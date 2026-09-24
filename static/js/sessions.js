@@ -1813,8 +1813,8 @@ export async function loadSessions() {
         _autoCreateInProgress = true;
         try {
           const dc = await _getPreferredDefaultChat();
-          if (dc && dc.endpoint_url && dc.model) {
-              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+          if (dc && dc.model) {
+              await createDirectChat(dc.endpoint_url || '', dc.model, dc.endpoint_id || '', { source: 'default' });
           }
         } catch (_) { /* no default model — that's fine, user can /setup */ }
         _autoCreateInProgress = false;
@@ -2176,16 +2176,16 @@ async function _getPreferredDefaultChat() {
   try {
     dc = window.__odysseusDefaultChat || null;
   } catch (_) {}
-  if (!dc || !dc.endpoint_url || !dc.model) {
+  if (!dc || !dc.model) {
     try {
       dc = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
     } catch (_) {}
   }
-  if (dc && dc.endpoint_url && dc.model) return dc;
+  if (dc && dc.model) return dc;
   try {
     const dcRes = await fetch(`${API_BASE}/api/default-chat`);
     dc = await dcRes.json();
-    if (dc && dc.endpoint_url && dc.model) {
+    if (dc && dc.model) {
       try {
         window.__odysseusDefaultChat = dc;
         localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
@@ -2287,7 +2287,10 @@ export async function materializePendingSession() {
     fd.append('name', name);
     fd.append('endpoint_url', pending.url || '');
     fd.append('model', pending.modelId || '');
-    if (pending.url && pending.modelId) {
+    // Overlay routes have empty leftover URL; skip leftover /v1/models probe.
+    const overlayRoutes = ['automatic', 'fast', 'balanced', 'best'];
+    const overlayRoute = overlayRoutes.includes(String(pending.modelId || '').toLowerCase());
+    if ((pending.url && pending.modelId) || overlayRoute || (!pending.url && pending.modelId)) {
       fd.append('skip_validation', 'true');
     }
     if (pending.endpointId) {

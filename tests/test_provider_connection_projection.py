@@ -108,9 +108,18 @@ def test_oauth_failure_shows_product_error_and_stores_no_refresh_token(monkeypat
 
 def test_device_flow_completion_never_exchanges_code_verifier_into_db(monkeypatch):
     TestSessionLocal = _mem_db(monkeypatch)
+    imported = []
 
     def _forbidden_exchange(*_args, **_kwargs):
         raise AssertionError("Odysseus must not exchange code_verifier or store tokens")
+
+    class Fake:
+        def import_codex_token(self, access_token):
+            imported.append(access_token)
+            return {"id": "conn-9r-alice", "status": "usable", "name": "Codex"}
+
+        def start_oauth(self, *_a, **_k):
+            raise AssertionError("poll must not start OAuth")
 
     monkeypatch.setattr(csr.chatgpt_subscription, "exchange_authorization_code", _forbidden_exchange)
     monkeypatch.setattr(csr.chatgpt_subscription, "poll_device_auth", lambda *_a, **_k: {
@@ -119,28 +128,17 @@ def test_device_flow_completion_never_exchanges_code_verifier_into_db(monkeypatc
         "access_token": _SECRET_ACCESS,
         "refresh_token": _SECRET_REFRESH,
     })
-
-    providers = [
-        {
-            "id": "conn-9r-alice",
-            "name": "Codex",
-            "provider": "codex",
-            "testStatus": "valid",
-            "accessToken": _SECRET_ACCESS,
-            "refreshToken": _SECRET_REFRESH,
-            "apiKey": "sk-leaked",
-            "baseUrl": "https://chatgpt.com/backend-api/codex",
-        }
-    ]
-    monkeypatch.setattr(csr, "_list_redacted_providers", lambda: providers)
+    monkeypatch.setattr(csr, "NineRouterConnectClient", lambda: Fake())
 
     outcome = csr._poll_device_flow(
         SimpleNamespace(),
         {"owner": "alice", "device_auth_id": "d", "user_code": "u"},
     )
 
+    assert imported == [_SECRET_ACCESS]
     assert outcome.status == "authorized"
     assert outcome.endpoint["connection_id"] == "conn-9r-alice"
+    assert "access_token" not in outcome.endpoint
     db = TestSessionLocal()
     try:
         auth = db.query(ProviderAuthSession).one()
@@ -267,17 +265,102 @@ def test_start_device_flow_opens_upstream_idp_not_9router_dashboard(monkeypatch)
 
     class Fake:
         def start_oauth(self, provider, redirect_uri):
-            assert provider
-            assert "callback" in redirect_uri
-            return {"authorization_url": "https://auth.openai.com/authorize?client_id=x"}
+            raise AssertionError("ChatGPT must not start 9router /authorize (OpenAI unknown_error)")
+
+        def import_codex_token(self, access_token):
+            raise AssertionError("start must not import tokens")
 
     monkeypatch.setattr(csr, "NineRouterConnectClient", lambda: Fake())
+    monkeypatch.setattr(
+        csr.chatgpt_subscription,
+        "request_device_code",
+        lambda timeout=15.0, code_challenge=None: {
+            "device_auth_id": "dev-1",
+            "user_code": "ABCD-EFGH",
+            "verification_uri": "https://auth.openai.com/codex/device",
+            "interval": 5,
+            "expires_in": 900,
+        },
+    )
     start = csr._start_device_flow(SimpleNamespace(), {})
-    redirect = start.response.get("redirect_url") or start.response.get("verification_uri")
-    assert redirect.startswith("https://auth.openai.com/")
-    assert "/dashboard/providers" not in redirect
+    assert start.response["user_code"] == "ABCD-EFGH"
+    assert start.response["verification_uri"] == "https://auth.openai.com/codex/device"
+    assert "/authorize" not in str(start.response.get("redirect_url") or "")
+    assert "/dashboard/providers" not in str(start.response)
     assert start.pending["owner"] == "alice"
-    assert "code_verifier" not in start.pending
+    assert start.pending["device_auth_id"] == "dev-1"
+    assert start.pending["user_code"] == "ABCD-EFGH"
+    assert "code_verifier" not in start.response
+    assert "access_token" not in start.response
+
+
+def test_poll_stays_pending_until_device_auth_returns_access_token(monkeypatch):
+    monkeypatch.setattr(
+        csr.chatgpt_subscription,
+        "poll_device_auth",
+        lambda *_a, **_k: {"status": "pending", "error": "authorization_pending"},
+    )
+
+    class Fake:
+        def import_codex_token(self, access_token):
+            raise AssertionError("must not import while OpenAI is pending")
+
+    monkeypatch.setattr(csr, "NineRouterConnectClient", lambda: Fake())
+    outcome = csr._poll_device_flow(
+        SimpleNamespace(),
+        {"owner": "alice", "device_auth_id": "d", "user_code": "u"},
+    )
+    assert outcome.status == "pending"
+
+
+def test_poll_exchanges_authorization_code_then_imports_to_9router(monkeypatch):
+    """OpenAI deviceauth/token 200 returns authorization_code, not access_token."""
+    TestSessionLocal = _mem_db(monkeypatch)
+    imported = []
+    exchanged = []
+
+    class Fake:
+        def import_codex_token(self, access_token):
+            imported.append(access_token)
+            return {"id": "conn-ex", "status": "usable", "name": "Codex"}
+
+    monkeypatch.setattr(csr, "NineRouterConnectClient", lambda: Fake())
+    monkeypatch.setattr(
+        csr.chatgpt_subscription,
+        "poll_device_auth",
+        lambda *_a, **_k: {
+            "authorization_code": "ac-live",
+            "code_verifier": "cv-from-openai",
+        },
+    )
+
+    def _exchange(code, verifier, timeout=15.0):
+        exchanged.append((code, verifier))
+        return {"access_token": "at-from-exchange", "refresh_token": "rt-from-exchange"}
+
+    monkeypatch.setattr(csr.chatgpt_subscription, "exchange_authorization_code", _exchange)
+
+    outcome = csr._poll_device_flow(
+        SimpleNamespace(),
+        {
+            "owner": "alice",
+            "device_auth_id": "d",
+            "user_code": "u",
+        },
+    )
+
+    assert exchanged == [("ac-live", "cv-from-openai")]
+    assert imported == ["at-from-exchange"]
+    assert outcome.status == "authorized"
+    assert outcome.endpoint["connection_id"] == "conn-ex"
+    assert "access_token" not in outcome.endpoint
+    db = TestSessionLocal()
+    try:
+        auth = db.query(ProviderAuthSession).one()
+        assert auth.access_token is None
+        assert auth.refresh_token is None
+    finally:
+        db.close()
 
 
 @pytest.mark.skip(reason="live 9router PKCE needs a browser user; unit contract covers completion")

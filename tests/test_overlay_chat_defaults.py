@@ -70,3 +70,77 @@ def test_default_chat_empty_prefs_are_automatic(monkeypatch):
     result = _get_default_chat()(_request(admin=False))
     assert result["model"] == "automatic"
     assert result["route"] == "automatic"
+
+
+def test_overlay_session_bind_empty_url_uses_9router_v1(monkeypatch):
+    """Chat Native Hello! posts empty endpoint_url; bind 9router, skip leftover."""
+    monkeypatch.setenv("NINE_ROUTER_METADATA_URL", "http://9router:20128")
+    bound = model_routes.overlay_session_bind("automatic", "", "")
+    assert bound == ("http://9router:20128/v1", "automatic")
+    assert model_routes.overlay_session_bind("fast", None, None) == (
+        "http://9router:20128/v1",
+        "fast",
+    )
+    assert model_routes.overlay_session_bind("", "", "") == (
+        "http://9router:20128/v1",
+        "automatic",
+    )
+    leftover = model_routes.overlay_session_bind(
+        "llama3", "", "http://127.0.0.1:11434/v1"
+    )
+    assert leftover is None
+    leftover_id = model_routes.overlay_session_bind("automatic", "ep-1", "")
+    assert leftover_id is None
+
+
+def test_session_create_binds_overlay_before_endpoint_url_gate():
+    """POST /api/session must not 400 overlay composer empty leftover URL."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent.joinpath(
+        "routes/session_routes.py"
+    ).read_text(encoding="utf-8")
+    assert "overlay_session_bind" in src
+    assert src.index("overlay_session_bind") < src.index(
+        'endpoint_url is required (choose from /api/models)'
+    )
+    sessions_js = Path(__file__).resolve().parent.parent.joinpath(
+        "static/js/sessions.js"
+    ).read_text(encoding="utf-8")
+    assert "overlayRoutes" in sessions_js
+    assert "if (dc && dc.model) return dc;" in sessions_js
+    slash = Path(__file__).resolve().parent.parent.joinpath(
+        "static/js/slashCommands.js"
+    ).read_text(encoding="utf-8")
+    assert "if (dc.model)" in slash
+    assert "overlayOk" in slash
+
+
+def test_is_overlay_ninerouter_url_matches_compose_host(monkeypatch):
+    monkeypatch.setenv("NINE_ROUTER_METADATA_URL", "http://9router:20128")
+    assert model_routes.is_overlay_ninerouter_url("http://9router:20128/v1") is True
+    assert model_routes.is_overlay_ninerouter_url(
+        "http://9router:20128/v1/chat/completions"
+    ) is True
+    assert model_routes.is_overlay_ninerouter_url("http://127.0.0.1:11434/v1") is False
+    assert model_routes.is_overlay_ninerouter_url("") is False
+
+
+def test_clear_orphaned_skips_overlay_9router_session(monkeypatch):
+    """Hello! on overlay chat must not 400 leftover ModelEndpoint orphan clear."""
+    import routes.chat_routes as chat_routes
+
+    sess = SimpleNamespace(
+        id="s1",
+        endpoint_url="http://9router:20128/v1",
+        model="automatic",
+        headers={},
+    )
+
+    def _no_leftover_db():
+        raise AssertionError("overlay 9router is not a leftover ModelEndpoint")
+
+    monkeypatch.setattr(chat_routes, "SessionLocal", _no_leftover_db)
+    assert chat_routes._clear_orphaned_session_endpoint(sess) is False
+    assert sess.model == "automatic"
+    assert sess.endpoint_url == "http://9router:20128/v1"

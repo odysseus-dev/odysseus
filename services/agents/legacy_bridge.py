@@ -21,7 +21,7 @@ from .workspace_privilege import (
 
 _CHAT_MUTATING_REJECT_REASON = "Chat mode cannot approve human-workspace writes."
 
-_IDLE = {"finished", "paused", "completed", "failed", "cancelled"}
+_IDLE = {"finished", "paused", "completed", "failed", "cancelled", "error", "errored"}
 _POLL_SLEEP_S = 0.4
 _POLL_TIMEOUT_S = 120.0
 _REBOUND_NOTE = "Started a new OpenHands conversation because the agent type changed."
@@ -164,9 +164,25 @@ async def stream_governed_agent(
                     }) + "\n\n"
             if _event_idle(event):
                 idle = True
-        if idle or _client_conversation_idle(
+        conv_idle = _client_conversation_idle(
             dispatcher.client, ref.conversation_id, ref.automation_execution_id
-        ):
+        )
+        if idle or conv_idle:
+            if conv_idle:
+                info = {}
+                fetch = getattr(dispatcher.client, "get_execution", None)
+                if callable(fetch):
+                    info = fetch(ref.automation_execution_id) or {}
+                status = str(
+                    info.get("execution_status")
+                    or info.get("status")
+                    or ""
+                ).lower()
+                if status in {"error", "errored", "failed"}:
+                    yield "data: " + json.dumps({
+                        "error": "Agent run failed before completion.",
+                        "status": 500,
+                    }) + "\n\n"
             break
         if time.monotonic() >= deadline:
             break

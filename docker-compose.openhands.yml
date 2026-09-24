@@ -7,15 +7,19 @@ services:
       - OPENHANDS_CANVAS_URL=${OPENHANDS_CANVAS_URL:-http://127.0.0.1:8000/canvas}
       - ODYSSEUS_MODEL_JOB_WORKER_URL=http://odysseus-model-jobs:8091
       # Overlay 9router is unpublished. Metadata + connect use the Compose DNS
-      # name. CLI token is derived from DATA_DIR (machine-id + auth/cli-secret),
-      # never a virtual inference key.
+      # name. CLI token is derived from DATA_DIR (machine-id + auth/cli-secret).
+      # Native chat reads the OpenHands sidecar virtual key, not sqlite.
       - NINE_ROUTER_METADATA_URL=http://9router:20128
       - NINE_ROUTER_DATA_DIR=/opt/odysseus/9router-cli
+      # GET /api/settings redacts llm.api_key. Native chat POSTs this sidecar
+      # into Agent Server so 9router is authenticated. Not the sqlite mint mount.
+      - OPENHANDS_NATIVE_LLM_API_KEY_FILE=/opt/odysseus/openhands-native-llm-api-key
     volumes:
       # CLI token only (machine-id + auth/cli-secret). Not the sqlite inference
       # key bridge owned by Agent Server / model-job worker.
       - ${APP_DATA_DIR:-./data}/9router/machine-id:/opt/odysseus/9router-cli/machine-id:ro
       - ${APP_DATA_DIR:-./data}/9router/auth:/opt/odysseus/9router-cli/auth:ro
+      - ${APP_DATA_DIR:-./data}/openhands-agent-server-home/native-llm-api-key:/opt/odysseus/openhands-native-llm-api-key:ro
     depends_on:
       openhands-agent-server:
         condition: service_healthy

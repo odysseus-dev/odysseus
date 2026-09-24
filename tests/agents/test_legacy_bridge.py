@@ -190,6 +190,21 @@ def test_client_idle_uses_execution_status():
     assert chunks[-1] == "data: [DONE]\n\n"
 
 
+def test_client_idle_treats_error_as_terminal():
+    """9router 401 sets execution_status=error; do not hang on Processing request."""
+    client = ScriptedClient([], polls=[[]] * 50)
+    client.execution = {"execution_status": "error"}
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "ping"}],
+        turn_id="t-exec-error",
+        poll_timeout_s=5,
+    )
+    assert client._poll_i <= 2
+    assert chunks[-1] == "data: [DONE]\n\n"
+    assert "Agent run failed before completion." in "".join(chunks)
+
+
 def test_chat_turn_sends_empty_workspace_grants():
     client = ScriptedClient([])
     _collect(

@@ -34,6 +34,7 @@ def test_connect_allowlist_accepts_probed_provider_paths():
     assert normalize_connect_path("POST", "/api/providers") == "/api/providers"
     assert normalize_connect_path("GET", "/api/oauth/codex/authorize") == "/api/oauth/codex/authorize"
     assert normalize_connect_path("POST", "/api/oauth/codex/exchange") == "/api/oauth/codex/exchange"
+    assert normalize_connect_path("POST", "/api/oauth/codex/import-token") == "/api/oauth/codex/import-token"
     assert normalize_connect_path("DELETE", "/api/providers/c156fa13") == "/api/providers/c156fa13"
 
 
@@ -90,6 +91,32 @@ def test_start_oauth_returns_idp_url():
     out = client.start_oauth("codex", "http://odysseus/callback")
     assert out["authorization_url"].startswith("https://auth.openai.com/")
     assert out["state"] == "st1"
+
+
+def test_import_codex_token_posts_access_token_and_redacts():
+    """Device-flow ChatGPT deposits the OpenAI access token in overlay 9router only."""
+    seen = []
+
+    def fetch(method, path, headers, json_body):
+        seen.append((method, path, json_body))
+        return {
+            "success": True,
+            "connection": {
+                "id": "conn-codex",
+                "accessToken": "should-strip",
+                "provider": "codex",
+                "name": "ChatGPT",
+            },
+        }
+
+    client = NineRouterConnectClient(fetch=fetch, token="cli-tok")
+    row = client.import_codex_token("sk-live-access")
+    assert seen[0][0] == "POST"
+    assert seen[0][1] == "/api/oauth/codex/import-token"
+    assert seen[0][2] == {"accessToken": "sk-live-access"}
+    assert row["id"] == "conn-codex"
+    assert "accessToken" not in row
+    assert "access_token" not in row
 
 
 def test_complete_oauth_forwards_code_not_tokens_and_redacts():

@@ -53,7 +53,12 @@ from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
+from routes.model_routes import (
+    OVERLAY_CHAT_ROUTES,
+    _visible_models,
+    is_overlay_ninerouter_url,
+    overlay_session_bind,
+)
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -466,8 +471,16 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
 
 
 def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
-    """Clear a session model if its endpoint was deleted from ModelEndpoint."""
-    if not getattr(sess, "endpoint_url", ""):
+    """Clear a session model if its leftover ModelEndpoint row was deleted.
+
+    Overlay 9router sessions store compose URL + route name. They are not
+    leftover ModelEndpoint rows; wiping them 400s Chat Native after Hello!.
+    """
+    url = getattr(sess, "endpoint_url", "") or ""
+    if not url:
+        return False
+    model = (getattr(sess, "model", "") or "").strip().lower()
+    if is_overlay_ninerouter_url(url) or model in OVERLAY_CHAT_ROUTES:
         return False
     db = SessionLocal()
     try:
@@ -703,7 +716,8 @@ def _reconcile_selected_route_from_request(
     The frontend creates a pending chat first and only materializes it on first
     send. Startup/default-model refreshes can race with that UI state, so the
     stream request includes the route that was selected at click/send time.
-    Trust only registered endpoint ids, or the session's existing endpoint URL.
+    Overlay routes bind to 9router without a leftover ModelEndpoint id.
+    Leftover chats still require a registered endpoint id or matching URL.
     """
     selected_model = str(form_data.get("selected_model") or "").strip()
     selected_endpoint_id = str(form_data.get("selected_endpoint_id") or "").strip()
@@ -713,7 +727,13 @@ def _reconcile_selected_route_from_request(
 
     endpoint_url = ""
     headers = None
-    if selected_endpoint_id or selected_endpoint_url:
+    overlay_bind = overlay_session_bind(
+        selected_model, selected_endpoint_id, selected_endpoint_url
+    )
+    if overlay_bind:
+        endpoint_url, selected_model = overlay_bind
+        headers = {}
+    elif selected_endpoint_id or selected_endpoint_url:
         try:
             from src.auth_helpers import owner_filter
             from src.endpoint_resolver import build_headers, normalize_base

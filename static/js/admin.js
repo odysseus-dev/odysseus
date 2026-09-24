@@ -1172,9 +1172,14 @@ function initEndpointForm() {
       });
       if (result.status === 'authorized') {
         const endpoint = result.endpoint || {};
-        const n = ((endpoint && endpoint.models) || []).length;
         status.className = 'admin-success';
-        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        // Overlay chat is 9router routes, not leftover ModelEndpoint inventory.
+        if (endpoint.connection_id) {
+          status.textContent = 'Connected. Overlay chat uses 9router routes (automatic, fast, balanced, best).';
+        } else {
+          const n = ((endpoint && endpoint.models) || []).length;
+          status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        }
         if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
         await loadNinerouterConnections();
         await loadEndpoints();

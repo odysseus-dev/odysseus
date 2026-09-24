@@ -67,6 +67,8 @@ def test_overlay_datadir_mounts_are_quarantined_not_owned_by_odysseus():
     assert "NINE_ROUTER_DATA_DIR=/opt/odysseus/9router-cli" in odysseus
     assert "9router/machine-id" in odysseus
     assert "9router/auth:" in odysseus
+    assert "native-llm-api-key" in odysseus
+    assert "OPENHANDS_NATIVE_LLM_API_KEY_FILE" in odysseus
     assert BRIDGE_MARK not in odysseus
     for block in (agent, worker):
         assert BRIDGE_MARK in block

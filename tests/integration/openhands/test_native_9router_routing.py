@@ -137,6 +137,12 @@ def test_bootstrap_files_overwrite_subscription_with_9router():
     assert "openai/" in script
     assert str(BOOTSTRAP_PY.relative_to(ROOT)) in _overlay_text() or BOOTSTRAP_PY.name in wrapper
     assert "bootstrap_native_llm" in wrapper
+    assert "_chown_tree" in script
+    assert "10001" in script
+    assert "native-llm-api-key" in script
+    assert "openai/cx/gpt-5.5" in script
+    assert "gpt-6-astra" in script
+    assert 'startswith("kr/")' not in script
 
 
 def test_compose_bootstraps_agent_server_home_and_keeps_9router():

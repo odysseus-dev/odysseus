@@ -7,7 +7,38 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
+
+
+def _native_llm_api_key() -> str:
+    """Return the overlay 9router virtual key Agent Server stores for native chat.
+
+    GET /api/settings redacts the secret. Without this file, POST /api/conversations
+    copies ********** and 9router 401s (Processing request hangs).
+    """
+    path = os.environ.get(
+        "OPENHANDS_NATIVE_LLM_API_KEY_FILE",
+        "/opt/odysseus/openhands-native-llm-api-key",
+    )
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _agent_settings_for_create(settings: dict[str, Any]) -> dict[str, Any]:
+    """Copy Agent Server settings for create, restoring a redacted llm.api_key."""
+    agent = dict(settings.get("agent_settings") or {})
+    llm = dict(agent.get("llm") or {})
+    if llm:
+        # Never copy GET /api/settings llm.api_key (it is ********** live).
+        llm.pop("api_key", None)
+        restored = _native_llm_api_key()
+        if restored:
+            llm["api_key"] = restored
+        agent["llm"] = llm
+    return agent
 
 
 class OpenHandsFailure(Exception):
@@ -94,8 +125,48 @@ class OpenHandsClient:
         resolved_base_url = None
         resolved_model = None
         resolved_runtime = None
+        if conversation_id:
+            try:
+                info = self.transport.request(
+                    "GET", f"/api/conversations/{conversation_id}"
+                )
+            except OpenHandsFailure:
+                info = {}
+            status = str(
+                (info or {}).get("execution_status")
+                or (info or {}).get("status")
+                or ""
+            ).lower()
+            if status in {"error", "failed", "errored"}:
+                # Dead conversation (Codex 400 / missing key) cannot be resumed.
+                conversation_id = None
         if not conversation_id:
-            settings = self.transport.request("GET", "/api/settings")
+            try:
+                settings = self.transport.request("GET", "/api/settings")
+            except OpenHandsFailure:
+                # Overlay: Odysseus /app/data chown can make settings.json
+                # unreadable to uid 10001. Still create with 9router + sidecar.
+                settings = {
+                    "agent_settings": {
+                        "schema_version": 5,
+                        "agent_kind": "openhands",
+                        "agent": "CodeActAgent",
+                        "llm": {
+                            "model": (
+                                os.environ.get("OPENHANDS_NATIVE_MODEL")
+                                or "openai/cx/gpt-5.5"
+                            ).strip()
+                            or "openai/cx/gpt-5.5",
+                            "base_url": os.environ.get(
+                                "OPENHANDS_NATIVE_BASE_URL",
+                                "http://9router:20128/v1",
+                            ).strip()
+                            or "http://9router:20128/v1",
+                            "auth_type": "api_key",
+                            "api_mode": "chat",
+                        },
+                    }
+                }
             if agent_profile_id == "opencode":
                 # OpenCode provenance is overlay config, not Agent Server LLM.
                 resolved_runtime = "opencode"
@@ -116,7 +187,7 @@ class OpenHandsClient:
                     "working_dir": "/workspace",
                     "kind": "LocalWorkspace",
                 },
-                "agent_settings": settings.get("agent_settings") or {},
+                "agent_settings": _agent_settings_for_create(settings),
                 **({"initial_message": user_message} if message else {}),
                 "autotitle": False,
             }

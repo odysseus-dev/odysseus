@@ -267,6 +267,25 @@ class NineRouterConnectClient:
             raise NineRouterConnectError("9router create did not return a connection id")
         return row
 
+    def import_codex_token(self, access_token: str) -> dict[str, Any]:
+        """Deposit a ChatGPT device-flow access token in overlay 9router.
+
+        Agents: POST ``/api/oauth/codex/import-token`` with ``accessToken`` only.
+        Odysseus must not persist that token. Do not log the token.
+        """
+        token = (access_token or "").strip()
+        if not token:
+            raise NineRouterConnectError("missing ChatGPT access token")
+        payload = self._request(
+            "POST",
+            "/api/oauth/codex/import-token",
+            {"accessToken": token},
+        )
+        row = self._one_row(payload)
+        if not str(row.get("id") or "").strip():
+            raise NineRouterConnectError("9router import-token did not return a connection id")
+        return row
+
     def start_oauth(self, provider: str, redirect_uri: str) -> dict[str, str]:
         """Start OAuth; returns IdP ``authorization_url`` plus 9router ``state``."""
         from urllib.parse import quote

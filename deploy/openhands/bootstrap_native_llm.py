@@ -35,7 +35,11 @@ NINE_ROUTER_HEALTH = "http://9router:20128/api/health"
 # "openai". OpenHands LiteLLM custom base needs the openai/ prefix so the
 # catalog id is what 9router receives after the first slash is stripped.
 NATIVE_LITELLM_PREFIX = "openai/"
-NATIVE_LITELLM_MODEL = "openai/auto"
+# LiteLLM needs openai/; 9router then receives catalog id after the first slash.
+# Bare auto/openai/auto 404s (provider openai, no API key). gpt-6-astra 400s on Codex.
+NATIVE_LITELLM_MODEL = "openai/cx/gpt-5.5"
+_SKIP_CATALOG = ("gpt-6-astra", "-review")
+_PREFER_CATALOG = ("cx/gpt-5.5", "cx/gpt-5.4", "cx/gpt-5.4-mini")
 KEY_NAME = "odysseus-native"
 MACHINE_ID = "odysseusnative1"
 OPENCODE_KEY_NAME = "odysseus-opencode"
@@ -102,6 +106,27 @@ def _run_sudo(args: list[str]) -> None:
     """
 
     subprocess.run(["sudo", "-n", *args], check=True)
+
+
+def _chown_tree(path: Path, uid: int = 10001, gid: int = 10001) -> None:
+    """Give the Agent Server user the bind-mounted home tree.
+
+    Host overlay data is often uid 1000 mode 0700. Agent Server runs as
+    10001. Without a recursive chown, GET /api/settings PermissionErrors and
+    chat Native shows Agent run failed before completion.
+    """
+
+    path.mkdir(parents=True, exist_ok=True)
+    if os.geteuid() == 0:
+        for root, dirs, files in os.walk(path):
+            os.chown(root, uid, gid)
+            os.chmod(root, 0o700)
+            for name in dirs + files:
+                target = Path(root) / name
+                os.chown(target, uid, gid)
+        return
+    _run_sudo(["chown", "-R", f"{uid}:{gid}", str(path)])
+    _run_sudo(["chmod", "700", str(path)])
 
 
 def _wait_http(url: str, timeout: float = 60.0) -> None:
@@ -209,17 +234,12 @@ def _ensure_key_row(
 
 
 def _pick_litellm_model(virtual_key: str) -> str:
-    """Choose ``openai/{catalog_id}`` from the live 9router catalog.
+    """Return ``openai/{catalog_id}`` for a ChatGPT/Codex catalog model that works.
 
-    Parameters
-    ----------
-    virtual_key
-        9router virtual key used only for the catalog GET.
-
-    Returns
-    -------
-    str
-        LiteLLM model id. Falls back to ``openai/auto`` if catalog is empty.
+    Overlay 9router catalog ids look like ``cx/gpt-5.5``. LiteLLM must see
+    ``openai/cx/gpt-5.5`` so it uses the OpenAI-compatible client; 9router then
+    gets ``cx/gpt-5.5``. ``openai/auto`` 404s (no OpenAI API key). ``cx/gpt-6-astra``
+    400s on ChatGPT Codex.
     """
 
     import urllib.error
@@ -236,9 +256,24 @@ def _pick_litellm_model(virtual_key: str) -> str:
         return NATIVE_LITELLM_MODEL
     ids = [str(item.get("id") or "") for item in (payload.get("data") or [])]
     ids = [item for item in ids if item]
+    return _litellm_id_from_catalog(ids)
+
+
+def _litellm_id_from_catalog(ids: list[str]) -> str:
+    """Pick a working overlay catalog id and wrap it for LiteLLM."""
+
     if not ids:
         return NATIVE_LITELLM_MODEL
-    chosen = next((item for item in ids if item.startswith("kr/")), ids[0])
+    chosen = next((item for item in _PREFER_CATALOG if item in ids), "")
+    if not chosen:
+        chosen = next(
+            (
+                item
+                for item in ids
+                if not any(skip in item for skip in _SKIP_CATALOG)
+            ),
+            ids[0],
+        )
     if chosen.startswith(NATIVE_LITELLM_PREFIX):
         return chosen
     return NATIVE_LITELLM_PREFIX + chosen
@@ -295,6 +330,7 @@ def apply_native_9router_settings() -> None:
     """Mint a 9router virtual key and overwrite persisted Agent Server LLM settings."""
 
     _reexec_as_root()
+    _chown_tree(SETTINGS_PATH.parent)
     _wait_http(NINE_ROUTER_HEALTH)
     virtual_key = _mint_virtual_key()
     if SETTINGS_PATH.is_file():
@@ -318,6 +354,16 @@ def apply_native_9router_settings() -> None:
     else:
         _run_sudo(["chown", "10001:10001", str(SETTINGS_PATH)])
         _run_sudo(["chmod", "600", str(SETTINGS_PATH)])
+    # GET /api/settings redacts llm.api_key to **********. Odysseus POSTs
+    # conversations with this sidecar so 9router is not called without a key.
+    sidecar = SETTINGS_PATH.parent / "native-llm-api-key"
+    sidecar.write_text(virtual_key, encoding="utf-8")
+    if os.geteuid() == 0:
+        os.chown(sidecar, 10001, 10001)
+        os.chmod(sidecar, 0o644)
+    else:
+        _run_sudo(["chown", "10001:10001", str(sidecar)])
+        _run_sudo(["chmod", "644", str(sidecar)])
     log.info(
         "native llm now %s model=%s auth_type=api_key",
         NINE_ROUTER_V1,
@@ -476,14 +522,9 @@ def apply_opencode_9router_config() -> None:
     """Mint a separate OpenCode 9router key and write isolated OpenCode config."""
 
     _reexec_as_root()
+    _chown_tree(Path("/home/opencode"))
     _wait_http(NINE_ROUTER_HEALTH)
     virtual_key = _mint_virtual_key(OPENCODE_KEY_NAME, OPENCODE_MACHINE_ID)
-    home = Path("/home/opencode")
-    home.mkdir(parents=True, exist_ok=True)
-    if os.geteuid() == 0:
-        os.chown(home, 10001, 10001)
-    else:
-        _run_sudo(["chown", "10001:10001", str(home)])
     _write_owned_json(OPENCODE_CONFIG_PATH, _opencode_config_payload(virtual_key))
     _retag_opencode_acp_profile()
     log.info("opencode provider now %s key=%s acp_server=opencode", NINE_ROUTER_V1, OPENCODE_KEY_NAME)
@@ -550,19 +591,13 @@ def apply_hermes_9router_config() -> None:
     """Mint a separate Hermes 9router key and write isolated HERMES_HOME config."""
 
     _reexec_as_root()
+    home = Path("/home/hermes")
+    _chown_tree(home)
+    _chown_tree(HERMES_HOME)
     _wait_http(NINE_ROUTER_HEALTH)
     virtual_key = _mint_virtual_key(HERMES_KEY_NAME, HERMES_MACHINE_ID)
-    home = Path("/home/hermes")
-    hermes_home = HERMES_HOME
-    home.mkdir(parents=True, exist_ok=True)
-    hermes_home.mkdir(parents=True, exist_ok=True)
-    if os.geteuid() == 0:
-        os.chown(home, 10001, 10001)
-        os.chown(hermes_home, 10001, 10001)
-    else:
-        _run_sudo(["chown", "10001:10001", str(home), str(hermes_home)])
     _write_owned_text(HERMES_CONFIG_PATH, _hermes_config_yaml(virtual_key))
-    _write_owned_text(hermes_home / ".env", f"{HERMES_KEY_ENV}={virtual_key}\n")
+    _write_owned_text(HERMES_HOME / ".env", f"{HERMES_KEY_ENV}={virtual_key}\n")
     _retag_hermes_acp_profile()
     log.info("hermes provider now %s key=%s acp_server=hermes", NINE_ROUTER_V1, HERMES_KEY_NAME)
 

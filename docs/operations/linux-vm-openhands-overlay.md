@@ -56,6 +56,20 @@ docker compose -f docker-compose.yml -f docker-compose.openhands.yml ls
 python3 scripts/openhands_probe.py stack --json
 ```
 
+## Native chat probe (headless)
+
+Overlay Docker is **not** Mac Docker. From the Mac checkout (phone SSH to the
+Mac is the same):
+
+```bash
+./scripts/run_overlay_native_chat_probe.sh
+```
+
+That SSHs to `orchestration-vm` and execs inside `odysseus`. A local
+`docker compose exec` on the Mac fails with `Cannot connect to the Docker daemon`.
+
+Exit 0 means 9router completions and OpenHands both returned assistant text.
+
 Keep `APP_BIND=127.0.0.1`, `APP_PORT=7000`, `AUTH_ENABLED=true`, Canvas on
 `127.0.0.1:8000`. Agent Server, Automation, and overlay 9router stay unpublished.
 Reach 9router with

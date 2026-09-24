@@ -1012,8 +1012,8 @@ async function _cmdSessionNew(args, ctx) {
     try {
       const dcRes = await fetch(`${API_BASE}/api/default-chat`);
       const dc = await dcRes.json();
-      if (dc.endpoint_url && dc.model) {
-        endpointUrl = dc.endpoint_url;
+      if (dc.model) {
+        endpointUrl = dc.endpoint_url || '';
         model = dc.model;
         endpointId = dc.endpoint_id || '';
       }
@@ -1042,8 +1042,10 @@ async function _cmdSessionNew(args, ctx) {
       }
     } catch (e) { /* ignore */ }
   }
-  if (!endpointUrl || !model) {
-    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
+  const overlayRoutes = ['automatic', 'fast', 'balanced', 'best'];
+  const overlayOk = overlayRoutes.includes(String(model || '').toLowerCase());
+  if ((!endpointUrl && !overlayOk) || !model) {
+    slashReply('No model available — pick a 9router route in the composer, or add a leftover local endpoint.');
     return true;
   }
 
@@ -5108,8 +5110,12 @@ async function _setupProviderDeviceFlow(providerKey) {
       },
     });
     if (result.status === 'authorized') {
-      const n = ((result.endpoint && result.endpoint.models) || []).length;
-      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      if (result.endpoint && result.endpoint.connection_id) {
+        await _setupReply('Connected. Overlay chat uses 9router routes (automatic, fast, balanced, best).');
+      } else {
+        const n = ((result.endpoint && result.endpoint.models) || []).length;
+        await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      }
       if (modelsModule) modelsModule.refreshModels(true);
       return;
     }

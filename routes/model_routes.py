@@ -1433,6 +1433,54 @@ def overlay_chat_route(model: str | None) -> str:
     return "automatic"
 
 
+def overlay_ninerouter_chat_url() -> str:
+    """OpenAI-compat base OpenHands uses on the overlay compose network.
+
+    Same origin as NINE_ROUTER_METADATA_URL / OPENHANDS_LLM_BASE_URL, plus /v1.
+    Stored on Session.endpoint_url so leftover ModelEndpoint rows stay unused.
+    """
+    origin = os.getenv("NINE_ROUTER_METADATA_URL", "http://9router:20128").rstrip("/")
+    return f"{origin}/v1"
+
+
+def overlay_session_bind(
+    model: str | None, endpoint_id: str | None, endpoint_url: str | None
+) -> tuple[str, str] | None:
+    """Bind POST /api/session to overlay 9router when leftover is not selected.
+
+    Empty endpoint_url + automatic/fast/balanced/best (or empty/leftover model
+    names) is overlay chat. A leftover URL plus a non-route model keeps the
+    old ModelEndpoint path. endpoint_id always wins leftover.
+    """
+    if str(endpoint_id or "").strip():
+        return None
+    raw = str(model or "").strip().lower()
+    url = str(endpoint_url or "").strip()
+    if url and raw not in OVERLAY_CHAT_ROUTES and raw:
+        return None
+    return overlay_ninerouter_chat_url(), overlay_chat_route(model)
+
+
+def is_overlay_ninerouter_url(url: str | None) -> bool:
+    """True when session.endpoint_url is overlay 9router, not a leftover row.
+
+    Overlay chat stores http://9router:20128/v1 (or NINE_ROUTER_METADATA_URL).
+    That host is not a ModelEndpoint. Orphan-clear must not wipe the session.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    want = urlparse(overlay_ninerouter_chat_url())
+    got = urlparse(raw)
+    want_host = (want.hostname or "").lower()
+    got_host = (got.hostname or "").lower()
+    if not want_host or got_host != want_host:
+        return False
+    want_port = want.port or (443 if want.scheme == "https" else 80)
+    got_port = got.port or (443 if got.scheme == "https" else 80)
+    return got_port == want_port
+
+
 def overlay_default_chat_payload(model: str | None) -> Dict[str, str]:
     """GET /api/default-chat shape for overlay OpenHands + 9router chat."""
     route = overlay_chat_route(model)

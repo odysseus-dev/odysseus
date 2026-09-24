@@ -1,12 +1,10 @@
-"""ChatGPT Subscription device-flow via stack 9router OAuth.
+"""ChatGPT Subscription device-flow; overlay 9router holds the token.
 
-Agents: start must return an upstream IdP URL from
-``NineRouterConnectClient.start_oauth``. Never send the browser to
-``/dashboard/providers``. Callback is Odysseus
-``/api/ninerouter/connections/oauth/callback`` (same path as
-``routes/ninerouter_connection_routes.py``). Poll still lists redacted
-metadata providers and provisions a projection (no tokens). Tests
-monkeypatch ``NineRouterConnectClient`` on this module.
+Agents: start OpenAI device-code (user_code + /codex/device). Do not call
+9router ``/api/oauth/codex/authorize`` — that opens /authorize with an
+Odysseus redirect_uri and OpenAI returns unknown_error. Poll until
+access_token, then ``import_codex_token`` into unpublished 9router.
+Odysseus stores only the opaque connection projection. Never dashboard.
 """
 
 import logging
@@ -20,7 +18,7 @@ from routes.device_flow import (
     PendingDeviceFlowStore,
     create_device_flow_router,
 )
-from services.ninerouter.connect import NineRouterConnectClient
+from services.ninerouter.connect import NineRouterConnectClient, NineRouterConnectError
 from src.auth_helpers import get_current_user
 from src import chatgpt_subscription
 
@@ -84,32 +82,100 @@ def _match_pending_connection(providers: Any, pending: Mapping[str, Any]) -> Opt
 
 
 def _start_device_flow(request: Request, _form) -> DeviceFlowStart:
-    """Start ChatGPT OAuth; return IdP authorization_url, never 9router dashboard."""
+    """Start ChatGPT device-code; return /codex/device + user_code, never /authorize."""
     owner = get_current_user(request) or None
-    # SimpleNamespace tests omit base_url; real FastAPI Request always has it.
-    base = str(getattr(request, "base_url", "") or "").rstrip("/")
-    redirect_uri = f"{base}{_OAUTH_CALLBACK_PATH}"
-    started = NineRouterConnectClient().start_oauth("codex", redirect_uri)
-    auth_url = ""
-    if isinstance(started, dict):
-        auth_url = str(started.get("authorization_url") or "")
-    pending: Dict[str, Any] = {"owner": owner, "redirect_url": auth_url}
-    if isinstance(started, dict) and started.get("state"):
-        pending["state"] = started["state"]
+    try:
+        data = chatgpt_subscription.request_device_code()
+    except chatgpt_subscription.ChatGPTSubscriptionError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"ChatGPT device-code request failed: {exc}") from exc
+    device_auth_id = str(data.get("device_auth_id") or "").strip()
+    user_code = str(data.get("user_code") or "").strip()
+    if not device_auth_id or not user_code:
+        raise HTTPException(502, "ChatGPT device-code response was missing required fields.")
+    verification_uri = str(
+        data.get("verification_uri") or f"{chatgpt_subscription.CHATGPT_OAUTH_ISSUER}/codex/device"
+    )
     return DeviceFlowStart(
-        pending=pending,
-        response={
-            "redirect_url": auth_url,
-            "verification_uri": auth_url,
+        pending={
+            "owner": owner,
+            "device_auth_id": device_auth_id,
+            "user_code": user_code,
         },
-        interval=5,
-        expires_in=900,
+        response={
+            "user_code": user_code,
+            "verification_uri": verification_uri,
+        },
+        interval=int(data.get("interval") or 5),
+        expires_in=int(data.get("expires_in") or 900),
     )
 
 
 def _poll_device_flow(_request: Request, pending: Dict) -> DeviceFlowPoll:
     if pending.get("oauth_error"):
         return DeviceFlowPoll.failed(str(pending.get("oauth_error") or "denied"))
+
+    device_auth_id = str(pending.get("device_auth_id") or "").strip()
+    user_code = str(pending.get("user_code") or "").strip()
+    if device_auth_id and user_code:
+        try:
+            data = chatgpt_subscription.poll_device_auth(device_auth_id, user_code)
+        except Exception as exc:
+            logger.debug("ChatGPT device poll failed: %s", exc)
+            return DeviceFlowPoll.pending(str(exc))
+        if not isinstance(data, dict):
+            return DeviceFlowPoll.pending()
+        err = str(data.get("error") or "")
+        if err in {"authorization_pending", "slow_down"} or str(data.get("status") or "") == "pending":
+            return DeviceFlowPoll.pending()
+        token = str(data.get("access_token") or data.get("accessToken") or "").strip()
+        if not token:
+            code = str(data.get("authorization_code") or data.get("code") or "").strip()
+            # OpenAI deviceauth/token returns the PKCE verifier with the code.
+            # Homemade verifiers 400 on oauth/token.
+            verifier = str(
+                data.get("code_verifier")
+                or data.get("codeVerifier")
+                or pending.get("code_verifier")
+                or ""
+            ).strip()
+            if code and verifier:
+                try:
+                    exchanged = chatgpt_subscription.exchange_authorization_code(code, verifier)
+                except Exception as exc:
+                    logger.warning(
+                        "ChatGPT authorization_code exchange failed: %s",
+                        str(exc).split(":")[0][:120],
+                    )
+                    return DeviceFlowPoll.failed("ChatGPT token exchange failed")
+                if isinstance(exchanged, dict):
+                    token = str(
+                        exchanged.get("access_token") or exchanged.get("accessToken") or ""
+                    ).strip()
+            if not token:
+                logger.info(
+                    "ChatGPT device poll 200 without access_token keys=%s",
+                    sorted(str(k) for k in data.keys()),
+                )
+                return DeviceFlowPoll.pending()
+        try:
+            row = NineRouterConnectClient().import_codex_token(token)
+        except NineRouterConnectError as exc:
+            return DeviceFlowPoll.failed(str(exc))
+        cid = str(row.get("id") or row.get("connection_id") or "").strip()
+        if not cid:
+            return DeviceFlowPoll.failed("9router import did not return a connection id")
+        result = _provision_connection(
+            {
+                "connection_id": cid,
+                "status": "usable",
+                "entitlement": row.get("entitlement") or row.get("provider") or "codex",
+                "label": row.get("name") or row.get("label") or "9router",
+            },
+            pending.get("owner"),
+        )
+        return DeviceFlowPoll.authorized(result)
 
     try:
         providers = _list_redacted_providers()

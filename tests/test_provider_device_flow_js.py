@@ -65,7 +65,8 @@ def test_copilot_success_uses_complete_verification_uri():
     assert out["calls"] == ["/api/copilot/device/start", "/api/copilot/device/poll", "/api/copilot/device/poll"]
 
 
-def test_chatgpt_success_prefers_idp_redirect_url():
+def test_chatgpt_success_prefers_codex_device_uri_over_authorize_redirect():
+    """Phone ChatGPT connect must open /codex/device, not /authorize (unknown_error)."""
     js = f"""
       import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
       const opened = [];
@@ -74,6 +75,7 @@ def test_chatgpt_success_prefers_idp_redirect_url():
         if (url.endsWith('/device/start')) {{
           return response(true, 200, {{
             poll_id: 'poll-1',
+            user_code: 'OA-CODE',
             redirect_url: 'https://auth.openai.com/authorize?client_id=x',
             verification_uri: 'https://auth.openai.com/codex/device',
             interval: 2,
@@ -92,7 +94,7 @@ def test_chatgpt_success_prefers_idp_redirect_url():
     """
     out = _run_node(js)
     assert out["result"]["status"] == "authorized"
-    assert out["opened"] == ["https://auth.openai.com/authorize?client_id=x"]
+    assert out["opened"] == ["https://auth.openai.com/codex/device"]
 
 
 def test_chatgpt_success_uses_plain_verification_uri():

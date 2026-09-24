@@ -8,8 +8,10 @@ upstream OAuth secrets to callers.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -167,10 +169,26 @@ def _json_or_error(response: httpx.Response, action: str) -> Dict[str, Any]:
     return data
 
 
-def request_device_code(timeout: float = 15.0) -> Dict[str, Any]:
+def make_pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, S256 code_challenge) for ChatGPT device auth.
+
+    Agents: verifier stays in the in-memory poll store only. Never write it to
+    SQLite or return it in /device/start JSON.
+    """
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
+def request_device_code(timeout: float = 15.0, code_challenge: str | None = None) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"client_id": CHATGPT_OAUTH_CLIENT_ID}
+    if code_challenge:
+        body["code_challenge"] = code_challenge
+        body["code_challenge_method"] = "S256"
     response = httpx.post(
         f"{CHATGPT_OAUTH_ISSUER}/api/accounts/deviceauth/usercode",
-        json={"client_id": CHATGPT_OAUTH_CLIENT_ID},
+        json=body,
         headers={"Content-Type": "application/json"},
         timeout=timeout,
     )

@@ -60,6 +60,14 @@ def test_device_auth_keeps_manual_auth_button_without_auto_opening_tab():
     assert "A new tab opened" not in auth_block
 
 
+def test_device_auth_success_copy_uses_9router_routes_not_leftover_model_count():
+    """ChatGPT connect stores a 9router projection; overlay chat is route-based."""
+    auth_block = _between(_ADMIN, "async function _startProviderDeviceAuth", "// Local \"Add\" button")
+    assert "9router routes" in auth_block
+    assert "automatic" in auth_block
+    assert "ChatGPT Subscription model" not in auth_block
+
+
 def test_loud_oauth_copy_and_removed_button_hooks_do_not_return():
     forbidden = [
         "Click Add to start",
