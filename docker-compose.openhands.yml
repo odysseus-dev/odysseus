@@ -14,6 +14,10 @@ services:
       # GET /api/settings redacts llm.api_key. Native chat POSTs this sidecar
       # into Agent Server so 9router is authenticated. Not the sqlite mint mount.
       - OPENHANDS_NATIVE_LLM_API_KEY_FILE=/opt/odysseus/openhands-native-llm-api-key
+      # Traces go to the overlay Collector only. Tempo and Langfuse URLs stay
+      # on the Collector, not on this service.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_SERVICE_NAME=odysseus
     volumes:
       # CLI token only (machine-id + auth/cli-secret). Not the sqlite inference
       # key bridge owned by Agent Server / model-job worker.
@@ -193,6 +197,11 @@ services:
       - MODEL_JOB_WORKER_HOST=0.0.0.0
       - MODEL_JOB_WORKER_PORT=8091
       - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
+      # Same Collector contract as odysseus. This process is stdlib HTTP, not
+      # FastAPI, and does not call configure_tracer yet. The env is the only
+      # export target if a later task starts a tracer here.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_SERVICE_NAME=odysseus-model-jobs
     volumes:
       # Overlay bind so a stale odysseus image still runs the branch worker.
       - ./services:/app/services:ro

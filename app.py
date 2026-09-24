@@ -132,6 +132,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Collector-only traces. Unset OTEL_EXPORTER_OTLP_ENDPOINT is a no-op. A set
+# endpoint that is not the overlay Collector (Tempo, Langfuse, anything else)
+# raises and refuses to start. Instrument after the app object exists so the
+# middleware can attach to it. httpx spans are not started here.
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from services.observability.otel import configure_tracer
+
+configure_tracer(os.getenv("OTEL_SERVICE_NAME") or "odysseus")
+FastAPIInstrumentor.instrument_app(app)
+
 # ========= CORS =========
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
