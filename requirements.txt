@@ -63,3 +63,5 @@ opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-httpx
+# Overlay stability gauges scraped at GET /metrics (services/observability/metrics.py).
+prometheus_client

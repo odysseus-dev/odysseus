@@ -1460,6 +1460,23 @@ def _session_uses_leftover_endpoint_url(session_url: str, base_url: str) -> bool
     return sess in variants or sess.startswith(base + "/")
 
 
+def _count_public_cloud_model_endpoints(db) -> int:
+    """Return ModelEndpoint rows whose base_url is a public cloud inference URL."""
+    endpoints = db.query(ModelEndpoint).all()
+    return sum(
+        1
+        for ep in endpoints
+        if _is_public_cloud_inference_url(str(getattr(ep, "base_url", "") or ""))
+    )
+
+
+def _refresh_cloud_endpoint_rows_metric(db) -> None:
+    """Publish remaining public-cloud ModelEndpoint count to Prometheus."""
+    from services.observability.metrics import set_cloud_endpoint_rows
+
+    set_cloud_endpoint_rows(_count_public_cloud_model_endpoints(db))
+
+
 def purge_leftover_cloud_model_endpoints(db) -> dict:
     """Delete public-cloud ModelEndpoint rows. Local leftover stays.
 
@@ -1474,6 +1491,7 @@ def purge_leftover_cloud_model_endpoints(db) -> dict:
         if _is_public_cloud_inference_url(str(getattr(ep, "base_url", "") or ""))
     ]
     if not cloud:
+        _refresh_cloud_endpoint_rows_metric(db)
         return {"deleted": 0, "sessions": 0}
     overlay_url = overlay_ninerouter_chat_url()
     sessions = db.query(DbSession).all()
@@ -1541,6 +1559,7 @@ def purge_leftover_cloud_model_endpoints(db) -> dict:
         len(cloud),
         n_sess,
     )
+    _refresh_cloud_endpoint_rows_metric(db)
     return {"deleted": len(cloud), "sessions": n_sess}
 
 

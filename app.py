@@ -283,6 +283,7 @@ if AUTH_ENABLED:
         "/api/auth/integrations/presets",
         "/api/health",
         "/api/version",
+        "/metrics",
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
@@ -975,6 +976,15 @@ async def get_version():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus text exposition for overlay stability gauges."""
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+    from starlette.responses import Response
+
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.post("/api/client-perf")
 async def client_perf(request: Request):
