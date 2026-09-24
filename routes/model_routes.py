@@ -1544,22 +1544,72 @@ def purge_leftover_cloud_model_endpoints(db) -> dict:
     return {"deleted": len(cloud), "sessions": n_sess}
 
 
+def _redacted_url_full(url: str) -> str:
+    """url.full for overlay.bind: scheme, host, port, and path.
+
+    Userinfo, query, and fragment are dropped so a key in the URL cannot
+    ride along on the span.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    path = parsed.path or ""
+    if parsed.scheme and host:
+        return f"{parsed.scheme}://{host}{path}"
+    return f"{host}{path}"
+
+
+def _trace_overlay_bind(
+    bound: tuple[str, str] | None,
+    endpoint_url: str | None,
+    conversation_id: str | None,
+) -> None:
+    """Emit overlay.bind for the bind decision. No prompt body, no credential."""
+    from services.observability.otel import apply_span_attributes, get_tracer
+
+    shown = bound[0] if bound else str(endpoint_url or "")
+    with get_tracer("odysseus").start_as_current_span("overlay.bind") as span:
+        apply_span_attributes(
+            span,
+            {
+                "odysseus.overlay": bound is not None,
+                "url.full": _redacted_url_full(shown),
+                "gen_ai.conversation.id": conversation_id or "",
+            },
+        )
+
+
 def overlay_session_bind(
-    model: str | None, endpoint_id: str | None, endpoint_url: str | None
+    model: str | None,
+    endpoint_id: str | None,
+    endpoint_url: str | None,
+    conversation_id: str | None = None,
 ) -> tuple[str, str] | None:
     """Bind POST /api/session to overlay 9router when leftover is not selected.
 
     Empty endpoint_url + automatic/fast/balanced/best (or empty/leftover model
     names) is overlay chat. A leftover URL plus a non-route model keeps the
     old ModelEndpoint path. endpoint_id always wins leftover.
+
+    ``conversation_id`` is optional trace context (Odysseus session id when the
+    caller has one). The span always sets ``gen_ai.conversation.id``, empty
+    when unknown. It is not an OpenHands conversation id.
     """
     if str(endpoint_id or "").strip():
-        return None
-    raw = str(model or "").strip().lower()
-    url = str(endpoint_url or "").strip()
-    if url and raw not in OVERLAY_CHAT_ROUTES and raw:
-        return None
-    return overlay_ninerouter_chat_url(), overlay_chat_route(model)
+        bound = None
+    else:
+        raw = str(model or "").strip().lower()
+        url = str(endpoint_url or "").strip()
+        if url and raw not in OVERLAY_CHAT_ROUTES and raw:
+            bound = None
+        else:
+            bound = (overlay_ninerouter_chat_url(), overlay_chat_route(model))
+    _trace_overlay_bind(bound, endpoint_url, conversation_id)
+    return bound
 
 
 def is_overlay_ninerouter_url(url: str | None) -> bool:
