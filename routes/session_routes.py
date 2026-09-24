@@ -380,10 +380,14 @@ def setup_session_routes(
         endpoint_api_key = ""
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
+        # Mint the Odysseus session id once; overlay bind and create_session share it.
+        sid = str(uuid.uuid4())
         # Overlay composer sends empty endpoint_url + a 9router route. Bind
         # before the leftover URL gate so Chat Native does not 400.
         from routes.model_routes import overlay_session_bind
-        overlay_bind = overlay_session_bind(model, endpoint_id, endpoint_url)
+        overlay_bind = overlay_session_bind(
+            model, endpoint_id, endpoint_url, conversation_id=sid
+        )
         if overlay_bind:
             endpoint_url, model = overlay_bind
             skip_val = True
@@ -467,7 +471,6 @@ def setup_session_routes(
                                         f"Model not found at server. Available: {', '.join(avail)}")
                 model_to_use = found
         
-        sid = str(uuid.uuid4())
         user = effective_user(request)
         session = session_manager.create_session(
             session_id=sid,

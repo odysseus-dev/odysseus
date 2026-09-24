@@ -728,7 +728,10 @@ def _reconcile_selected_route_from_request(
     endpoint_url = ""
     headers = None
     overlay_bind = overlay_session_bind(
-        selected_model, selected_endpoint_id, selected_endpoint_url
+        selected_model,
+        selected_endpoint_id,
+        selected_endpoint_url,
+        conversation_id=session_id,
     )
     if overlay_bind:
         endpoint_url, selected_model = overlay_bind

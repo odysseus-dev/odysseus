@@ -149,7 +149,10 @@ async def stream_governed_agent(
             raise
         apply_span_attributes(
             span,
-            {"gen_ai.conversation.id": ref.conversation_id},
+            {
+                "gen_ai.conversation.id": str(session_id or ""),
+                "openhands.conversation.id": ref.conversation_id,
+            },
         )
     yield "data: " + json.dumps({
         "type": "execution",

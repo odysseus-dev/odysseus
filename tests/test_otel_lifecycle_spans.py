@@ -37,6 +37,7 @@ from services.agents.openhands_client import (  # noqa: E402
 )
 
 _SECRET = "sk-native-lifecycle-secret"
+_ODY_SESSION = "ody-otel-lifecycle-session"
 
 
 def _install_memory_exporter() -> InMemorySpanExporter:
@@ -120,7 +121,9 @@ class _CreateTransport:
         raise AssertionError(f"unexpected {method} {path}")
 
 
-def _run_native_turn(transport: _CreateTransport) -> None:
+def _run_native_turn(
+    transport: _CreateTransport, *, session_id: str = _ODY_SESSION
+) -> None:
     client = OpenHandsClient(transport=transport, agent_server_base="http://agent")
     dispatcher = AgentDispatcher(client=client)
 
@@ -131,6 +134,7 @@ def _run_native_turn(transport: _CreateTransport) -> None:
                 dispatcher=dispatcher,
                 messages=[{"role": "user", "content": "Hello"}],
                 turn_id="turn-otel",
+                session_id=session_id,
                 poll_timeout_s=1,
             )
         ]
@@ -146,9 +150,11 @@ def test_lifecycle_span_names_and_api_key_absent(memory_spans, monkeypatch, tmp_
     monkeypatch.setenv("ODYSSEUS_SYNTHETIC", "1")
     monkeypatch.setenv("NINE_ROUTER_METADATA_URL", "http://9router:20128")
 
-    bound = model_routes.overlay_session_bind("automatic", "", "")
+    bound = model_routes.overlay_session_bind(
+        "automatic", "", "", conversation_id=_ODY_SESSION
+    )
     assert bound == ("http://9router:20128/v1", "automatic")
-    _run_native_turn(_CreateTransport())
+    _run_native_turn(_CreateTransport(), session_id=_ODY_SESSION)
 
     finished = list(memory_spans.get_finished_spans())
     names = {span.name for span in finished}
@@ -165,7 +171,7 @@ def test_lifecycle_span_names_and_api_key_absent(memory_spans, monkeypatch, tmp_
     bind = by_name["overlay.bind"].attributes
     assert bind["odysseus.overlay"] is True
     assert bind["url.full"] == "http://9router:20128/v1"
-    assert bind["gen_ai.conversation.id"] == ""
+    assert bind["gen_ai.conversation.id"] == _ODY_SESSION
     assert bind["odysseus.synthetic"] is True
 
     settings = by_name["openhands.settings"].attributes
@@ -181,7 +187,8 @@ def test_lifecycle_span_names_and_api_key_absent(memory_spans, monkeypatch, tmp_
     invoked = by_name["invoke_agent Native"].attributes
     assert invoked["gen_ai.operation.name"] == "invoke_agent"
     assert invoked["gen_ai.agent.name"] == "Native"
-    assert invoked["gen_ai.conversation.id"] == "conv-created"
+    assert invoked["gen_ai.conversation.id"] == _ODY_SESSION
+    assert invoked["openhands.conversation.id"] == "conv-created"
     assert invoked["odysseus.synthetic"] is True
 
     idle = by_name["openhands.idle"]
