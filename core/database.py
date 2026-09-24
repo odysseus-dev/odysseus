@@ -2220,6 +2220,26 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _purge_leftover_cloud_model_endpoints()
+
+
+def _purge_leftover_cloud_model_endpoints() -> None:
+    """Drop pre-slice-D public cloud ModelEndpoint rows on startup.
+
+    Local leftover (LAN, loopback, docker short names) is kept. Import is
+    inside the function so core.database does not import routes at module load.
+    """
+
+    try:
+        from routes.model_routes import purge_leftover_cloud_model_endpoints
+
+        db = SessionLocal()
+        try:
+            purge_leftover_cloud_model_endpoints(db)
+        finally:
+            db.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("cloud ModelEndpoint purge skipped: %s", exc)
 
 
 def _migrate_backfill_task_folders():

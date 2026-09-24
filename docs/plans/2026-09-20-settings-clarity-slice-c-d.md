@@ -19,3 +19,5 @@ from this note.
 - Local leftover (loopback, RFC1918, CGNAT, docker short names) still
   posts.
 - `/setup` cloud keys POST `/api/ninerouter/connections`.
+- Startup `purge_leftover_cloud_model_endpoints` deletes existing public
+  cloud ModelEndpoint rows and rebinds those sessions to overlay 9router.

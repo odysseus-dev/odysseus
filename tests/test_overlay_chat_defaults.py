@@ -144,3 +144,88 @@ def test_clear_orphaned_skips_overlay_9router_session(monkeypatch):
     assert chat_routes._clear_orphaned_session_endpoint(sess) is False
     assert sess.model == "automatic"
     assert sess.endpoint_url == "http://9router:20128/v1"
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeDb:
+    def __init__(self, endpoints, sessions):
+        self.endpoints = list(endpoints)
+        self.sessions = list(sessions)
+        self.deleted = []
+        self.committed = False
+
+    def query(self, model):
+        name = getattr(model, "__name__", "")
+        if name == "ModelEndpoint":
+            return _FakeQuery(self.endpoints)
+        return _FakeQuery(self.sessions)
+
+    def delete(self, row):
+        self.deleted.append(row)
+        if row in self.endpoints:
+            self.endpoints.remove(row)
+
+    def commit(self):
+        self.committed = True
+
+
+def test_purge_deletes_cloud_rows_and_keeps_local(monkeypatch):
+    """Slice D leftover: openai.com keys leave Odysseus; ollama stays."""
+    cloud = SimpleNamespace(
+        id="ep-cloud",
+        base_url="https://api.openai.com/v1",
+        api_key="sk-secret",
+        provider_auth_id=None,
+    )
+    local = SimpleNamespace(
+        id="ep-local",
+        base_url="http://ollama:11434/v1",
+        api_key="",
+        provider_auth_id=None,
+    )
+    sess = SimpleNamespace(
+        endpoint_url="https://api.openai.com/v1/chat/completions",
+        model="gpt-4o",
+        headers={"Authorization": "Bearer sk-secret"},
+    )
+    saved = {}
+    monkeypatch.setenv("NINE_ROUTER_METADATA_URL", "http://9router:20128")
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {"default_endpoint_id": "ep-cloud"})
+    monkeypatch.setattr(model_routes, "_save_settings", lambda s: saved.update(s))
+    monkeypatch.setattr(
+        model_routes,
+        "_clear_user_pref_endpoint_refs",
+        lambda prefs, ep_id: 0,
+    )
+    db = _FakeDb([cloud, local], [sess])
+    result = model_routes.purge_leftover_cloud_model_endpoints(db)
+    assert result["deleted"] == 1
+    assert db.committed is True
+    assert cloud in db.deleted
+    assert local not in db.deleted
+    assert db.endpoints == [local]
+    assert sess.endpoint_url == "http://9router:20128/v1"
+    assert sess.model == "automatic"
+    assert sess.headers == {}
+    assert saved.get("default_endpoint_id") == ""
+
+
+def test_purge_noop_when_only_local_leftover(monkeypatch):
+    local = SimpleNamespace(id="ep-lan", base_url="http://192.168.1.10:8080/v1", api_key="")
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "_save_settings", lambda _s: None)
+    db = _FakeDb([local], [])
+    result = model_routes.purge_leftover_cloud_model_endpoints(db)
+    assert result["deleted"] == 0
+    assert db.deleted == []
+    assert db.committed is False

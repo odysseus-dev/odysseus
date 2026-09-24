@@ -1443,6 +1443,76 @@ def overlay_ninerouter_chat_url() -> str:
     return f"{origin}/v1"
 
 
+def _session_uses_leftover_endpoint_url(session_url: str, base_url: str) -> bool:
+    """True when a session chat URL belongs to a ModelEndpoint base_url."""
+    if not session_url or not base_url:
+        return False
+    sess = session_url.rstrip("/")
+    base = _normalize_base(base_url).rstrip("/")
+    variants = {
+        base,
+        base + "/chat/completions",
+        build_chat_url(base).rstrip("/"),
+    }
+    return sess in variants or sess.startswith(base + "/")
+
+
+def purge_leftover_cloud_model_endpoints(db) -> dict:
+    """Delete public-cloud ModelEndpoint rows. Local leftover stays.
+
+    Overlay Native chat uses 9router. Slice D already rejects new cloud POSTs;
+    this removes rows (and encrypted keys) that predate that gate. Sessions
+    that pointed at a purged URL bind overlay 9router ``automatic``.
+    """
+    endpoints = db.query(ModelEndpoint).all()
+    cloud = [
+        ep
+        for ep in endpoints
+        if _is_public_cloud_inference_url(str(getattr(ep, "base_url", "") or ""))
+    ]
+    if not cloud:
+        return {"deleted": 0, "sessions": 0}
+    overlay_url = overlay_ninerouter_chat_url()
+    sessions = db.query(DbSession).all()
+    n_sess = 0
+    for sess in sessions:
+        for ep in cloud:
+            if _session_uses_leftover_endpoint_url(
+                str(getattr(sess, "endpoint_url", "") or ""),
+                str(getattr(ep, "base_url", "") or ""),
+            ):
+                sess.endpoint_url = overlay_url
+                sess.model = overlay_chat_route(getattr(sess, "model", None))
+                sess.headers = {}
+                n_sess += 1
+                break
+    settings = _load_settings()
+    touched = False
+    for ep in cloud:
+        if _clear_endpoint_settings_for_endpoint(
+            settings, str(ep.id), include_speech=True
+        ):
+            touched = True
+        try:
+            from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
+
+            all_prefs = _load_prefs()
+            if _clear_user_pref_endpoint_refs(all_prefs, str(ep.id)):
+                _save_prefs(all_prefs)
+        except Exception:
+            pass
+        db.delete(ep)
+    if touched:
+        _save_settings(settings)
+    db.commit()
+    logger.info(
+        "purged leftover cloud ModelEndpoint rows deleted=%s sessions=%s",
+        len(cloud),
+        n_sess,
+    )
+    return {"deleted": len(cloud), "sessions": n_sess}
+
+
 def overlay_session_bind(
     model: str | None, endpoint_id: str | None, endpoint_url: str | None
 ) -> tuple[str, str] | None:
