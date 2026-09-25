@@ -81,20 +81,20 @@ def _group_gpus(gpus):
     return out
 
 
-def _detect_nvidia():
-    global _last_gpu_error
-    _last_gpu_error = None
-    out = _run(["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+def _nvidia_smi_query(fields):
+    """Run `nvidia-smi --query-gpu=<fields>` through the PATH fallback ladder.
+
+    Returns stdout, or None when nvidia-smi is missing or rejects the query.
+    """
+    args = [f"--query-gpu={fields}", "--format=csv,noheader,nounits"]
+    out = _run(["nvidia-smi", *args])
     # Fallback: a non-interactive shell (or WSL) often has a minimal PATH
     # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin,
     # /usr/lib/wsl/lib), so the first call silently returns nothing →
     # "No GPU" on machines that DO have GPUs.
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
-        out = _run(
-            f"bash -lc '{SSH_PATH_OVERRIDE}"
-            "nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits'"
-        )
+        out = _run(f"bash -lc '{SSH_PATH_OVERRIDE}nvidia-smi {' '.join(args)}'")
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
     # shell that isn't bash (or a profile that errors), so the bash -lc retry
     # above still comes back empty even though the binary is right there.
@@ -105,11 +105,18 @@ def _detect_nvidia():
             # Use list form so subprocess.run (local) resolves the absolute path
             # correctly instead of treating the whole string as an executable name.
             if _remote_host:
-                out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+                out = _run(f"{_p} {' '.join(args)}")
             else:
-                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+                out = _run([_p, *args])
             if out:
                 break
+    return out
+
+
+def _detect_nvidia():
+    global _last_gpu_error
+    _last_gpu_error = None
+    out = _nvidia_smi_query("memory.total,name")
     if not out:
         return None
 
@@ -164,6 +171,8 @@ def _detect_nvidia():
         return None
     total_vram = sum(g["vram_gb"] for g in gpus)
     groups = _group_gpus(gpus)
+    _attach_nvidia_compute_caps(gpus)
+    arch, family = classify_nvidia_pool(gpus)
     return {
         "gpu_name": gpus[0]["name"],
         "gpu_vram_gb": round(total_vram, 1),
@@ -172,7 +181,112 @@ def _detect_nvidia():
         "gpu_groups": groups,
         "homogeneous": len(groups) <= 1,
         "backend": "cuda",
+        # Same pair AMD reports (see classify_amd_gfx), so fit.py can tell
+        # cards that current vLLM/SGLang builds serve from ones they do not.
+        "gpu_arch": arch,
+        "gpu_family": family,
     }
+
+
+def _attach_nvidia_compute_caps(gpus):
+    """Add each GPU's compute capability ("6.0", "8.9", ...) in place.
+
+    Asked in a separate query, and only after the memory/name query has
+    answered: an nvidia-smi that predates the compute_cap field rejects the
+    whole query, and folding the field into the first call would turn "old
+    driver" into "no GPU". Rows come back in the same index order. A missing
+    or unparsable value is left empty, and classify_nvidia_cc falls back to
+    the card name.
+    """
+    caps = (_nvidia_smi_query("compute_cap") or "").splitlines()
+    for g in gpus:
+        idx = g.get("index", -1)
+        cap = caps[idx].strip() if 0 <= idx < len(caps) else ""
+        g["compute_cap"] = cap if re.fullmatch(r"\d+\.\d+", cap) else ""
+
+
+# NVIDIA architecture families, oldest first. The order is what
+# classify_nvidia_pool uses to find the newest card in a mixed box.
+_NVIDIA_FAMILY_ORDER = (
+    "kepler", "maxwell", "pascal", "volta",
+    "turing", "ampere", "ada", "hopper", "blackwell",
+)
+
+# Card-name fallback for an nvidia-smi too old to report compute_cap. Only the
+# two families that change a serving decision on hardware people still run are
+# listed; any other name stays "unknown", which callers treat as capable so a
+# misdetect never hides a model the card can serve.
+_NVIDIA_NAME_FAMILIES = (
+    (re.compile(r"\bTesla P(4|6|40|100)\b|\bQuadro (GP100|P\d{3,4})\b|"
+                r"\bGTX 10[5-8]0\b|\bTITAN Xp\b|\bTITAN X \(Pascal\)", re.I), "pascal"),
+    (re.compile(r"\bV100S?\b|\bTITAN V\b|\bQuadro GV100\b", re.I), "volta"),
+)
+
+
+def classify_nvidia_cc(compute_cap, name=""):
+    """Map one NVIDIA GPU to (compute_cap, family).
+
+    family is one of:
+      "kepler" / "maxwell" — compute capability 3.x / 5.x
+      "pascal"   — 6.x (Tesla P100/P40, GTX 10-series, TITAN Xp)
+      "volta"    — 7.0 / 7.2 (Tesla V100, TITAN V)
+      "turing"   — 7.5
+      "ampere"   — 8.0 / 8.6 / 8.7
+      "ada"      — 8.9
+      "hopper"   — 9.x
+      "blackwell" — 10.x and newer
+      "unknown"  — empty/unrecognized; callers must treat it as capable
+
+    Mirrors classify_amd_gfx. Current vLLM and SGLang builds ship no kernels
+    below compute capability 7.5, so the families older than "turing" are
+    the ones that change a serving decision.
+    """
+    cc = str(compute_cap or "").strip()
+    m = re.fullmatch(r"(\d+)\.(\d+)", cc)
+    if m:
+        major, minor = int(m.group(1)), int(m.group(2))
+        if major >= 10:
+            return cc, "blackwell"
+        if major == 9:
+            return cc, "hopper"
+        if major == 8:
+            return cc, "ada" if minor >= 9 else "ampere"
+        if major == 7:
+            return cc, "turing" if minor >= 5 else "volta"
+        if major == 6:
+            return cc, "pascal"
+        if major == 5:
+            return cc, "maxwell"
+        if major == 3:
+            return cc, "kepler"
+        return cc, "unknown"
+    for pattern, family in _NVIDIA_NAME_FAMILIES:
+        if pattern.search(name or ""):
+            return "", family
+    return "", "unknown"
+
+
+def classify_nvidia_pool(gpus):
+    """Reduce detected NVIDIA GPUs to one (compute_cap, family) pair.
+
+    Reports the newest card in the box, because that card decides whether
+    vLLM/SGLang can serve on this host at all: a P100 next to an RTX 4090 is
+    an "ada" host (vLLM runs on the 4090), while a P100 next to a V100 is a
+    "volta" host (neither card has current vLLM/SGLang kernels). Any card
+    that cannot be classified makes the whole pool "unknown", the capable
+    direction. Per-card detail stays on each entry of "gpus".
+    """
+    best = None
+    for g in gpus or []:
+        cc, family = classify_nvidia_cc(g.get("compute_cap"), g.get("name"))
+        if family not in _NVIDIA_FAMILY_ORDER:
+            return "", "unknown"
+        rank = _NVIDIA_FAMILY_ORDER.index(family)
+        if best is None or rank > best[0]:
+            best = (rank, cc, family)
+    if best is None:
+        return "", "unknown"
+    return best[1], best[2]
 
 
 def classify_amd_gfx(gfx):
