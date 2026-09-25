@@ -116,7 +116,7 @@ def test_probe_compose_files_exclude_hhpe_relay(monkeypatch):
     assert "4318:" not in obs
     assert "8889:" not in obs
     for mapping in (
-        "127.0.0.1:3000:3000",
+        "127.0.0.1:3002:3000",
         "127.0.0.1:3001:3000",
         "127.0.0.1:3200:3200",
         "127.0.0.1:9090:9090",
@@ -154,6 +154,7 @@ def test_probe_compose_files_exclude_hhpe_relay(monkeypatch):
         assert key in collector
     assert "tempo:4317" in collector
     assert "http://langfuse-web:3000/api/public/otel" in collector
+    assert "compression: none" in collector
     assert "0.0.0.0:8889" in collector
     assert "jaeger" not in collector_lower
     assert "LANGFUSE_OTLP_AUTH" in collector

@@ -210,7 +210,7 @@ GRAFANA_IMAGE=grafana/grafana:11.6.0
 LANGFUSE_IMAGE=langfuse/langfuse:3.29.0
 ```
 
-Langfuse v3 follows upstream docker-compose (web, worker, postgres, redis, minio, clickhouse). All `ports` are `127.0.0.1:<port>:<port>` on the guest only. Grafana `3001:3000` if 3000 collides with Langfuse; Langfuse web `127.0.0.1:3000:3000`; Tempo `127.0.0.1:3200:3200`; Prometheus `127.0.0.1:9090:9090`; Collector **no host ports** (overlay DNS only).
+Langfuse v3 follows upstream docker-compose (web, worker, postgres, redis, minio, clickhouse). All `ports` are `127.0.0.1:<port>:<port>` on the guest only. Grafana `127.0.0.1:3001:3000`; Langfuse web `127.0.0.1:3002:3000` (guest Forgejo already owns `:3000`); Tempo `127.0.0.1:3200:3200`; Prometheus `127.0.0.1:9090:9090`; Collector **no host ports** (overlay DNS only). Collector still posts to `http://langfuse-web:3000/api/public/otel`.
 
 Collector must **not** export to Jaeger. Langfuse exporter headers from env `LANGFUSE_OTLP_AUTH` (Basic) sourced from overlay `.env` / `deploy/observability/langfuse.env` — not Odysseus SQLite.
 
@@ -415,7 +415,7 @@ Expected: CONFIG FILES list exactly those three. No relay.
 
 Expected: `"ok": true`, non-empty `trace_id`, OpenHands `finished` with text.
 
-- [ ] **Step 4: On guest, curl Grafana Tempo datasource search for that `trace_id` (Grafana API or Tempo `/api/traces/{id}` on `127.0.0.1:3200`). Confirm a span `overlay.stability` or `openhands.create`. Confirm Langfuse has a generation for the same synthetic without prompt body (UI or API on `127.0.0.1:3000`).**
+- [ ] **Step 4: On guest, curl Grafana Tempo datasource search for that `trace_id` (Grafana API or Tempo `/api/traces/{id}` on `127.0.0.1:3200`). Confirm a span `overlay.stability` or `openhands.create`. Confirm Langfuse has a generation for the same synthetic without prompt body (UI or API on `127.0.0.1:3002`).**
 
 If Tempo 404, Collector export is wrong — fix yaml, do not ask for a phone screenshot.
 

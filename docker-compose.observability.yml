@@ -106,9 +106,10 @@ services:
       - otel-collector
     restart: unless-stopped
 
-  # Explore UI for Tempo + Prometheus. 3001 on the host because Langfuse
-  # web owns 3000. Datasources are provisioned; no data volume, so a
-  # grafana uid mismatch on a fresh Linux volume cannot block startup.
+  # Explore UI for Tempo + Prometheus. 3001 on the host. Guest Forgejo
+  # already binds 0.0.0.0:3000, so Langfuse cannot use host 3000.
+  # Datasources are provisioned; no data volume, so a grafana uid
+  # mismatch on a fresh Linux volume cannot block startup.
   grafana:
     image: grafana/grafana:11.6.0
     environment:
@@ -126,8 +127,9 @@ services:
       - tempo
     restart: unless-stopped
 
-  # Langfuse v3 web. Loopback :3000. OTLP ingest is
-  # http://langfuse-web:3000/api/public/otel on the overlay network.
+  # Langfuse v3 web. Host loopback :3002 (Forgejo owns guest :3000).
+  # OTLP ingest stays http://langfuse-web:3000/api/public/otel on the
+  # overlay network; this host map does not change that DNS.
   langfuse-web:
     image: langfuse/langfuse:3.29.0
     restart: unless-stopped
@@ -141,10 +143,10 @@ services:
       langfuse-clickhouse:
         condition: service_healthy
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3002:3000"
     environment:
       <<: *langfuse-env
-      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-mysecret}
       LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
       LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}

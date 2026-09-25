@@ -60,6 +60,10 @@ exporters:
   # Empty until an operator sets it. Not Odysseus sqlite.
   otlphttp/langfuse:
     endpoint: http://langfuse-web:3000/api/public/otel
+    # Langfuse 3.29 protobuf decoder does not gunzip the default otlphttp
+    # payload (gzip bytes look like protobuf wire type 7 → HTTP 400).
+    compression: none
+    encoding: proto
     headers:
       Authorization: ${env:LANGFUSE_OTLP_AUTH:-}
   # Scraped by Prometheus at otel-collector:8889. Not a host port.

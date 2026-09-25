@@ -101,6 +101,18 @@ Reach 9router with
 `docker-compose.openhands.yml`, and `docker-compose.observability.yml`.
 It must not list `docker-compose.relay.yml`.
 
+Unpublished guest loopback UIs: Grafana `127.0.0.1:3001`, Langfuse
+`127.0.0.1:3002`, Tempo `127.0.0.1:3200`, Prometheus `127.0.0.1:9090`.
+Langfuse is not on host `:3000` because Forgejo already binds that port.
+Collector OTLP stays overlay DNS only (`otel-collector:4318`). Do not
+Tailscale-Serve Grafana or Langfuse.
+
+Langfuse OTLP ingest needs a project Basic header in gitignored
+`deploy/observability/langfuse.env` (`LANGFUSE_OTLP_AUTH`). Seed
+`LANGFUSE_INIT_*` in the guest `.env` on first boot; the init user email
+must be a real-looking address (not `user@localhost`). The Collector
+sends uncompressed protobuf to Langfuse.
+
 ## After health
 
 Connect providers from **Odysseus Settings → 9router connections** on this
