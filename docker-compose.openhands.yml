@@ -18,6 +18,9 @@ services:
       # on the Collector, not on this service.
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
       - OTEL_SERVICE_NAME=odysseus
+      # Shared with compose exec probes for loopback X-Odysseus-Internal-Token.
+      # Guest .env only; never commit the value. Empty → random per process.
+      - ODYSSEUS_INTERNAL_TOKEN=${ODYSSEUS_INTERNAL_TOKEN:-}
     volumes:
       # CLI token only (machine-id + auth/cli-secret). Not the sqlite inference
       # key bridge owned by Agent Server / model-job worker.

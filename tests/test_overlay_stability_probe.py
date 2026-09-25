@@ -18,12 +18,19 @@ def test_stability_probe_script_matches_contract():
     assert "odysseus.synthetic" in text
     assert "get_current_span" in text
     assert "set_native_probe_success" in text
-    assert "run_native_pipe" in text
+    # Native turn must go through Odysseus HTTP so uvicorn emits overlay.bind.
+    assert "run_odysseus_native_pipe" in text
     assert "cloud_rows" in text
     assert "jaeger" not in text.lower()
     # openai/auto is the rejected model, not the pin.
     assert 'PINNED_MODEL_PREFIX = "openai/auto"' not in text
     assert "= \"openai/auto\"" not in text.replace('REJECT_MODEL = "openai/auto"', "")
+    # Do not call the Agent-Server-direct pipe from the stability probe.
+    assert "from overlay_native_chat_probe import" in text
+    assert "run_native_pipe," not in text.replace("run_odysseus_native_pipe", "")
+    assert "_native_pipe_step" in text
+    # native_pipe step body must call Odysseus pipe
+    assert "run_odysseus_native_pipe()" in text
 
 
 def test_stability_probe_wrapper_sshs_guest_with_three_compose_files():

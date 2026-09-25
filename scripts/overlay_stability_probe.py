@@ -7,14 +7,16 @@ From the Mac repo:
     ./scripts/run_overlay_stability_probe.sh
 
 Stdout is one JSON object ``{ok, trace_id, session_id, steps}``. Exit 0 iff
-``ok``. The sidecar virtual key is never printed.
+``ok``. The sidecar virtual key and internal token are never printed.
 
 Steps, in order: compose files, health, settings model, sidecar boolean,
 catalog pick (skip ``gpt-6-astra`` and ``-review``), cloud_rows, native pipe
-(Hello/Hi), probe gauge.
+(Hello/Hi via Odysseus ``/api/session`` + ``/api/chat_stream``), probe gauge.
 
 The root span is ``overlay.stability`` with ``odysseus.synthetic=true``.
-``trace_id`` is the hex id of ``otel.trace.get_current_span()`` inside that span.
+``trace_id`` is the hex id of ``otel.trace.get_current_span()`` inside that span;
+W3C ``traceparent`` continues into uvicorn so Tempo shows ``overlay.bind``.
+``session_id`` is the Odysseus session id.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ from overlay_native_chat_probe import (  # noqa: E402
     _http,
     _pick_catalog_id,
     _read_sidecar_key,
-    run_native_pipe,
+    run_odysseus_native_pipe,
 )
 
 # Overlay project files. Relay is forbidden. Observability must be present.
@@ -193,12 +195,18 @@ def _cloud_rows_step() -> dict:
 
 
 def _native_pipe_step() -> dict:
-    """Hello/Hi pipe. Nested steps stay; the key does not."""
-    pipe = _scrub(run_native_pipe())
+    """Hello/Hi through Odysseus HTTP (phone path). Nested steps stay; secrets do not.
+
+    Agents: must call ``run_odysseus_native_pipe`` so uvicorn emits
+    ``overlay.bind`` / ``invoke_agent Native`` / ``openhands.*`` on the same
+    ``trace_id`` as ``overlay.stability`` (W3C traceparent).
+    """
+    pipe = _scrub(run_odysseus_native_pipe())
     return {
         "name": "native_pipe",
         "ok": bool(pipe.get("ok")),
         "session_id": pipe.get("session_id"),
+        "openhands_conversation_id": pipe.get("openhands_conversation_id"),
         "steps": pipe.get("steps") or [],
         "error": pipe.get("error"),
     }

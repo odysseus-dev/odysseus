@@ -73,9 +73,13 @@ Do not compose `docker-compose.relay.yml`.
 Exit 0 means the JSON report has `"ok": true`: health, Native settings on an
 `openai/cx/…` model (never `openai/auto`), a non-empty sidecar reported only
 as a boolean, a catalog pick that skips `gpt-6-astra` and `-review`,
-`cloud_rows` of 0, and the Native Hello/Hi pipe. The report includes
-`trace_id` from the `overlay.stability` span (`odysseus.synthetic=true`).
-The script never prints the virtual key.
+`cloud_rows` of 0, and the Native Hello/Hi pipe through Odysseus
+`POST /api/session` + `POST /api/chat_stream` (phone path). The report
+includes `trace_id` from the `overlay.stability` span
+(`odysseus.synthetic=true`); Tempo must show `overlay.bind` /
+`invoke_agent Native` / `openhands.create` on that id. Guest `.env` must set
+`ODYSSEUS_INTERNAL_TOKEN` (same value compose injects into `odysseus`). The
+script never prints the virtual key or that token.
 
 ## Native chat probe (headless)
 

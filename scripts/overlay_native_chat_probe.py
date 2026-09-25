@@ -11,27 +11,36 @@ On the guest:
     docker compose -f docker-compose.yml -f docker-compose.openhands.yml \\
       exec -T odysseus python3 /app/scripts/overlay_native_chat_probe.py
 
-Exit 0 only when 9router completions and an OpenHands conversation both return
-assistant text. Prints JSON. Never logs the virtual key.
+Exit 0 only when an Odysseus session + Native chat_stream returns assistant
+text (phone path). Prints JSON. Never logs the virtual key or internal token.
 
-``run_native_pipe`` is the Hello/Hi step used by
-``scripts/overlay_stability_probe.py``. This file stays the standalone pipe.
+``run_odysseus_native_pipe`` is the Hello/Hi step used by
+``scripts/overlay_stability_probe.py``. It POSTs Odysseus ``/api/session`` and
+``/api/chat_stream`` so uvicorn emits ``overlay.bind`` / ``invoke_agent Native`` /
+``openhands.*`` under the synthetic trace. ``run_native_pipe`` remains the
+Agent-Server-direct stack check for offline diagnostics.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 
 NINE = "http://9router:20128"
 AGENT = "http://openhands-agent-server:8000"
+# Odysseus listens on 7000 inside the container; host APP_BIND only maps the publish.
+ODY = "http://127.0.0.1:7000"
 KEY_FILE = Path("/opt/odysseus/openhands-native-llm-api-key")
 SKIP = ("gpt-6-astra", "-review")
 PREFER = ("cx/gpt-5.5", "cx/gpt-5.4", "cx/gpt-5.4-mini")
+INTERNAL_HEADER = "X-Odysseus-Internal-Token"
+HELLO_MSG = "Hello! Reply with the single word Hi."
 
 
 def _http(url: str, *, method: str = "GET", body: dict | None = None, headers: dict | None = None, timeout: float = 30) -> tuple[int, dict | str]:
@@ -55,6 +64,8 @@ def _http(url: str, *, method: str = "GET", body: dict | None = None, headers: d
             return exc.code, json.loads(raw) if raw else {"error": str(exc)}
         except json.JSONDecodeError:
             return exc.code, raw
+    except urllib.error.URLError as exc:
+        return 0, {"error": str(exc.reason if getattr(exc, "reason", None) else exc)}
 
 
 def _assistant_text(events: list) -> str:
@@ -93,12 +104,182 @@ def _read_sidecar_key() -> str:
     return KEY_FILE.read_text(encoding="utf-8").strip()
 
 
+def _odysseus_auth_headers() -> dict[str, str]:
+    """Loopback internal-tool header plus W3C traceparent when a span is active.
+
+    Agents: ``ODYSSEUS_INTERNAL_TOKEN`` must match uvicorn (compose env). Without
+    it AUTH_ENABLED rejects /api/session. ``inject`` continues the probe's
+    ``overlay.stability`` trace into FastAPI so Tempo shows one tree.
+    """
+    token = os.environ.get("ODYSSEUS_INTERNAL_TOKEN", "").strip()
+    headers: dict[str, str] = {}
+    if token:
+        headers[INTERNAL_HEADER] = token
+    try:
+        from opentelemetry.propagate import inject
+
+        inject(headers)
+    except Exception:
+        # OTel optional in unit tests that only monkeypatch form/sse helpers.
+        pass
+    return headers
+
+
+def _http_form(
+    url: str,
+    *,
+    fields: dict | None = None,
+    headers: dict | None = None,
+    timeout: float = 30,
+) -> tuple[int, dict | str]:
+    """POST ``application/x-www-form-urlencoded`` (phone FormData shaped as form)."""
+    encoded = urllib.parse.urlencode({k: str(v) for k, v in (fields or {}).items()}).encode()
+    req = urllib.request.Request(url, data=encoded, method="POST")
+    for name, value in (headers or {}).items():
+        req.add_header(name, value)
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode() or "{}"
+            try:
+                return response.status, json.loads(raw)
+            except json.JSONDecodeError:
+                return response.status, raw
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode() if getattr(exc, "fp", None) else ""
+        try:
+            return exc.code, json.loads(raw) if raw else {"error": str(exc)}
+        except json.JSONDecodeError:
+            return exc.code, raw
+
+
+def _http_sse_events(
+    url: str,
+    *,
+    fields: dict | None = None,
+    headers: dict | None = None,
+    timeout: float = 120,
+) -> tuple[int, list[dict]]:
+    """POST form body and parse ``data:`` JSON events until ``[DONE]`` or EOF."""
+    encoded = urllib.parse.urlencode({k: str(v) for k, v in (fields or {}).items()}).encode()
+    req = urllib.request.Request(url, data=encoded, method="POST")
+    for name, value in (headers or {}).items():
+        req.add_header(name, value)
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    req.add_header("Accept", "text/event-stream")
+    events: list[dict] = []
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            status = response.status
+            while True:
+                line = response.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").strip()
+                if not text or text.startswith(":"):
+                    continue
+                if text.startswith("data:"):
+                    payload = text[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        item = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(item, dict):
+                        events.append(item)
+            return status, events
+    except urllib.error.HTTPError as exc:
+        return exc.code, [{"error": (exc.read().decode() if getattr(exc, "fp", None) else str(exc))[:400]}]
+
+
+def run_odysseus_native_pipe() -> dict:
+    """Phone path: Odysseus session create + Native chat_stream Hello/Hi.
+
+    Returns ``{ok, session_id, openhands_conversation_id, steps}``.
+    ``session_id`` is the Odysseus conversation id (``gen_ai.conversation.id``).
+    Auth is ``ODYSSEUS_INTERNAL_TOKEN`` on loopback; never printed.
+    """
+    report: dict = {
+        "ok": False,
+        "session_id": None,
+        "openhands_conversation_id": None,
+        "steps": [],
+    }
+    token = os.environ.get("ODYSSEUS_INTERNAL_TOKEN", "").strip()
+    if not token:
+        report["error"] = "ODYSSEUS_INTERNAL_TOKEN unset"
+        return report
+    headers = _odysseus_auth_headers()
+
+    status, created = _http_form(
+        f"{ODY}/api/session",
+        fields={
+            "name": "overlay-stability",
+            "model": "automatic",
+            "endpoint_url": "",
+            "skip_validation": "true",
+        },
+        headers=headers,
+        timeout=30,
+    )
+    sid = created.get("id") if isinstance(created, dict) else None
+    report["steps"].append({
+        "name": "session",
+        "http": status,
+        "session_id": sid,
+        "model": (created.get("model") if isinstance(created, dict) else None),
+    })
+    if status not in {200, 201} or not sid:
+        report["error"] = "session create failed"
+        return report
+    report["session_id"] = str(sid)
+
+    status, events = _http_sse_events(
+        f"{ODY}/api/chat_stream",
+        fields={
+            "message": HELLO_MSG,
+            "session": str(sid),
+            "selected_model": "automatic",
+            "agent_profile_id": "odysseus",
+            "mode": "chat",
+        },
+        headers=headers,
+        timeout=120,
+    )
+    text_parts: list[str] = []
+    oh_cid = None
+    for item in events:
+        if item.get("type") == "execution" and item.get("conversation_id"):
+            oh_cid = str(item["conversation_id"])
+        delta = item.get("delta")
+        if isinstance(delta, str) and delta and not item.get("thinking"):
+            text_parts.append(delta)
+        if item.get("error"):
+            report["steps"].append({"name": "chat_stream", "http": status, "error": item.get("error")})
+            return report
+    text = "".join(text_parts).strip()
+    report["openhands_conversation_id"] = oh_cid
+    report["steps"].append({
+        "name": "chat_stream",
+        "http": status,
+        "openhands_conversation_id": oh_cid,
+        "text": text[:400],
+        "event_count": len(events),
+    })
+    report["ok"] = status == 200 and bool(text) and bool(oh_cid)
+    if not report["ok"] and not report.get("error"):
+        report["error"] = "chat_stream missing assistant text or OpenHands id"
+    return report
+
+
 def run_native_pipe() -> dict:
-    """One-word 9router completion plus OpenHands Hello/Hi.
+    """One-word 9router completion plus OpenHands Hello/Hi (Agent Server direct).
 
     Returns ``{ok, session_id, steps}`` and an ``error`` string when the
     sidecar is missing. The virtual key is never copied into the dict.
-    ``session_id`` is the Agent Server conversation id.
+    ``session_id`` is the Agent Server conversation id. Prefer
+    ``run_odysseus_native_pipe`` for stability / Tempo session-tree DoD.
     """
     report: dict = {"ok": False, "session_id": None, "steps": []}
     key = _read_sidecar_key()
@@ -169,7 +350,7 @@ def run_native_pipe() -> dict:
             },
             "initial_message": {
                 "role": "user",
-                "content": [{"type": "text", "text": "Hello! Reply with the single word Hi."}],
+                "content": [{"type": "text", "text": HELLO_MSG}],
             },
             "autotitle": False,
         },
@@ -205,9 +386,14 @@ def run_native_pipe() -> dict:
 
 
 def main() -> int:
-    """Print the pipe report. Exit 0 only when ``ok`` is true."""
-    report = run_native_pipe()
-    public = {"ok": report["ok"], "steps": report["steps"]}
+    """Print the Odysseus phone-path report. Exit 0 only when ``ok`` is true."""
+    report = run_odysseus_native_pipe()
+    public = {
+        "ok": report["ok"],
+        "session_id": report.get("session_id"),
+        "openhands_conversation_id": report.get("openhands_conversation_id"),
+        "steps": report["steps"],
+    }
     if report.get("error"):
         public["error"] = report["error"]
     print(json.dumps(public, indent=2))
