@@ -38,7 +38,21 @@ def test_set_native_probe_success_updates_registry():
     assert _sample_value("odysseus_overlay_native_probe_success") == 1.0
 
 
+def test_client_http_error_series_present_at_zero_before_inc():
+    """Prometheus must scrape the counter series even when no 401/5xx has fired."""
+    overlay_metrics.ensure_client_http_error_series()
+    for target in ("openhands", "9router"):
+        for code in ("401", "5xx"):
+            value = _sample_value(
+                "odysseus_overlay_client_http_errors_total",
+                {"target": target, "code": code},
+            )
+            assert value is not None
+            assert value >= 0.0
+
+
 def test_record_client_http_error_counts_401_and_5xx():
+    overlay_metrics.ensure_client_http_error_series()
     before_401 = _sample_value(
         "odysseus_overlay_client_http_errors_total",
         {"target": "openhands", "code": "401"},

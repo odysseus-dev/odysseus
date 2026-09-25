@@ -34,6 +34,11 @@ for entry in (str(ROOT), str(SCRIPTS)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
+# /app/calendar shadows stdlib; OTLP exporter needs timegm before otel import.
+from services.observability.stdlib_calendar import prefer_stdlib_calendar
+
+prefer_stdlib_calendar()
+
 from overlay_native_chat_probe import (  # noqa: E402
     AGENT,
     NINE,

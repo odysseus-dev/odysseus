@@ -164,6 +164,7 @@ def test_lifecycle_span_names_and_api_key_absent(memory_spans, monkeypatch, tmp_
         "openhands.create",
         "openhands.idle",
         "invoke_agent Native",
+        "chat openai/cx/gpt-5.5",
     } <= names
     _assert_no_secrets(finished)
 
@@ -190,6 +191,14 @@ def test_lifecycle_span_names_and_api_key_absent(memory_spans, monkeypatch, tmp_
     assert invoked["gen_ai.conversation.id"] == _ODY_SESSION
     assert invoked["openhands.conversation.id"] == "conv-created"
     assert invoked["odysseus.synthetic"] is True
+
+    chat = by_name["chat openai/cx/gpt-5.5"]
+    assert chat.attributes["gen_ai.operation.name"] == "chat"
+    assert chat.attributes["gen_ai.provider.name"] == "9router"
+    assert chat.attributes["gen_ai.request.model"] == "openai/cx/gpt-5.5"
+    assert chat.attributes["http.status_code"] == 200
+    assert chat.attributes["odysseus.synthetic"] is True
+    assert "gen_ai.input.messages" not in (chat.attributes or {})
 
     idle = by_name["openhands.idle"]
     assert idle.attributes["odysseus.execution_status"] == "finished"

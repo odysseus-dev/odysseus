@@ -197,8 +197,9 @@ def invoke_nine_router(
     base = str(base or "").rstrip("/")
     if not base or not key:
         raise ModelJobFailed("9router access missing")
+    model = str(payload.get("model") or "auto")
     body = {
-        "model": str(payload.get("model") or "auto"),
+        "model": model,
         "messages": _messages_from_payload(payload, archetype),
         "temperature": getattr(archetype, "temperature", 0) or 0,
     }
@@ -215,11 +216,32 @@ def invoke_nine_router(
         method="POST",
     )
     timeout = getattr(archetype, "timeout_seconds", 60) or 60
-    try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:
-            parsed = json.loads(resp.read().decode())
-    except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise ModelJobFailed(f"9router completions failed: {exc}") from exc
+    from services.observability.otel import (
+        apply_span_attributes,
+        chat_completion_span,
+        record_span_error,
+    )
+
+    with chat_completion_span(model) as span:
+        try:
+            with urlrequest.urlopen(req, timeout=timeout) as resp:
+                status = int(getattr(resp, "status", 200) or 200)
+                parsed = json.loads(resp.read().decode())
+            apply_span_attributes(span, {"http.status_code": status})
+            if status == 401 or status >= 500:
+                from services.observability.metrics import record_client_http_error
+
+                record_client_http_error("9router", status)
+        except (urlerror.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            http_status = 500
+            if isinstance(exc, urlerror.HTTPError):
+                http_status = int(exc.code or 500)
+            apply_span_attributes(span, {"http.status_code": http_status})
+            record_span_error(span, exc)
+            from services.observability.metrics import record_client_http_error
+
+            record_client_http_error("9router", http_status)
+            raise ModelJobFailed(f"9router completions failed: {exc}") from exc
     if not isinstance(parsed, dict):
         raise ModelJobFailed("9router returned a non-object")
     text = _content_from_completion(parsed)
@@ -336,8 +358,19 @@ class _JobHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    """Mint the named jobs key, then serve typed jobs."""
+    """Mint the named jobs key, then serve typed jobs.
 
+    Agents: ``configure_tracer`` uses the same Collector-only contract as the
+    Odysseus API process. Completions emit ``chat {model}`` GenAI spans.
+    """
+
+    _unshadow = __import__(
+        "services.observability.stdlib_calendar", fromlist=["prefer_stdlib_calendar"]
+    ).prefer_stdlib_calendar
+    _unshadow()
+    from services.observability.otel import configure_tracer
+
+    configure_tracer(os.environ.get("OTEL_SERVICE_NAME") or "odysseus-model-jobs")
     os.environ[_JOBS_KEY_ENV] = mint_jobs_virtual_key()
     host = os.environ.get("MODEL_JOB_WORKER_HOST", "0.0.0.0")
     port = int(os.environ.get("MODEL_JOB_WORKER_PORT", "8091"))

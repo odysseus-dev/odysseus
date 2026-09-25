@@ -190,6 +190,34 @@ def test_model_job_still_rejects_agent_archetype_and_tools():
         executor.execute(_job_archetype(tools=["odysseus.mail.send"]), {}, owner="u1")
 
 
+def test_model_job_worker_calls_configure_tracer():
+    """Worker must export to the Collector; env alone is not enough."""
+    worker_src = _WORKER.read_text(encoding="utf-8")
+    assert "configure_tracer" in worker_src
+    assert "chat_completion_span" in worker_src or "gen_ai.operation.name" in worker_src
+    assert "prefer_stdlib_calendar" in worker_src
+
+
+def test_prefer_stdlib_calendar_exposes_timegm(monkeypatch, tmp_path):
+    """Fake app calendar on path must not hide stdlib timegm after prefer."""
+    from services.observability.stdlib_calendar import prefer_stdlib_calendar
+
+    fake = tmp_path / "calendar"
+    fake.mkdir()
+    (fake / "__init__.py").write_text("# app calendar shadow\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    import sys
+
+    sys.modules.pop("calendar", None)
+    import calendar as shadowed
+
+    assert not hasattr(shadowed, "timegm")
+    prefer_stdlib_calendar()
+    import calendar as fixed
+
+    assert hasattr(fixed, "timegm")
+
+
 def test_overlay_odysseus_env_omits_worker_ninerouter_key():
     compose = _OVERLAY.read_text(encoding="utf-8")
     odysseus = _service_block(compose, "odysseus")

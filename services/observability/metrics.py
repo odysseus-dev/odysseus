@@ -63,12 +63,25 @@ def set_native_probe_success(ok: bool) -> None:
     _NATIVE_PROBE.set(1 if ok else 0)
 
 
+def ensure_client_http_error_series() -> None:
+    """Register zeroed 401/5xx series so Prometheus scrapes them before any error.
+
+    Agents: Counter children are absent until ``labels()`` is called. Call this
+    at process start (and from ``GET /metrics``) so ``client_http_errors_total``
+    is always present for openhands and 9router.
+    """
+    for target in ("openhands", "9router"):
+        for code in ("401", "5xx"):
+            _CLIENT_HTTP_ERRORS.labels(target=target, code=code)
+
+
 def record_client_http_error(target: str, status: int) -> None:
     """Increment 401 or 5xx counters. Other statuses are ignored.
 
     Agents: ``target`` is ``openhands`` or ``9router``. Call from the client
     that saw the status; never pass response bodies.
     """
+    ensure_client_http_error_series()
     code = int(status or 0)
     if code == 401:
         _CLIENT_HTTP_ERRORS.labels(target=str(target), code="401").inc()
@@ -96,7 +109,9 @@ def refresh_dependency_up() -> None:
     """Probe each overlay dependency and refresh labeled ``dependency_up`` gauges.
 
     Agents: called from ``GET /metrics`` so Prometheus scrapes a fresh view.
-    Timeouts stay short so a down peer cannot stall the scrape.
+    Timeouts stay short so a down peer cannot stall the scrape. Also ensures
+    client HTTP error counter series exist at zero before the first 401/5xx.
     """
+    ensure_client_http_error_series()
     for service, url in _DEPENDENCY_URLS.items():
         set_dependency_up(service, _probe_url(url))

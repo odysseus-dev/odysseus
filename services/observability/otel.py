@@ -9,10 +9,15 @@ libraries run without Traceloop cloud: ``TRACELOOP_TRACE_CONTENT`` defaults to
 ``false`` and ``Traceloop.init`` is never called. Callers start spans with
 ``get_tracer`` and must set attributes through ``apply_span_attributes`` so
 secrets and prompt bodies are dropped first. ``ODYSSEUS_SYNTHETIC=1`` adds
-``odysseus.synthetic``.
+``odysseus.synthetic``. Spec §6 GenAI chat spans use ``chat_completion_span``
+(name ``chat {model}``, no prompt bodies).
 """
 
+from __future__ import annotations
+
 import os
+from contextlib import contextmanager
+from typing import Iterator
 from urllib.parse import urlparse
 
 from opentelemetry import trace
@@ -52,9 +57,14 @@ def configure_tracer(service_name: str) -> None:
     )
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
-    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    # httpx auto-instrumentation is best-effort. Model-jobs uses urllib and may
+    # fail to import httpx when ``/app/calendar`` shadows the stdlib module.
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-    HTTPXClientInstrumentor().instrument()
+        HTTPXClientInstrumentor().instrument()
+    except Exception:
+        pass
 
 
 def get_tracer(name: str):
@@ -84,3 +94,32 @@ def record_span_error(span, exc: BaseException) -> None:
     """Mark ``span`` ERROR and store the exception type. Re-raise at the call site."""
     span.record_exception(exc)
     span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+
+
+def chat_span_name(model: str) -> str:
+    """Return the spec §6 span name ``chat {model}`` (or ``chat`` when empty)."""
+    cleaned = str(model or "").strip()
+    return f"chat {cleaned}" if cleaned else "chat"
+
+
+@contextmanager
+def chat_completion_span(
+    model: str, *, provider: str = "9router"
+) -> Iterator:
+    """Start a GenAI ``chat`` span for a 9router (or probe) completion.
+
+    Agents: sets ``gen_ai.operation.name=chat`` so Langfuse maps a GENERATION.
+    Never attach ``gen_ai.input.messages`` or completion bodies. Callers set
+    ``http.status_code`` before exiting the context.
+    """
+    tracer = get_tracer("odysseus")
+    with tracer.start_as_current_span(chat_span_name(model)) as span:
+        apply_span_attributes(
+            span,
+            {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.provider.name": provider,
+                "gen_ai.request.model": str(model or ""),
+            },
+        )
+        yield span

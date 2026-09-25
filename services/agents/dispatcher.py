@@ -77,6 +77,7 @@ class AgentDispatcher:
         ref = AutomationExecutionRef(
             automation_execution_id=resumed.execution_id,
             conversation_id=resumed.conversation_id,
+            resolved_model=getattr(resumed, "resolved_model", None),
         )
         self._idempotency[request.request_id] = ref
         return ref

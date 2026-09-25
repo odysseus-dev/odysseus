@@ -16,6 +16,8 @@ class ExecutionKind(StrEnum):
 class AutomationExecutionRef:
     automation_execution_id: str
     conversation_id: str
+    # Model OpenHands will call via 9router; used for GenAI ``chat {model}`` spans.
+    resolved_model: str | None = None
 
 
 @dataclass(frozen=True)

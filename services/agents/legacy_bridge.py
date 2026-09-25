@@ -2,10 +2,10 @@
 
 Legacy ``stream_agent_loop`` remains for tests until Task 18 deletion.
 
-Agents: ``invoke_agent Native`` wraps create-or-resume. ``openhands.idle``
-covers the poll until a terminal execution status. Empty assistant text on
-``finished`` adds event ``odysseus.assistant.empty``. Do not put message
-bodies on either span.
+Agents: ``invoke_agent Native`` wraps create-or-resume. Spec §6 ``chat {model}``
+parents ``openhands.idle`` (GenAI chat / Langfuse GENERATION) for the
+OpenHands→9router turn. Empty assistant text on ``finished`` adds event
+``odysseus.assistant.empty``. Do not put message bodies on either span.
 """
 
 from __future__ import annotations
@@ -120,9 +120,11 @@ async def stream_governed_agent(
     # so it uses a detached span below and does not attach OTel context across yields.
     from services.observability.otel import (
         apply_span_attributes,
+        chat_span_name,
         get_tracer,
         record_span_error,
     )
+    from opentelemetry.trace import Status, StatusCode, set_span_in_context
 
     tracer = get_tracer("odysseus")
     with tracer.start_as_current_span("invoke_agent Native") as span:
@@ -166,8 +168,22 @@ async def stream_governed_agent(
     emitted_pending: set[str] = set()
     rejected_mutating: set[str] = set()
     idle = False
-    # Detached span: start_as_current_span across yields trips the ContextVar detach bug.
-    idle_span = tracer.start_span("openhands.idle")
+    # Detached spans: start_as_current_span across yields trips the ContextVar
+    # detach bug. ``chat {model}`` parents ``openhands.idle`` so Tempo/Langfuse
+    # see the GenAI chat observation for the OpenHands→9router turn.
+    model = str(getattr(ref, "resolved_model", None) or "").strip() or "unknown"
+    chat_span = tracer.start_span(chat_span_name(model))
+    apply_span_attributes(
+        chat_span,
+        {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.provider.name": "9router",
+            "gen_ai.request.model": model,
+        },
+    )
+    idle_span = tracer.start_span(
+        "openhands.idle", context=set_span_in_context(chat_span)
+    )
     execution_status = ""
     saw_assistant_text = False
     deadline = time.monotonic() + float(kwargs.get("poll_timeout_s", _POLL_TIMEOUT_S))
@@ -177,6 +193,7 @@ async def stream_governed_agent(
                 events = dispatcher.client.conversation_events(ref.conversation_id)
             except Exception as exc:
                 record_span_error(idle_span, exc)
+                record_span_error(chat_span, exc)
                 raise
             for event in events:
                 eid = str(event.get("id") or "")
@@ -250,4 +267,11 @@ async def stream_governed_agent(
         if execution_status == "finished" and not saw_assistant_text:
             idle_span.add_event("odysseus.assistant.empty")
         idle_span.end()
+        # OpenHands owns the real 9router HTTP; surface turn outcome as status.
+        failed = execution_status in {"error", "errored", "failed"}
+        http_status = 500 if failed else 200
+        apply_span_attributes(chat_span, {"http.status_code": http_status})
+        if failed:
+            chat_span.set_status(Status(StatusCode.ERROR, execution_status or "failed"))
+        chat_span.end()
     yield "data: [DONE]\n\n"

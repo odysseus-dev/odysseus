@@ -200,9 +200,8 @@ services:
       - MODEL_JOB_WORKER_HOST=0.0.0.0
       - MODEL_JOB_WORKER_PORT=8091
       - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
-      # Same Collector contract as odysseus. This process is stdlib HTTP, not
-      # FastAPI, and does not call configure_tracer yet. The env is the only
-      # export target if a later task starts a tracer here.
+      # Same Collector contract as odysseus. Worker calls configure_tracer and
+      # emits GenAI chat spans on /v1/chat/completions.
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
       - OTEL_SERVICE_NAME=odysseus-model-jobs
     volumes:

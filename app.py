@@ -14,6 +14,11 @@ import time
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+# /app/calendar shadows stdlib calendar; httpx/requests need timegm.
+from services.observability.stdlib_calendar import prefer_stdlib_calendar
+
+prefer_stdlib_calendar()
+
 
 def register_static_mime_types() -> None:
     """Force stable JS module MIME types across platforms.
