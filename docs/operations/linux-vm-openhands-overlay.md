@@ -78,8 +78,13 @@ as a boolean, a catalog pick that skips `gpt-6-astra` and `-review`,
 includes `trace_id` from the `overlay.stability` span
 (`odysseus.synthetic=true`); Tempo must show `overlay.bind` /
 `invoke_agent Native` / `openhands.create` on that id. Guest `.env` must set
-`ODYSSEUS_INTERNAL_TOKEN` (same value compose injects into `odysseus`). The
-script never prints the virtual key or that token.
+`ODYSSEUS_INTERNAL_TOKEN` (same value compose injects into `odysseus`). After
+the pipe, the probe POSTs `/api/overlay/native-probe` so Prometheus scrapes
+`odysseus_overlay_native_probe_success=1` from uvicorn. `/metrics` also
+refreshes `odysseus_overlay_dependency_up` for 9router, Agent Server, Tempo,
+Langfuse, Collector, and Prometheus. FastAPI does not trace `/metrics` or
+`/api/health` (keeps Langfuse clear of scrape noise). The script never prints
+the virtual key or that token.
 
 ## Native chat probe (headless)
 

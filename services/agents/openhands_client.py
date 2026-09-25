@@ -212,6 +212,9 @@ class OpenHandsClient:
                     settings_status = _http_status(exc)
                     settings = _fallback_settings()
                     record_span_error(span, exc)
+                    from services.observability.metrics import record_client_http_error
+
+                    record_client_http_error("openhands", settings_status)
                 apply_span_attributes(
                     span,
                     {
@@ -269,6 +272,9 @@ class OpenHandsClient:
                         },
                     )
                     record_span_error(span, exc)
+                    from services.observability.metrics import record_client_http_error
+
+                    record_client_http_error("openhands", _http_status(exc))
                     raise
             conversation_id = str(created.get("id") or created.get("conversation_id"))
         elif message:

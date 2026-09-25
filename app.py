@@ -140,7 +140,11 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from services.observability.otel import configure_tracer
 
 configure_tracer(os.getenv("OTEL_SERVICE_NAME") or "odysseus")
-FastAPIInstrumentor.instrument_app(app)
+# Scrape + liveness must not flood Tempo/Langfuse. Exclude before middleware.
+FastAPIInstrumentor.instrument_app(
+    app,
+    excluded_urls="/metrics,/api/health",
+)
 
 # ========= CORS =========
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
@@ -980,11 +984,39 @@ async def health_check() -> Dict[str, str]:
 
 @app.get("/metrics")
 async def prometheus_metrics():
-    """Prometheus text exposition for overlay stability gauges."""
+    """Prometheus text exposition for overlay stability gauges.
+
+    Agents: refreshes dependency ``up`` gauges before export so a scrape
+    answers whether 9router / Agent Server / Tempo / Langfuse / Collector /
+    Prometheus are reachable from Odysseus.
+    """
     from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
     from starlette.responses import Response
 
+    from services.observability.metrics import refresh_dependency_up
+
+    refresh_dependency_up()
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/api/overlay/native-probe")
+async def overlay_native_probe_result(request: Request):
+    """Record the last stability-probe outcome on the uvicorn process.
+
+    Agents: the Mac/guest wrapper execs the probe in a separate PID. Setting
+    the gauge there never appears on Prometheus scrapes of this process.
+    Auth is the loopback internal-tool token (same as the phone-path probe).
+    Body: ``{"ok": true|false}``. Never logs secrets.
+    """
+    from services.observability.metrics import set_native_probe_success
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ok = bool((body or {}).get("ok"))
+    set_native_probe_success(ok)
+    return {"ok": True, "recorded": ok}
 
 @app.post("/api/client-perf")
 async def client_perf(request: Request):

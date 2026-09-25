@@ -17,7 +17,7 @@ def test_stability_probe_script_matches_contract():
     assert "overlay.stability" in text
     assert "odysseus.synthetic" in text
     assert "get_current_span" in text
-    assert "set_native_probe_success" in text
+    assert "/api/overlay/native-probe" in text
     # Native turn must go through Odysseus HTTP so uvicorn emits overlay.bind.
     assert "run_odysseus_native_pipe" in text
     assert "cloud_rows" in text

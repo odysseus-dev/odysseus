@@ -213,16 +213,28 @@ def _native_pipe_step() -> dict:
 
 
 def _set_probe_gauge(ok: bool) -> dict:
-    """Record the last probe outcome on ``odysseus_overlay_native_probe_success``.
+    """Record the last probe outcome on uvicorn via ``/api/overlay/native-probe``.
 
-    This process is not the uvicorn worker. The in-process gauge is what
-    Task 8 is required to set; the running ``/metrics`` scrape stays on the
-    server process.
+    Agents: this process is ``compose exec``, not the scraped worker. POST the
+    result with the loopback internal token so Prometheus sees the gauge on
+    ``odysseus:7000/metrics``.
     """
-    from services.observability.metrics import set_native_probe_success
+    from overlay_native_chat_probe import _http, _odysseus_auth_headers
 
-    set_native_probe_success(ok)
-    return {"name": "probe_gauge", "ok": True, "value": 1 if ok else 0}
+    status, body = _http(
+        "http://127.0.0.1:7000/api/overlay/native-probe",
+        method="POST",
+        body={"ok": bool(ok)},
+        headers=_odysseus_auth_headers(),
+        timeout=10,
+    )
+    recorded = bool(isinstance(body, dict) and body.get("ok"))
+    return {
+        "name": "probe_gauge",
+        "ok": status == 200 and recorded,
+        "http": status,
+        "value": 1 if ok else 0,
+    }
 
 
 def _current_trace_id() -> str:
