@@ -139,6 +139,10 @@ DEFAULT_SETTINGS = {
     "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
+    # Optional model for AI email reply drafts; empty = open chat's model,
+    # then Utility.
+    "email_draft_endpoint_id": "",
+    "email_draft_model": "",
     "default_endpoint_id": "",
     "default_model": "",
     # Optional prose style used only for normal document writing/editing.
