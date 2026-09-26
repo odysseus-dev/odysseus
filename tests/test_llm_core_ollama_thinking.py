@@ -163,3 +163,17 @@ class TestThinkSuppression:
             monkeypatch, "http://127.0.0.1:11435/v1/chat/completions", "qwen3:14b"
         )
         assert payload.get("think") is False
+
+    def test_reasoning_effort_none_for_ollama_v1_thinking_model(self, monkeypatch):
+        """Newer Ollama /v1 ignores think:false but honours reasoning_effort,
+        so both must be sent or qwen3 can spend the whole budget thinking."""
+        payload = _capture_payload(
+            monkeypatch, "http://127.0.0.1:11434/v1/chat/completions", "qwen3:14b"
+        )
+        assert payload.get("reasoning_effort") == "none"
+
+    def test_no_reasoning_effort_for_ollama_v1_non_thinking_model(self, monkeypatch):
+        payload = _capture_payload(
+            monkeypatch, "http://127.0.0.1:11434/v1/chat/completions", "llama3.2:3b"
+        )
+        assert "reasoning_effort" not in payload
