@@ -228,6 +228,30 @@ def _normalize_dsml(text: str) -> str:
     t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s*>", "</parameter>", t, flags=re.IGNORECASE)
     return t
 
+
+# Qwen3-Coder text-mode calls put the names in the TAG rather than in a name
+# attribute: <function=bash><parameter=command>…</parameter></function>.
+# qwen-architecture local models emit this whenever Odysseus runs them in text
+# mode, and nothing downstream understood it, so the call rendered as chat text
+# and no tool ran. Normalize to <invoke>/<parameter name=> — the same trick
+# _normalize_dsml uses — so every existing path picks it up unchanged.
+_QWEN_FN_OPEN_RE = re.compile(r"<function=([A-Za-z_][\w.-]*)\s*>", re.IGNORECASE)
+_QWEN_FN_CLOSE_RE = re.compile(r"<\s*/\s*function\s*>", re.IGNORECASE)
+_QWEN_PARAM_OPEN_RE = re.compile(r"<parameter=([A-Za-z_][\w.-]*)\s*>", re.IGNORECASE)
+# Models also emit a stray empty <function></function> pair right after the
+# opening tag. It carries nothing, but it is the first closer in the body, so a
+# forward-only scan would pair the opener with it and find no parameters.
+_QWEN_EMPTY_FN_RE = re.compile(r"<function>\s*<\s*/\s*function\s*>\s*", re.IGNORECASE)
+
+
+def _normalize_qwen_function_xml(text: str) -> str:
+    if not isinstance(text, str) or "<function=" not in text:
+        return text
+    t = _QWEN_EMPTY_FN_RE.sub("", text)
+    t = _QWEN_FN_OPEN_RE.sub(lambda m: f'<invoke name="{m.group(1)}">', t)
+    t = _QWEN_PARAM_OPEN_RE.sub(lambda m: f'<parameter name="{m.group(1)}">', t)
+    return _QWEN_FN_CLOSE_RE.sub("</invoke>", t)
+
 # Map model tool names to our tool types
 _TOOL_NAME_MAP = {
     "shell": "bash",
@@ -1310,6 +1334,8 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # Normalize DeepSeek DSML markup into standard <invoke> form so the
     # XML patterns below catch it.
     text = _normalize_dsml(text)
+    # Same for Qwen3-Coder <function=NAME> markup.
+    text = _normalize_qwen_function_xml(text)
 
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
     if not skip_fenced:
@@ -1493,6 +1519,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
+    text = _normalize_qwen_function_xml(text)
     # Keep the executed-vs-illustrative fence distinction (only strip fences
     # that actually dispatched; leave example fences from native models inert
     # but visible), then remove [TOOL_CALL]{...}[/TOOL_CALL] markup.
