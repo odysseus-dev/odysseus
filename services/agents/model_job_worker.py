@@ -39,6 +39,48 @@ DEFAULT_V1 = "http://9router:20128/v1"
 DEFAULT_DB = "/opt/odysseus/9router-data/db/data.sqlite"
 API_KEY_SECRET = os.environ.get("API_KEY_SECRET", "endpoint-proxy-api-key-secret")
 _JOBS_KEY_ENV = "_JOBS_VIRTUAL_KEY"
+# Catalog id 9router accepts on /v1/chat/completions. Overlay UI routes
+# (automatic/fast/…) and LiteLLM ``openai/`` prefixes 404 if sent raw.
+DEFAULT_CATALOG_MODEL = "cx/gpt-5.5"
+_LITELLM_OPENAI_PREFIX = "openai/"
+# Odysseus composer routes + legacy ``auto`` default from session_routes.
+_OVERLAY_ROUTE_MODELS = frozenset({"auto", "automatic", "fast", "balanced", "best"})
+
+
+def resolve_nine_router_model(raw: str | None) -> str:
+    """Map Odysseus/LiteLLM model strings to a 9router catalog id.
+
+    Agents: model-jobs calls 9router directly (not via LiteLLM). Catalog ids
+    look like ``cx/gpt-5.5``. Sending ``auto``/``automatic`` or
+    ``openai/cx/gpt-5.5`` yields model_not_found (no OpenAI credentials).
+
+    Parameters
+    ----------
+    raw
+        Payload model, overlay route, LiteLLM id, or empty.
+
+    Returns
+    -------
+    str
+        Catalog id safe for ``POST /v1/chat/completions``.
+
+    Examples
+    --------
+    >>> resolve_nine_router_model("automatic")
+    'cx/gpt-5.5'
+    >>> resolve_nine_router_model("openai/cx/gpt-5.5")
+    'cx/gpt-5.5'
+    """
+
+    model = str(raw or "").strip()
+    if model.startswith(_LITELLM_OPENAI_PREFIX):
+        model = model[len(_LITELLM_OPENAI_PREFIX) :].strip()
+    if not model or model in _OVERLAY_ROUTE_MODELS:
+        env_default = str(os.environ.get("NINE_ROUTER_DEFAULT_MODEL") or "").strip()
+        if env_default.startswith(_LITELLM_OPENAI_PREFIX):
+            env_default = env_default[len(_LITELLM_OPENAI_PREFIX) :].strip()
+        return env_default or DEFAULT_CATALOG_MODEL
+    return model
 
 
 def mint_jobs_virtual_key(db_path: str | Path | None = None) -> str:
@@ -197,7 +239,8 @@ def invoke_nine_router(
     base = str(base or "").rstrip("/")
     if not base or not key:
         raise ModelJobFailed("9router access missing")
-    model = str(payload.get("model") or "auto")
+    # Resolve before the request: overlay routes and openai/ LiteLLM ids 404.
+    model = resolve_nine_router_model(payload.get("model"))
     body = {
         "model": model,
         "messages": _messages_from_payload(payload, archetype),

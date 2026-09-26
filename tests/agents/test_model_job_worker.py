@@ -234,8 +234,13 @@ def test_overlay_odysseus_env_omits_worker_ninerouter_key():
     assert "odysseus-jobs" not in odysseus
     list_entries = [line.strip() for line in odysseus.splitlines() if line.strip().startswith("- ")]
     assert any("ODYSSEUS_MODEL_JOB_WORKER_URL=" in line for line in list_entries)
-    assert "NINE_ROUTER" not in odysseus
+    # Metadata/catalog URLs on odysseus are fine; inference keys and the jobs
+    # catalog default stay on odysseus-model-jobs only.
+    assert "NINE_ROUTER_DEFAULT_MODEL" not in odysseus
+    assert "NINE_ROUTER_V1" not in odysseus
+    assert "NINE_ROUTER_SQLITE" not in odysseus
     assert "9router:/opt/odysseus/9router-data" in worker
+    assert "NINE_ROUTER_DEFAULT_MODEL=cx/gpt-5.5" in worker
     assert "./services:/app/services:ro" in worker
     assert "python" in worker and "model_job_worker" in worker
     assert "entrypoint:" in worker
@@ -322,3 +327,73 @@ def test_submit_model_job_uses_executor_and_strips_secrets():
     assert result.output == {"title": "Short Title"}
     assert "api_key" not in result.audit
     assert result.audit["resolved_model"] == "auto"
+
+
+def test_resolve_nine_router_model_maps_overlay_routes_to_catalog():
+    """Overlay route names and LiteLLM prefixes must become catalog ids for 9router."""
+    from services.agents.model_job_worker import resolve_nine_router_model
+
+    assert resolve_nine_router_model(None) == "cx/gpt-5.5"
+    assert resolve_nine_router_model("") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("auto") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("automatic") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("fast") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("balanced") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("best") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("openai/auto") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("openai/automatic") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("openai/cx/gpt-5.5") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("cx/gpt-5.5") == "cx/gpt-5.5"
+    assert resolve_nine_router_model("cx/gpt-5.4") == "cx/gpt-5.4"
+
+
+def test_resolve_nine_router_model_honors_env_default(monkeypatch):
+    from services.agents.model_job_worker import resolve_nine_router_model
+
+    monkeypatch.setenv("NINE_ROUTER_DEFAULT_MODEL", "cx/gpt-5.4")
+    assert resolve_nine_router_model("automatic") == "cx/gpt-5.4"
+    monkeypatch.setenv("NINE_ROUTER_DEFAULT_MODEL", "openai/cx/gpt-5.4-mini")
+    assert resolve_nine_router_model("auto") == "cx/gpt-5.4-mini"
+
+
+def test_invoke_nine_router_posts_catalog_model_not_overlay_route(monkeypatch):
+    """Direct 9router rejects auto/automatic; worker must send a catalog id."""
+    from services.agents import model_job_worker as worker
+
+    captured: dict[str, object] = {}
+
+    class _Resp:
+        status = 200
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "model": "gpt-5.5",
+                    "choices": [{"message": {"content": "Short Title"}}],
+                }
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return _Resp()
+
+    monkeypatch.setattr(worker.urlrequest, "urlopen", fake_urlopen)
+    monkeypatch.delenv("NINE_ROUTER_DEFAULT_MODEL", raising=False)
+
+    out = worker.invoke_nine_router(
+        {"text": "hello world", "model": "automatic"},
+        archetype=_job_archetype(id="session-title", token_limit=64),
+        owner="u1",
+        base_url="http://9router:20128/v1",
+        virtual_key="sk-test",
+    )
+    assert captured["body"]["model"] == "cx/gpt-5.5"
+    assert out["title"] == "Short Title"
+    assert out["_provenance"]["resolved_model"] == "gpt-5.5"

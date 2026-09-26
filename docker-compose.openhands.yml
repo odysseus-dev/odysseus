@@ -197,6 +197,8 @@ services:
     environment:
       - NINE_ROUTER_V1=http://9router:20128/v1
       - NINE_ROUTER_SQLITE_PATH=/opt/odysseus/9router-data/db/data.sqlite
+      # Catalog id for jobs when payload still carries overlay routes (automatic).
+      - NINE_ROUTER_DEFAULT_MODEL=cx/gpt-5.5
       - MODEL_JOB_WORKER_HOST=0.0.0.0
       - MODEL_JOB_WORKER_PORT=8091
       - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
