@@ -6,6 +6,10 @@ Agents: ``invoke_agent Native`` wraps create-or-resume. Spec §6 ``chat {model}`
 parents ``openhands.idle`` (GenAI chat / Langfuse GENERATION) for the
 OpenHands→9router turn. Empty assistant text on ``finished`` adds event
 ``odysseus.assistant.empty``. Do not put message bodies on either span.
+
+Telem: resume must not replay prior assistant MessageEvents as this turn's
+SSE deltas (live OH conv ``55f20ae3…`` showed greeting replay while status
+was still ``running``). Poll only events after the latest user MessageEvent.
 """
 
 from __future__ import annotations
@@ -90,6 +94,66 @@ def _assistant_text(event: dict[str, Any]) -> str:
     )
 
 
+def _is_user_message_event(event: dict[str, Any]) -> bool:
+    """True when OpenHands event is a user MessageEvent (this turn's gate)."""
+    if event.get("kind") != "MessageEvent":
+        return False
+    if event.get("source") == "user":
+        return True
+    llm = event.get("llm_message") or {}
+    return str(llm.get("role") or "").lower() == "user"
+
+
+def _message_event_text(event: dict[str, Any]) -> str:
+    """Plain text from a MessageEvent body (user or assistant)."""
+    llm_message = event.get("llm_message") or {}
+    parts = (
+        event.get("content")
+        or event.get("text")
+        or llm_message.get("content")
+        or ""
+    )
+    if isinstance(parts, str):
+        return parts
+    return "".join(
+        block.get("text") or ""
+        for block in parts
+        if isinstance(block, dict)
+    )
+
+
+def _index_after_turn_user_message(
+    events: list[dict[str, Any]], turn_text: str
+) -> int | None:
+    """Start index for this turn, or None until the turn's user event is visible.
+
+    Agents / telem: phone trace ``d399a584…`` / OH ``55f20ae3…`` replayed the
+    prior assistant greeting. Live recheck also showed a race where the first
+    poll lacked the new user MessageEvent, so ``latest user`` still pointed at
+    the previous turn and the greeting streamed again. Wait for a user
+    MessageEvent whose text matches this turn's prompt; then ignore everything
+    at or before it (deltas, pending, idle/finished).
+    """
+    needle = (turn_text or "").strip()
+    if not needle:
+        return 0
+    last_match = -1
+    any_user = False
+    for index, event in enumerate(events):
+        if not _is_user_message_event(event):
+            continue
+        any_user = True
+        if _message_event_text(event).strip() == needle:
+            last_match = index
+    if last_match >= 0:
+        return last_match + 1
+    # User events exist but not this turn's prompt yet — caller must wait.
+    if any_user:
+        return None
+    # No user MessageEvents (unit fixtures / odd shapes): stream from the start.
+    return 0
+
+
 async def stream_governed_agent(
     endpoint_url: str | None = None,
     model: str | None = None,
@@ -172,6 +236,7 @@ async def stream_governed_agent(
     # detach bug. ``chat {model}`` parents ``openhands.idle`` so Tempo/Langfuse
     # see the GenAI chat observation for the OpenHands→9router turn.
     model = str(getattr(ref, "resolved_model", None) or "").strip() or "unknown"
+    turn_text = _user_text(messages)
     chat_span = tracer.start_span(chat_span_name(model))
     apply_span_attributes(
         chat_span,
@@ -195,12 +260,27 @@ async def stream_governed_agent(
                 record_span_error(idle_span, exc)
                 record_span_error(chat_span, exc)
                 raise
-            for event in events:
+            turn_start = _index_after_turn_user_message(events, turn_text)
+            if turn_start is None:
+                # Telem race: new user MessageEvent not indexed yet. Do not
+                # treat prior-turn assistant/finished as this turn.
+                for event in events:
+                    eid = str(event.get("id") or "")
+                    if eid:
+                        seen.add(eid)
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(_POLL_SLEEP_S)
+                continue
+            for index, event in enumerate(events):
                 eid = str(event.get("id") or "")
                 if eid and eid in seen:
                     continue
                 if eid:
                     seen.add(eid)
+                # Telem gate: skip history through this turn's user MessageEvent.
+                if index < turn_start:
+                    continue
                 text = _assistant_text(event)
                 if text:
                     saw_assistant_text = True

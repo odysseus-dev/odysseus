@@ -45,6 +45,221 @@ async def _alist(kwargs):
     return [chunk async for chunk in stream_governed_agent(**kwargs)]
 
 
+def test_resume_waits_for_turn_user_before_emitting_prior_assistant():
+    """Telem race: first poll can lack the new user MessageEvent.
+
+    If the gate uses ``latest user`` before this turn's prompt is indexed,
+    the prior greeting (after the previous user) is streamed again. Wait
+    until a user MessageEvent matching this turn's text appears.
+    """
+    greeting = "Hey! What can I help you with today?"
+    reply = "READY"
+    before_user = [
+        {
+            "id": "u1",
+            "kind": "MessageEvent",
+            "source": "user",
+            "llm_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Hey there!"}],
+            },
+        },
+        {
+            "id": "a1",
+            "kind": "MessageEvent",
+            "source": "agent",
+            "llm_message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": greeting}],
+            },
+        },
+        {"id": "s1", "kind": "ConversationStateUpdate", "status": "finished"},
+    ]
+    with_user = before_user + [
+        {
+            "id": "u2",
+            "kind": "MessageEvent",
+            "source": "user",
+            "llm_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "say READY"}],
+            },
+        },
+    ]
+    client = ScriptedClient(
+        [],
+        polls=[
+            before_user,  # race: new user not indexed yet
+            with_user,
+            with_user
+            + [
+                {
+                    "id": "a2",
+                    "kind": "MessageEvent",
+                    "source": "agent",
+                    "llm_message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": reply}],
+                    },
+                },
+                {"id": "s2", "kind": "ConversationStateUpdate", "status": "finished"},
+            ],
+        ],
+    )
+    client.execution = {"execution_status": "running"}
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "say READY"}],
+        conversation_id="conv-keep",
+        turn_id="t-resume-race",
+        poll_timeout_s=5,
+    )
+    joined = "".join(chunks)
+    assert greeting not in joined
+    assert f'"delta": "{reply}"' in joined
+
+
+
+
+def test_resume_does_not_replay_prior_assistant_delta():
+    """Telem (OH conv 55f20ae3…): prior greeting must not stream as this turn's reply."""
+    greeting = "Hey! What can I help you with today?"
+    reply = "Checked Agent Server and 9router; both healthy."
+    prompt = "check all systems that you are supposed to have access to"
+    history = [
+        {
+            "id": "u1",
+            "kind": "MessageEvent",
+            "source": "user",
+            "llm_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "Hey there!"}],
+            },
+        },
+        {
+            "id": "a1",
+            "kind": "MessageEvent",
+            "source": "agent",
+            "llm_message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": greeting}],
+            },
+        },
+        {"id": "s1", "kind": "ConversationStateUpdate", "status": "finished"},
+        {
+            "id": "u2",
+            "kind": "MessageEvent",
+            "source": "user",
+            "llm_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}],
+            },
+        },
+    ]
+    client = ScriptedClient(
+        [],
+        polls=[
+            history,
+            history
+            + [
+                {
+                    "id": "a2",
+                    "kind": "MessageEvent",
+                    "source": "agent",
+                    "llm_message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": reply}],
+                    },
+                },
+                {"id": "s2", "kind": "ConversationStateUpdate", "status": "finished"},
+            ],
+        ],
+    )
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": prompt}],
+        conversation_id="conv-keep",
+        session_id="ody-session",
+        turn_id="t-resume-no-replay",
+        poll_timeout_s=5,
+    )
+    joined = "".join(chunks)
+    assert greeting not in joined
+    assert f'"delta": "{reply}"' in joined
+    assert chunks[-1] == "data: [DONE]\n\n"
+
+
+def test_resume_ignores_prior_finished_idle_until_new_assistant():
+    """Telem idle span ended ``running`` after replaying prior turn's finished.
+
+    A historical ``finished`` before the latest user message must not stop the
+    poll; wait for this turn's terminal status.
+    """
+    history = [
+        {
+            "id": "u1",
+            "kind": "MessageEvent",
+            "source": "user",
+            "llm_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "hi"}],
+            },
+        },
+        {
+            "id": "a1",
+            "kind": "MessageEvent",
+            "source": "agent",
+            "llm_message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "old"}],
+            },
+        },
+        {"id": "s-old", "kind": "ConversationStateUpdate", "status": "finished"},
+        {
+            "id": "u2",
+            "kind": "MessageEvent",
+            "source": "user",
+            "llm_message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "next"}],
+            },
+        },
+    ]
+    client = ScriptedClient(
+        [],
+        polls=[
+            history,
+            history,
+            history
+            + [
+                {
+                    "id": "a2",
+                    "kind": "MessageEvent",
+                    "source": "agent",
+                    "llm_message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "new"}],
+                    },
+                },
+                {"id": "s-new", "kind": "ConversationStateUpdate", "status": "finished"},
+            ],
+        ],
+    )
+    # Force get_execution to stay non-idle so only event-driven idle ends the loop.
+    client.execution = {"execution_status": "running"}
+    chunks = _collect(
+        dispatcher=AgentDispatcher(client=client),
+        messages=[{"role": "user", "content": "next"}],
+        conversation_id="conv-keep",
+        turn_id="t-resume-idle-gate",
+        poll_timeout_s=5,
+    )
+    joined = "".join(chunks)
+    assert '"delta": "old"' not in joined
+    assert '"delta": "new"' in joined
+    assert client._poll_i >= 2
+
+
 def test_second_turn_reuses_openhands_id_not_session_id():
     client = ScriptedClient([])
     dispatcher = AgentDispatcher(client=client)
