@@ -130,8 +130,17 @@ async def do_trigger_research(content: str, owner: Optional[str] = None,
         payload["category"] = args["category"]
     if args.get("search_provider"):
         payload["search_provider"] = args["search_provider"]
+    # Post the finished report back into this chat — never for an incognito chat,
+    # whose turns must not be persisted or copied (decided now: the incognito
+    # store is TTL-based and may be gone by the time research finishes).
+    deliver_to_chat = False
     if session_id:
-        # Lets /api/research/start post the finished report back into this chat.
+        try:
+            from routes.chat_helpers import is_incognito_session
+            deliver_to_chat = not is_incognito_session(session_id)
+        except Exception:
+            deliver_to_chat = False
+    if deliver_to_chat:
         payload["chat_session_id"] = session_id
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -147,7 +156,7 @@ async def do_trigger_research(content: str, owner: Optional[str] = None,
                 "Progress is visible in the Deep Research sidebar. "
                 + ("When it finishes, the FULL report is posted into this chat automatically — "
                    "tell the user that, and do NOT promise to summarize it later or repeat it yourself."
-                   if session_id else
+                   if deliver_to_chat else
                    "Click to open the Deep Research sidebar to read the report.")
             ),
             "session_id": sid,

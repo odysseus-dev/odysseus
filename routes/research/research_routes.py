@@ -636,8 +636,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         effective_max_rounds = body.max_rounds if body.max_rounds > 0 else 20
         on_complete = None
         query = body.query
+        from routes.chat_helpers import is_incognito_session
         if (body.chat_session_id and session_manager is not None
-                and _SESSION_ID_RE.match(body.chat_session_id)):
+                and _SESSION_ID_RE.match(body.chat_session_id)
+                and not is_incognito_session(body.chat_session_id)):
             on_complete = _make_chat_delivery(session_manager, body.chat_session_id, user, body.query)
             query = _with_verbatim_user_request(session_manager, body.chat_session_id, user, query)
         research_handler.start_research(

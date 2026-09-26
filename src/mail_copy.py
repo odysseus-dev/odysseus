@@ -19,9 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 def _markdown_to_html(text: str) -> str:
+    # Model output (built from fetched web pages) may carry raw HTML; Python-Markdown
+    # passes raw HTML through verbatim, so neutralise tags first. Only "<" is escaped:
+    # ">" blockquotes and "&" entities keep rendering as Markdown.
+    safe = (text or "").replace("<", "&lt;")
     try:
         import markdown as _md
-        return _md.markdown(text or "", extensions=["tables", "fenced_code"])
+        return _md.markdown(safe, extensions=["tables", "fenced_code"])
     except Exception:
         return f"<pre>{_html.escape(text or '')}</pre>"
 
@@ -74,7 +78,8 @@ def send_telegram_copy(text: str, *, tag: str = "") -> bool:
     def _send():
         import httpx
         try:
-            r = httpx.post(url, json={"text": text}, headers={"x-relay-secret": secret}, timeout=120)
+            # The relay paces parts (~1 s each) and waits out Telegram 429s.
+            r = httpx.post(url, json={"text": text}, headers={"x-relay-secret": secret}, timeout=300)
             if r.status_code == 200:
                 logger.info(f"Telegram copy sent ({tag}, {len(text)} chars)")
             else:

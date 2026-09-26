@@ -88,6 +88,14 @@ def _incognito_messages(session_id: str) -> list[dict[str, Any]]:
     return [dict(m) for m in bundle.get("messages", []) if isinstance(m, dict)]
 
 
+def is_incognito_session(session_id: str) -> bool:
+    """True while a chat is running in incognito mode (its turns live only in the
+    request-local store). Background features such as posting a research report
+    back into the chat or emailing copies must not touch such chats."""
+    sid = str(session_id or "").strip()
+    return bool(sid) and sid in _INCOGNITO_CONTEXTS
+
+
 def _append_incognito_message(session_id: str, role: str, content: Any, metadata: dict | None = None):
     sid = str(session_id or "").strip()
     if not sid:

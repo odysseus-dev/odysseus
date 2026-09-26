@@ -352,19 +352,20 @@ function _finishJob(job, status) {
   if (job._es) { job._es.close(); job._es = null; }
   if (job._timerInterval) { clearInterval(job._timerInterval); job._timerInterval = null; }
   job.elapsed = Date.now() - (job.startedAt || Date.now());
+  // The research→chat link lives in localStorage so it survives a page reload
+  // (mobile browsers often kill background tabs mid-research). Consume it on
+  // every terminal status so errored/cancelled jobs don't leave keys behind.
+  let chatSid = null;
+  try {
+    chatSid = localStorage.getItem(RESEARCH_CHAT_KEY + job.id);
+    localStorage.removeItem(RESEARCH_CHAT_KEY + job.id);
+  } catch {}
   if (status === 'done') {
     if ('Notification' in window && Notification.permission === 'granted') {
       try { new Notification('Research Complete', { body: job.query.slice(0, 80) }); } catch {}
     }
     if (_onCompleteCb) _onCompleteCb(job);
-    // The server posts the finished report into the chat that asked for it.
-    // The research→chat link lives in localStorage so it survives a page
-    // reload (mobile browsers often kill background tabs mid-research).
-    let chatSid = null;
-    try {
-      chatSid = localStorage.getItem(RESEARCH_CHAT_KEY + job.id);
-      localStorage.removeItem(RESEARCH_CHAT_KEY + job.id);
-    } catch {}
+    // The server posted the finished report into the chat that asked for it.
     if (chatSid) {
       window.dispatchEvent(new CustomEvent('odysseus:research-posted',
         { detail: { researchId: job.id, chatSid } }));
