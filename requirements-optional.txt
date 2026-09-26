@@ -50,7 +50,10 @@ markitdown[docx,pptx,xlsx,xls]==0.1.6
 # detection, honeypot auto-ban, per-route size/content-type caps, and log-only
 # credential-into-corpus / prompt-injection signals. Wired in core/guard.py and
 # only imported when the flag is set, so the default install stays unchanged.
-fastapi-guard>=8.0.0
+# 8.0.2 is the floor: it resolves per-route config through Starlette's
+# trailing-slash redirect, gives middleware-generated 403/429 pages an explicit
+# text/plain Content-Type, and floors guard-core>=4.1.0.
+fastapi-guard>=8.0.2
 # guard-core >= 4.0.0 redacts authorization, proxy-authorization, cookie and
 # x-api-key (plus query-string and body secrets) as [REDACTED] on every guard
 # log line, event and hook payload, closing the leak where 3.17.0 wrote those
@@ -74,9 +77,17 @@ fastapi-guard>=8.0.0
 # cmd-injection, sqli comment terminator), hardens the ReDoS validator against
 # the remaining quadratic shapes, and scales the custom-pattern verdict
 # deadline by measured host load, so a hostile pattern is verdicted instead of
-# stalling the perimeter on a busy host.
-# >= 8.0.0 floors guard-core>=4.0.0.
-guard-core>=4.0.2
+# stalling the perimeter on a busy host. >= 4.0.3-4.0.5 stop binary uploads
+# from producing false positives that grow with file size (binary-density
+# gate, printable-run reduction, the SQLi comment-terminator follow-up):
+# load-bearing here, where the perimeter's detection runs over uploads into
+# the RAG corpus. >= 4.1.0 stops bare query and body values such as
+# README.md from counting as recon probes (the leading-separator gate):
+# load-bearing for a search-first app whose users type file names into query
+# params. Verified against 4.1.0 with fastapi-guard 8.0.2 (2026-09-26): the
+# perimeter suite passes and the active-mode probe matrix is unchanged.
+# >= 8.0.0 floors guard-core>=4.0.0; >= 8.0.2 floors guard-core>=4.1.0.
+guard-core>=4.1.0
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
