@@ -2,8 +2,8 @@
 
 Agents: Odysseus ships ``calendar/`` under WORKDIR ``/app``. Importing httpx or
 requests then binds the app package (no ``timegm``) and crashes. Call
-``prefer_stdlib_calendar`` before those imports in ``app.py`` and the model-job
-worker. Safe to call more than once.
+``prefer_stdlib_calendar`` before those imports in ``app.py``, the model-job
+worker, and ``mcp_servers.odysseus_server``. Safe to call more than once.
 """
 
 from __future__ import annotations

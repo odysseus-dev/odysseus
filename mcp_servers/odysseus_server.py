@@ -1,6 +1,15 @@
-"""Thin Streamable-HTTP MCP adapter over Odysseus domain services."""
+"""Thin Streamable-HTTP MCP adapter over Odysseus domain services.
+
+Agents: Compose service ``odysseus-mcp`` runs ``python -m mcp_servers.odysseus_server``.
+``/app/calendar`` shadows stdlib ``calendar``; call ``prefer_stdlib_calendar``
+before domain imports so httpx/requests can load (same contract as ``app.py``).
+"""
 
 from __future__ import annotations
+
+from services.observability.stdlib_calendar import prefer_stdlib_calendar
+
+prefer_stdlib_calendar()
 
 from dataclasses import dataclass
 from typing import Any, Callable

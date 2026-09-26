@@ -19,6 +19,22 @@ from services.agents.delegation import (  # noqa: E402
 from services.agents.approvals import ApprovalDenied  # noqa: E402
 
 
+def test_odysseus_mcp_module_prefers_stdlib_calendar_before_domains():
+    """Compose ``odysseus-mcp`` crashes when ``/app/calendar`` shadows stdlib.
+
+    Agents: same footgun as the API/worker. ``prefer_stdlib_calendar`` must run
+    before ``services.agents.domains`` (and any httpx path) so
+    ``python -m mcp_servers.odysseus_server`` can boot.
+    """
+    from pathlib import Path
+
+    text = Path("mcp_servers/odysseus_server.py").read_text(encoding="utf-8")
+    assert "prefer_stdlib_calendar" in text
+    assert text.index("prefer_stdlib_calendar") < text.index(
+        "from services.agents.domains"
+    )
+
+
 class Workload:
     def authenticate(self) -> str:
         return "workload-1"
