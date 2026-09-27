@@ -2809,6 +2809,23 @@ def _summarize_stream_error(err_chunk: Optional[str]) -> str:
     return "primary model failed"
 
 
+def _combined_fallback_error(primary_model: str, primary_err: str, last_model: str, last_err: str) -> str:
+    """Terminal error when every candidate failed: lead with the PRIMARY model's
+    reason. Showing only the last fallback's error hid the real cause (e.g. an
+    exhausted Anthropic balance surfaced as a Groq 413 'request too large')."""
+    status = None
+    try:
+        for line in (primary_err or "").split("\n"):
+            if line.startswith("data: "):
+                status = json.loads(line[6:]).get("status")
+                break
+    except Exception:
+        pass
+    text = (f"{primary_model}: {_summarize_stream_error(primary_err)} — "
+            f"fallback models also failed (last: {last_model}: {_summarize_stream_error(last_err)})")
+    return f'event: error\ndata: {json.dumps({"status": status or 502, "text": text})}\n\n'
+
+
 async def stream_llm_with_fallback(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
@@ -2830,6 +2847,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     primary_model = cands[0][1]
     last_error = None
+    primary_error = None
     for i, (url, model, headers) in enumerate(cands):
         is_last = (i == len(cands) - 1)
         emitted = False
@@ -2843,14 +2861,18 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     last_error = chunk
                     retried = True
                     if i == 0:
-                        logger.warning(f"[fallback] primary {model} failed before output; trying fallback")
+                        primary_error = chunk
+                        logger.warning(f"[fallback] primary {model} failed before output ({_summarize_stream_error(chunk)}); trying fallback")
                     else:
-                        logger.warning(f"[fallback] candidate {model} failed; trying next")
+                        logger.warning(f"[fallback] candidate {model} failed ({_summarize_stream_error(chunk)}); trying next")
                     break
                 if not emitted:
-                    # A last-candidate error is already the clearest terminal
-                    # result; do not append an empty-completion error as well.
-                    yield chunk
+                    # Do not append an empty-completion error as well. When the
+                    # primary already failed, lead with ITS reason.
+                    if i > 0 and primary_error:
+                        yield _combined_fallback_error(primary_model, primary_error, model, chunk)
+                    else:
+                        yield chunk
                     return
                 yield chunk
                 continue

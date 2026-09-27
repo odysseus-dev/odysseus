@@ -238,3 +238,31 @@ def test_summarize_stream_error():
     assert "400" in llm_core._summarize_stream_error('event: error\ndata: {"status": 400, "text": "nope"}\n\n')
     assert llm_core._summarize_stream_error(None) == "primary model failed"
     assert llm_core._summarize_stream_error("garbage") == "primary model failed"
+
+
+def test_all_candidates_fail_terminal_error_leads_with_primary_reason(monkeypatch):
+    # Real incident: Anthropic balance exhausted (400) → fallbacks → last one Groq 413.
+    # The user saw only the Groq 413; the terminal error must name the primary cause.
+    def per_model(model):
+        if model == "primary":
+            return ['event: error\ndata: {"status": 400, "text": "Your credit balance is too low"}\n\n']
+        return ['event: error\ndata: {"status": 413, "text": "Request too large for model gpt-oss-20b"}\n\n']
+    chunks = _run_fallback(monkeypatch, per_model)
+    errs = [c for c in chunks if c.startswith("event: error")]
+    assert len(errs) == 1, chunks
+    payload = json.loads(errs[0].split("data: ", 1)[1])
+    assert payload["status"] == 400
+    assert payload["text"].startswith("primary: HTTP 400: Your credit balance is too low")
+    assert "backup" in payload["text"] and "413" in payload["text"]
+
+
+def test_single_candidate_error_passes_through_unchanged(monkeypatch):
+    async def fake_stream(url, model, messages, **kw):
+        yield 'event: error\ndata: {"status": 503, "text": "down"}\n\n'
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+
+    async def run():
+        return [c async for c in llm_core.stream_llm_with_fallback([("u1", "only", {})], [])]
+
+    out = asyncio.run(run())
+    assert out == ['event: error\ndata: {"status": 503, "text": "down"}\n\n']
