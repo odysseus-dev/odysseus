@@ -295,6 +295,32 @@ _BROWSER_MCP_READ_TOOLS = frozenset(
 )
 
 
+# Desktop control (mcp_servers/desktop_server.py). Screen pixels are
+# attacker-reachable
+# (a web page or email on screen can carry injected instructions). Input
+# actions drive arbitrary host apps, so they stay behind the post-untrusted
+# approval gate like any other side effect.
+_DESKTOP_MCP_PREFIX = "mcp__builtin_desktop__"
+_DESKTOP_MCP_READ_TOOLS = frozenset(
+    {
+        "mcp__builtin_desktop__desktop_screenshot",
+        "mcp__builtin_desktop__desktop_cursor_position",
+        "mcp__builtin_desktop__desktop_wait",
+    }
+)
+# No gated effect on reads: once the run has looked at the screen, looking
+# again exposes nothing new, and gating it would demand approval for every
+# re-screenshot. The output still arms the untrusted-context gate.
+_DESKTOP_MCP_READ_CAPABILITIES = _capabilities(
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_DESKTOP_MCP_ACTION_CAPABILITIES = _capabilities(
+    ToolEffect.UI_SIDE_EFFECT,
+    ToolEffect.EXTERNAL_SIDE_EFFECT,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+
+
 def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
     """Return deterministic capabilities; malformed and unknown tools fail high."""
     if not isinstance(tool_name, str) or not tool_name:
@@ -309,6 +335,10 @@ def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
             return capabilities
     if tool_name in _BROWSER_MCP_READ_TOOLS:
         return _BROWSER_MCP_READ_CAPABILITIES
+    if tool_name in _DESKTOP_MCP_READ_TOOLS:
+        return _DESKTOP_MCP_READ_CAPABILITIES
+    if tool_name.startswith(_DESKTOP_MCP_PREFIX):
+        return _DESKTOP_MCP_ACTION_CAPABILITIES
     return _UNKNOWN_CAPABILITIES
 
 

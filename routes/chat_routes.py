@@ -316,6 +316,26 @@ _BROWSER_MCP_TOOLS = {
     "mcp__builtin_browser__browser_navigate_back",
     "mcp__builtin_browser__browser_close",
 }
+# Desktop control (opt-in, ODYSSEUS_DESKTOP_CONTROL=1). The agent loop expands
+# any one of these to the full set the connected server exposes.
+_DESKTOP_MCP_TOOLS = {
+    "mcp__builtin_desktop__desktop_screenshot",
+    "mcp__builtin_desktop__desktop_click",
+    "mcp__builtin_desktop__desktop_move_mouse",
+    "mcp__builtin_desktop__desktop_drag",
+    "mcp__builtin_desktop__desktop_scroll",
+    "mcp__builtin_desktop__desktop_type",
+    "mcp__builtin_desktop__desktop_key",
+    "mcp__builtin_desktop__desktop_cursor_position",
+    "mcp__builtin_desktop__desktop_wait",
+}
+_DESKTOP_INTENT_RE = re.compile(
+    r"\b(?:(?:my|the)\s+(?:screen|desktop|computer|pc|monitor|mouse|keyboard)|"
+    r"screen\s*shot|take\s+(?:over|control)|control\s+my|"
+    r"what(?:'s|\s+is)\s+on\s+(?:my\s+)?screen|desktop\s+app|"
+    r"open\s+(?:the\s+)?(?:app|application|program))\b",
+    re.I,
+)
 
 
 def _recent_session_text(sess, limit: int = 8, max_chars: int = 2000) -> str:
@@ -1047,6 +1067,9 @@ def setup_chat_routes(
                 r"contact\s+form|web\s*form|form\s+submission)\b",
                 _msg_l,
             ))
+        _explicit_desktop_intent = bool(
+            isinstance(message, str) and _DESKTOP_INTENT_RE.search(message)
+        )
         _allow_browser_for_web_turn = bool(
             _explicit_browser_intent
             or _explicit_web_intent
@@ -1233,6 +1256,8 @@ def setup_chat_routes(
                 if pending_tool_approval.tool_name in WEB_TOOL_NAMES:
                     allow_web_search = "true"
                     _search_enabled = True
+                if pending_tool_approval.tool_name in _DESKTOP_MCP_TOOLS or _DESKTOP_INTENT_RE.search(message or ""):
+                    _explicit_desktop_intent = True
                 chat_mode = "agent"
             else:
                 # A normal user message supersedes the card that was waiting
@@ -1285,6 +1310,11 @@ def setup_chat_routes(
                     auto_escalated = True
                     _workspace_agent_intent = False
                     logger.info("chat→agent auto-escalation: contextual browser/form follow-up")
+            if _explicit_desktop_intent and chat_mode == "chat":
+                chat_mode = "agent"
+                auto_escalated = True
+                _workspace_agent_intent = False
+                logger.info("chat→agent auto-escalation: desktop control request")
             if not workspace and isinstance(message, str):
                 _auto_workspace, _ = _resolve_workspace_from_message_path(request, message)
                 if _auto_workspace:
@@ -1553,6 +1583,8 @@ def setup_chat_routes(
                 disabled_tools.update({"bash", "python", "read_file", "write_file"})
             if not _privs.get("can_use_browser", True):
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
+            if not _privs.get("can_use_desktop", _privs.get("can_use_bash", True)):
+                disabled_tools.update(_DESKTOP_MCP_TOOLS)
             if not _privs.get("can_use_documents", True):
                 disabled_tools.update({"create_document", "edit_document", "update_document", "suggest_document"})
             if not _privs.get("can_generate_images", True):
@@ -1581,6 +1613,8 @@ def setup_chat_routes(
             })
             if not _allow_browser_for_web_turn:
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
+            if not _explicit_desktop_intent:
+                disabled_tools.update(_DESKTOP_MCP_TOOLS)
 
         # Disable document tools in compare sessions — they break the pane UI
         if sess.name and sess.name.startswith("[CMP]"):
@@ -2332,6 +2366,8 @@ def setup_chat_routes(
                             _forced_tools |= set(_BROWSER_MCP_TOOLS)
                     elif _explicit_browser_intent:
                         _forced_tools = set(_BROWSER_MCP_TOOLS)
+                    if _explicit_desktop_intent:
+                        _forced_tools = (_forced_tools or set()) | set(_DESKTOP_MCP_TOOLS)
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,

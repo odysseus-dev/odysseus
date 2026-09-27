@@ -17,6 +17,10 @@ from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
+# Built-in servers whose tools are called via native function calling rather
+# than the code-block format the other built-ins are hardcoded into.
+FUNCTION_CALLING_BUILTINS = frozenset({"builtin_browser", "builtin_desktop"})
+
 def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
     args = args or []
@@ -577,7 +581,7 @@ class McpManager:
         for server_id, tools in self._tools.items():
             # Skip builtin Python servers — they use the code-block tool format
             # But include NPX-based builtins (like browser) which need function calling
-            if self.is_builtin(server_id) and server_id != "builtin_browser":
+            if self.is_builtin(server_id) and server_id not in FUNCTION_CALLING_BUILTINS:
                 continue
             conn = self._connections.get(server_id, {})
             server_name = conn.get("name", server_id)
@@ -676,7 +680,7 @@ class McpManager:
         for t in tools:
             # Skip builtin Python servers — they're already in the agent prompt
             # But include NPX-based builtins (like browser) which aren't hardcoded
-            if self.is_builtin(t["server_id"]) and t["server_id"] != "builtin_browser":
+            if self.is_builtin(t["server_id"]) and t["server_id"] not in FUNCTION_CALLING_BUILTINS:
                 continue
             if t.get("is_disabled"):
                 continue
