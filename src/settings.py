@@ -98,6 +98,13 @@ DEFAULT_SETTINGS = {
     "research_planning_timeout_seconds": 90,
     "research_query_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
+    # Ordered fallback chain for deep-research LLM calls when the research
+    # model fails (429 / 402 / 5xx / unreachable). Entries:
+    #   {"endpoint_id": "...", "model": "...",
+    #    "limited": true,              # free tier: calls serialized
+    #    "max_input_chars": 12000,     # prompt trimmed to fit per-minute limits
+    #    "max_output_tokens": 2048}    # Groq counts max_tokens into its TPM
+    "research_model_fallbacks": [],
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
     # (30 min) is comfortable for most local setups while still bounding

@@ -473,6 +473,40 @@ def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
     return _resolve_fallback_candidates("vision_model_fallbacks", owner=owner)
 
 
+def resolve_research_fallback_candidates(owner: Optional[str] = None) -> list:
+    """Deep-research fallback chain (`research_model_fallbacks`) as dicts
+    {url, model, headers, limited, max_input_chars, max_output_tokens}; entries
+    that can't resolve are skipped. The primary research model is NOT included."""
+    out = []
+    try:
+        from src.settings import get_setting
+        chain = get_setting("research_model_fallbacks", []) or []
+    except Exception:
+        return out
+    for entry in chain:
+        if not isinstance(entry, dict):
+            continue
+        resolved = resolve_endpoint_by_id(entry.get("endpoint_id", ""), entry.get("model", ""), owner=owner)
+        if not resolved:
+            continue
+        url, model, headers = resolved
+
+        def _pos_int(key):
+            try:
+                v = int(entry.get(key) or 0)
+            except (TypeError, ValueError):
+                v = 0
+            return v if v > 0 else None
+
+        out.append({
+            "url": url, "model": model, "headers": headers,
+            "limited": bool(entry.get("limited")),
+            "max_input_chars": _pos_int("max_input_chars"),
+            "max_output_tokens": _pos_int("max_output_tokens"),
+        })
+    return out
+
+
 def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
     out = []
     try:

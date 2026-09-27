@@ -782,7 +782,19 @@ class ResearchHandler:
         # Probe the endpoint before committing to a long research run
         if progress_callback:
             progress_callback({"phase": "probing", "model": llm_model})
-        await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
+        try:
+            await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
+        except RuntimeError as probe_err:
+            # With a research fallback chain configured the run can still go
+            # ahead — DeepResearcher._llm falls through to the next candidate.
+            try:
+                from src.endpoint_resolver import resolve_research_fallback_candidates
+                _has_fallbacks = bool(resolve_research_fallback_candidates())
+            except Exception:
+                _has_fallbacks = False
+            if not _has_fallbacks:
+                raise
+            logger.warning("Primary research model probe failed (%s) — continuing on research_model_fallbacks", probe_err)
 
         try:
             from src.deep_research import DeepResearcher

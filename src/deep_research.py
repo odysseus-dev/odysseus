@@ -209,10 +209,23 @@ class DeepResearcher:
         progress_callback: Optional[Callable] = None,
         search_provider: Optional[str] = None,
         category: Optional[str] = None,
+        llm_fallbacks: Optional[List[Dict]] = None,
     ):
         self.llm_endpoint = llm_endpoint
         self.llm_model = llm_model
         self.llm_headers = llm_headers
+        # Fallback chain for LLM calls (settings `research_model_fallbacks`
+        # unless passed explicitly). See _llm for cooldown / limited handling.
+        if llm_fallbacks is None:
+            try:
+                from src.endpoint_resolver import resolve_research_fallback_candidates
+                llm_fallbacks = resolve_research_fallback_candidates()
+            except Exception as e:
+                logger.warning("Research fallback chain unavailable: %s", e)
+                llm_fallbacks = []
+        self.llm_fallbacks = [f for f in (llm_fallbacks or []) if f.get("url") and f.get("model")]
+        self._llm_cooldown: Dict[int, float] = {}
+        self._llm_limited_lock = asyncio.Lock()
         self.search_provider_override = search_provider
         self.category = category
         self.max_rounds = max_rounds
@@ -378,20 +391,72 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # LLM helper
     # ------------------------------------------------------------------
+    LLM_COOLDOWN_SECONDS = 90
+
+    @staticmethod
+    def _fit_messages(messages: List[Dict], max_chars: Optional[int]) -> List[Dict]:
+        """Trim the longest text messages (keeping their start) until the total
+        fits max_chars — free tiers reject oversized requests (HTTP 413)."""
+        if not max_chars:
+            return messages
+        msgs = [dict(m) for m in messages]
+        total = sum(len(m.get("content") or "") for m in msgs if isinstance(m.get("content"), str))
+        while total > max_chars:
+            idx = max((i for i, m in enumerate(msgs) if isinstance(m.get("content"), str)),
+                      key=lambda i: len(msgs[i]["content"]), default=None)
+            if idx is None:
+                break
+            content = msgs[idx]["content"]
+            keep = max(200, len(content) - (total - max_chars) - 40)
+            if keep >= len(content):
+                break
+            msgs[idx]["content"] = content[:keep] + "\n…[обрезано под лимит модели]"
+            total = sum(len(m.get("content") or "") for m in msgs if isinstance(m.get("content"), str))
+        return msgs
+
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60) -> str:
-        """Call the LLM asynchronously and strip thinking tags."""
+        """Call the research LLM with fallback, then strip thinking tags.
+
+        Candidates: primary research model, then `research_model_fallbacks`.
+        A candidate that fails goes into a short cooldown so later calls skip it
+        instead of re-hitting a rate-limited/unpaid provider. 429s wait for the
+        provider's Retry-After (rate_limit_retries) before falling through.
+        `limited` (free-tier) candidates are serialized and get trimmed prompts
+        / capped max_tokens so they fit per-minute token limits.
+        """
         from src.llm_core import llm_call_async
-        response = await llm_call_async(
-            url=self.llm_endpoint,
-            model=self.llm_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            headers=self.llm_headers,
-            timeout=timeout,
-        )
-        return strip_thinking(response)
+        cands = [{"url": self.llm_endpoint, "model": self.llm_model, "headers": self.llm_headers,
+                  "limited": False, "max_input_chars": None, "max_output_tokens": None}] + self.llm_fallbacks
+        now = time.time()
+        order = [i for i in range(len(cands)) if self._llm_cooldown.get(i, 0) <= now] or list(range(len(cands)))
+        last_exc: Optional[Exception] = None
+        for i in order:
+            c = cands[i]
+            msgs = self._fit_messages(messages, c.get("max_input_chars"))
+            mt = min(max_tokens, c["max_output_tokens"]) if c.get("max_output_tokens") else max_tokens
+            try:
+                call = llm_call_async(url=c["url"], model=c["model"], messages=msgs, temperature=temperature,
+                                      max_tokens=mt, headers=c.get("headers"), timeout=timeout,
+                                      rate_limit_retries=2, workload="research")
+                if c.get("limited"):
+                    async with self._llm_limited_lock:
+                        response = await call
+                else:
+                    response = await call
+                if i:
+                    logger.info("Research LLM answered by fallback #%d %s", i, c["model"])
+                return strip_thinking(response)
+            except Exception as e:
+                last_exc = e
+                status = getattr(e, "status_code", None)
+                # 413 = this request is too big for that model — not the model's fault
+                if status != 413:
+                    self._llm_cooldown[i] = time.time() + self.LLM_COOLDOWN_SECONDS
+                if i + 1 < len(cands) or i != order[-1]:
+                    logger.warning("Research LLM %s failed (%s: %s) — trying next candidate",
+                                   c["model"], status or type(e).__name__, str(getattr(e, "detail", e))[:160])
+        raise last_exc if last_exc else RuntimeError("no research LLM candidates")
 
     # ------------------------------------------------------------------
     # PLAN: create research strategy

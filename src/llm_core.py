@@ -1958,6 +1958,29 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     raise last_err if last_err else HTTPException(503, "All fallback candidates failed")
 
 
+# Backoff schedule for HTTP 429 when a caller opts in via rate_limit_retries
+# (deep research). Chat keeps the old fast-fail behaviour (default 0).
+RATE_LIMIT_BACKOFF = (5.0, 15.0, 45.0)
+RATE_LIMIT_MAX_WAIT = 30.0
+
+
+def _retry_after_seconds(value) -> Optional[float]:
+    """Parse a Retry-After header (delta-seconds or HTTP-date) into seconds."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(str(value).strip()))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        import datetime as _dt
+        when = parsedate_to_datetime(str(value))
+        return max(0.0, (when - _dt.datetime.now(when.tzinfo)).total_seconds())
+    except Exception:
+        return None
+
+
 async def llm_call_async(
     url: str,
     model: str,
@@ -1970,8 +1993,14 @@ async def llm_call_async(
     prompt_type: Optional[str] = None,
     session_id: Optional[str] = None,
     workload: str = "foreground",
+    rate_limit_retries: int = 0,
 ) -> str:
-    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging.
+
+    rate_limit_retries: extra retries on HTTP 429 that WAIT for the provider's
+    Retry-After (or RATE_LIMIT_BACKOFF), capped at RATE_LIMIT_MAX_WAIT each.
+    They don't consume max_retries. Default 0 keeps chat latency unchanged.
+    """
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -2086,6 +2115,7 @@ async def llm_call_async(
 
     call_timeout = _call_timeout(timeout)
     attempt = 0
+    rl_used = 0
     while attempt < max_retries:
         attempt += 1
         start = time.time()
@@ -2101,6 +2131,16 @@ async def llm_call_async(
                     f"LLM async call to {target_url} failed in {duration:.2f}s "
                     f"(attempt {attempt}): HTTP {r.status_code} {friendly}"
                 )
+                if r.status_code == 429 and rl_used < rate_limit_retries:
+                    wait = _retry_after_seconds(r.headers.get("retry-after"))
+                    if wait is None:
+                        wait = RATE_LIMIT_BACKOFF[min(rl_used, len(RATE_LIMIT_BACKOFF) - 1)]
+                    wait = min(wait, RATE_LIMIT_MAX_WAIT)
+                    rl_used += 1
+                    attempt -= 1  # rate-limit waits don't consume normal attempts
+                    logger.warning(f"LLM 429 from {_host_key(target_url)} — waiting {wait:.0f}s (rate-limit retry {rl_used}/{rate_limit_retries})")
+                    await asyncio.sleep(wait)
+                    continue
                 if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
                     await asyncio.sleep(LLMConfig.RETRY_DELAY)
                     continue
