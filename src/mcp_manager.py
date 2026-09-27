@@ -105,6 +105,75 @@ _MCP_READONLY_VERBS = (
 )
 
 
+_TRUE_STRINGS = {"true", "yes", "1"}
+_FALSE_STRINGS = {"false", "no", "0"}
+
+
+def _schema_types(schema: Dict) -> List[str]:
+    """Declared JSON-schema types, including those inside anyOf/oneOf."""
+    types: List[str] = []
+    t = schema.get("type")
+    if isinstance(t, str):
+        types.append(t)
+    elif isinstance(t, list):
+        types.extend(x for x in t if isinstance(x, str))
+    for key in ("anyOf", "oneOf"):
+        for sub in schema.get(key) or []:
+            if isinstance(sub, dict):
+                types.extend(_schema_types(sub))
+    return types
+
+
+def _coerce_value(value: Any, schema: Any) -> Any:
+    if not isinstance(schema, dict):
+        return value
+    types = _schema_types(schema)
+    if isinstance(value, str):
+        if "string" in types or not types:
+            return value
+        s = value.strip()
+        if "integer" in types:
+            try:
+                return int(s)
+            except ValueError:
+                pass
+        if "number" in types:
+            try:
+                f = float(s)
+                return int(f) if f.is_integer() and "." not in s and "e" not in s.lower() else f
+            except ValueError:
+                pass
+        if "boolean" in types:
+            if s.lower() in _TRUE_STRINGS:
+                return True
+            if s.lower() in _FALSE_STRINGS:
+                return False
+        if ("array" in types or "object" in types) and s[:1] in "[{":
+            try:
+                parsed = json.loads(s)
+            except ValueError:
+                return value
+            return _coerce_value(parsed, schema)
+        return value
+    if isinstance(value, dict) and isinstance(schema.get("properties"), dict):
+        return _coerce_mcp_args(value, schema)
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        return [_coerce_value(v, schema["items"]) for v in value]
+    return value
+
+
+def _coerce_mcp_args(arguments: Any, schema: Any) -> Any:
+    """Coerce string-typed scalars in tool arguments to the types the schema
+    declares (integer/number/boolean, JSON-encoded arrays/objects). Values
+    that don't parse, and anything the schema doesn't describe, pass through."""
+    if not isinstance(arguments, dict) or not isinstance(schema, dict):
+        return arguments
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return arguments
+    return {k: _coerce_value(v, props.get(k)) if k in props else v for k, v in arguments.items()}
+
+
 def mcp_tool_is_readonly(tool: Dict) -> bool:
     """Classify an MCP tool as safe (non-mutating) for plan mode.
 
@@ -465,6 +534,13 @@ class McpManager:
                 "name": srv.name,
             }
 
+    def _tool_schema(self, server_id: str, tool_name: str) -> Dict:
+        for tool in self._tools.get(server_id) or []:
+            if tool.get("name") == tool_name:
+                schema = tool.get("input_schema")
+                return schema if isinstance(schema, dict) else {}
+        return {}
+
     async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
 
@@ -476,6 +552,9 @@ class McpManager:
 
         server_id = parts[1]
         tool_name = parts[2]
+        # Models often emit numbers/booleans as strings ("limit": "5"); strict
+        # servers (Firecrawl) reject that with -32602, so coerce per schema.
+        arguments = _coerce_mcp_args(arguments, self._tool_schema(server_id, tool_name))
 
         session = self._sessions.get(server_id)
         if not session:

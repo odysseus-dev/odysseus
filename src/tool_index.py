@@ -416,7 +416,11 @@ class ToolIndex:
             {"web_search", "web_fetch"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
-                   "report on", "do research", "look up everything"}):
+                   "report on", "do research", "look up everything",
+                   # Russian (matched as whole words)
+                   "исследование", "исследования", "исследованию", "исследуй",
+                   "исследуйте", "расследование", "расследуй", "изучи", "изучите",
+                   "ресерч", "ресёрч"}):
             {"trigger_research"},
         # Settings-change intent — "change my…/set my…/use X for…/turn on…".
         frozenset({"change my", "set my", "use the voice", "change the voice",

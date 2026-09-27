@@ -491,6 +491,11 @@ _DOMAIN_RULES = {
 - Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
 - Use `manage_contact` to list, add, update, or delete contacts in the address book.
 - Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
+    "research": """\
+## Research rules
+- A request to research/investigate a topic in ANY language ("research X", «проведи исследование», «исследуй», «изучи тему», «глубокое исследование») means `trigger_research` — the live Deep Research job — not a chain of web_search/web_fetch/MCP calls answered inline.
+- If the user says "research based on the previous answer" / «на основе предыдущего ответа», write a concrete `topic` from the conversation (keep names exactly as written) and call `trigger_research`.
+- Only answer inline when the user explicitly asks for a quick lookup.""",
     "integrations": """\
 ## Integration/API rules
 - To query or control a configured service integration (Home Assistant, Miniflux, Gitea, Linkding, Jellyfin, or any other registered service), use `api_call` with the integration name, HTTP method, path, and optional JSON body.
@@ -509,6 +514,7 @@ _DOMAIN_TOOL_MAP = {
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
+    "research": {"trigger_research", "manage_research"},
 }
 
 _WORKSPACE_TERMINUS_TOOLS = (
@@ -1328,6 +1334,18 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("web")
     if has(r"\b(research|deep dive|investigate|look into)\b"):
         domains.add("web")
+    # Deep-research intent → seed trigger_research deterministically. The
+    # embedding model is English-only and the tool index can time out on a
+    # cold start, so Russian requests like «Проведи исследование…» otherwise
+    # never see the tool and the agent improvises inline with MCP calls.
+    if has(
+        r"\b(deep research|deep dive|investigate|(?:do|run|start|conduct) (?:a |some )?(?:deep )?research|research (?:on|about|into))\b",
+        r"^\s*research\b",
+        r"\b(?:исследуй|исследуйте|расследуй|расследуйте|изучи|изучите|разузнай|разузнайте)\b",
+        r"\b(?:проведи|проведите|провести|сделай|сделайте|сделать|запусти|запустите|запустить|начни|начните|нужно|нужн[аоы]|хочу|давай)\b.{0,40}\b(?:исследовани\w*|расследовани\w*|ресерч\w*|ресёрч\w*)",
+        r"\bглубок\w*\s+(?:исследовани\w*|ресерч\w*|ресёрч\w*|анализ\w*)",
+    ):
+        domains.add("research")
     if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
         domains.add("ui")
     if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
@@ -3338,12 +3356,14 @@ async def stream_agent_loop(
                     timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
+                # Leave _relevant_tools unset so the keyword fallback below
+                # still runs (same reasoning as the retrieval timeout).
                 logger.warning(
-                    "[tool-rag] Tool index init exceeded %.1fs; falling back to always-available tools",
+                    "[tool-rag] Tool index init exceeded %.1fs; falling back to keyword tool selection",
                     _TOOL_SELECTION_TIMEOUT_SECONDS,
                 )
                 tool_idx = None
-                _relevant_tools = set(ALWAYS_AVAILABLE)
+                _relevant_tools = None
             if tool_idx:
                 if mcp_mgr:
                     try:
