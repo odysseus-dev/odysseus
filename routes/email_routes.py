@@ -479,6 +479,28 @@ def _uid_exists(conn, uid: str) -> bool:
         return False
 
 
+def _uid_search_text_terms(conn, terms):
+    """UID SEARCH for queries with non-ASCII text (e.g. Cyrillic).
+
+    imaplib encodes commands as ASCII and RFC 3501 forbids 8-bit bytes in
+    quoted strings, so the usual `TEXT "рэйки"` either raises
+    UnicodeEncodeError or is rejected by the server. Send each term as a
+    UTF-8 literal with CHARSET UTF-8 instead. TEXT matches headers
+    (From/To/Cc/Subject) and body, so it covers the fields the ASCII
+    query ORs together. imaplib allows one literal per command, so multiple
+    terms are ANDed by intersecting per-term results.
+    """
+    uids = None
+    for term in terms:
+        conn.literal = str(term).encode("utf-8")
+        status, data = conn.uid("SEARCH", "CHARSET", "UTF-8", "TEXT")
+        if status != "OK":
+            return status, data
+        found = set(data[0].split()) if data and data[0] else set()
+        uids = found if uids is None else uids & found
+    return "OK", [b" ".join(sorted(uids or (), key=int))]
+
+
 def _imap_uid_search(conn, criteria: str):
     return conn.uid("SEARCH", None, criteria)
 
@@ -2798,7 +2820,10 @@ def setup_email_routes():
 
                 search_cmd = _email_imap_search_criteria(q)
 
-                status, data = _imap_uid_search(conn, search_cmd)
+                if q.isascii():
+                    status, data = _imap_uid_search(conn, search_cmd)
+                else:
+                    status, data = _uid_search_text_terms(conn, _email_search_terms(q))
                 if status != "OK" or not data[0]:
                     if indexed_response and indexed_response.get("emails"):
                         indexed_response["fallback"] = True

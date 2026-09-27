@@ -1091,6 +1091,28 @@ def _list_emails_across_accounts(folder="INBOX", max_results=20,
     return combined[:max_results], errors
 
 
+def _uid_search_text_terms(conn, terms):
+    """UID SEARCH for queries with non-ASCII text (e.g. Cyrillic).
+
+    imaplib encodes commands as ASCII and RFC 3501 forbids 8-bit bytes in
+    quoted strings, so the usual `TEXT "рэйки"` either raises
+    UnicodeEncodeError or is rejected by the server. Send each term as a
+    UTF-8 literal with CHARSET UTF-8 instead. TEXT matches headers
+    (From/To/Cc/Subject) and body, so it covers the fields the ASCII
+    query ORs together. imaplib allows one literal per command, so multiple
+    terms are ANDed by intersecting per-term results.
+    """
+    uids = None
+    for term in terms:
+        conn.literal = str(term).encode("utf-8")
+        status, data = conn.uid("SEARCH", "CHARSET", "UTF-8", "TEXT")
+        if status != "OK":
+            return status, data
+        found = set(data[0].split()) if data and data[0] else set()
+        uids = found if uids is None else uids & found
+    return "OK", [b" ".join(sorted(uids or (), key=int))]
+
+
 def _search_emails(query, folders=None, max_results=20, account=None):
     """IMAP-search emails by free-text query. Matches FROM, SUBJECT, and
     body TEXT. Walks multiple folders so older threads outside INBOX
@@ -1118,7 +1140,10 @@ def _search_emails(query, folders=None, max_results=20, account=None):
                 status, _ = conn.select(_q(folder), readonly=True)
                 if status != "OK":
                     continue
-                status, data = conn.uid("SEARCH", None, search_cmd)
+                if str(query).isascii():
+                    status, data = conn.uid("SEARCH", None, search_cmd)
+                else:
+                    status, data = _uid_search_text_terms(conn, [str(query).strip()])
                 if status != "OK" or not data or not data[0]:
                     continue
                 uid_list = list(reversed(data[0].split()))[:max_results]
