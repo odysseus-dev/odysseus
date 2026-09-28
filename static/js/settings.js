@@ -4447,6 +4447,17 @@ async function initUnifiedIntegrations() {
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>Signature <span style="font-weight:normal;opacity:0.7">— added to messages you compose</span></div>
           <div class="settings-row" style="align-items:flex-start"><label class="settings-label" style="padding-top:6px">Text${_hint('Appended to new messages, replies and forwards from this account. It goes into the draft before it opens, so you can edit or delete it per message. Markdown works — the same renderer that formats the body formats this.')}</label><textarea id="uf-email-signature" class="settings-input" rows="4" style="resize:vertical;font-family:inherit;line-height:1.5;" placeholder="Ada Lovelace&#10;Analytical Engines Ltd&#10;+44 20 7946 0958"></textarea></div>
           <div class="settings-row"><label class="settings-label">Use signature${_hint('Turn off to stop adding it without deleting the text.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-signature-on" checked><span class="admin-slider"></span></label></div>
+          <div class="settings-row" style="align-items:flex-start"><label class="settings-label" style="padding-top:6px">Image${_hint('A logo or scanned sign-off, shown under the text. It is embedded in the message rather than linked, so it displays without the recipient having to allow remote images. PNG, JPEG or GIF, up to 256 KB.')}</label>
+            <div style="flex:1;display:flex;flex-direction:column;gap:6px;align-items:flex-start;">
+              <img id="uf-email-signature-img" alt="" style="display:none;max-width:200px;max-height:80px;border:1px solid var(--border);border-radius:4px;padding:4px;background:var(--card);">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <input type="file" id="uf-email-signature-file" accept="image/png,image/jpeg,image/gif" style="display:none;">
+                <button type="button" class="admin-btn-add" id="uf-email-signature-pick" style="background:transparent;">Choose image</button>
+                <button type="button" class="admin-btn-add" id="uf-email-signature-clear" style="display:none;background:transparent;">Remove</button>
+                <span id="uf-email-signature-img-msg" style="font-size:11px;opacity:0.7"></span>
+              </div>
+            </div>
+          </div>
           <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-email-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -4716,6 +4727,68 @@ async function initUnifiedIntegrations() {
       el('uf-smtp-port').value = 465;
       el('uf-smtp-security').value = 'ssl';
     }
+    // ── Signature image ──
+    // `_sigImage` holds a pending upload as a data URL. It stays null while
+    // the user does not touch the picker, and the save body then omits
+    // `signature_image` entirely — which is what tells the server to leave
+    // the stored image alone. '' is the explicit "remove it" value.
+    let _sigImage = null;
+    const _sigImgEl = el('uf-email-signature-img');
+    const _sigClearBtn = el('uf-email-signature-clear');
+    const _sigImgMsg = el('uf-email-signature-img-msg');
+    const _SIG_IMG_MAX = 256 * 1024;
+
+    const _showSigImage = (src) => {
+      if (src) {
+        _sigImgEl.src = src;
+        _sigImgEl.style.display = '';
+        _sigClearBtn.style.display = '';
+      } else {
+        _sigImgEl.removeAttribute('src');
+        _sigImgEl.style.display = 'none';
+        _sigClearBtn.style.display = 'none';
+      }
+    };
+
+    if (existing && existing.has_signature_image) {
+      // Cache-busted: the URL does not change when the image behind it does.
+      _showSigImage(`/api/email/accounts/${existing.id}/signature-image?t=${Date.now()}`);
+    }
+
+    el('uf-email-signature-pick').addEventListener('click', () => {
+      el('uf-email-signature-file').click();
+    });
+
+    el('uf-email-signature-file').addEventListener('change', (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      _sigImgMsg.textContent = '';
+      if (!file) return;
+      // Checked here as well as on the server so a 5 MB photo fails
+      // immediately instead of after uploading it.
+      if (file.size > _SIG_IMG_MAX) {
+        _sigImgMsg.textContent = 'Too large — 256 KB maximum.';
+        ev.target.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        _sigImage = String(reader.result || '');
+        _showSigImage(_sigImage);
+        _sigImgMsg.textContent = 'Saved when you save the account.';
+        _resetTestBtn();
+      };
+      reader.onerror = () => { _sigImgMsg.textContent = 'Could not read that file.'; };
+      reader.readAsDataURL(file);
+      ev.target.value = '';
+    });
+
+    _sigClearBtn.addEventListener('click', () => {
+      _sigImage = '';
+      _showSigImage(null);
+      _sigImgMsg.textContent = 'Removed when you save the account.';
+      _resetTestBtn();
+    });
+
     el('uf-email-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     // Reset the Test button to neutral when the user edits any field
@@ -4757,6 +4830,7 @@ async function initUnifiedIntegrations() {
         signature: el('uf-email-signature').value,
         signature_enabled: el('uf-email-signature-on').checked,
       };
+      if (_sigImage !== null) body.signature_image = _sigImage;
       if (el('uf-imap-pass').value) body.imap_password = el('uf-imap-pass').value;
       if (el('uf-smtp-pass').value) body.smtp_password = el('uf-smtp-pass').value;
       if (el('uf-smtp-same').checked) {

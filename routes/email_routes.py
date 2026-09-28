@@ -37,12 +37,19 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from src.constants import DATA_DIR
+from src.email_html import md_to_email_html as _md_to_email_html
 from src.email_signature import (
+    SignatureImageError as _SignatureImageError,
     account_signature as _account_signature,
+    account_signature_image as _account_signature_image,
     apply_signature as _apply_signature,
+    body_has_signature as _body_has_signature,
+    html_with_signature_image as _html_with_signature_image,
     normalize_signature as _normalize_signature,
+    normalize_signature_image as _normalize_signature_image,
+    signature_image_part as _signature_image_part,
 )
 
 from src.llm_core import llm_call_async
@@ -1589,52 +1596,6 @@ def _envelope_recipients(*fields: str) -> list:
         if addr:
             out.append(addr)
     return out
-
-
-def _md_to_email_html(text: str) -> str:
-    """Render the compose markdown body to a SAFE HTML fragment for the email's
-    text/html part. Everything is HTML-escaped FIRST (so a pasted <script> /
-    <img onerror=...> can never become live HTML in the recipient's client),
-    then the toolbar's formatting is layered on with controlled regex: bold,
-    italic, strike, inline code, http(s) links, headings, and bullet/numbered
-    lists. Plain-text readers still get the raw markdown via the text/plain part.
-    """
-    def _inline(s: str) -> str:
-        s = html.escape(s)                                  # escape BEFORE formatting
-        s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
-        s = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", s)
-        s = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", s)
-        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-        # links: text + http(s) url only (escape() already neutralised quotes)
-        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', s)
-        return s
-
-    parts: list[str] = []
-    in_ul = in_ol = False
-    for ln in (text or "").split("\n"):
-        m_h = re.match(r"^(#{1,3})\s+(.*)$", ln)
-        m_ul = re.match(r"^\s*[-*]\s+(.*)$", ln)
-        m_ol = re.match(r"^\s*\d+\.\s+(.*)$", ln)
-        if m_h:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
-            lvl = len(m_h.group(1))
-            parts.append(f"<h{lvl}>{_inline(m_h.group(2))}</h{lvl}>")
-        elif m_ul:
-            if in_ol: parts.append("</ol>"); in_ol = False
-            if not in_ul: parts.append("<ul>"); in_ul = True
-            parts.append(f"<li>{_inline(m_ul.group(1))}</li>")
-        elif m_ol:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if not in_ol: parts.append("<ol>"); in_ol = True
-            parts.append(f"<li>{_inline(m_ol.group(1))}</li>")
-        else:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
-            parts.append(_inline(ln) + "<br>")
-    if in_ul: parts.append("</ul>")
-    if in_ol: parts.append("</ol>")
-    return "<html><body>" + "\n".join(parts) + "</body></html>"
 
 
 # Tags the WYSIWYG email composer may legitimately produce.
@@ -4739,15 +4700,45 @@ def setup_email_routes():
             logger.warning(f"No SMTP-capable account resolved: {e}")
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
 
-        # Use 'mixed' if we have attachments, 'alternative' otherwise
+        # The composer already signed the draft, so append_signature only
+        # fires for callers that built the body themselves. `apply_signature`
+        # is a no-op on a body that already carries the signature, which is
+        # what keeps a double-append from reaching the recipient.
+        _sig_text = _account_signature(cfg)
+        if req.append_signature:
+            req.body = _apply_signature(req.body, _sig_text)
+
+        # The signature image rides on the signature text. The composer puts
+        # that text in the draft precisely so the user can delete it to send
+        # one unsigned message; attaching the logo anyway would defeat that,
+        # so the image goes out only when the text actually survived.
+        _sig_image, _sig_image_mime = _account_signature_image(cfg)
+        if _sig_image and not _body_has_signature(req.body, _sig_text):
+            _sig_image = _sig_image_mime = None
+
+        # Container shape, decided before any header is set so the object
+        # that carries the headers is the one that gets sent.
+        #
+        #   mixed                  ← only when there are attachments
+        #     related              ← only when there is a signature image
+        #       alternative        ← always: text/plain + text/html
+        #       image (inline)
+        #     attachments…
+        #
+        # related has to WRAP the alternative pair rather than sit beside
+        # it: a part with no stated relation to the HTML is what makes
+        # clients list the logo as a downloadable attachment instead of
+        # rendering it where the body references it.
         has_attachments = bool(req.attachments)
         logger.info(f"Sending email to {req.to}: subject={req.subject!r}, attachments={req.attachments}")
+        body_container = MIMEMultipart("alternative")
+        related = MIMEMultipart("related") if _sig_image else None
         if has_attachments:
             outer = MIMEMultipart("mixed")
-            body_container = MIMEMultipart("alternative")
+        elif related is not None:
+            outer = related
         else:
-            outer = MIMEMultipart("alternative")
-            body_container = outer
+            outer = body_container
 
         req.to = _normalize_addr_field(req.to or "")
         req.cc = _normalize_addr_field(req.cc or "")
@@ -4767,13 +4758,6 @@ def setup_email_routes():
         if req.odysseus_kind:
             _apply_odysseus_headers(outer, req.odysseus_kind)
 
-        # The composer already signed the draft, so this only fires for
-        # callers that built the body themselves. `apply_signature` is a no-op
-        # on a body that already carries the signature, which is what keeps a
-        # double-append from reaching the recipient.
-        if req.append_signature:
-            req.body = _apply_signature(req.body, _account_signature(cfg))
-
         # Plain + HTML body. Escape user content so a `<script>` or
         # `<img onerror=...>` paste in compose doesn't end up as live HTML
         # in the recipient's MUA.
@@ -4783,10 +4767,16 @@ def setup_email_routes():
         # so neither can introduce live script/handlers.
         _html_part = (_sanitize_email_html(req.body_html) if req.body_html else None) \
             or _md_to_email_html(req.body)
+        if _sig_image:
+            _html_part = _html_with_signature_image(_html_part)
         body_container.attach(MIMEText(_html_part, "html", "utf-8"))
 
+        if related is not None:
+            related.attach(body_container)
+            related.attach(_signature_image_part(_sig_image, _sig_image_mime))
+
         if has_attachments:
-            outer.attach(body_container)
+            outer.attach(related if related is not None else body_container)
             _attach_compose_uploads(outer, req.attachments)
 
         # Build recipient list (parse the address grammar so display names with
@@ -5863,6 +5853,12 @@ def setup_email_routes():
                     "signature_enabled": bool(
                         True if r.signature_enabled is None else r.signature_enabled
                     ),
+                    # The bytes are not in this list. A few accounts with a
+                    # logo each would make the settings page download a
+                    # megabyte of base64 it only needs a thumbnail of; the
+                    # preview fetches one image from its own route.
+                    "has_signature_image": bool(getattr(r, "signature_image", None)),
+                    "signature_image_mime": getattr(r, "signature_image_mime", None) or "",
                 })
             return {"accounts": out}
         finally:
@@ -5883,6 +5879,12 @@ def setup_email_routes():
         smtp_port, port_err = _coerce_port(data.get("smtp_port"), 465)
         if port_err:
             return {"ok": False, "error": port_err}
+        try:
+            sig_image, sig_image_mime = _normalize_signature_image(
+                data.get("signature_image")
+            )
+        except _SignatureImageError as e:
+            return {"ok": False, "error": str(e)}
         db = SessionLocal()
         try:
             _lock_email_account_owner_mutation(db, owner)
@@ -5905,6 +5907,8 @@ def setup_email_routes():
                 display_name=(data.get("display_name") or "").strip(),
                 signature=_normalize_signature(data.get("signature")),
                 signature_enabled=bool(data.get("signature_enabled", True)),
+                signature_image=sig_image,
+                signature_image_mime=sig_image_mime,
                 # SECURITY: stamp the creator so all subsequent reads / mutations
                 # can filter by user. Without this every new account leaks to
                 # every other user.
@@ -5953,6 +5957,16 @@ def setup_email_routes():
                     setattr(row, key, bool(data[key]))
             if "signature" in data:
                 row.signature = _normalize_signature(data["signature"])
+            # Absent means "leave it alone" — the settings form does not
+            # re-upload the image on every save. An explicit empty string is
+            # how the Remove button clears it.
+            if "signature_image" in data:
+                try:
+                    row.signature_image, row.signature_image_mime = (
+                        _normalize_signature_image(data["signature_image"])
+                    )
+                except _SignatureImageError as e:
+                    return {"ok": False, "error": str(e)}
             # Passwords — only overwrite when a non-empty value is
             # provided. Stored encrypted; see src/secret_storage.py.
             from src.secret_storage import encrypt as _enc
@@ -5962,6 +5976,48 @@ def setup_email_routes():
                 row.smtp_password = _enc(data["smtp_password"])
             db.commit()
             return {"ok": True, "id": row.id}
+        finally:
+            db.close()
+
+    @router.get("/accounts/{account_id}/signature-image")
+    async def get_signature_image(account_id: str, owner: str = Depends(require_user)):
+        """Serve the account's signature image for the settings preview.
+
+        Owner-scoped like every other account read: the image is not a
+        secret — it goes to every recipient — but which accounts exist and
+        what they are branded with is not something to hand out by id.
+        """
+        _assert_owns_account(account_id, owner)
+        from core.database import SessionLocal, EmailAccount
+        import base64 as _b64
+        db = SessionLocal()
+        try:
+            row = db.get(EmailAccount, account_id)
+            if not row or not getattr(row, "signature_image", None):
+                raise HTTPException(status_code=404, detail="No signature image")
+            data, mime = _account_signature_image({
+                "signature_image": row.signature_image,
+                "signature_image_mime": row.signature_image_mime,
+                # The preview shows what is stored, so the on/off switch
+                # must not hide it — that switch governs sending.
+                "signature_enabled": True,
+            })
+            if not data:
+                raise HTTPException(status_code=404, detail="No signature image")
+            try:
+                payload = _b64.b64decode(data, validate=True)
+            except Exception:
+                raise HTTPException(status_code=404, detail="No signature image")
+            return Response(
+                content=payload,
+                media_type=mime,
+                headers={
+                    "Content-Disposition": 'inline; filename="signature"',
+                    # It changes only when the user uploads a new one, and a
+                    # stale thumbnail in settings would be confusing.
+                    "Cache-Control": "no-store",
+                },
+            )
         finally:
             db.close()
 

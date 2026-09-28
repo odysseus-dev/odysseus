@@ -514,6 +514,17 @@ clients use to fold a signature away. Markdown works — the same renderer that
 formats the message body formats the signature. Turn **Use signature** off to
 stop adding it without losing the text.
 
+A logo or scanned sign-off can go under the text. Pick one with **Choose
+image** in the same section — PNG, JPEG or GIF, up to 256 KB. It is embedded
+in the message rather than linked, so it shows without the recipient having
+to allow remote images, and no third-party host learns when your mail was
+opened.
+
+The image follows the text: delete the signature from a draft before sending
+and the logo does not go out either. It appears only in the HTML part, since
+a picture cannot exist in plain text — the text signature stays the part
+every reader gets.
+
 Mail the assistant sends carries the same signature, so a reply it writes for
 you is signed the way your own are.
 
