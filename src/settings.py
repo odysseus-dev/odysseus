@@ -133,6 +133,14 @@ DEFAULT_SETTINGS = {
     # `compute_input_token_budget`.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
+    # Monthly (UTC calendar month) USD caps on Claude models, one per payment
+    # channel, priced at Anthropic list rates; once a channel's cap is reached
+    # its Claude calls are refused and the fallback chain answers. 0 disables.
+    # "claude_monthly_budget_usd": Anthropic direct/proxy and any other host;
+    # "claude_timeweb_monthly_budget_usd": the Timeweb AI gateway (api.timeweb.ai).
+    # Spend ledger: data/claude_spend.json. See src/claude_budget.py.
+    "claude_monthly_budget_usd": 7.0,
+    "claude_timeweb_monthly_budget_usd": 7.0,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell

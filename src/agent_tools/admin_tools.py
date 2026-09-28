@@ -518,6 +518,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "brave_api_key", "google_pse_key", "google_pse_cx",
             "tavily_api_key", "exa_api_key", "serper_api_key", "app_public_url",
         }
+        # Spend limits are readable from chat but never writable by the agent.
+        _SPEND_CAP_KEYS = {"claude_monthly_budget_usd", "claude_timeweb_monthly_budget_usd"}
         def _is_secret(k):
             # `token` must be a suffix, not a substring: otherwise the int
             # setting `agent_input_token_budget` (which even has a "token budget"
@@ -646,6 +648,9 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Unknown setting '{raw}'. Use action='list' to see available settings.", "exit_code": 1}
             if _is_secret(key):
                 return {"response": f"'{key}' is a credential/secret. For security I can't set it from chat. Open Settings and set it there.", "exit_code": 0}
+            # A spend cap the model could lift itself would not be a cap.
+            if key in _SPEND_CAP_KEYS:
+                return {"response": f"'{key}' is a spend limit. I can't change it from chat; edit it in data/settings.json.", "exit_code": 0}
             # Structured settings (dicts/lists like keybinds, default_model_fallbacks)
             # have no safe scalar coercion; _coerce would pass a bare string
             # straight through and clobber the structure. Refuse them here; they're

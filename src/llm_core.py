@@ -13,6 +13,25 @@ from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
 from urllib.parse import urlparse
+from src import claude_budget
+
+
+def _record_claude_usage(model: str, data, url: str = "") -> None:
+    """Add a non-streamed response's token usage to the Claude monthly budget."""
+    if not claude_budget.is_claude(model) or not isinstance(data, dict):
+        return
+    u = data.get("usage") or {}
+    try:
+        claude_budget.record(
+            model,
+            input_tokens=u.get("input_tokens") or u.get("prompt_tokens") or 0,
+            output_tokens=u.get("output_tokens") or u.get("completion_tokens") or 0,
+            cache_write_tokens=u.get("cache_creation_input_tokens") or 0,
+            cache_read_tokens=u.get("cache_read_input_tokens") or 0,
+            url=url,
+        )
+    except Exception as e:
+        logger.warning("[claude-budget] failed to record usage for %s: %s", model, e)
 
 logger = logging.getLogger(__name__)
 
@@ -1834,6 +1853,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    claude_budget.check_or_raise(model, messages_copy, url)
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -1870,6 +1891,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if not r.is_success:
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
     data = r.json()
+    _record_claude_usage(model, data, url)
     try:
         if provider == "anthropic":
             response = _parse_anthropic_response(data)
@@ -2023,6 +2045,8 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    claude_budget.check_or_raise(model, messages_copy, url)
+
     if provider == "chatgpt-subscription":
         # ChatGPT/Codex requires streamed Responses requests even for callers
         # that want a plain string (auto-title, memory extraction, etc.).
@@ -2148,6 +2172,7 @@ async def llm_call_async(
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
             data = r.json()
+            _record_claude_usage(model, data, url)
             try:
                 if provider == "anthropic":
                     response = _parse_anthropic_response(data)
@@ -2192,6 +2217,20 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
                      tool_choice_none: bool = False, workload: str = "foreground"):
     target_url = _stream_target_url(url)
+    if claude_budget.is_claude(model):
+        reason = claude_budget.block_reason(model, messages, url)
+        if reason:
+            logger.warning("[claude-budget] blocked %s: %s", model, reason)
+            yield f'event: error\ndata: {json.dumps({"error": reason, "status": 402})}\n\n'
+            return
+        async for chunk in _stream_with_claude_accounting(
+            target_url, url, model, messages, workload,
+            temperature=temperature, max_tokens=max_tokens, headers=headers,
+            timeout=timeout, prompt_type=prompt_type, tools=tools,
+            session_id=session_id, tool_choice_none=tool_choice_none,
+        ):
+            yield chunk
+        return
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
             url,
@@ -2207,6 +2246,50 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tool_choice_none=tool_choice_none,
         ):
             yield chunk
+
+
+async def _stream_with_claude_accounting(target_url, url, model, messages, workload, **kwargs):
+    """stream_llm for Claude models: pass chunks through and add the call's
+    cost to the monthly budget. When the stream ends without a usage event
+    (client disconnect, upstream cut), the cost is estimated from text size."""
+    usage = None
+    out_chars = 0
+    try:
+        async with _local_model_slot(target_url, model, workload):
+            async for chunk in _stream_llm_inner(url, model, messages, **kwargs):
+                if chunk.startswith("data: {"):
+                    try:
+                        ev = json.loads(chunk[6:])
+                    except Exception:
+                        ev = {}
+                    if ev.get("type") == "usage" and isinstance(ev.get("data"), dict):
+                        usage = ev["data"]
+                    elif isinstance(ev.get("delta"), str):
+                        out_chars += len(ev["delta"])
+                    elif ev.get("type") == "tool_call_delta":
+                        out_chars += len(ev.get("arg_delta") or "")
+                yield chunk
+    finally:
+        try:
+            if usage:
+                claude_budget.record(
+                    model,
+                    input_tokens=usage.get("input_tokens") or 0,
+                    output_tokens=usage.get("output_tokens") or 0,
+                    cache_write_tokens=usage.get("cache_creation_input_tokens") or 0,
+                    cache_read_tokens=usage.get("cache_read_input_tokens") or 0,
+                    url=url,
+                )
+            elif out_chars:
+                claude_budget.record(
+                    model,
+                    input_tokens=claude_budget.estimate_input_tokens(messages),
+                    output_tokens=out_chars // 4,
+                    estimated=True,
+                    url=url,
+                )
+        except Exception as e:
+            logger.warning("[claude-budget] failed to record stream usage for %s: %s", model, e)
 
 
 async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
@@ -2439,6 +2522,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     if provider == "anthropic":
         _anth_input_tokens = 0
         _anth_output_tokens = 0
+        _c_read = 0
+        _c_write = 0
         # Track tool_use blocks: {index: {id, name, arguments_json}}
         _anth_tool_blocks: Dict[int, Dict] = {}
         _anth_block_idx = -1
@@ -2518,7 +2603,12 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     })
                                 yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
                             if _anth_input_tokens or _anth_output_tokens:
-                                yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens}})}\n\n'
+                                _usage_evt = {"input_tokens": _anth_input_tokens, "output_tokens": _anth_output_tokens}
+                                if _c_read:
+                                    _usage_evt["cache_read_input_tokens"] = _c_read
+                                if _c_write:
+                                    _usage_evt["cache_creation_input_tokens"] = _c_write
+                                yield f'data: {json.dumps({"type": "usage", "data": _usage_evt})}\n\n'
                             yield "data: [DONE]\n\n"
                             return
                         elif evt == "error":
