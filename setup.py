@@ -16,7 +16,8 @@ sys.path.insert(0, BASE_DIR)
 from src.constants import (
     DATA_DIR, AUTH_FILE, UPLOAD_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR,
     TTS_CACHE_DIR, GENERATED_IMAGES_DIR, DEEP_RESEARCH_DIR, CHROMA_DIR,
-    RAG_DIR, MEMORY_VECTORS_DIR, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH,
+    RAG_DIR, MEMORY_VECTORS_DIR, AGENT_WORKSPACE_DIR, PASSWORD_MIN_LENGTH,
+    PASSWORD_MAX_LENGTH,
 )
 from core.auth import RESERVED_USERNAMES
 
@@ -31,6 +32,7 @@ DIRS = [
     CHROMA_DIR,
     RAG_DIR,
     MEMORY_VECTORS_DIR,
+    AGENT_WORKSPACE_DIR,
     os.path.join(BASE_DIR, "logs"),
 ]
 
@@ -65,7 +67,7 @@ def _prompt_admin_credentials():
         if not username:
             username = "admin"
         if username in RESERVED_USERNAMES:
-            print(f"  '{username}' is a reserved username. Choose another.")
+            print("  That username is reserved. Choose another.")
             continue
         break
 
@@ -75,10 +77,10 @@ def _prompt_admin_credentials():
             print("  Password cannot be empty.")
             continue
         if len(password) < PASSWORD_MIN_LENGTH:
-            print(f"  Password must be at least {PASSWORD_MIN_LENGTH} characters.")
+            print("  Password does not meet the minimum length requirement.")
             continue
         if len(password.encode("utf-8")) > PASSWORD_MAX_LENGTH:
-            print(f"  Password must be {PASSWORD_MAX_LENGTH} bytes or fewer.")
+            print("  Password exceeds the maximum byte-length requirement.")
             continue
         confirm = getpass.getpass("  Confirm password: ")
         if password != confirm:
@@ -107,13 +109,13 @@ def create_default_admin():
         if username and password:
             # Both provided via env — validate before using
             if username in RESERVED_USERNAMES:
-                print(f"  [error] ODYSSEUS_ADMIN_USER '{username}' is a reserved username")
+                print("  [error] ODYSSEUS_ADMIN_USER is a reserved username")
                 return "failed"
             if len(password) < PASSWORD_MIN_LENGTH:
-                print(f"  [error] ODYSSEUS_ADMIN_PASSWORD must be at least {PASSWORD_MIN_LENGTH} characters")
+                print("  [error] ODYSSEUS_ADMIN_PASSWORD does not meet the minimum length requirement")
                 return "failed"
             if len(password.encode("utf-8")) > PASSWORD_MAX_LENGTH:
-                print(f"  [error] ODYSSEUS_ADMIN_PASSWORD must be {PASSWORD_MAX_LENGTH} bytes or fewer")
+                print("  [error] ODYSSEUS_ADMIN_PASSWORD exceeds the maximum byte-length requirement")
                 return "failed"
         elif sys.stdin.isatty() and not os.getenv("ODYSSEUS_SKIP_ADMIN_PROMPT"):
             # Interactive terminal — ask the user
@@ -142,13 +144,10 @@ def create_default_admin():
             print(f"  [ok] Initial admin user created ({username})")
             if not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
                 print(f"        Temporary password: {password}")
-                print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+                print("        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
         return "created"
     except ImportError as e:
         if "incompatible architecture" in str(e).lower():
-            # bcrypt is present but built for the wrong CPU architecture — the
-            # same Apple Silicon mismatch check_arch() guards against, caught here
-            # for the rarer case of an x86 wheel inside an arm64 venv.
             print("  [error] bcrypt loaded with the wrong CPU architecture.")
             print("          Rebuild the venv with an arm64 Python:")
             print("            rm -rf venv && /opt/homebrew/bin/python3.11 -m venv venv")
@@ -185,7 +184,7 @@ def check_deps():
             missing.append(mod)
     if missing:
         print(f"\n  [warn] Missing packages: {', '.join(missing)}")
-        print(f"         Run: pip install -r requirements.txt")
+        print("         Run: pip install -r requirements.txt")
     else:
         print("  [ok] All core dependencies installed")
 
@@ -204,20 +203,9 @@ def check_deps():
 
 
 def check_arch():
-    """Stop early, with guidance, if we're on Apple Silicon but running an
-    Intel (x86_64) Python through Rosetta.
-
-    A venv built with such an interpreter installs and loads compiled packages
-    (bcrypt, pydantic-core, onnxruntime, …) for the wrong CPU architecture, then
-    dies deep inside an import with a cryptic
-    "(mach-o file, but is an incompatible architecture)" error. Catching it here
-    turns that into one clear, actionable message.
-    """
+    """Stop early if Apple Silicon is running an Intel Python through Rosetta."""
     if sys.platform != "darwin" or platform.machine() == "arm64":
-        return  # Not macOS, or already an arm64-native interpreter — nothing to do.
-
-    # platform.machine() == "x86_64": either a genuine Intel Mac (fine) or an x86
-    # interpreter running under Rosetta on Apple Silicon (the case we must catch).
+        return
     try:
         translated = subprocess.run(
             ["sysctl", "-n", "sysctl.proc_translated"],
@@ -226,7 +214,7 @@ def check_arch():
     except Exception:
         translated = ""
     if translated != "1":
-        return  # Genuine Intel Mac — carry on.
+        return
 
     print("\n  [error] This is an Apple Silicon Mac, but setup is running under an")
     print("          Intel (x86_64) Python through Rosetta. Compiled packages would")
@@ -245,28 +233,16 @@ def check_arch():
 def main():
     print("\n=== Odysseus Setup ===\n")
 
-    # Load .env so pre-seeded ODYSSEUS_ADMIN_USER / ODYSSEUS_ADMIN_PASSWORD (and
-    # other deployment vars) are honored on native installs, not just when they
-    # are exported in the shell. Mirrors app.py: encoding="utf-8-sig" tolerates a
-    # UTF-8 BOM in a Notepad-saved .env. load_dotenv does not override already
-    # exported OS env vars, so the existing precedence is preserved. python-dotenv
-    # is a hard dependency (requirements.txt) and is verified by check_deps below.
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"), encoding="utf-8-sig")
-
-    # Fail fast with a clear message if the CPU architecture is wrong (Apple
-    # Silicon under an x86/Rosetta Python) before importing anything native.
     check_arch()
 
     print("1. Creating directories...")
     create_dirs()
-
     print("\n2. Environment file...")
     create_env()
-
     print("\n3. Checking dependencies...")
     check_deps()
-
     print("\n4. Initializing database...")
     try:
         init_database()
@@ -275,9 +251,7 @@ def main():
         print("         This is OK if dependencies aren't installed yet.")
 
     print("\n5. Creating initial admin...")
-
     admin_status = "failed"
-
     try:
         admin_status = create_default_admin()
     except Exception as e:
@@ -285,23 +259,18 @@ def main():
         admin_status = "failed"
 
     print("\n=== Setup complete ===")
-    # start-macos.sh launches the server itself (on its own port) right after
-    # this, so suppress the manual hint there to avoid a contradictory URL.
     if not os.getenv("ODYSSEUS_SKIP_RUN_HINT"):
-        print(f"\nStart the server with:")
-        print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
-        print(f"\nThen open http://localhost:7000")
+        print("\nStart the server with:")
+        print("  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
+        print("\nThen open http://localhost:7000")
 
-    # Cleaned, action-focused final instruction strings
     if admin_status == "created":
         print("Login with your admin credentials.\n")
     elif admin_status == "exists":
         print("Login with your existing admin credentials.\n")
     elif admin_status == "skipped":
         print("Admin creation did not happen: dependencies are missing.\nRun 'pip install bcrypt' and rerun setup.\n")
-    elif admin_status == "failed":
-        print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
-    else:  # handling "failed" or any unhandled edge case
+    else:
         print("Admin creation did not happen: a system or file error occurred.\nCheck write permissions for the 'data' directory and rerun setup.\n")
 
 
