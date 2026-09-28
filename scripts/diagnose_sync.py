@@ -64,7 +64,10 @@ def safe(label, fn, timeout=PROBE_TIMEOUT):
 
 
 def main():
-    from core.database import CalendarCal, CalendarEvent, EmailAccount, SessionLocal
+    from core.database import (
+        CalendarCal, CalendarEvent, EmailAccount, MsTodoDeletedNote, Note,
+        SessionLocal,
+    )
 
     # ── Accounts ──────────────────────────────────────────────────
     head("1. Email accounts")
@@ -222,6 +225,86 @@ def main():
         print(f"  {result}")
 
     safe("sync", _sync)
+
+    # ── Microsoft To Do ───────────────────────────────────────────
+    head("8. Microsoft To Do (tasks)")
+
+    todo_owner = [None]
+
+    def _todo_accounts():
+        from src.msgraph_todo import _load_mstodo_accounts
+
+        for probe_owner in candidates:
+            accounts = _load_mstodo_accounts(probe_owner)
+            if not accounts:
+                continue
+            if todo_owner[0] is None:
+                todo_owner[0] = probe_owner
+            for acc in accounts:
+                print(f"  owner={probe_owner!r}  id={acc.get('id')}  email={acc.get('email')}")
+                print(f"    has refresh token: {bool(acc.get('refresh_token'))}"
+                      f"   expiry: {acc.get('token_expiry')}")
+        if todo_owner[0] is None:
+            print(f"  none connected for any known owner (tried {candidates})")
+            print("  → Settings → Integrations → Add → Microsoft To Do")
+
+    safe("To Do account lookup", _todo_accounts)
+
+    def _todo_lists():
+        from src.msgraph_todo import (
+            _graph_request, _load_mstodo_accounts, _valid_access_token,
+        )
+
+        probe_owner = todo_owner[0]
+        if probe_owner is None:
+            print("  skipped — no connected account to test with")
+            return
+        account_id = (_load_mstodo_accounts(probe_owner)[0] or {}).get("id")
+        token = _valid_access_token(probe_owner, account_id)
+        if not token:
+            print("  could NOT obtain an access token — the sign-in has expired,")
+            print("  or Tasks.ReadWrite was never consented. Reconnect Microsoft To Do.")
+            return
+        print(f"  access token obtained ({len(token)} chars)")
+        lists = _graph_request(token, "GET", "/me/todo/lists", params={"$top": 25})
+        for lst in lists.get("value") or []:
+            kind = lst.get("wellknownListName") or "custom"
+            print(f"    list: {lst.get('displayName')!r}  ({kind})")
+
+    safe("To Do lists", _todo_lists)
+
+    # ── Local task notes ──────────────────────────────────────────
+    head("9. Task notes stored locally")
+    db = SessionLocal()
+    try:
+        from src.msgraph_todo import SYNCED_NOTE_TYPES
+
+        rows = db.query(Note).filter(Note.note_type.in_(SYNCED_NOTE_TYPES)).all()
+        linked = [nt for nt in rows if nt.remote_id]
+        pending = [nt for nt in rows if nt.todo_sync_pending or not nt.remote_id]
+        print(f"  task notes: {len(rows)}   linked to To Do: {len(linked)}   "
+              f"waiting to push: {len(pending)}")
+        owners = sorted({repr(nt.owner) for nt in rows})
+        print(f"  owners present: {', '.join(owners) or '(none)'}")
+        tombstones = db.query(MsTodoDeletedNote).count()
+        print(f"  deletes waiting to reach To Do: {tombstones}")
+    finally:
+        db.close()
+
+    head("10. Forcing a two-way task sync")
+
+    def _todo_sync():
+        import asyncio
+
+        from src.msgraph_todo import sync_mstodo_direction
+
+        if todo_owner[0] is None:
+            print("  skipped — no connected account")
+            return
+        print(f"  syncing as owner={todo_owner[0]!r}")
+        print(f"  {asyncio.run(sync_mstodo_direction(todo_owner[0], 'both'))}")
+
+    safe("task sync", _todo_sync)
 
     print("\nDone. Nothing above includes message bodies, tokens or .env values.")
 

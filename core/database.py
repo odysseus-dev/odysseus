@@ -1291,6 +1291,54 @@ def _migrate_add_notes_sort_order():
         except Exception:
             pass
 
+def _migrate_add_notes_todo_sync_columns():
+    """Add the Microsoft To Do sync columns to an existing notes table.
+
+    Every column is nullable with no default, so a pre-existing note reads
+    back as a purely local one — which is what it is — and the pull will not
+    treat it as a row it owns.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    wanted = (
+        ("origin", "TEXT"),
+        ("remote_id", "TEXT"),
+        ("remote_etag", "TEXT"),
+        ("remote_list_id", "TEXT"),
+        ("todo_account_id", "TEXT"),
+        ("todo_sync_pending", "TEXT"),
+    )
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(notes)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return
+        for name, sql_type in wanted:
+            if name not in columns:
+                conn.execute(f"ALTER TABLE notes ADD COLUMN {name} {sql_type}")
+        # Lookups the sync runs on every pass: "my rows for this account" and
+        # "this remote id". Without them each pull table-scans the notes.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_notes_remote_id ON notes (remote_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_notes_todo_account_id ON notes (todo_account_id)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_notes_origin ON notes (origin)")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"notes To Do sync migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_mode_column():
     """Add mode column to sessions table if it doesn't exist."""
     import sqlite3
@@ -1889,6 +1937,19 @@ class Note(TimestampMixin, Base):
     # The note shows a clickable tag that opens this session for review.
     agent_session_id  = Column(String, nullable=True)
 
+    # ── Microsoft To Do sync ──────────────────────────────────────────────
+    # A todo note is the local half of a Graph `todoTask`. The list it lives
+    # in maps to the note's label, the checklist items to the task's
+    # `checklistItems`, and `archived` to the task's completed status.
+    # "mstodo" once the row came from (or reached) Graph; NULL for a purely
+    # local note, which the pull must therefore never prune.
+    origin            = Column(String, nullable=True, index=True)
+    remote_id         = Column(String, nullable=True, index=True)  # todoTask id
+    remote_etag       = Column(String, nullable=True)              # @odata.etag
+    remote_list_id    = Column(String, nullable=True)              # todoTaskList id
+    todo_account_id   = Column(String, nullable=True, index=True)  # msgraph account uuid
+    todo_sync_pending = Column(String, nullable=True)              # create | update | delete
+
 
 class CalendarCal(TimestampMixin, Base):
     """A calendar (e.g. 'Personal', 'TimeTree')."""
@@ -1953,6 +2014,21 @@ class CalendarDeletedEvent(TimestampMixin, Base):
     remote_etag = Column(String, nullable=True)
     caldav_base_url = Column(String, nullable=True)
     summary = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+
+class MsTodoDeletedNote(TimestampMixin, Base):
+    """Hidden Microsoft To Do delete tombstone, kept until the remote delete
+    lands. The note row is gone by then, so the remote ids the push needs
+    have nowhere else to live."""
+    __tablename__ = "mstodo_deleted_notes"
+
+    id = Column(String, primary_key=True, index=True)   # the deleted note's id
+    owner = Column(String, nullable=True, index=True)
+    remote_id = Column(String, nullable=True)
+    remote_list_id = Column(String, nullable=True)
+    account_id = Column(String, nullable=True)
+    title = Column(String, nullable=True)
     last_error = Column(Text, nullable=True)
 
 
@@ -2159,6 +2235,7 @@ def init_db():
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
+    _migrate_add_notes_todo_sync_columns()
     _migrate_add_email_signature_columns()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()

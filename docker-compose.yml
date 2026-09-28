@@ -68,6 +68,7 @@ services:
       - MICROSOFT_OAUTH_TENANT_ID=${MICROSOFT_OAUTH_TENANT_ID:-}
       - MICROSOFT_OAUTH_REDIRECT_URI=${MICROSOFT_OAUTH_REDIRECT_URI:-}
       - MICROSOFT_CALENDAR_REDIRECT_URI=${MICROSOFT_CALENDAR_REDIRECT_URI:-}
+      - MICROSOFT_TODO_REDIRECT_URI=${MICROSOFT_TODO_REDIRECT_URI:-}
       # Externally reachable origin for MCP OAuth callbacks. The container
       # always listens on 7000 and cannot see the host port map above, so
       # remote MCP OAuth needs this set whenever the browser reaches

@@ -2,14 +2,16 @@
 """Google Keep-style notes / checklists API."""
 
 import json
+import os
+import time
 import uuid
 import logging
 from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, Note
+from core.database import MsTodoDeletedNote, SessionLocal, Note
 from core.middleware import INTERNAL_TOOL_USER
 from src.auth_helpers import require_user
 from src.constants import DATA_DIR
@@ -572,6 +574,73 @@ async def dispatch_reminder(
 
 
 # ---------------------------------------------------------------------------
+# Microsoft To Do write-back
+#
+# A todo note is the local half of a Graph `todoTask`. Every local change to
+# one has to reach To Do, and every one of these routes is a plain `def` that
+# FastAPI runs in a threadpool — so the push is handed to BackgroundTasks and
+# runs after the response instead of making the user wait on Graph.
+#
+# Local SQLite stays authoritative: a push that fails only leaves a retry
+# marker, and the next sync picks it up.
+# ---------------------------------------------------------------------------
+
+def _note_syncs_to_todo(note) -> bool:
+    try:
+        from src.msgraph_todo import note_should_sync
+
+        return note_should_sync(note)
+    except Exception:
+        return False
+
+
+def _schedule_todo_push(background, owner: Optional[str], note_id: str,
+                        action: str) -> None:
+    """Queue a To Do write-back to run once the response has been sent.
+
+    `background` is None only when a route is called directly rather than
+    served — a unit test holding the endpoint function. There is nothing to
+    queue onto there, so the push is skipped rather than run inline.
+    """
+    if background is None or not note_id:
+        return
+    try:
+        from src.msgraph_todo import push_note_blocking
+    except Exception:
+        return
+    background.add_task(push_note_blocking, owner or "", note_id, action)
+
+
+def _leave_todo_tombstone(db, note) -> bool:
+    """Record what a delete needs before the note row goes away.
+
+    Returns whether the task ever reached To Do — there is nothing upstream
+    to delete when it did not.
+    """
+    if not (note.remote_id and note.remote_list_id):
+        return False
+    db.merge(MsTodoDeletedNote(
+        id=note.id,
+        owner=note.owner,
+        remote_id=note.remote_id,
+        remote_list_id=note.remote_list_id,
+        account_id=note.todo_account_id,
+        title=note.title,
+    ))
+    return True
+
+
+def _mark_todo_dirty(note) -> None:
+    """Flag a note whose local edit has not reached To Do yet.
+
+    Set inside the same transaction as the change, so a crash between the
+    commit and the push still leaves the retry marker behind.
+    """
+    if _note_syncs_to_todo(note):
+        note.todo_sync_pending = "update" if note.remote_id else "create"
+
+
+# ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
 
@@ -649,7 +718,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- CREATE ---
     @router.post("")
-    def create_note(request: Request, body: NoteCreate):
+    def create_note(request: Request, body: NoteCreate,
+                    background: BackgroundTasks = None):
         user = _owner(request)
         _reserve_note_uploads(
             user,
@@ -677,9 +747,12 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
                 repeat=body.repeat or "none",
                 sort_order=body.sort_order if body.sort_order is not None else 0,
             )
+            _mark_todo_dirty(note)
             db.add(note)
             db.commit()
             db.refresh(note)
+            if _note_syncs_to_todo(note):
+                _schedule_todo_push(background, user, note.id, "create")
             return _note_to_dict(note)
         finally:
             db.close()
@@ -703,7 +776,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- UPDATE ---
     @router.put("/{note_id}")
-    def update_note(request: Request, note_id: str, body: NoteUpdate):
+    def update_note(request: Request, note_id: str, body: NoteUpdate,
+                    background: BackgroundTasks = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -750,15 +824,34 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if body.agent_session_id is not None:
                 note.agent_session_id = body.agent_session_id
 
+            # Turning a task back into a plain note is a deletion upstream:
+            # it is no longer a task, so it should not stay in To Do.
+            still_a_task = _note_syncs_to_todo(note)
+            unsynced = bool(note.remote_id) and not still_a_task
+            if unsynced:
+                _leave_todo_tombstone(db, note)
+                note.remote_id = None
+                note.remote_list_id = None
+                note.remote_etag = None
+                note.origin = None
+                note.todo_sync_pending = None
+            else:
+                _mark_todo_dirty(note)
+
             db.commit()
             db.refresh(note)
+            if unsynced:
+                _schedule_todo_push(background, user, note_id, "delete")
+            elif still_a_task:
+                _schedule_todo_push(background, user, note.id, "update")
             return _note_to_dict(note)
         finally:
             db.close()
 
     # --- DELETE ---
     @router.delete("/{note_id}")
-    def delete_note(request: Request, note_id: str):
+    def delete_note(request: Request, note_id: str,
+                    background: BackgroundTasks = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -769,15 +862,21 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # let any user touch a row whose owner field was null/empty.
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
+            # The tombstone is written in the same transaction as the delete:
+            # once the row is gone, nothing else remembers the remote ids.
+            had_remote = _leave_todo_tombstone(db, note)
             db.delete(note)
             db.commit()
+            if had_remote:
+                _schedule_todo_push(background, user, note_id, "delete")
             return {"ok": True}
         finally:
             db.close()
 
     # --- TOGGLE PIN ---
     @router.post("/{note_id}/pin")
-    def toggle_pin(request: Request, note_id: str):
+    def toggle_pin(request: Request, note_id: str,
+                   background: BackgroundTasks = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -789,14 +888,18 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
             note.pinned = not note.pinned
+            _mark_todo_dirty(note)
             db.commit()
+            if _note_syncs_to_todo(note):
+                _schedule_todo_push(background, user, note_id, "update")
             return {"ok": True, "pinned": note.pinned}
         finally:
             db.close()
 
     # --- TOGGLE ARCHIVE ---
     @router.post("/{note_id}/archive")
-    def toggle_archive(request: Request, note_id: str):
+    def toggle_archive(request: Request, note_id: str,
+                       background: BackgroundTasks = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -807,15 +910,21 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             # let any user touch a row whose owner field was null/empty.
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
+            # Archiving is how a task is completed: the note leaves the
+            # grid here and the task is ticked off in To Do.
             note.archived = not note.archived
+            _mark_todo_dirty(note)
             db.commit()
+            if _note_syncs_to_todo(note):
+                _schedule_todo_push(background, user, note_id, "update")
             return {"ok": True, "archived": note.archived}
         finally:
             db.close()
 
     # --- TOGGLE CHECKLIST ITEM ---
     @router.post("/{note_id}/items/{index}/toggle")
-    def toggle_item(request: Request, note_id: str, index: int):
+    def toggle_item(request: Request, note_id: str, index: int,
+                    background: BackgroundTasks = None):
         user = _owner(request)
         db = SessionLocal()
         try:
@@ -834,7 +943,10 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             items[index]["done"] = not items[index].get("done", False)
             note.items = json.dumps(items)
             flag_modified(note, "items")
+            _mark_todo_dirty(note)
             db.commit()
+            if _note_syncs_to_todo(note):
+                _schedule_todo_push(background, user, note_id, "update")
             return {"ok": True, "items": items}
         finally:
             db.close()
@@ -933,5 +1045,227 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             return {"ok": True, "count": len(ids)}
         finally:
             db.close()
+
+    # ── Microsoft To Do ──────────────────────────────────────────────────
+    #
+    # Its own OAuth connection: Microsoft issues access tokens per resource
+    # and refuses an authorization request that mixes scopes from two of
+    # them, so Tasks.ReadWrite is consented on its own against the same app
+    # registration the mail and calendar connections use.
+
+    def _todo_redirect_uri(request: Request) -> str:
+        return (
+            os.environ.get("MICROSOFT_TODO_REDIRECT_URI")
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}"
+               "/api/notes/oauth/microsoft/callback"
+        )
+
+    def _todo_result_redirect(reason: str, code: str = "", aadsts: str = "") -> str:
+        """Send the browser back to the UI with a sanitized failure marker.
+
+        Everything here reaches the URL bar, so only allow-listed shapes pass
+        and a provider-supplied string is never interpolated raw.
+        """
+        import urllib.parse
+
+        from routes.email_routes import _AADSTS_CODE_RE, _OAUTH_ERROR_CODE_RE
+
+        params = {"section": "integrations", "tasks_oauth_error": reason}
+        if code and _OAUTH_ERROR_CODE_RE.match(code):
+            params["tasks_oauth_code"] = code
+        if aadsts and _AADSTS_CODE_RE.fullmatch(aadsts):
+            params["tasks_oauth_aadsts"] = aadsts
+        return "/?" + urllib.parse.urlencode(params)
+
+    @router.get("/config/microsoft")
+    def list_mstodo_accounts(request: Request):
+        """Connected Microsoft To Do accounts. Tokens are never returned."""
+        owner = _owner(request)
+        from src.msgraph_todo import _load_mstodo_accounts
+
+        return {
+            "configured": bool(os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()),
+            "accounts": [
+                {
+                    "id": acc.get("id", ""),
+                    "label": acc.get("label") or acc.get("email") or "Microsoft To Do",
+                    "email": acc.get("email", ""),
+                    "connected": bool(acc.get("refresh_token")),
+                }
+                for acc in _load_mstodo_accounts(owner)
+            ],
+        }
+
+    @router.delete("/config/microsoft/{account_id}")
+    def disconnect_mstodo_account(request: Request, account_id: str):
+        """Disconnect an account and unlink the notes it brought in.
+
+        The notes stay: they are the user's tasks, and deleting them because
+        a connection was removed would destroy local data to tidy up a
+        setting. They just stop being synced.
+        """
+        owner = _owner(request)
+        from src.msgraph_todo import _load_mstodo_accounts, _save_mstodo_accounts, _scope_owner
+
+        accounts = _load_mstodo_accounts(owner)
+        remaining = [a for a in accounts if a.get("id") != account_id]
+        if len(remaining) == len(accounts):
+            raise HTTPException(404, "Account not found")
+        _save_mstodo_accounts(owner, remaining)
+
+        db = SessionLocal()
+        try:
+            linked = _scope_owner(db.query(Note), owner or "").filter(
+                Note.todo_account_id == account_id,
+            ).all()
+            for note in linked:
+                note.origin = None
+                note.remote_id = None
+                note.remote_etag = None
+                note.remote_list_id = None
+                note.todo_account_id = None
+                note.todo_sync_pending = None
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+        return {"ok": True, "unlinked": len(linked)}
+
+    @router.post("/sync")
+    async def sync_mstodo_endpoint(request: Request, direction: str = "both"):
+        """Sync tasks with Microsoft To Do.
+
+        Defaults to `both` — a pull-only sync would leave a task created here
+        while offline stranded forever, which is the shape of bug a "Sync"
+        button is least likely to be suspected of.
+        """
+        owner = _owner(request)
+        from src.msgraph_todo import _load_mstodo_accounts, sync_mstodo_direction
+
+        if not _load_mstodo_accounts(owner):
+            return {"lists": 0, "tasks": 0, "deleted": 0,
+                    "errors": ["No Microsoft To Do account is connected"]}
+        return await sync_mstodo_direction(owner or "", direction)
+
+    @router.get("/oauth/microsoft/authorize")
+    async def mstodo_oauth_authorize(request: Request):
+        """Start the consent flow for Tasks.ReadWrite."""
+        import urllib.parse
+
+        from fastapi.responses import RedirectResponse as _RR
+        from routes.email_helpers import make_oauth_state
+        from src.msgraph_todo import MSGRAPH_TODO_SCOPES, _authorize_url
+
+        owner = _owner(request)
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
+        if not client_id:
+            raise HTTPException(400, "MICROSOFT_OAUTH_CLIENT_ID not set — add it to .env")
+        # The account row is created by the callback; the id is minted here so
+        # the signed state can bind the flow to it.
+        account_id = str(uuid.uuid4())
+        params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "redirect_uri": _todo_redirect_uri(request),
+            "response_type": "code",
+            "scope": MSGRAPH_TODO_SCOPES,
+            "prompt": "select_account",
+            "state": make_oauth_state(account_id, owner or ""),
+        })
+        return _RR(f"{_authorize_url()}?{params}")
+
+    @router.get("/oauth/microsoft/callback")
+    async def mstodo_oauth_callback(
+        request: Request,
+        code: str = None,
+        state: str = None,
+        error: str = None,
+        error_description: str = None,
+    ):
+        import httpx
+
+        from fastapi.responses import RedirectResponse as _RR
+        from routes.email_helpers import verify_oauth_state
+        from routes.email_routes import (
+            _microsoft_identity_from_id_token, _oauth_failure_hints,
+        )
+        from src.msgraph_todo import (
+            MSGRAPH_TODO_SCOPES, _load_mstodo_accounts, _save_mstodo_accounts,
+            _token_url,
+        )
+        from src.secret_storage import encrypt
+
+        if error:
+            hint_code, aadsts = _oauth_failure_hints(error, error_description)
+            logger.warning(
+                "Microsoft To Do authorization was refused (code=%s aadsts=%s)",
+                hint_code or "unknown", aadsts or "none",
+            )
+            return _RR(_todo_result_redirect("microsoft_error", hint_code, aadsts))
+        if not code or not state:
+            return _RR(_todo_result_redirect("missing_code"))
+        state_data = verify_oauth_state(state)
+        if not state_data:
+            return _RR(_todo_result_redirect("invalid_state"))
+        account_id = state_data.get("a", "")
+        owner = state_data.get("o", "")
+        if not account_id:
+            return _RR(_todo_result_redirect("invalid_state"))
+
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "").strip()
+        resp = None
+        try:
+            resp = httpx.post(_token_url(), data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": _todo_redirect_uri(request),
+                "grant_type": "authorization_code",
+                "scope": MSGRAPH_TODO_SCOPES,
+            }, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            # A rejected exchange carries its AADSTS code in the body, and
+            # raise_for_status throws it away — read it back before reporting.
+            body_error, body_description = "", ""
+            if resp is not None:
+                try:
+                    payload = resp.json()
+                    body_error = payload.get("error") or ""
+                    body_description = payload.get("error_description") or ""
+                except Exception:
+                    pass
+            hint_code, aadsts = _oauth_failure_hints(body_error, body_description)
+            logger.warning(
+                "Microsoft To Do token exchange failed (code=%s aadsts=%s)",
+                hint_code or "unknown", aadsts or "none",
+            )
+            return _RR(_todo_result_redirect("token_exchange_failed", hint_code, aadsts))
+
+        refresh_token = data.get("refresh_token") or ""
+        if not refresh_token:
+            # Without offline_access consent there is nothing to refresh with,
+            # so the connection would die at the first token expiry.
+            return _RR(_todo_result_redirect("no_refresh_token"))
+
+        mailbox = _microsoft_identity_from_id_token(data.get("id_token") or "")[0]
+        accounts = [
+            a for a in _load_mstodo_accounts(owner)
+            if not mailbox or a.get("email") != mailbox
+        ]
+        accounts.append({
+            "id": account_id,
+            "label": mailbox or "Microsoft To Do",
+            "email": mailbox,
+            "access_token": encrypt(data.get("access_token") or ""),
+            "refresh_token": encrypt(refresh_token),
+            "token_expiry": str(int(time.time()) + int(data.get("expires_in") or 3600)),
+        })
+        _save_mstodo_accounts(owner, accounts)
+        logger.info("Connected Microsoft To Do for owner=%s", owner or "(single-user)")
+        return _RR("/?section=integrations&tasks_oauth_success=1&tasks_oauth_provider=microsoft")
 
     return router

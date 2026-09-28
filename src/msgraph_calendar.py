@@ -68,20 +68,44 @@ _CAL_NAMESPACE = uuid.UUID("6f0b9f1e-6a5c-4c2e-9f4a-0c2b7d1e8a35")
 
 # ── Account storage ───────────────────────────────────────────────
 
+def _prefs_owner(owner):
+    """The preferences key for *owner*.
+
+    Two owner conventions reach this module. The calendar routes normalize an
+    anonymous caller to ODYSSEUS_FALLBACK_OWNER so rows have a stable owner to
+    filter on, while the OAuth routes see the bare "" that `require_user`
+    returns when auth is disabled or unconfigured. Preferences have a third
+    convention for that same single-user case: None, meaning the flat/first
+    record.
+
+    All three are the same person, so map them onto the one key prefs uses.
+    Without this an account connected through the OAuth route lands under ""
+    and the sync, asking for "owner@localhost", finds nothing — and reports
+    no error, because "no account connected" is not a failure. That is a
+    silent no-op, which is the worst shape this bug can take.
+    """
+    name = (owner or "").strip()
+    fallback = os.environ.get("ODYSSEUS_FALLBACK_OWNER", "owner@localhost")
+    if not name or name == fallback:
+        return None
+    return name
+
+
 def _load_msgraph_accounts(owner: str) -> list:
     """Return the Microsoft calendar accounts configured for *owner*."""
     from routes.prefs_routes import _load_for_user
 
-    prefs = _load_for_user(owner) or {}
+    prefs = _load_for_user(_prefs_owner(owner)) or {}
     return list(prefs.get("msgraph_accounts") or [])
 
 
 def _save_msgraph_accounts(owner: str, accounts: list) -> None:
     from routes.prefs_routes import _load_for_user, _save_for_user
 
-    prefs = _load_for_user(owner) or {}
+    key = _prefs_owner(owner)
+    prefs = _load_for_user(key) or {}
     prefs["msgraph_accounts"] = accounts
-    _save_for_user(owner, prefs)
+    _save_for_user(key, prefs)
 
 
 def _find_account(owner: str, account_id: str) -> dict | None:

@@ -3384,6 +3384,7 @@ async function initIntegrations() {
 const INTG_TYPES = {
   api:     { label: 'API',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
   caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+  mstodo: { label: 'Microsoft To Do', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>' },
   msgraph: { label: 'Microsoft 365', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="m9 16 2 2 4-4"/></svg>' },
   contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
@@ -3484,10 +3485,11 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, msGraphRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
+    const [apiRes, calRes, msGraphRes, msTodoRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/calendar/config/microsoft', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
+      fetch('/api/notes/config/microsoft', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/list', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { contacts: [], count: 0 }).catch(() => ({ contacts: [], count: 0 })),
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
@@ -3512,6 +3514,17 @@ async function initUnifiedIntegrations() {
         id: acc.id,
         name: acc.label || 'Microsoft 365 Calendar',
         detail: acc.email || 'Two-way calendar sync',
+        enabled: true,
+        data: acc,
+      });
+    }
+    // Microsoft To Do — tasks sync into Notes, so there is no URL either.
+    for (const acc of (msTodoRes.accounts || [])) {
+      items.push({
+        type: 'mstodo',
+        id: acc.id,
+        name: acc.label || 'Microsoft To Do',
+        detail: acc.email || 'Two-way task sync',
         enabled: true,
         data: acc,
       });
@@ -3631,6 +3644,7 @@ async function initUnifiedIntegrations() {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'msgraph') await fetch(`/api/calendar/config/microsoft/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'mstodo') await fetch(`/api/notes/config/microsoft/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'contacts') {
             await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }
@@ -3654,6 +3668,7 @@ async function initUnifiedIntegrations() {
     if (type === 'api') showApiForm(editId);
     else if (type === 'caldav') showCalDavForm(editId);
     else if (type === 'msgraph') showMsGraphForm();
+    else if (type === 'mstodo') showMsTodoForm();
     else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
@@ -3899,6 +3914,43 @@ async function initUnifiedIntegrations() {
     el('uf-msgraph-connect').addEventListener('click', () => {
       if (!configured) return;
       window.location.href = '/api/calendar/oauth/microsoft/authorize';
+    });
+  }
+
+  // ── Microsoft To Do (OAuth, no credentials to type) ──
+  async function showMsTodoForm() {
+    let configured = false;
+    try {
+      const r = await fetch('/api/notes/config/microsoft', { credentials: 'same-origin' });
+      if (r.ok) configured = !!(await r.json()).configured;
+    } catch (_) {}
+
+    const icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
+
+    // Without the app registration there is nothing to redirect to, so say
+    // what is missing instead of bouncing the user to a Microsoft error.
+    const notice = configured
+      ? 'Your To Do tasks appear in Notes and sync both ways: ticking one off here completes it in To Do, and a task added on your phone shows up here. Each To Do list becomes a tag.'
+      : 'MICROSOFT_OAUTH_CLIENT_ID is not set. Add the app registration credentials to your .env and restart Odysseus, then connect.';
+
+    formEl.innerHTML = `
+      <div class="admin-card" style="margin-top:8px">
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;">${icon}Connect Microsoft To Do</h2>
+        <div class="settings-col">
+          <div style="font-size:11px;opacity:0.8;line-height:1.5;margin-bottom:4px;">${esc(notice)}</div>
+          <div style="font-size:11px;opacity:0.65;line-height:1.5;">Your Microsoft password never reaches Odysseus — sign-in happens on Microsoft and only a revocable token is stored. The app registration needs the delegated Microsoft Graph permission <strong>Tasks.ReadWrite</strong>.</div>
+          <div class="settings-row" style="margin-top:12px;align-items:center;justify-content:flex-end;gap:6px;">
+            <span id="uf-mstodo-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            <button class="admin-btn-add" id="uf-mstodo-connect" ${configured ? '' : 'disabled'} style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;${configured ? '' : 'opacity:0.45;cursor:not-allowed;'}">Connect with Microsoft</button>
+            <button class="admin-btn-add" id="uf-mstodo-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+
+    el('uf-mstodo-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('uf-mstodo-connect').addEventListener('click', () => {
+      if (!configured) return;
+      window.location.href = '/api/notes/oauth/microsoft/authorize';
     });
   }
 
@@ -5629,6 +5681,7 @@ async function initUnifiedIntegrations() {
       ['email', 'Email (IMAP/SMTP)'],
       ['mcp', 'MCP Tool Server'],
       ['msgraph', 'Microsoft 365 Calendar'],
+      ['mstodo', 'Microsoft To Do'],
     ];
     const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');
     const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');
@@ -5759,11 +5812,12 @@ const OAUTH_PROVIDER_CODE_GUIDANCE = {
   AADSTS50020: 'This account cannot sign in to the app. Check the Supported account types on the app registration.',
 };
 
-// Mail and calendar run the same OAuth dance and report back through the same
-// shaped params under their own prefix, so one handler covers both.
+// Mail, calendar and tasks run the same OAuth dance and report back through
+// the same shaped params under their own prefix, so one handler covers them.
 const OAUTH_REDIRECT_FLOWS = [
   { prefix: 'email_oauth', subject: 'email' },
   { prefix: 'calendar_oauth', subject: 'calendar sync' },
+  { prefix: 'tasks_oauth', subject: 'task sync' },
 ];
 
 (function _handleOauthRedirect() {

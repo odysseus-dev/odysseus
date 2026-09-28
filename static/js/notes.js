@@ -460,6 +460,69 @@ async function _fetchNotes() {
   }
 }
 
+// Microsoft To Do sync. The button stays hidden unless an account is
+// actually connected — a control that can only ever say "nothing connected"
+// is noise in a header this small.
+let _todoSyncRunning = false;
+
+async function _todoAccountConnected() {
+  try {
+    const res = await fetch(`${API_BASE}/api/notes/config/microsoft`, { credentials: 'same-origin' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return (data.accounts || []).length > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+function _flattenTodoSync(raw) {
+  const out = { tasks: 0, deleted: 0, errors: [] };
+  const add = (part) => {
+    if (!part || typeof part !== 'object') return;
+    out.tasks += Number(part.tasks || 0);
+    out.deleted += Number(part.deleted || 0);
+    if (Array.isArray(part.errors)) out.errors.push(...part.errors);
+  };
+  // `direction=both` nests its counts under push/pull.
+  if (raw && (raw.push || raw.pull)) { add(raw.push); add(raw.pull); }
+  else add(raw);
+  return out;
+}
+
+async function _syncTodo(interactive = true) {
+  if (_todoSyncRunning) return;
+  _todoSyncRunning = true;
+  const btn = document.getElementById('notes-todo-sync');
+  btn?.classList.add('active');
+  if (btn) btn.disabled = true;
+  try {
+    // `both` pushes local edits before pulling. A pull alone would strand a
+    // task created here while offline, and "Sync" is exactly when the user
+    // expects that retry to happen.
+    const res = await fetch(`${API_BASE}/api/notes/sync?direction=both`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+    const data = _flattenTodoSync(await res.json().catch(() => ({})));
+    // The open-time pass is silent: it redraws only when something actually
+    // moved, so opening Notes does not flash the board or pop a toast for a
+    // sync the user did not ask for.
+    if (interactive || data.tasks > 0 || data.deleted > 0) {
+      await _fetchNotes();
+      _renderNotes();
+    }
+    if (!interactive) return;
+    if (data.errors.length) uiModule.showError(String(data.errors[0]).slice(0, 200));
+    else uiModule.showToast?.(`Tasks synced (${data.tasks})`);
+  } catch (e) {
+    if (interactive) uiModule.showError('Task sync failed');
+  } finally {
+    _todoSyncRunning = false;
+    btn?.classList.remove('active');
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function _saveNote(note) {
   const method = note.id ? 'PUT' : 'POST';
   const url = note.id ? `${API_BASE}/api/notes/${note.id}` : `${API_BASE}/api/notes`;
@@ -1185,6 +1248,10 @@ export function openPanel() {
     <div class="notes-pane-header">
       <h4 class="notes-pane-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;margin-right:6px"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>Notes</h4>
       <span style="flex:1"></span>
+      <button id="notes-todo-sync" class="doc-action-icon-btn notes-header-text-btn" title="Sync tasks with Microsoft To Do" style="opacity:0.8;gap:5px;display:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-7.6-4.2"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 7.6 4.2"/><polyline points="21 3 19.6 7.2 15.4 7.2"/><polyline points="3 21 4.4 16.8 8.6 16.8"/></svg>
+        <span class="notes-header-btn-label">Sync</span>
+      </button>
       <button id="notes-archive-toggle" class="doc-action-icon-btn notes-header-text-btn" title="View archive" style="opacity:0.8;gap:5px;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>
         <span class="notes-header-btn-label">Archive</span>
@@ -1266,6 +1333,19 @@ export function openPanel() {
     searchEl.addEventListener('input', () => {
       _searchQuery = searchEl.value.trim().toLowerCase();
       _renderNotes();
+    });
+  }
+
+  // Microsoft To Do sync
+  const todoSyncBtn = document.getElementById('notes-todo-sync');
+  if (todoSyncBtn) {
+    todoSyncBtn.addEventListener('click', () => { _syncTodo(true); });
+    _todoAccountConnected().then((connected) => {
+      if (!connected) return;
+      todoSyncBtn.style.display = '';
+      // Same shape as the calendar: pull on open so a task ticked off on a
+      // phone is already here, without waiting for the user to press Sync.
+      _syncTodo(false);
     });
   }
 

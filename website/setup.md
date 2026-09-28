@@ -495,6 +495,15 @@ reach a Microsoft mailbox. Add the delegated Graph permission
 Integrations → Microsoft 365 Calendar**. See
 [the Office 365 calendar guide](calendar-office365.md) for the full walkthrough.
 
+### Microsoft To Do
+The same app registration also drives two-way task sync. Tasks live in
+**Notes** — a note of type To-do matches a To Do task field for field, while
+the Tasks tool schedules automation and has no counterpart in To Do. Add the
+delegated Graph permission `Tasks.ReadWrite` and a third redirect URI ending in
+`/api/notes/oauth/microsoft/callback`, then connect from **Settings →
+Integrations → Microsoft To Do**. See
+[the Microsoft To Do guide](tasks-microsoft-todo.md) for the full walkthrough.
+
 ### Email signature
 Each email account carries its own outgoing signature, set under **Settings →
 Integrations →** the account **→ Signature**. It is dropped into new messages,

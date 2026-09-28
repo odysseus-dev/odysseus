@@ -8,7 +8,8 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 
 - app route wiring, auth exemptions, and scheduler startup in `app.py`;
 - canonical database models in `core/database.py`, with `src/database.py` as a compatibility re-export;
-- `routes/calendar_routes.py`, `src/caldav_sync.py`, and `src/caldav_writeback.py`;
+- `routes/calendar_routes.py`, `src/caldav_sync.py`, `src/caldav_writeback.py`, and `src/msgraph_calendar.py`;
+- `src/msgraph_todo.py`, which syncs todo notes with Microsoft To Do;
 - canonical `routes/task/task_routes.py`, compatibility shim `routes/task_routes.py`, `src/task_scheduler.py`, `src/task_endpoint.py`, `src/event_bus.py`, and `src/interactive_gate.py`;
 - shared privileged task-action policy in `src/task_action_policy.py`;
 - `routes/assistant_routes.py`;
@@ -16,7 +17,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
   `routes/note_routes.py`, `src/builtin_actions.py`, and `src/action_intents.py`;
 - agent/tool call sites in `src/tool_index.py` and `src/tool_implementations.py`;
 - scoped Codex wrappers in `routes/codex_routes.py`;
-- database models `CalendarCal`, `CalendarEvent`, `ScheduledTask`, `TaskRun`, `Note`, and `CrewMember`;
+- database models `CalendarCal`, `CalendarEvent`, `CalendarDeletedEvent`, `ScheduledTask`, `TaskRun`, `Note`, `MsTodoDeletedNote`, and `CrewMember`;
 - direct DB CLIs `scripts/odysseus-calendar`, `scripts/odysseus-notes`, and `scripts/odysseus-tasks`;
 - frontend modules `static/js/calendar.js`, `static/js/calendar/*`, `static/js/tasks.js`, `static/js/notes.js`, and `static/js/assistant.js`;
 - tests covering calendar routes/utilities, CalDAV, recurrence, timezone handling, scheduler behavior, task webhooks, notes CLI/tool behavior, and task CLI behavior.
@@ -95,6 +96,30 @@ state, AI classification, source/session provenance, and agent session
 linkage.
 
 Notes CRUD/reorder/reminder routes resolve the acting owner through `require_user()`: auth-enabled anonymous requests fail closed before hitting owner-scoped queries, while documented no-login/single-user modes still resolve to the compatibility owner path.
+
+### Microsoft To Do Sync
+
+`src.msgraph_todo` owns two-way task sync with Microsoft To Do over Graph. It maps a `todoTask` onto the existing `Note` schema rather than adding a model: a note whose `note_type` is in `SYNCED_NOTE_TYPES` (`todo`, `checklist`) is the local half of a task, `checklistItems` are the note's `items`, `dueDateTime`/`reminderDateTime` are `due_date` (a bare date stays a date; a reminder carries the time of day), `recurrence` is `repeat`, completed status is `archived`, high importance is `pinned`, and the To Do list is a tag in `label`. `Note.origin` carries `mstodo`, `remote_id` the task id, `remote_etag` its `@odata.etag`, `remote_list_id` the list id, `todo_account_id` the connected account, and `todo_sync_pending` the retry marker. `MsTodoDeletedNote` is the delete tombstone, since the note row is gone by the time the push runs.
+
+Odysseus's Tasks tool (`ScheduledTask`) is deliberately not the synced surface: it schedules automation, which has no counterpart in To Do, and importing a task into it would produce rows the scheduler tries to execute.
+
+Runtime behavior:
+
+- only `SYNCED_NOTE_TYPES` is pushed; a plain note, drawing or goal stays local, and a pulled task always lands as `todo`;
+- note CRUD, pin, archive and item-toggle routes mark `todo_sync_pending` inside the same transaction as the change and hand the push to `BackgroundTasks`, so a Graph round trip never blocks the response and a crash between commit and push still leaves the retry marker; `src/tools/notes.py` awaits the same write-back directly, since the agent has no response to hang one off;
+- changing a synced note's type away from a task tombstones it and deletes it upstream, then clears its remote ids;
+- the pull writes only fields that actually changed: the active notes view is ordered by `updated_at`, so rewriting an unchanged row would reshuffle the board on every sync. The `@odata.etag` moves whenever the server touches a task, so it rides along with a real change rather than counting as one;
+- the pull preserves tags added locally and replaces only the tag naming another list, so `merge_label` keeps exactly one list tag;
+- a task cannot move between lists (Graph has no move operation), so `choose_list_for_note` picks the list once — first tag naming an existing list, else the default list — and a tag matching no list never creates one;
+- pruning only touches rows with `origin == "mstodo"`, this account and list, a `remote_id` and no pending marker, and never runs after a failed fetch or a walk truncated at the page cap; a 200 with no tasks is a real answer, so emptying a list upstream does clear its notes;
+- tasks completed more than `_COMPLETED_LOOKBACK_DAYS` ago are left upstream rather than imported, but are still counted as seen so the prune does not delete their notes;
+- `direction=both` pushes before pulling, and a task note with no `remote_id` is queued for push — which is how the first sync uploads the to-dos that already existed;
+- disconnecting an account unlinks its notes but keeps them: they are the user's tasks, not a cache;
+- checklist items are reconciled by position through their own Graph collection, because Graph does not accept `checklistItems` on a task PATCH.
+
+Microsoft task access is a separate OAuth connection from mail and calendar, for the same per-resource token reason, with its own `Tasks.ReadWrite` consent and its own callback. Graph tokens are stored encrypted in per-user prefs as `mstodo_accounts`, Microsoft's rotated refresh token is persisted on every refresh, and every Graph call is pinned to `https://graph.microsoft.com`.
+
+Both Graph modules normalize the owner before touching preferences (`_prefs_owner`). Three spellings reach them for the same person on a single-user install — `""` from the OAuth routes, `ODYSSEUS_FALLBACK_OWNER` from the calendar routes, and `None` from the preferences layer itself — and storing under one while reading under another makes `/sync` report success while doing nothing, because "no account connected" is not an error.
 
 Reminder policy:
 
