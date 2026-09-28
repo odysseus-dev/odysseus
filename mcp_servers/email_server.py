@@ -215,11 +215,20 @@ def _read_accounts_from_db() -> list:
             "signature_enabled" if "signature_enabled" in columns
             else "1 AS signature_enabled"
         )
+        signature_img_select = (
+            "signature_image" if "signature_image" in columns
+            else "NULL AS signature_image"
+        )
+        signature_img_mime_select = (
+            "signature_image_mime" if "signature_image_mime" in columns
+            else "NULL AS signature_image_mime"
+        )
         rows = conn.execute(f"""
             SELECT id, {owner_select}, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
                    smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address,
-                   {signature_select}, {signature_on_select}
+                   {signature_select}, {signature_on_select},
+                   {signature_img_select}, {signature_img_mime_select}
             FROM email_accounts WHERE enabled = 1
             ORDER BY is_default DESC, created_at ASC
         """).fetchall()
@@ -357,6 +366,8 @@ def _load_config(account: str | None = None) -> dict:
         cfg["signature_enabled"] = bool(
             True if row["signature_enabled"] is None else row["signature_enabled"]
         )
+        cfg["signature_image"] = row["signature_image"] or ""
+        cfg["signature_image_mime"] = row["signature_image_mime"] or ""
     else:
         # Legacy fallback: settings.json flat keys
         try:
@@ -1477,6 +1488,56 @@ def _stash_agent_draft(*, to, subject, body, in_reply_to=None, references=None,
     }
 
 
+def _attach_signature_image(msg, body, cfg):
+    """Give *msg* an HTML alternative carrying the account's signature image.
+
+    A picture cannot exist in text/plain, so an account with a signature
+    image needs an HTML part to reference it. The plain part stays the
+    body as written and remains what a text-only reader gets.
+
+    Only fires when the signature text survived in *body* — the same rule
+    the web send path follows, so a message the user unsigned during
+    confirmation does not go out branded anyway.
+
+    Best-effort: this is decoration, and a failure here must never stop a
+    send that is otherwise ready.
+    """
+    try:
+        from src.email_signature import (
+            account_signature,
+            account_signature_image,
+            body_has_signature,
+            html_with_signature_image,
+            SIGNATURE_IMAGE_CID,
+        )
+
+        data, mime = account_signature_image(cfg)
+        if not data or not body_has_signature(body, account_signature(cfg)):
+            return False
+
+        from src.email_html import md_to_email_html
+        import base64 as _b64
+
+        msg.add_alternative(html_with_signature_image(md_to_email_html(body)),
+                            subtype="html")
+        # add_alternative wrapped the body in multipart/alternative; the
+        # HTML part is the last one, and add_related on it produces the
+        # multipart/related that binds the image to the markup that
+        # references it by Content-ID.
+        html_part = msg.get_payload()[-1]
+        html_part.add_related(
+            _b64.b64decode(data, validate=True),
+            maintype="image",
+            subtype=(mime or "image/png").split("/", 1)[-1] or "png",
+            cid=f"<{SIGNATURE_IMAGE_CID}>",
+            disposition="inline",
+            filename="signature",
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _signed_body(body, cfg):
     """Append the account's configured signature to an agent-composed body.
 
@@ -1530,6 +1591,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
     if "Message-ID" not in msg:
         msg["Message-ID"] = email.utils.make_msgid()
     msg.set_content(body)
+    _attach_signature_image(msg, body, cfg)
 
     recipients = []
     if isinstance(to, str):

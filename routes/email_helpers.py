@@ -1230,6 +1230,8 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "signature_enabled": bool(
                         True if row.signature_enabled is None else row.signature_enabled
                     ),
+                    "signature_image": getattr(row, "signature_image", None) or "",
+                    "signature_image_mime": getattr(row, "signature_image_mime", None) or "",
                 }
                 is_oauth = bool(cfg.get("oauth_provider"))
                 if not is_oauth and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):

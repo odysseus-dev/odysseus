@@ -438,6 +438,18 @@ class EmailAccount(TimestampMixin, Base):
         Boolean, default=True, server_default=text("1"), nullable=False,
     )
 
+    # A logo or scanned sign-off shown under the signature text. Stored
+    # base64 (no `data:` prefix) with its media type beside it, and sent as
+    # an inline MIME part referenced by Content-ID rather than a remote URL:
+    # Outlook and Gmail block remote images by default, so a hosted logo
+    # reaches most recipients as an empty box, and fetching one tells the
+    # host when the message was opened.
+    #
+    # Not encrypted, for the same reason the text above is not — it goes to
+    # every recipient by design.
+    signature_image      = Column(Text, nullable=True)
+    signature_image_mime = Column(String, nullable=True)   # image/png | image/jpeg | image/gif
+
     # OAuth2 (Google / Google Workspace). Tokens stored encrypted via secret_storage.
     oauth_provider      = Column(String, nullable=True)   # "google" or None
     oauth_access_token  = Column(String, nullable=True)   # encrypted
@@ -1229,7 +1241,9 @@ def _migrate_add_email_signature_columns():
     `signature_enabled` defaults to 1 so an account that later gets a
     signature starts using it, but `signature` itself stays NULL — an
     existing install keeps sending exactly what it sent before until someone
-    actually writes one.
+    actually writes one. The image columns are added the same way, and each
+    column is checked on its own so an install that already ran the earlier
+    version of this migration picks up only what it is missing.
     """
     import sqlite3
     db_path = DATABASE_URL.replace("sqlite:///", "")
@@ -1248,6 +1262,12 @@ def _migrate_add_email_signature_columns():
             conn.execute(
                 "ALTER TABLE email_accounts ADD COLUMN signature_enabled "
                 "BOOLEAN DEFAULT 1 NOT NULL"
+            )
+        if "signature_image" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN signature_image TEXT")
+        if "signature_image_mime" not in columns:
+            conn.execute(
+                "ALTER TABLE email_accounts ADD COLUMN signature_image_mime TEXT"
             )
         conn.commit()
     except Exception as e:
