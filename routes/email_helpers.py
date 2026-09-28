@@ -1226,6 +1226,10 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "oauth_refresh_token": row.oauth_refresh_token or "",
                     "oauth_token_expiry": row.oauth_token_expiry or "",
                     "display_name": row.display_name or "",
+                    "signature": row.signature or "",
+                    "signature_enabled": bool(
+                        True if row.signature_enabled is None else row.signature_enabled
+                    ),
                 }
                 is_oauth = bool(cfg.get("oauth_provider"))
                 if not is_oauth and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
@@ -2221,6 +2225,12 @@ class SendEmailRequest(BaseModel):
     odysseus_kind: Optional[str] = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.
     wait_for_delivery: bool = False
+    # Opt-in, because the composer already puts the account's signature into
+    # the draft where the user can see and edit it. Callers that build a body
+    # themselves — the agent, scheduled sends — set this to get the same
+    # signature. /send still refuses to add a second copy to a body that
+    # already carries one.
+    append_signature: bool = False
 
 
 class ExtractStyleRequest(BaseModel):

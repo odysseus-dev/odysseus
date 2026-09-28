@@ -210,10 +210,16 @@ def _read_accounts_from_db() -> list:
         columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
         owner_select = "owner" if "owner" in columns else "NULL AS owner"
         smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
+        signature_select = "signature" if "signature" in columns else "'' AS signature"
+        signature_on_select = (
+            "signature_enabled" if "signature_enabled" in columns
+            else "1 AS signature_enabled"
+        )
         rows = conn.execute(f"""
             SELECT id, {owner_select}, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
-                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
+                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address,
+                   {signature_select}, {signature_on_select}
             FROM email_accounts WHERE enabled = 1
             ORDER BY is_default DESC, created_at ASC
         """).fetchall()
@@ -347,6 +353,10 @@ def _load_config(account: str | None = None) -> dict:
         cfg["smtp_user"] = row["smtp_user"] or cfg["smtp_user"]
         cfg["smtp_password"] = _decrypt(row["smtp_password"]) if row["smtp_password"] else cfg["smtp_password"]
         cfg["from_address"] = row["from_address"] or row["imap_user"] or cfg["from_address"]
+        cfg["signature"] = row["signature"] or ""
+        cfg["signature_enabled"] = bool(
+            True if row["signature_enabled"] is None else row["signature_enabled"]
+        )
     else:
         # Legacy fallback: settings.json flat keys
         try:
@@ -1467,6 +1477,21 @@ def _stash_agent_draft(*, to, subject, body, in_reply_to=None, references=None,
     }
 
 
+def _signed_body(body, cfg):
+    """Append the account's configured signature to an agent-composed body.
+
+    The agent writes the prose; the signature is the user's, and it is the
+    same block the composer puts on mail they write by hand. Best-effort —
+    a missing helper or an unreadable column must not stop the send.
+    """
+    try:
+        from src.email_signature import account_signature, apply_signature
+
+        return apply_signature(body, account_signature(cfg))
+    except Exception:
+        return body
+
+
 def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, bcc=None, account=None):
     """Send an email via SMTP. Returns dict with status.
 
@@ -1480,12 +1505,16 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         # Otherwise a caller could stage a pending draft against another
         # owner's account selector before browser approval handles it.
         cfg = _load_config(account)
+        # Sign before stashing, so the user approves the message that will
+        # actually go out rather than one the signature is added to later.
+        body = _signed_body(body, cfg)
         return _stash_agent_draft(
             to=to, subject=subject, body=body,
             in_reply_to=in_reply_to, references=references,
             cc=cc, bcc=bcc, account=cfg.get("account_id") or account,
         )
     send_account, cfg = _resolve_send_config(account)
+    body = _signed_body(body, cfg)
     msg = EmailMessage()
     msg["From"] = _clean_header_value(cfg["from_address"])
     msg["To"] = _clean_header_value(to if isinstance(to, str) else ", ".join(to))

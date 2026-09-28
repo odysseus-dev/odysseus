@@ -4444,6 +4444,9 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password. Outlook / Office 365 generally requires OAuth and will not work with this password form.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>Signature <span style="font-weight:normal;opacity:0.7">— added to messages you compose</span></div>
+          <div class="settings-row" style="align-items:flex-start"><label class="settings-label" style="padding-top:6px">Text${_hint('Appended to new messages, replies and forwards from this account. It goes into the draft before it opens, so you can edit or delete it per message. Markdown works — the same renderer that formats the body formats this.')}</label><textarea id="uf-email-signature" class="settings-input" rows="4" style="resize:vertical;font-family:inherit;line-height:1.5;" placeholder="Ada Lovelace&#10;Analytical Engines Ltd&#10;+44 20 7946 0958"></textarea></div>
+          <div class="settings-row"><label class="settings-label">Use signature${_hint('Turn off to stop adding it without deleting the text.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-signature-on" checked><span class="admin-slider"></span></label></div>
           <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-email-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -4700,6 +4703,8 @@ async function initUnifiedIntegrations() {
       el('uf-smtp-security').value = _smtpSecurity(existing);
       el('uf-smtp-user').value = existing.smtp_user || '';
       el('uf-email-default').checked = !!existing.is_default;
+      el('uf-email-signature').value = existing.signature || '';
+      el('uf-email-signature-on').checked = existing.signature_enabled !== false;
       // If the saved SMTP user matches the IMAP user, keep the "Same as
       // IMAP" toggle ON (and stay hidden). Otherwise turn it off so the
       // separate SMTP credentials are visible for editing.
@@ -4749,6 +4754,8 @@ async function initUnifiedIntegrations() {
         smtp_security: el('uf-smtp-security').value,
         smtp_user: el('uf-smtp-user').value.trim(),
         is_default: el('uf-email-default').checked,
+        signature: el('uf-email-signature').value,
+        signature_enabled: el('uf-email-signature-on').checked,
       };
       if (el('uf-imap-pass').value) body.imap_password = el('uf-imap-pass').value;
       if (el('uf-smtp-pass').value) body.smtp_password = el('uf-smtp-pass').value;
@@ -4867,6 +4874,12 @@ async function initUnifiedIntegrations() {
         }
         el('uf-email-msg').textContent = 'Saved';
         el('uf-email-msg').style.color = 'var(--green,#50fa7b)';
+        // The composer caches the account list for 30s; drop it so the very
+        // next draft carries the signature that was just edited rather than
+        // the one it replaced.
+        import('./emailLibrary/signature.js')
+          .then(m => m.invalidateSignatureCache && m.invalidateSignatureCache())
+          .catch(() => {});
         integrationNotice = 'Email account saved. For more settings, go to Settings > Email.';
         formEl.style.display = 'none';
         await renderList();

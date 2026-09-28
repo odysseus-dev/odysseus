@@ -39,6 +39,11 @@ from email.mime.multipart import MIMEMultipart
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
+from src.email_signature import (
+    account_signature as _account_signature,
+    apply_signature as _apply_signature,
+    normalize_signature as _normalize_signature,
+)
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
@@ -4762,6 +4767,13 @@ def setup_email_routes():
         if req.odysseus_kind:
             _apply_odysseus_headers(outer, req.odysseus_kind)
 
+        # The composer already signed the draft, so this only fires for
+        # callers that built the body themselves. `apply_signature` is a no-op
+        # on a body that already carries the signature, which is what keeps a
+        # double-append from reaching the recipient.
+        if req.append_signature:
+            req.body = _apply_signature(req.body, _account_signature(cfg))
+
         # Plain + HTML body. Escape user content so a `<script>` or
         # `<img onerror=...>` paste in compose doesn't end up as live HTML
         # in the recipient's MUA.
@@ -5847,6 +5859,10 @@ def setup_email_routes():
                     "has_smtp_password": bool(r.smtp_password),
                     "oauth_provider": r.oauth_provider or "",
                     "display_name": r.display_name or "",
+                    "signature": r.signature or "",
+                    "signature_enabled": bool(
+                        True if r.signature_enabled is None else r.signature_enabled
+                    ),
                 })
             return {"accounts": out}
         finally:
@@ -5887,6 +5903,8 @@ def setup_email_routes():
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
                 display_name=(data.get("display_name") or "").strip(),
+                signature=_normalize_signature(data.get("signature")),
+                signature_enabled=bool(data.get("signature_enabled", True)),
                 # SECURITY: stamp the creator so all subsequent reads / mutations
                 # can filter by user. Without this every new account leaks to
                 # every other user.
@@ -5930,9 +5948,11 @@ def setup_email_routes():
                     setattr(row, key, port)
             if "smtp_security" in data:
                 row.smtp_security = _smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or row.smtp_port})
-            for key in ("imap_starttls", "enabled"):
+            for key in ("imap_starttls", "enabled", "signature_enabled"):
                 if key in data:
                     setattr(row, key, bool(data[key]))
+            if "signature" in data:
+                row.signature = _normalize_signature(data["signature"])
             # Passwords — only overwrite when a non-empty value is
             # provided. Stored encrypted; see src/secret_storage.py.
             from src.secret_storage import encrypt as _enc

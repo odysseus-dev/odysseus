@@ -419,6 +419,25 @@ class EmailAccount(TimestampMixin, Base):
     from_address   = Column(String, default="")
     display_name   = Column(String, nullable=True)   # "Hriday Ranka" — used in From: header
 
+    # Outgoing signature — the block appended to messages sent from this
+    # account. Plain text (markdown is rendered into the HTML part by the
+    # same path that renders the body), delimited on the wire by RFC 3676's
+    # "-- " line so receiving clients can fold it.
+    #
+    # Deliberately NOT encrypted, unlike the passwords above and the
+    # handwritten Signature model: this text is sent to every recipient by
+    # design, so encrypting it at rest would protect nothing while making it
+    # unreadable to an operator inspecting the database.
+    signature         = Column(Text, nullable=True)
+    # server_default, not just default: `default=` is applied by the ORM, so a
+    # raw-SQL INSERT that does not name this column — the legacy seed
+    # migration below is one — would hit the NOT NULL constraint. The DEFAULT
+    # lives in the table so every writer gets it, which also matches what the
+    # ALTER TABLE migration installs on an existing database.
+    signature_enabled = Column(
+        Boolean, default=True, server_default=text("1"), nullable=False,
+    )
+
     # OAuth2 (Google / Google Workspace). Tokens stored encrypted via secret_storage.
     oauth_provider      = Column(String, nullable=True)   # "google" or None
     oauth_access_token  = Column(String, nullable=True)   # encrypted
@@ -1203,6 +1222,42 @@ def _migrate_add_pinned_models_column():
             conn.close()
         except Exception:
             pass
+
+def _migrate_add_email_signature_columns():
+    """Add the outgoing-signature columns to an existing email_accounts table.
+
+    `signature_enabled` defaults to 1 so an account that later gets a
+    signature starts using it, but `signature` itself stays NULL — an
+    existing install keeps sending exactly what it sent before until someone
+    actually writes one.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return
+        if "signature" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN signature TEXT")
+        if "signature_enabled" not in columns:
+            conn.execute(
+                "ALTER TABLE email_accounts ADD COLUMN signature_enabled "
+                "BOOLEAN DEFAULT 1 NOT NULL"
+            )
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"email signature migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 def _migrate_add_notes_sort_order():
     """Add sort_order, image_url, repeat columns to notes if they don't exist."""
@@ -2181,6 +2236,7 @@ def init_db():
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_notes_todo_sync_columns()
+    _migrate_add_email_signature_columns()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()

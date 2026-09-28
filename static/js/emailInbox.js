@@ -9,11 +9,31 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
+import { loadOutgoingSignature, withSignature } from './emailLibrary/signature.js';
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => emailAccountQuery('&');
+
+// Drop the account's signature into a draft before it opens, so it is
+// visible and editable rather than something the user only discovers in
+// their Sent folder. Everything before the first `---` is the header block;
+// the signature belongs in the body below it.
+async function _withDraftSignature(content) {
+  try {
+    const signature = await loadOutgoingSignature();
+    if (!signature) return content;
+    const marker = '\n---\n';
+    const at = content.indexOf(marker);
+    if (at < 0) return content;
+    const head = content.slice(0, at + marker.length);
+    return head + withSignature(content.slice(at + marker.length), signature);
+  } catch (_) {
+    // A signature is a nicety; never let one stop a draft from opening.
+    return content;
+  }
+}
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
@@ -1005,6 +1025,8 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       content += `${_replySeparator}\nOn ${niceDate}, ${data.from_name} <${data.from_address}> wrote:\n${quotedBody}`;
     }
 
+    content = await _withDraftSignature(content);
+
     if (_docModule) {
       // Agent-provided reply text should land in the email draft the user
       // already has open. Plain Reply clicks must create a fresh draft: reusing
@@ -1411,13 +1433,14 @@ async function _composeNew() {
       import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
       return;
     }
+    const composeContent = await _withDraftSignature('To: \nSubject: \n---\n');
     const createComposeDoc = (sessionId) => fetch(`${API_BASE}/api/document`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sessionId,
         title: 'New Email',
-        content: 'To: \nSubject: \n---\n',
+        content: composeContent,
         language: 'email',
       }),
     });
