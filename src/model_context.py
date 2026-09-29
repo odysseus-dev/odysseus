@@ -338,6 +338,7 @@ def _model_ctx_from_entry(m: dict) -> Optional[int]:
         "max_model_len",
         "max_context_length",
         "max_seq_len",
+        "context_size",  # Novita
     ):
         val = m.get(field)
         if val and isinstance(val, (int, float)) and val > 0:
