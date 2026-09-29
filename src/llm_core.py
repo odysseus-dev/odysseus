@@ -1178,6 +1178,10 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
                 detail = (err.get("message") or err.get("detail") or "").strip()
             elif isinstance(err, str):
                 detail = err.strip()
+            # Cloudflare API errors: {"errors": [{"message": ..., "code": ...}], "success": false}
+            if not detail and isinstance(j.get("errors"), list) and j["errors"]:
+                first = j["errors"][0]
+                detail = ((first.get("message") or "") if isinstance(first, dict) else str(first)).strip()[:300]
     except Exception:
         detail = (body or "").strip()[:240]
 
@@ -1519,6 +1523,27 @@ def _is_untrusted_context_content(content) -> bool:
 _REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
 
 
+def _adapt_messages_for_url(url: str, messages: List[Dict]) -> List[Dict]:
+    """Provider-specific message fixes applied after _sanitize_llm_messages.
+
+    Cloudflare Workers AI validates every message against a schema that requires
+    string content; an assistant tool-calls-only turn with the spec-correct
+    `content: null` is rejected with HTTP 400 "AiError: Bad input ... Type
+    mismatch of '/messages/N/content', 'string' not in 'null'". That broke the
+    Cloudflare fallback on every agent round after the first tool call. Send ""
+    there instead. Other providers keep `content: null` (Gemini/Ollama reject
+    tool_calls alongside "", see _sanitize_llm_messages).
+    """
+    if not url or not _host_match(url, "api.cloudflare.com"):
+        return messages
+    adapted = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("content") is None:
+            msg = {**msg, "content": ""}
+        adapted.append(msg)
+    return adapted
+
+
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     """Strip Odysseus-only metadata before sending messages to providers.
 
@@ -1831,7 +1856,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, dict):
         h.update(headers)
 
-    messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = _adapt_messages_for_url(url, _sanitize_llm_messages(messages))
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -2024,7 +2049,7 @@ async def llm_call_async(
     They don't consume max_retries. Default 0 keeps chat latency unchanged.
     """
     provider = _detect_provider(url)
-    messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = _adapt_messages_for_url(url, _sanitize_llm_messages(messages))
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -2306,7 +2331,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
-    messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = _adapt_messages_for_url(url, _sanitize_llm_messages(messages))
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
