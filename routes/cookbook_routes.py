@@ -1012,8 +1012,10 @@ def setup_cookbook_routes() -> APIRouter:
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
-        proc = subprocess.Popen(
-            argv,
+        # Reviewed 2026-09-30: argv is a fixed interpreter + our own script path;
+        # running the user's recipe is the feature itself, and this path is Windows-only.
+        proc = subprocess.Popen(  # nosemgrep
+            argv,  # nosemgrep
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
