@@ -995,6 +995,12 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             # flag through so callers can tell unified from discrete VRAM.
             "unified_memory": gpu_info.get("unified_memory", False),
         }
+        # Architecture and family from the vendor probe (NVIDIA compute
+        # capability, AMD gfx). fit.py reads gpu_family, so it has to survive
+        # into the detected system, not stop at _detect_*().
+        for _k in ("gpu_arch", "gpu_family"):
+            if gpu_info.get(_k):
+                result[_k] = gpu_info[_k]
     else:
         backend = "cpu_arm" if cpu_arch == "arm64" else "cpu_x86"
         result = {

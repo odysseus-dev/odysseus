@@ -186,3 +186,15 @@ def test_turing_and_newer_or_unknown_still_see_vllm_only_rows(monkeypatch, famil
     names = _ranked_names(_cuda_system(family, "", "NVIDIA GeForce RTX 3090"))
 
     assert "some-org/Model-AWQ" in names
+
+
+def test_detect_system_carries_family_through_to_the_ranker(monkeypatch):
+    """gpu_family must survive from the vendor probe into the detected system,
+    otherwise fit.py never sees it and the pre-Turing rule cannot fire."""
+    monkeypatch.setattr(hardware, "_run", _fake_smi("6.0\n6.0\n7.0"))
+    monkeypatch.setattr(hardware, "_detect_apple_silicon", lambda: None)
+    system = hardware.detect_system(fresh=True)
+
+    assert system["backend"] == "cuda"
+    assert system["gpu_arch"] == "7.0"
+    assert system["gpu_family"] == "volta"
