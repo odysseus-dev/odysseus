@@ -2971,7 +2971,36 @@ def setup_email_routes():
                 _t_fetch = _t.monotonic() - _t0
                 if status != "OK":
                     return {"error": f"Email UID {uid} not found"}
+                # A UID FETCH that matches no message still returns tagged OK
+                # per the IMAP spec — the server just reports zero results as
+                # an untagged None rather than an error status. Left unchecked,
+                # that silently produces an empty `raw` below, which parses
+                # into a blank "(no subject)"/"unknown" message instead of a
+                # clear error. This happens for UIDs that were valid when the
+                # message was first indexed but no longer resolve to anything
+                # (moved, deleted, or the mailbox was reindexed/UIDVALIDITY
+                # changed) — surface it so the reader shows a real error
+                # instead of hanging on a blank message.
+                if not msg_data or all(item is None for item in msg_data):
+                    return {
+                        "error": (
+                            f"Email UID {uid} is no longer available in this "
+                            "folder. It may have been moved or deleted, or the "
+                            "mailbox was reindexed — try refreshing your inbox."
+                        ),
+                        "not_found": True,
+                    }
                 if full:
+                    if not isinstance(msg_data[0], tuple):
+                        return {
+                            "error": (
+                                f"Email UID {uid} is no longer available in "
+                                "this folder. It may have been moved or "
+                                "deleted, or the mailbox was reindexed — try "
+                                "refreshing your inbox."
+                            ),
+                            "not_found": True,
+                        }
                     raw = msg_data[0][1]
                 else:
                     header_part = b""
@@ -3287,6 +3316,13 @@ def setup_email_routes():
                 conn.select(_q(folder), readonly=True)
                 status, msg_data = _imap_uid_fetch(conn, uid, "(RFC822)")
             if status != "OK":
+                return {"attachments": [], "error": "Email not found"}
+            # See the matching guard in _read_email_sync: a UID FETCH that
+            # matches nothing still returns tagged OK, with msg_data holding
+            # only None entries. Without this check, `msg_data[0][1]` below
+            # raises "'NoneType' object is not subscriptable" for a UID that
+            # no longer resolves to a message (moved/deleted/reindexed).
+            if not msg_data or not isinstance(msg_data[0], tuple):
                 return {"attachments": [], "error": "Email not found"}
             raw = msg_data[0][1]
             msg = email_mod.message_from_bytes(raw)
