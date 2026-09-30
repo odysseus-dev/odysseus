@@ -8,7 +8,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
-import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
+import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, recipeUsesVenv, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
 
 // Sub-modules
@@ -1246,9 +1246,9 @@ async function _fetchDependencies() {
       const py = _shellQuote(`${envPath}/bin/python3`);
       return commands.map(cmd => String(cmd || '').replace(/^python(\s+-m\s+pip\b)/, `${py}$1`));
     }
-    function _recipeDisplayText(commands, variant) {
+    function _recipeDisplayText(commands, variant, usesVenv = true) {
       const runtimeCommands = _recipeRuntimeCommands(commands, variant);
-      if (variant === 'docker') return commands.join('\n');
+      if (variant === 'docker' || !usesVenv) return commands.join('\n');
       const envPath = (_envState.envPath || '').replace(/\/+$/, '');
       const activate = envPath
         ? `source ${envPath}${envPath.endsWith('/bin/activate') ? '' : '/bin/activate'}`
@@ -1289,7 +1289,7 @@ async function _fetchDependencies() {
             </div>
           </div>
           <div style="position:relative;">
-            <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialRuntimeCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre;">${esc(_recipeDisplayText(initialCmds, initialVariant))}</pre>
+            <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialRuntimeCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre;">${esc(_recipeDisplayText(initialCmds, initialVariant, recipeUsesVenv(initial, initialVariant)))}</pre>
             <button type="button" id="recipe-copy-${esc(backend)}" class="cookbook-dep-recipe-copy" data-dep-recipe-copy="${esc(backend)}" title="Copy" aria-label="Copy" style="position:absolute;top:6px;right:6px;padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
           <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
@@ -1665,7 +1665,7 @@ async function _fetchDependencies() {
       const runtimeCmds = _recipeRuntimeCommands(cmds, variant);
       const pre = panel.querySelector('[data-dep-recipe-cmds]');
       if (pre) {
-        pre.textContent = _recipeDisplayText(cmds, variant);
+        pre.textContent = _recipeDisplayText(cmds, variant, recipeUsesVenv(recipe, variant));
         pre.dataset.depRecipeInstall = runtimeCmds.join('\n');
       }
     }
