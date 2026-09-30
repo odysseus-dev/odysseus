@@ -39,8 +39,8 @@ const _RECIPES = [
     label: 'PXQ model (PXA vLLM sidecar, P100 / V100)',
     match: (m) => /pxq/i.test(m || ''),
     variants: {
-      pip:    { commands: ['echo "The PXA vLLM sidecar ships as a container image, not a pip package. Switch this recipe to Docker."'], venv: false },
-      docker: { commands: ['bash -eu <<\'PXA\'\ncaps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | tr -d \'[:blank:]\' | sort -u | paste -sd\' \')\ncase "$caps" in\n  6.0) arch=sm60 ;;\n  7.0) arch=sm70 ;;\n  *) echo "The PXA vLLM sidecar has one image per card family, P100 (6.0) or V100 (7.0); this host reports: $caps"; exit 1 ;;\nesac\n# The sidecar images are tagged per feature release (v2026.10), not per patch release.\ndocker pull "ghcr.io/poisonxa16/pxa-vllm:$arch-v2026.10"\necho "The sidecar serves a checkpoint converted from a PXQ GGUF: https://github.com/poisonxa16/pxa/blob/main/docs/VLLM.md"\nPXA'] },
+      pip:    { run: false, commands: ['echo "The PXA vLLM sidecar ships as a container image, not a pip package. Switch this recipe to Docker."'], venv: false },
+      docker: { run: false, commands: ['bash -eu <<\'PXA\'\ncaps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | tr -d \'[:blank:]\' | sort -u | paste -sd\' \')\ncase "$caps" in\n  6.0) arch=sm60 ;;\n  7.0) arch=sm70 ;;\n  *) echo "The PXA vLLM sidecar has one image per card family, P100 (6.0) or V100 (7.0); this host reports: $caps"; exit 1 ;;\nesac\n# The sidecar images are tagged per feature release (v2026.10), not per patch release.\ndocker pull "ghcr.io/poisonxa16/pxa-vllm:$arch-v2026.10"\necho "The sidecar serves a checkpoint converted from a PXQ GGUF: https://github.com/poisonxa16/pxa/blob/main/docs/VLLM.md"\nPXA'] },
     },
   },
   // Generic vllm fallback.
@@ -171,8 +171,8 @@ const _RECIPES = [
     label: 'PXQ GGUF (PXA engine, Pascal / Volta)',
     match: (m) => /pxq/i.test(m || ''),
     variants: {
-      pip:    { commands: ['bash -eu <<\'PXA\'\n[ "$(uname -m)" = x86_64 ] || { echo "PXA ships Linux x86_64 binaries only."; exit 1; }\nglibc=$(getconf GNU_LIBC_VERSION | awk \'{print $2}\')\necho "$glibc" | awk \'{ split($1, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 35)) }\' || { echo "PXA needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, RHEL 9+); this host has $glibc."; exit 1; }\ncaps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | tr -d \'[:blank:]\' | sort -u | paste -sd\' \')\n[ -n "$caps" ] || { echo "nvidia-smi reported no GPUs."; exit 1; }\nfor c in $caps; do case "$c" in 6.0|6.1|7.0) ;; *) echo "PXA is built for Pascal (6.0, 6.1) and Volta (7.0); this host reports: $caps"; exit 1 ;; esac; done\nurls=$(curl -fsSL https://api.github.com/repos/poisonxa16/pxa/releases/latest | grep \'"browser_download_url"\' | cut -d\'"\' -f4 | grep -E \'/pxa-v[^/]*linux-x86_64[^/]*\\.tar\\.gz$\' || true)\nu22=$(echo "$urls" | grep -- \'-ubuntu22\\.04\\.tar\\.gz$\' | sed -n 1p || true)\nu24=$(echo "$urls" | grep -v -- \'-ubuntu22\\.04\\.tar\\.gz$\' | sed -n 1p || true)\nif echo "$glibc" | awk \'{ split($1, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 38)) }\'; then url=${u24:-$u22}; else url=$u22; fi\n[ -n "$url" ] || { echo "Could not find a tarball for glibc $glibc in the latest PXA release (the default build needs 2.38+, the ubuntu22.04 build 2.35+)."; exit 1; }\nmkdir -p "$HOME/.local/share/pxa" && cd "$HOME/.local/share/pxa"\ntgz=$(basename "$url")\ncurl -fL -o "$tgz" "$url" && curl -fL -o "$tgz.sha256" "$url.sha256"\nsha256sum -c "$tgz.sha256"\ntop=$(tar tzf "$tgz" | sed -n 1p | cut -d/ -f1)\ntar xzf "$tgz" && ln -sfn "$top" current\necho "PXA $top installed. Serve a GGUF with: $HOME/.local/share/pxa/current/run-server.sh -m /path/to/model.gguf -ngl 99 -c 8192"\nPXA'], venv: false },
-      docker: { commands: ['tag=$(curl -fsSL https://api.github.com/repos/poisonxa16/pxa/releases/latest | grep \'"tag_name"\' | cut -d\'"\' -f4) && [ -n "$tag" ] && docker pull "ghcr.io/poisonxa16/pxa:$tag"'] },
+      pip:    { run: false, commands: ['bash -eu <<\'PXA\'\n[ "$(uname -m)" = x86_64 ] || { echo "PXA ships Linux x86_64 binaries only."; exit 1; }\nglibc=$(getconf GNU_LIBC_VERSION | awk \'{print $2}\')\necho "$glibc" | awk \'{ split($1, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 35)) }\' || { echo "PXA needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, RHEL 9+); this host has $glibc."; exit 1; }\ncaps=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | tr -d \'[:blank:]\' | sort -u | paste -sd\' \')\n[ -n "$caps" ] || { echo "nvidia-smi reported no GPUs."; exit 1; }\nfor c in $caps; do case "$c" in 6.0|6.1|7.0) ;; *) echo "PXA is built for Pascal (6.0, 6.1) and Volta (7.0); this host reports: $caps"; exit 1 ;; esac; done\nurls=$(curl -fsSL https://api.github.com/repos/poisonxa16/pxa/releases/latest | grep \'"browser_download_url"\' | cut -d\'"\' -f4 | grep -E \'/pxa-v[^/]*linux-x86_64[^/]*\\.tar\\.gz$\' || true)\nu22=$(echo "$urls" | grep -- \'-ubuntu22\\.04\\.tar\\.gz$\' | sed -n 1p || true)\nu24=$(echo "$urls" | grep -v -- \'-ubuntu22\\.04\\.tar\\.gz$\' | sed -n 1p || true)\nif echo "$glibc" | awk \'{ split($1, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 38)) }\'; then url=${u24:-$u22}; else url=$u22; fi\n[ -n "$url" ] || { echo "Could not find a tarball for glibc $glibc in the latest PXA release (the default build needs 2.38+, the ubuntu22.04 build 2.35+)."; exit 1; }\nmkdir -p "$HOME/.local/share/pxa" && cd "$HOME/.local/share/pxa"\ntgz=$(basename "$url")\ncurl -fL -o "$tgz" "$url" && curl -fL -o "$tgz.sha256" "$url.sha256"\nsha256sum -c "$tgz.sha256"\ntop=$(tar tzf "$tgz" | sed -n 1p | cut -d/ -f1)\ntar xzf "$tgz" && ln -sfn "$top" current\necho "PXA $top installed. Serve a GGUF with: $HOME/.local/share/pxa/current/run-server.sh -m /path/to/model.gguf -ngl 99 -c 8192"\nPXA'], venv: false },
+      docker: { run: false, commands: ['tag=$(curl -fsSL https://api.github.com/repos/poisonxa16/pxa/releases/latest | grep \'"tag_name"\' | cut -d\'"\' -f4) && [ -n "$tag" ] && docker pull "ghcr.io/poisonxa16/pxa:$tag"'] },
     },
   },
   {
@@ -204,6 +204,16 @@ export function recipeUsesVenv(recipe, variant) {
   if (!recipe) return true;
   const v = (recipe.variants || {})[variant] || (recipe.variants || {}).pip;
   return !(v && v.venv === false);
+}
+
+// Whether the panel's Run button can execute a variant. The Cookbook runner
+// (/api/model/serve) only accepts one command that starts with an allowlisted
+// binary (python, vllm, llama-server, ...) and has no `&&`, `;` or `$(`, so a
+// multi-step installer variant sets run: false and is Copy-only.
+export function recipeRunnable(recipe, variant) {
+  if (!recipe) return true;
+  const v = (recipe.variants || {})[variant] || (recipe.variants || {}).pip;
+  return !(v && v.run === false);
 }
 
 // Backends we surface a recipe panel for. Other rows in the Dependencies

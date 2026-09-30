@@ -169,3 +169,22 @@ def test_engine_tarball_recipe_picks_only_engine_tarballs_by_glibc():
     assert "-ubuntu22\\.04\\.tar\\.gz" in script
     assert "libggml" not in script
     assert "2.34" not in script
+
+
+@needs_node
+@pytest.mark.parametrize("backend", ["llama_cpp", "vllm"])
+@pytest.mark.parametrize("variant", ["pip", "docker"])
+def test_pxa_recipes_are_copy_only_generic_ones_stay_runnable(backend, variant):
+    """The Run button posts to /api/model/serve, which rejects newlines, `&&`,
+    `$(` and any first binary outside its allowlist, so the multi-step PXA
+    installers must be Copy-only. The generic pip recipes keep working."""
+    out = _node_eval(
+        f"""
+        import {{ pickRecipe, recipeRunnable }} from './static/js/cookbook-deps-recipes.js';
+        console.log(JSON.stringify({{
+          pxa: recipeRunnable(pickRecipe({json.dumps(backend)}, 'PXA/Qwen3-0.6B-PXQ4'), {json.dumps(variant)}),
+          generic: recipeRunnable(pickRecipe({json.dumps(backend)}, ''), {json.dumps(variant)}),
+        }}));
+        """
+    )
+    assert out == {"pxa": False, "generic": True}

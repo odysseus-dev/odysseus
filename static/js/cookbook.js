@@ -8,7 +8,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
-import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, recipeUsesVenv, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
+import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, recipeUsesVenv, recipeRunnable, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
 
 // Sub-modules
@@ -1191,11 +1191,12 @@ async function _fetchDependencies() {
       // For backends with a recipe catalog (vllm / sglang / llama_cpp),
       // append a caret button that toggles a per-row recipe panel below.
       const hasRecipe = RECIPE_BACKENDS.has(pkg.name);
-      // Standalone recipe-caret button removed — the "Pick install
-      // command" action lives inside the Installed ▾ dropdown menu
-      // (see _showDepMenu) so each row only has ONE caret to click.
-      // Kept the variable so downstream concat code stays the same.
-      const recipeCaret = '';
+      // The caret is the only entry point to the recipe panel below the row
+      // (the Installed menu has no recipe item), so keep it on every row that
+      // has a recipe catalog.
+      const recipeCaret = hasRecipe
+        ? `<button class="cookbook-dep-tag cookbook-dep-recipe-caret" data-dep-recipe-toggle="${esc(pkg.name)}" title="Pick a model to see the exact install commands" aria-expanded="false" style="background:none;border:1px solid var(--border);padding:2px 6px;display:inline-flex;align-items:center;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg></button>`
+        : '';
       const recipePanel = hasRecipe ? _recipePanelHtml(pkg.name) : '';
       // When llama_cpp (or any future engine) reports build_deps_missing
       // from its system_prereqs probe, surface a one-tap install button
@@ -1722,6 +1723,13 @@ async function _fetchDependencies() {
         const backend = btn.dataset.depRecipeRun;
         const pre = list.querySelector(`[data-dep-recipe-cmds="${CSS.escape(backend)}"]`);
         if (!pre) return;
+        const runPanel = list.querySelector(`[data-dep-recipe-panel="${CSS.escape(backend)}"]`);
+        const runModel = (runPanel?.querySelector('[data-dep-recipe-pick]') || {}).value || '';
+        const runVariant = runPanel?.dataset.depRecipeActiveVariant || RECIPE_DEFAULT_VARIANT;
+        if (!recipeRunnable(pickRecipe(backend, runModel), runVariant)) {
+          uiModule.showToast('This recipe is a multi-step installer. Use Copy and run it in a terminal.');
+          return;
+        }
         // Use the install-only command list (no activate line) — the
         // displayed source line is for the user's reading; env_prefix
         // handles it for the actual run.
