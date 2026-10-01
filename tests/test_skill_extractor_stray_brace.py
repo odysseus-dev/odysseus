@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from services.memory import skill_extractor
@@ -38,10 +40,10 @@ _STRAY_BRACE_RESPONSE = (
 
 @pytest.mark.parametrize("response", [_STRAY_BRACE_RESPONSE])
 async def test_maybe_extract_skill_recovers_json_past_stray_braces(monkeypatch, response):
-    async def fake_llm_call_async(*args, **kwargs):
-        return response
+    def fake_submit_model_job(*args, **kwargs):
+        return SimpleNamespace(output={"text": response})
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(skill_extractor, "submit_model_job", fake_submit_model_job)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(
@@ -73,10 +75,10 @@ _LEADING_INVALID_BRACE_RESPONSE = (
 
 @pytest.mark.parametrize("response", [_LEADING_INVALID_BRACE_RESPONSE])
 async def test_maybe_extract_skill_recovers_json_after_leading_invalid_brace(monkeypatch, response):
-    async def fake_llm_call_async(*args, **kwargs):
-        return response
+    def fake_submit_model_job(*args, **kwargs):
+        return SimpleNamespace(output={"text": response})
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(skill_extractor, "submit_model_job", fake_submit_model_job)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(
@@ -96,10 +98,10 @@ async def test_maybe_extract_skill_recovers_json_after_leading_invalid_brace(mon
 
 
 async def test_maybe_extract_skill_drops_when_no_candidate_parses(monkeypatch):
-    async def fake_llm_call_async(*args, **kwargs):
-        return 'Some commentary with {unbalanced and { nested } braces } but no real JSON object'
+    def fake_submit_model_job(*args, **kwargs):
+        return SimpleNamespace(output={"text": 'Some commentary with {unbalanced and { nested } braces } but no real JSON object'})
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(skill_extractor, "submit_model_job", fake_submit_model_job)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(
@@ -125,10 +127,10 @@ async def test_maybe_extract_skill_drops_on_multiple_json_objects(monkeypatch):
         '{"title": "Unrelated skill", "problem": "manual", "solution": "script", '
         '"steps": ["build"], "tags": ["deploy"], "confidence": 0.9}'
     )
-    async def fake_llm_call_async(*args, **kwargs):
-        return resp
+    def fake_submit_model_job(*args, **kwargs):
+        return SimpleNamespace(output={"text": resp})
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(skill_extractor, "submit_model_job", fake_submit_model_job)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(

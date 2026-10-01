@@ -801,6 +801,23 @@ def _classify_endpoint(base_url: str, endpoint_kind: str = "auto") -> str:
     return "api"
 
 
+def _is_public_cloud_inference_url(base_url: str) -> bool:
+    """True for public cloud inference hosts. Docker/LAN short names stay leftover local."""
+    if _classify_endpoint(base_url, "auto") == "local":
+        return False
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return True
+    if not host:
+        return True
+    if "." not in host:
+        return False
+    if host.endswith(".local") or host.endswith(".internal"):
+        return False
+    return True
+
+
 def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
     """Return explicit kind, with a legacy proxy heuristic for keyed /v1 URLs."""
     kind = _endpoint_kind(ep)
@@ -1367,6 +1384,284 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
     ), pinned
 
 
+def curated_chat_route_payload(providers: Any = None) -> Dict[str, Any]:
+    """Return Automatic plus optional 9router aliases for ordinary chat.
+
+    Parameters
+    ----------
+    providers
+        Optional redacted 9router provider payload. When omitted, the
+        allowlisted metadata client is used.
+
+    Returns
+    -------
+    dict
+        ``default`` plus ``routes`` with id/label only.
+
+    Examples
+    --------
+    >>> curated_chat_route_payload([])["default"]
+    'automatic'
+    """
+    from services.ninerouter.metadata import (
+        NineRouterMetadataClient,
+        NineRouterMetadataError,
+        build_curated_chat_routes,
+    )
+
+    payload = providers
+    if payload is None:
+        try:
+            payload = NineRouterMetadataClient().get("/api/providers")
+        except NineRouterMetadataError:
+            payload = []
+        except Exception:
+            payload = []
+    return {"default": "automatic", "routes": build_curated_chat_routes(payload)}
+
+
+# Overlay interactive chat is a 9router curated route. Leftover ModelEndpoint
+# names (Ollama ids, etc.) must not become the composer default.
+OVERLAY_CHAT_ROUTES = frozenset({"automatic", "fast", "balanced", "best"})
+
+
+def overlay_chat_route(model: str | None) -> str:
+    """Return a curated 9router route id; unknown leftover names become automatic."""
+    raw = str(model or "").strip().lower()
+    if raw in OVERLAY_CHAT_ROUTES:
+        return raw
+    return "automatic"
+
+
+def overlay_ninerouter_chat_url() -> str:
+    """OpenAI-compat base OpenHands uses on the overlay compose network.
+
+    Same origin as NINE_ROUTER_METADATA_URL / OPENHANDS_LLM_BASE_URL, plus /v1.
+    Stored on Session.endpoint_url so leftover ModelEndpoint rows stay unused.
+    """
+    origin = os.getenv("NINE_ROUTER_METADATA_URL", "http://9router:20128").rstrip("/")
+    return f"{origin}/v1"
+
+
+def _session_uses_leftover_endpoint_url(session_url: str, base_url: str) -> bool:
+    """True when a session chat URL belongs to a ModelEndpoint base_url."""
+    if not session_url or not base_url:
+        return False
+    sess = session_url.rstrip("/")
+    base = _normalize_base(base_url).rstrip("/")
+    variants = {
+        base,
+        base + "/chat/completions",
+    }
+    try:
+        variants.add(build_chat_url(base).rstrip("/"))
+    except Exception:
+        pass
+    return sess in variants or sess.startswith(base + "/")
+
+
+def _count_public_cloud_model_endpoints(db) -> int:
+    """Return ModelEndpoint rows whose base_url is a public cloud inference URL."""
+    endpoints = db.query(ModelEndpoint).all()
+    return sum(
+        1
+        for ep in endpoints
+        if _is_public_cloud_inference_url(str(getattr(ep, "base_url", "") or ""))
+    )
+
+
+def _refresh_cloud_endpoint_rows_metric(db) -> None:
+    """Publish remaining public-cloud ModelEndpoint count to Prometheus."""
+    from services.observability.metrics import set_cloud_endpoint_rows
+
+    set_cloud_endpoint_rows(_count_public_cloud_model_endpoints(db))
+
+
+def purge_leftover_cloud_model_endpoints(db) -> dict:
+    """Delete public-cloud ModelEndpoint rows. Local leftover stays.
+
+    Overlay Native chat uses 9router. Slice D already rejects new cloud POSTs;
+    this removes rows (and encrypted keys) that predate that gate. Sessions
+    that pointed at a purged URL bind overlay 9router ``automatic``.
+    """
+    endpoints = db.query(ModelEndpoint).all()
+    cloud = [
+        ep
+        for ep in endpoints
+        if _is_public_cloud_inference_url(str(getattr(ep, "base_url", "") or ""))
+    ]
+    if not cloud:
+        _refresh_cloud_endpoint_rows_metric(db)
+        return {"deleted": 0, "sessions": 0}
+    overlay_url = overlay_ninerouter_chat_url()
+    sessions = db.query(DbSession).all()
+    n_sess = 0
+    for sess in sessions:
+        for ep in cloud:
+            if _session_uses_leftover_endpoint_url(
+                str(getattr(sess, "endpoint_url", "") or ""),
+                str(getattr(ep, "base_url", "") or ""),
+            ):
+                sess.endpoint_url = overlay_url
+                sess.model = "automatic"
+                sess.headers = {}
+                n_sess += 1
+                break
+    settings = _load_settings()
+    touched = False
+    all_prefs = None
+    prefs_dirty = False
+    try:
+        from routes.prefs_routes import _load as _load_prefs
+
+        all_prefs = _load_prefs()
+    except Exception as exc:
+        logger.warning(
+            "Failed to load user prefs for cloud endpoint purge: %s",
+            type(exc).__name__,
+        )
+    for ep in cloud:
+        if _clear_endpoint_settings_for_endpoint(
+            settings, str(ep.id), include_speech=True
+        ):
+            touched = True
+        if all_prefs is not None:
+            try:
+                if _clear_user_pref_endpoint_refs(all_prefs, str(ep.id)):
+                    prefs_dirty = True
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clear user prefs for endpoint %s during cloud purge: %s",
+                    ep.id,
+                    type(exc).__name__,
+                )
+        _delete_orphaned_provider_auth(
+            db,
+            getattr(ep, "provider_auth_id", None),
+            exclude_ep_id=str(ep.id),
+        )
+        db.delete(ep)
+    db.commit()
+    if touched:
+        _save_settings(settings)
+    if prefs_dirty and all_prefs is not None:
+        try:
+            from routes.prefs_routes import _save as _save_prefs
+
+            _save_prefs(all_prefs)
+        except Exception as exc:
+            logger.warning(
+                "Failed to save user prefs after cloud endpoint purge: %s",
+                type(exc).__name__,
+            )
+    logger.info(
+        "purged leftover cloud ModelEndpoint rows deleted=%s sessions=%s",
+        len(cloud),
+        n_sess,
+    )
+    _refresh_cloud_endpoint_rows_metric(db)
+    return {"deleted": len(cloud), "sessions": n_sess}
+
+
+def _redacted_url_full(url: str) -> str:
+    """url.full for overlay.bind: scheme, host, port, and path.
+
+    Userinfo, query, and fragment are dropped so a key in the URL cannot
+    ride along on the span.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    path = parsed.path or ""
+    if parsed.scheme and host:
+        return f"{parsed.scheme}://{host}{path}"
+    return f"{host}{path}"
+
+
+def _trace_overlay_bind(
+    bound: tuple[str, str] | None,
+    endpoint_url: str | None,
+    conversation_id: str | None,
+) -> None:
+    """Emit overlay.bind for the bind decision. No prompt body, no credential."""
+    from services.observability.otel import apply_span_attributes, get_tracer
+
+    shown = bound[0] if bound else str(endpoint_url or "")
+    with get_tracer("odysseus").start_as_current_span("overlay.bind") as span:
+        apply_span_attributes(
+            span,
+            {
+                "odysseus.overlay": bound is not None,
+                "url.full": _redacted_url_full(shown),
+                "gen_ai.conversation.id": conversation_id or "",
+            },
+        )
+
+
+def overlay_session_bind(
+    model: str | None,
+    endpoint_id: str | None,
+    endpoint_url: str | None,
+    conversation_id: str | None = None,
+) -> tuple[str, str] | None:
+    """Bind POST /api/session to overlay 9router when leftover is not selected.
+
+    Empty endpoint_url + automatic/fast/balanced/best (or empty/leftover model
+    names) is overlay chat. A leftover URL plus a non-route model keeps the
+    old ModelEndpoint path. endpoint_id always wins leftover.
+
+    ``conversation_id`` is optional trace context (Odysseus session id when the
+    caller has one). The span always sets ``gen_ai.conversation.id``, empty
+    when unknown. It is not an OpenHands conversation id.
+    """
+    if str(endpoint_id or "").strip():
+        bound = None
+    else:
+        raw = str(model or "").strip().lower()
+        url = str(endpoint_url or "").strip()
+        if url and raw not in OVERLAY_CHAT_ROUTES and raw:
+            bound = None
+        else:
+            bound = (overlay_ninerouter_chat_url(), overlay_chat_route(model))
+    _trace_overlay_bind(bound, endpoint_url, conversation_id)
+    return bound
+
+
+def is_overlay_ninerouter_url(url: str | None) -> bool:
+    """True when session.endpoint_url is overlay 9router, not a leftover row.
+
+    Overlay chat stores http://9router:20128/v1 (or NINE_ROUTER_METADATA_URL).
+    That host is not a ModelEndpoint. Orphan-clear must not wipe the session.
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    want = urlparse(overlay_ninerouter_chat_url())
+    got = urlparse(raw)
+    want_host = (want.hostname or "").lower()
+    got_host = (got.hostname or "").lower()
+    if not want_host or got_host != want_host:
+        return False
+    want_port = want.port or (443 if want.scheme == "https" else 80)
+    got_port = got.port or (443 if got.scheme == "https" else 80)
+    return got_port == want_port
+
+
+def overlay_default_chat_payload(model: str | None) -> Dict[str, str]:
+    """GET /api/default-chat shape for overlay OpenHands + 9router chat."""
+    route = overlay_chat_route(model)
+    return {
+        "endpoint_id": "",
+        "endpoint_url": "",
+        "model": route,
+        "route": route,
+    }
+
+
 def _api_key_fingerprint(api_key: Optional[str]) -> str:
     """Stable, non-secret label for distinguishing same-URL credentials."""
     key = (api_key or "").strip()
@@ -1664,6 +1959,27 @@ def setup_model_routes(model_discovery):
         if background or refresh:
             _refresh_caches_bg(force=refresh)
         return result
+
+    @router.get("/chat-routes")
+    def api_chat_routes(request: Request):
+        """Ordinary-chat curated routes. No raw URLs or provider keys."""
+        try:
+            if getattr(request.state, "api_token", False):
+                scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+                if "chat" not in scopes:
+                    raise HTTPException(403, "API token is not scoped for chat")
+                if not getattr(request.state, "api_token_owner", None):
+                    raise HTTPException(403, "API token has no owner")
+            owner = effective_user(request) or ""
+            auth_mgr = getattr(request.app.state, "auth_manager", None)
+            if not owner and not _auth_disabled() and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+                raise HTTPException(401, "Not authenticated")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Auth gate error in GET /api/chat-routes, failing closed: %s", e)
+            raise HTTPException(status_code=500, detail="Internal error")
+        return curated_chat_route_payload()
 
     # Brief cache for local-probe results so picker-open doesn't hammer
     # endpoint health checks every time. 8s TTL — long enough to amortize cost,
@@ -2024,6 +2340,12 @@ def setup_model_routes(model_discovery):
             name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
 
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        if _is_public_cloud_inference_url(base_url):
+            raise HTTPException(
+                400,
+                "Cloud providers connect through Settings → Inference → 9router. "
+                "Odysseus does not store cloud API keys.",
+            )
         refresh_mode = _normalize_endpoint_refresh_mode(model_refresh_mode, requested_kind, base_url)
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
@@ -2411,24 +2733,14 @@ def setup_model_routes(model_discovery):
 
     @router.get("/default-chat")
     def get_default_chat(request: Request):
-        # SECURITY: resolve the default endpoint + model from the CALLER's
-        # per-user prefs ONLY. We deliberately do NOT fall back to the
-        # global `default_model` / `default_endpoint_id` in settings.json
-        # for authenticated users — that's what was leaking the previous
-        # admin's pick into every new account's composer. If the user has
-        # no per-user default yet, we resolve via the owner-scoped endpoint
-        # lookup below (last-resort: first enabled endpoint THIS user owns).
-        # Unauthenticated single-user mode keeps the old behavior.
+        # Overlay interactive chat: 9router curated route only. Do not resolve
+        # leftover ModelEndpoint rows — that was a second chat catalog.
+        # Per-user default_model still wins over global unless sharing is on.
         from src.auth_helpers import get_current_user as _gcu
         try:
             _user = _gcu(request) or ""
         except Exception:
             _user = ""
-        # Admins resolve via the global defaults (they own them, and the
-        # scoped resolution was making the picker disappear for them).
-        # Regular users get per-user prefs with NO global fallback for the
-        # model/endpoint values — that's what was leaking the previous
-        # admin's pick into every new account's composer.
         settings = _load_settings()
         _is_admin = False
         try:
@@ -2437,60 +2749,16 @@ def setup_model_routes(model_discovery):
                 _is_admin = bool(auth_mgr.is_admin(_user))
         except Exception:
             _is_admin = False
+        model = ""
         if _user and not _is_admin:
             from routes.prefs_routes import _load_for_user
             _user_prefs = _load_for_user(_user) or {}
-            ep_id = (_user_prefs.get("default_endpoint_id") or "").strip()
             model = (_user_prefs.get("default_model") or "").strip()
-            # If user has no personal default, fall back to global default
-            # But only based on the "share_defaults_with_users" flag
-            # (only if share_defaults_with_users is enabled)
-            if settings.get("share_defaults_with_users", False):
-                if not ep_id:
-                    ep_id = settings.get("default_endpoint_id", "")
-                if not model:
-                    model = settings.get("default_model", "")
+            if not model and settings.get("share_defaults_with_users", False):
+                model = settings.get("default_model", "") or ""
         else:
-            ep_id = settings.get("default_endpoint_id", "")
-            model = settings.get("default_model", "")
-        db = SessionLocal()
-        try:
-            ep = None
-            if ep_id:
-                ep_q = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
-                )
-                # Honor the same owner-scope rule as /api/models — a per-user
-                # default that points at an endpoint owned by a different user
-                # mustn't silently resolve. Admins are exempt (they manage the
-                # global pool).
-                if _user and not _is_admin:
-                    ep_q = owner_filter(ep_q, ModelEndpoint, _user)
-                ep = ep_q.first()
-            # Last resort: first enabled endpoint owned by THIS user. Do not
-            # include null-owner/shared endpoints here: a brand-new user with
-            # no explicit default should not auto-open a pending chat using an
-            # existing shared/admin endpoint. Shared endpoints remain visible
-            # in the picker and still work when explicitly selected/saved.
-            if not ep:
-                _last_q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                if _user and not _is_admin:
-                    _last_q = owner_filter(_last_q, ModelEndpoint, _user, include_shared=False)
-                ep = _last_q.first()
-            if not ep:
-                return {"endpoint_id": "", "endpoint_url": "", "model": ""}
-            base = _normalize_base(ep.base_url)
-            chat_url = build_chat_url(base)
-            if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
-                try:
-                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
-                    if visible:
-                        model = visible[0]
-                except Exception:
-                    pass
-            return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
-        finally:
-            db.close()
+            model = settings.get("default_model", "") or ""
+        return overlay_default_chat_payload(model)
 
     @router.patch("/model-endpoints/{ep_id}")
     async def toggle_model_endpoint(ep_id: str, request: Request):

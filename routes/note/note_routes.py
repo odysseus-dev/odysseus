@@ -1,6 +1,7 @@
 # routes/note_routes.py
 """Google Keep-style notes / checklists API."""
 
+import asyncio
 import json
 import uuid
 import logging
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
 from core.middleware import INTERNAL_TOOL_USER
+from services.agents.model_jobs import bounded_archetype, submit_model_job
+from services.notes.service import note_to_dict
 from src.auth_helpers import require_user
 from src.constants import DATA_DIR
 from src.upload_handler import reserve_upload_references
@@ -60,42 +63,7 @@ class NoteUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _note_to_dict(note: Note) -> Dict[str, Any]:
-    items = None
-    if note.items:
-        try:
-            items = json.loads(note.items)
-        except (json.JSONDecodeError, TypeError):
-            items = None
-    ai_cls = None
-    raw_ai = getattr(note, "ai_classification", None)
-    if raw_ai:
-        try:
-            ai_cls = json.loads(raw_ai)
-        except (json.JSONDecodeError, TypeError):
-            ai_cls = None
-    return {
-        "id": note.id,
-        "owner": note.owner,
-        "title": note.title,
-        "content": note.content,
-        "items": items,
-        "note_type": note.note_type,
-        "color": note.color,
-        "label": note.label,
-        "pinned": note.pinned,
-        "archived": note.archived,
-        "due_date": note.due_date,
-        "source": note.source,
-        "session_id": note.session_id,
-        "sort_order": note.sort_order or 0,
-        "image_url": note.image_url,
-        "repeat": note.repeat or "none",
-        "ai_classification": ai_cls,
-        "ai_content_hash": getattr(note, "ai_content_hash", None),
-        "agent_session_id": getattr(note, "agent_session_id", None),
-        "created_at": note.created_at.isoformat() if note.created_at else None,
-        "updated_at": note.updated_at.isoformat() if note.updated_at else None,
-    }
+    return note_to_dict(note)
 
 
 def _reminder_text_from_note(note: Note) -> tuple[str, str]:
@@ -208,82 +176,87 @@ async def dispatch_reminder(
     _SYNTH_FAILED_TAG = "[utility model unavailable — no summary generated]"
     if llm_on:
         try:
-            from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import llm_call_async
             from src.reminder_personas import synthesis_system_prompt
-            url, model, headers = resolve_endpoint("utility", owner=owner or None)
-            if not url:
-                url, model, headers = resolve_endpoint("default", owner=owner or None)
-            if url and model:
-                persona_id = (settings.get("reminder_llm_persona") or "").strip()
-                sys_prompt = synthesis_system_prompt(persona_id)
-                raw = await llm_call_async(
-                    url=url, model=model,
-                    messages=[
+            persona_id = (settings.get("reminder_llm_persona") or "").strip()
+            sys_prompt = synthesis_system_prompt(persona_id)
+            user_text = f"Title: {title}\n\n{note_body}".strip()
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "reminder-synthesis",
+                    temperature=0.7,
+                    token_limit=200,
+                    timeout_seconds=30,
+                ),
+                {
+                    "text": user_text,
+                    "messages": [
                         {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": f"Title: {title}\n\n{note_body}".strip()},
+                        {"role": "user", "content": user_text},
                     ],
-                    temperature=0.7, max_tokens=200, headers=headers, timeout=30,
+                },
+                owner or "",
+            )
+            raw = str((result.output or {}).get("text") or "")
+            from src.text_helpers import strip_think as _strip_think
+            # prose=True strips untagged "The user wants me to…" chain-of-thought.
+            # prompt_echo=True strips Qwen-style "Thinking Process:" / leaked
+            # prompt prefixes. Both are safe here because this is a
+            # one-sentence LLM-only output, not user-pasted content.
+            synthesis = _strip_think(raw or "", prose=True, prompt_echo=True)
+            # Reminder synthesis is supposed to be ONE sentence. Strip-think's
+            # paragraph-based heuristic misses cases where the model puts
+            # reasoning + answer on consecutive lines inside one paragraph
+            # (e.g. "I should write... [\n] You have one task waiting...").
+            # Walk lines, drop reasoning/prompt-echo lines, then keep the
+            # last surviving line — that's the actual warm sentence.
+            if synthesis:
+                import re as _re
+                # Tightened: target ACTUAL self-talk (model narrating what
+                # it'll do) rather than any first-person sentence. The old
+                # pattern killed legit warm sentences like "I'll see you
+                # tomorrow" or "I should be done by then". New rules:
+                #  • "I (need|should|have|'ll|will) (write|draft|reply|…)"
+                #    only matches when followed by a TASK verb taking an
+                #    OBJECT (so first-person + intransitive verb passes).
+                #  • Self-instructional patterns the model emits verbatim:
+                #    "I should write something that reminds them…",
+                #    "I need to draft…", "Let me think…".
+                #  • Explicit instructions echoed back from the prompt:
+                #    "Keep it under 25 words", "No greetings".
+                _reasoning = _re.compile(
+                    r"^\s*(?:"
+                    # "I should write/draft/compose…" with a task-object follow
+                    r"i (?:need|should|have|'ll|will|am going|am)\s+to\s+"
+                    r"(?:write|draft|compose|craft|generate|produce|create|"
+                    r"summarize|answer|provide|note|address|remind|output)"
+                    r"\s+(?:a |an |the |something|this|that|here|them|him|her|"
+                    r"you|user|reply|response|sentence|message|line|warm)|"
+                    # The model literally narrating about the user
+                    r"the user (?:wants|is asking|asks|needs|wrote|said|requested) (?:me )?(?:to|for|that|about|something)|"
+                    # "Let me [think/write/draft/…] (about/for/the …)"
+                    r"let me (?:think|write|draft|consider|note|see|check)\b\s+(?:about|for|the|this|that|if|whether)|"
+                    # "Looking at the/this/that …"
+                    r"looking at (?:the|this|that)\b|"
+                    # "Based on the/this/what …"
+                    r"based on (?:the|this|what|context|that)\b|"
+                    # Prompt-echo of length / style instructions
+                    r"keep it under \d+ words\b|"
+                    r"(?:no greetings|no preamble|no hashtags|just output the)\b"
+                    r").*",
+                    _re.IGNORECASE,
                 )
-                from src.text_helpers import strip_think as _strip_think
-                # prose=True strips untagged "The user wants me to…" chain-of-thought.
-                # prompt_echo=True strips Qwen-style "Thinking Process:" / leaked
-                # prompt prefixes. Both are safe here because this is a
-                # one-sentence LLM-only output, not user-pasted content.
-                synthesis = _strip_think(raw or "", prose=True, prompt_echo=True)
-                # Reminder synthesis is supposed to be ONE sentence. Strip-think's
-                # paragraph-based heuristic misses cases where the model puts
-                # reasoning + answer on consecutive lines inside one paragraph
-                # (e.g. "I should write... [\n] You have one task waiting...").
-                # Walk lines, drop reasoning/prompt-echo lines, then keep the
-                # last surviving line — that's the actual warm sentence.
-                if synthesis:
-                    import re as _re
-                    # Tightened: target ACTUAL self-talk (model narrating what
-                    # it'll do) rather than any first-person sentence. The old
-                    # pattern killed legit warm sentences like "I'll see you
-                    # tomorrow" or "I should be done by then". New rules:
-                    #  • "I (need|should|have|'ll|will) (write|draft|reply|…)"
-                    #    only matches when followed by a TASK verb taking an
-                    #    OBJECT (so first-person + intransitive verb passes).
-                    #  • Self-instructional patterns the model emits verbatim:
-                    #    "I should write something that reminds them…",
-                    #    "I need to draft…", "Let me think…".
-                    #  • Explicit instructions echoed back from the prompt:
-                    #    "Keep it under 25 words", "No greetings".
-                    _reasoning = _re.compile(
-                        r"^\s*(?:"
-                        # "I should write/draft/compose…" with a task-object follow
-                        r"i (?:need|should|have|'ll|will|am going|am)\s+to\s+"
-                        r"(?:write|draft|compose|craft|generate|produce|create|"
-                        r"summarize|answer|provide|note|address|remind|output)"
-                        r"\s+(?:a |an |the |something|this|that|here|them|him|her|"
-                        r"you|user|reply|response|sentence|message|line|warm)|"
-                        # The model literally narrating about the user
-                        r"the user (?:wants|is asking|asks|needs|wrote|said|requested) (?:me )?(?:to|for|that|about|something)|"
-                        # "Let me [think/write/draft/…] (about/for/the …)"
-                        r"let me (?:think|write|draft|consider|note|see|check)\b\s+(?:about|for|the|this|that|if|whether)|"
-                        # "Looking at the/this/that …"
-                        r"looking at (?:the|this|that)\b|"
-                        # "Based on the/this/what …"
-                        r"based on (?:the|this|what|context|that)\b|"
-                        # Prompt-echo of length / style instructions
-                        r"keep it under \d+ words\b|"
-                        r"(?:no greetings|no preamble|no hashtags|just output the)\b"
-                        r").*",
-                        _re.IGNORECASE,
-                    )
-                    # Echo of the prompt's "Pending:" / "<N> pending" tail.
-                    _echo = _re.compile(
-                        r"^\s*(?:pending\s*[:.]|(?:\d+|one|two|three|four|five)\s+pending\b)",
-                        _re.IGNORECASE,
-                    )
-                    lines = [ln for ln in synthesis.splitlines() if ln.strip()]
-                    cleaned = [ln for ln in lines if not _reasoning.match(ln) and not _echo.match(ln)]
-                    if cleaned:
-                        # The model's actual answer is normally the LAST surviving
-                        # line — reasoning leads, answer trails.
-                        synthesis = cleaned[-1].strip()
+                # Echo of the prompt's "Pending:" / "<N> pending" tail.
+                _echo = _re.compile(
+                    r"^\s*(?:pending\s*[:.]|(?:\d+|one|two|three|four|five)\s+pending\b)",
+                    _re.IGNORECASE,
+                )
+                lines = [ln for ln in synthesis.splitlines() if ln.strip()]
+                cleaned = [ln for ln in lines if not _reasoning.match(ln) and not _echo.match(ln)]
+                if cleaned:
+                    # The model's actual answer is normally the LAST surviving
+                    # line — reasoning leads, answer trails.
+                    synthesis = cleaned[-1].strip()
             else:
                 synthesis = _SYNTH_FAILED_TAG
         except Exception as e:

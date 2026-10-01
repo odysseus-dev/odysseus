@@ -1,0 +1,22 @@
+id: session-title
+version: 1
+execution_kind: model-job
+input_schema: SessionTitleInputV1
+result_schema: SessionTitleResultV1
+required_capabilities: []
+risk_class: low
+approval_policy: never
+budget: model-job-standard
+timeout_seconds: 30
+audit_requirements:
+  - owner
+completion_criteria: typed-output
+failure_retry_policy: bounded
+compatible_runtime_traits:
+  - model-job
+token_limit: 512
+temperature: 0
+tools: []
+model_capability_requirements:
+  - chat-completion
+determinism_policy: low-temperature

@@ -6,9 +6,12 @@ When the agent takes >= 2 rounds or >= 2 tool calls to complete a task,
 we ask the LLM to distill the approach into a reusable skill.
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional
+
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +147,6 @@ async def maybe_extract_skill(
         return None
 
     try:
-        from src.llm_core import llm_call_async
-
         # Get recent messages
         history = session.get_context_messages()
         recent = history[-CONTEXT_WINDOW:] if len(history) > CONTEXT_WINDOW else history
@@ -191,16 +192,26 @@ async def maybe_extract_skill(
             "[skill-extract] calling LLM (endpoint=%s, ctx=%d msgs, timeout=30s)",
             endpoint_url, len(recent),
         )
-        response = await llm_call_async(
-            endpoint_url,
-            model,
-            [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": f"Conversation:\n{conversation}"},
-            ],
-            headers=headers,
-            timeout=30,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype("skill-extract", timeout_seconds=30),
+            {
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"Conversation:\n{conversation}"},
+                ],
+                "text": conversation,
+                "model": model or "auto",
+            },
+            owner or "",
         )
+        output = result.output or {}
+        if output.get("title"):
+            response = json.dumps(output)
+        else:
+            response = str(output.get("text") or "")
+            if not response and output:
+                response = json.dumps(output)
         logger.debug(
             "[skill-extract] LLM returned in %.1fs (len=%d, head=%r)",
             _time.monotonic() - _t0, len(response or ""), (response or "")[:80],

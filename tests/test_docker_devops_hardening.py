@@ -118,6 +118,9 @@ def test_docker_entrypoint_ownership_repair_stays_inside_expected_mounts():
     assert "mount_root_for" in script
     assert "is_broad_mount_root" in script
     assert "Skipping recursive ownership repair" in script
+    assert "openhands-agent-server-home" in script
+    assert "openhands-opencode-home" in script
+    assert "openhands-hermes-home" in script
 
 
 def test_docker_entrypoint_repairs_cache_parent_without_recursive_walk():

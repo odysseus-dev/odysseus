@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from src import ai_interaction
 from src import document_processor as dp
@@ -55,13 +56,13 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
         seen["fallback_owner"] = owner
         return []
 
-    def fake_llm_call(url, model, messages, headers=None, timeout=None):
-        seen["llm"] = (url, model, headers, timeout, messages)
-        return "description"
+    def fake_job(archetype, payload, owner, **kwargs):
+        seen["job"] = (getattr(archetype, "id", None), owner, payload.get("messages"))
+        return SimpleNamespace(output={"text": "description"}, audit={"resolved_model": "vision-primary"})
 
     monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": "gpt-4o"})
     monkeypatch.setattr(dp, "_resolve_vl_model", fake_resolve_vl_model)
-    monkeypatch.setattr(dp, "llm_call", fake_llm_call)
+    monkeypatch.setattr(dp, "submit_model_job", fake_job, raising=False)
 
     from src import endpoint_resolver
 
@@ -70,18 +71,11 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
     image = tmp_path / "image.png"
     image.write_bytes(b"not-a-real-png-but-base64-is-enough")
 
-    assert dp.analyze_image_with_vl_result(str(image), owner="alice") == {
-        "text": "description",
-        "model": "vision-primary",
-    }
+    result = dp.analyze_image_with_vl_result(str(image), owner="alice")
+    assert result["text"] == "description"
     assert seen["primary"] == ("gpt-4o", "alice")
-    assert seen["fallback_owner"] == "alice"
-    assert seen["llm"][:4] == (
-        "http://primary.test/chat/completions",
-        "vision-primary",
-        {"X-Test": "1"},
-        120,
-    )
+    assert seen["job"][1] == "alice"
+    assert seen["job"][2]
 
 
 def test_request_vision_call_sites_pass_owner():

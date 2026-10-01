@@ -540,7 +540,6 @@ function buildFixture(document) {
 
   const panelIds = [
     'services',
-    'added-models',
     'ai',
     'search',
     'integrations',

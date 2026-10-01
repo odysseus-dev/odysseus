@@ -10,6 +10,7 @@ Periodically audits all memories via LLM to consolidate duplicates,
 rewrite vague entries, and remove junk.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -58,6 +59,31 @@ def _load_tidy_state(memory_manager) -> dict:
         return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
+
+
+def _bounded_archetype(job_id: str, **overrides):
+    """Lazy bounded-job archetype so isolated tests can load this module alone."""
+    from services.agents.model_jobs import bounded_archetype
+    return bounded_archetype(job_id, **overrides)
+
+
+def _submit_model_job(archetype, payload, owner, **kwargs):
+    """Lazy submit so extract/audit stay patchable without importing services/."""
+    from services.agents.model_jobs import submit_model_job
+    return submit_model_job(archetype, payload, owner, **kwargs)
+
+
+def _model_job_text(result) -> str:
+    """Read worker text, or re-dump a parsed JSON object for existing parsers."""
+    output = getattr(result, "output", None) or {}
+    if not isinstance(output, dict):
+        return str(output or "")
+    text = output.get("text")
+    if text:
+        return str(text)
+    if output:
+        return json.dumps(output)
+    return ""
 
 
 def _save_tidy_state(memory_manager, owner: Optional[str], fingerprint: str) -> None:
@@ -293,8 +319,6 @@ async def extract_and_store(
         return
 
     try:
-        from src.llm_core import llm_call_async
-
         # Get last N messages from session
         messages = session.get_context_messages()
         recent = messages[-CONTEXT_WINDOW:] if len(messages) > CONTEXT_WINDOW else messages
@@ -354,25 +378,25 @@ async def extract_and_store(
 
         facts = []
         try:
-            raw = await llm_call_async(
-                endpoint_url,
-                model,
-                extraction_messages,
-                temperature=0.1,
-                # A reasoning model spends most of its budget on <think> tokens
-                # BEFORE emitting the JSON, so the old 500 truncated the response
-                # before any JSON appeared → every run logged "0 candidates". The
-                # audit path hit the same wall and raised to 16384; extraction's
-                # output (a short facts list) is small, so an ample ceiling is
-                # enough once thinking has room.
-                max_tokens=4096,
-                headers=headers,
+            result = await asyncio.to_thread(
+                _submit_model_job,
+                _bounded_archetype(
+                    "memory-extract",
+                    temperature=0.1,
+                    token_limit=4096,
+                    timeout_seconds=60,
+                ),
+                {
+                    "messages": extraction_messages,
+                    "text": transcript,
+                    "model": model or "auto",
+                },
+                getattr(session, "owner", None) or "",
             )
-
             # Parse JSON, tolerating reasoning-model noise (<think> blocks, a
             # ```json fence, and leading/trailing commentary). See
             # _parse_extraction_json — returns [] rather than raising.
-            facts = _parse_extraction_json(raw)
+            facts = _parse_extraction_json(_model_job_text(result))
         except Exception as e:
             logger.warning(f"LLM memory extraction failed; using fallback candidates if available: {e}")
 
@@ -511,8 +535,6 @@ async def audit_memories(
     Errors are logged, never raised.
     """
     try:
-        from src.llm_core import llm_call_async
-
         existing = memory_manager.load(owner=owner)
         if not existing:
             logger.info("Memory audit: nothing to audit")
@@ -547,20 +569,22 @@ async def audit_memories(
             {"role": "user", "content": json.dumps(memory_payload, ensure_ascii=False)},
         ]
 
-        raw = await llm_call_async(
-            endpoint_url,
-            model,
-            audit_messages,
-            temperature=0.1,
-            # 16384 (was 2000): the deduped list of all memories can be large,
-            # and a reasoning model spends tokens thinking first — 2000 truncated
-            # the JSON so it never parsed ("bad_json").
-            max_tokens=16384,
-            headers=headers,
-            # Bound the call so the Tidy whirlpool can't spin indefinitely on a
-            # slow/large generation.
-            timeout=120,
+        result = await asyncio.to_thread(
+            _submit_model_job,
+            _bounded_archetype(
+                "memory-audit",
+                temperature=0.1,
+                token_limit=16384,
+                timeout_seconds=120,
+            ),
+            {
+                "messages": audit_messages,
+                "text": json.dumps(memory_payload, ensure_ascii=False),
+                "model": model or "auto",
+            },
+            owner or "",
         )
+        raw = _model_job_text(result)
 
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,
         # markdown fences, leading prose, and trailing commas.

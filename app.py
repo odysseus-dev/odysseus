@@ -14,6 +14,11 @@ import time
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+# /app/calendar shadows stdlib calendar; httpx/requests need timegm.
+from services.observability.stdlib_calendar import prefer_stdlib_calendar
+
+prefer_stdlib_calendar()
+
 
 def register_static_mime_types() -> None:
     """Force stable JS module MIME types across platforms.
@@ -71,6 +76,7 @@ from core.middleware import (
     SecurityHeadersMiddleware,
     get_application_route_path,
     is_cors_preflight,
+    login_redirect_url,
     path_is_route_or_child,
     with_asgi_root_path,
 )
@@ -129,6 +135,20 @@ app = FastAPI(
     title="AI Chat Application",
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
     version="1.0.0",
+)
+
+# Collector-only traces. Unset OTEL_EXPORTER_OTLP_ENDPOINT is a no-op. A set
+# endpoint that is not the overlay Collector (Tempo, Langfuse, anything else)
+# raises and refuses to start. Instrument after the app object exists so the
+# middleware can attach to it. httpx spans are not started here.
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from services.observability.otel import configure_tracer
+
+configure_tracer(os.getenv("OTEL_SERVICE_NAME") or "odysseus")
+# Scrape + liveness must not flood Tempo/Langfuse. Exclude before middleware.
+FastAPIInstrumentor.instrument_app(
+    app,
+    excluded_urls="/metrics,/api/health",
 )
 
 # ========= CORS =========
@@ -272,6 +292,7 @@ if AUTH_ENABLED:
         "/api/auth/integrations/presets",
         "/api/health",
         "/api/version",
+        "/metrics",
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
@@ -408,7 +429,7 @@ if AUTH_ENABLED:
                 # No users yet — redirect to login for first-time setup
                 if not path.startswith("/api/"):
                     return RedirectResponse(
-                        url=with_asgi_root_path(request.scope, "/login"),
+                        url=login_redirect_url(request.scope),
                         status_code=302,
                     )
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
@@ -473,7 +494,7 @@ if AUTH_ENABLED:
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
                 return RedirectResponse(
-                    url=with_asgi_root_path(request.scope, "/login"),
+                    url=login_redirect_url(request.scope),
                     status_code=302,
                 )
 
@@ -606,6 +627,7 @@ app.state.research_handler = research_handler
 chat_handler      = components["chat_handler"]
 model_discovery   = components["model_discovery"]
 skills_manager    = components["skills_manager"]
+agent_dispatcher  = components["agent_dispatcher"]
 
 # TTS
 from services.tts import get_tts_service
@@ -752,6 +774,10 @@ app.include_router(setup_copilot_routes())
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 
+# In-stack 9router connections (API key / OAuth BFF; never ModelEndpoint keys)
+from routes.ninerouter_connection_routes import setup_ninerouter_connection_routes
+app.include_router(setup_ninerouter_connection_routes())
+
 # TTS
 from routes.tts_routes import setup_tts_routes
 app.include_router(setup_tts_routes(tts_service))
@@ -858,6 +884,10 @@ logger.info("Webhook & API token routes initialized")
 from routes.note.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler, upload_handler=upload_handler))
 
+from routes.agent_routes import setup_agent_routes
+from services.agents.projection import ProjectionReconciler, ProjectionStore
+app.include_router(setup_agent_routes(agent_dispatcher, ProjectionReconciler(ProjectionStore())))
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
@@ -956,6 +986,43 @@ async def get_version():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus text exposition for overlay stability gauges.
+
+    Agents: refreshes dependency ``up`` gauges before export so a scrape
+    answers whether 9router / Agent Server / Tempo / Langfuse / Collector /
+    Prometheus are reachable from Odysseus.
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+    from starlette.responses import Response
+
+    from services.observability.metrics import refresh_dependency_up
+
+    refresh_dependency_up()
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/api/overlay/native-probe")
+async def overlay_native_probe_result(request: Request):
+    """Record the last stability-probe outcome on the uvicorn process.
+
+    Agents: the Mac/guest wrapper execs the probe in a separate PID. Setting
+    the gauge there never appears on Prometheus scrapes of this process.
+    Auth is the loopback internal-tool token (same as the phone-path probe).
+    Body: ``{"ok": true|false}``. Never logs secrets.
+    """
+    from services.observability.metrics import set_native_probe_success
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ok = bool((body or {}).get("ok"))
+    set_native_probe_success(ok)
+    return {"ok": True, "recorded": ok}
 
 @app.post("/api/client-perf")
 async def client_perf(request: Request):

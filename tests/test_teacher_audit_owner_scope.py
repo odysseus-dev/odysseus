@@ -20,9 +20,11 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
         seen["owner"] = owner
         return ("http://endpoint.local/v1", "teacher-model", {})
 
-    async def fake_llm_call_async(url, model, messages, **kwargs):
-        seen["messages"] = messages
-        return "teacher reply"
+    async def fake_stream(**kwargs):
+        seen["messages"] = kwargs.get("messages")
+        seen["stream_owner"] = kwargs.get("owner")
+        yield 'data: {"delta": "teacher reply"}\n\n'
+        yield "data: [DONE]\n\n"
 
     from src.agent_tools import model_interaction_tools
 
@@ -32,7 +34,9 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
         "_TEACHER_SYSTEM_PROMPT",
         "sys",
     )
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(
+        "services.agents.legacy_bridge.stream_governed_agent", fake_stream
+    )
 
     result = asyncio.run(
         teacher_escalation._call_teacher("teacher-model", "prompt", owner="alice")
@@ -40,6 +44,7 @@ def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):
 
     assert result == "teacher reply"
     assert seen["owner"] == "alice"
+    assert seen["stream_owner"] == "alice"
     assert seen["spec"] == "teacher-model"
     assert seen["messages"][0] == {"role": "system", "content": "sys"}
 

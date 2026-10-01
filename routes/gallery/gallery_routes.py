@@ -579,7 +579,7 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
         if not ep:
-            raise HTTPException(400, "No image generation endpoint configured. Add one in Settings → Add Models.")
+            raise HTTPException(400, "No image generation endpoint configured. Add one in Settings → Inference.")
 
         base_url = ep.base_url.rstrip("/")
         if not base_url.endswith("/v1"):

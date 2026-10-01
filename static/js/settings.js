@@ -378,53 +378,57 @@ function _bindFallbackWidget(opts) {
 
 /* ── Default Chat Model ── */
 async function initDefaultChat() {
-  var epSel = el('set-defaultEpSelect');
-  var modelSel = el('set-defaultModelSelect');
+  var routeSel = el('set-defaultRouteSelect');
   var msg = el('set-defaultChatMsg');
-  var _endpoints = [];
+  if (!routeSel) return;
 
-  // Fill any <select> with the models for a given endpoint id.
-  function fillModels(selectEl, epId, selected) {
-    var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
-  }
+  const OVERLAY_ROUTES = ['automatic', 'fast', 'balanced', 'best'];
 
-  try {
-    _endpoints = await _fetchModelEndpoints();
-    _fillEndpointSelect(epSel, _endpoints, epSel.value, false);
-  } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
-
-  function refreshModels(selectedModel) { fillModels(modelSel, epSel.value, selectedModel); }
-  function refreshEndpointOptions(selectedEndpoint, selectedModel) {
-    _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
-    refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
+  function fillRoutes(selected) {
+    var current = OVERLAY_ROUTES.indexOf(String(selected || '').toLowerCase()) >= 0
+      ? String(selected).toLowerCase()
+      : 'automatic';
+    try {
+      fetch('/api/chat-routes', { credentials: 'same-origin' }).then(function(r) { return r.ok ? r.json() : null; }).then(function(data) {
+        var routes = data && Array.isArray(data.routes) ? data.routes : [];
+        if (!routes.length) return;
+        routeSel.innerHTML = '';
+        routes.forEach(function(route) {
+          var id = String(route.id || '').trim();
+          if (!id) return;
+          var opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = String(route.label || id);
+          routeSel.appendChild(opt);
+        });
+        if (OVERLAY_ROUTES.indexOf(current) >= 0 || [].some.call(routeSel.options, function(o) { return o.value === current; })) {
+          routeSel.value = current;
+        }
+      }).catch(function() {});
+    } catch (_) {}
+    routeSel.value = current;
   }
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
-    if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
-    refreshModels(settings.default_model || '');
-  } catch (e) { console.warn('Failed to load default chat settings', e); }
+    fillRoutes(settings.default_model || 'automatic');
+  } catch (e) {
+    fillRoutes('automatic');
+  }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
-  modelSel.addEventListener('change', saveDefault);
+  routeSel.addEventListener('change', saveDefault);
 
   async function saveDefault() {
     try {
       await _postSettings({
-        default_endpoint_id: epSel.value,
-        default_model: modelSel.value
+        default_endpoint_id: '',
+        default_model: routeSel.value
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
-
-  _registerAiEndpointRefresh(function(endpoints) {
-    _endpoints = endpoints;
-    refreshEndpointOptions(epSel.value, modelSel.value);
-  });
 }
 
 /* ── Utility Model ── */
@@ -3081,7 +3085,7 @@ async function initEmailSettings() {
     const msg = el('set-email-style-msg');
     btn.disabled = true;
     // Render whirlpool + label inside the status area (same pattern as
-    // the "Find" / network-discover button in Add Models).
+    // the "Find" / network-discover button in Inference).
     let wp = null;
     if (msg) {
       msg.className = '';
@@ -3362,22 +3366,21 @@ const INTG_TYPES = {
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
-  codex:   { label: 'Codex',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 10.696.453a6.023 6.023 0 0 0-5.75 4.172 6.061 6.061 0 0 0-3.946 2.945 6.024 6.024 0 0 0 .742 7.099 5.98 5.98 0 0 0 .516 4.911 6.046 6.046 0 0 0 6.51 2.9A5.996 5.996 0 0 0 13.26 23.547a6.023 6.023 0 0 0 5.75-4.172 6.061 6.061 0 0 0 3.946-2.945 6.024 6.024 0 0 0-.674-6.609zM13.26 21.047a4.508 4.508 0 0 1-2.886-1.041l.143-.082 4.793-2.769a.777.777 0 0 0 .391-.676V10.34l2.026 1.17a.072.072 0 0 1 .039.061v5.596a4.532 4.532 0 0 1-4.506 4.48zM3.968 17.64a4.473 4.473 0 0 1-.537-3.018l.143.086 4.793 2.769a.79.79 0 0 0 .782 0l5.852-3.379v2.34a.072.072 0 0 1-.029.062l-4.845 2.796a4.532 4.532 0 0 1-6.159-1.656zM2.804 7.922a4.49 4.49 0 0 1 2.348-1.973V11.6a.778.778 0 0 0 .391.676l5.852 3.378-2.026 1.17a.072.072 0 0 1-.068 0L4.456 14.03a4.532 4.532 0 0 1-1.652-6.108zm16.423 3.823L13.375 8.367l2.026-1.17a.072.072 0 0 1 .068 0l4.845 2.796a4.525 4.525 0 0 1-.7 8.08V12.42a.778.778 0 0 0-.387-.676zm2.015-3.025l-.143-.086-4.793-2.769a.79.79 0 0 0-.782 0L9.672 9.243V6.903a.072.072 0 0 1 .029-.062l4.845-2.796a4.525 4.525 0 0 1 6.696 4.675zM8.598 12.66L6.57 11.49a.072.072 0 0 1-.039-.061V5.833a4.525 4.525 0 0 1 7.413-3.48l-.143.082-4.793 2.769a.777.777 0 0 0-.391.676l-.019 6.78zm1.1-2.379l2.607-1.505 2.607 1.505v3.01l-2.607 1.505-2.607-1.505z"/></svg>' },
-  claude:  { label: 'Claude',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>' },
+  codex:   { label: 'CLI plugin',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 10.696.453a6.023 6.023 0 0 0-5.75 4.172 6.061 6.061 0 0 0-3.946 2.945 6.024 6.024 0 0 0 .742 7.099 5.98 5.98 0 0 0 .516 4.911 6.046 6.046 0 0 0 6.51 2.9A5.996 5.996 0 0 0 13.26 23.547a6.023 6.023 0 0 0 5.75-4.172 6.061 6.061 0 0 0 3.946-2.945 6.024 6.024 0 0 0-.674-6.609zM13.26 21.047a4.508 4.508 0 0 1-2.886-1.041l.143-.082 4.793-2.769a.777.777 0 0 0 .391-.676V10.34l2.026 1.17a.072.072 0 0 1 .039.061v5.596a4.532 4.532 0 0 1-4.506 4.48zM3.968 17.64a4.473 4.473 0 0 1-.537-3.018l.143.086 4.793 2.769a.79.79 0 0 0 .782 0l5.852-3.379v2.34a.072.072 0 0 1-.029.062l-4.845 2.796a4.532 4.532 0 0 1-6.159-1.656zM2.804 7.922a4.49 4.49 0 0 1 2.348-1.973V11.6a.778.778 0 0 0 .391.676l5.852 3.378-2.026 1.17a.072.072 0 0 1-.068 0L4.456 14.03a4.532 4.532 0 0 1-1.652-6.108zm16.423 3.823L13.375 8.367l2.026-1.17a.072.072 0 0 1 .068 0l4.845 2.796a4.525 4.525 0 0 1-.7 8.08V12.42a.778.778 0 0 0-.387-.676zm2.015-3.025l-.143-.086-4.793-2.769a.79.79 0 0 0-.782 0L9.672 9.243V6.903a.072.072 0 0 1 .029-.062l4.845-2.796a4.525 4.525 0 0 1 6.696 4.675zM8.598 12.66L6.57 11.49a.072.072 0 0 1-.039-.061V5.833a4.525 4.525 0 0 1 7.413-3.48l-.143.082-4.793 2.769a.777.777 0 0 0-.391.676l-.019 6.78zm1.1-2.379l2.607-1.505 2.607 1.505v3.01l-2.607 1.505-2.607-1.505z"/></svg>' },
+  claude:  { label: 'CLI plugin',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
 };
 
-// Config shared by the Codex Agent and Claude Agent forms. Both use the same
-// scope-gated /api/codex/* backend; this just parameterizes the UI label,
-// default token name, and the per-agent install commands.
+// Inbound CLI plugins: install Odysseus *into* Codex/Claude. Not inference
+// providers. Overlay ChatGPT/Anthropic connect lives on Inference → 9router.
 const AGENT_CONFIGS = {
   codex: {
-    label: 'Codex Agent',
+    label: 'Codex CLI plugin (calls Odysseus)',
     word: 'Codex',
     namePrefix: 'codex agent',
     defaultName: 'Codex Agent',
     pluginPath: '/api/codex/plugin.zip',
-    setupDescription: 'Downloads a plugin bundle and registers it.',
+    setupDescription: 'Installs Odysseus into Codex CLI. Does not add OpenAI as an inference provider.',
     buildSetup: (origin, token) => `export ODYSSEUS_URL=${origin}
 export ODYSSEUS_API_TOKEN='${token}'
 mkdir -p ~/plugins
@@ -3410,12 +3413,12 @@ codex plugin add odysseus@personal
 python3 ~/plugins/odysseus/scripts/odysseus_api.py capabilities`,
   },
   claude: {
-    label: 'Claude Agent',
+    label: 'Claude Code plugin (calls Odysseus)',
     word: 'Claude',
     namePrefix: 'claude agent',
     defaultName: 'Claude Agent',
     pluginPath: '/api/claude/plugin.zip',
-    setupDescription: 'Downloads a plugin bundle and registers it.',
+    setupDescription: 'Installs Odysseus into Claude Code. Does not add Anthropic as an inference provider.',
     buildSetup: (origin, token) => `export ODYSSEUS_URL=${origin}
 export ODYSSEUS_API_TOKEN='${token}'
 mkdir -p ~/.claude
@@ -3560,7 +3563,13 @@ async function initUnifiedIntegrations() {
     if (items.length === 0) {
       listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
     } else {
-      listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
+      const inbound = items.filter(item => item.type === 'codex' || item.type === 'claude');
+      const accounts = items.filter(item => item.type !== 'codex' && item.type !== 'claude');
+      const heading = (title, cls) => `<div class="${cls}" style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;opacity:0.55;margin:10px 2px 6px;">${title}</div>`;
+      let body = '';
+      if (accounts.length) body += heading('Accounts', 'intg-group-accounts') + accounts.map(renderCard).join('');
+      if (inbound.length) body += heading('CLI plugins (call Odysseus)', 'intg-group-inbound') + inbound.map(renderCard).join('');
+      listEl.innerHTML = noticeHtml + body;
     }
     listEl.querySelector('.intg-open-email-settings')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -5514,15 +5523,23 @@ async function initUnifiedIntegrations() {
     const _typeOptions = [
       ['api', 'API Service'],
       ['caldav', 'CalDAV Calendar'],
-      ['claude', 'Claude Agent'],
-      ['codex', 'Codex Agent'],
       ['carddav', 'Contacts (CardDAV)'],
       ['contacts', 'Contacts Import'],
       ['email', 'Email (IMAP/SMTP)'],
       ['mcp', 'MCP Tool Server'],
     ];
+    const _inboundOptions = [
+      ['claude', 'Claude Code plugin (calls Odysseus)'],
+      ['codex', 'Codex CLI plugin (calls Odysseus)'],
+    ];
     const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');
-    const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');
+    const _row = ([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`;
+    const _rowsHtml = [
+      '<div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;opacity:0.55;padding:6px 10px 2px;">Accounts</div>',
+      ..._typeOptions.map(_row),
+      '<div class="intg-group-inbound" style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;opacity:0.55;padding:8px 10px 2px;">CLI plugins (call Odysseus)</div>',
+      ..._inboundOptions.map(_row),
+    ].join('');
 
     // Anchor wrapper so the absolutely-positioned menu lands directly under
     // the add button. The button is the wrapper's only sibling.

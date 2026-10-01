@@ -1,0 +1,229 @@
+services:
+  odysseus:
+    image: odysseus-odysseus:latest
+    environment:
+      - ODYSSEUS_OPENHANDS_AGENT_SERVER_URL=http://openhands-agent-server:8000
+      - ODYSSEUS_OPENHANDS_AUTOMATION_URL=http://openhands-automation:8000
+      - OPENHANDS_CANVAS_URL=${OPENHANDS_CANVAS_URL:-http://127.0.0.1:8000/canvas}
+      - ODYSSEUS_MODEL_JOB_WORKER_URL=http://odysseus-model-jobs:8091
+      # Overlay 9router is unpublished. Metadata + connect use the Compose DNS
+      # name. CLI token is derived from DATA_DIR (machine-id + auth/cli-secret).
+      # Native chat reads the OpenHands sidecar virtual key, not sqlite.
+      - NINE_ROUTER_METADATA_URL=http://9router:20128
+      - NINE_ROUTER_DATA_DIR=/opt/odysseus/9router-cli
+      # GET /api/settings redacts llm.api_key. Native chat POSTs this sidecar
+      # into Agent Server so 9router is authenticated. Not the sqlite mint mount.
+      - OPENHANDS_NATIVE_LLM_API_KEY_FILE=/opt/odysseus/openhands-native-llm-api-key
+      # Traces go to the overlay Collector only. Tempo and Langfuse URLs stay
+      # on the Collector, not on this service.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_SERVICE_NAME=odysseus
+      # Shared with compose exec probes for loopback X-Odysseus-Internal-Token.
+      # Guest .env only; never commit the value. Empty → random per process.
+      - ODYSSEUS_INTERNAL_TOKEN=${ODYSSEUS_INTERNAL_TOKEN:-}
+    volumes:
+      # CLI token only (machine-id + auth/cli-secret). Not the sqlite inference
+      # key bridge owned by Agent Server / model-job worker.
+      - ${APP_DATA_DIR:-./data}/9router/machine-id:/opt/odysseus/9router-cli/machine-id:ro
+      - ${APP_DATA_DIR:-./data}/9router/auth:/opt/odysseus/9router-cli/auth:ro
+      - ${APP_DATA_DIR:-./data}/openhands-agent-server-home/native-llm-api-key:/opt/odysseus/openhands-native-llm-api-key:ro
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+      odysseus-model-jobs:
+        condition: service_healthy
+
+  openhands-agent-server:
+    image: ghcr.io/openhands/agent-server:1.45.0-python@sha256:b0104980776ed6adbd6ce406636e08069087b4f11fa130bfd3548b965b262946
+    # Image entrypoint is already tini -- /usr/local/bin/openhands-agent-server.
+    # Overlay wraps it so persisted ChatGPT subscription cannot remain the default.
+    entrypoint: ["/bin/bash", "/opt/odysseus/agent-server-entrypoint.sh"]
+    command: ["--host", "0.0.0.0"]
+    env_file: deploy/openhands/versions.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      PATH: /opt/oh-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENCODE_CONFIG: /home/opencode/.config/opencode/opencode.json
+      HERMES_HOME: /home/hermes/.hermes
+      HERMES_CONFIG: /home/hermes/.hermes/config.yaml
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_BASE_URL: ""
+      CLAUDE_CODE_OAUTH_TOKEN: ""
+      OPENCODE_API_KEY: ""
+    volumes:
+      - openhands-agent-server-data:/workspace
+      - ${APP_DATA_DIR:-./data}/openhands-agent-server-home:/home/openhands/.openhands
+      - ${APP_DATA_DIR:-./data}/openhands-opencode-home:/home/opencode
+      - ${APP_DATA_DIR:-./data}/openhands-hermes-home:/home/hermes
+      - ${APP_DATA_DIR:-./data}/openhands-runtime-bin:/opt/oh-bin:ro
+      # TEMPORARY BRIDGE. Preferred: Agent Server → supported 9router control/API
+      # → scoped virtual key. Deletion condition: mint exclusively via
+      # POST /api/keys (or another official control API) and drop this mount.
+      - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
+      - ./deploy/openhands/bootstrap_native_llm.py:/opt/odysseus/bootstrap_native_llm.py:ro
+      - ./deploy/openhands/agent-server-entrypoint.sh:/opt/odysseus/agent-server-entrypoint.sh:ro
+      - ./deploy/openhands/opencode.json:/opt/odysseus/opencode.json:ro
+      - ./deploy/openhands/hermes/config.yaml:/opt/odysseus/hermes-config.yaml:ro
+    depends_on:
+      9router:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  openhands-automation:
+    image: ghcr.io/openhands/automation:1.11.0
+    env_file: deploy/openhands/versions.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AUTOMATION_AGENT_SERVER_URL: http://openhands-agent-server:8000
+      AGENT_SERVER_URL: http://openhands-agent-server:8000
+      AUTOMATION_DB_URL: sqlite+aiosqlite:////data/automations.db
+      FILE_STORE: local
+      LOCAL_STORAGE_PATH: /data/storage
+      # Must match Canvas --session-api-key. Mismatch is a 401 when Canvas
+      # opens a conversation and lists /api/automation/*.
+      OPENHANDS_AUTOMATION_API_KEY: ${OPENHANDS_SESSION_API_KEY:-local-dev-session}
+      AUTOMATION_LOCAL_API_KEY: ${OPENHANDS_SESSION_API_KEY:-local-dev-session}
+      AUTOMATION_AGENT_SERVER_API_KEY: ${OPENHANDS_SESSION_API_KEY:-local-dev-session}
+    volumes:
+      - openhands-automation-data:/data
+    # Image USER is uid 42420; a fresh named volume is root-owned, so SQLite
+    # cannot create automations.db unless this process can write /data.
+    user: "0"
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+    # Image default wraps uvicorn in ddtrace-run; local verification does not
+    # need Datadog and that wrapper can fail closed without an agent.
+    command:
+      ["uvicorn", "openhands.automation.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  openhands-canvas:
+    image: ghcr.io/openhands/agent-canvas:1.16.0@sha256:ab194760cb46098641747b27c1e07458ab1bed439821af7a31c97133ca466bb8
+    env_file: deploy/openhands/versions.env
+    environment:
+      AGENT_SERVER_URL: http://openhands-agent-server:8000
+      AUTOMATION_URL: http://openhands-automation:8000
+      AGENT_CANVAS_BASE_PATH: /canvas
+    ports:
+      - "${OPENHANDS_CANVAS_BIND:-127.0.0.1}:${OPENHANDS_CANVAS_PORT:-8000}:8000"
+    volumes:
+      - openhands-canvas-data:/home/openhands/.openhands
+      - ./deploy/openhands/canvas-frontend.sh:/opt/odysseus/canvas-frontend.sh:ro
+    entrypoint: ["/bin/bash", "/opt/odysseus/canvas-frontend.sh"]
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+      openhands-automation:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  odysseus-mcp:
+    image: odysseus-odysseus:latest
+    pull_policy: never
+    env_file: .env
+    # Authenticated Streamable HTTP MCP. stdio cannot be a Compose service.
+    command: ["python", "-m", "mcp_servers.odysseus_server"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ODYSSEUS_OPENHANDS_AGENT_SERVER_URL: http://openhands-agent-server:8000
+      ODYSSEUS_OPENHANDS_AUTOMATION_URL: http://openhands-automation:8000
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/app.db}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    volumes:
+      - ${APP_DATA_DIR:-./data}:/app/data:z
+      - ${APP_LOGS_DIR:-./logs}:/app/logs:z
+    depends_on:
+      openhands-agent-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/api/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  9router:
+    # Unmodified decolua/9router 0.5.69 on the default overlay network.
+    # In-network OpenAI-compatible base URL: http://9router:20128/v1
+    # Overlay health target for Agent Server / ACP: http://9router:20128/api/health
+    # Host publish of the provider port is not required.
+    # Virtual inference keys stay in 9router DATA_DIR. Agent Server and the
+    # model-job worker currently mint them through a TEMPORARY BRIDGE sqlite
+    # mount. Preferred: those runtimes → supported 9router control/API →
+    # scoped virtual key. Odysseus must never receive the inference key.
+    image: decolua/9router:0.5.69@sha256:47c17576ad49f0918d1a455dd412ae4509ee8bc742f17ba0b3327ddc70f35a40
+    pull_policy: never
+    env_file: deploy/openhands/versions.env
+    environment:
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - HOSTNAME=0.0.0.0
+      - ENABLE_REQUEST_LOGS=false
+    volumes:
+      - ${APP_DATA_DIR:-./data}/9router:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:20128/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  odysseus-model-jobs:
+    image: odysseus-odysseus:latest
+    pull_policy: never
+    entrypoint: ["python", "-m", "services.agents.model_job_worker"]
+    command: []
+    environment:
+      - NINE_ROUTER_V1=http://9router:20128/v1
+      - NINE_ROUTER_SQLITE_PATH=/opt/odysseus/9router-data/db/data.sqlite
+      # Catalog id for jobs when payload still carries overlay routes (automatic).
+      - NINE_ROUTER_DEFAULT_MODEL=cx/gpt-5.5
+      - MODEL_JOB_WORKER_HOST=0.0.0.0
+      - MODEL_JOB_WORKER_PORT=8091
+      - API_KEY_SECRET=${API_KEY_SECRET:-endpoint-proxy-api-key-secret}
+      # Same Collector contract as odysseus. Worker calls configure_tracer and
+      # emits GenAI chat spans on /v1/chat/completions.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - OTEL_SERVICE_NAME=odysseus-model-jobs
+    volumes:
+      # Overlay bind so a stale odysseus image still runs the branch worker.
+      - ./services:/app/services:ro
+      # TEMPORARY BRIDGE. Preferred: Agent Server → supported 9router control/API
+      # → scoped virtual key. Deletion condition: mint exclusively via
+      # POST /api/keys (or another official control API) and drop this mount.
+      - ${APP_DATA_DIR:-./data}/9router:/opt/odysseus/9router-data
+    depends_on:
+      9router:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3).read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  openhands-agent-server-data:
+  openhands-automation-data:
+  openhands-canvas-data:

@@ -18,6 +18,7 @@ from core.database import SessionLocal, CrewMember, ScheduledTask
 from src.auth_helpers import get_current_user
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.task_scheduler import compute_next_run
+from services.agents.scheduling import AutomationScheduler
 
 
 class CheckInUpdate(BaseModel):
@@ -78,6 +79,8 @@ def _task_to_checkin_dict(t: ScheduledTask) -> dict:
 
 
 def setup_assistant_routes(task_scheduler) -> APIRouter:
+    if getattr(task_scheduler, "automation_scheduler", None) is None:
+        task_scheduler.automation_scheduler = AutomationScheduler()
     router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
     def _owner(request: Request) -> str:

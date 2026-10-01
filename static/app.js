@@ -198,7 +198,11 @@ const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
-    window.location.href = '/login';
+    const here = window.location.pathname + window.location.search;
+    const next = (here.charAt(0) === '/' && here.charAt(1) !== '/' && !here.startsWith('/login'))
+      ? here
+      : '/';
+    window.location.href = '/login?next=' + encodeURIComponent(next);
   }
   return res;
 };
@@ -214,7 +218,7 @@ const el = uiModule.el;
 let _defaultChat = null;
 try {
   const cachedDefaultChat = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
-  if (cachedDefaultChat && cachedDefaultChat.endpoint_url && cachedDefaultChat.model) {
+  if (cachedDefaultChat && cachedDefaultChat.model) {
     _defaultChat = cachedDefaultChat;
     window.__odysseusDefaultChat = cachedDefaultChat;
   }
@@ -222,7 +226,7 @@ try {
 async function _refreshDefaultChat() {
   try {
     const d = await (await fetch('/api/default-chat')).json();
-    if (d && d.endpoint_url && d.model) {
+    if (d && d.model) {
       _defaultChat = d;
       try {
         window.__odysseusDefaultChat = d;
@@ -256,7 +260,7 @@ async function _createDirectChatFromPreferredModel() {
 
   const dc = await _refreshDefaultChat();
   if (dc) {
-    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+    sessionModule.createDirectChat(dc.endpoint_url || '', dc.model, dc.endpoint_id || '', { source: 'default' });
     return true;
   }
 

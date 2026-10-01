@@ -35,3 +35,7 @@ from core.database import (  # explicit re-exports for IDE/type-checker visibili
     get_session_by_id,
     archive_session,
 )
+
+# OpenHands projection identity. Rows are unique on this pair; websocket
+# deliveries of the same Agent Server event share the agent-server system key.
+AGENT_RUN_PROJECTION_UNIQUE_CONSTRAINT = ("source_system", "source_event_id")

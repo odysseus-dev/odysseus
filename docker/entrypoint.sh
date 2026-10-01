@@ -63,7 +63,20 @@ is_broad_mount_root() {
 repair_tree_ownership() {
     dir="$1"
     if [ -d "$dir" ]; then
-        find "$dir" -xdev -not -uid "$PUID" -print0 2>/dev/null \
+        # Overlay OpenHands homes are uid 10001. Recursive /app/data repair
+        # must not chown them to PUID or GET /api/settings PermissionErrors.
+        find "$dir" -xdev \
+            \( \
+                -path "$dir/openhands-agent-server-home" -o \
+                -path "$dir/openhands-agent-server-home/*" -o \
+                -path "$dir/openhands-opencode-home" -o \
+                -path "$dir/openhands-opencode-home/*" -o \
+                -path "$dir/openhands-hermes-home" -o \
+                -path "$dir/openhands-hermes-home/*" -o \
+                -path "$dir/openhands-runtime-bin" -o \
+                -path "$dir/openhands-runtime-bin/*" \
+            \) -prune -o \
+            -not -uid "$PUID" -print0 2>/dev/null \
             | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
     fi
 }

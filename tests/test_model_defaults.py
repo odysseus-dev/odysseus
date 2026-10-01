@@ -140,23 +140,20 @@ def test_get_default_chat_user_no_prefs_share_disabled_resolves_nothing(monkeypa
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=False)
 
-    assert test_data["endpoint_id"] == "", "Should get empty endpoint_id"
-    assert test_data["model"] == "", "Should get empty model"
+    assert test_data["endpoint_id"] == ""
+    assert test_data["model"] == "automatic"
 
 
 def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults(monkeypatch):
     """
-    Non-admin user without personal preferences should resolve to global
-    defaults for ep_id and model when share_defaults_with_users is enabled.
+    Shared leftover endpoint names are not overlay chat. Global default_model
+    qwen-3.6 becomes automatic.
     """
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=True)
 
-    assert test_data["model"] == "qwen-3.6", \
-        "model should be resolved from global default_model"
-
-    assert test_data["endpoint_id"] == "global-ep-123", \
-        "Should get global endpoint_id"
+    assert test_data["model"] == "automatic"
+    assert test_data["endpoint_id"] == ""
 
 def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
     """
@@ -198,5 +195,5 @@ def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
 
     test_data = get_default_chat(fake_request)
 
-    assert test_data["endpoint_id"] == "global-ep-123"
-    assert test_data["model"] == "qwen-3.6"
+    assert test_data["endpoint_id"] == ""
+    assert test_data["model"] == "automatic"

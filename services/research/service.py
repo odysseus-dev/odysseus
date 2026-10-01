@@ -165,3 +165,17 @@ class ResearchService:
     def cancel(self, session_id: str) -> bool:
         """Cancel background research."""
         return self.handler.cancel_research(session_id)
+
+
+def to_mcp_result(result: ResearchResult) -> dict:
+    """Project a research result for the Odysseus MCP research.invoke tool."""
+    return {
+        "query": result.query,
+        "summary": result.summary,
+        "sources": [
+            {"url": source.url, "title": source.title, "snippet": source.snippet}
+            for source in result.sources
+        ],
+        "tokens_used": result.tokens_used,
+        "duration_seconds": result.duration_seconds,
+    }

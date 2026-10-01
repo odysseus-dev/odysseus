@@ -167,7 +167,7 @@ async def send_to_session(content: str, session_id: Optional[str] = None, owner:
       Line 2+: message
     """
     _session_manager = get_session_manager()
-    from src.llm_core import llm_call_async
+    from services.agents.legacy_bridge import stream_governed_agent
     from core.models import ChatMessage
 
     if not _session_manager:
@@ -219,11 +219,44 @@ async def send_to_session(content: str, session_id: Optional[str] = None, owner:
             }
         context.append({"role": "user", "content": message})
 
-        response = await llm_call_async(
-            sess.endpoint_url, sess.model, context,
-            headers=sess.headers,
-            timeout=AI_CHAT_TIMEOUT,
-        )
+        # Resume the session's OpenHands conversation. Do not mint a second
+        # conversation id here — OpenHands binds or creates one on execution.
+        bound_cid = getattr(sess, "openhands_conversation_id", None)
+        if bound_cid == target_sid:
+            bound_cid = None
+        parts = []
+        new_cid = bound_cid
+        async for chunk in stream_governed_agent(
+            messages=context,
+            session_id=target_sid,
+            conversation_id=bound_cid,
+            owner=owner,
+            headers=getattr(sess, "headers", None),
+            archetype="chat",
+            user_requested_agent=True,
+            poll_timeout_s=float(AI_CHAT_TIMEOUT),
+        ):
+            if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+                continue
+            try:
+                data = json.loads(chunk[6:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            if data.get("type") == "execution":
+                cid = data.get("conversation_id")
+                if cid and cid != target_sid:
+                    new_cid = cid
+                continue
+            if data.get("thinking"):
+                continue
+            delta = data.get("delta")
+            if isinstance(delta, str) and delta:
+                parts.append(delta)
+        response = "".join(parts)
+        if new_cid:
+            sess.openhands_conversation_id = new_cid
 
         # Save both messages to session
         sess.add_message(ChatMessage("user", message))

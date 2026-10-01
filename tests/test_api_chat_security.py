@@ -175,9 +175,10 @@ class _DB:
 
 
 class _ChatSession:
-    def __init__(self, endpoint_url, model):
+    def __init__(self, endpoint_url, model, owner=None):
         self.endpoint_url = endpoint_url
         self.model = model
+        self.owner = owner
         self.headers = {}
         self.history = []
 
@@ -189,9 +190,10 @@ class _SessionManager:
     def __init__(self):
         self.created = []
         self.save_calls = 0
+        self.sessions = {}
 
     def create_session(self, *, session_id, name, endpoint_url, model, owner):
-        session = _ChatSession(endpoint_url, model)
+        session = _ChatSession(endpoint_url, model, owner=owner)
         self.created.append({
             "session_id": session_id,
             "name": name,
@@ -200,7 +202,13 @@ class _SessionManager:
             "owner": owner,
             "session": session,
         })
+        self.sessions[session_id] = session
         return session
+
+    def get_session(self, session_id):
+        if session_id not in self.sessions:
+            raise KeyError(session_id)
+        return self.sessions[session_id]
 
     def save_sessions(self):
         self.save_calls += 1
@@ -292,12 +300,11 @@ async def test_api_chat_direct_base_url_rejects_local_private_targets(monkeypatc
         await sync_chat(_Request(), body)
 
     assert exc.value.status_code == 400
-    assert exc.value.detail == "base_url must point to a public HTTP(S) endpoint"
     assert session_manager.created == []
 
 
 @pytest.mark.asyncio
-async def test_api_chat_direct_base_url_allows_mocked_public_endpoint(monkeypatch):
+async def test_api_chat_direct_base_url_is_rejected_not_a_gateway(monkeypatch):
     webhook_routes = _load_webhook_routes_for_test(monkeypatch)
     _install_sync_chat_stubs(monkeypatch)
 
@@ -320,11 +327,12 @@ async def test_api_chat_direct_base_url_allows_mocked_public_endpoint(monkeypatc
         session=None,
     )
 
-    response = await sync_chat(_Request(), body)
+    with pytest.raises(webhook_routes.HTTPException) as exc:
+        await sync_chat(_Request(), body)
 
-    assert response["response"] == "mocked response"
-    assert response["model"] == "test-model"
-    assert session_manager.created[0]["endpoint_url"] == "https://api.example.com/v1/chat/completions"
+    assert exc.value.status_code == 400
+    assert "gateway" in str(exc.value.detail).lower() or "provider" in str(exc.value.detail).lower()
+    assert session_manager.created == []
 
 
 def test_api_chat_fallback_endpoint_selection_for_owned_token(monkeypatch):
@@ -383,7 +391,12 @@ async def test_api_chat_fallback_trusts_configured_local_endpoint(monkeypatch):
 
     monkeypatch.setattr(webhook_routes, "ModelEndpoint", _ModelEndpoint)
     monkeypatch.setattr(webhook_routes, "SessionLocal", _session_local)
-    monkeypatch.setattr(webhook_routes, "validate_public_http_url", _validate_public_http_url)
+    monkeypatch.setattr(
+        webhook_routes,
+        "validate_public_http_url",
+        _validate_public_http_url,
+        raising=False,
+    )
 
     session_manager = _SessionManager()
     sync_chat = _sync_chat_endpoint(webhook_routes, session_manager)
@@ -396,9 +409,71 @@ async def test_api_chat_fallback_trusts_configured_local_endpoint(monkeypatch):
         session=None,
     )
 
-    response = await sync_chat(_Request(owner=None), body)
+    with pytest.raises(webhook_routes.HTTPException) as exc:
+        await sync_chat(_Request(owner=None), body)
 
-    assert response["response"] == "mocked response"
-    assert response["model"] == "local-model"
-    assert session_manager.created[0]["endpoint_url"] == "http://localhost:11434/v1/chat/completions"
+    assert exc.value.status_code == 400
+    assert "session" in str(exc.value.detail).lower()
+    assert session_manager.created == []
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_without_session_fails_closed(monkeypatch):
+    webhook_routes = _load_webhook_routes_for_test(monkeypatch)
+    _install_sync_chat_stubs(monkeypatch)
+    session_manager = _SessionManager()
+    sync_chat = _sync_chat_endpoint(webhook_routes, session_manager)
+    body = types.SimpleNamespace(
+        message="hello",
+        model=None,
+        api_key=None,
+        base_url=None,
+        provider=None,
+        session=None,
+    )
+
+    with pytest.raises(webhook_routes.HTTPException) as exc:
+        await sync_chat(_Request(), body)
+
+    assert exc.value.status_code == 400
+    assert "session" in str(exc.value.detail).lower()
+    assert session_manager.created == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_owned_session_uses_governed_agent_not_llm(monkeypatch):
+    webhook_routes = _load_webhook_routes_for_test(monkeypatch)
+    _install_sync_chat_stubs(monkeypatch)
+    governed = []
+
+    async def _governed(*args, **kwargs):
+        governed.append((args, kwargs))
+        yield 'data: {"delta": "governed reply"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(
+        "services.agents.legacy_bridge.stream_governed_agent",
+        _governed,
+    )
+    session_manager = _SessionManager()
+    session_manager.sessions["sess-1"] = _ChatSession(
+        "https://provider.example/v1/chat/completions",
+        "should-not-forward",
+        owner="alice",
+    )
+    sync_chat = _sync_chat_endpoint(webhook_routes, session_manager)
+    body = types.SimpleNamespace(
+        message="hello",
+        model=None,
+        api_key=None,
+        base_url=None,
+        provider=None,
+        session="sess-1",
+    )
+
+    response = await sync_chat(_Request(owner="alice"), body)
+
+    assert response["response"] == "governed reply"
+    assert governed, "owned webhook chat must dispatch stream_governed_agent"
+    assert session_manager.sessions["sess-1"].headers == {}

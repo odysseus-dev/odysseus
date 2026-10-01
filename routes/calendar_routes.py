@@ -1629,8 +1629,8 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
         owner = _require_user(request)
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        import asyncio
+        from services.agents.model_jobs import bounded_archetype, submit_model_job
         from src.text_helpers import strip_think
         import json as _json
         import re as _re
@@ -1653,12 +1653,6 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             set_user_tz_offset(body.get("tz_offset"))
         if tz_hint:
             set_user_tz_name(tz_hint)
-
-        url, model, headers = resolve_endpoint("utility", owner=owner or None)
-        if not url:
-            url, model, headers = resolve_endpoint("default", owner=owner or None)
-        if not url or not model:
-            return {"ok": False, "error": "No LLM endpoint configured"}
 
         now = now_user_local()
         now_iso = now.strftime("%Y-%m-%dT%H:%M:%S")
@@ -1687,29 +1681,41 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         )
 
         try:
-            raw = await llm_call_async(
-                url=url, model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                headers=headers,
-                temperature=0.0,
-                max_tokens=512,
-                timeout=20,
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "calendar-parse",
+                    temperature=0.0,
+                    token_limit=512,
+                    timeout_seconds=20,
+                ),
+                {
+                    "text": text,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text},
+                    ],
+                },
+                owner or "",
             )
         except Exception as e:
             return {"ok": False, "error": f"LLM call failed: {e}"}
 
-        cleaned = strip_think(raw or "", prose=False, prompt_echo=True)
-        cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=_re.MULTILINE).strip()
-        m = _re.search(r"\{[\s\S]*\}", cleaned)
-        if not m:
-            return {"ok": False, "error": "Could not extract JSON", "raw": cleaned[:400]}
-        try:
-            parsed = _json.loads(m.group())
-        except Exception as e:
-            return {"ok": False, "error": f"Invalid JSON: {e}", "raw": cleaned[:400]}
+        output = result.output or {}
+        if isinstance(output, dict) and (output.get("summary") or output.get("dtstart")):
+            parsed = output
+            cleaned = ""
+        else:
+            raw = str(output.get("text") or "")
+            cleaned = strip_think(raw or "", prose=False, prompt_echo=True)
+            cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=_re.MULTILINE).strip()
+            m = _re.search(r"\{[\s\S]*\}", cleaned)
+            if not m:
+                return {"ok": False, "error": "Could not extract JSON", "raw": cleaned[:400]}
+            try:
+                parsed = _json.loads(m.group())
+            except Exception as e:
+                return {"ok": False, "error": f"Invalid JSON: {e}", "raw": cleaned[:400]}
 
         # Light validation / defaults so the frontend can trust the shape.
         summary = (parsed.get("summary") or text)[:200]

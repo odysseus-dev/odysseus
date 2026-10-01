@@ -1,0 +1,30 @@
+# Grafana provisioning for the default organization (orgId 1).
+# Tempo is the trace store. Prometheus is the metrics store.
+# URLs are overlay DNS names, not host ports.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    orgId: 1
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    orgId: 1
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      httpMethod: GET
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

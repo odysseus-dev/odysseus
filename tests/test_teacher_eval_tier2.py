@@ -10,17 +10,14 @@ import src.teacher_escalation as teacher_escalation
 async def test_evaluate_turn_llm_ok(monkeypatch):
     seen = {}
 
-    def fake_resolve_endpoint(prefix, fallback_url=None, owner=None):
-        seen["prefix"] = prefix
+    def fake_job(archetype, payload, owner, **kwargs):
         seen["owner"] = owner
-        return "http://endpoint.local/v1", "utility-model", {}
-
-    async def fake_llm_call_async(url, model, messages, **kwargs):
         seen["called"] = True
-        return "ok"
+        return SimpleNamespace(output={"text": "ok"})
 
-    monkeypatch.setattr("src.endpoint_resolver.resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(
+        "services.agents.model_jobs.submit_model_job", fake_job, raising=False
+    )
 
     status, reason = await teacher_escalation.evaluate_turn_llm(
         user_request="test request",
@@ -32,21 +29,18 @@ async def test_evaluate_turn_llm_ok(monkeypatch):
 
     assert status == "ok"
     assert reason is None
-    assert seen["prefix"] == "utility"
     assert seen["owner"] == "alice"
     assert seen["called"] is True
 
 
 @pytest.mark.asyncio
 async def test_evaluate_turn_llm_failure(monkeypatch):
-    def fake_resolve_endpoint(prefix, fallback_url=None, owner=None):
-        return "http://endpoint.local/v1", "utility-model", {}
+    def fake_job(archetype, payload, owner, **kwargs):
+        return SimpleNamespace(output={"text": '  "Failure"  '})
 
-    async def fake_llm_call_async(url, model, messages, **kwargs):
-        return "  \"Failure\"  "
-
-    monkeypatch.setattr("src.endpoint_resolver.resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(
+        "services.agents.model_jobs.submit_model_job", fake_job, raising=False
+    )
 
     status, reason = await teacher_escalation.evaluate_turn_llm(
         user_request="test request",
@@ -62,14 +56,12 @@ async def test_evaluate_turn_llm_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_evaluate_turn_llm_contains_failure_but_not_exact_match(monkeypatch):
-    def fake_resolve_endpoint(prefix, fallback_url=None, owner=None):
-        return "http://endpoint.local/v1", "utility-model", {}
+    def fake_job(archetype, payload, owner, **kwargs):
+        return SimpleNamespace(output={"text": "this agent execution is not a failure"})
 
-    async def fake_llm_call_async(url, model, messages, **kwargs):
-        return "this agent execution is not a failure"
-
-    monkeypatch.setattr("src.endpoint_resolver.resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(
+        "services.agents.model_jobs.submit_model_job", fake_job, raising=False
+    )
 
     status, reason = await teacher_escalation.evaluate_turn_llm(
         user_request="test request",
@@ -85,14 +77,12 @@ async def test_evaluate_turn_llm_contains_failure_but_not_exact_match(monkeypatc
 
 @pytest.mark.asyncio
 async def test_evaluate_turn_llm_exception_handling(monkeypatch):
-    def fake_resolve_endpoint(prefix, fallback_url=None, owner=None):
-        return "http://endpoint.local/v1", "utility-model", {}
-
-    async def fake_llm_call_async(url, model, messages, **kwargs):
+    def fake_job(archetype, payload, owner, **kwargs):
         raise RuntimeError("model timeout")
 
-    monkeypatch.setattr("src.endpoint_resolver.resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(
+        "services.agents.model_jobs.submit_model_job", fake_job, raising=False
+    )
 
     # Should degrade gracefully to "ok"
     status, reason = await teacher_escalation.evaluate_turn_llm(
@@ -239,7 +229,7 @@ async def test_run_teacher_inline_triggers_tier2_escalation(monkeypatch):
             },
         }) + "\n\n"
         yield "data: [DONE]\n\n"
-    monkeypatch.setattr("src.agent_loop.stream_agent_loop", fake_stream_agent_loop)
+    monkeypatch.setattr("services.agents.legacy_bridge.stream_governed_agent", fake_stream_agent_loop)
 
     # Mock _call_teacher returning a skill definition
     async def fake_call_teacher(spec, prompt, owner=None):
@@ -343,7 +333,7 @@ async def test_teacher_approval_keeps_parent_authority_and_skips_skill_save(
         raise AssertionError("paused teacher trace was distilled into a skill")
 
     monkeypatch.setattr(
-        "src.agent_loop.stream_agent_loop",
+        "services.agents.legacy_bridge.stream_governed_agent",
         fake_stream_agent_loop,
     )
     monkeypatch.setattr(

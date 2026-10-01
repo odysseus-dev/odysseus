@@ -17,10 +17,14 @@ through the standard agent_tools.py pipeline.
 import asyncio
 import json
 import logging
+import os
 import uuid
 import time
+import urllib.error
+import urllib.request
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.constants import GENERATED_IMAGES_DIR
 from src.memory import MemoryStoreUnreadable
 
@@ -233,8 +237,6 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
       Line 2: step2_model | step2_instruction
       ...
     """
-    from src.llm_core import llm_call_async
-
     # Try JSON parse first
     steps = None
     try:
@@ -296,9 +298,19 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
                 {"role": "user", "content": user_content},
             ]
 
-            response = await llm_call_async(
-                url, model, messages, headers=headers, timeout=AI_CHAT_TIMEOUT
+            _ = (url, headers)
+            result = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "pipeline-step",
+                    temperature=0.3,
+                    token_limit=4096,
+                    timeout_seconds=AI_CHAT_TIMEOUT,
+                ),
+                {"text": user_content, "model": model, "messages": messages},
+                owner or "",
             )
+            response = str((result.output or {}).get("text") or "")
 
             step_outputs.append({
                 "step": i + 1,
@@ -1487,3 +1499,46 @@ async def dispatch_ai_tool(
         result = {"error": f"Unknown AI interaction tool: {tool}"}
 
     return desc, result
+
+
+def invoke_structured_model(payload, *, archetype=None, owner=None):
+    """Single structured-request boundary for governed model jobs.
+
+    Embeddings, STT/TTS, image generation, moderation, and capability probes
+    stay on their existing infrastructure paths and do not enter this function.
+    The web process posts to the isolated worker and never calls 9router.
+    """
+    from services.agents.model_jobs import ModelJobFailed, archetype_to_dict
+
+    url = (os.environ.get("ODYSSEUS_MODEL_JOB_WORKER_URL") or "").rstrip("/")
+    if not url:
+        raise ModelJobFailed("model-job worker unavailable")
+    body = {
+        "owner": owner,
+        "archetype": archetype_to_dict(archetype),
+        "payload": payload,
+    }
+    timeout = getattr(archetype, "timeout_seconds", 60) or 60
+    req = urllib.request.Request(
+        f"{url}/jobs",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            parsed = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise ModelJobFailed(f"model-job worker unavailable: {exc}") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("output"), dict):
+        raise ModelJobFailed("model-job worker returned an invalid result")
+    output = dict(parsed["output"])
+    audit = parsed.get("audit") if isinstance(parsed.get("audit"), dict) else {}
+    extra = {
+        key: value
+        for key, value in audit.items()
+        if key in {"resolved_model", "resolved_route"}
+    }
+    if extra:
+        output.setdefault("_provenance", extra)
+    return output

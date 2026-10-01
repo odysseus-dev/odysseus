@@ -1,17 +1,20 @@
-"""ChatGPT subscription / Codex backend OAuth helpers.
+"""Provider connection projection for 9router-hosted OAuth.
 
-This provider is intentionally separate from OpenAI API-key endpoints. It uses
-OpenAI account OAuth device authorization, stores refresh tokens server-side,
-and resolves a fresh bearer token at request time.
+Odysseus starts connect UX and stores an opaque connection id plus non-secret
+status. 9router keeps access and refresh tokens. This module must not return
+upstream OAuth secrets to callers.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import secrets
 import threading
 import time
+import uuid
 from typing import Any, Dict, Optional
 
 import httpx
@@ -22,6 +25,7 @@ DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL = (
     or "https://chatgpt.com/backend-api/codex"
 )
 CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription"
+NINEROUTER_CONNECTION_PROVIDER = "9router"
 CHATGPT_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_OAUTH_ISSUER = "https://auth.openai.com"
@@ -165,10 +169,26 @@ def _json_or_error(response: httpx.Response, action: str) -> Dict[str, Any]:
     return data
 
 
-def request_device_code(timeout: float = 15.0) -> Dict[str, Any]:
+def make_pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, S256 code_challenge) for ChatGPT device auth.
+
+    Agents: verifier stays in the in-memory poll store only. Never write it to
+    SQLite or return it in /device/start JSON.
+    """
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
+def request_device_code(timeout: float = 15.0, code_challenge: str | None = None) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"client_id": CHATGPT_OAUTH_CLIENT_ID}
+    if code_challenge:
+        body["code_challenge"] = code_challenge
+        body["code_challenge_method"] = "S256"
     response = httpx.post(
         f"{CHATGPT_OAUTH_ISSUER}/api/accounts/deviceauth/usercode",
-        json={"client_id": CHATGPT_OAUTH_CLIENT_ID},
+        json=body,
         headers={"Content-Type": "application/json"},
         timeout=timeout,
     )
@@ -251,42 +271,195 @@ def access_token_is_expiring(access_token: str, skew_seconds: int = CHATGPT_ACCE
     return exp <= int(time.time()) + int(skew_seconds)
 
 
-def resolve_runtime_credentials(auth_id: str, owner: Optional[str] = None, *, force_refresh: bool = False) -> Dict[str, Any]:
+def ninerouter_public_url() -> str:
+    """Return the 9router origin used for hosted PKCE redirects.
+
+    Returns
+    -------
+    str
+        Public or overlay origin without a trailing slash.
+
+    Examples
+    --------
+    >>> ninerouter_public_url().startswith("http")
+    True
+    """
+    return (
+        os.getenv("NINE_ROUTER_PUBLIC_URL", "").strip().rstrip("/")
+        or os.getenv("NINE_ROUTER_METADATA_URL", "").strip().rstrip("/")
+        or "http://9router:20128"
+    )
+
+
+def _projection_payload(row: Any) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "connection_id": row.connection_id,
+        "owner": row.owner,
+        "status": row.status or "usable",
+        "entitlement": row.entitlement,
+        "label": row.label,
+    }
+
+
+def provision_connection(projection: Dict[str, Any], owner: Optional[str]) -> Dict[str, Any]:
+    """Persist an owner-scoped 9router connection without provider secrets.
+
+    Parameters
+    ----------
+    projection
+        Opaque connection fields. ``connection_id`` is required. Token fields
+        are ignored and never written.
+    owner
+        Odysseus owner that consented.
+
+    Returns
+    -------
+    dict
+        Non-secret projection returned to product UX.
+
+    Raises
+    ------
+    ValueError
+        If ``connection_id`` is missing.
+
+    Examples
+    --------
+    >>> isinstance(provision_connection, object)
+    True
+    """
+    connection_id = str(projection.get("connection_id") or "").strip()
+    if not connection_id:
+        raise ValueError("connection_id is required; Odysseus no longer stores provider tokens")
+
     ProviderAuthSession, SessionLocal, utcnow_naive = _database_handles()
     db = SessionLocal()
     try:
-        q = db.query(ProviderAuthSession).filter(
-            ProviderAuthSession.id == auth_id,
-            ProviderAuthSession.provider == CHATGPT_SUBSCRIPTION_PROVIDER,
+        auth = (
+            db.query(ProviderAuthSession)
+            .filter(
+                ProviderAuthSession.connection_id == connection_id,
+                ProviderAuthSession.owner == owner,
+            )
+            .first()
         )
+        if auth is None:
+            auth = ProviderAuthSession(
+                id=str(uuid.uuid4())[:8],
+                provider=NINEROUTER_CONNECTION_PROVIDER,
+                owner=owner,
+                label=str(projection.get("label") or "9router"),
+                base_url=NINEROUTER_CONNECTION_PROVIDER,
+                auth_mode="projection",
+            )
+            db.add(auth)
+        auth.connection_id = connection_id
+        auth.status = str(projection.get("status") or "usable")
+        auth.entitlement = projection.get("entitlement")
+        auth.label = str(projection.get("label") or auth.label or "9router")
+        auth.provider = NINEROUTER_CONNECTION_PROVIDER
+        auth.base_url = NINEROUTER_CONNECTION_PROVIDER
+        auth.auth_mode = "projection"
+        auth.access_token = None
+        auth.refresh_token = None
+        auth.last_refresh = utcnow_naive()
+        db.commit()
+        db.refresh(auth)
+        return _projection_payload(auth)
+    finally:
+        db.close()
+
+
+def get_owner_connection(connection_id: str, owner: Optional[str]) -> Dict[str, Any]:
+    """Load a connection projection for one owner only.
+
+    Parameters
+    ----------
+    connection_id
+        Opaque 9router connection id.
+    owner
+        Odysseus owner that must match the stored row.
+
+    Returns
+    -------
+    dict
+        Non-secret projection.
+
+    Raises
+    ------
+    ChatGPTSubscriptionAuthNotFound
+        If the id is missing or belongs to another owner.
+
+    Examples
+    --------
+    >>> callable(get_owner_connection)
+    True
+    """
+    if not connection_id or not owner:
+        raise ChatGPTSubscriptionAuthNotFound("Provider connection was not found for this user.")
+    ProviderAuthSession, SessionLocal, _utcnow = _database_handles()
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(ProviderAuthSession)
+            .filter(
+                ProviderAuthSession.connection_id == connection_id,
+                ProviderAuthSession.owner == owner,
+            )
+            .first()
+        )
+        if row is None:
+            raise ChatGPTSubscriptionAuthNotFound("Provider connection was not found for this user.")
+        return _projection_payload(row)
+    finally:
+        db.close()
+
+
+def resolve_runtime_credentials(auth_id: str, owner: Optional[str] = None, *, force_refresh: bool = False) -> Dict[str, Any]:
+    """Return a non-secret projection. Never emit upstream OAuth tokens.
+
+    Parameters
+    ----------
+    auth_id
+        Odysseus ``ProviderAuthSession.id``.
+    owner
+        Optional owner scope.
+    force_refresh
+        Ignored. Odysseus is not the token vault.
+
+    Returns
+    -------
+    dict
+        Projection without ``api_key`` / access / refresh values.
+
+    Raises
+    ------
+    ChatGPTSubscriptionAuthNotFound
+        If the row is missing or owned by someone else.
+
+    Examples
+    --------
+    >>> callable(resolve_runtime_credentials)
+    True
+    """
+    del force_refresh
+    ProviderAuthSession, SessionLocal, _utcnow = _database_handles()
+    db = SessionLocal()
+    try:
+        q = db.query(ProviderAuthSession).filter(ProviderAuthSession.id == auth_id)
         if owner:
             q = q.filter(ProviderAuthSession.owner == owner)
         row = q.first()
         if row is None:
-            raise ChatGPTSubscriptionAuthNotFound("ChatGPT Subscription credentials were not found for this user.")
-
-        access_token = row.access_token or ""
-        if force_refresh or access_token_is_expiring(access_token):
-            with _refresh_lock_for(auth_id):
-                db.refresh(row)
-                access_token = row.access_token or ""
-                refresh_token = row.refresh_token or ""
-                if force_refresh or access_token_is_expiring(access_token):
-                    refreshed = refresh_oauth_tokens(access_token, refresh_token)
-                    row.access_token = refreshed["access_token"]
-                    if refreshed.get("refresh_token"):
-                        row.refresh_token = refreshed["refresh_token"]
-                    row.last_refresh = utcnow_naive()
-                    db.commit()
-                    db.refresh(row)
-            access_token = row.access_token or ""
-
-        return {
-            "provider": CHATGPT_SUBSCRIPTION_PROVIDER,
-            "base_url": (row.base_url or DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL).rstrip("/"),
-            "api_key": access_token,
-            "auth_mode": row.auth_mode or "chatgpt",
-        }
+            raise ChatGPTSubscriptionAuthNotFound("Provider connection was not found for this user.")
+        payload = _projection_payload(row)
+        payload.update({
+            "provider": row.provider or NINEROUTER_CONNECTION_PROVIDER,
+            "base_url": "",
+            "api_key": None,
+            "auth_mode": row.auth_mode or "projection",
+        })
+        return payload
     finally:
         db.close()
 

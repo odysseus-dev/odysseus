@@ -9,9 +9,9 @@ through the registry rather than the legacy dispatch_ai_tool elif.
 """
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import src.ai_interaction as ai_interaction
-import src.llm_core as llm_core
 import src.database as database
 from src.agent_tools import TOOL_HANDLERS
 from src.agent_tools import model_interaction_tools as mit
@@ -32,12 +32,14 @@ def test_chat_with_model_threads_owner_and_returns(monkeypatch):
         seen["owner"] = owner
         return ("http://x", "model-x", {})
 
-    async def fake_call(url, model, messages, headers=None, timeout=None):
-        seen["message"] = messages[-1]["content"]
-        return "hi back"
+    def fake_job(archetype, payload, owner, **kwargs):
+        seen["message"] = payload.get("text")
+        return SimpleNamespace(output={"text": "hi back"})
 
     monkeypatch.setattr(ai_interaction, "_resolve_model", fake_resolve)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+    monkeypatch.setattr(
+        "services.agents.model_jobs.submit_model_job", fake_job, raising=False
+    )
 
     res = asyncio.run(mit.ChatWithModelTool().execute(
         "model-x\nhello there", {"owner": "alice", "session_id": "s1"}))
@@ -55,11 +57,14 @@ def test_ask_teacher_threads_owner_and_marks_teacher(monkeypatch):
         seen["owner"] = owner
         return ("http://x", "teacher-x", {})
 
-    async def fake_call(url, model, messages, headers=None, timeout=None):
-        return "do this and that"
+    async def fake_stream(**kwargs):
+        yield 'data: {"delta": "do this and that"}\n\n'
+        yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(ai_interaction, "_resolve_model", fake_resolve)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+    monkeypatch.setattr(
+        "services.agents.legacy_bridge.stream_governed_agent", fake_stream
+    )
 
     res = asyncio.run(mit.AskTeacherTool().execute(
         "teacher-x\nI am stuck", {"owner": "bob"}))

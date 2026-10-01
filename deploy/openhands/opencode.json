@@ -1,0 +1,29 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "ninerouter/auto",
+  "autoupdate": false,
+  "enabled_providers": ["ninerouter"],
+  "disabled_providers": [
+    "openai",
+    "anthropic",
+    "opencode",
+    "amazon-bedrock",
+    "google",
+    "gemini"
+  ],
+  "provider": {
+    "ninerouter": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "9router",
+      "options": {
+        "baseURL": "http://9router:20128/v1",
+        "apiKey": "{env:OPENCODE_NINE_ROUTER_KEY}"
+      },
+      "models": {
+        "auto": {
+          "name": "auto"
+        }
+      }
+    }
+  }
+}

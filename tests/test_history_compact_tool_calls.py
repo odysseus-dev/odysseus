@@ -95,16 +95,16 @@ class _FakeSession:
 def _compact_prompt_for(monkeypatch, history):
     captured = {}
 
-    async def fake_llm_call_async(endpoint_url, model, messages, **kwargs):
-        captured["messages"] = messages
-        return "Summary text"
+    def fake_submit_model_job(archetype, payload, owner, **kwargs):
+        captured["messages"] = payload.get("messages") or []
+        captured["owner"] = owner
+        return SimpleNamespace(output={"text": "Summary text"})
 
     monkeypatch.setattr(history_routes, "_verify_session_owner", lambda request, session_id: None)
     monkeypatch.setattr(history_routes, "SessionLocal", lambda: _FakeDb())
 
     import src.agent_runs as agent_runs
     import src.endpoint_resolver as endpoint_resolver
-    import src.llm_core as llm_core
     import src.model_context as model_context
 
     monkeypatch.setattr(agent_runs, "is_active", lambda session_id: False)
@@ -113,7 +113,7 @@ def _compact_prompt_for(monkeypatch, history):
         return None, None, {}
 
     monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(history_routes, "submit_model_job", fake_submit_model_job)
     monkeypatch.setattr(model_context, "estimate_tokens", lambda messages: 100)
     monkeypatch.setattr(model_context, "get_context_length", lambda endpoint_url, model: 1000)
 
@@ -133,9 +133,10 @@ def _compact_prompt_for(monkeypatch, history):
 def _registered_compact_response(monkeypatch, history, active_run=False):
     captured = {}
 
-    async def fake_llm_call_async(endpoint_url, model, messages, **kwargs):
-        captured["messages"] = messages
-        return "Summary text"
+    def fake_submit_model_job(archetype, payload, owner, **kwargs):
+        captured["messages"] = payload.get("messages") or []
+        captured["owner"] = owner
+        return SimpleNamespace(output={"text": "Summary text"})
 
     monkeypatch.setattr(
         session_routes,
@@ -148,7 +149,6 @@ def _registered_compact_response(monkeypatch, history, active_run=False):
 
     import src.agent_runs as agent_runs
     import src.endpoint_resolver as endpoint_resolver
-    import src.llm_core as llm_core
 
     monkeypatch.setattr(agent_runs, "is_active", lambda session_id: active_run)
     def fake_resolve_endpoint(kind, owner=None):
@@ -156,7 +156,8 @@ def _registered_compact_response(monkeypatch, history, active_run=False):
         return None, None, {}
 
     monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr(session_routes, "submit_model_job", fake_submit_model_job)
+    monkeypatch.setattr(history_routes, "submit_model_job", fake_submit_model_job)
 
     session = _FakeSession(history)
     manager = _FakeSessionManager(session)

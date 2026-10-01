@@ -17,9 +17,11 @@ the facts still land in the JSON store.
 import asyncio
 import tempfile
 
-import src.llm_core
+from types import SimpleNamespace
+
 import src.event_bus
 from src.memory import MemoryManager
+from services.memory import memory_extractor as mex
 from services.memory.memory_extractor import extract_and_store
 
 
@@ -58,10 +60,10 @@ def test_extraction_persists_facts_when_vector_store_fails_at_runtime(monkeypatc
         '{"text": "Alice prefers tea over coffee", "category": "preference"}]'
     )
 
-    async def _fake_llm(url, model, messages, **kwargs):
-        return facts_json
+    def _fake_job(*args, **kwargs):
+        return SimpleNamespace(output={"text": facts_json})
 
-    monkeypatch.setattr(src.llm_core, "llm_call_async", _fake_llm)
+    monkeypatch.setattr(mex, "_submit_model_job", _fake_job)
     # fire_event touches an async event loop / disk — neutralize it.
     monkeypatch.setattr(src.event_bus, "fire_event", lambda *a, **k: None)
 
@@ -93,10 +95,10 @@ def test_healthy_vector_store_still_dedups_normally(monkeypatch):
     fact would be a cross-tenant false drop. Here the match is alice's own
     memory, so the dedup must still fire."""
 
-    async def _fake_llm(url, model, messages, **kwargs):
-        return '[{"text": "Alice lives in Lisbon", "category": "fact"}]'
+    def _fake_job(*args, **kwargs):
+        return SimpleNamespace(output={"text": '[{"text": "Alice lives in Lisbon", "category": "fact"}]'})
 
-    monkeypatch.setattr(src.llm_core, "llm_call_async", _fake_llm)
+    monkeypatch.setattr(mex, "_submit_model_job", _fake_job)
     monkeypatch.setattr(src.event_bus, "fire_event", lambda *a, **k: None)
 
     with tempfile.TemporaryDirectory() as data_dir:

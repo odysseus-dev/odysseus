@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>9router / OpenHands Provider Boundary - Plan</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #141414;
+      --panel: #1d1d1b;
+      --panel-2: #24231f;
+      --text: #ebe7df;
+      --muted: #aaa397;
+      --line: #37342e;
+      --accent: #d2ae70;
+      --accent-soft: #342b1e;
+      --ok: #add2ad;
+      --ok-soft: #1c3023;
+      --warn: #e0c078;
+      --warn-soft: #372f1d;
+      --danger: #dfa6a1;
+      --danger-soft: #382321;
+      --code: #11110f;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 58rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+    h1 { margin: 0 0 .4rem; font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.12; }
+    h2 { margin: 2.8rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: 1.45rem; }
+    h3 { margin: 1.8rem 0 .65rem; font-size: 1.08rem; }
+    p { margin: .65rem 0; max-width: 70ch; }
+    a { color: var(--accent); }
+    code { background: var(--code); border: 1px solid var(--line); border-radius: .28rem; padding: .08rem .28rem; }
+    ul, ol { padding-left: 1.35rem; }
+    li + li { margin-top: .42rem; }
+    strong { color: inherit; }
+    .lede { color: var(--muted); max-width: 46rem; font-size: 1.05rem; }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+      gap: .65rem;
+      margin: 1.4rem 0;
+    }
+    .meta div { background: var(--panel); border: 1px solid var(--line); border-radius: .55rem; padding: .65rem .8rem; }
+    .meta dt { color: var(--muted); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; }
+    .meta dd { margin: .15rem 0 0; overflow-wrap: anywhere; }
+    nav { background: var(--panel); border: 1px solid var(--line); border-radius: .65rem; padding: .85rem 1rem; margin: 1.2rem 0; }
+    nav strong { display: block; margin-bottom: .35rem; }
+    nav ul { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin: 0; padding: 0; list-style: none; }
+    .callout { border: 1px solid var(--line); border-radius: .65rem; padding: .9rem 1rem; margin: 1rem 0; background: var(--panel); }
+    .callout.invariant { background: var(--accent-soft); color: var(--text); }
+    .callout.open { background: var(--warn-soft); color: var(--text); }
+    .callout.out { background: var(--danger-soft); color: var(--text); }
+    .callout.ok { background: var(--ok-soft); color: var(--text); }
+    .eyebrow { color: var(--accent); font-size: .74rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+    .callout.ok .eyebrow { color: var(--ok); }
+    .callout.open .eyebrow { color: var(--warn); }
+    .callout.out .eyebrow { color: var(--danger); }
+    .req-group { margin-top: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+    th, td { padding: .72rem .78rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    td:first-child { width: 4.25rem; white-space: nowrap; }
+    .id { display: inline-block; border-radius: 999px; padding: .12rem .48rem; background: var(--accent-soft); color: var(--accent); font-weight: 750; }
+    .acceptance article { background: var(--panel); border: 1px solid var(--line); border-radius: .65rem; padding: .85rem 1rem; margin: .7rem 0; }
+    .acceptance h3 { margin: 0 0 .4rem; }
+    .ktd, .unit, .risk {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: .65rem;
+      padding: .95rem 1rem;
+      margin: .85rem 0;
+    }
+    .ktd h3, .unit h3, .risk h3 { margin: 0 0 .55rem; }
+    .unit dl {
+      display: grid;
+      grid-template-columns: 8.5rem 1fr;
+      gap: .35rem .75rem;
+      margin: .7rem 0 0;
+    }
+    .unit dt { color: var(--muted); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; }
+    .unit dd { margin: 0; }
+    .unit details { margin-top: .75rem; }
+    .unit summary { cursor: pointer; color: var(--accent); font-weight: 650; }
+    .note {
+      background: var(--warn-soft);
+      border: 1px solid var(--line);
+      border-radius: .55rem;
+      padding: .7rem .85rem;
+      margin: .75rem 0 0;
+    }
+    .note .eyebrow { margin-bottom: .25rem; }
+    .diagram {
+      margin: 1.1rem 0;
+      overflow-x: auto;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: .65rem;
+      padding: .6rem;
+    }
+    .diagram figcaption { color: var(--muted); font-size: .86rem; margin: .45rem .2rem .1rem; max-width: none; }
+    .subnav { margin: .4rem 0 1rem; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: .35rem .9rem; }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .86rem; max-width: none; }
+    @media (max-width: 640px) {
+      main { padding-top: 1.5rem; }
+      table.req, table.req tbody, table.req tr, table.req td { display: block; }
+      table.req thead { display: none; }
+      table.req td { border-bottom: 0; padding-bottom: .4rem; }
+      table.req td:first-child { width: auto; padding-top: .8rem; }
+      table.req tr { display: block; border-bottom: 1px solid var(--line); }
+      table.req tr:last-child { border-bottom: 0; }
+      .unit dl { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">Implementation-ready unified plan</div>
+    <h1>9router / OpenHands Provider Boundary - Plan</h1>
+    <p class="lede">Make 9router provider authority for every OpenHands-distributed inference runtime without weakening Odysseus as production frontend or OpenHands as canonical agent backend.</p>
+    <dl class="meta">
+      <div><dt>title</dt><dd>9router / OpenHands Provider Boundary - Plan</dd></div>
+      <div><dt>type</dt><dd>refactor</dd></div>
+      <div><dt>date</dt><dd><time datetime="2026-09-10">2026-09-10</time></dd></div>
+      <div><dt>deepened</dt><dd><time datetime="2026-09-11">2026-09-11</time></dd></div>
+      <div><dt>topic</dt><dd>9router-openhands-provider-boundary</dd></div>
+      <div><dt>origin</dt><dd>docs/ideation/2026-09-10-9router-api-only-ideation.html</dd></div>
+      <div><dt>artifact_contract</dt><dd>ce-unified-plan/v1</dd></div>
+      <div><dt>artifact_readiness</dt><dd>implementation-ready</dd></div>
+      <div><dt>product_contract_source</dt><dd>ce-brainstorm</dd></div>
+      <div><dt>execution</dt><dd>code</dd></div>
+    </dl>
+  </header>
+
+  <nav aria-label="Document sections">
+    <strong>Contents</strong>
+    <ul>
+      <li><a href="#goal-capsule">Goal Capsule</a></li>
+      <li><a href="#product-contract">Product Contract</a></li>
+      <li><a href="#planning-contract">Planning Contract</a></li>
+      <li><a href="#implementation-units">Implementation Units</a></li>
+      <li><a href="#verification-contract">Verification Contract</a></li>
+      <li><a href="#definition-of-done">Definition of Done</a></li>
+    </ul>
+  </nav>
+
+  <section id="goal-capsule">
+    <h2>Goal Capsule</h2>
+    <p><strong>Objective:</strong> Route all agent inference in the OpenHands distribution through 9router while retaining one product frontend and one canonical agent backend.</p>
+    <p><strong>Authority hierarchy:</strong> Rigid invariant and R1–R4 outrank every other preference. Product Contract outranks Planning Contract. Do not reinterpret or weaken R1–R4.</p>
+    <p><strong>Product authority:</strong> Odysseus owns production experience, product policy, domain behavior, approvals, schedules, projections, entitlements, and operations. OpenHands owns agent execution, conversations, events, workspaces, and native/ACP lifecycle. 9router owns provider routing and provider credentials.</p>
+    <p><strong>Stop conditions:</strong> Stop if a change would give Odysseus a second transcript, agent loop, or chat-completions API. Stop if Agent Server native LLM settings are treated as ACP inheritance. Stop if 9router or Agent Canvas source must be modified without evidence existing interfaces failed. Stop if Task 18 deletion is proposed in this slice.</p>
+    <p><strong>Execution profile:</strong> Code. Overlay environment stays list form. Compose uses <code>--pull never</code>. Do not treat GitHub Actions as a merge gate. Do not start 9router inside the Odysseus web process.</p>
+    <p><strong>Tail ownership:</strong> <code>ce-work</code> or equivalent executes units in dependency order. Abandoned-attempt code must be removed before done.</p>
+  </section>
+
+  <section id="product-contract">
+    <h2>Product Contract</h2>
+    <div class="callout ok">
+      <div class="eyebrow">Product Contract preservation</div>
+      <p>Product Contract unchanged for R1–R27, A1–A6, F1–F5, and AE1–AE7. Worker-owned questions are resolved in the Planning Contract. Product scope is unaltered.</p>
+    </div>
+
+    <section id="summary">
+      <h3>Summary</h3>
+      <p>9router becomes provider authority for every inference-capable runtime distributed through OpenHands. OpenHands remains canonical agent runtime and conversation/event backend. Odysseus remains canonical production frontend and product/domain authority.</p>
+      <p>This plan covers the full product contract. Adjacent MCP expansion, Canvas features, and Task 18 deletion stay out. Test scope is the seven acceptance examples plus per-runtime fail-closed proof and the disposition ledger.</p>
+    </section>
+
+    <section id="problem-frame">
+      <h3>Problem Frame</h3>
+      <p>Odysseus still has legacy direct inference paths while native OpenHands, OpenCode ACP, and Hermes ACP do not inherit one common provider configuration. Treating one Agent Server endpoint as universal would leave ACP inference outside the intended provider boundary.</p>
+      <p>Earlier topology rules also confused architectural purity with product value. They would have removed useful bounded inference, production connection UX, and curated model visibility even though none competes with OpenHands conversation ownership.</p>
+    </section>
+
+    <section id="key-decisions">
+      <h3>Key Decisions</h3>
+      <div class="callout invariant">
+        <div class="eyebrow">Rigid invariant</div>
+        <p>Odysseus is canonical production and operations frontend. OpenHands is canonical agent runtime, conversation, and event backend. No other preference may override this relationship.</p>
+      </div>
+      <ul>
+        <li><strong>One provider authority, separate integration paths.</strong> 9router serves native OpenHands, OpenCode ACP, and Hermes ACP through runtime-specific configuration and acceptance.</li>
+        <li><strong>No Odysseus conversational inference surface.</strong> Odysseus neither proxies nor accepts chat-completions APIs and does not retain a second agent loop or transcript.</li>
+        <li><strong>Bounded work is not fake chat.</strong> Typed inference may use governed lightweight execution without creating a visible conversation, provided it cannot become a competing agent backend.</li>
+        <li><strong>Raw catalog and secrets stay upstream.</strong> 9router owns provider/model inventory, routing, credentials, failover, quotas, and health. Odysseus may expose curated product choices and non-secret status.</li>
+        <li><strong>Domain access remains separate from inference.</strong> Agents use Odysseus MCP for domain capabilities. 9router does not own MCP policy or domain behavior.</li>
+      </ul>
+    </section>
+
+    <section id="actors">
+      <h3>Actors</h3>
+      <ul>
+        <li><span class="id" id="a1">A1.</span> <strong>Production user:</strong> starts and controls work through Odysseus.</li>
+        <li><span class="id" id="a2">A2.</span> <strong>Engineer/operator:</strong> uses Agent Canvas for development inspection and raw runtime debugging.</li>
+        <li><span class="id" id="a3">A3.</span> <strong>OpenHands runtime:</strong> owns agent execution, canonical conversation state, events, workspaces, and runtime provenance.</li>
+        <li><span class="id" id="a4">A4.</span> <strong>ACP implementation:</strong> owns its internal model loop while OpenHands owns its outer lifecycle envelope.</li>
+        <li><span class="id" id="a5">A5.</span> <strong>9router:</strong> routes inference and retains provider credentials.</li>
+        <li><span class="id" id="a6">A6.</span> <strong>Odysseus:</strong> owns product policy, domain services, MCP, ApprovalGrant authority, schedules, projections, and product UX.</li>
+      </ul>
+    </section>
+
+    <section id="product-requirements">
+      <h3>Product Requirements</h3>
+
+      <div class="req-group">
+        <h3>Canonical ownership</h3>
+        <table class="req">
+          <thead><tr><th>ID</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr id="r1"><td><span class="id">R1.</span></td><td>Odysseus must remain production and operations frontend for agent work.</td></tr>
+            <tr id="r2"><td><span class="id">R2.</span></td><td>OpenHands must remain sole canonical owner of agent execution, conversations, events, workspaces, and lifecycle.</td></tr>
+            <tr id="r3"><td><span class="id">R3.</span></td><td>Agent Canvas must remain a separate engineering frontend over the same OpenHands conversations and must not be embedded in Odysseus.</td></tr>
+            <tr id="r4"><td><span class="id">R4.</span></td><td>Odysseus must not create a second canonical transcript, agent runtime, or OpenAI-compatible conversational API.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="req-group">
+        <h3>Provider authority and runtime coverage</h3>
+        <table class="req">
+          <thead><tr><th>ID</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr id="r5"><td><span class="id">R5.</span></td><td>9router must be provider authority for every inference-capable runtime shipped in OpenHands distribution.</td></tr>
+            <tr id="r6"><td><span class="id">R6.</span></td><td>Native OpenHands, OpenCode ACP, and Hermes ACP must each receive independent 9router configuration appropriate to runtime ownership.</td></tr>
+            <tr id="r7"><td><span class="id">R7.</span></td><td>Each supported runtime must pass separate end-to-end acceptance proving model requests resolve through 9router.</td></tr>
+            <tr id="r8"><td><span class="id">R8.</span></td><td>Runtime provenance must record enough resolved route/model information to explain which governed path served execution without exposing secrets.</td></tr>
+            <tr id="r9"><td><span class="id">R9.</span></td><td>Direct provider fallback must not silently bypass 9router.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="req-group">
+        <h3>Inference classification</h3>
+        <table class="req">
+          <thead><tr><th>ID</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr id="r10"><td><span class="id">R10.</span></td><td>Interactive chat and agentic work must execute through OpenHands conversations or governed OpenHands runs.</td></tr>
+            <tr id="r11"><td><span class="id">R11.</span></td><td>Remaining direct inference paths must receive explicit disposition as agent conversation, bounded job, deterministic logic, specialist service, or deletion.</td></tr>
+            <tr id="r12"><td><span class="id">R12.</span></td><td>Bounded typed inference must use first-class lightweight OpenHands execution when it satisfies latency, isolation, provenance, and product-visibility needs.</td></tr>
+            <tr id="r13"><td><span class="id">R13.</span></td><td>If OpenHands cannot satisfy bounded execution, fallback worker must remain governed, non-conversational, isolated from Odysseus web process, and incapable of becoming another agent runtime.</td></tr>
+            <tr id="r14"><td><span class="id">R14.</span></td><td>Existing user-visible behavior must not be deleted only to simplify topology.</td></tr>
+            <tr id="r15"><td><span class="id">R15.</span></td><td>Embeddings, speech, image generation, moderation, and comparable specialist inference must remain outside agent conversations unless product behavior requires agent reasoning.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="req-group">
+        <h3>Credentials, catalog, and product UX</h3>
+        <table class="req">
+          <thead><tr><th>ID</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr id="r16"><td><span class="id">R16.</span></td><td>Provider access and refresh credentials must remain in 9router and must never return to Odysseus.</td></tr>
+            <tr id="r17"><td><span class="id">R17.</span></td><td>Odysseus may retain opaque connection identity, tenant association, entitlement, connection status, usage, quota, and disconnect UX.</td></tr>
+            <tr id="r18"><td><span class="id">R18.</span></td><td>9router must own raw provider/model catalog, aliases, routing, failover, quota enforcement, and provider health.</td></tr>
+            <tr id="r19"><td><span class="id">R19.</span></td><td>OpenHands must own executable runtime capability and profile view derived from provider authority.</td></tr>
+            <tr id="r20"><td><span class="id">R20.</span></td><td>Odysseus may present curated product-level routing choices and resolved-model provenance without copying raw provider administration.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="req-group">
+        <h3>Product control and domain boundary</h3>
+        <table class="req">
+          <thead><tr><th>ID</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr id="r21"><td><span class="id">R21.</span></td><td>Odysseus must retain product workflows, policy, entitlements, approvals, schedules, job submission, retry/cancel controls, artifact presentation, projections, and audit views.</td></tr>
+            <tr id="r22"><td><span class="id">R22.</span></td><td>Odysseus MCP must remain canonical agent-facing domain capability boundary over Odysseus domain services.</td></tr>
+            <tr id="r23"><td><span class="id">R23.</span></td><td>9router metadata/control integration may expose non-secret health and connection data but must not make Odysseus an inference proxy or credential custodian.</td></tr>
+            <tr id="r24"><td><span class="id">R24.</span></td><td>Webhook-triggered conversational or bounded work must enter governed OpenHands execution rather than a generic chat-completions gateway.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="req-group">
+        <h3>Migration protection</h3>
+        <table class="req">
+          <thead><tr><th>ID</th><th>Requirement</th></tr></thead>
+          <tbody>
+            <tr id="r25"><td><span class="id">R25.</span></td><td>Legacy direct inference removal must follow a complete disposition ledger and replacement acceptance.</td></tr>
+            <tr id="r26"><td><span class="id">R26.</span></td><td>Task 18 legacy-loop deletion must remain held until its existing cutover gates and clean residual ledger pass.</td></tr>
+            <tr id="r27"><td><span class="id">R27.</span></td><td>9router and Agent Canvas must remain unmodified unless later evidence proves an upstream change necessary.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="key-flows">
+      <h3>Key Flows</h3>
+      <ol>
+        <li id="f1"><span class="id">F1.</span> <strong>Interactive work:</strong> production user submits through Odysseus; OpenHands executes canonical conversation; selected runtime calls 9router; OpenHands records events; Odysseus projects result.</li>
+        <li id="f2"><span class="id">F2.</span> <strong>Domain action:</strong> OpenHands agent invokes Odysseus MCP under delegated authority; Odysseus re-authorizes and executes domain behavior; result returns to canonical OpenHands event stream.</li>
+        <li id="f3"><span class="id">F3.</span> <strong>Bounded work:</strong> Odysseus submits typed job; governed runtime calls 9router; lifecycle and provenance remain attributable; Odysseus receives typed result without creating user-visible chat unless work is genuinely conversational.</li>
+        <li id="f4"><span class="id">F4.</span> <strong>Provider connection:</strong> user starts connection from allowed product surface; 9router completes provider authorization and stores tokens; Odysseus receives only opaque connection identity and non-secret state.</li>
+        <li id="f5"><span class="id">F5.</span> <strong>ACP execution:</strong> OpenHands launches ACP profile and owns lifecycle; ACP implementation performs internal inference through its own 9router configuration; canonical outer events remain in OpenHands.</li>
+      </ol>
+    </section>
+
+    <section id="acceptance-examples" class="acceptance">
+      <h3>Acceptance Examples</h3>
+      <article id="ae1"><h3><span class="id">AE1.</span> Shared production conversation</h3><p><strong>Covers R1–R4, R10.</strong> User sends message in Odysseus. OpenHands stores canonical conversation/events. Canvas can inspect same conversation. Odysseus stores projection, not duplicate canonical transcript.</p></article>
+      <article id="ae2"><h3><span class="id">AE2.</span> Native provider routing</h3><p><strong>Covers R5–R9.</strong> Native OpenHands execution completes through 9router. Audit identifies runtime profile and resolved route/model. Removing 9router access causes explicit governed failure, not direct-provider fallback.</p></article>
+      <article id="ae3"><h3><span class="id">AE3.</span> ACP provider routing</h3><p><strong>Covers R5–R9.</strong> OpenCode and Hermes each complete independent acceptance through their runtime-specific 9router configuration. Passing native OpenHands acceptance alone cannot satisfy this example.</p></article>
+      <article id="ae4"><h3><span class="id">AE4.</span> Bounded extraction</h3><p><strong>Covers R11–R15.</strong> Structured extraction completes as governed typed work with provenance and no visible chat. If lightweight OpenHands execution fails stated needs, approved fallback worker supplies same product result without holding credentials in Odysseus web process.</p></article>
+      <article id="ae5"><h3><span class="id">AE5.</span> Provider subscription</h3><p><strong>Covers R16–R20.</strong> User starts connection from product UX and returns with usable status. Provider tokens remain retrievable only by 9router. Odysseus can show entitlement, health, and curated route state without receiving provider secret.</p></article>
+      <article id="ae6"><h3><span class="id">AE6.</span> Domain action separation</h3><p><strong>Covers R21–R24.</strong> Agent reasoning uses 9router, while mail, calendar, notes, documents, tasks, memory, and research operations traverse authorized Odysseus MCP capabilities rather than 9router.</p></article>
+      <article id="ae7"><h3><span class="id">AE7.</span> Safe legacy removal</h3><p><strong>Covers R25–R27.</strong> Direct inference path is removed only after ledger names its replacement or deletion rationale and acceptance passes. Task 18 remains present while its independent hold conditions remain unmet.</p></article>
+    </section>
+
+    <section id="success-criteria">
+      <h3>Success Criteria</h3>
+      <ul>
+        <li>Native OpenHands, OpenCode ACP, and Hermes ACP independently prove 9router routing under real execution.</li>
+        <li>No production conversational inference or canonical transcript exists outside OpenHands.</li>
+        <li>No provider access or refresh token is stored by or returned to Odysseus.</li>
+        <li>Production users can operate agent work in Odysseus without using Canvas.</li>
+        <li>Bounded product behavior survives migration without being forced into visible chat.</li>
+        <li>Every removed legacy inference caller has disposition and acceptance evidence.</li>
+      </ul>
+    </section>
+
+    <section id="scope-boundaries">
+      <h3>Scope Boundaries</h3>
+      <div class="callout out">
+        <div class="eyebrow">Outside this product contract</div>
+        <ul>
+          <li>New Odysseus chat-completions gateway, provider proxy, agent runtime, or canonical transcript.</li>
+          <li>Embedded Canvas or migration of normal production workflows into Canvas.</li>
+          <li>9router modifications without evidence existing interfaces cannot satisfy requirement.</li>
+          <li>Forcing every title, classifier, rewrite, or extraction into visible conversation.</li>
+          <li>Removing product model visibility solely because Odysseus no longer runs inference.</li>
+          <li>Task 18 deletion as part of this slice.</li>
+        </ul>
+      </div>
+      <h4>Deferred to follow-up work</h4>
+      <ul>
+        <li>Sandbox egress lock so ACP children cannot reach provider APIs except through 9router.</li>
+        <li>Organization-managed plus per-user combined tenancy once org identity exists.</li>
+        <li>Hermes in the Odysseus agent chooser after independent Hermes 9router acceptance.</li>
+        <li>MCP resources for quota or connection status; nested <code>research.invoke</code> / <code>skills.invoke</code> child executions.</li>
+        <li>Migration of the bounded-job worker onto a future OpenHands job primitive if one ships.</li>
+      </ul>
+    </section>
+
+    <section id="dependencies-assumptions">
+      <h3>Dependencies / Assumptions</h3>
+      <ul>
+        <li>Current shared-chat completion remains baseline: Odysseus and Canvas operate over same Agent Server conversations.</li>
+        <li>Native and ACP runtimes have distinct provider configuration mechanisms.</li>
+        <li>9router can retain provider credentials and expose runtime-compatible inference plus non-secret status.</li>
+        <li>Pinned Agent Server 1.45 has no first-class bounded-job API that meets isolation and product-visibility needs; R13 worker is selected now.</li>
+        <li>Odysseus MCP and delegated authorization remain independent workstreams governed by existing cutover design.</li>
+      </ul>
+    </section>
+
+    <section id="outstanding-questions">
+      <h3>Outstanding Questions</h3>
+      <div class="callout ok">
+        <div class="eyebrow">Resolved in Planning Contract</div>
+        <ol>
+          <li>Credential tenancy → KTD3 owner-scoped connections.</li>
+          <li>Failure behavior → KTD4 fail closed; 9router-internal failover only.</li>
+          <li>Enforcement strength → KTD5 configuration-only this slice; egress deferred.</li>
+          <li>Bounded execution fit → KTD2 isolated worker; OpenHands 1.45 job API unsatisfied.</li>
+        </ol>
+      </div>
+      <div class="callout ok">
+        <div class="eyebrow">Also resolved during planning</div>
+        <ul>
+          <li>Curated routes default to Automatic. Fast / Balanced / Best appear only when 9router aliases exist. Resolved-model provenance always remains.</li>
+          <li>Caller classification is the U5 ledger. Specialist embeddings, STT/TTS, and image generation stay on existing services.</li>
+          <li>Odysseus metadata needs are health, redacted connection status, and usage/quota. Completions paths are not included.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sources">
+      <h3>Sources / Research</h3>
+      <ul>
+        <li><code>docs/ideation/2026-09-10-9router-api-only-ideation.html</code> — corrected seven-component ideation and direct source for this contract.</li>
+        <li><code>docs/superpowers/specs/2026-09-08-openhands-agent-platform-cutover-design.md</code> — canonical platform ownership and domain-boundary design.</li>
+        <li><code>docs/superpowers/specs/2026-09-09-odysseus-one-chat-openhands-design.md</code> — shared-conversation product contract.</li>
+        <li><code>docs/superpowers/specs/2026-09-10-odysseus-openhands-operations-chat-design.md</code> — production Odysseus and development Canvas relationship.</li>
+        <li><code>docs/architecture/evidence/gate-10-macos-acceptance.md</code> — native ChatGPT subscription does not configure Hermes; ACPInitError when Hermes has no provider.</li>
+        <li><code>docs/architecture/evidence/legacy-deletion-hold.md</code> — Task 18 hold conditions.</li>
+        <li>Pinned Agent Server 1.45 SDK: <code>LLM</code> fields, <code>PATCH /api/settings</code>, ACP sentinel <code>llm</code>, no Hermes in <code>ACP_PROVIDERS</code>, <code>ask_agent</code> requires a conversation.</li>
+        <li>Live Agent Server home: <code>data/openhands-agent-server-home/settings.json</code> currently <code>auth_type: subscription</code>, not 9router.</li>
+        <li>9router 0.5.69 unmodified: <code>/v1/chat/completions</code>, <code>/v1/models</code>, <code>/api/health</code>, <code>/api/providers</code>, <code>/api/oauth/*</code>, <code>/api/usage/*</code>.</li>
+      </ul>
+    </section>
+  </section>
+
+  <section id="planning-contract">
+    <h2>Planning Contract</h2>
+
+    <h3>Assumptions</h3>
+    <ul>
+      <li>Current Odysseus identity is owner-scoped self-host. Owner stamping is required even when only one owner exists.</li>
+      <li>Existing 9router HTTP APIs satisfy this contract. R27 forbids modifying 9router unless acceptance proves otherwise.</li>
+      <li>Compose overlay environment remains list form. Agent Server <code>SESSION_API_KEY</code> stays unset unless Odysseus already sends matching headers.</li>
+      <li>Authoritative Python tests for this work run in <code>odysseus-odysseus:latest</code> with the repo bind-mounted. Host pytest is not sufficient when SQLAlchemy is missing.</li>
+    </ul>
+
+    <h3>Key Technical Decisions</h3>
+
+    <article class="ktd" id="ktd1">
+      <h3><span class="id">KTD1.</span> Three independent 9router injections</h3>
+      <p>Native OpenHands uses Agent Server LLM profile or persisted <code>agent_settings.llm</code> (<code>base_url</code>, virtual API key, <code>api_mode=chat</code>, <code>auth_type=api_key</code>). OpenCode uses OpenCode provider <code>options.baseURL</code>. Hermes uses a named Hermes <code>providers:</code> entry under isolated <code>HERMES_HOME</code>. Agent Server native LLM does not configure ACP children.</p>
+      <p>Rejected: one <code>LLM_BASE_URL</code> on Agent Server as universal socket. Gate 10 already showed Canvas ChatGPT subscription does not configure Hermes. Live ACP profiles currently tag <code>acp_server: claude-code</code> while commands are <code>opencode acp</code> / <code>hermes acp</code>; U3/U4 must correct provider detection so Anthropic env channels are not used.</p>
+    </article>
+
+    <article class="ktd" id="ktd2">
+      <h3><span class="id">KTD2.</span> Isolated bounded-job worker, not OpenHands conversations</h3>
+      <p>Pinned Agent Server 1.45 has no first-class job API. <code>ask_agent</code> requires an existing conversation. New conversations are listable in Canvas and would violate AE4 / AE1 product-visibility needs. R13 therefore applies now.</p>
+      <p>Odysseus submits typed jobs to a separately deployed worker. The worker calls 9router <code>/v1/chat/completions</code>. The web process does not hold the inference key. Reuse <code>ModelJobExecutor</code>; replace the raising <code>invoke_structured_model</code> with a worker client. The worker has no MCP client, no workspace, no transcript, and no agent profile.</p>
+      <p>Rejected: ephemeral OpenHands conversations as the primary bounded path. Rejected: calling 9router from FastAPI request handlers. A later OpenHands job primitive may replace the worker without changing the product contract.</p>
+    </article>
+
+    <article class="ktd" id="ktd3">
+      <h3><span class="id">KTD3.</span> Owner-scoped connections and virtual runtime keys</h3>
+      <p>Bind every 9router connection and every runtime virtual key to the Odysseus owner that consented. OpenHands and ACP receive a 9router virtual key, never upstream access or refresh tokens. Do not share one upstream provider credential across owners.</p>
+      <p>Rejected: a global compose <code>OPENAI_API_KEY</code> as the native source of truth. Rejected: org-plus-per-user combined tenancy before org identity exists.</p>
+    </article>
+
+    <article class="ktd" id="ktd4">
+      <h3><span class="id">KTD4.</span> Fail closed outside 9router</h3>
+      <p>If 9router is unreachable, unauthorized, or misconfigured, OpenHands surfaces a governed error and Odysseus projects it. No <code>stream_llm</code> fallback. No silent SDK default to OpenAI or Anthropic. Failover inside 9router is allowed only when the route is in that owner's policy and provenance records the resolved route.</p>
+    </article>
+
+    <article class="ktd" id="ktd5">
+      <h3><span class="id">KTD5.</span> Configuration-only sole-provider this slice</h3>
+      <p>This slice proves routing by isolated config and acceptance. Isolate ACP HOME / <code>HERMES_HOME</code> so host ChatGPT or Anthropic credentials cannot bypass 9router. Do not advertise ACP sole-provider as a security control until egress restriction lands as follow-up.</p>
+    </article>
+
+    <article class="ktd" id="ktd6">
+      <h3><span class="id">KTD6.</span> Overlay configures inference; Odysseus does not PATCH provider keys</h3>
+      <p>Native LLM settings, OpenCode provider files, and Hermes config are applied by the OpenHands overlay onto runtime volumes. Odysseus keeps creating conversations through <code>OpenHandsClient</code> without sending per-turn provider URLs or credentials.</p>
+      <p>Odysseus may read allowlisted 9router metadata paths (health, redacted providers, usage). That client must not call <code>/v1/chat/completions</code>. Connection UX is redirect to 9router-hosted PKCE; Odysseus stores opaque connection id and non-secret status only.</p>
+    </article>
+
+    <article class="ktd" id="ktd7">
+      <h3><span class="id">KTD7.</span> Dual-plane runtime config</h3>
+      <p>Provider config and Odysseus MCP config are separate planes. Changing 9router injection must not overwrite profile <code>mcp:</code>, broker credentials, or ApprovalGrant rules. Each runtime acceptance includes one 9router-backed turn and one Odysseus MCP domain call. This slice does not change <code>mcp_servers/odysseus_server.py</code>.</p>
+    </article>
+
+    <article class="ktd" id="ktd8">
+      <h3><span class="id">KTD8.</span> Automatic routing plus optional curated aliases</h3>
+      <p>Ordinary chat does not require an Odysseus <code>ModelEndpoint</code>. Default product choice is Automatic. Fast / Balanced / Best appear only when 9router aliases exist. Raw base URLs, provider keys, and model-admin screens stay out of Odysseus. Compare becomes parallel bounded jobs with resolved-model provenance, not a second chat backend.</p>
+    </article>
+
+    <h3 id="high-level-technical-design">High-Level Technical Design</h3>
+    <p>Four planes exist: product, runtime control, provider, and domain MCP. Agent inference always leaves an OpenHands-owned process toward 9router. Odysseus never proxies completions.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 860 430" width="100%" height="auto" role="img" aria-labelledby="topo-title">
+        <title id="topo-title">Product, runtime, and provider planes</title>
+        <rect x="12" y="12" width="836" height="118" rx="10" fill="#342b1e" stroke="#d2ae70"/>
+        <text x="28" y="38" fill="#d2ae70" font-size="13" font-weight="700">PRODUCT PLANE</text>
+        <rect x="40" y="54" width="160" height="52" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="120" y="85" text-anchor="middle" fill="#ebe7df" font-size="14">Browser</text>
+        <rect x="260" y="54" width="360" height="52" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="440" y="76" text-anchor="middle" fill="#ebe7df" font-size="14">Odysseus</text>
+        <text x="440" y="94" text-anchor="middle" fill="#aaa397" font-size="11">UI, policy, MCP, projections, job submit</text>
+        <rect x="12" y="150" width="836" height="118" rx="10" fill="#1c3023" stroke="#add2ad"/>
+        <text x="28" y="176" fill="#add2ad" font-size="13" font-weight="700">RUNTIME PLANE</text>
+        <rect x="200" y="192" width="460" height="52" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="430" y="214" text-anchor="middle" fill="#ebe7df" font-size="14">OpenHands Agent Server</text>
+        <text x="430" y="232" text-anchor="middle" fill="#aaa397" font-size="11">conversations, events, native and ACP envelope</text>
+        <rect x="12" y="288" width="836" height="126" rx="10" fill="#372f1d" stroke="#e0c078"/>
+        <text x="28" y="314" fill="#e0c078" font-size="13" font-weight="700">PROVIDER PLANE</text>
+        <rect x="40" y="332" width="170" height="52" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="125" y="363" text-anchor="middle" fill="#ebe7df" font-size="13">Native LLM</text>
+        <rect x="230" y="332" width="170" height="52" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="315" y="363" text-anchor="middle" fill="#ebe7df" font-size="13">OpenCode ACP</text>
+        <rect x="420" y="332" width="170" height="52" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="505" y="363" text-anchor="middle" fill="#ebe7df" font-size="13">Hermes ACP</text>
+        <rect x="620" y="332" width="200" height="52" rx="8" fill="#1d1d1b" stroke="#d2ae70"/>
+        <text x="720" y="363" text-anchor="middle" fill="#ebe7df" font-size="14">9router</text>
+        <line x1="200" y1="80" x2="258" y2="80" stroke="#d2ae70" stroke-width="2" marker-end="url(#arrow)"/>
+        <line x1="440" y1="106" x2="430" y2="192" stroke="#add2ad" stroke-width="2"/>
+        <line x1="125" y1="332" x2="125" y2="268" stroke="#e0c078" stroke-width="1.5"/>
+        <line x1="315" y1="332" x2="360" y2="244" stroke="#e0c078" stroke-width="1.5"/>
+        <line x1="505" y1="332" x2="500" y2="244" stroke="#e0c078" stroke-width="1.5"/>
+        <line x1="210" y1="358" x2="618" y2="358" stroke="#e0c078" stroke-width="2"/>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#d2ae70"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Odysseus talks to OpenHands for control. Each inference runtime talks to 9router on its own seam. Domain MCP remains Odysseus-owned and is not drawn as a 9router concern.</figcaption>
+    </figure>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 860 280" width="100%" height="auto" role="img" aria-labelledby="inj-title">
+        <title id="inj-title">Provider injection is not inherited</title>
+        <rect x="20" y="24" width="240" height="72" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="140" y="54" text-anchor="middle" fill="#ebe7df" font-size="14">Agent Server LLM</text>
+        <text x="140" y="74" text-anchor="middle" fill="#aaa397" font-size="12">settings / llm_profile_ref</text>
+        <rect x="20" y="120" width="240" height="56" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="140" y="154" text-anchor="middle" fill="#ebe7df" font-size="14">OpenCode opencode.json</text>
+        <rect x="20" y="196" width="240" height="56" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="140" y="230" text-anchor="middle" fill="#ebe7df" font-size="14">Hermes config.yaml</text>
+        <rect x="560" y="110" width="260" height="72" rx="8" fill="#342b1e" stroke="#d2ae70"/>
+        <text x="690" y="152" text-anchor="middle" fill="#ebe7df" font-size="16">9router /v1</text>
+        <line x1="260" y1="60" x2="560" y2="130" stroke="#add2ad" stroke-width="2"/>
+        <line x1="260" y1="148" x2="560" y2="146" stroke="#add2ad" stroke-width="2"/>
+        <line x1="260" y1="224" x2="560" y2="162" stroke="#add2ad" stroke-width="2"/>
+        <line x1="140" y1="96" x2="140" y2="120" stroke="#dfa6a1" stroke-width="2" stroke-dasharray="6 5"/>
+        <text x="300" y="108" fill="#dfa6a1" font-size="13">no inheritance</text>
+      </svg>
+      <figcaption>ACP Agent Server llm fields are metrics metadata. OpenCode and Hermes must be configured and accepted separately.</figcaption>
+    </figure>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 860 210" width="100%" height="auto" role="img" aria-labelledby="seq-title">
+        <title id="seq-title">Interactive conversation versus bounded job</title>
+        <rect x="16" y="20" width="828" height="72" rx="8" fill="#1c3023" stroke="#add2ad"/>
+        <text x="36" y="48" fill="#add2ad" font-size="12" font-weight="700">CONVERSATION F1</text>
+        <text x="36" y="72" fill="#ebe7df" font-size="14">Browser → Odysseus → OpenHands conversation → native or ACP runtime → 9router → events → Odysseus projection</text>
+        <rect x="16" y="112" width="828" height="72" rx="8" fill="#372f1d" stroke="#e0c078"/>
+        <text x="36" y="140" fill="#e0c078" font-size="12" font-weight="700">BOUNDED JOB F3</text>
+        <text x="36" y="164" fill="#ebe7df" font-size="14">Odysseus submits typed job → isolated worker → 9router → typed result + audit. No chat row. No Canvas conversation.</text>
+      </svg>
+      <figcaption>Interactive chat stays on OpenHands conversations. Titles, rewrite, compare, and extract use the worker unless the ledger classifies them as agent work or deletion.</figcaption>
+    </figure>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 860 160" width="100%" height="auto" role="img" aria-labelledby="oauth-title">
+        <title id="oauth-title">Provider connection without token return</title>
+        <rect x="16" y="44" width="150" height="56" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="91" y="78" text-anchor="middle" fill="#ebe7df" font-size="13">Odysseus Connect</text>
+        <rect x="230" y="44" width="190" height="56" rx="8" fill="#342b1e" stroke="#d2ae70"/>
+        <text x="325" y="78" text-anchor="middle" fill="#ebe7df" font-size="13">9router PKCE / vault</text>
+        <rect x="486" y="44" width="160" height="56" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="566" y="78" text-anchor="middle" fill="#ebe7df" font-size="13">opaque connection id</text>
+        <rect x="694" y="44" width="150" height="56" rx="8" fill="#1d1d1b" stroke="#37342e"/>
+        <text x="769" y="78" text-anchor="middle" fill="#ebe7df" font-size="13">status UX</text>
+        <line x1="166" y1="72" x2="228" y2="72" stroke="#d2ae70" stroke-width="2"/>
+        <line x1="420" y1="72" x2="484" y2="72" stroke="#d2ae70" stroke-width="2"/>
+        <line x1="646" y1="72" x2="692" y2="72" stroke="#d2ae70" stroke-width="2"/>
+        <text x="430" y="28" fill="#aaa397" font-size="13">tokens never return to Odysseus</text>
+      </svg>
+      <figcaption>Odysseus starts connection UX. 9router is the OAuth client and vault. Odysseus keeps identity, entitlement, and non-secret status.</figcaption>
+    </figure>
+
+    <h3>Sequencing</h3>
+    <ol>
+      <li>Phase A — U1 deploy 9router; U2 native OpenHands routing.</li>
+      <li>Phase B — U3 OpenCode then U4 Hermes, each with independent acceptance.</li>
+      <li>Phase C — U5 ledger; U6 worker and bounded-path migration before deleting leftover behavior.</li>
+      <li>Phase D — U7 secret custody and curated UX; U8 retire leftover conversational LLM paths.</li>
+    </ol>
+    <p>U3 and U4 must not be skipped because U2 passed. Hermes stays off the Odysseus chooser until U4 acceptance. Do not remove titles, rewrite, compare, or extract until U6 replacements pass.</p>
+
+    <h3>Alternatives considered</h3>
+    <ul>
+      <li><strong>Wait for an OpenHands job API.</strong> Rejected for this slice. 1.45 has none that meets AE4. The worker is the current R13 path.</li>
+      <li><strong>Hidden OpenHands conversations for titles.</strong> Rejected. Canvas and <code>sessions.read</code> would see them.</li>
+      <li><strong>Odysseus as 9router BFF that also completes chat.</strong> Rejected. Violates R4.</li>
+      <li><strong>Egress-enforced sole-provider in this slice.</strong> Deferred. Configuration plus isolated HOME is the smallest viable proof.</li>
+    </ul>
+  </section>
+
+  <section id="implementation-units">
+    <h2>Implementation Units</h2>
+    <ul class="subnav">
+      <li><a href="#u1">U1. Deploy 9router</a></li>
+      <li><a href="#u2">U2. Native routing</a></li>
+      <li><a href="#u3">U3. OpenCode ACP</a></li>
+      <li><a href="#u4">U4. Hermes ACP</a></li>
+      <li><a href="#u5">U5. Disposition ledger</a></li>
+      <li><a href="#u6">U6. Bounded worker</a></li>
+      <li><a href="#u7">U7. Secrets and catalog UX</a></li>
+      <li><a href="#u8">U8. Retire leftover LLM</a></li>
+    </ul>
+
+    <article class="unit" id="u1">
+      <h3>U1. Deploy unmodified 9router on the OpenHands network</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Run 9router as an independent compose service reachable from Agent Server and ACP execution environments.</dd>
+        <dt>Requirements</dt>
+        <dd>R5, R27. Enables F1, F3, F5.</dd>
+        <dt>Dependencies</dt>
+        <dd>None.</dd>
+        <dt>Files</dt>
+        <dd><code>docker-compose.openhands.yml</code>, <code>deploy/openhands/versions.env</code>, <code>tests/integration/openhands/test_stack_contract.py</code>, <code>tests/integration/openhands/test_9router_reachability.py</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Prefer install and reachability smoke over unit coverage. Pin an image digest. Do not vendor or edit 9router source.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Add a 9router service to the existing OpenHands overlay, on the same Docker network as Agent Server. Pin version in <code>versions.env</code> the same way other first-party pins work. Publish the OpenAI-compatible base URL inside the network only. Create one 9router API key for later runtime injection. Odysseus web environment stays list form and does not receive that inference key. Do not start 9router as an in-process Odysseus module.</p>
+        <p><strong>Patterns:</strong> <code>tests/integration/openhands/test_stack_contract.py</code> pin checks; overlay list-form environment.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Happy path: Agent Server container can HTTP GET 9router health and receive ok.</li>
+          <li>Happy path: versions file pins a non-latest 9router image and compose references that pin.</li>
+          <li>Error: Odysseus web process environment does not contain the 9router inference key.</li>
+          <li>Integration: <code>compose up --pull never</code> brings 9router healthy without rebuilding Odysseus.</li>
+        </ul>
+        <p><strong>Verification:</strong> 9router is healthy on the overlay network. Stack pin tests pass. No 9router source tree is modified.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u2">
+      <h3>U2. Configure native OpenHands for 9router</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Native conversations complete through 9router and fail closed when 9router is removed.</dd>
+        <dt>Requirements</dt>
+        <dd>R5–R10, R19. F1. AE1, AE2.</dd>
+        <dt>Dependencies</dt>
+        <dd>U1</dd>
+        <dt>Files</dt>
+        <dd><code>deploy/openhands/profiles/odysseus.yaml</code>, Agent Server home settings bootstrap under <code>deploy/openhands/</code>, <code>docker-compose.openhands.yml</code>, <code>services/agents/openhands_client.py</code>, <code>tests/integration/openhands/test_native_9router_routing.py</code>, <code>scripts/openhands_probe.py</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Prove with a live native conversation, tools, cancel, and 9router-down failure. Persisted ChatGPT subscription must not remain the silent default.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Replace live <code>auth_type: subscription</code> with an API-key LLM profile pointing at 9router <code>/v1</code>. Prefer overlay bootstrap of Agent Server settings or <code>llm_profile_ref</code> on the <code>odysseus</code> profile. Do not have Odysseus routes PATCH provider keys. Spike the LiteLLM model-id prefix against 9router's catalog during this unit. Keep conversation create/resume on existing <code>OpenHandsClient</code>. Record non-secret resolved route/model in runtime provenance.</p>
+        <p><strong>Patterns:</strong> existing <code>GET /api/settings</code> copy into <code>POST /api/conversations</code>; first-party profile snapshots in <code>tests/integration/openhands/test_first_party_profiles.py</code>.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE1. User message from Odysseus Chat creates or resumes an OpenHands conversation Canvas can inspect; Odysseus stores projection only.</li>
+          <li>Covers AE2. Native turn completes; audit shows native profile and a 9router-resolved model; no upstream provider URL in Odysseus logs.</li>
+          <li>Error: 9router stopped mid-stack; native turn fails with a governed error; no request to ChatGPT or api.openai.com.</li>
+          <li>Edge: cancel and condensation still work on the native 9router profile.</li>
+          <li>Integration: dual-plane — native turn can still call Odysseus MCP <code>notes.read</code>; <code>mail.send</code> still requires ApprovalGrant.</li>
+        </ul>
+        <p><strong>Verification:</strong> Native AE2 passes. Interactive Chat still uses <code>stream_governed_agent</code> with no <code>stream_llm</code> fallback.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u3">
+      <h3>U3. Configure OpenCode ACP for 9router independently</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>OpenCode ACP conversations infer through 9router using OpenCode's own provider config.</dd>
+        <dt>Requirements</dt>
+        <dd>R5–R9, R19. F5. AE3, AE6.</dd>
+        <dt>Dependencies</dt>
+        <dd>U1</dd>
+        <dt>Files</dt>
+        <dd><code>deploy/openhands/profiles/opencode.yaml</code>, OpenCode config mount under <code>deploy/openhands/</code>, live ACP profile JSON if generated, <code>services/agents/openhands_client.py</code>, <code>tests/integration/openhands/test_opencode_9router_routing.py</code>, <code>tests/integration/openhands/test_acp_mcp_contract.py</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Native U2 success must not be treated as OpenCode acceptance. Spike <code>acp_server</code> retag away from <code>claude-code</code> if credential detection would inject Anthropic channels.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Write OpenCode custom provider config using OpenAI-compatible <code>options.baseURL</code> to 9router <code>/v1</code> and a virtual key. Mount it into the ACP child's config/HOME. Do not add <code>llm_profile_ref</code> onto the ACP profile. Keep Odysseus sending <code>agent_profile_id</code> for OpenCode only as today.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE3 for OpenCode. OpenCode turn completes through 9router with OpenCode provenance, not native settings.</li>
+          <li>Covers AE6. Same turn can use Odysseus MCP domain read; mutating mail still denied without ApprovalGrant.</li>
+          <li>Error: 9router down yields governed ACP failure, not a direct OpenAI call and not an Odysseus <code>stream_llm</code> fallback.</li>
+          <li>Edge: Agent Server native <code>base_url</code> pointing at 9router is insufficient by itself; OpenCode still requires its own config or the test fails.</li>
+        </ul>
+        <p><strong>Verification:</strong> OpenCode AE3 passes independently of U2.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u4">
+      <h3>U4. Configure Hermes ACP for 9router independently</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Hermes ACP initializes with a named 9router provider and completes independent acceptance.</dd>
+        <dt>Requirements</dt>
+        <dd>R5–R9, R19. F5. AE3.</dd>
+        <dt>Dependencies</dt>
+        <dd>U1</dd>
+        <dt>Files</dt>
+        <dd><code>deploy/openhands/profiles/hermes.yaml</code>, Hermes home config under <code>deploy/openhands/</code>, <code>services/agents/session_binding.py</code>, <code>tests/integration/openhands/test_hermes_9router_routing.py</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Keep Hermes off the Odysseus chooser until this unit's acceptance passes. Use a named Hermes provider, not bare <code>custom</code>.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Give Hermes an isolated home with a named 9router provider and chat-completions transport. Launch <code>hermes acp</code> with that home. Do not reuse Canvas subscription settings. Do not expect Agent Server LLM settings to initialize Hermes. Gate 10 <code>ACPInitError: No LLM provider configured</code> must be gone after this unit.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE3 for Hermes. Hermes initializes and completes a turn through 9router.</li>
+          <li>Error: missing Hermes provider config still fails loudly; Canvas ChatGPT subscription remains irrelevant.</li>
+          <li>Edge: Odysseus <code>normalize_agent_profile_id("hermes")</code> continues mapping to <code>odysseus</code> until acceptance is recorded, then a follow-up may enable the chooser.</li>
+          <li>Integration: dual-plane MCP non-regression on Hermes after provider config.</li>
+        </ul>
+        <p><strong>Verification:</strong> Hermes AE3 passes. Chooser policy remains conservative until that evidence exists.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u5">
+      <h3>U5. Inventory remaining Odysseus inference callers</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Produce a complete disposition ledger before any leftover path is removed.</dd>
+        <dt>Requirements</dt>
+        <dd>R11, R14, R15, R25, R26. AE7.</dd>
+        <dt>Dependencies</dt>
+        <dd>None.</dd>
+        <dt>Files</dt>
+        <dd><code>docs/architecture/evidence/inference-disposition-ledger.md</code>, <code>tests/agents/test_inference_disposition_ledger.py</code>, covering callers in <code>src/llm_core.py</code>, <code>routes/chat_routes.py</code>, <code>routes/webhook/webhook_routes.py</code>, <code>src/agent_loop.py</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Characterization only. Do not delete behavior in this unit. Do not delete <code>src/agent_loop.py</code>.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Classify every remaining <code>stream_llm</code> / <code>llm_call*</code> caller as agent conversation, bounded job, deterministic, specialist, or delete. Starting map:</p>
+        <ul>
+          <li>Agent conversation: interactive Chat/Agent (already OpenHands), scheduled agent tasks, teacher takeover, skill tests, background follow-ups, agentic research, leftover <code>POST /api/chat</code>, webhook <code>POST /api/v1/chat</code>.</li>
+          <li>Bounded job: rewrite, compare panes, session titles, compact, auto-sort, calendar parse, task parse, memory extract, mail summarize/reply/translate, document tidy, reminder synthesis.</li>
+          <li>Specialist keep: embeddings, STT, TTS, image generation, capability probes.</li>
+          <li>Held: <code>src/agent_loop.py</code> and <code>execute_tool_block</code> (Task 18).</li>
+          <li>MCP-adjacent: skill eval/judge and research helpers that still call <code>llm_call_async</code> from routes that MCP can reach. Classify them; do not leave a nested Odysseus completions loop behind <code>skills.invoke</code> or <code>research.invoke</code>.</li>
+        </ul>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE7. Ledger lists every production <code>llm_call</code> / <code>stream_llm</code> caller with exactly one disposition.</li>
+          <li>Edge: specialist callers are marked keep-specialist, not fake-agent.</li>
+          <li>Error: a new caller without a ledger entry fails the ledger test.</li>
+        </ul>
+        <p><strong>Verification:</strong> Ledger exists and the characterization test is green. No product behavior removed.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u6">
+      <h3>U6. Bounded-job worker and migrate typed inference</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Keep titles, rewrite, compare, extract, and similar product behavior without a competing conversation backend.</dd>
+        <dt>Requirements</dt>
+        <dd>R11–R15, R21. F3. AE4.</dd>
+        <dt>Dependencies</dt>
+        <dd>U1, U5</dd>
+        <dt>Files</dt>
+        <dd><code>services/agents/model_jobs.py</code>, <code>src/ai_interaction.py</code>, new worker module under <code>services/agents/</code>, overlay service in <code>docker-compose.openhands.yml</code>, <code>tests/agents/test_model_jobs.py</code>, <code>tests/agents/test_model_job_worker.py</code>, compare/rewrite/title call sites in <code>routes/chat_routes.py</code> and <code>routes/chat_helpers.py</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Implement the worker contract test-first. Do not remove product behavior until the replacement path passes.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Deploy a non-agentic worker that holds the 9router virtual key. Odysseus submits owner-scoped typed jobs and receives typed results plus audit. <code>ModelJobExecutor</code> stays the in-process contract and must keep rejecting tools, workspaces, conversations, and agent archetypes. Web request handlers must not call 9router completions. Session titles may use a deterministic heuristic first; use the worker only if the ledger says the heuristic is insufficient.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE4. Structured extraction returns an object, provenance without secrets, no OpenHands conversation id, no Odysseus chat row, no Canvas conversation.</li>
+          <li>Happy path: compare runs two bounded jobs and shows resolved-model provenance for each pane.</li>
+          <li>Error: worker missing 9router access fails closed; Odysseus does not fall back to <code>stream_llm</code>.</li>
+          <li>Error: agent archetype or tools on a model job still raise <code>InvalidArchetype</code>.</li>
+          <li>Edge: Odysseus web process memory/logs do not contain the worker's 9router key.</li>
+        </ul>
+        <p><strong>Verification:</strong> Ledger bounded items have a replacement path. Compare no longer needs Odysseus <code>stream_llm</code> as a conversation backend.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u7">
+      <h3>U7. Move provider secrets to 9router; keep product connection UX</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Odysseus stops storing provider access/refresh tokens and stops requiring raw model-admin screens for ordinary use.</dd>
+        <dt>Requirements</dt>
+        <dd>R16–R20, R23. F4. AE5.</dd>
+        <dt>Dependencies</dt>
+        <dd>U1, U2</dd>
+        <dt>Files</dt>
+        <dd><code>routes/chatgpt_subscription_routes.py</code>, <code>src/chatgpt_subscription.py</code>, <code>routes/model_routes.py</code>, <code>core/database.py</code> <code>ModelEndpoint</code> / <code>ProviderAuthSession</code>, <code>static/js/providerDeviceFlow.js</code>, <code>static/js/modelPicker.js</code>, <code>tests/test_provider_connection_projection.py</code></dd>
+      </dl>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Connect starts in Odysseus and redirects to 9router-hosted PKCE. 9router stores tokens. Odysseus stores opaque connection id, owner, entitlement, and non-secret status. Remove token pump from Odysseus device-flow completion. Metadata client allowlists health, redacted providers, and usage only. Replace ordinary-chat raw picker with Automatic plus optional curated aliases. Canvas remains the raw provider debug surface.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE5. Successful connect leaves Odysseus with an opaque id and usable status; provider tokens are absent from Odysseus DB and logs.</li>
+          <li>Error: 9router OAuth failure shows product error and stores no partial refresh token.</li>
+          <li>Edge: two owners cannot use each other's connection id.</li>
+          <li>Edge: curated picker never displays raw base URLs or API keys.</li>
+        </ul>
+        <p><strong>Verification:</strong> No provider access/refresh token remains readable from Odysseus. Production users can connect and see status without Canvas.</p>
+      </details>
+    </article>
+
+    <article class="unit" id="u8">
+      <h3>U8. Retire leftover conversational LLM paths</h3>
+      <dl>
+        <dt>Goal</dt>
+        <dd>Remove competing conversational inference after replacements exist. Keep Task 18 held.</dd>
+        <dt>Requirements</dt>
+        <dd>R4, R10, R24–R26. AE7.</dd>
+        <dt>Dependencies</dt>
+        <dd>U2, U3, U4, U6, U7</dd>
+        <dt>Files</dt>
+        <dd><code>routes/chat_routes.py</code>, <code>routes/webhook/webhook_routes.py</code>, <code>src/research_handler.py</code>, <code>tests/test_chat_openhands_binding.py</code>, <code>tests/test_foreground_model_routing.py</code>, <code>docs/architecture/evidence/legacy-deletion-hold.md</code></dd>
+      </dl>
+      <div class="note"><div class="eyebrow">Execution note</div>Delete only ledger rows whose replacement already passed. Do not delete <code>src/agent_loop.py</code>.</div>
+      <details>
+        <summary>Approach, tests, verification</summary>
+        <p><strong>Approach:</strong> Route leftover <code>POST /api/chat</code> conversational traffic onto governed OpenHands. Keep webhook <code>POST /api/v1/chat</code> as an authenticated governed conversation or bounded-job API, never an OpenAI-compatible gateway. Move agentic research onto OpenHands/Hermes after U4. Reject any new <code>/v1/chat/completions</code> on Odysseus. Leave Task 18 residual until backup, one switch, clean ledger, and old-runtime-disabled acceptance exist.</p>
+        <p><strong>Test scenarios:</strong></p>
+        <ul>
+          <li>Covers AE7. Removed caller has a ledger replacement and a passing test; <code>src/agent_loop.py</code> still exists.</li>
+          <li>Error: inbound OpenAI-shaped <code>/v1/chat/completions</code> on Odysseus is absent or rejected.</li>
+          <li>Error: Agent Server down still has no interactive <code>stream_llm</code> fallback.</li>
+          <li>Integration: full native + OpenCode + Hermes 9router acceptance plus MCP dual-plane still pass.</li>
+        </ul>
+        <p><strong>Verification:</strong> No production conversational inference remains on Odysseus LLM primitives. Task 18 hold file still records residual-until-acceptance.</p>
+      </details>
+    </article>
+  </section>
+
+  <section id="verification-contract">
+    <h2>Verification Contract</h2>
+    <p>Authoritative Python for this slice runs in the Odysseus image with the repo mounted. Do not treat GitHub Actions as the gate.</p>
+    <ul>
+      <li>Image pytest for units that import app/services: <code>tests/agents/test_model_jobs.py</code>, <code>tests/agents/test_model_job_worker.py</code>, <code>tests/agents/test_inference_disposition_ledger.py</code>, <code>tests/test_chat_openhands_binding.py</code>, <code>tests/test_provider_connection_projection.py</code>, plus existing <code>tests/agents/test_legacy_bridge.py</code>, <code>tests/agents/test_dispatcher.py</code>, <code>tests/agents/test_workspace_privilege.py</code>.</li>
+      <li>OpenHands stack: <code>tests/integration/openhands/test_stack_contract.py</code>, native/OpenCode/Hermes 9router routing tests, <code>scripts/openhands_probe.py</code> stack and acceptance JSON.</li>
+      <li>JS syntax check on changed <code>static/js</code> files.</li>
+      <li>AE2/AE3 live proof: 9router logs or equivalent show the runtime's requests; stopping 9router produces governed failure without provider bypass.</li>
+      <li>AE4: bounded job leaves no conversation id and no chat projection row.</li>
+      <li>AE5: Odysseus database has no provider access/refresh tokens after connect.</li>
+      <li>AE6: MCP domain path unchanged; 9router is not invoked for mail/notes/calendar operations.</li>
+      <li>AE7: ledger complete; <code>src/agent_loop.py</code> still present.</li>
+    </ul>
+  </section>
+
+  <section id="definition-of-done">
+    <h2>Definition of Done</h2>
+    <ul>
+      <li>R1–R4 still hold in product behavior and tests.</li>
+      <li>U1–U8 complete with their listed verification outcomes.</li>
+      <li>AE1–AE7 have evidence. Native, OpenCode, and Hermes each passed 9router routing independently.</li>
+      <li>No Odysseus chat-completions gateway exists. No per-turn provider URL is sent from Odysseus.</li>
+      <li>Provider access/refresh tokens are not stored in Odysseus.</li>
+      <li>9router and Agent Canvas source trees are unmodified.</li>
+      <li><code>src/agent_loop.py</code> remains. Task 18 hold is still recorded.</li>
+      <li>Abandoned experimental config and dead-end code from the slice are removed.</li>
+    </ul>
+  </section>
+
+  <section id="system-wide-impact">
+    <h2>System-Wide Impact</h2>
+    <ul>
+      <li><strong>Interactive chat:</strong> already OpenHands; native LLM source changes from ChatGPT subscription to 9router without changing the composer contract.</li>
+      <li><strong>Compare / rewrite / titles:</strong> leave Odysseus <code>stream_llm</code> only after U6.</li>
+      <li><strong>Research:</strong> bounded plan/query stay jobs; agentic research becomes OpenHands after U4/U8.</li>
+      <li><strong>MCP / ApprovalGrant / workspace privilege:</strong> unchanged. Dual-plane tests must catch ACP config clobber.</li>
+      <li><strong>Canvas:</strong> continues to inspect the same conversations. Bounded jobs must not appear there.</li>
+      <li><strong>Secrets:</strong> <code>ModelEndpoint.api_key</code> and <code>ProviderAuthSession</code> stop being the provider vault. Overlay volumes become the inference-key home for runtimes; 9router remains the upstream vault.</li>
+      <li><strong>Agent tools:</strong> No MCP tool for provider connect, disconnect, raw catalog, or 9router credentials. Connection remains human UX. Bounded jobs must not appear in <code>sessions.read</code> or Canvas conversation lists.</li>
+    </ul>
+  </section>
+
+  <section id="risks">
+    <h2>Risks &amp; Dependencies</h2>
+    <article class="risk">
+      <div class="eyebrow">RISK · MITIGATE IN U2</div>
+      <h3>Persisted subscription wins over overlay env</h3>
+      <p>Live Agent Server settings are ChatGPT subscription. Compose <code>OPENAI_API_KEY</code> will not switch native routing. Mitigation: overwrite settings/profile in overlay bootstrap and assert <code>auth_type</code> is no longer subscription.</p>
+    </article>
+    <article class="risk">
+      <div class="eyebrow">RISK · MITIGATE IN U3/U4</div>
+      <h3>ACP bypass via host credentials or wrong acp_server</h3>
+      <p>OpenCode and Hermes make their own HTTP calls. Mis-tagged <code>acp_server: claude-code</code> can steer secret channels to Anthropic. Mitigation: isolated HOME, named 9router providers, independent acceptance, fail-closed when 9router is down.</p>
+    </article>
+    <article class="risk">
+      <div class="eyebrow">RISK · MITIGATE UNTIL U6</div>
+      <h3>Compare still uses Odysseus stream_llm during Phases A–B</h3>
+      <p>Interactive Chat already has no local fallback. Compare panes still call <code>stream_llm_with_fallback</code> until the worker exists. A 9router outage on native Chat must not revive that path for ordinary chat. Do not treat compare as proof that conversational fallback is allowed.</p>
+    </article>
+    <article class="risk">
+      <div class="eyebrow">RISK · MITIGATE IN U6</div>
+      <h3>Worker becomes a second agent runtime</h3>
+      <p>Mitigation: no MCP, no tools, no workspace, no transcript, no profile. <code>ModelJobExecutor</code> already rejects those. Do not give the worker conversation APIs.</p>
+    </article>
+    <article class="risk">
+      <div class="eyebrow">RISK · MITIGATE IN U7</div>
+      <h3>Token pump during connection UX</h3>
+      <p>Current ChatGPT device flow stores tokens in Odysseus. Mitigation: 9router is the OAuth client; Odysseus never sees <code>code_verifier</code> completion or refresh tokens.</p>
+    </article>
+    <article class="risk">
+      <div class="eyebrow">OPEN · DEFERRED FOLLOW-UP</div>
+      <h3>Configuration-only is not egress enforcement</h3>
+      <p>ACP could still be instructed to call a provider directly. This slice does not claim a security-grade sole-provider control. Egress restriction is follow-up.</p>
+    </article>
+    <article class="risk">
+      <div class="eyebrow">DEPENDENCY</div>
+      <h3>Unmodified 9router APIs</h3>
+      <p>Plan depends on 9router 0.5.69 completions, catalog, OAuth, health, and usage. If an interface is missing, stop and report rather than patching 9router in-tree.</p>
+    </article>
+  </section>
+
+  <section id="operational-notes">
+    <h2>Documentation / Operational Notes</h2>
+    <ul>
+      <li>Record live 9router routing evidence under <code>docs/architecture/evidence/</code>. Do not edit parent spec bodies.</li>
+      <li>Do not enable Agent Server <code>SESSION_API_KEY</code> unless Odysseus clients already send it.</li>
+      <li>Keep overlay environment as YAML list form.</li>
+      <li>9router dashboard/admin remains an engineering surface; Odysseus remains production connection/status UX if the product needs it.</li>
+    </ul>
+  </section>
+
+  <section id="open-questions">
+    <h2>Open Questions</h2>
+    <div class="callout open">
+      <div class="eyebrow">Deferred to implementation — non-blocking</div>
+      <ul>
+        <li>Exact LiteLLM model-id prefix against the live 9router catalog (spike in U2).</li>
+        <li>Whether live <code>acp_server: claude-code</code> must be retagged for OpenCode on this pin (spike in U3).</li>
+        <li>Exact 9router image digest to pin from the already-used unmodified distribution (U1).</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="composition-signal">Composed 2026-09-11T16:20Z by ce-plan from <code>docs/ideation/2026-09-10-9router-api-only-ideation.html</code>. Product Contract preserved (R1–R27). Artifact readiness implementation-ready. No code, deployment, 9router modification, commit, or Task 18 work performed by this enrichment.</footer>
+</main>
+</body>
+</html>

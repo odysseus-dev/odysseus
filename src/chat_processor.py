@@ -5,6 +5,7 @@ import re
 import time
 from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 from src.chat_helpers import extract_urls
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
@@ -392,33 +393,35 @@ class ChatProcessor:
         web_sources = []
         if use_web:
             try:
-                from src.llm_core import llm_call
-
-                t_url, t_model, t_headers = session.endpoint_url, session.model, session.headers
-
                 # Default fallback is the first non-empty line of the original user message
                 fallback_query = next((line.strip() for line in message.split("\n") if line.strip()), "")
                 search_query = fallback_query
 
                 try:
-                    generated_query = llm_call(
-                        t_url,
-                        t_model,
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Extract a concise search query from the user's message. "
-                                    "Reply ONLY with the query."
-                                ),
-                            },
-                            {"role": "user", "content": message},
-                        ],
-                        headers=t_headers,
-                        temperature=0.1,
-                        max_tokens=50,
-                        timeout=15,
-                    ).strip()
+                    job_owner = owner or getattr(session, "owner", None) or ""
+                    result = submit_model_job(
+                        bounded_archetype(
+                            "search-query",
+                            temperature=0.1,
+                            token_limit=50,
+                            timeout_seconds=15,
+                        ),
+                        {
+                            "text": message,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Extract a concise search query from the user's message. "
+                                        "Reply ONLY with the query."
+                                    ),
+                                },
+                                {"role": "user", "content": message},
+                            ],
+                        },
+                        job_owner,
+                    )
+                    generated_query = str((result.output or {}).get("text") or "").strip()
 
                     if generated_query:
                         # LLM successfully generated a non-empty query -> use the generated query
@@ -427,7 +430,7 @@ class ChatProcessor:
                         # LLM returned an empty or whitespace-only query -> fall back to original query
                         logger.warning("LLM generated an empty search query, using fallback.")
                 except Exception as e:
-                    # LLM failed (exception/error) -> fall back to original user query
+                    # Job failed -> fall back to original user query (deterministic, not llm_call)
                     logger.warning(f"Failed to generate search query via LLM, using fallback: {e}")
 
                 search_query = " ".join(search_query.split())

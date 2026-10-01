@@ -29,7 +29,7 @@ def _utcnow() -> datetime:
 # setting turns them off). The RAG tool selector + ASSISTANT_ALWAYS_AVAILABLE
 # never include bash/python, so on a host with an empty/degraded tool-embedding
 # index a task could not run shell or Python even for an admin owner. Offering
-# them here is safe: stream_agent_loop's blocked_tools_for_owner() still strips
+# them here is safe: stream_governed_agent's blocked_tools_for_owner() still strips
 # this whole group for non-admin multi-user owners, and only admits it for
 # admins and single-user (AUTH_ENABLED=false) deployments.
 TASK_DEFAULT_SHELL_TOOLS = frozenset({
@@ -44,7 +44,7 @@ def compose_task_relevant_tools(rag_tools, assistant_always, disabled_tools):
     Unions the RAG-retrieved tools, the assistant's always-available set, and
     the default shell/file group, then removes anything the task's crew
     explicitly disabled via its `enabled_tools` allowlist. Per-owner admin
-    gating is applied later by stream_agent_loop (blocked_tools_for_owner).
+    gating is applied later by stream_governed_agent (blocked_tools_for_owner).
     """
     tools = set(rag_tools) | set(assistant_always) | set(TASK_DEFAULT_SHELL_TOOLS)
     if disabled_tools:
@@ -362,6 +362,9 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+        from services.agents.scheduling import AutomationScheduler
+
+        self.automation_scheduler = AutomationScheduler()
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -1650,18 +1653,32 @@ class TaskScheduler:
             )
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
-            from src.task_endpoint import task_llm_call_async
+            from services.agents.legacy_bridge import stream_governed_agent
             messages: list = [{"role": "system", "content": system_prompt}]
             if _dt_msg:
                 messages.append(_dt_msg)
             messages.append({"role": "user", "content": task.prompt})
-            result = await task_llm_call_async(
-                messages,
-                fallback_url=endpoint_url,
-                fallback_model=model,
+            parts: list[str] = []
+            async for event_str in stream_governed_agent(
+                endpoint_url=endpoint_url,
+                model=model,
+                messages=messages,
+                session_id=session_id,
                 owner=task.owner,
-                timeout=120,
-            )
+                workload="background",
+                poll_timeout_s=120,
+            ):
+                if not event_str.startswith("data: ") or event_str.startswith("data: [DONE]"):
+                    continue
+                try:
+                    data = json.loads(event_str[6:])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict) and not data.get("thinking"):
+                    delta = data.get("delta")
+                    if isinstance(delta, str) and delta:
+                        parts.append(delta)
+            result = "".join(parts)
 
         # Strip the model's chain-of-thought before saving/delivering. Task
         # output is LLM-only, so prose=True (which also removes untagged
@@ -1862,7 +1879,7 @@ class TaskScheduler:
                               override_user_message: str | None = None,
                               datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
-        from src.agent_loop import stream_agent_loop
+        from services.agents.legacy_bridge import stream_governed_agent
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
@@ -1915,7 +1932,7 @@ class TaskScheduler:
             )[1:]
         except Exception:
             _task_fallbacks = []
-        async for event_str in stream_agent_loop(
+        async for event_str in stream_governed_agent(
             endpoint_url=endpoint_url,
             model=model,
             messages=messages,
@@ -1985,25 +2002,37 @@ class TaskScheduler:
         # asking it to summarize what it did. Guarantees output.
         if not full_text.strip():
             try:
-                from src.task_endpoint import task_llm_call_async
                 grace_context = "You ran out of steps. "
                 if tool_results:
                     grace_context += "Here's what your tools returned:\n" + "\n".join(tool_results[-5:])
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                full_text = await task_llm_call_async(
+                grace_parts: list[str] = []
+                async for event_str in stream_governed_agent(
+                    endpoint_url=endpoint_url,
+                    model=model,
                     messages=[
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": grace_context},
                     ],
-                    fallback_url=endpoint_url,
-                    fallback_model=model,
-                    fallback_headers=headers,
+                    session_id=session_id,
                     owner=task.owner or None,
-                    timeout=30,
-                )
-                full_text = (full_text or "").strip()
+                    headers=headers,
+                    workload="background",
+                    poll_timeout_s=30,
+                ):
+                    if not event_str.startswith("data: ") or event_str.startswith("data: [DONE]"):
+                        continue
+                    try:
+                        data = json.loads(event_str[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict) and not data.get("thinking"):
+                        delta = data.get("delta")
+                        if isinstance(delta, str) and delta:
+                            grace_parts.append(delta)
+                full_text = "".join(grace_parts).strip()
             except Exception as e:
                 logger.warning(f"Grace summarization failed: {e}")
                 if tool_results:
@@ -2082,6 +2111,8 @@ class TaskScheduler:
             extraction_timeout=extraction_timeout,
             extraction_concurrency=extraction_concurrency,
         )
+        researcher.session_id = task.session_id
+        researcher.owner = task.owner
 
         started_ts = time.time()
         report = await researcher.research(task.prompt)

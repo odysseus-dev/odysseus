@@ -14,7 +14,8 @@ export const PROVIDER_DEVICE_FLOWS = {
     startUrl: '/api/chatgpt-subscription/device/start',
     pollUrl: '/api/chatgpt-subscription/device/poll',
     authUrl(start) {
-      return start?.verification_uri || '';
+      // Device page first. /authorize + Odysseus redirect_uri is OpenAI unknown_error.
+      return start?.verification_uri_complete || start?.verification_uri || start?.redirect_url || '';
     },
   },
 };

@@ -6,6 +6,7 @@ deleted. The fix honors the explicit `drop` set, so an omitted memory survives.
 """
 import asyncio
 import json
+from types import SimpleNamespace
 
 import src.builtin_actions as ba
 
@@ -29,24 +30,20 @@ class _FakeMM:
 
 def test_omitted_memory_survives_only_explicit_drop(monkeypatch):
     import src.memory
-    import src.llm_core
-    import src.task_endpoint
 
     _FakeMM.saved = None
     monkeypatch.setattr(src.memory, "MemoryManager", _FakeMM)
-    monkeypatch.setattr(
-        src.task_endpoint, "resolve_task_candidates",
-        lambda owner=None: [("http://x/v1", "model", {})],
-    )
 
-    async def fake_llm(_candidates, **kwargs):
-        # Model keeps 'a', drops 'b', and OMITS 'c' entirely.
-        return json.dumps({
-            "keep": [{"id": "a", "text": "Likes dark roast coffee", "category": "preference"}],
-            "drop": [{"id": "b", "reason": "duplicate of a"}],
-        })
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        return SimpleNamespace(
+            output={
+                "keep": [{"id": "a", "text": "Likes dark roast coffee", "category": "preference"}],
+                "drop": [{"id": "b", "reason": "duplicate of a"}],
+            },
+            audit={},
+        )
 
-    monkeypatch.setattr(src.llm_core, "llm_call_async_with_fallback", fake_llm)
+    monkeypatch.setattr(ba, "submit_model_job", fake_submit, raising=False)
 
     msg, ok = asyncio.run(ba.action_consolidate_memory("alice"))
 

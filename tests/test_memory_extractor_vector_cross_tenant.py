@@ -11,11 +11,7 @@ dedup fallback right below is already owner-scoped; the vector path must be too.
 """
 import asyncio
 import importlib.util
-import sys
-import types
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,8 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _load_extractor():
     # Load services/memory/memory_extractor.py directly by path so we don't
     # trigger services/__init__ (which imports the search stack and its heavy
-    # optional deps). The module's only module-level imports are stdlib; its
-    # src.llm_core / src.event_bus imports are lazy and stubbed/guarded.
+    # optional deps). Model-job helpers stay lazy so this loader stays light.
     path = ROOT / "services" / "memory" / "memory_extractor.py"
     spec = importlib.util.spec_from_file_location("memory_extractor_under_test", path)
     mod = importlib.util.module_from_spec(spec)
@@ -32,20 +27,17 @@ def _load_extractor():
     return mod
 
 
-def _install_llm_stub(monkeypatch, facts_json):
-    mod = types.ModuleType("src.llm_core")
+def _install_job_stub(mod, monkeypatch, facts_json):
+    from types import SimpleNamespace
 
-    async def llm_call_async(*a, **k):
-        return facts_json
+    def _submit_model_job(*a, **k):
+        return SimpleNamespace(output={"text": facts_json})
 
-    mod.llm_call_async = llm_call_async
-    # Use monkeypatch.setitem so sys.modules is restored at teardown. A raw
-    # assignment here permanently replaced the real src.llm_core with this
-    # stripped stub, leaking "My home is in Lisbon" (and hiding _detect_provider)
-    # into every later-collected test that imports the real module.
-    src_pkg = sys.modules.get("src") or types.ModuleType("src")
-    monkeypatch.setitem(sys.modules, "src", src_pkg)
-    monkeypatch.setitem(sys.modules, "src.llm_core", mod)
+    def _bounded_archetype(job_id, **overrides):
+        return SimpleNamespace(id=job_id, **overrides)
+
+    monkeypatch.setattr(mod, "_submit_model_job", _submit_model_job, raising=False)
+    monkeypatch.setattr(mod, "_bounded_archetype", _bounded_archetype, raising=False)
 
 
 class FakeSession:
@@ -105,9 +97,8 @@ def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch):
     ])
     # The vector store reports user B's new fact as a near-duplicate of a1.
     vec = FakeVector(match_id="a1")
-    _install_llm_stub(monkeypatch, '["My home is in Lisbon"]')
-
     memory_extractor = _load_extractor()
+    _install_job_stub(memory_extractor, monkeypatch, '["My home is in Lisbon"]')
 
     asyncio.run(memory_extractor.extract_and_store(
         FakeSession(owner="userB"), mm, vec,

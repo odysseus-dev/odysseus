@@ -8,7 +8,7 @@ import base64
 import tempfile
 from typing import List, Dict, Any
 
-from src.llm_core import llm_call
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 
 logger = logging.getLogger(__name__)
 
@@ -360,27 +360,27 @@ def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> d
                 ],
             }
         ]
-        # Vision-specific fallback chain (Settings → Vision → Fallbacks). A
-        # downed vision endpoint can fall through to the next configured model
-        # — same shape as task/chat but its own list (`vision_model_fallbacks`).
-        try:
-            from src.endpoint_resolver import resolve_vision_fallback_candidates
-            _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates(owner=owner)
-        except Exception:
-            _vl_candidates = [(url, model_id, headers)]
-
-        last_err = None
-        for i, (_url, _model, _headers) in enumerate([c for c in _vl_candidates if c and c[0] and c[1]]):
-            try:
-                description = llm_call(_url, _model, vl_messages, headers=_headers, timeout=120)
-                logger.info("VL analysis complete with model %s", _model)
-                return {"text": description, "model": _model}
-            except Exception as e:
-                last_err = e
-                tag = "primary" if i == 0 else "candidate"
-                logger.warning(f"[vision fallback] {tag} {_model} failed ({type(e).__name__}); trying next")
-                continue
-        raise last_err if last_err else RuntimeError("No vision model endpoint configured")
+        # Bounded vision extract through the isolated worker. No llm_call
+        # fallback onto owner endpoints after replacement.
+        _ = (url, headers)
+        result = submit_model_job(
+            bounded_archetype(
+                "vision-extract",
+                temperature=0.1,
+                token_limit=2048,
+                timeout_seconds=120,
+            ),
+            {"text": "Describe this image in detail", "messages": vl_messages},
+            owner or "",
+        )
+        description = str((result.output or {}).get("text") or "")
+        model_used = str(
+            (result.output or {}).get("model")
+            or (getattr(result, "audit", None) or {}).get("resolved_model")
+            or model_id
+        )
+        logger.info("VL analysis complete with model %s", model_used)
+        return {"text": description, "model": model_used}
 
     except Exception as e:
         logger.error(f"VL model unavailable: {e}")

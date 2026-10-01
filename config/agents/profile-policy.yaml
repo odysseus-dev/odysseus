@@ -1,0 +1,42 @@
+profiles:
+  - agent_profile_id: odysseus
+    agent_profile_revision: 1
+    capabilities:
+      - notes.read
+      - documents.read
+    archetypes:
+      - chat
+    risk_class: low
+    delegation_depth: 0
+    workspace_classes: []
+    budget_class: chat-standard
+    distribution_metadata: {}
+    policy_revision: 1
+  - agent_profile_id: opencode
+    agent_profile_revision: 1
+    capabilities:
+      - documents.read
+    archetypes:
+      - chat
+    risk_class: medium
+    delegation_depth: 0
+    workspace_classes:
+      - coding
+    budget_class: coding-standard
+    distribution_metadata: {}
+    policy_revision: 1
+  - agent_profile_id: hermes
+    agent_profile_revision: 12
+    capabilities:
+      - research.invoke
+      - documents.read
+    archetypes:
+      - chat
+      - deep-research
+    risk_class: medium
+    delegation_depth: 1
+    workspace_classes:
+      - research
+    budget_class: research-standard
+    distribution_metadata: {}
+    policy_revision: 7

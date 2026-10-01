@@ -22,6 +22,7 @@ from src.attachment_refs import attachment_ref
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
+from services.agents.model_jobs import session_title_heuristic, submit_model_job
 
 logger = logging.getLogger(__name__)
 
@@ -254,9 +255,6 @@ def needs_auto_name(name: str) -> bool:
 async def auto_name_session(session_manager, sess):
     """Generate a short title for a session from its first user message."""
     try:
-        from src.llm_core import llm_call_async
-        from src.task_endpoint import resolve_task_endpoint
-
         # Find first user message
         first_msg = ""
         for msg in sess.history:
@@ -273,35 +271,19 @@ async def auto_name_session(session_manager, sess):
         if not first_msg:
             return
 
-        owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers, owner=owner
-        )
-        if not t_model:
-            logger.debug("[auto-name] No model provided, skipping")
-            return
+        title = session_title_heuristic(first_msg)
+        if not title:
+            owner = getattr(sess, "owner", None) or ""
+            from services.agents.model_jobs import bounded_archetype
 
-        # max_tokens big enough that reasoning models (Minimax M2,
-        # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
-        # plus the actual title — 200 used to clip them mid-reasoning
-        # so strip_think left an empty string and no rename happened.
-        # Timeout matches: 60s gives slow local reasoners room to finish.
-        title = await llm_call_async(
-            t_url,
-            t_model,
-            [
-                {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
-                {"role": "user", "content": first_msg},
-            ],
-            temperature=0.3,
-            max_tokens=4096,
-            headers=t_headers,
-            timeout=60,
-        )
+            result = submit_model_job(
+                bounded_archetype("session-title", token_limit=64, timeout_seconds=30),
+                {"text": first_msg},
+                owner,
+            )
+            title = str((result.output or {}).get("title") or "")
 
         title = title.strip().strip('"\'').strip()
-        # Strip <think>/<thinking> blocks (closed, dangling, or stray tags)
-        # via the central helper.
         from src.text_helpers import strip_think
         title = strip_think(title, prose=False, prompt_echo=False)
         if title and len(title) < 80:

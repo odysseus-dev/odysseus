@@ -18,6 +18,7 @@ unchanged. That lets legacy rows coexist with new ones until a
 single migration pass rewrites them.
 """
 
+import hashlib
 import os
 import logging
 from pathlib import Path
@@ -85,3 +86,11 @@ def decrypt(value: str) -> str:
 
 def is_encrypted(value: str) -> bool:
     return bool(value) and value.startswith(_PREFIX)
+
+
+def hmac_secret(purpose: str) -> bytes:
+    """Derive a purpose-bound HMAC key from the existing app key file."""
+    if not purpose or any(ch in purpose for ch in "\n\r\x00"):
+        raise ValueError("hmac purpose is required")
+    material = _load_or_create_key()
+    return hashlib.sha256(b"odysseus-hmac:" + purpose.encode("utf-8") + b":" + material).digest()

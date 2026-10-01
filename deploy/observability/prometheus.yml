@@ -1,0 +1,27 @@
+# Prometheus scrape config for the overlay.
+# otel-collector:8889 is the Collector prometheus exporter (overlay DNS).
+# odysseus:7000 exists when this file is composed with docker-compose.yml.
+# Tempo and Prometheus expose /metrics on the overlay network. 9router,
+# Agent Server, and Langfuse are covered by odysseus_overlay_dependency_up
+# gauges refreshed on Odysseus /metrics (they have health, not Prom text).
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+  - job_name: odysseus
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["odysseus:7000"]
+  - job_name: tempo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["tempo:3200"]
+  - job_name: prometheus
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["prometheus:9090"]

@@ -24,6 +24,7 @@ itself wasn't confident about.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -231,8 +232,8 @@ portable across users / hosts.
 
 async def _call_teacher(teacher_model_spec: str, prompt: str,
                         owner: Optional[str] = None) -> Optional[str]:
-    """Call the configured teacher endpoint with the escalation prompt."""
-    from src.llm_core import llm_call_async
+    """Call the configured teacher via governed OpenHands."""
+    from services.agents.legacy_bridge import stream_governed_agent
     from src.ai_interaction import _resolve_model
     from src.agent_tools.model_interaction_tools import _TEACHER_SYSTEM_PROMPT
     try:
@@ -241,15 +242,32 @@ async def _call_teacher(teacher_model_spec: str, prompt: str,
         logger.warning(f"teacher endpoint not resolvable ({teacher_model_spec!r}): {e}")
         return None
     try:
-        return await llm_call_async(
-            url, model,
-            [
+        parts: List[str] = []
+        async for chunk in stream_governed_agent(
+            endpoint_url=url,
+            model=model,
+            messages=[
                 {"role": "system", "content": _TEACHER_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             headers=headers,
-            timeout=120,
-        )
+            owner=owner,
+            archetype="teacher",
+            user_requested_agent=True,
+            poll_timeout_s=120,
+        ):
+            if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+                continue
+            try:
+                data = json.loads(chunk[6:])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict) or data.get("thinking"):
+                continue
+            delta = data.get("delta")
+            if isinstance(delta, str) and delta:
+                parts.append(delta)
+        return "".join(parts)
     except Exception as e:
         logger.warning(f"teacher call failed: {e}")
         return None
@@ -394,18 +412,8 @@ async def evaluate_turn_llm(
     student_endpoint_url: str,
     owner: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
-    """Use a fast LLM (resolved via utility endpoint) to evaluate a turn."""
-    from src.endpoint_resolver import resolve_endpoint
-    from src.llm_core import llm_call_async
-
-    # Resolve utility model (falls back to default model, then student_endpoint_url)
-    url, model, headers = resolve_endpoint(
-        "utility",
-        fallback_url=student_endpoint_url,
-        owner=owner
-    )
-    if not url or not model:
-        return ("ok", None)
+    """Judge a finished turn with a bounded model-job worker."""
+    from services.agents.model_jobs import bounded_archetype, submit_model_job
 
     trace_str = _format_trace(tool_results, agent_reply)
     prompt = _EVALUATE_TURN_LLM_PROMPT.format(
@@ -415,12 +423,24 @@ async def evaluate_turn_llm(
     )
 
     try:
-        response = await llm_call_async(
-            url, model,
-            [{"role": "user", "content": prompt}],
-            headers=headers,
-            timeout=20,
+        result = await asyncio.to_thread(
+            submit_model_job,
+            bounded_archetype(
+                "evaluate-turn",
+                temperature=0.0,
+                token_limit=32,
+                timeout_seconds=20,
+            ),
+            {
+                "text": prompt,
+                "user_request": user_request or "",
+                "agent_reply": agent_reply or "",
+                "student_endpoint_url": student_endpoint_url or "",
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            owner or "",
         )
+        response = str((result.output or {}).get("text") or "").strip()
         if response:
             cleaned_response = response.strip().strip("'\"").lower()
             if cleaned_response == "failure":
@@ -621,12 +641,12 @@ async def run_teacher_inline(
     # Recursively invoke the agent loop with the teacher's params.
     # The _is_teacher_run flag prevents infinite recursion (the teacher
     # run will skip its own escalation hook).
-    from src.agent_loop import stream_agent_loop
+    from services.agents.legacy_bridge import stream_governed_agent
     captured_tool_events: List[Dict[str, Any]] = []
     captured_text_parts: List[str] = []
     captured_metrics: Dict[str, Any] = {}
 
-    async for evt_str in stream_agent_loop(
+    async for evt_str in stream_governed_agent(
         endpoint_url=teacher_url,
         model=teacher_model,
         messages=teacher_messages,

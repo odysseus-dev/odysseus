@@ -4,8 +4,8 @@ a minute-level timestamp that busts the Anthropic prompt cache.
 Three focused tests:
 1. End-to-end: system prompt is clean; message ordering is [system, datetime
    user-context, task user-prompt] through the real _run_agent_loop.
-2. Fallback: same ordering when the agent loop raises and task_llm_call_async
-   is used directly.
+2. Fallback: same ordering when the agent loop raises and
+   stream_governed_agent is used directly.
 3. Helper: current_datetime_context_message_for_tz() renders the correct local
    time for an explicit IANA timezone, and falls back to UTC for None or invalid.
 """
@@ -50,10 +50,10 @@ async def test_scheduler_agent_loop_path(monkeypatch):
 
     async def _stub_stream(**kwargs):
         captured["messages"] = list(kwargs.get("messages", []))
-        return
-        yield  # async generator
+        yield 'data: {"delta": "done"}\n\n'
+        yield "data: [DONE]\n\n"
 
-    monkeypatch.setattr("src.agent_loop.stream_agent_loop", _stub_stream)
+    monkeypatch.setattr("services.agents.legacy_bridge.stream_governed_agent", _stub_stream)
     monkeypatch.setattr("src.task_endpoint.resolve_task_candidates", lambda **kw: [])
 
     from src.task_scheduler import TaskScheduler
@@ -95,7 +95,7 @@ async def test_scheduler_retires_unattended_exact_approval(monkeypatch):
         }) + "\n\n"
 
     monkeypatch.setattr(
-        "src.agent_loop.stream_agent_loop",
+        "services.agents.legacy_bridge.stream_governed_agent",
         fake_stream_agent_loop,
     )
     monkeypatch.setattr(
@@ -119,7 +119,7 @@ async def test_scheduler_retires_unattended_exact_approval(monkeypatch):
 # ---------------------------------------------------------------------------
 
 async def test_scheduler_fallback_path(monkeypatch):
-    """When _run_agent_loop raises, task_llm_call_async must receive
+    """When _run_agent_loop raises, stream_governed_agent must receive
     [system, datetime user-context, task user-prompt] — the same ordering."""
     _patch_scheduler_deps(monkeypatch)
 
@@ -128,18 +128,21 @@ async def test_scheduler_fallback_path(monkeypatch):
     async def _fail(*args, **kwargs):
         raise RuntimeError("simulated failure")
 
-    async def _capture_call(messages, **kw):
-        captured["messages"] = list(messages)
-        return "fallback"
+    async def _capture_stream(**kwargs):
+        captured["messages"] = list(kwargs.get("messages", []))
+        yield 'data: {"delta": "fallback"}\n\n'
+        yield "data: [DONE]\n\n"
 
-    import src.task_endpoint as _te
-    monkeypatch.setattr(_te, "task_llm_call_async", _capture_call)
+    monkeypatch.setattr(
+        "services.agents.legacy_bridge.stream_governed_agent", _capture_stream
+    )
 
     from src.task_scheduler import TaskScheduler
     sched = TaskScheduler(session_manager=None)
     sched._run_agent_loop = _fail
-    await sched._execute_llm_task(_make_task(prompt="send the digest"), db=None)
+    result = await sched._execute_llm_task(_make_task(prompt="send the digest"), db=None)
 
+    assert result == "fallback"
     msgs = captured.get("messages", [])
     assert len(msgs) == 3, f"expected 3 messages, got {len(msgs)}"
     assert msgs[0]["role"] == "system"

@@ -1,0 +1,245 @@
+# Unpublished observability overlay.
+# Compose with docker-compose.yml and docker-compose.openhands.yml so
+# Prometheus can scrape odysseus:7000 and apps can later reach
+# http://otel-collector:4318 on the project network.
+#
+# Host ports are 127.0.0.1 only. The Collector has no host ports.
+# Do not set Tempo or Langfuse URLs on Odysseus in this file.
+# Langfuse v3.29.0 upstream dependency set (web, worker, postgres, redis,
+# minio, clickhouse), with service DNS names prefixed langfuse-*.
+# Postgres/redis/minio/clickhouse/worker are not published on the host.
+# Interpolation variables are LANGFUSE_* so Odysseus DATABASE_URL in the
+# project .env cannot be injected into Langfuse.
+
+# Shared by langfuse-web and langfuse-worker. Anchor is declared before
+# either service so YAML can merge it. Container env names stay the ones
+# Langfuse v3.29 reads; only the Compose interpolation keys are prefixed.
+x-langfuse-env: &langfuse-env
+  DATABASE_URL: ${LANGFUSE_DATABASE_URL:-postgresql://postgres:postgres@langfuse-postgres:5432/postgres}
+  # Upstream v3.29 dev placeholders. Override with LANGFUSE_* in the
+  # overlay .env before any non-local use. Not Odysseus sqlite.
+  SALT: ${LANGFUSE_SALT:-mysalt}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+  # Upstream defaults this true. The overlay defaults off so Langfuse
+  # does not phone home from the guest.
+  TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-true}
+  CLICKHOUSE_MIGRATION_URL: ${LANGFUSE_CLICKHOUSE_MIGRATION_URL:-clickhouse://langfuse-clickhouse:9000}
+  CLICKHOUSE_URL: ${LANGFUSE_CLICKHOUSE_URL:-http://langfuse-clickhouse:8123}
+  CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+  CLICKHOUSE_CLUSTER_ENABLED: ${LANGFUSE_CLICKHOUSE_CLUSTER_ENABLED:-false}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_EVENT_UPLOAD_REGION:-auto}
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-http://langfuse-minio:9000}
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-true}
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-auto}
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-minio}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-miniosecret}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://langfuse-minio:9000}
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE:-true}
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
+  LANGFUSE_INGESTION_QUEUE_DELAY_MS: ${LANGFUSE_INGESTION_QUEUE_DELAY_MS:-}
+  LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: ${LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS:-}
+  REDIS_HOST: ${LANGFUSE_REDIS_HOST:-langfuse-redis}
+  REDIS_PORT: ${LANGFUSE_REDIS_PORT:-6379}
+  REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-myredissecret}
+  REDIS_TLS_ENABLED: ${LANGFUSE_REDIS_TLS_ENABLED:-false}
+
+services:
+  # Receives OTLP from overlay apps and exports traces to Tempo + Langfuse.
+  # Prometheus scrapes the in-network exporter on :8889. No host publish:
+  # a published 4317/4318 would expose unredacted spans before this process
+  # if a client bypassed the Collector, and would make the Collector reachable
+  # off the overlay DNS name the apps are required to use.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.122.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./deploy/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    # LANGFUSE_OTLP_AUTH (Basic header) comes from deploy/observability/langfuse.env.
+    # The project .env is not injected here: it holds Odysseus secrets, and a
+    # Compose `environment: LANGFUSE_OTLP_AUTH` entry overwrites this file with
+    # an empty string whenever the shell value is unset. Copy the one line
+    # from the overlay .env into langfuse.env (see langfuse.env.example).
+    env_file:
+      - path: deploy/observability/langfuse.env
+        required: false
+    depends_on:
+      - tempo
+      - langfuse-web
+    restart: unless-stopped
+
+  # Local trace backend. Grafana uses :3200. Collector writes tempo:4317,
+  # which is not published (see deploy/observability/tempo.yaml).
+  tempo:
+    image: grafana/tempo:2.7.2
+    # Image user cannot chown a fresh root-owned named volume on Linux.
+    user: "0"
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./deploy/observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+    restart: unless-stopped
+
+  # Scrapes the Collector exporter and Odysseus /metrics. Listen address
+  # inside the container is 0.0.0.0 so the 127.0.0.1 host publish can
+  # reach it; the process user cannot write a root-owned /prometheus volume,
+  # so TSDB data stays on the container writable layer under /tmp.
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/tmp/prometheus
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+
+  # Explore UI for Tempo + Prometheus. 3001 on the host. Guest Forgejo
+  # already binds 0.0.0.0:3000, so Langfuse cannot use host 3000.
+  # Datasources are provisioned; no data volume, so a grafana uid
+  # mismatch on a fresh Linux volume cannot block startup.
+  grafana:
+    image: grafana/grafana:11.6.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_HTTP_PORT: "3000"
+    volumes:
+      - ./deploy/observability/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+      - tempo
+    restart: unless-stopped
+
+  # Langfuse v3 web. Host loopback :3002 (Forgejo owns guest :3000).
+  # OTLP ingest stays http://langfuse-web:3000/api/public/otel on the
+  # overlay network; this host map does not change that DNS.
+  langfuse-web:
+    image: langfuse/langfuse:3.29.0
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3002}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-mysecret}
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+
+  # Langfuse v3 worker. No host port (upstream publishes 3030; this overlay
+  # does not). Queue traffic stays on redis.
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3.29.0
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    environment:
+      <<: *langfuse-env
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.8.14.39
+    restart: unless-stopped
+    # Upstream v3.29 sets uid 101 so ClickHouse matches the image user.
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Chainguard MinIO pinned by digest in versions.env. Docker Hub
+  # minio/minio RELEASE tags are unauthorized. /data in the image is 0777,
+  # so the nonroot user can create the langfuse bucket on a fresh volume.
+  # No host ports: Prometheus owns 127.0.0.1:9090, and upstream's 9090
+  # publish would collide.
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    restart: unless-stopped
+    entrypoint: ["sh", "-c"]
+    command: ["mkdir -p /data/langfuse && exec minio server --address :9000 --console-address :9001 /data"]
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-miniosecret}
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  langfuse-redis:
+    image: redis:7.4.2
+    restart: unless-stopped
+    # Password is the upstream dev default. redis-cli ping without -a
+    # fails once requirepass is set, so the healthcheck passes the same value.
+    command: ["redis-server", "--requirepass", "${LANGFUSE_REDIS_AUTH:-myredissecret}", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${LANGFUSE_REDIS_AUTH:-myredissecret}", "--no-auth-warning", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  langfuse-postgres:
+    image: postgres:17.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${LANGFUSE_POSTGRES_DB:-postgres}
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_POSTGRES_USER:-postgres}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tempo-data:
+  langfuse-postgres-data:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio-data:

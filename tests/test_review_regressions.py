@@ -1341,7 +1341,7 @@ def test_default_chat_skips_hidden_first_model(monkeypatch):
     )
 
     result = _default_chat_endpoint()(request)
-    assert result["model"] == "visible-model", f"Expected visible-model, got {result['model']!r}"
+    assert result["model"] == "automatic", f"Expected automatic overlay route, got {result['model']!r}"
 
 
 def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
@@ -1373,7 +1373,7 @@ def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
     )
 
     result = _default_chat_endpoint()(request)
-    assert result["model"] == "visible-model"
+    assert result["model"] == "automatic"
 
 
 def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
@@ -1405,7 +1405,7 @@ def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
     )
 
     result = _default_chat_endpoint()(request)
-    assert result["model"] == "", f"Expected empty model, got {result['model']!r}"
+    assert result["model"] == "automatic", f"Expected automatic overlay route, got {result['model']!r}"
 
 
 def test_visible_models_filters_hidden_first(monkeypatch):

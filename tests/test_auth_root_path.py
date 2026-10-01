@@ -37,7 +37,8 @@ def test_login_page_uses_mount_aware_urls():
     ):
         assert f"appUrl('{api_path}')" in html
 
-    assert "window.location.replace(appUrl('/'))" in html
+    assert "postLoginPath" in html
+    assert "window.location.replace(appUrl(postLoginPath()))" in html
     assert (
         "__odysseusLoginAppUrl || ((path) => path))('/static/js/theme.js')"
         in html
@@ -271,12 +272,12 @@ def test_real_auth_middleware_uses_application_relative_path(tmp_path):
     }
     assert payload["static_lookalike"] == {
         "status": 302,
-        "location": "/odysseus/login",
+        "location": "/odysseus/login?next=%2Fstatic-v2%2Fapp.js",
         "called": 0,
     }
     assert payload["mounted_browser"] == {
         "status": 302,
-        "location": "/odysseus/login",
+        "location": "/odysseus/login?next=%2Fnotes",
         "called": 0,
     }
     for name in ("mounted_api", "default_api"):

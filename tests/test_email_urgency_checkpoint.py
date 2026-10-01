@@ -436,7 +436,6 @@ async def test_action_dispatch_stays_on_app_loop_and_queues_browser_notification
     tmp_path,
 ):
     import routes.note_routes as note_routes
-    from src import endpoint_resolver, llm_core
     from src.task_scheduler import TaskScheduler
 
     builtin_actions, runtime = _configure_action(
@@ -444,46 +443,16 @@ async def test_action_dispatch_stays_on_app_loop_and_queues_browser_notification
     )
     runtime["settings"]["reminder_llm_synthesis"] = True
     monkeypatch.setattr(note_routes, "DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        endpoint_resolver,
-        "resolve_endpoint",
-        lambda *_args, **_kwargs: (
-            "https://api.openai.com/v1",
-            "utility-model",
-            {},
-        ),
-    )
 
-    expected_loop = asyncio.get_running_loop()
     expected_thread = threading.get_ident()
-    synthesis_loops = []
-    shared_client = SimpleNamespace(is_closed=False)
-    monkeypatch.setattr(llm_core, "_http_client", shared_client)
-    monkeypatch.setattr(llm_core, "_response_cache", {})
 
-    class _Response:
-        is_success = True
-        status_code = 200
-        text = "ok"
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        return SimpleNamespace(
+            output={"text": "Synthesized urgency reminder."},
+            audit={},
+        )
 
-        @staticmethod
-        def json():
-            return {
-                "choices": [
-                    {"message": {"content": "Synthesized urgency reminder."}}
-                ]
-            }
-
-    async def fake_http_post(client, *_args, **_kwargs):
-        synthesis_loops.append(asyncio.get_running_loop())
-        assert client is shared_client
-        return _Response()
-
-    monkeypatch.setattr(
-        llm_core,
-        "httpx_post_kimi_aware_async",
-        fake_http_post,
-    )
+    monkeypatch.setattr(note_routes, "submit_model_job", fake_submit)
 
     scheduler = TaskScheduler(None)
     notification_threads = []
@@ -500,7 +469,6 @@ async def test_action_dispatch_stays_on_app_loop_and_queues_browser_notification
 
     assert ok is True
     assert "notified 1" in message
-    assert synthesis_loops == [expected_loop]
     assert notification_threads == [expected_thread]
     notifications = scheduler.pop_notifications(owner="alice")
     assert len(notifications) == 1
@@ -1156,7 +1124,6 @@ async def test_zero_enabled_accounts_cleanup_precedes_model_resolution(
     tmp_path,
 ):
     import routes.note_routes as note_routes
-    from src import task_endpoint
 
     builtin_actions, runtime = _configure_action(
         monkeypatch, tmp_path, ["acct-a"]
@@ -1174,20 +1141,8 @@ async def test_zero_enabled_accounts_cleanup_precedes_model_resolution(
     await builtin_actions.action_check_email_urgency("alice")
     runtime["accounts"] = []
 
-    model_resolution_owners = []
-
-    def no_model_available(*_args, **kwargs):
-        model_resolution_owners.append(kwargs.get("owner"))
-        return []
-
-    monkeypatch.setattr(
-        task_endpoint,
-        "resolve_task_candidates",
-        no_model_available,
-    )
     with pytest.raises(builtin_actions.TaskNoop):
         await builtin_actions.action_check_email_urgency("alice")
-    assert model_resolution_owners == ["alice"]
 
     state = json.loads(
         (tmp_path / "email_urgency_state_alice.json").read_text(encoding="utf-8")

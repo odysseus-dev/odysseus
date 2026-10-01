@@ -1,0 +1,29 @@
+id: deep-research
+version: 1
+execution_kind: agent
+input_schema: DeepResearchInputV1
+result_schema: DeepResearchResultV1
+required_capabilities:
+  - research.invoke
+optional_capabilities:
+  - documents.read
+risk_class: medium
+approval_policy: confirm-risky
+budget: research-standard
+timeout_seconds: 3600
+audit_requirements:
+  - owner
+  - execution
+  - artifacts
+completion_criteria: research-report
+failure_retry_policy: transient-only
+compatible_runtime_traits:
+  - acp
+preferred_profile_traits:
+  - research
+conversation_policy: durable
+workspace_policy: research
+delegation_policy:
+  max_depth: 1
+checkpoint_resume_policy: checkpoint
+interaction_policy: interactive

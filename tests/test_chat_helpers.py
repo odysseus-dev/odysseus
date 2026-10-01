@@ -388,36 +388,23 @@ def test_spinoff_detected_from_chatmessage_history():
     assert _session_is_research_spinoff(sess) is True
 
 
-def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch):
+def test_auto_name_session_uses_heuristic_without_llm(monkeypatch):
     import src.llm_core as llm_core
-    import src.task_endpoint as task_endpoint
 
-    resolver_calls = []
     llm_calls = []
-
-    def fake_resolve_task_endpoint(
-        fallback_url=None,
-        fallback_model=None,
-        fallback_headers=None,
-        owner=None,
-    ):
-        resolver_calls.append((fallback_url, fallback_model, fallback_headers, owner))
-        return fallback_url, fallback_model, fallback_headers
 
     async def fake_llm_call(url, model, messages, **kwargs):
         llm_calls.append((url, model, messages, kwargs))
         return "Focused Fix"
 
-    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", fake_resolve_task_endpoint)
     monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call)
 
-    session_headers = {"Authorization": "Bearer session"}
     sess = SimpleNamespace(
         id="session-1",
         owner="alice",
         endpoint_url="http://session.example/v1/chat/completions",
         model="session-model",
-        headers=session_headers,
+        headers={"Authorization": "Bearer session"},
         history=[SimpleNamespace(role="user", content="Please fix the endpoint fallback bug.")],
     )
     updates = []
@@ -427,16 +414,8 @@ def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch)
 
     asyncio.run(auto_name_session(session_manager, sess))
 
-    assert resolver_calls == [(
-        "http://session.example/v1/chat/completions",
-        "session-model",
-        session_headers,
-        "alice",
-    )]
-    assert llm_calls[0][0] == "http://session.example/v1/chat/completions"
-    assert llm_calls[0][1] == "session-model"
-    assert llm_calls[0][3]["headers"] == session_headers
-    assert updates == [("session-1", "Focused Fix")]
+    assert llm_calls == []
+    assert updates == [("session-1", "Please fix the endpoint fallback bug")]
 
 
 def test_spinoff_detected_from_dict_history():

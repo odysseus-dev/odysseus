@@ -221,6 +221,8 @@ class Session(TimestampMixin, Base):
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
+    openhands_conversation_id = Column(String, nullable=True)
+    agent_profile_id = Column(String, nullable=True)
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -554,7 +556,12 @@ class ModelEndpoint(TimestampMixin, Base):
 
 
 class ProviderAuthSession(TimestampMixin, Base):
-    """Encrypted OAuth/session credentials for refresh-aware model providers."""
+    """Owner-scoped 9router connection projection.
+
+    Ordinary connect stores an opaque connection id and non-secret status.
+    ``access_token`` / ``refresh_token`` remain on the table so leftover vault
+    rows can be wiped; new writes must leave them null.
+    """
     __tablename__ = "provider_auth_sessions"
 
     id = Column(String, primary_key=True, index=True)
@@ -566,6 +573,9 @@ class ProviderAuthSession(TimestampMixin, Base):
     refresh_token = Column(EncryptedText, nullable=True)
     last_refresh = Column(DateTime, nullable=True)
     auth_mode = Column(String, nullable=True)
+    connection_id = Column(String, nullable=True, index=True)
+    status = Column(String, nullable=True)
+    entitlement = Column(String, nullable=True)
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
@@ -1029,6 +1039,49 @@ def _migrate_add_model_endpoint_owner_column():
             logging.getLogger(__name__).info("Migrated: added 'owner' column + index to model_endpoints")
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_endpoints.owner migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_provider_connection_projection_columns():
+    """Add opaque 9router projection columns on provider_auth_sessions."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(provider_auth_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return
+        added = False
+        if "connection_id" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN connection_id VARCHAR")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_provider_auth_sessions_connection_id "
+                "ON provider_auth_sessions(connection_id)"
+            )
+            added = True
+        if "status" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN status VARCHAR")
+            added = True
+        if "entitlement" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN entitlement VARCHAR")
+            added = True
+        if added:
+            conn.commit()
+            logging.getLogger(__name__).info(
+                "Migrated: added provider connection projection columns"
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"provider_auth_sessions projection migration failed: {e}"
+        )
     finally:
         try:
             conn.close()
@@ -1785,6 +1838,24 @@ def _migrate_add_crew_member_id():
     except Exception as e:
         logging.getLogger(__name__).warning(f"crew_member_id migration: {e}")
 
+
+def _migrate_add_openhands_binding():
+    """Add openhands_conversation_id and agent_profile_id columns to sessions if missing."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
+            if "openhands_conversation_id" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN openhands_conversation_id TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added openhands_conversation_id column to sessions")
+            if "agent_profile_id" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN agent_profile_id TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added agent_profile_id column to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"openhands binding migration: {e}")
+
+
 def _migrate_add_assistant_columns():
     """Add is_default_assistant + timezone columns to crew_members for the personal-assistant feature."""
     try:
@@ -2108,6 +2179,7 @@ def init_db():
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
+    _migrate_add_provider_connection_projection_columns()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
@@ -2132,6 +2204,7 @@ def init_db():
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()
     _migrate_add_crew_member_id()
+    _migrate_add_openhands_binding()
     _migrate_add_assistant_columns()
     _migrate_add_email_smtp_security()
     _migrate_email_account_default_invariant()
@@ -2147,6 +2220,29 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _purge_leftover_cloud_model_endpoints()
+
+
+def _purge_leftover_cloud_model_endpoints() -> None:
+    """Drop pre-slice-D public cloud ModelEndpoint rows on startup.
+
+    Local leftover (LAN, loopback, docker short names) is kept. Import is
+    inside the function so core.database does not import routes at module load.
+    """
+
+    try:
+        from routes.model_routes import purge_leftover_cloud_model_endpoints
+
+        db = SessionLocal()
+        try:
+            purge_leftover_cloud_model_endpoints(db)
+        finally:
+            db.close()
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "cloud ModelEndpoint purge skipped: %s",
+            type(exc).__name__,
+        )
 
 
 def _migrate_backfill_task_folders():

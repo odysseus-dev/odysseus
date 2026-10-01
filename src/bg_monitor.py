@@ -40,11 +40,11 @@ async def _drain_agent(sess, messages):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
-    from src.agent_loop import stream_agent_loop
+    from services.agents.legacy_bridge import stream_governed_agent
     full = ""
     tool_events = []
     round_num = 1
-    async for chunk in stream_agent_loop(
+    async for chunk in stream_governed_agent(
         sess.endpoint_url, sess.model, messages,
         headers=getattr(sess, "headers", None),
         context_length=getattr(sess, "context_length", 0) or 0,

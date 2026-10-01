@@ -1,0 +1,82 @@
+# Overlay Collector. Apps export OTLP here (4317 grpc / 4318 http).
+# This process fans traces out to Tempo and Langfuse and exposes a
+# Prometheus scrape port. Trace exporters are Tempo and Langfuse only.
+#
+# Redaction matches services/observability/redact.py:
+#   DENY_SUBSTRINGS: authorization, api_key, cookie, x-9r-cli-token, virtual_key
+#   DROP_KEYS: gen_ai.input.messages, gen_ai.output.messages
+# Substring match is case-insensitive, same as redact_span_attributes().
+# The enc: value prefix is enforced in Python only; this file drops keys.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        # Overlay DNS only. Compose does not publish this port on the host.
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Exact key deletes plus regex deletes for the deny-list substrings.
+  attributes/redact:
+    actions:
+      - pattern: (?i).*authorization.*
+        action: delete
+      - pattern: (?i).*api_key.*
+        action: delete
+      - pattern: (?i).*cookie.*
+        action: delete
+      - pattern: (?i).*x-9r-cli-token.*
+        action: delete
+      - pattern: (?i).*virtual_key.*
+        action: delete
+      - key: gen_ai.input.messages
+        action: delete
+      - key: gen_ai.output.messages
+        action: delete
+  # Same contract via OTTL so a key that survives the attributes processor
+  # is still removed. error_mode propagate drops the payload instead of
+  # exporting it when a delete statement fails.
+  transform/redact:
+    error_mode: propagate
+    trace_statements:
+      - context: span
+        statements:
+          - delete_matching_keys(attributes, "(?i).*(authorization|api_key|cookie|x-9r-cli-token|virtual_key).*")
+          - delete_key(attributes, "gen_ai.input.messages")
+          - delete_key(attributes, "gen_ai.output.messages")
+  batch:
+
+exporters:
+  # Tempo OTLP gRPC. TLS is off inside the overlay network.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  # Langfuse OTLP/HTTP base URL. The exporter appends /v1/traces.
+  # LANGFUSE_OTLP_AUTH is the full Basic header from
+  # deploy/observability/langfuse.env (copy the line from the overlay .env).
+  # Empty until an operator sets it. Not Odysseus sqlite.
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    # Langfuse 3.29 protobuf decoder does not gunzip the default otlphttp
+    # payload (gzip bytes look like protobuf wire type 7 → HTTP 400).
+    compression: none
+    encoding: proto
+    headers:
+      Authorization: ${env:LANGFUSE_OTLP_AUTH:-}
+  # Scraped by Prometheus at otel-collector:8889. Not a host port.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/redact, transform/redact, batch]
+      exporters: [otlp/tempo, otlphttp/langfuse]
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/redact, batch]
+      exporters: [prometheus]

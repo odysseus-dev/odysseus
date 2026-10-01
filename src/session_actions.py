@@ -5,10 +5,13 @@ Reusable session actions that can be called from both REST routes
 and the task scheduler / builtin actions system.
 """
 
+import asyncio
 import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +69,6 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
     Returns a human-readable summary of what was done.
     """
     from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg
-    from src.llm_core import llm_call_async
     from src.task_endpoint import resolve_task_endpoint
 
     db = SessionLocal()
@@ -163,7 +165,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         if skip_llm:
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions (folder sort skipped)."
 
-        url, model, headers = resolve_task_endpoint(owner=owner or None)
+        url, model, _headers = resolve_task_endpoint(owner=owner or None)
         if not url:
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions. No model endpoint available for sorting."
 
@@ -181,10 +183,28 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         )
 
         try:
-            # 16384 (was 4096): large folder JSON + reasoning-model thinking
-            # overflowed 4096 and truncated the JSON, so it never parsed.
-            raw = await llm_call_async(url, model, [{"role": "user", "content": prompt}],
-                                       temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+            job = await asyncio.to_thread(
+                submit_model_job,
+                bounded_archetype(
+                    "session-sort",
+                    temperature=0.3,
+                    token_limit=16384,
+                    timeout_seconds=120,
+                ),
+                {
+                    "messages": [{"role": "user", "content": prompt}],
+                    "text": prompt,
+                    "model": model or "auto",
+                },
+                owner or "",
+            )
+            output = job.output or {}
+            if isinstance(output.get("folders"), dict):
+                raw = json.dumps(output)
+            else:
+                raw = str(output.get("text") or "")
+                if not raw and output:
+                    raw = json.dumps(output)
         except Exception as e:
             logger.warning(f"Auto-sort LLM call failed: {e}")
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions. Folder sort skipped (model unreachable)."

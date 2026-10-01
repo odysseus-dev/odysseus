@@ -36,6 +36,7 @@ from typing import Optional, List
 
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
+from services.agents.model_jobs import bounded_archetype, submit_model_job
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +279,75 @@ def _extract_reply(text: str) -> str:
     return _strip_think(t).strip()
 
 
+def mail_job_text(result) -> str:
+    """Return model-job prose, or JSON when the worker already parsed an object."""
+    output = getattr(result, "output", None) or {}
+    if isinstance(output, dict):
+        text = output.get("text")
+        if isinstance(text, str) and text.strip():
+            return text
+        if output:
+            return json.dumps(output)
+    return str(output or "")
+
+
+def mail_job_model(result, default: str = "auto") -> str:
+    """Resolved model from job audit, else a stable cache label."""
+    audit = getattr(result, "audit", None) or {}
+    return str(audit.get("resolved_model") or default)
+
+
+def run_mail_model_job(
+    job_id: str,
+    messages: list,
+    owner: str,
+    *,
+    temperature: float = 0.3,
+    token_limit: int = 4096,
+    timeout_seconds: int = 60,
+    model: str | None = None,
+):
+    """Submit one owner-scoped mail/calendar job. No web-process inference."""
+    payload = {"messages": messages}
+    if model:
+        payload["model"] = model
+    return submit_model_job(
+        bounded_archetype(
+            job_id,
+            temperature=temperature,
+            token_limit=token_limit,
+            timeout_seconds=timeout_seconds,
+        ),
+        payload,
+        owner or "",
+    )
+
+
+async def await_mail_model_job(
+    job_id: str,
+    messages: list,
+    owner: str,
+    *,
+    temperature: float = 0.3,
+    token_limit: int = 4096,
+    timeout_seconds: int = 60,
+    model: str | None = None,
+):
+    """Async wrapper around ``run_mail_model_job``."""
+    import asyncio
+
+    return await asyncio.to_thread(
+        run_mail_model_job,
+        job_id,
+        messages,
+        owner,
+        temperature=temperature,
+        token_limit=token_limit,
+        timeout_seconds=timeout_seconds,
+        model=model,
+    )
+
+
 def _build_email_summary_messages(sender: str, subject: str, body_for_llm: str) -> list[dict[str, str]]:
     return [
         {
@@ -316,23 +386,29 @@ async def _generate_email_summary(
     body_for_llm: str,
     *,
     headers: dict | None = None,
+    owner: str | None = None,
     max_tokens: int = 8192,
     timeout: int = 180,
 ) -> str:
-    """Generate an interactive email summary through the shared LLM adapter."""
-    from src.llm_core import llm_call_async
+    """Generate an interactive email summary through the bounded-job worker."""
+    del url, headers
+    import asyncio
 
-    raw = await llm_call_async(
-        url=url,
-        model=model,
-        messages=_build_email_summary_messages(sender, subject, body_for_llm),
-        temperature=0.3,
-        max_tokens=max_tokens,
-        headers=headers,
-        timeout=timeout,
-        workload="foreground",
+    result = await asyncio.to_thread(
+        submit_model_job,
+        bounded_archetype(
+            "email-summary",
+            temperature=0.3,
+            token_limit=max_tokens,
+            timeout_seconds=timeout,
+        ),
+        {
+            "messages": _build_email_summary_messages(sender, subject, body_for_llm),
+            "model": model,
+        },
+        owner or "",
     )
-    return _normalize_email_summary(raw)
+    return _normalize_email_summary(mail_job_text(result))
 
 
 async def _generate_scheduled_email_summary(
@@ -347,20 +423,25 @@ async def _generate_scheduled_email_summary(
     max_tokens: int = 8192,
     timeout: int = 180,
 ) -> str:
-    """Generate a scheduled summary through the background task candidate chain."""
-    from src.task_endpoint import task_llm_call_async
+    """Generate a scheduled summary through the bounded-job worker."""
+    del url, headers
+    import asyncio
 
-    raw = await task_llm_call_async(
-        messages=_build_email_summary_messages(sender, subject, body_for_llm),
-        fallback_url=url,
-        fallback_model=model,
-        fallback_headers=headers,
-        owner=owner,
-        temperature=0.3,
-        max_tokens=max_tokens,
-        timeout=timeout,
+    result = await asyncio.to_thread(
+        submit_model_job,
+        bounded_archetype(
+            "email-summary",
+            temperature=0.3,
+            token_limit=max_tokens,
+            timeout_seconds=timeout,
+        ),
+        {
+            "messages": _build_email_summary_messages(sender, subject, body_for_llm),
+            "model": model,
+        },
+        owner or "",
     )
-    return _normalize_email_summary(raw)
+    return _normalize_email_summary(mail_job_text(result))
 
 
 def _normalize_email_summary(raw) -> str:

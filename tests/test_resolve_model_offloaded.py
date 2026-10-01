@@ -10,6 +10,7 @@ tests drive the offload path without a live model endpoint.
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import src.ai_interaction as ai
 
@@ -49,10 +50,10 @@ async def test_do_pipeline_uses_offloaded_resolution_result(monkeypatch):
         lambda spec, owner=None: ("http://x/v1/chat/completions", "resolved-model", {}),
     )
 
-    async def fake_llm(url, model, messages, **kwargs):
-        return f"output from {model}"
+    def fake_job(archetype, payload, owner, **kwargs):
+        return SimpleNamespace(output={"text": f"output from {payload.get('model')}"})
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm)
+    monkeypatch.setattr(ai, "submit_model_job", fake_job, raising=False)
 
     result = await ai.do_pipeline('[{"model": "m", "instruction": "go"}]', owner="u")
 

@@ -1,5 +1,6 @@
 import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,8 +30,6 @@ def _read_memories(data_dir):
 @pytest.mark.asyncio
 async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monkeypatch, tmp_path):
     from src import constants
-    from src import llm_core
-    from src import task_endpoint
     action_consolidate_memory = _import_consolidate_action()
 
     long_alice_text = "Alice private project context. " + ("A" * 2200)
@@ -44,38 +43,39 @@ async def test_consolidate_memory_empty_owner_treats_each_owner_separately(monke
         ],
     )
     monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
-    monkeypatch.setattr(
-        task_endpoint,
-        "resolve_task_candidates",
-        lambda *args, **kwargs: [("http://llm", "model", {})],
-    )
 
     prompts = []
 
-    async def fake_llm_call_async(_candidates, **kwargs):
-        prompt = kwargs["messages"][0]["content"]
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        prompt = payload["messages"][0]["content"]
         prompts.append(prompt)
         if "alice-long" in prompt:
             assert "bob-keep" not in prompt
-            return json.dumps(
-                {
+            return SimpleNamespace(
+                output={
                     "keep": [
                         {"id": "alice-long", "text": "TRUNCATED REWRITE", "category": "project"},
                         {"id": "alice-short", "text": "Alice likes concise summaries.", "category": "preference"},
                     ],
                     "drop": [],
-                }
+                },
+                audit={},
             )
         assert "bob-keep" in prompt
         assert "alice-long" not in prompt
-        return json.dumps(
-            {
+        return SimpleNamespace(
+            output={
                 "keep": [{"id": "bob-keep", "text": "Bob secret deployment note.", "category": "project"}],
                 "drop": [{"id": "bob-drop", "reason": "duplicate"}],
-            }
+            },
+            audit={},
         )
 
-    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_llm_call_async)
+    monkeypatch.setattr(
+        "src.builtin_actions.submit_model_job",
+        fake_submit,
+        raising=False,
+    )
 
     message, ok = await action_consolidate_memory("")
 
@@ -119,8 +119,6 @@ async def test_consolidate_memory_specific_owner_does_not_absorb_ownerless_rows(
 @pytest.mark.asyncio
 async def test_consolidate_memory_removes_near_duplicates_before_ai(monkeypatch, tmp_path):
     from src import constants
-    from src import llm_core
-    from src import task_endpoint
     action_consolidate_memory = _import_consolidate_action()
 
     data_dir = _write_memories(
@@ -132,23 +130,25 @@ async def test_consolidate_memory_removes_near_duplicates_before_ai(monkeypatch,
         ],
     )
     monkeypatch.setattr(constants, "DATA_DIR", str(data_dir))
+
+    def fake_submit(archetype, payload, owner, **_kwargs):
+        items = json.loads(payload["messages"][0]["content"].split("MEMORIES:\n", 1)[1])
+        return SimpleNamespace(
+            output={
+                "keep": [
+                    {"id": item["id"], "text": item["text"], "category": item["category"]}
+                    for item in items
+                ],
+                "drop": [],
+            },
+            audit={},
+        )
+
     monkeypatch.setattr(
-        task_endpoint,
-        "resolve_task_candidates",
-        lambda *args, **kwargs: [("http://llm", "model", {})],
+        "src.builtin_actions.submit_model_job",
+        fake_submit,
+        raising=False,
     )
-
-    async def fake_llm_call_async(_candidates, **kwargs):
-        items = json.loads(kwargs["messages"][0]["content"].split("MEMORIES:\n", 1)[1])
-        return json.dumps({
-            "keep": [
-                {"id": item["id"], "text": item["text"], "category": item["category"]}
-                for item in items
-            ],
-            "drop": [],
-        })
-
-    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_llm_call_async)
 
     message, ok = await action_consolidate_memory("alice")
 

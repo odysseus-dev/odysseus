@@ -676,6 +676,52 @@ async function connectDetectedSetupEndpoint(detected) {
 
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i.test(detected.base_url);
 
+  if (!isLocal) {
+    const slugByName = {
+      OpenAI: 'openai',
+      Anthropic: 'anthropic',
+      Groq: 'groq',
+      DeepSeek: 'deepseek',
+      OpenRouter: 'openrouter',
+      Gemini: 'gemini',
+      xAI: 'xai',
+      'Ollama Cloud': 'ollama',
+    };
+    const slug = slugByName[detected.name] || '';
+    try {
+      if (!slug || !detected.api_key) {
+        setupSpinner.destroy();
+        spinnerDiv.remove();
+        await typewriterReply('Cloud providers connect in Settings → Inference → 9router. Odysseus does not store cloud API keys.');
+        return;
+      }
+      const fd = new FormData();
+      fd.append('provider', slug);
+      fd.append('api_key', detected.api_key);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      const res = await fetch(`${API_BASE}/api/ninerouter/connections`, { method: 'POST', body: fd, credentials: 'same-origin', signal: controller.signal });
+      clearTimeout(timer);
+      const data = await res.json().catch(() => ({}));
+      setupSpinner.destroy();
+      spinnerDiv.remove();
+      if (!res.ok) {
+        setupMode = 'endpoint-provider-first';
+        await typewriterReply(`9router connect failed: ${data.detail || 'connection failed'}`);
+        return;
+      }
+      await typewriterReply(`Connected ${providerLabel} through overlay 9router. Keys stay in 9router, not Odysseus. Pick a route in Settings → AI Defaults.`);
+      _clearSetupGuideMessages();
+      return;
+    } catch {
+      setupSpinner.destroy();
+      spinnerDiv.remove();
+      setupMode = 'endpoint-provider-first';
+      await typewriterReply('9router connect failed before it could finish. Use Settings → Inference.');
+      return;
+    }
+  }
+
   try {
     const fd = new FormData();
     fd.append('base_url', detected.base_url);
@@ -966,8 +1012,8 @@ async function _cmdSessionNew(args, ctx) {
     try {
       const dcRes = await fetch(`${API_BASE}/api/default-chat`);
       const dc = await dcRes.json();
-      if (dc.endpoint_url && dc.model) {
-        endpointUrl = dc.endpoint_url;
+      if (dc.model) {
+        endpointUrl = dc.endpoint_url || '';
         model = dc.model;
         endpointId = dc.endpoint_id || '';
       }
@@ -996,8 +1042,10 @@ async function _cmdSessionNew(args, ctx) {
       }
     } catch (e) { /* ignore */ }
   }
-  if (!endpointUrl || !model) {
-    slashReply('No model available — open the model picker and use the <code>+</code> button to add a model endpoint.');
+  const overlayRoutes = ['automatic', 'fast', 'balanced', 'best'];
+  const overlayOk = overlayRoutes.includes(String(model || '').toLowerCase());
+  if ((!endpointUrl && !overlayOk) || !model) {
+    slashReply('No model available — pick a 9router route in the composer, or add a leftover local endpoint.');
     return true;
   }
 
@@ -3483,22 +3531,22 @@ async function _cmdTourSettings(args, ctx) {
       text: '<b>Welcome to Settings.</b> HOW EXCITING.',
       placement: 'center-above' },
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="services"]',
-      text: '<b>Add Models</b> — add a local endpoint first, like Ollama, vLLM, or llama.cpp. Cloud providers are optional.',
+      text: '<b>Inference</b> — overlay 9router connections, then 9router routes. Local leftover (Ollama, vLLM, llama.cpp) is at the bottom. Cloud keys are not stored in Odysseus.',
       before: () => _clickNav('services') },
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="ai"]',
-      text: '<b>AI Defaults</b> — three roles share the work. Let\'s walk through them.',
+      text: '<b>AI Defaults</b> — Default Chat Model picks the overlay 9router route. Utility and Vision stay leftover local.',
       before: () => _clickNav('ai') },
-    { sel: '#settings-modal .admin-card:has(#set-defaultModelSelect)',
-      text: '<b>Default Chat Model</b> — your main model. The one Odysseus reaches for whenever you start a new chat.',
+    { sel: '#settings-modal .admin-card:has(#set-defaultRouteSelect)',
+      text: '<b>Default Chat Model</b> — overlay 9router route (automatic / fast / balanced / best). Same control as the composer picker.',
       before: () => _clickNav('ai') },
     { sel: '#settings-modal .admin-card:has(#set-utilityModelSelect)',
-      text: '<b>Utility Model</b> — your hard-working sidekick. Runs background tasks (compaction, cleanup, auto-naming, summarization) so your chat model doesn\'t burn cycles on chores. <b>Recommend a small local model</b> here — it\'s free and always on.',
+      text: '<b>Utility Model</b> — leftover Odysseus chores (compaction, cleanup, auto-naming, summarization). Prefer a small local endpoint. Not overlay 9router chat routing.',
       before: () => _clickNav('ai') },
     { sel: '#settings-modal .admin-card:has(#set-vlModelSelect)',
-      text: '<b>Vision</b> — powers any image-recognition feature: drop a photo in chat, ask what\'s in it, OCR, etc.',
+      text: '<b>Vision</b> — leftover Odysseus image analysis on an endpoint model. Overlay OpenHands chat vision is separate.',
       before: () => _clickNav('ai') },
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="integrations"]',
-      text: '<b>Integrations</b> — wire up email, calendar, contacts here (per-account).',
+      text: '<b>Integrations</b> — email, calendar, contacts, plus inbound CLI plugins that call Odysseus. Not ChatGPT/Anthropic inference (that is Inference → 9router).',
       before: () => _clickNav('integrations') },
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="search"]',
       text: '<b>Search</b> — plug in your own search provider, or use the bundled <b>SearXNG</b> out of the box.',
@@ -5062,8 +5110,12 @@ async function _setupProviderDeviceFlow(providerKey) {
       },
     });
     if (result.status === 'authorized') {
-      const n = ((result.endpoint && result.endpoint.models) || []).length;
-      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      if (result.endpoint && result.endpoint.connection_id) {
+        await _setupReply('Connected. Overlay chat uses 9router routes (automatic, fast, balanced, best).');
+      } else {
+        const n = ((result.endpoint && result.endpoint.models) || []).length;
+        await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      }
       if (modelsModule) modelsModule.refreshModels(true);
       return;
     }

@@ -232,6 +232,33 @@ helpers:
 - One-off custom module patching.
 - Custom DB session, route, and app setup.
 
+## OpenHands feasibility stack
+
+The OpenHands overlay is isolated from normal Compose startup. It adds Agent
+Server, Automation, Agent Canvas, Odysseus MCP, and 9router without publishing
+their internal APIs; only configured Odysseus and Canvas ports reach the host.
+9router is reachable on the overlay network at `http://9router:20128/v1`
+(health `GET /api/health`). Virtual inference keys stay in 9router `DATA_DIR`.
+Agent Server and the model-job worker currently mint them through a temporary
+sqlite mount; that is a temporary bridge, not the long-term control API.
+Odysseus overlay environment must not receive the inference key.
+
+Live overlay target on this machine is the Fusion Ubuntu VM. See
+`docs/operations/linux-vm-openhands-overlay.md`. Do not start overlay 9router
+on the Mac host (existing 9router already binds `127.0.0.1:20128`). Do not
+compose HHPE relay files. Connect providers on overlay 9router only after
+`python3 scripts/openhands_probe.py stack` is healthy.
+
+```bash
+# Mac: compose shape only. Live `up` is the Linux VM runbook.
+docker compose -f docker-compose.yml -f docker-compose.openhands.yml config --quiet
+python3 -m pytest tests/integration/openhands/test_stack_contract.py tests/integration/openhands/test_9router_reachability.py --noconftest -q
+```
+
+Pins live in `deploy/openhands/versions.env`. Update them only from official
+release artifacts, then update the image references in the overlay and rerun
+the probe.
+
 ## Validation expectations
 
 Run validation locally before opening or approving a PR. Practical checks:

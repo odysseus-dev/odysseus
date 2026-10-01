@@ -1,0 +1,14 @@
+agent_profile_id: odysseus
+agent_profile_revision: 1
+transport: native
+agent: CodeActAgent
+snapshot_rejects_unknown_fields: true
+capabilities:
+  - notes.read
+  - documents.read
+archetypes:
+  - chat
+system_suffix_file: deploy/openhands/agents/odysseus-system.md
+mcp:
+  - odysseus
+extra: forbid

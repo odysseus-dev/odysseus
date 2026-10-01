@@ -1424,18 +1424,20 @@ def test_post_google_endpoint_defaults_to_manual_refresh_when_mode_omitted(monke
     monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *args, **kwargs: ["gemini-test"])
     create = _get_route("/api/model-endpoints", "POST")
 
-    create(
-        _PinnedFakeRequest(),
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        **_create_form_kwargs(
-            api_key="google-key",
-            endpoint_kind="api",
-            model_refresh_mode="",
-        ),
-    )
+    with pytest.raises(HTTPException) as exc:
+        create(
+            _PinnedFakeRequest(),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            **_create_form_kwargs(
+                api_key="google-key",
+                endpoint_kind="api",
+                model_refresh_mode="",
+            ),
+        )
 
-    assert len(db.added) == 1
-    assert db.added[0].model_refresh_mode == "manual"
+    assert exc.value.status_code == 400
+    assert "9router" in str(exc.value.detail).lower()
+    assert db.added == []
 
 
 def test_post_dedupe_existing_merges_and_returns_pinned(monkeypatch):
@@ -1488,7 +1490,7 @@ def test_post_dedupe_existing_does_not_clobber_pinned_when_omitted(monkeypatch):
 
 def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypatch):
     existing = _make_endpoint(
-        base_url="https://api.example.test/v1",
+        base_url="http://host:1234/v1",
         api_key="key-one",
     )
     db = _PinnedFakeDb([existing])
@@ -1497,7 +1499,7 @@ def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypa
 
     result = create(
         _PinnedFakeRequest(),
-        base_url="https://api.example.test/v1",
+        base_url="http://host:1234/v1",
         **_create_form_kwargs(api_key="key-two"),
     )
 
@@ -1505,7 +1507,7 @@ def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypa
     assert result["has_key"] is True
     assert result["api_key_fingerprint"] == _api_key_fingerprint("key-two")
     assert len(db.added) == 1
-    assert db.added[0].base_url == "https://api.example.test/v1"
+    assert db.added[0].base_url == "http://host:1234/v1"
     assert db.added[0].api_key == "key-two"
 
 
@@ -1553,7 +1555,7 @@ def test_post_keeps_default_when_current_default_enabled(monkeypatch):
 
 def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):
     existing = _make_endpoint(
-        base_url="https://api.example.test/v1",
+        base_url="http://host:1234/v1",
         api_key="key-one",
     )
     db = _PinnedFakeDb([existing])
@@ -1562,7 +1564,7 @@ def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):
 
     result = create(
         _PinnedFakeRequest(),
-        base_url="https://api.example.test/v1",
+        base_url="http://host:1234/v1",
         **_create_form_kwargs(api_key="key-one"),
     )
 
@@ -2177,3 +2179,22 @@ def test_manual_refresh_timeout_keeps_cached_models_and_warns(monkeypatch):
     assert db.commits == 0
     assert response.headers["X-Model-Refresh-Status"] == "failed"
     assert "kept cached models" in response.headers["X-Model-Refresh-Warning"]
+
+
+def test_post_rejects_cloud_openai_url_without_storing_key(monkeypatch):
+    """Slice D: cloud inference keys stay in overlay 9router, not ModelEndpoint."""
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    with pytest.raises(HTTPException) as exc:
+        create(
+            _PinnedFakeRequest(),
+            base_url="https://api.openai.com/v1",
+            **_create_form_kwargs(api_key="sk-live-secret", endpoint_kind="local"),
+        )
+
+    assert exc.value.status_code == 400
+    assert "9router" in str(exc.value.detail).lower()
+    assert db.added == []
+
