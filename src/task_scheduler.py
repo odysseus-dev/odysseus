@@ -27,13 +27,13 @@ def _utcnow() -> datetime:
 # Shell/file tools a scheduled task's agent should be offered by default,
 # mirroring the chat agent (where these are on unless a privilege or global
 # setting turns them off). The RAG tool selector + ASSISTANT_ALWAYS_AVAILABLE
-# never include bash/python, so on a host with an empty/degraded tool-embedding
+# never include bash/powershell/python, so on a host with an empty/degraded tool-embedding
 # index a task could not run shell or Python even for an admin owner. Offering
 # them here is safe: stream_agent_loop's blocked_tools_for_owner() still strips
 # this whole group for non-admin multi-user owners, and only admits it for
 # admins and single-user (AUTH_ENABLED=false) deployments.
 TASK_DEFAULT_SHELL_TOOLS = frozenset({
-    "bash", "python", "read_file", "write_file", "edit_file",
+    "bash", "powershell", "python", "read_file", "write_file", "edit_file",
     "grep", "glob", "ls", "get_workspace",
 })
 

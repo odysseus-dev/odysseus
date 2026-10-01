@@ -426,7 +426,7 @@ const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
 // persisted history (src/tool_parsing.py builds the same regex from TOOL_TAGS),
 // so a reload always renders clean.
 let EXEC_FENCE_RE = null;
-const EXEC_FENCE_NON_TOOL = new Set(['bash', 'python']);
+const EXEC_FENCE_NON_TOOL = new Set(['bash', 'powershell', 'python']);
 
 function escapeRegex(source) {
   return String(source).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

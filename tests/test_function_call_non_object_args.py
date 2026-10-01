@@ -53,6 +53,14 @@ def test_non_object_arguments_do_not_crash(arguments):
     assert block.content == ""
 
 
+def test_powershell_function_call_maps_to_command_content():
+    block = function_call_to_tool_block("powershell", '{"command": "Get-Command i"}')
+
+    assert block is not None
+    assert block.tool_type == "powershell"
+    assert block.content == "Get-Command i"
+
+
 @pytest.mark.parametrize("tool_name", ["list_emails", "mcp__email__list_emails"])
 def test_email_mcp_non_object_arguments_are_rejected(tool_name):
     block = function_call_to_tool_block(tool_name, '["INBOX"]')

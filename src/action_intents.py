@@ -88,7 +88,7 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
 
         # UI/control-plane actions that should open panels or flip toggles.
         ("ui", "open/show panel request", rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b"),
-        ("ui", "tool or feature toggle request", r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b"),
+        ("ui", "tool or feature toggle request", r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|powershell|pwsh|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b"),
 
         # Deep research jobs, not quick conceptual mentions of research.
         ("web", "explicit web search request", rf"{_PLEASE}(?:do|run|use|perform|make)\s+(?:a\s+)?(?:web\s+search|search\s+the\s+web)\b.+"),
@@ -120,12 +120,13 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("workspace", "server/process debugging request", rf"{_PLEASE}(?:check|debug|fix|restart|start|stop|kill|tail|inspect)\b.{{0,120}}\b(?:server|service|process|port|docker|container|tmux|endpoint|logs?)\b"),
         ("workspace", "local computer task request", r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"),
         ("workspace", "named computer task request", r"\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b)(?:[a-z][a-z0-9_.-]{1,31})\b"),
-        ("workspace", "terminal workspace request", r"\b(?:terminal|shell|workspace|tmux|docker|container|git|branch|commit|diff|pytest|stacktrace|traceback|benchmark|terminal[- ]bench|tbench)\b"),
+        ("workspace", "terminal workspace request", r"\b(?:terminal|shell|powershell|pwsh|workspace|tmux|docker|container|git|branch|commit|diff|pytest|stacktrace|traceback|benchmark|terminal[- ]bench|tbench)\b"),
 
         # Shell / remote-host intent.
         ("shell", "ssh request", r"\bssh\s+(?:in)?to\b"),
         ("shell", "ssh target request", r"\bssh\s+\w+"),
         ("shell", "remote command request", r"\b(run|execute)\s+.{1,40}\bon\s+\w+"),
+        ("shell", "powershell command request", r"\b(?:run|execute|use)\b.{0,80}\b(?:powershell|pwsh|ps)\b|\b(?:powershell|pwsh|ps)\b.{0,80}\b(?:run|execute)\b"),
         ("shell", "assistant command execution request", r"\b(can|could|please|would)\s+you\s+(run|execute|exec)\b"),
         # Shell verbs only count in imperative position (start of message,
         # optionally after "please") or as a "can you ..." request. A bare
