@@ -363,6 +363,12 @@ class TaskScheduler:
         self._concurrency_cap = 1
         self._task_handles = {}
 
+    def _foreground_stopped(self) -> set:
+        """Task ids cancelled by stop_background_tasks_for_foreground, so the
+        CancelledError handler defers them instead of recording a user stop.
+        Lazy so schedulers built without __init__ (tests) still work."""
+        return self.__dict__.setdefault("_fg_stopped", set())
+
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
         if not run_id:
@@ -957,6 +963,11 @@ class TaskScheduler:
                 db.commit()
                 return
             except asyncio.CancelledError:
+                # A foreground pre-emption (monitor or app-level stop) defers
+                # the run; only an explicit stop skips to the next slot.
+                if task_id in self._foreground_stopped():
+                    self._foreground_stopped().discard(task_id)
+                    foreground_cancel["hit"] = True
                 msg = (
                     "Paused because Odysseus became active"
                     if foreground_cancel.get("hit")
@@ -1008,6 +1019,7 @@ class TaskScheduler:
                 db.commit()
                 return
             finally:
+                self._foreground_stopped().discard(task_id)
                 if foreground_monitor and not foreground_monitor.done():
                     foreground_monitor.cancel()
                     try:
@@ -2302,9 +2314,10 @@ class TaskScheduler:
         for task_id in task_ids:
             handle = self._task_handles.get(task_id)
             if handle and not handle.done():
+                self._foreground_stopped().add(task_id)
                 handle.cancel()
                 stopped += 1
-            if self._mark_run_aborted(task_id):
+            if self._mark_run_aborted(task_id, message="Paused because Odysseus became active"):
                 stopped += 1
         if stopped:
             logger.info("Stopped %d background scheduler task(s): %s", stopped, reason)

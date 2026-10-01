@@ -158,7 +158,6 @@ function initForegroundActivityHeartbeat() {
   ['pointerdown', 'keydown', 'touchstart', 'scroll'].forEach(type => {
     window.addEventListener(type, () => send(false), { passive: true, capture: true });
   });
-  setInterval(() => send(false), 15000);
 }
 initForegroundActivityHeartbeat();
 
