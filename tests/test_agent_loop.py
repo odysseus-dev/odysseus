@@ -36,7 +36,7 @@ _IMPORTED_AGENT_LOOP = None
 try:
     from src.agent_loop import (
         _detect_admin_intent,
-        _classify_agent_request,
+        _build_tool_selection_context,
         _compute_final_metrics,
         _append_tool_results,
         _insert_before_latest_user,
@@ -64,14 +64,15 @@ def test_mcp_keyword_gate_matches_literal_mcp_requests():
     assert "mcp" in _MCP_KEYWORDS
 
 
-def test_polish_internet_search_request_classifies_as_web():
-    intent = _classify_agent_request(
+def test_non_english_request_keeps_full_selection_query():
+    context = _build_tool_selection_context(
         [],
         "Wyszukaj w internecie i podaj temperaturę w Lubartowie dzisiaj",
     )
 
-    assert intent["low_signal"] is False
-    assert "web" in intent["domains"]
+    assert context["low_signal"] is False
+    assert context["retrieval_query"].startswith("Wyszukaj")
+    assert "domains" not in context
 
 
 def test_insert_before_latest_user_places_context_before_last_user_turn():

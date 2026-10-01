@@ -10,6 +10,8 @@ from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
     detect_guide_only_turn,
+    explicit_tool_names_for_turn,
+    normalize_requested_chat_mode,
     web_search_enabled_for_turn,
 )
 
@@ -40,6 +42,7 @@ def _patch_loop_basics(monkeypatch):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
 
 
 def test_detects_strong_guide_only_turns():
@@ -90,6 +93,24 @@ def test_web_search_enabled_for_turn_requires_explicit_enable():
     assert web_search_enabled_for_turn(False, "true") is False
 
 
+def test_explicit_tool_names_are_additive_request_inputs():
+    selected = explicit_tool_names_for_turn(
+        allow_bash="true",
+        allow_web_search="true",
+    )
+
+    assert selected == {"bash", "web_search", "web_fetch"}
+
+
+def test_run_mode_requires_an_explicit_agent_value():
+    assert normalize_requested_chat_mode("agent") == "agent"
+    assert normalize_requested_chat_mode("AGENT") == "agent"
+    assert normalize_requested_chat_mode("chat") == "chat"
+    assert normalize_requested_chat_mode("") == "chat"
+    assert normalize_requested_chat_mode(None) == "chat"
+    assert normalize_requested_chat_mode("unexpected") == "chat"
+
+
 def _schema_names(tools):
     return {
         tool.get("function", {}).get("name") or tool.get("name")
@@ -123,7 +144,7 @@ def test_agent_loop_web_intent_preserves_disabled_web_tools(monkeypatch):
     assert WEB_TOOL_NAMES.isdisjoint(_schema_names(sent_tools[0]))
 
 
-def test_agent_loop_forced_web_tools_filtered_by_disabled_tools(monkeypatch):
+def test_agent_loop_explicit_web_tools_filtered_by_disabled_tools(monkeypatch):
     _patch_loop_basics(monkeypatch)
     sent_tools = []
 
@@ -141,13 +162,90 @@ def test_agent_loop_forced_web_tools_filtered_by_disabled_tools(monkeypatch):
             [{"role": "user", "content": "latest Kubernetes release"}],
             max_rounds=1,
             relevant_tools=set(),
-            forced_tools=set(WEB_TOOL_NAMES),
+            explicit_tools=set(WEB_TOOL_NAMES),
             disabled_tools=set(WEB_TOOL_NAMES),
         )
     )
 
     assert sent_tools
     assert WEB_TOOL_NAMES.isdisjoint(_schema_names(sent_tools[0]))
+
+
+def test_url_adds_web_without_removing_explicit_bash(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_tools = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_tools.append(kwargs.get("tools"))
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            "gemini-test",
+            [{"role": "user", "content": "Inspect https://example.com, then use Bash."}],
+            max_rounds=1,
+            explicit_tools={"bash", "web_search", "web_fetch"},
+        )
+    )
+
+    names = _schema_names(sent_tools[0])
+    assert {"bash", "web_search", "web_fetch"} <= names
+
+
+def test_url_hint_cannot_override_explicit_web_deny_or_remove_bash(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_tools = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_tools.append(kwargs.get("tools"))
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [{"role": "user", "content": "Inspect https://example.com with Bash."}],
+            max_rounds=1,
+            explicit_tools={"bash"},
+            disabled_tools=set(WEB_TOOL_NAMES),
+        )
+    )
+
+    names = _schema_names(sent_tools[0])
+    assert "bash" in names
+    assert WEB_TOOL_NAMES.isdisjoint(names)
+
+
+def test_explicit_bash_is_filtered_by_hard_disabled_tools(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    sent_tools = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        sent_tools.append(kwargs.get("tools"))
+        yield _delta_chunk("ok")
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    _collect(
+        al.stream_agent_loop(
+            "https://api.openai.com/v1",
+            "gpt-test",
+            [{"role": "user", "content": "Use Bash."}],
+            max_rounds=1,
+            explicit_tools={"bash"},
+            disabled_tools={"bash"},
+        )
+    )
+
+    assert "bash" not in _schema_names(sent_tools[0])
 
 
 def test_agent_loop_policy_blocks_disabled_web_tool_call_before_execution(monkeypatch):
