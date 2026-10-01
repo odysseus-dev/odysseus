@@ -43,6 +43,7 @@ _SOTA_HOSTS = frozenset({
     "api.perplexity.ai", "api.x.ai",
     "generativelanguage.googleapis.com", "api.groq.com",
     "openrouter.ai", "ollama.com", "api.venice.ai", "api.kimi.com",
+    "api.orcarouter.ai",
 })
 
 
