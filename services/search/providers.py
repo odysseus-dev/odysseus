@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -121,6 +122,58 @@ def _safesearch_for(provider: str) -> Optional[str]:
     return None
 
 
+# SearXNG's `language` accepts an ISO code (pins the corpus and the response
+# locale) or "all" (no pin). Default "en" is the historical behaviour: without
+# a pin, brand-ambiguous queries bleed foreign-language SEO pages ("Odyssey" →
+# Honda Japan). Operators whose engines geolocate badly against the pin -- a
+# German query answered with random Bing filler, see #6392 -- can set
+# search_language (admin settings) or SEARXNG_LANGUAGE (env) to "all".
+_SEARCH_LANGUAGE_ENV = "SEARXNG_LANGUAGE"
+_DEFAULT_SEARCH_LANGUAGE = "en"
+_UNPINNED_LANGUAGES = ("all", "auto", "any", "none", "off")
+
+
+def _get_search_language() -> Optional[str]:
+    """Return the SearXNG `language` value to send, or None to omit it."""
+    settings = _get_search_settings()
+    raw = str(settings.get("search_language") or "").strip()
+    if not raw:
+        raw = (os.environ.get(_SEARCH_LANGUAGE_ENV) or "").strip()
+    if not raw:
+        return _DEFAULT_SEARCH_LANGUAGE
+    norm = raw.lower()
+    return None if norm in _UNPINNED_LANGUAGES else norm
+
+
+# Tokens a relevant page is not expected to carry. Deliberately small: the
+# relevance gate below only has to avoid treating a filler page that happens to
+# repeat a connective as a match.
+_QUERY_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "from", "this", "that", "than", "then",
+    "into", "over", "what", "when", "where", "which", "about", "how", "why",
+    "are", "was", "were", "does", "can", "should", "best", "top", "new",
+})
+
+
+def _query_tokens(query: str) -> frozenset:
+    """Significant lowercase tokens a relevant result is expected to mention."""
+    return frozenset({
+        t for t in re.findall(r"[a-z0-9]+", query.lower())
+        if len(t) >= 4 and t not in _QUERY_STOPWORDS
+    })
+
+
+def _mentions_query(results: List[dict], tokens: frozenset) -> bool:
+    """True if any result carries at least one query token."""
+    if not tokens:
+        return True
+    for r in results:
+        blob = " ".join((r.get("title") or "", r.get("snippet") or "", r.get("url") or "")).lower()
+        if any(t in blob for t in tokens):
+            return True
+    return False
+
+
 # ── SearXNG ──
 
 _NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "idag")
@@ -147,16 +200,19 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
     # freshness (time_filter) or the query reads like a news lookup, switch to
     # the 'news' category, constrain recency, and pin language to English so a
     # search like "Canada latest news" returns actual news instead of Wikipedia.
-    # Pin English for ALL searches — without it, SearXNG geolocates / mixes
+    # Pin a language for ALL searches — without it, SearXNG geolocates / mixes
     # languages and brand-ambiguous terms bleed in foreign SEO pages (e.g.
     # "Odyssey" → Honda Japan, "Trojan" → Japanese malware blogs, "Polyphemus"
     # → Chinese math forums). The news path already did this; general didn't.
+    # The pinned value is operator-configurable (#6392); see _get_search_language.
+    language = _get_search_language()
     params = {
         "q": query,
         "format": "json",
-        "language": "en",
         "safesearch": _safesearch_for("searxng"),
     }
+    if language:
+        params["language"] = language
     q_lc = query.lower()
     is_news = time_filter is not None or any(h in q_lc for h in _NEWS_HINTS)
     if is_news and categories == "general":
@@ -203,10 +259,11 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             fallback = {
                 "q": query,
                 "format": "json",
-                "language": "en",
                 "categories": "general",
                 "safesearch": _safesearch_for("searxng"),
             }
+            if language:
+                fallback["language"] = language
             if _GENERAL_ENGINES:
                 fallback["engines"] = _GENERAL_ENGINES
             logger.info(
@@ -232,6 +289,35 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
                 query,
             )
             parsed, data = _run(fallback)
+        # Relevance gate for the language pin (#6392): a pinned search can also
+        # fail by returning non-empty filler rather than nothing, which every
+        # `not parsed` branch above is blind to. Retry unpinned, and keep the
+        # original results unless the retry actually mentions the query.
+        if parsed and active_params.get("language"):
+            tokens = _query_tokens(query)
+            if tokens and not _mentions_query(parsed, tokens):
+                logger.info(
+                    "SearXNG language-pinned search returned no result matching %r; retrying without language",
+                    query,
+                )
+                retry_params = dict(active_params)
+                retry_params.pop("language", None)
+                try:
+                    retry_parsed, retry_data = _run(retry_params)
+                except Exception as retry_error:
+                    # The outer handler would drop the results we already have
+                    # for an HTML scrape, so absorb this one here instead.
+                    logger.info(
+                        "SearXNG unpinned retry failed for %r (%s); keeping pinned results",
+                        query, retry_error,
+                    )
+                else:
+                    if _mentions_query(retry_parsed, tokens):
+                        logger.info(
+                            "SearXNG unpinned search returned %d matching result(s) for %r",
+                            len(retry_parsed), query,
+                        )
+                        parsed, data = retry_parsed, retry_data
         logger.info(f"SearXNG JSON API returned {len(parsed)} results for: {query}")
         if not parsed:
             unresponsive = data.get("unresponsive_engines") if isinstance(data, dict) else None
