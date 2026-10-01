@@ -705,6 +705,11 @@ def _matches_search(model, search):
     return True
 
 
+# NVIDIA families (as reported by hardware.classify_nvidia_cc) that current
+# vLLM and SGLang builds cannot serve: everything below compute capability 7.5.
+_PRE_TURING_NVIDIA_FAMILIES = frozenset({"kepler", "maxwell", "pascal", "volta"})
+
+
 def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
     """Rank all models against detected hardware. Returns sorted list of fit results.
 
@@ -775,6 +780,16 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     gpu_family = (system.get("gpu_family") or "").lower()
     consumer_amd = system_backend == "rocm" and gpu_family == "rdna"
 
+    # NVIDIA below Turing (compute capability < 7.5: Pascal, Volta and older)
+    # is the CUDA-side equivalent. vLLM's docs require compute capability 7.5+
+    # since v0.20.0, when its wheels and image moved to CUDA 13 and sm_70 left
+    # the build; Pascal was never supported. SGLang's default attention
+    # backend (FlashInfer) needs sm_75+. Even on vLLM <= 0.19, AWQ and FP8
+    # need 7.5+. So on these cards the servable local path is GGUF.
+    # hardware.py reports the newest card's family, so a P100 next to a 4090
+    # is left alone, and so is "unknown" (no compute_cap, unrecognized name).
+    pre_turing_nvidia = system_backend == "cuda" and gpu_family in _PRE_TURING_NVIDIA_FAMILIES
+
     for m in models:
         native_q = _native_quant(m)
         is_mlx = _is_mlx_model(m, native_q)
@@ -808,7 +823,10 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # Windows is the same: Odysseus only supports llama.cpp on Windows,
         # which requires GGUF. vLLM/SGLang are explicitly blocked, so AWQ/GPTQ
         # models without a GGUF source are unservable there.
-        if (apple_silicon or consumer_amd or is_windows) and not is_mlx and not (m.get("is_gguf") or m.get("gguf_sources")):
+        #
+        # Pre-Turing NVIDIA (Pascal/Volta) is the same again: no current
+        # vLLM/SGLang kernels, so the model needs a real GGUF.
+        if (apple_silicon or consumer_amd or is_windows or pre_turing_nvidia) and not is_mlx and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
@@ -840,7 +858,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         if (
             quant == "Q4_K_M"
             and system.get("gpu_count", 1) >= 2
-            and not (apple_silicon or consumer_amd or is_windows)
+            and not (apple_silicon or consumer_amd or is_windows or pre_turing_nvidia)
             and native_q == "AWQ-4bit"
         ):
             model_quant = native_q
