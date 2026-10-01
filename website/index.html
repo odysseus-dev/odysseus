@@ -8,14 +8,14 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
   :root {
-    /* Odysseus default theme — exact app tokens */
+    /* Odysseus default theme — exact app tokens with accessible contrast */
     --bg: #282c34;
     --bg2: #1e2228;          /* app code/hl background */
     --panel: #111;           /* app panel surface */
     --panel2: #1e2228;
     --fg: #9cdef2;           /* signature cyan text */
     --heading: #9cdef2;
-    --muted: #6b8a94;        /* app subheader */
+    --muted: #9da5b4;        /* WCAG AA compliant muted text (~4.8:1 contrast) */
     --border: #355a66;       /* teal border */
     --accent: #e06c75;       /* app accent (the send-button coral) */
     --accent2: #f0989e;      /* lighter coral for gradients */
@@ -26,18 +26,19 @@
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; scroll-padding-top: 60px; }
-  /* REMOVED: "scroll-snap-type: y proximity"
-     The idea was: >>Each section is a full-viewport "page" with its content centered,
-     so only one shows at a time and the snap is obvious.<<
 
-     PROBLEM: sections easily grow taller than 100vh IRL
-     This cause forced jumps mid-read. It's intrusive UX.
-     The landing-page is not a PowerPoint presentation!
+  /* Polished browser surfaces */
+  ::selection { background: rgba(156,222,242,0.28); color: #fff; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
-     Preserved: CSS snap-points to avoid destroying code meta-data*/
   .hero, section {
-    scroll-snap-align: start; min-height: 100vh;
+    min-height: 100vh;
     display: flex; flex-direction: column; justify-content: center;
+    box-sizing: border-box;
   }
   /* Alternate the page backgrounds: slate (the body) ↔ black, to make each
      page boundary obvious. */
@@ -65,8 +66,12 @@
   .hero, section { opacity: 0; transform: translateY(24px); transition: opacity .6s cubic-bezier(.2,.7,.2,1), transform .6s cubic-bezier(.2,.7,.2,1); }
   .hero.in, section.in { opacity: 1; transform: none; }
   @media (prefers-reduced-motion: reduce) {
-    html { scroll-snap-type: none; }
-    .hero, section { opacity: 1 !important; transform: none !important; transition: none; }
+    html { scroll-behavior: auto; }
+    .hero, section { opacity: 1 !important; transform: none !important; transition: none !important; }
+    #features .feature { opacity: 1 !important; transform: none !important; animation: none !important; }
+    .tgrid .tcard.active.shake { animation: none !important; }
+    #hero-flow { display: none !important; }
+    .has-bg-video .sec-bg { animation: none !important; transform: scale(1.12) !important; }
   }
   /* Capabilities cards cascade in like the app's domino expand. */
   #features .feature { opacity: 0; transform: translateY(16px); }
@@ -93,7 +98,7 @@
     -webkit-font-smoothing: antialiased;
   }
   a { color: var(--accent); text-decoration: none; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 22px; }
 
   /* Nav */
   nav {
@@ -132,7 +137,7 @@
     font-size: 12.5px; color: var(--muted); border: 1px solid var(--border);
     background: var(--panel); padding: 5px 12px; border-radius: 999px; margin-bottom: 22px;
   }
-  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 1px 4px rgba(80,250,123,0.45); }
   .hero-logo { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--accent); margin-bottom: 4px; }
   .hero-logo svg { filter: drop-shadow(0 4px 18px rgba(224,108,117,0.35)); }
   .hero-logo .wordmark { font-size: clamp(30px, 6vw, 44px); font-weight: 700; color: var(--heading); letter-spacing: -0.01em; line-height: 1; }
@@ -157,8 +162,14 @@
   }
   .term-bar { display: flex; align-items: center; justify-content: space-between; padding: 5px 6px 5px 12px; border-bottom: 1px solid var(--border); background: #20242c; }
   .term-bar .ttl { color: var(--muted); font-size: 12px; font-family: 'Fira Code', ui-monospace, monospace; }
-  .term-bar .winbtns { display: flex; gap: 1px; }
-  .term-bar .winbtns span { cursor: pointer; }
+  .term-bar .winbtns { display: flex; gap: 2px; }
+  .term-bar .winbtns .winbtn {
+    width: 32px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 4px; color: var(--muted); font-size: 12px; line-height: 1;
+    background: transparent; border: none; cursor: pointer; padding: 0;
+  }
+  .term-bar .winbtns .winbtn:hover, .term-bar .winbtns .winbtn:focus-visible { background: rgba(156,222,242,0.12); color: var(--fg); }
+  .term-bar .winbtns .winbtn.x:hover, .term-bar .winbtns .winbtn.x:focus-visible { background: #c0392b; color: #fff; }
   .term { transition: opacity .18s ease, transform .18s ease; }
   /* Minimized = a rounded "pill", like the app's tab-down dock chip. */
   .term.term-min { max-width: max-content; border-radius: 999px; box-shadow: 0 6px 22px rgba(0,0,0,0.4); }
@@ -168,21 +179,15 @@
   .term-reopen {
     display: none; margin: 14px auto 0; font-family: 'Fira Code', monospace; font-size: 12px;
     color: var(--muted); background: none; border: 1px dashed var(--border); border-radius: 6px;
-    padding: 5px 12px; cursor: pointer;
+    padding: 8px 16px; min-height: 44px; cursor: pointer;
   }
   .term-reopen:hover { color: var(--accent); border-color: var(--accent); }
   .term-reopen.show { display: inline-block; }
-  .term-bar .winbtns span {
-    width: 28px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
-    border-radius: 4px; color: var(--muted); font-size: 12px; line-height: 1;
-  }
-  .term-bar .winbtns span:hover { background: rgba(156,222,242,0.12); color: var(--fg); }
-  .term-bar .winbtns span.x:hover { background: #c0392b; color: #fff; }
   .term pre {
     margin: 0; padding: 18px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 13.5px; color: var(--fg); line-height: 1.7; white-space: pre-wrap;
   }
-  .term .cs { color: var(--green); } .term .cm { color: #828997; }
+  .term .cs { color: var(--green); } .term .cm { color: var(--muted); }
   .term-cursor { display: inline-block; color: var(--fg); font-weight: 400; animation: term-blink 1.05s steps(1) infinite; }
   @keyframes term-blink { 50% { opacity: 0; } }
 
@@ -199,9 +204,9 @@
   .tcarousel-wrap { position: relative; max-width: 820px; margin: 36px auto 0; }
   .tarrow {
     position: absolute; top: 50%; transform: translateY(-50%); z-index: 4;
-    width: 38px; height: 38px; border-radius: 50%;
+    width: 44px; height: 44px; min-width: 44px; min-height: 44px; border-radius: 50%;
     background: rgba(17,17,17,0.85); border: 1px solid var(--border); color: var(--fg);
-    font-size: 20px; line-height: 1; cursor: pointer;
+    font-size: 24px; line-height: 1; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     transition: border-color .12s ease, color .12s ease;
   }
@@ -233,10 +238,19 @@
   .tcard .rl { color: var(--muted); font-size: 12.5px; }
   .tcard.cyclops { border-color: rgba(255,90,90,0.45); background: linear-gradient(180deg, rgba(255,80,80,0.06), var(--panel)); }
   .tcard.cyclops .q { color: #ff8a8a; font-weight: 700; letter-spacing: 0.4px; word-break: break-word; }
-  .tnav { display: block; text-align: center; margin-top: 18px; }
-  .tdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #39414d; margin: 0 4px; cursor: pointer; }
-  .tdot.on { background: var(--accent); }
-  .thint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .tnav { display: flex; align-items: center; justify-content: center; gap: 2px; margin-top: 18px; flex-wrap: wrap; }
+  .tdot {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+    background: transparent; border: none; padding: 0; margin: 0; cursor: pointer;
+  }
+  .tdot .dot-inner {
+    width: 9px; height: 9px; border-radius: 50%; background: #39414d;
+    transition: background-color .15s ease, transform .15s ease;
+  }
+  .tdot.on .dot-inner { background: var(--accent); transform: scale(1.25); }
+  .tdot:focus-visible .dot-inner { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .thint { width: 100%; font-size: 12px; color: var(--muted); margin-top: 4px; }
   @keyframes tshake {
     0%,100% { transform: translateX(0) rotate(0); }
     10% { transform: translateX(-9px) rotate(-1.5deg); }
@@ -273,24 +287,34 @@
   .shot .frame-dots { position: absolute; top: 10px; left: 12px; display: flex; gap: 5px; }
   .shot .frame-dots i { width: 8px; height: 8px; border-radius: 50%; background: #39414d; display: inline-block; }
 
-  /* Previews — expanding hover carousel that plays a video on hover/tap */
-  .previews { display: flex; align-items: center; gap: 12px; height: 480px; max-width: 1000px; margin: 36px auto 0; }
+  /* Previews — expanding hover showcase that plays video on hover/tap */
+  #previews .wrap { width: 100%; max-width: 1180px; }
+  .previews { display: flex; flex-direction: column; gap: 16px; width: 100%; margin: 36px auto 0; }
+  .preview-row { display: flex; align-items: stretch; gap: 14px; height: 275px; width: 100%; }
   .preview-panel {
-    position: relative; flex: 1 1 0; min-width: 0; height: 360px; overflow: hidden;
+    position: relative; flex: 0.62 1 0; min-width: 0; height: 100%; overflow: hidden;
     border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;
     background: linear-gradient(180deg, var(--panel), var(--panel2));
-    transition: flex-grow .5s cubic-bezier(.2,.7,.2,1), height .5s cubic-bezier(.2,.7,.2,1), border-color .25s ease;
+    transition: flex-grow .45s cubic-bezier(.2,.7,.2,1), border-color .25s ease, box-shadow .25s ease;
   }
-  .previews:hover .preview-panel { flex-grow: 0.55; height: 300px; }
-  .preview-panel:hover, .preview-panel:focus-visible, .preview-panel.is-active { flex-grow: 3.4 !important; height: 480px !important; border-color: var(--accent); }
+  .preview-panel.is-active,
+  .preview-panel:hover,
+  .preview-panel:focus-visible {
+    flex-grow: 2.15 !important; border-color: var(--accent);
+    box-shadow: 0 12px 32px -8px rgba(0,0,0,0.75), 0 0 24px -2px rgba(224, 108, 117, 0.28);
+  }
   .preview-panel .ph {
     position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 10px;
-    color: var(--muted); font-size: 12.5px; opacity: 0.7; text-align: center; padding: 8px;
+    color: var(--muted); font-size: 12.5px; opacity: 0.75; text-align: center; padding: 12px;
+    transition: opacity .3s ease;
+  }
+  .preview-panel .ph span {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%; letter-spacing: 0.2px;
   }
   .preview-panel video {
     position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-    z-index: 1; opacity: 0; transition: opacity .3s ease; background: transparent;
+    z-index: 1; opacity: 0; transition: opacity .35s ease; background: transparent;
   }
   .preview-panel.has-video video { opacity: 1; }
   /* These clips have their action on the left, so show the left edge instead of
@@ -299,23 +323,42 @@
   .preview-panel:has(source[src="notes.webm"]) video { object-position: right center; }
   .preview-panel .label {
     position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; padding: 14px 16px;
-    background: linear-gradient(0deg, rgba(0,0,0,0.82), transparent);
+    background: linear-gradient(0deg, rgba(17,17,17,0.92) 0%, rgba(17,17,17,0.72) 65%, transparent 100%);
     color: var(--heading);
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+    pointer-events: none;
   }
-  .preview-panel .label .t { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 700; font-size: 14px; }
+  .preview-panel .label .t {
+    display: flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 700; font-size: 14px;
+    overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  }
   .preview-panel .label .ico { color: var(--accent); flex-shrink: 0; }
   .preview-panel .label .desc {
-    font-weight: 400; font-size: 12.5px; line-height: 1.35; color: rgba(255,255,255,0.82);
-    white-space: normal; max-height: 0; opacity: 0; overflow: hidden;
-    transition: max-height .4s ease, opacity .4s ease;
+    font-weight: 400; font-size: 12.5px; line-height: 1.4; color: rgba(255,255,255,0.88);
+    white-space: normal; opacity: 0; transform: translateY(4px);
+    transition: opacity .3s ease, transform .3s ease;
+    pointer-events: none;
+    max-height: 0; overflow: hidden;
   }
-  .preview-panel:hover .label .desc, .preview-panel:focus-visible .label .desc, .preview-panel.is-active .label .desc { max-height: 64px; opacity: 1; }
+  .preview-panel:hover .label .desc,
+  .preview-panel:focus-visible .label .desc,
+  .preview-panel.is-active .label .desc {
+    max-height: 64px; opacity: 1; transform: translateY(0);
+  }
+  @media (max-width: 860px) {
+    .preview-row { height: 240px; gap: 10px; }
+  }
   @media (max-width: 760px) {
-    .previews { flex-direction: column; height: auto; touch-action: pan-y; }
-    .preview-panel { height: 190px; flex: none; width: 100%; }
+    .previews { gap: 12px; height: auto; touch-action: pan-y; }
+    .preview-row { flex-direction: column; height: auto; gap: 12px; }
+    .preview-panel {
+      height: 190px; flex: none; width: 100%;
+      transition: height .35s cubic-bezier(.2,.7,.2,1), border-color .25s ease, box-shadow .25s ease;
+    }
     .preview-panel.is-active { height: 280px !important; }
-    .previews:hover .preview-panel, .preview-panel:hover { flex: none !important; }
+    .preview-row:hover .preview-panel,
+    .preview-row:has(.preview-panel.is-active) .preview-panel,
+    .preview-panel:hover { flex: none !important; }
     .preview-panel .label .desc { max-height: 64px; opacity: 1; }
   }
 
@@ -516,7 +559,7 @@
 
         <!-- Coder guy -->
         <figure class="tcard">
-          <span class="av"><img src="https://cdn.prod.website-files.com/66708f90d7e407423093fa76/66708f91d7e407423093fd21_john-carter-testimonial-image-dentistry-x-webflow-template.png" alt="Generic Coder Guy" loading="lazy"></span>
+          <span class="av"><img src="https://cdn.prod.website-files.com/66708f90d7e407423093fa76/66708f91d7e407423093fd21_john-carter-testimonial-image-dentistry-x-webflow-template.png" alt="Generic Coder Guy" loading="lazy" width="84" height="84"></span>
           <div class="tmeta">
             <p class="q">"Odysseus helped us ship more ships while shipping ships. Truly best-in-class shipping."</p>
             <div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
@@ -527,7 +570,7 @@
 
         <!-- Woman -->
         <figure class="tcard">
-          <span class="av"><img src="https://images.pexels.com/photos/5876695/pexels-photo-5876695.jpeg?auto=compress&amp;cs=tinysrgb&amp;w=160&amp;h=160&amp;fit=crop" alt="A real woman" loading="lazy"></span>
+          <span class="av"><img src="https://images.pexels.com/photos/5876695/pexels-photo-5876695.jpeg?auto=compress&amp;cs=tinysrgb&amp;w=160&amp;h=160&amp;fit=crop" alt="A real woman" loading="lazy" width="84" height="84"></span>
           <div class="tmeta">
             <p class="q">"I'm a real person. This is a real testimonial. By a real woman."</p>
             <div class="stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
@@ -578,7 +621,7 @@
       </div>
       <button class="tarrow next" type="button" aria-label="Next testimonial">&#8250;</button>
       </div>
-      <div class="tnav" id="tnav"></div>
+      <div class="tnav" id="tnav" role="tablist" aria-label="Testimonial navigation"></div>
     </div>
   </section>
 
@@ -590,7 +633,7 @@
       <div class="term">
         <div class="term-bar">
           <span class="ttl">user@odysseus: ~</span>
-          <span class="winbtns"><span data-term="min" title="Minimize">&#8211;</span><span class="x" data-term="close" title="Close">&#10005;</span></span>
+          <span class="winbtns"><button type="button" class="winbtn" data-term="min" aria-label="Minimize terminal window">–</button><button type="button" class="winbtn x" data-term="close" aria-label="Close terminal window">✕</button></span>
         </div>
         <pre id="term-pre"><span class="cs">&gt;</span> idk what to make come up with something oh make an AI chat but make it good and make it look nice</pre>
       </div>
@@ -607,44 +650,48 @@
         <p class="sub center">Each panel expands and plays its preview when you hover or tap it. Swipe on mobile to move through them.</p>
       </div>
       <div class="previews">
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>[ Chat &amp; Agents ]</span></div>
-          <video muted loop playsinline preload="none"><source src="chat.webm" type="video/webm"><source src="chat.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat &amp; Agents</span><span class="desc">Talk to any local model, or give it tools and let the agent run.</span></div>
+        <div class="preview-row">
+          <div class="preview-panel is-active" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>[ Chat &amp; Agents ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="chat.webm" type="video/webm"><source src="chat.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat &amp; Agents</span><span class="desc">Talk to any local model, or give it tools and let the agent run.</span></div>
+          </div>
+          <div class="preview-panel" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span>[ Cookbook ]</span></div>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Cookbook</span><span class="desc">Download, serve, and manage local models across your machines.</span></div>
+          </div>
+          <div class="preview-panel" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg><span>[ Deep Research ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="research.webm" type="video/webm"><source src="research.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>Deep Research</span><span class="desc">Ask once: it searches, reads sources, and writes back a cited report.</span></div>
+          </div>
+          <div class="preview-panel" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg><span>[ Compare ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="compare.webm" type="video/webm"><source src="compare.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg>Compare</span><span class="desc">Send one prompt to many models at once and watch them answer side by side.</span></div>
+          </div>
         </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><span>[ Cookbook ]</span></div>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>Cookbook</span><span class="desc">Download, serve, and manage local models across your machines.</span></div>
-        </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg><span>[ Deep Research ]</span></div>
-          <video muted loop playsinline preload="none"><source src="research.webm" type="video/webm"><source src="research.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>Deep Research</span><span class="desc">Ask once: it searches, reads sources, and writes back a cited report.</span></div>
-        </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg><span>[ Compare ]</span></div>
-          <video muted loop playsinline preload="none"><source src="compare.webm" type="video/webm"><source src="compare.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg>Compare</span><span class="desc">Send one prompt to many models at once and watch them answer side by side.</span></div>
-        </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg><span>[ Documents ]</span></div>
-          <video muted loop playsinline preload="none"><source src="document.webm" type="video/webm"><source src="document.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>Documents</span><span class="desc">A document editor that puts you first — work on what you want, with AI help when you want it.</span></div>
-        </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 2 2 4-4"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8M13 18h8"/></svg><span>[ Notes &amp; Tasks ]</span></div>
-          <video muted loop playsinline preload="none"><source src="notes.webm" type="video/webm"><source src="notes.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 2 2 4-4"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8M13 18h8"/></svg>Notes &amp; Tasks</span><span class="desc">Capture notes and to-dos, or let scheduled agents work and brief you after.</span></div>
-        </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 21"/></svg><span>[ Image Gallery ]</span></div>
-          <video muted loop playsinline preload="none"><source src="gallery.webm" type="video/webm"><source src="gallery.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 21"/></svg>Image Gallery</span><span class="desc">Generate, edit, remove backgrounds, and inpaint in your own gallery.</span></div>
-        </div>
-        <div class="preview-panel" tabindex="0">
-          <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></svg><span>[ Themes ]</span></div>
-          <video muted loop playsinline preload="none"><source src="theme.webm" type="video/webm"><source src="theme.mp4" type="video/mp4"></video>
-          <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></svg>Themes</span><span class="desc">Restyle and make it yours — edit your own, or ask the agent to make one.</span></div>
+        <div class="preview-row">
+          <div class="preview-panel" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg><span>[ Documents ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="document.webm" type="video/webm"><source src="document.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>Documents</span><span class="desc">A document editor that puts you first — work on what you want, with AI help when you want it.</span></div>
+          </div>
+          <div class="preview-panel" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 2 2 4-4"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8M13 18h8"/></svg><span>[ Notes &amp; Tasks ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="notes.webm" type="video/webm"><source src="notes.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 2 2 4-4"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8M13 18h8"/></svg>Notes &amp; Tasks</span><span class="desc">Capture notes and to-dos, or let scheduled agents work and brief you after.</span></div>
+          </div>
+          <div class="preview-panel" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 21"/></svg><span>[ Image Gallery ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="gallery.webm" type="video/webm"><source src="gallery.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 21"/></svg>Image Gallery</span><span class="desc">Generate, edit, remove backgrounds, and inpaint in your own gallery.</span></div>
+          </div>
+          <div class="preview-panel is-active" tabindex="0">
+            <div class="ph"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></svg><span>[ Themes ]</span></div>
+            <video muted loop playsinline preload="metadata"><source src="theme.webm" type="video/webm"><source src="theme.mp4" type="video/mp4"></video>
+            <div class="label"><span class="t"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></svg>Themes</span><span class="desc">Restyle and make it yours — edit your own, or ask the agent to make one.</span></div>
+          </div>
         </div>
       </div>
     </div>
@@ -678,7 +725,7 @@
         <div class="eyebrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"/><path d="M12 19h8"/></svg>Get started</div>
         <h2 class="h" style="margin-bottom:6px;">Odysseus is yours.</h2>
         <p class="sub center" style="margin:0 auto;">It's open source and free. No sales team, no demo request, no Trojan horse.</p>
-        <div class="codeblock"><span><span class="prompt">$</span> git clone https://github.com/odysseus-dev/odysseus.git &amp;&amp; cd odysseus</span><button class="copy-btn" data-copy="git clone https://github.com/odysseus-dev/odysseus.git && cd odysseus">Copy</button></div>
+        <div class="codeblock"><span><span class="prompt">$</span> git clone https://github.com/odysseus-dev/odysseus.git &amp;&amp; cd odysseus</span><button type="button" class="copy-btn" data-copy="git clone https://github.com/odysseus-dev/odysseus.git && cd odysseus" aria-label="Copy clone command to clipboard">Copy</button><span class="sr-only" aria-live="polite" id="copy-status" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"></span></div>
         <div>
           <a class="btn primary" href="https://github.com/odysseus-dev/odysseus" target="_blank" style="margin-top:14px;">View on GitHub</a>
         </div>
@@ -793,66 +840,157 @@
     // Previews: hovering/tapping a panel expands it (CSS) and plays its video; the
     // video only becomes visible once it actually starts playing, so missing
     // files just leave the labeled placeholder.
+    // Previews: On desktop, each row maintains one full-size active widget.
+    // On mobile (<=760px), double persistent hover is disabled: only one single panel is active at a time across the entire section.
     (function () {
-      var panels = [].slice.call(document.querySelectorAll('.preview-panel'));
-      if (!panels.length) return;
-      var active = -1;
+      var allPanels = [].slice.call(document.querySelectorAll('.preview-panel'));
+      var rows = [].slice.call(document.querySelectorAll('.preview-row'));
+      if (!allPanels.length) return;
+
+      function isMobile() {
+        return window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+      }
+
       function playPanel(p) {
+        if (!p) return;
         var v = p.querySelector('video');
         if (!v) return;
         var pr = v.play();
         if (pr && pr.catch) pr.catch(function () {});
       }
+
       function pausePanel(p) {
+        if (!p) return;
         var v = p.querySelector('video');
         if (v) v.pause();
       }
-      function setActive(i, shouldPlay) {
-        active = (i + panels.length) % panels.length;
-        panels.forEach(function (panel, k) {
-          var on = k === active;
-          panel.classList.toggle('is-active', on);
-          panel.setAttribute('aria-expanded', on ? 'true' : 'false');
-          if (!on) pausePanel(panel);
-        });
-        if (shouldPlay !== false) playPanel(panels[active]);
+
+      function setPanelActive(targetPanel, shouldPlay) {
+        if (isMobile()) {
+          // Mobile: single active panel across entire previews section
+          allPanels.forEach(function (panel) {
+            var on = (panel === targetPanel);
+            panel.classList.toggle('is-active', on);
+            panel.setAttribute('aria-expanded', on ? 'true' : 'false');
+            if (on) {
+              if (shouldPlay !== false) playPanel(panel);
+            } else {
+              pausePanel(panel);
+            }
+          });
+        } else {
+          // Desktop: per-row active panel
+          var parentRow = targetPanel.closest('.preview-row');
+          var rowPanels = parentRow ? [].slice.call(parentRow.querySelectorAll('.preview-panel')) : allPanels;
+          rowPanels.forEach(function (panel) {
+            var on = (panel === targetPanel);
+            panel.classList.toggle('is-active', on);
+            panel.setAttribute('aria-expanded', on ? 'true' : 'false');
+            if (on) {
+              if (shouldPlay !== false) playPanel(panel);
+            } else {
+              pausePanel(panel);
+            }
+          });
+        }
       }
-      panels.forEach(function (p, i) {
+
+      allPanels.forEach(function (p) {
         var v = p.querySelector('video');
         if (v) {
+          if (v.readyState >= 2) p.classList.add('has-video');
+          v.addEventListener('loadeddata', function () {
+            p.classList.add('has-video');
+            if (p.classList.contains('is-active')) playPanel(p);
+          });
+          v.addEventListener('canplay', function () {
+            p.classList.add('has-video');
+            if (p.classList.contains('is-active')) playPanel(p);
+          });
           v.addEventListener('playing', function () { p.classList.add('has-video'); });
-          v.addEventListener('pause', function () { /* keep last frame */ });
         }
-        p.setAttribute('aria-expanded', 'false');
-        p.addEventListener('mouseenter', function () { setActive(i); });
-        p.addEventListener('focus', function () { setActive(i); });
-        p.addEventListener('mouseleave', function () {
-          if (!window.matchMedia || !window.matchMedia('(hover: none)').matches) {
-            p.classList.remove('is-active');
-            p.setAttribute('aria-expanded', 'false');
-            pausePanel(p);
-          }
-        });
-        p.addEventListener('blur', function () { pausePanel(p); });
-        p.addEventListener('click', function () { setActive(i); });
+        p.addEventListener('mouseenter', function () { setPanelActive(p, true); });
+        p.addEventListener('focus', function () { setPanelActive(p, true); });
+        p.addEventListener('click', function () { setPanelActive(p, true); });
       });
-      var strip = document.querySelector('.previews');
-      var sx = null, sy = null;
-      if (strip) {
-        strip.addEventListener('touchstart', function (e) {
+
+      function initActiveStates() {
+        if (isMobile()) {
+          // On mobile, ensure only 1 single panel is active across all rows
+          var activePanels = document.querySelectorAll('.preview-panel.is-active');
+          var chosen = activePanels.length ? activePanels[0] : allPanels[0];
+          allPanels.forEach(function (p) {
+            var on = (p === chosen);
+            p.classList.toggle('is-active', on);
+            p.setAttribute('aria-expanded', on ? 'true' : 'false');
+            if (!on) pausePanel(p);
+          });
+          if (chosen) playPanel(chosen);
+        } else {
+          // Desktop: ensure each row has 1 active panel
+          rows.forEach(function (row) {
+            var rowPanels = [].slice.call(row.querySelectorAll('.preview-panel'));
+            if (!rowPanels.length) return;
+            var initial = row.querySelector('.preview-panel.is-active') || rowPanels[0];
+            rowPanels.forEach(function (panel) {
+              var on = (panel === initial);
+              panel.classList.toggle('is-active', on);
+              panel.setAttribute('aria-expanded', on ? 'true' : 'false');
+              if (on) playPanel(panel);
+              else pausePanel(panel);
+            });
+          });
+        }
+      }
+
+      initActiveStates();
+      window.addEventListener('resize', initActiveStates);
+
+      // Swipe navigation per row or overall on touch
+      rows.forEach(function (row) {
+        var panels = [].slice.call(row.querySelectorAll('.preview-panel'));
+        if (!panels.length) return;
+        var sx = null, sy = null;
+        row.addEventListener('touchstart', function (e) {
           if (!e.touches.length) return;
           sx = e.touches[0].clientX;
           sy = e.touches[0].clientY;
         }, { passive: true });
-        strip.addEventListener('touchend', function (e) {
+        row.addEventListener('touchend', function (e) {
           if (sx === null || sy === null || !e.changedTouches.length) return;
           var dx = e.changedTouches[0].clientX - sx;
           var dy = e.changedTouches[0].clientY - sy;
           if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.25) {
-            setActive((active < 0 ? 0 : active) + (dx < 0 ? 1 : -1));
+            var list = isMobile() ? allPanels : panels;
+            var currentIdx = -1;
+            for (var i = 0; i < list.length; i++) {
+              if (list[i].classList.contains('is-active')) { currentIdx = i; break; }
+            }
+            if (currentIdx < 0) currentIdx = 0;
+            var nextIdx = dx < 0 ? currentIdx + 1 : currentIdx - 1;
+            if (nextIdx >= 0 && nextIdx < list.length) {
+              setPanelActive(list[nextIdx], true);
+            }
           }
           sx = sy = null;
         }, { passive: true });
+      });
+
+      // Autoplay visible active panels when scrolling into previews section
+      if ('IntersectionObserver' in window) {
+        var prevSec = document.getElementById('previews');
+        if (prevSec) {
+          var io = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+              if (e.isIntersecting) {
+                document.querySelectorAll('.preview-panel.is-active').forEach(function (p) {
+                  playPanel(p);
+                });
+              }
+            });
+          }, { threshold: 0.15 });
+          io.observe(prevSec);
+        }
       }
     })();
 
@@ -892,7 +1030,7 @@
       });
     })();
 
-    // Mobile testimonial carousel: tap or swipe to advance; Polyphemus shakes ~1s.
+    // Testimonial carousel: accessible tab navigation, swipe, keyboard, Polyphemus shake.
     (function () {
       var carousel = document.getElementById('tcarousel');
       var nav = document.getElementById('tnav');
@@ -902,21 +1040,31 @@
       var idx = 0;
 
       var dots = cards.map(function (_, k) {
-        var d = document.createElement('span');
+        var d = document.createElement('button');
+        d.type = 'button';
         d.className = 'tdot';
+        d.setAttribute('role', 'tab');
+        d.setAttribute('aria-label', 'Customer testimonial ' + (k + 1));
+        d.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
+        var inner = document.createElement('span');
+        inner.className = 'dot-inner';
+        d.appendChild(inner);
         d.addEventListener('click', function (e) { e.stopPropagation(); show(k); });
         nav.appendChild(d);
         return d;
       });
       var hint = document.createElement('div');
       hint.className = 'thint';
-      hint.textContent = 'tap or swipe for the next satisfied customer →';
       nav.appendChild(hint);
 
       function show(i) {
         idx = (i + cards.length) % cards.length;
         cards.forEach(function (c, k) { c.classList.toggle('active', k === idx); c.classList.remove('shake'); });
-        dots.forEach(function (d, k) { d.classList.toggle('on', k === idx); });
+        dots.forEach(function (d, k) {
+          var on = (k === idx);
+          d.classList.toggle('on', on);
+          d.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
         var cur = cards[idx];
         if (cur.getAttribute('data-shake') === '1') {
           void cur.offsetWidth;
@@ -944,14 +1092,23 @@
       show(0);
     })();
 
-    // Copy button for the codeblock command.
+    // Copy button for the codeblock command with live region accessibility feedback.
     (function () {
       var btn = document.querySelector('.codeblock .copy-btn');
+      var status = document.getElementById('copy-status');
       if (!btn) return;
       btn.addEventListener('click', function () {
         navigator.clipboard.writeText(btn.getAttribute('data-copy')).then(function () {
-          btn.textContent = 'Copied!'; btn.classList.add('copied');
-          setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          btn.setAttribute('aria-label', 'Copied to clipboard');
+          if (status) status.textContent = 'Command copied to clipboard';
+          setTimeout(function () {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+            btn.setAttribute('aria-label', 'Copy clone command to clipboard');
+            if (status) status.textContent = '';
+          }, 2000);
         });
       });
     })();
