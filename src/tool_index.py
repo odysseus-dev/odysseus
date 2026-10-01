@@ -414,6 +414,20 @@ class ToolIndex:
                    "on the internet", "google", "latest", "current", "news",
                    "weather", "forecast", "stock price", "price of"}):
             {"web_search", "web_fetch"},
+        # Explicit shell/terminal/CLI intent. When embedding retrieval is slow
+        # or unavailable, the keyword fallback paths (get_tools_for_query and
+        # the agent-loop fallback that iterates this dict) previously had no
+        # shell entry, so "run this in the terminal" could surface no bash.
+        # get_tools_for_query matches with word boundaries, so no "cli" here
+        # (collides with "client") and no "console" (browser-console requests).
+        # "shell"/"bash" can substring-match rare unrelated words ("in a
+        # nutshell", "bashful") on the degraded agent-loop fallback path only
+        # — same loose-substring behavior as existing entries ("note" in
+        # "denoted", "draft" in "draft beer") — and costs four schemas there,
+        # never on the primary path.
+        frozenset({"terminal", "shell", "bash", "zsh", "powershell",
+                   "cmd", "command line", "command-line", "chmod", "chown"}):
+            {"bash", "python", "read_file", "ls"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):

@@ -116,6 +116,36 @@ def test_tool_index_retrieval_continues_when_custom_lane_query_fails():
     assert index.retrieve("run shell", k=5) == ["bash"]
 
 
+def test_tool_index_keyword_hints_force_include_shell(monkeypatch):
+    fake = FakeChroma()
+    patch_chroma(monkeypatch, fake)
+
+    import src.embedding_lanes as lanes
+
+    monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
+    monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
+
+    from src.tool_index import ToolIndex
+
+    index = ToolIndex()
+    index.index_builtin_tools()
+
+    # Explicit CLI requests must surface bash even when embedding retrieval
+    # misses — via the word-boundary keyword hints in get_tools_for_query.
+    for query in (
+        "run this in the terminal",
+        "use the shell",
+        "from the command line",
+        "chmod +x deploy.sh",
+        "open cmd",
+    ):
+        tools = index.get_tools_for_query(query, k=5)
+        assert "bash" in tools, query
+
+    # Substring safety: an unrelated word must not drag the shell in.
+    assert "bash" not in index.get_tools_for_query("write an http client", k=5)
+
+
 def test_tool_index_merges_fallback_tool_results_before_limit():
     custom_collection = FakeCollection("odysseus_tool_index_custom", metadata={"embedding_lane": "custom"})
     fast_collection = FakeCollection("odysseus_tool_index_fastembed", metadata={"embedding_lane": "fastembed"})
