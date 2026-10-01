@@ -110,6 +110,48 @@ def load_stored_hf_token(*, state_path: Path | str | None = None) -> str:
     return token
 
 
+def save_stored_hf_token(token: str, *, state_path: Path | str | None = None) -> str:
+    """Store the Cookbook Hugging Face token in cookbook_state.json, encrypted.
+
+    This is the only path that can persist the token typed in
+    Cookbook -> Settings: the debounced state sync strips ``env.hfToken``
+    from every request it sends, so the generic state save never receives it
+    (#6361). Everything else that reads the token goes through
+    :func:`load_stored_hf_token`.
+
+    Raises HTTPException(400) for an empty or badly-charactered token: a clear
+    is deliberately not offered here, so no stray empty save can drop a working
+    token, and an unreadable state file is left untouched rather than rewritten
+    as a single-key file (which would drop the user's tasks and servers).
+    """
+    path = Path(state_path) if state_path else Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    value = (token or "").strip()
+    if not value:
+        raise HTTPException(400, "A token is required — this endpoint stores or replaces, it does not clear")
+    _validate_token(value)
+
+    state: dict = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise HTTPException(500, f"Cannot read cookbook state — token not saved ({e})") from e
+        if not isinstance(loaded, dict):
+            raise HTTPException(500, "Cannot read cookbook state — token not saved (state is not an object)")
+        state = loaded
+
+    env = state.get("env")
+    if not isinstance(env, dict):
+        env = {}
+        state["env"] = env
+    from src.secret_storage import encrypt
+    env["hfToken"] = encrypt(value)
+
+    from core.atomic_io import atomic_write_json
+    atomic_write_json(str(path), state, indent=2)
+    return value
+
+
 def _validate_local_dir(v: str | None) -> str | None:
     if v is None or v == "":
         return None

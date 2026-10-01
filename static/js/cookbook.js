@@ -10,6 +10,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
 import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
+import { saveHfToken } from './cookbook-hf-token.js';
 
 // Sub-modules
 import {
@@ -2858,32 +2859,59 @@ function _wireTabEvents(body) {
   if (hfInput) {
     hfInput.addEventListener('change', async () => {
       const val = hfInput.value.trim();
+      if (!val) return;
+      // In-session downloads read the live copy off _envState (they send it as a
+      // task payload, which the state sync's redaction never touches), so keep
+      // it regardless of whether the save lands. localStorage and the debounced
+      // sync both strip hfToken; only saveHfToken() can persist it.
       _envState.hfToken = val;
-      try { await _persistEnvState(); } catch {}
-      if (val) {
-        _envState.hfTokenConfigured = true;
-        const masked = val.length > 6 ? val.slice(0, 3) + '…' + val.slice(-3) : '••••';
-        _envState.hfTokenMasked = masked;
-        hfInput.placeholder = `Stored (${masked}) - enter a new token to replace`;
-        hfInput.value = '';
-        let check = hfInput.parentNode.querySelector('.hwfit-hf-check');
-        if (!check) {
-          check = document.createElement('span');
-          check.className = 'hwfit-hf-check';
-          check.title = 'Token stored';
-          check.textContent = '✓';
-          check.style.cssText = 'font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;';
-          hfInput.parentNode.insertBefore(check, hfInput);
-        }
-        const flash = document.createElement('span');
-        flash.textContent = 'Saved';
-        flash.style.cssText = 'margin-left:8px;font-size:11px;color:var(--green,#50fa7b);opacity:0;transition:opacity 0.18s;flex-shrink:0;position:relative;top:1px;';
-        hfInput.parentNode.appendChild(flash);
-        requestAnimationFrame(() => { flash.style.opacity = '1'; });
-        setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 220); }, 1400);
+      const saved = await saveHfToken(val);
+      if (!saved.ok || !saved.configured) {
+        // The old code flashed Saved for a request that carried no token at
+        // all. Now the mark needs the server to say it holds the token, and the
+        // typed value stays visible so the user can retry.
+        _hfTokenMark(hfInput, false);
+        _hfTokenFlash(hfInput, saved.error || 'Not saved', false);
+        return;
       }
+      try { await _persistEnvState(); } catch {}
+      _envState.hfTokenConfigured = saved.configured;
+      _envState.hfTokenMasked = saved.masked;
+      hfInput.placeholder = `Stored (${saved.masked || 'configured'}) - enter a new token to replace`;
+      hfInput.value = '';
+      _hfTokenMark(hfInput, true);
+      _hfTokenFlash(hfInput, 'Saved', true);
     });
   }
+}
+
+// The persistent ✓ next to the HF token field: present only while the server
+// holds a token, removed when a save fails.
+function _hfTokenMark(input, stored) {
+  const check = input.parentNode.querySelector('.hwfit-hf-check');
+  if (!stored) {
+    if (check) check.remove();
+    return;
+  }
+  if (check) return;
+  const span = document.createElement('span');
+  span.className = 'hwfit-hf-check';
+  span.title = 'Token stored';
+  span.textContent = '✓';
+  span.style.cssText = 'font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;';
+  input.parentNode.insertBefore(span, input);
+}
+
+// Transient confirmation or failure text next to the field. A failure lingers
+// about three times as long as a success: it is the one that needs reading.
+function _hfTokenFlash(input, text, ok) {
+  const flash = document.createElement('span');
+  flash.textContent = text;
+  flash.style.cssText = `margin-left:8px;font-size:11px;color:${ok ? 'var(--green,#50fa7b)' : 'var(--red,#e06c75)'};opacity:0;transition:opacity 0.18s;flex-shrink:0;position:relative;top:1px;`;
+  input.parentNode.appendChild(flash);
+  requestAnimationFrame(() => { flash.style.opacity = '1'; });
+  const hold = ok ? 1400 : 4000;
+  setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 220); }, hold);
 }
 
 // ── Main render ──

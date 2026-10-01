@@ -53,6 +53,7 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_windows_bash_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     load_stored_hf_token,
+    save_stored_hf_token,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
@@ -3514,6 +3515,43 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": True, "preserved": len(preserved)}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    class CookbookHfTokenRequest(BaseModel):
+        token: str = ""
+
+    @router.post("/api/cookbook/hf-token")
+    async def set_cookbook_hf_token(request: Request, req: CookbookHfTokenRequest):
+        """Store the Hugging Face token typed into Cookbook -> Settings.
+
+        Admin-gated like the other state writers: the value lands in the same
+        cookbook_state.json that the serve and download builders read back
+        through `load_stored_hf_token()`.
+
+        Why a route of its own: the debounced state sync runs its body through
+        `_stripStateSecrets()` (static/js/cookbookRunning.js), which deletes
+        `env.hfToken` from every POST, so `/api/cookbook/state` never receives
+        the token and the Settings field could not persist (#6361). That
+        redaction stays exactly as it is; this explicit call is the only writer,
+        and the reply reports what is now stored rather than what was typed.
+        """
+        require_admin(request)
+        save_stored_hf_token(req.token, state_path=_cookbook_state_path)
+        # Answer from what is on disk now, not by echoing the request: the reply
+        # is the same projection GET /state serves, so the field renders the
+        # server's own configured flag and mask. Refreshing the GET /state cache
+        # with that projection is what the state POST does for the same reason.
+        saved = _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
+        _state_get_cache.update({
+            "ts": time.monotonic(),
+            "mtime": _cookbook_state_path.stat().st_mtime,
+            "value": saved,
+        })
+        env = saved.get("env") or {}
+        return {
+            "ok": True,
+            "hfTokenConfigured": bool(env.get("hfTokenConfigured")),
+            "hfTokenMasked": env.get("hfTokenMasked") or "",
+        }
 
     @router.get("/api/cookbook/hf-latest")
     async def hf_latest(vram_gb: float = 0, limit: int = 10, pipeline: str = "text-generation", owner: str = Depends(require_user)):
