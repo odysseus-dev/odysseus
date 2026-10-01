@@ -127,6 +127,74 @@ def test_workspace_auto_escalation_keeps_shell_tools():
     assert "if auto_escalated and not _workspace_agent_intent:" in source
 
 
+def test_compare_chat_preserves_explicit_mode_during_tool_intent_routing():
+    """Compare Chat must not be auto-promoted to Agent by prompt-derived tool intent."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    chat_stream_func = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream":
+            chat_stream_func = node
+            break
+
+    assert chat_stream_func is not None, "chat_stream function not found"
+
+    escalation_if = None
+    for node in ast.walk(chat_stream_func):
+        if not isinstance(node, ast.If):
+            continue
+
+        condition = ast.get_source_segment(source, node.test) or ""
+        if (
+            'chat_mode == "chat"' in condition
+            and "_tool_intent" in condition
+            and "needs_tools" in condition
+        ):
+            body = "\n".join(
+                ast.get_source_segment(source, stmt) or ""
+                for stmt in node.body
+            )
+            if 'chat_mode = "agent"' in body:
+                escalation_if = node
+                break
+
+    assert escalation_if is not None, "tool-intent Chat→Agent escalation branch not found"
+
+    condition = ast.get_source_segment(source, escalation_if.test) or ""
+    assert "not compare_mode" in condition, (
+        "Compare Chat must preserve its explicitly selected mode instead of "
+        "being auto-promoted to Agent by prompt-derived tool intent"
+    )
+
+
+def test_compare_chat_blocks_other_automatic_agent_escalation_paths():
+    """Compare Chat must stay Chat across search, web, follow-up, and workspace heuristics."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+
+    assert 'elif chat_mode == "chat" and not compare_mode and _search_enabled:' in source
+    assert 'elif chat_mode == "chat" and not compare_mode and _explicit_web_intent:' in source
+
+    assert (
+        'chat_mode == "chat"\n'
+        '                and not compare_mode\n'
+        '                and isinstance(message, str)\n'
+        '                and (not _tool_intent or not _tool_intent.needs_tools)\n'
+        '                and _is_contextual_web_followup(message, sess)'
+    ) in source
+
+    assert (
+        'if isinstance(message, str) and _is_contextual_browser_followup(message, sess):\n'
+        '                _explicit_browser_intent = True\n'
+        '                if chat_mode == "chat" and not compare_mode:'
+    ) in source
+
+    assert (
+        'if _auto_workspace:\n'
+        '                    workspace = _auto_workspace\n'
+        '                    if not (compare_mode and chat_mode == "chat"):'
+    ) in source
+
 # ── Functional tests of the disabled-tools logic ───────────────
 
 
