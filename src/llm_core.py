@@ -808,6 +808,32 @@ KIMI_CODE_USER_AGENT = KIMI_CODE_USER_AGENTS[0]
 _kimi_code_ua_cache: dict[str, str] = {}
 
 
+# OpenCode Go (opencode.ai/zen/go) requires a stable per-conversation
+# `x-opencode-session` header for routing/prompt-caching, plus its own
+# User-Agent (not a generic SDK/HTTP-library name). See
+# https://opencode.ai/docs/go/#where-can-i-use-it
+OPENCODE_GO_USER_AGENT = "Odysseus/1.0"
+OPENCODE_GO_FALLBACK_SESSION = "odysseus-global"
+
+
+def _apply_opencode_go_headers(h: Dict[str, str], session_id: Optional[str] = None) -> Dict[str, str]:
+    """Ensure OpenCode Go routing headers are present, in place."""
+    h.setdefault("User-Agent", OPENCODE_GO_USER_AGENT)
+    existing_key = next(
+        (k for k in list(h.keys()) if isinstance(k, str) and k.lower() == "x-opencode-session"),
+        None,
+    )
+    sid = str(session_id).strip() if session_id else ""
+    if sid:
+        if existing_key:
+            h[existing_key] = sid
+        else:
+            h["x-opencode-session"] = sid
+    elif not existing_key:
+        h["x-opencode-session"] = OPENCODE_GO_FALLBACK_SESSION
+    return h
+
+
 def _is_kimi_code_url(url: str) -> bool:
     if not url or not _host_match(url, "kimi.com"):
         return False
@@ -815,6 +841,93 @@ def _is_kimi_code_url(url: str) -> bool:
         return "/coding" in (urlparse(url).path or "")
     except Exception:
         return False
+
+
+def _is_opencode_go_url(url: str) -> bool:
+    if not url or not _host_match(url, "opencode.ai"):
+        return False
+    try:
+        path = (urlparse(url).path or "").rstrip("/")
+    except Exception:
+        return False
+    return path == "/zen/go" or path.startswith("/zen/go/")
+
+
+def _is_opencode_zen_url(url: str) -> bool:
+    if not url or not _host_match(url, "opencode.ai"):
+        return False
+    try:
+        path = (urlparse(url).path or "").rstrip("/")
+    except Exception:
+        return False
+    return path == "/zen" or path.startswith("/zen/")
+
+
+# OpenCode Go serves these models on the OpenAI Responses API
+# (.../v1/responses); the remaining Go models use .../v1/chat/completions.
+# See https://opencode.ai/docs/go/#endpoints
+_OPENCODE_GO_RESPONSES_MODELS = ("grok-4.6", "gpt-5.6-luna", "muse-spark")
+
+
+def _is_opencode_go_responses_model(model: str) -> bool:
+    """Check if a Go model needs the Responses API instead of chat completions."""
+    if not model:
+        return False
+    m = model.lower()
+    return any(m.startswith(p) or f"/{p}" in m for p in _OPENCODE_GO_RESPONSES_MODELS)
+
+
+def _normalize_opencode_go_url(url: str, model: str) -> str:
+    """Point a Go base URL at /responses or /chat/completions for this model."""
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/models", "/completions", "/responses"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    if _is_opencode_go_responses_model(model):
+        return base + "/responses"
+    return base + "/chat/completions"
+
+
+def _build_opencode_go_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    *,
+    stream: bool = False,
+) -> Dict:
+    """Build an OpenAI Responses API payload for Go responses-models."""
+    from src.chatgpt_subscription import build_responses_input
+
+    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    payload: Dict = {
+        "model": model,
+        "instructions": _chatgpt_subscription_instructions(messages),
+        "input": build_responses_input(conversation),
+        "stream": stream,
+        "store": False,
+    }
+    if not _restricts_temperature(model):
+        payload["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        payload["max_output_tokens"] = max_tokens
+    return payload
+
+
+def _parse_responses_output_text(data: Dict) -> str:
+    """Extract plain text from a non-streamed Responses API response."""
+    parts: List[str] = []
+    output = (data or {}).get("output") or []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        for block in item.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "output_text" and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+    return "".join(parts)
 
 
 def _kimi_code_base_key(url: str) -> str:
@@ -976,9 +1089,9 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
-    if _host_match(url, "opencode.ai/zen/go"):
+    if _is_opencode_go_url(url):
         return "opencode-go"
-    if _host_match(url, "opencode.ai/zen"):
+    if _is_opencode_zen_url(url):
         return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
@@ -1094,7 +1207,7 @@ def _apply_local_generation_stability(payload: Dict, url: str, model: str) -> No
         payload["max_tokens"] = 2048
 
 
-def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+def _provider_headers(provider: str, headers: Optional[Dict] = None, session_id: Optional[str] = None) -> Dict[str, str]:
     h = {"Content-Type": "application/json"}
     if isinstance(headers, dict):
         h.update(headers)
@@ -1109,6 +1222,8 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
         from src.copilot import copilot_headers
         for k, v in copilot_headers(None).items():
             h.setdefault(k, v)
+    if provider == "opencode-go":
+        _apply_opencode_go_headers(h, session_id)
     return h
 
 
@@ -1121,8 +1236,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
-    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
-    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
+    if _is_opencode_go_url(url): return "OpenCode Go"
+    if _is_opencode_zen_url(url): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
@@ -2016,6 +2131,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "opencode-go" and _is_opencode_go_responses_model(model):
+        target_url = _normalize_opencode_go_url(url, model)
+        payload = _build_opencode_go_responses_payload(model, messages_copy, temperature, max_tokens)
     else:
         target_url = _normalize_openai_chat_url(url)
         if provider == "copilot":
@@ -2047,6 +2165,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
+        elif provider == "opencode-go" and _is_opencode_go_responses_model(model):
+            response = _parse_responses_output_text(data)
         else:
             msg = data["choices"][0]["message"]
             content = msg.get("content")
@@ -2301,10 +2421,11 @@ async def llm_call_async(
             return cached_response, (_get_cached_response_model(cache_key) or model)
         return cached_response
 
-    if provider == "chatgpt-subscription":
-        # ChatGPT/Codex requires streamed Responses requests even for callers
+    _go_responses = provider == "opencode-go" and _is_opencode_go_responses_model(model)
+    if provider == "chatgpt-subscription" or _go_responses:
+        # Responses APIs require streamed requests even for callers
         # that want a plain string (auto-title, memory extraction, etc.).
-        # Reuse stream_llm's validated Codex SSE path and collect deltas.
+        # Reuse stream_llm's validated Responses SSE path and collect deltas.
         parts: List[str] = []
         actual_model = model
         async for chunk in stream_llm(
@@ -2316,6 +2437,7 @@ async def llm_call_async(
             headers=headers,
             timeout=timeout,
             workload=workload,
+            session_id=session_id,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2345,7 +2467,9 @@ async def llm_call_async(
                     continue
                 if event_is_error or data.get("error") or (data.get("status") and data.get("text")):
                     status = int(data.get("status") or 502)
-                    text = data.get("text") or data.get("error") or "ChatGPT Subscription request failed"
+                    text = data.get("text") or data.get("error") or (
+                        "OpenCode Go request failed" if _go_responses else "ChatGPT Subscription request failed"
+                    )
                     error_type = (
                         _FallbackIneligibleHTTPException
                         if data.get("fallback_eligible") is False
@@ -2378,7 +2502,7 @@ async def llm_call_async(
         )
     else:
         target_url = _normalize_openai_chat_url(url)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, session_id)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -2626,6 +2750,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+    elif provider == "opencode-go" and _is_opencode_go_responses_model(model):
+        target_url = _normalize_opencode_go_url(url, model)
+        h = _provider_headers(provider, headers, session_id)
+        payload = _build_opencode_go_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2659,7 +2787,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, session_id)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -2677,8 +2805,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     note_model_activity(target_url, model)
     degenerate_guard = _DegenerateStreamGuard(model)
 
-    # ── ChatGPT Subscription / Codex Responses streaming ──
-    if provider == "chatgpt-subscription":
+    # ── Responses API streaming (ChatGPT Subscription / Codex, OpenCode Go) ──
+    _go_responses_stream = provider == "opencode-go" and _is_opencode_go_responses_model(model)
+    if provider == "chatgpt-subscription" or _go_responses_stream:
+        _responses_tag = "OpenCode Go" if _go_responses_stream else "ChatGPT Subscription"
         event_name = ""
         input_tokens = 0
         output_tokens = 0
@@ -2690,7 +2820,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
-                    friendly = _format_chatgpt_subscription_error(r.status_code, raw)
+                    if _go_responses_stream:
+                        friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    else:
+                        friendly = _format_chatgpt_subscription_error(r.status_code, raw)
                     yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                     return
                 async for line in r.aiter_lines():
@@ -2774,7 +2907,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                 for key in ("type", "code", "message", "status", "status_code", "http_status")
                                 if key in data
                             }
-                        text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
+                        text = err.get("message") if isinstance(err, dict) else str(err or f"{_responses_tag} request failed")
                         status = _provider_stream_error_status(err, default=400)
                         yield f'event: error\ndata: {json.dumps({"status": status, "text": text})}\n\n'
                         return
@@ -2782,7 +2915,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
-            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            logger.warning(f"{_responses_tag} stream connect to {target_url} failed: {e}{_tail}")
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
@@ -2795,7 +2928,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         except httpx.NetworkError:
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
         except Exception as e:
-            logger.error(f"ChatGPT Subscription stream error: {e}")
+            logger.error(f"{_responses_tag} stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
         return
 
