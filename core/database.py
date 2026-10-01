@@ -406,7 +406,7 @@ class EmailAccount(TimestampMixin, Base):
     imap_host      = Column(String, default="")
     imap_port      = Column(Integer, default=993)
     imap_user      = Column(String, default="")
-    imap_password  = Column(String, default="")
+    imap_password  = Column(EncryptedText, default="")
     imap_starttls  = Column(Boolean, default=True)
 
     # SMTP (sending)
@@ -414,15 +414,15 @@ class EmailAccount(TimestampMixin, Base):
     smtp_port      = Column(Integer, default=465)
     smtp_security  = Column(String, default="ssl")  # ssl | starttls | none
     smtp_user      = Column(String, default="")
-    smtp_password  = Column(String, default="")
+    smtp_password  = Column(EncryptedText, default="")
 
     from_address   = Column(String, default="")
     display_name   = Column(String, nullable=True)   # "Hriday Ranka" — used in From: header
 
     # OAuth2 (Google / Google Workspace). Tokens stored encrypted via secret_storage.
     oauth_provider      = Column(String, nullable=True)   # "google" or None
-    oauth_access_token  = Column(String, nullable=True)   # encrypted
-    oauth_refresh_token = Column(String, nullable=True)   # encrypted
+    oauth_access_token  = Column(EncryptedText, nullable=True)
+    oauth_refresh_token = Column(EncryptedText, nullable=True)
     oauth_token_expiry  = Column(String, nullable=True)   # unix timestamp string
 
     __table_args__ = (

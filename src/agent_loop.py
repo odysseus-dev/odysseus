@@ -609,7 +609,9 @@ Read a file and return its contents.""",
 <file path>
 <file contents>
 ```
-Write content to a file. First line is the path, rest is the content.""",
+Write content to a file. First line is the path, rest is the content. An empty body is
+refused when the target already holds data — to clear a file on purpose, send
+`{"path": "<file path>", "content": ""}` instead.""",
 
     "edit_file": """\
 ```edit_file
@@ -3168,7 +3170,7 @@ def _compute_final_metrics(
     elif has_real_usage:
         ctx_tokens = real_input_tokens
     else:
-        ctx_tokens = estimate_tokens(messages)
+        ctx_tokens = estimate_tokens(messages, model)
     ctx_pct = min(round((ctx_tokens / context_length) * 100, 1), 100.0) if context_length else 0
 
     metrics = {
@@ -3564,7 +3566,7 @@ async def stream_agent_loop(
         metrics = {
             "model": model,
             "requested_model": model,
-            "input_tokens": estimate_tokens(messages),
+            "input_tokens": estimate_tokens(messages, model),
             "output_tokens": max(len(msg) // 4, 1),
             "total_time": 0,
             "response_time": 0,
@@ -3645,7 +3647,7 @@ async def stream_agent_loop(
                 input_tokens=(
                     real_input_tokens
                     if direct_has_real_usage
-                    else estimate_tokens(direct_actual_messages)
+                    else estimate_tokens(direct_actual_messages, direct_actual_model)
                 ),
                 output_tokens=(
                     real_output_tokens
@@ -3821,7 +3823,7 @@ async def stream_agent_loop(
             input_tokens=(
                 real_input_tokens
                 if direct_has_real_usage
-                else estimate_tokens(direct_actual_messages)
+                else estimate_tokens(direct_actual_messages, direct_actual_model)
             ),
             output_tokens=(
                 real_output_tokens
@@ -3837,7 +3839,7 @@ async def stream_agent_loop(
             "endpoint_label": direct_actual_endpoint_label,
             "requested_endpoint_id": requested_endpoint_id,
             "requested_endpoint_label": requested_endpoint_label,
-            "input_tokens": real_input_tokens or estimate_tokens(direct_actual_messages),
+            "input_tokens": real_input_tokens or estimate_tokens(direct_actual_messages, direct_actual_model),
             "output_tokens": real_output_tokens or max(len(direct_response) // 4, 1),
             "total_time": round(duration, 2),
             "response_time": round(duration, 2),
@@ -4228,7 +4230,7 @@ async def stream_agent_loop(
             soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
             if soft_budget <= 0:
                 return _without_protection(route_messages)
-            before_trim_tokens = estimate_tokens(route_messages)
+            before_trim_tokens = estimate_tokens(route_messages, candidate_model)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
             try:
                 hard_max = int(
@@ -4250,8 +4252,9 @@ async def stream_agent_loop(
                 route_messages,
                 effective_budget,
                 reserve_tokens=reserve_tokens,
+                model=candidate_model,
             )
-            after_trim_tokens = estimate_tokens(trimmed_messages)
+            after_trim_tokens = estimate_tokens(trimmed_messages, candidate_model)
             if after_trim_tokens < before_trim_tokens:
                 logger.info(
                     "[agent] soft-trimmed route model=%s context: %s -> %s tokens "
@@ -4386,7 +4389,7 @@ async def stream_agent_loop(
     prep_timings["context_trim"] = time.time() - _t3
 
     run_security.observe_messages(_initial_route_request_messages)
-    agent_prompt_tokens = estimate_tokens(_initial_route_request_messages)
+    agent_prompt_tokens = estimate_tokens(_initial_route_request_messages, model)
     logger.info(
         "[agent-timing] prep_done model=%s prompt_tokens=%s context_length=%s prep=%s",
         model,
@@ -4913,7 +4916,7 @@ async def stream_agent_loop(
                 round_output_tokens = _round_real_output_tokens
                 usage_source = "real"
             else:
-                round_input_tokens = estimate_tokens(_last_route_request_messages)
+                round_input_tokens = estimate_tokens(_last_route_request_messages, _round_actual_model)
                 round_output_tokens = max(
                     len(round_response + round_reasoning) // 4,
                     0,
@@ -4934,7 +4937,7 @@ async def stream_agent_loop(
             round_num,
             model,
             endpoint_url,
-            estimate_tokens(messages),
+            estimate_tokens(messages, model),
             len(_tool_names_sent),
             bool(all_tool_schemas),
             agent_stream_timeout,
@@ -5367,7 +5370,7 @@ async def stream_agent_loop(
                         endpoint_id=_round_actual_endpoint_id,
                         endpoint_label=_round_actual_endpoint_label,
                         endpoint_cost_tracked=actual_endpoint_cost_tracked,
-                        input_tokens=estimate_tokens(_synth_messages),
+                        input_tokens=estimate_tokens(_synth_messages, model),
                         output_tokens=max(len(_raw_text) // 4, 0),
                         usage_source="estimated",
                     ))
@@ -6382,7 +6385,7 @@ async def stream_agent_loop(
 
     # --- Final metrics ---
     total_duration = time.time() - total_start
-    final_context_tokens = estimate_tokens(messages)
+    final_context_tokens = estimate_tokens(messages, actual_model)
     metrics = _compute_final_metrics(
         _last_route_request_messages, full_response, total_duration, time_to_first_token,
         _last_route_context_length, real_input_tokens, real_output_tokens,
