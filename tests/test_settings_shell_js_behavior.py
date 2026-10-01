@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.stylesheets import app_css
+
 
 _REPO = Path(__file__).resolve().parent.parent
 _LEAF_HELPER = _REPO / "tests" / "helpers" / "test_settings_shell.js"
@@ -22,11 +24,10 @@ _COORDINATOR_HELPER = (
     _REPO / "tests" / "helpers" / "test_settings_shell_coordinator.mjs"
 )
 _HAS_NODE = shutil.which("node") is not None
-_STYLE = _REPO / "static" / "style.css"
 
 
 def test_settings_desktop_width_targets_settings_not_cookbook():
-    source = _STYLE.read_text(encoding="utf-8")
+    source = app_css()
 
     settings_rule = re.search(
         r"(?ms)^\.settings-modal-content\s*\{[^}]*"

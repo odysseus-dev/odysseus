@@ -246,6 +246,11 @@
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
   <link rel="stylesheet" href="/static/style.css?v=20260808startupshell1">
+  <!-- Panel stylesheets split out of style.css for maintainability. They are
+       eager and their order is load-bearing: the cascade is the concatenation of
+       these files in this order, so they must stay in this order here and in the
+       PRECACHE list in sw.js. None of them is lazy-loaded. -->
+  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20260922csssplit1">
   <link rel="modulepreload" href="/static/app.js?v=20260815toolapproval4">
   <link rel="modulepreload" href="/static/js/chat.js?v=20260815toolapproval4">
   <link rel="modulepreload" href="/static/js/ui.js">

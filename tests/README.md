@@ -153,6 +153,20 @@ The helpers below live under `tests/helpers/`. They exist to remove repeated
 boilerplate that already appeared across multiple tests. Reach for one only when
 your test matches its intended use; do not stretch a helper to cover a new case.
 
+### `tests.helpers.stylesheets.app_css`
+
+Use when a test asserts on a CSS rule.
+
+- Returns every app stylesheet concatenated in the order `static/index.html`
+  loads them, which is the order the cascade actually has.
+- Panel styles no longer all live in `static/style.css`; reading that file
+  alone ties the test to whichever file a rule sits in today, so it breaks
+  when a rule moves without the rendered page changing.
+- `stylesheet_paths()` is there when a test needs the files themselves rather
+  than their contents. It fails loudly if `index.html` links a stylesheet that
+  does not exist.
+- Not for vendored CSS under `static/lib/`, which it deliberately skips.
+
 ### `tests.helpers.cli_loader.load_script`
 
 Use when a test needs to import a script under `scripts/` without repeating

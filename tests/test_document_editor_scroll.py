@@ -10,10 +10,12 @@ document.js is browser-coupled and not importable in pytest.
 
 from pathlib import Path
 
+from tests.helpers.stylesheets import app_css
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = (ROOT / "static/js/document.js").read_text(encoding="utf-8")
-STYLE_CSS = (ROOT / "static/style.css").read_text(encoding="utf-8")
+STYLE_CSS = app_css()
 
 
 def test_document_textarea_scrollbar_is_visible():
