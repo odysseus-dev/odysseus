@@ -36,6 +36,7 @@ from routes.email_helpers import (
     _send_smtp_message,
     _imap_connect, _imap, _decode_header,
     _detect_sent_folder, _detect_spam_folder, _imap_move,
+    _ensure_sent_copy, _server_saves_sent_copy,
     _extract_attachment_text, _extract_text,
     _pre_retrieve_context,
     _attach_compose_uploads, _cleanup_compose_uploads, _q,
@@ -1440,6 +1441,10 @@ def _scheduled_poll_once() -> dict:
                     outer = MIMEMultipart("alternative")
                     body_container = outer
                 outer["From"] = cfg["from_address"]
+                # Set our own Message-ID so the Sent copy is identifiable:
+                # without it the server assigns one and we cannot tell our
+                # message apart from anything else in the folder.
+                outer["Message-ID"] = email.utils.make_msgid()
                 outer["To"] = r[1]
                 if r[2]:
                     outer["Cc"] = r[2]
@@ -1470,7 +1475,13 @@ def _scheduled_poll_once() -> dict:
                 try:
                     with _imap(row_account_id, owner=row_owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
-                        imap.append(_q(sent_folder), "\\Seen", None, outer.as_bytes())
+                        _ensure_sent_copy(
+                            imap,
+                            sent_folder,
+                            outer["Message-ID"] or "",
+                            outer.as_bytes(),
+                            server_saves_copy=_server_saves_sent_copy(cfg),
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to append scheduled {sid} to Sent: {e}")
 

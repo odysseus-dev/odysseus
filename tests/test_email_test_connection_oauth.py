@@ -91,7 +91,7 @@ async def test_test_connection_oauth_account_uses_xoauth2_for_imap_and_smtp():
          mock.patch("routes.email_routes._open_imap_connection", return_value=mock_imap_conn), \
          mock.patch("routes.email_routes.smtplib.SMTP", return_value=mock_smtp_conn), \
          mock.patch("routes.email_routes.smtplib.SMTP_SSL", return_value=mock_smtp_conn), \
-         mock.patch("routes.email_routes._get_valid_google_token", return_value="ya29.live") as token_getter:
+         mock.patch("routes.email_routes._get_valid_oauth_token", return_value="ya29.live") as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 
     assert result["ok"] is True

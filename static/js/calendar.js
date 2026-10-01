@@ -203,16 +203,37 @@ async function _fetchCalendars() {
 // Trigger a CalDAV pull. `interactive=true` waits for the result and
 // refreshes the UI; false fires-and-forgets (used on first open). Both
 // no-op silently if CalDAV isn't configured.
+// `direction=both` answers with {push, pull} branches; pull-only answers flat.
+// Flatten either into one set of counts the callers can read.
+function _flattenSyncResult(raw) {
+  const out = { calendars: 0, events: 0, deleted: 0, errors: [] };
+  const add = (part) => {
+    if (!part || typeof part !== 'object') return;
+    out.calendars += Number(part.calendars || 0);
+    out.events += Number(part.events || 0);
+    out.deleted += Number(part.deleted || 0);
+    if (Array.isArray(part.errors)) out.errors.push(...part.errors);
+  };
+  if (raw && (raw.push || raw.pull)) { add(raw.push); add(raw.pull); }
+  else add(raw);
+  return out;
+}
+
 async function _syncCaldav(interactive) {
   try {
-    const res = await fetch(`${API_BASE}/api/calendar/sync`, {
+    // `both` pushes local edits before pulling. A pull alone would leave an
+    // event created here while the server was unreachable stuck pending
+    // forever, since nothing else retries it — and "Sync now" is exactly
+    // when the user expects that retry to happen.
+    const res = await fetch(`${API_BASE}/api/calendar/sync?direction=both`, {
       method: 'POST', credentials: 'same-origin',
     });
-    const data = await res.json().catch(() => ({}));
+    const raw = await res.json().catch(() => ({}));
+    const data = _flattenSyncResult(raw);
     if (interactive) return data;
-    // Background path: if the pull actually changed anything, drop
+    // Background path: if the sync actually changed anything, drop
     // local caches and re-render so new events appear.
-    const changed = (data.calendars || 0) > 0 && ((data.events || 0) > 0 || (data.deleted || 0) > 0);
+    const changed = (data.events || 0) > 0 || (data.deleted || 0) > 0;
     if (changed) {
       _allEvents = {}; _fetchedRanges = [];
       try { localStorage.removeItem(LS_KEY); } catch (_) {}

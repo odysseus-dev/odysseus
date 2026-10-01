@@ -261,7 +261,8 @@ def test_outlook_smtp_basic_auth_error_is_actionable():
     )
 
     assert "Microsoft no longer accepts normal mailbox passwords" in msg
-    assert "OAuth/Graph" in msg
+    # Point at the OAuth connect flow that replaces the password.
+    assert "Connect with Microsoft" in msg
     assert "535" not in msg
 
 

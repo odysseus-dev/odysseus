@@ -32,6 +32,15 @@ let initialized = false;
 let modalEl = null;
 let _authPolicy = { password_min_length: 8 };
 
+// Per-provider copy for the email OAuth connect panel, shared by the Settings
+// account form and the first-run setup form. Keyed by the `oauth` value on a
+// provider preset, which is also the URL segment of its authorize route
+// (/api/email/oauth/<provider>/authorize).
+const OAUTH_PROVIDER_META = {
+  google:    { label: 'Google',    title: 'Google OAuth2 — required for Workspace / .edu accounts' },
+  microsoft: { label: 'Microsoft', title: 'Microsoft OAuth2 — required for Outlook / Office 365 accounts' },
+};
+
 /**
  * POST a settings patch, then drop the shared snapshot in appConfig.js.
  *
@@ -2263,7 +2272,7 @@ async function initReminderSettings() {
   const smtpAccountReady = (account) => !!(
     account.smtp_host
     && account.smtp_user
-    && (account.has_smtp_password || account.oauth_provider === 'google')
+    && (account.has_smtp_password || !!account.oauth_provider)
   );
   try {
     const res = await fetch('/api/email/accounts', { credentials: 'same-origin' });
@@ -2771,7 +2780,7 @@ async function initEmailAccountsSettings() {
       google_workspace:  { label: 'Google Workspace / .edu',   imap: { host: 'imap.gmail.com',        port: 993, starttls: false }, smtp: { host: 'smtp.gmail.com',        port: 587 }, oauth: 'google' },
       migadu:            { label: 'Migadu',                     imap: { host: 'imap.migadu.com',       port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com',       port: 465 } },
       icloud:            { label: 'iCloud',                     imap: { host: 'imap.mail.me.com',      port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com',      port: 587 } },
-      outlook:           { label: 'Outlook / Office 365',       imap: { host: 'outlook.office365.com', port: 993, starttls: false }, smtp: { host: 'smtp.office365.com',    port: 587 } },
+      outlook:           { label: 'Outlook / Office 365',       imap: { host: 'outlook.office365.com', port: 993, starttls: false }, smtp: { host: 'smtp.office365.com',    port: 587 }, oauth: 'microsoft' },
       fastmail:          { label: 'Fastmail',                   imap: { host: 'imap.fastmail.com',     port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com',     port: 465 } },
       yahoo:             { label: 'Yahoo',                      imap: { host: 'imap.mail.yahoo.com',   port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com',   port: 465 } },
       dovecot:           { label: 'Dovecot IMAP (no SMTP)',     imap: { host: '',                      port: 31143, starttls: false }, smtp: { host: '',                     port: 465 } },
@@ -2789,9 +2798,9 @@ async function initEmailAccountsSettings() {
         <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
         <div class="settings-row"><label class="settings-label">Display Name${_hint('Your name as it appears in the From: field of emails you send, e.g. Jane Smith. Auto-filled from Google during OAuth.')}</label><input id="eaf-display-name" class="settings-input" placeholder="Your Name" value="${esc(a.display_name || '')}"></div>
         <div id="eaf-oauth-section" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--accent,#50fa7b) 6%,transparent)">
-          <div style="font-size:11px;font-weight:600;margin-bottom:6px">Google OAuth2 — required for Workspace / .edu accounts</div>
-          <div id="eaf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${a.oauth_provider === 'google' ? '✓ Connected via Google OAuth' : 'Not connected — click below to authorize'}</div>
-          <button type="button" id="eaf-oauth-btn" class="admin-btn-add" style="font-size:11px">${a.oauth_provider === 'google' ? 'Reconnect with Google' : 'Connect with Google'}</button>
+          <div id="eaf-oauth-title" style="font-size:11px;font-weight:600;margin-bottom:6px"></div>
+          <div id="eaf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px"></div>
+          <button type="button" id="eaf-oauth-btn" class="admin-btn-add" style="font-size:11px">Connect</button>
         </div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
@@ -2820,20 +2829,35 @@ async function initEmailAccountsSettings() {
       </div>
     `;
 
-    // Show/hide OAuth section and password fields based on provider selection.
+    // Which provider the connect button authorizes against — set by
+    // _syncOauthUI from the selected preset, read by the click handler.
+    let _oauthProvider = '';
+
+    // Show/hide OAuth section and password fields based on provider selection,
+    // and relabel the panel for whichever provider the preset uses.
     function _syncOauthUI(providerKey) {
       const p = PROVIDERS[providerKey];
-      const isOauth = !!(p && p.oauth);
-      el('eaf-oauth-section').style.display = isOauth ? '' : 'none';
+      const provider = (p && p.oauth) || '';
+      _oauthProvider = provider;
+      el('eaf-oauth-section').style.display = provider ? '' : 'none';
+      const meta = OAUTH_PROVIDER_META[provider];
+      if (meta) {
+        const connected = a.oauth_provider === provider;
+        el('eaf-oauth-title').textContent = meta.title;
+        el('eaf-oauth-status').textContent = connected
+          ? `✓ Connected via ${meta.label} OAuth`
+          : 'Not connected — click below to authorize';
+        el('eaf-oauth-btn').textContent = `${connected ? 'Reconnect' : 'Connect'} with ${meta.label}`;
+      }
       formEl.querySelectorAll('.eaf-password-section').forEach(r => {
-        r.style.display = isOauth ? 'none' : '';
+        r.style.display = provider ? 'none' : '';
       });
     }
 
     const eafProviderNotes = {
       outlook: {
         title: 'Outlook / Office 365 needs OAuth',
-        body: 'Microsoft disables normal password login for IMAP/SMTP in most Outlook and Microsoft 365 accounts. Odysseus does not support Microsoft OAuth/Graph mail yet, so this preset is only a placeholder for future support.',
+        body: 'Microsoft disables normal password login for IMAP/SMTP in most Outlook and Microsoft 365 accounts. Use the "Connect with Microsoft" button below to authorize this mailbox with OAuth instead of entering a password.',
       },
     };
     const eafNoteEl = el('eaf-provider-note');
@@ -2866,8 +2890,9 @@ async function initEmailAccountsSettings() {
 
     // Init OAuth UI for accounts already connected via OAuth.
     if (a.oauth_provider === 'google') _syncOauthUI('google_workspace');
+    else if (a.oauth_provider === 'microsoft') _syncOauthUI('outlook');
 
-    // "Connect with Google" button — save the account first, then redirect to OAuth.
+    // "Connect with …" button — save the account first, then redirect to OAuth.
     el('eaf-oauth-btn').addEventListener('click', async () => {
       // Must save the account first to get an account_id to pass to the OAuth flow.
       const body = {
@@ -2890,7 +2915,8 @@ async function initEmailAccountsSettings() {
       const d = await r.json();
       if (!d.ok) { el('eaf-msg').textContent = d.error || 'Save failed'; el('eaf-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? a.id : d.id;
-      window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
+      const provider = _oauthProvider || 'google';
+      window.location.href = `/api/email/oauth/${encodeURIComponent(provider)}/authorize?account_id=${encodeURIComponent(accId)}`;
     });
     el('eaf-smtp-security').value = _smtpSecurity(a);
 
@@ -3358,6 +3384,8 @@ async function initIntegrations() {
 const INTG_TYPES = {
   api:     { label: 'API',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
   caldav:  { label: 'CalDAV',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+  mstodo: { label: 'Microsoft To Do', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>' },
+  msgraph: { label: 'Microsoft 365', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="m9 16 2 2 4-4"/></svg>' },
   contacts: { label: 'Contacts', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
@@ -3457,9 +3485,11 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
+    const [apiRes, calRes, msGraphRes, msTodoRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
+      fetch('/api/calendar/config/microsoft', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
+      fetch('/api/notes/config/microsoft', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/list', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { contacts: [], count: 0 }).catch(() => ({ contacts: [], count: 0 })),
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
@@ -3476,6 +3506,28 @@ async function initUnifiedIntegrations() {
     // CalDAV — one card per account
     for (const acc of (calRes.accounts || [])) {
       items.push({ type: 'caldav', id: acc.id, name: acc.label || 'Calendar (CalDAV)', detail: acc.url, enabled: true, data: acc });
+    }
+    // Microsoft 365 calendars — connected by OAuth, so no URL to show.
+    for (const acc of (msGraphRes.accounts || [])) {
+      items.push({
+        type: 'msgraph',
+        id: acc.id,
+        name: acc.label || 'Microsoft 365 Calendar',
+        detail: acc.email || 'Two-way calendar sync',
+        enabled: true,
+        data: acc,
+      });
+    }
+    // Microsoft To Do — tasks sync into Notes, so there is no URL either.
+    for (const acc of (msTodoRes.accounts || [])) {
+      items.push({
+        type: 'mstodo',
+        id: acc.id,
+        name: acc.label || 'Microsoft To Do',
+        detail: acc.email || 'Two-way task sync',
+        enabled: true,
+        data: acc,
+      });
     }
     // Contacts import first, then the optional CardDAV sync account.
     const contactCount = Number(contactsRes.count || (contactsRes.contacts || []).length || 0);
@@ -3591,6 +3643,8 @@ async function initUnifiedIntegrations() {
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'msgraph') await fetch(`/api/calendar/config/microsoft/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'mstodo') await fetch(`/api/notes/config/microsoft/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'contacts') {
             await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }
@@ -3613,6 +3667,8 @@ async function initUnifiedIntegrations() {
     formEl.style.display = '';
     if (type === 'api') showApiForm(editId);
     else if (type === 'caldav') showCalDavForm(editId);
+    else if (type === 'msgraph') showMsGraphForm();
+    else if (type === 'mstodo') showMsTodoForm();
     else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
@@ -3821,6 +3877,80 @@ async function initUnifiedIntegrations() {
           el('uf-api-msg').style.color = 'var(--red)';
         }
       } catch (e) { el('uf-api-msg').textContent = 'Error: ' + e.message; el('uf-api-msg').style.color = 'var(--red)'; }
+    });
+  }
+
+  // ── Microsoft 365 calendar (OAuth, no credentials to type) ──
+  async function showMsGraphForm() {
+    let configured = false;
+    try {
+      const r = await fetch('/api/calendar/config/microsoft', { credentials: 'same-origin' });
+      if (r.ok) configured = !!(await r.json()).configured;
+    } catch (_) {}
+
+    const icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="m9 16 2 2 4-4"/></svg>';
+
+    // Without the app registration there is nothing to redirect to, so say
+    // what is missing instead of bouncing the user to a Microsoft error.
+    const notice = configured
+      ? 'Events sync both ways: changes made in Outlook appear in Odysseus, and events you create here are written back to your Microsoft calendar.'
+      : 'MICROSOFT_OAUTH_CLIENT_ID is not set. Add the app registration credentials to your .env and restart Odysseus, then connect.';
+
+    formEl.innerHTML = `
+      <div class="admin-card" style="margin-top:8px">
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;">${icon}Connect Microsoft 365 Calendar</h2>
+        <div class="settings-col">
+          <div style="font-size:11px;opacity:0.8;line-height:1.5;margin-bottom:4px;">${esc(notice)}</div>
+          <div style="font-size:11px;opacity:0.65;line-height:1.5;">Your Microsoft password never reaches Odysseus — sign-in happens on Microsoft and only a revocable token is stored. The app registration needs the delegated Microsoft Graph permission <strong>Calendars.ReadWrite</strong>.</div>
+          <div class="settings-row" style="margin-top:12px;align-items:center;justify-content:flex-end;gap:6px;">
+            <span id="uf-msgraph-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            <button class="admin-btn-add" id="uf-msgraph-connect" ${configured ? '' : 'disabled'} style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;${configured ? '' : 'opacity:0.45;cursor:not-allowed;'}">Connect with Microsoft</button>
+            <button class="admin-btn-add" id="uf-msgraph-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+
+    el('uf-msgraph-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('uf-msgraph-connect').addEventListener('click', () => {
+      if (!configured) return;
+      window.location.href = '/api/calendar/oauth/microsoft/authorize';
+    });
+  }
+
+  // ── Microsoft To Do (OAuth, no credentials to type) ──
+  async function showMsTodoForm() {
+    let configured = false;
+    try {
+      const r = await fetch('/api/notes/config/microsoft', { credentials: 'same-origin' });
+      if (r.ok) configured = !!(await r.json()).configured;
+    } catch (_) {}
+
+    const icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
+
+    // Without the app registration there is nothing to redirect to, so say
+    // what is missing instead of bouncing the user to a Microsoft error.
+    const notice = configured
+      ? 'Your To Do tasks appear in Notes and sync both ways: ticking one off here completes it in To Do, and a task added on your phone shows up here. Each To Do list becomes a tag.'
+      : 'MICROSOFT_OAUTH_CLIENT_ID is not set. Add the app registration credentials to your .env and restart Odysseus, then connect.';
+
+    formEl.innerHTML = `
+      <div class="admin-card" style="margin-top:8px">
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;">${icon}Connect Microsoft To Do</h2>
+        <div class="settings-col">
+          <div style="font-size:11px;opacity:0.8;line-height:1.5;margin-bottom:4px;">${esc(notice)}</div>
+          <div style="font-size:11px;opacity:0.65;line-height:1.5;">Your Microsoft password never reaches Odysseus — sign-in happens on Microsoft and only a revocable token is stored. The app registration needs the delegated Microsoft Graph permission <strong>Tasks.ReadWrite</strong>.</div>
+          <div class="settings-row" style="margin-top:12px;align-items:center;justify-content:flex-end;gap:6px;">
+            <span id="uf-mstodo-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+            <button class="admin-btn-add" id="uf-mstodo-connect" ${configured ? '' : 'disabled'} style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;${configured ? '' : 'opacity:0.45;cursor:not-allowed;'}">Connect with Microsoft</button>
+            <button class="admin-btn-add" id="uf-mstodo-cancel" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+
+    el('uf-mstodo-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('uf-mstodo-connect').addEventListener('click', () => {
+      if (!configured) return;
+      window.location.href = '/api/notes/oauth/microsoft/authorize';
     });
   }
 
@@ -4251,7 +4381,7 @@ async function initUnifiedIntegrations() {
       google_workspace: { label: 'Google Workspace / .edu', emailEx: 'you@yourschool.edu', imap: { host: 'imap.gmail.com', port: 993, starttls: false }, smtp: { host: 'smtp.gmail.com', port: 587 }, oauth: 'google' },
       migadu:   { label: 'Migadu',                  emailEx: 'you@yourdomain.com', imap: { host: 'imap.migadu.com',          port: 993, starttls: false }, smtp: { host: 'smtp.migadu.com',    port: 465 } },
       icloud:   { label: 'iCloud',                  emailEx: 'you@icloud.com',    imap: { host: 'imap.mail.me.com',         port: 993, starttls: false }, smtp: { host: 'smtp.mail.me.com',   port: 587 } },
-      outlook:  { label: 'Outlook / Office 365',    emailEx: 'you@outlook.com',   imap: { host: 'outlook.office365.com',    port: 993, starttls: false }, smtp: { host: 'smtp.office365.com', port: 587 } },
+      outlook:  { label: 'Outlook / Office 365',    emailEx: 'you@outlook.com',   imap: { host: 'outlook.office365.com',    port: 993, starttls: false }, smtp: { host: 'smtp.office365.com', port: 587 }, oauth: 'microsoft' },
       fastmail: { label: 'Fastmail',                emailEx: 'you@fastmail.com',  imap: { host: 'imap.fastmail.com',        port: 993, starttls: false }, smtp: { host: 'smtp.fastmail.com',  port: 465 } },
       yahoo:    { label: 'Yahoo',                   emailEx: 'you@yahoo.com',     imap: { host: 'imap.mail.yahoo.com',      port: 993, starttls: false }, smtp: { host: 'smtp.mail.yahoo.com', port: 465 } },
       dovecot:  { label: 'Dovecot IMAP (no SMTP)',  emailEx: 'you@example.com',   imap: { host: '',                         port: 31143, starttls: false }, smtp: { host: '',                   port: 465 } },
@@ -4297,9 +4427,9 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
           <div class="settings-row"><label class="settings-label">Display Name${_hint('Your name as it appears in the From: field of emails you send, e.g. Jane Smith. Auto-filled from Google during OAuth.')}</label><input id="uf-display-name" class="settings-input" placeholder="Your Name"></div>
           <div id="uf-oauth-section" style="display:none;margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--accent,#50fa7b) 6%,transparent)">
-            <div style="font-size:11px;font-weight:600;margin-bottom:6px">Google OAuth2 — required for Workspace / .edu accounts</div>
-            <div id="uf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px">${existing && existing.oauth_provider === 'google' ? '✓ Connected via Google OAuth' : 'Not connected — click below to authorize'}</div>
-            <button type="button" id="uf-oauth-btn" class="admin-btn-add" style="font-size:11px">${existing && existing.oauth_provider === 'google' ? 'Reconnect with Google' : 'Connect with Google'}</button>
+            <div id="uf-oauth-title" style="font-size:11px;font-weight:600;margin-bottom:6px"></div>
+            <div id="uf-oauth-status" style="font-size:11px;opacity:0.7;margin-bottom:6px"></div>
+            <button type="button" id="uf-oauth-btn" class="admin-btn-add" style="font-size:11px">Connect</button>
           </div>
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>IMAP (Receiving)</div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
@@ -4314,6 +4444,20 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password. Outlook / Office 365 generally requires OAuth and will not work with this password form.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>Signature <span style="font-weight:normal;opacity:0.7">— added to messages you compose</span></div>
+          <div class="settings-row" style="align-items:flex-start"><label class="settings-label" style="padding-top:6px">Text${_hint('Appended to new messages, replies and forwards from this account. It goes into the draft before it opens, so you can edit or delete it per message. Markdown works — the same renderer that formats the body formats this.')}</label><textarea id="uf-email-signature" class="settings-input" rows="4" style="resize:vertical;font-family:inherit;line-height:1.5;" placeholder="Ada Lovelace&#10;Analytical Engines Ltd&#10;+44 20 7946 0958"></textarea></div>
+          <div class="settings-row"><label class="settings-label">Use signature${_hint('Turn off to stop adding it without deleting the text.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-signature-on" checked><span class="admin-slider"></span></label></div>
+          <div class="settings-row" style="align-items:flex-start"><label class="settings-label" style="padding-top:6px">Image${_hint('A logo or scanned sign-off, shown under the text. It is embedded in the message rather than linked, so it displays without the recipient having to allow remote images. PNG, JPEG or GIF, up to 256 KB.')}</label>
+            <div style="flex:1;display:flex;flex-direction:column;gap:6px;align-items:flex-start;">
+              <img id="uf-email-signature-img" alt="" style="display:none;max-width:200px;max-height:80px;border:1px solid var(--border);border-radius:4px;padding:4px;background:var(--card);">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <input type="file" id="uf-email-signature-file" accept="image/png,image/jpeg,image/gif" style="display:none;">
+                <button type="button" class="admin-btn-add" id="uf-email-signature-pick" style="background:transparent;">Choose image</button>
+                <button type="button" class="admin-btn-add" id="uf-email-signature-clear" style="display:none;background:transparent;">Remove</button>
+                <span id="uf-email-signature-img-msg" style="font-size:11px;opacity:0.7"></span>
+              </div>
+            </div>
+          </div>
           <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-email-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -4360,7 +4504,7 @@ async function initUnifiedIntegrations() {
       },
       outlook: {
         title: 'Outlook / Office 365 needs OAuth',
-        body: 'Microsoft disables normal password login for IMAP/SMTP in most Outlook and Microsoft 365 accounts. Odysseus does not support Microsoft OAuth/Graph mail yet, so this preset is only a placeholder for future support.',
+        body: 'Microsoft disables normal password login for IMAP/SMTP in most Outlook and Microsoft 365 accounts. Use the "Connect with Microsoft" button below to authorize this mailbox with OAuth instead of entering a password.',
         url: 'https://learn.microsoft.com/exchange/clients-and-mobile-in-exchange-online/disable-basic-authentication-in-exchange-online',
         linkLabel: 'Read Microsoft note',
       },
@@ -4430,13 +4574,28 @@ async function initUnifiedIntegrations() {
         </div>`;
     };
 
-    // Show/hide the OAuth section and password fields based on provider selection.
+    // Which provider the connect button authorizes against — set by
+    // _syncOauthUI from the selected preset, read by the click handler.
+    let _oauthProvider = '';
+
+    // Show/hide the OAuth section and password fields based on provider
+    // selection, and relabel the panel for whichever provider it uses.
     function _syncOauthUI(providerKey) {
       const p = PROVIDERS[providerKey];
-      const isOauth = !!(p && p.oauth);
-      el('uf-oauth-section').style.display = isOauth ? '' : 'none';
+      const provider = (p && p.oauth) || '';
+      _oauthProvider = provider;
+      el('uf-oauth-section').style.display = provider ? '' : 'none';
+      const meta = OAUTH_PROVIDER_META[provider];
+      if (meta) {
+        const connected = !!existing && existing.oauth_provider === provider;
+        el('uf-oauth-title').textContent = meta.title;
+        el('uf-oauth-status').textContent = connected
+          ? `✓ Connected via ${meta.label} OAuth`
+          : 'Not connected — click below to authorize';
+        el('uf-oauth-btn').textContent = `${connected ? 'Reconnect' : 'Connect'} with ${meta.label}`;
+      }
       formEl.querySelectorAll('.uf-password-section').forEach(r => {
-        r.style.display = isOauth ? 'none' : '';
+        r.style.display = provider ? 'none' : '';
       });
     }
 
@@ -4516,8 +4675,9 @@ async function initUnifiedIntegrations() {
 
     // Init OAuth UI for accounts already connected via OAuth.
     if (existing && existing.oauth_provider === 'google') _syncOauthUI('google_workspace');
+    else if (existing && existing.oauth_provider === 'microsoft') _syncOauthUI('outlook');
 
-    // "Connect with Google" — save the account first, then redirect to OAuth.
+    // "Connect with …" — save the account first, then redirect to OAuth.
     el('uf-oauth-btn').addEventListener('click', async () => {
       const body = _collectBody();
       if (!body.name) body.name = body.from_address;
@@ -4528,7 +4688,8 @@ async function initUnifiedIntegrations() {
       const d = await r.json();
       if (!(d.ok || d.id)) { el('uf-email-msg').textContent = d.error || 'Save failed'; el('uf-email-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? editId : d.id;
-      window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
+      const provider = _oauthProvider || 'google';
+      window.location.href = `/api/email/oauth/${encodeURIComponent(provider)}/authorize?account_id=${encodeURIComponent(accId)}`;
     });
 
     // "Same as IMAP" toggle — hide the SMTP creds rows when on.
@@ -4553,6 +4714,8 @@ async function initUnifiedIntegrations() {
       el('uf-smtp-security').value = _smtpSecurity(existing);
       el('uf-smtp-user').value = existing.smtp_user || '';
       el('uf-email-default').checked = !!existing.is_default;
+      el('uf-email-signature').value = existing.signature || '';
+      el('uf-email-signature-on').checked = existing.signature_enabled !== false;
       // If the saved SMTP user matches the IMAP user, keep the "Same as
       // IMAP" toggle ON (and stay hidden). Otherwise turn it off so the
       // separate SMTP credentials are visible for editing.
@@ -4564,6 +4727,68 @@ async function initUnifiedIntegrations() {
       el('uf-smtp-port').value = 465;
       el('uf-smtp-security').value = 'ssl';
     }
+    // ── Signature image ──
+    // `_sigImage` holds a pending upload as a data URL. It stays null while
+    // the user does not touch the picker, and the save body then omits
+    // `signature_image` entirely — which is what tells the server to leave
+    // the stored image alone. '' is the explicit "remove it" value.
+    let _sigImage = null;
+    const _sigImgEl = el('uf-email-signature-img');
+    const _sigClearBtn = el('uf-email-signature-clear');
+    const _sigImgMsg = el('uf-email-signature-img-msg');
+    const _SIG_IMG_MAX = 256 * 1024;
+
+    const _showSigImage = (src) => {
+      if (src) {
+        _sigImgEl.src = src;
+        _sigImgEl.style.display = '';
+        _sigClearBtn.style.display = '';
+      } else {
+        _sigImgEl.removeAttribute('src');
+        _sigImgEl.style.display = 'none';
+        _sigClearBtn.style.display = 'none';
+      }
+    };
+
+    if (existing && existing.has_signature_image) {
+      // Cache-busted: the URL does not change when the image behind it does.
+      _showSigImage(`/api/email/accounts/${existing.id}/signature-image?t=${Date.now()}`);
+    }
+
+    el('uf-email-signature-pick').addEventListener('click', () => {
+      el('uf-email-signature-file').click();
+    });
+
+    el('uf-email-signature-file').addEventListener('change', (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      _sigImgMsg.textContent = '';
+      if (!file) return;
+      // Checked here as well as on the server so a 5 MB photo fails
+      // immediately instead of after uploading it.
+      if (file.size > _SIG_IMG_MAX) {
+        _sigImgMsg.textContent = 'Too large — 256 KB maximum.';
+        ev.target.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        _sigImage = String(reader.result || '');
+        _showSigImage(_sigImage);
+        _sigImgMsg.textContent = 'Saved when you save the account.';
+        _resetTestBtn();
+      };
+      reader.onerror = () => { _sigImgMsg.textContent = 'Could not read that file.'; };
+      reader.readAsDataURL(file);
+      ev.target.value = '';
+    });
+
+    _sigClearBtn.addEventListener('click', () => {
+      _sigImage = '';
+      _showSigImage(null);
+      _sigImgMsg.textContent = 'Removed when you save the account.';
+      _resetTestBtn();
+    });
+
     el('uf-email-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     // Reset the Test button to neutral when the user edits any field
@@ -4602,7 +4827,10 @@ async function initUnifiedIntegrations() {
         smtp_security: el('uf-smtp-security').value,
         smtp_user: el('uf-smtp-user').value.trim(),
         is_default: el('uf-email-default').checked,
+        signature: el('uf-email-signature').value,
+        signature_enabled: el('uf-email-signature-on').checked,
       };
+      if (_sigImage !== null) body.signature_image = _sigImage;
       if (el('uf-imap-pass').value) body.imap_password = el('uf-imap-pass').value;
       if (el('uf-smtp-pass').value) body.smtp_password = el('uf-smtp-pass').value;
       if (el('uf-smtp-same').checked) {
@@ -4720,6 +4948,12 @@ async function initUnifiedIntegrations() {
         }
         el('uf-email-msg').textContent = 'Saved';
         el('uf-email-msg').style.color = 'var(--green,#50fa7b)';
+        // The composer caches the account list for 30s; drop it so the very
+        // next draft carries the signature that was just edited rather than
+        // the one it replaced.
+        import('./emailLibrary/signature.js')
+          .then(m => m.invalidateSignatureCache && m.invalidateSignatureCache())
+          .catch(() => {});
         integrationNotice = 'Email account saved. For more settings, go to Settings > Email.';
         formEl.style.display = 'none';
         await renderList();
@@ -5520,6 +5754,8 @@ async function initUnifiedIntegrations() {
       ['contacts', 'Contacts Import'],
       ['email', 'Email (IMAP/SMTP)'],
       ['mcp', 'MCP Tool Server'],
+      ['msgraph', 'Microsoft 365 Calendar'],
+      ['mstodo', 'Microsoft To Do'],
     ];
     const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');
     const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');
@@ -5619,32 +5855,150 @@ export function close() {
 }
 
 // Handle redirect back from Google OAuth2 — open settings to integrations and show status.
+// What each failure means and what to do about it. Keyed by Odysseus's own
+// error code, then by the provider's code / AADSTS number, which is far more
+// specific when the provider supplied one.
+const OAUTH_ERROR_GUIDANCE = {
+  missing_refresh_token: 'The provider did not return a refresh token, so the mailbox would stop working within the hour. Check that offline_access is granted on the app registration, then connect again.',
+  identity_verification_failed: 'You signed in as a different mailbox than this account is configured for. Sign in with the address in the account\'s Email field, or correct that field first.',
+  token_exchange_failed: 'The provider rejected the token exchange. The client secret is usually wrong or expired, or the redirect URI does not match the one registered on the app.',
+  invalid_state: 'The sign-in could not be matched to the request that started it. Start the connect again from Settings.',
+  missing_code: 'The provider returned no authorization code. Start the connect again from Settings.',
+  account_not_found: 'The email account this connect belonged to no longer exists.',
+  ownership_error: 'That email account belongs to another user.',
+  no_refresh_token: 'Microsoft returned no refresh token, so the calendar would stop syncing within the hour. Check that offline_access is granted on the app registration, then connect again.',
+  microsoft_error: 'Microsoft refused the sign-in before issuing a code.',
+};
+
+const OAUTH_PROVIDER_CODE_GUIDANCE = {
+  access_denied: 'Sign-in or consent was declined. On a work or school tenant this usually means the app still needs administrator approval.',
+  consent_required: 'The tenant requires administrator consent for this app. In Entra, open the app registration, go to API permissions and use "Grant admin consent".',
+  interaction_required: 'Microsoft needs an interactive sign-in for this account. Try again in a normal browser window.',
+  invalid_scope: 'A requested permission is not registered on the app. Mail needs the Exchange delegated permissions (IMAP.AccessAsUser.All, SMTP.Send); calendar sync needs Microsoft Graph Calendars.ReadWrite.',
+  invalid_client: 'The client id or client secret does not match the registered app.',
+  AADSTS65001: 'Nobody has consented to this app for the tenant yet. In Entra, open the app registration, go to API permissions and use "Grant admin consent".',
+  AADSTS90094: 'This app needs administrator approval before it can be used. Ask a tenant administrator to grant consent.',
+  AADSTS7000215: 'The client secret is wrong. Generate a new one in Certificates & secrets and copy its Value, not its Secret ID.',
+  AADSTS700016: 'The application was not found in this tenant. Check MICROSOFT_OAUTH_CLIENT_ID and MICROSOFT_OAUTH_TENANT_ID.',
+  AADSTS50011: 'The redirect URI does not match the one registered on the app. It must match exactly, including scheme and port.',
+  AADSTS50194: 'The app registration is single-tenant, so the shared /common sign-in endpoint is refused. Set MICROSOFT_OAUTH_TENANT_ID to the Directory (tenant) ID from the app registration Overview, then restart. Only a tenant id or verified domain works here — organizations is for multi-tenant apps.',
+  AADSTS500113: 'The app registration has no redirect URI. Add a Web platform with the callback URL.',
+  AADSTS50020: 'This account cannot sign in to the app. Check the Supported account types on the app registration.',
+};
+
+// Mail, calendar and tasks run the same OAuth dance and report back through
+// the same shaped params under their own prefix, so one handler covers them.
+const OAUTH_REDIRECT_FLOWS = [
+  { prefix: 'email_oauth', subject: 'email' },
+  { prefix: 'calendar_oauth', subject: 'calendar sync' },
+  { prefix: 'tasks_oauth', subject: 'task sync' },
+];
+
 (function _handleOauthRedirect() {
   const sp = new URLSearchParams(window.location.search);
-  if (!sp.has('email_oauth_success') && !sp.has('email_oauth_error')) return;
+  const flow = OAUTH_REDIRECT_FLOWS.find(
+    (f) => sp.has(`${f.prefix}_success`) || sp.has(`${f.prefix}_error`),
+  );
+  if (!flow) return;
   // Strip params from URL without a page reload.
   const clean = window.location.pathname + window.location.hash;
   window.history.replaceState(null, '', clean);
-  const success = sp.has('email_oauth_success');
-  const errMsg = sp.get('email_oauth_error') || '';
+  const success = sp.has(`${flow.prefix}_success`);
+  const reason = sp.get(`${flow.prefix}_error`) || '';
+  const provider = sp.get(`${flow.prefix}_provider`) || '';
+  const providerCode = sp.get(`${flow.prefix}_code`) || '';
+  const aadsts = sp.get(`${flow.prefix}_aadsts`) || '';
+  const providerName = (OAUTH_PROVIDER_META[provider] || {}).label || 'OAuth';
+
   // Open settings → integrations once the document is ready. This module owns
   // the open() API, so it does not need to wait for a window-level alias.
   function _showResult() {
     open('integrations');
-    // Brief toast-style banner.
-    const banner = document.createElement('div');
-    banner.textContent = success
-      ? 'Google account connected — email is ready'
-      : `Google OAuth failed: ${errMsg || 'unknown error'}`;
-    Object.assign(banner.style, {
+    if (success) {
+      const banner = document.createElement('div');
+      banner.textContent = `${providerName} account connected — ${flow.subject} is ready`;
+      Object.assign(banner.style, {
+        position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+        background: 'var(--accent, #50fa7b)', color: '#000', padding: '8px 18px',
+        borderRadius: '6px', fontSize: '12px', fontWeight: '600', zIndex: '99999',
+        pointerEvents: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+      });
+      document.body.appendChild(banner);
+      setTimeout(() => banner.remove(), 4000);
+      return;
+    }
+
+    // Failures stay on screen: they carry a code the operator has to read,
+    // act on, and often copy into a support thread. A toast that vanishes
+    // after four seconds sent people digging through browser history for it.
+    const guidance = OAUTH_PROVIDER_CODE_GUIDANCE[aadsts]
+      || OAUTH_PROVIDER_CODE_GUIDANCE[providerCode]
+      || OAUTH_ERROR_GUIDANCE[reason]
+      || 'Check the Odysseus server log for the provider error code.';
+    const codes = [providerCode, aadsts].filter(Boolean).join(' · ');
+
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
       position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-      background: success ? 'var(--accent, #50fa7b)' : 'var(--red, #ff5555)',
-      color: '#000', padding: '8px 18px', borderRadius: '6px', fontSize: '12px',
-      fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
-      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+      width: 'min(520px, calc(100vw - 32px))', background: 'var(--card, #1a1a1a)',
+      color: 'var(--fg)', border: '1px solid var(--border)',
+      borderLeft: '3px solid var(--red, #ff5555)', borderRadius: '6px',
+      padding: '12px 14px', fontSize: '12px', lineHeight: '1.5', zIndex: '99999',
+      boxShadow: '0 4px 18px rgba(0,0,0,0.4)',
     });
-    document.body.appendChild(banner);
-    setTimeout(() => banner.remove(), 4000);
+
+    const title = document.createElement('div');
+    title.textContent = `${providerName} connection failed`;
+    Object.assign(title.style, { fontWeight: '600', marginBottom: '4px' });
+
+    const body = document.createElement('div');
+    body.textContent = guidance;
+    Object.assign(body.style, { opacity: '0.85', marginBottom: codes ? '8px' : '4px' });
+
+    panel.appendChild(title);
+    panel.appendChild(body);
+
+    if (codes) {
+      const codeRow = document.createElement('div');
+      codeRow.textContent = codes;
+      Object.assign(codeRow.style, {
+        fontFamily: 'inherit', opacity: '0.7', userSelect: 'all',
+        padding: '4px 6px', border: '1px solid var(--border)', borderRadius: '4px',
+        marginBottom: '8px', wordBreak: 'break-all',
+      });
+      panel.appendChild(codeRow);
+    }
+
+    const actions = document.createElement('div');
+    Object.assign(actions.style, { display: 'flex', gap: '6px', alignItems: 'center' });
+
+    if (codes) {
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'admin-btn-add';
+      copy.style.fontSize = '11px';
+      copy.textContent = 'Copy code';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(`${reason} ${codes}`.trim());
+          copy.textContent = 'Copied';
+        } catch {
+          copy.textContent = 'Copy failed';
+        }
+      });
+      actions.appendChild(copy);
+    }
+
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'admin-btn-add';
+    Object.assign(dismiss.style, { fontSize: '11px', opacity: '0.7', marginLeft: 'auto' });
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', () => panel.remove());
+    actions.appendChild(dismiss);
+
+    panel.appendChild(actions);
+    document.body.appendChild(panel);
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _showResult, { once: true });

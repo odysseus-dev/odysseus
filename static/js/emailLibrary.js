@@ -3475,6 +3475,14 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
     }));
     let data = await res.json();
     if (seq !== _libFolderSeq || accountAtStart !== (state._libAccountId || '')) return;
+    // A provisional payload is a placeholder, not this mailbox's folders —
+    // its "Sent" is wrong for Office 365 ("Sent Items") and Gmail
+    // ("[Gmail]/Sent Mail"), and selecting it asks for a mailbox that does
+    // not exist. Render it so the picker is not empty, then immediately go
+    // get the real list.
+    if (data.provisional && !live) {
+      _loadFolders({ resetMissing, live: true }).catch(() => {});
+    }
     const sel = document.getElementById('email-lib-folder');
     if (!sel || !data.folders) return;
     state._libFolders = data.folders;

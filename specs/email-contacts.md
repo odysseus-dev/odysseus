@@ -34,7 +34,7 @@ This spec covers mail and contacts in:
 
 ## Email Accounts And Transport
 
-`EmailAccount` rows own IMAP/SMTP configuration. Password fields are string columns containing encrypted ciphertext written with `src.secret_storage`; startup migrations handle legacy plaintext rows. Google OAuth account rows also carry `oauth_provider`, encrypted access/refresh tokens, token expiry, and an optional outbound `display_name`. Do not return decrypted credentials or OAuth tokens, or write them to logs.
+`EmailAccount` rows own IMAP/SMTP configuration. Password fields are string columns containing encrypted ciphertext written with `src.secret_storage`; startup migrations handle legacy plaintext rows. OAuth account rows (`oauth_provider` is `google` or `microsoft`) also carry encrypted access/refresh tokens, token expiry, and an optional outbound `display_name`. Do not return decrypted credentials or OAuth tokens, or write them to logs.
 
 Exactly one default account per owner is enforced as a serialized database transition. Startup normalizes legacy duplicate defaults and installs a unique per-owner default constraint/index; first create, delete/promotion, set-default, demo teardown, and owner rename lock the relevant owner rows and commit atomically. Multi-owner rename acquires locks in canonical order so stale concurrent writers fail closed.
 
@@ -42,7 +42,7 @@ Exactly one default account per owner is enforced as a serialized database trans
 
 - account owner assertions and config fallback order;
 - IMAP/SMTP connection helpers and related transport utilities;
-- Google OAuth2 state signing/verification, token refresh, and XOAUTH2 framing;
+- OAuth2 state signing/verification, per-provider token refresh, provider dispatch (`_get_valid_oauth_token`), and XOAUTH2 framing;
 - SMTP security modes (`ssl`, `starttls`, `none`);
 - envelope recipients and Odysseus headers;
 - attachment extraction helpers;
@@ -63,7 +63,7 @@ Email owner semantics are route-local and compatibility-sensitive:
 `routes.email_routes` owns the HTTP mail surface:
 
 - account CRUD, test, default, and masked config reads;
-- Google OAuth authorize/callback for Workspace and .edu Gmail-style accounts;
+- Google OAuth authorize/callback for Workspace and .edu Gmail-style accounts, and Microsoft OAuth authorize/callback for Outlook / Office 365 accounts;
 - list, search, read, folders, and contacts;
 - folder role resolution and UID fetch/search helpers used by the route surface;
 - owner-scoped route caches and IMAP pool behavior;
@@ -73,14 +73,23 @@ Email owner semantics are route-local and compatibility-sensitive:
 - pending agent-draft approval/cancel flows;
 - mark read/unread/answered, spam flags, move, archive, and delete. IMAP move/delete/archive operations use UID commands for message identity and fail safe when the requested UID no longer exists; they never reinterpret a missing UID as a sequence number, which could mutate or expunge an unrelated message.
 
-Google OAuth behavior is account-owned:
+OAuth behavior is account-owned. Both providers share `_persist_oauth_account_tokens`, so the ownership and mailbox-identity guards cannot drift apart between them:
 
 - `/api/email/oauth/google/authorize` requires an authenticated owner, checks account ownership, HMAC-signs state with account id, owner, and nonce, and redirects to Google with mail/userinfo scopes;
 - `/api/email/oauth/google/callback` verifies signed state before token exchange, re-checks the target account owner before writing tokens, stores access/refresh tokens encrypted, stores token expiry as a timestamp, and redirects with generic success/error codes rather than raw provider errors;
 - token refresh uses `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, stores refreshed access tokens encrypted, and logs only generic/account-id context on failures;
-- SMTP and IMAP use XOAUTH2 when `oauth_provider == "google"`; OAuth accounts are send-capable without an SMTP password when host and user are configured;
+- SMTP and IMAP use XOAUTH2 whenever `oauth_provider` is set; OAuth accounts are send-capable without an SMTP password when host and user are configured. An unrecognized provider yields no token and surfaces as reconnect-required rather than falling back to password auth;
+- each provider is pinned to its own mail hosts and TLS transports (`imap.gmail.com`/`smtp.gmail.com`, `outlook.office365.com`/`smtp.office365.com`), so an edited host can never receive a valid bearer token in an XOAUTH2 frame. Microsoft 365 SMTP is STARTTLS on 587 only;
 - outbound mail formats the `From` header with `display_name` when present.
-- authorize/callback redirect URIs derive their scheme and host from the mounted request unless `GOOGLE_OAUTH_REDIRECT_URI` explicitly pins a value; the browser preserves the selected SMTP security mode during connect and reopens Settings after the callback.
+- authorize/callback redirect URIs derive their scheme and host from the mounted request unless `GOOGLE_OAUTH_REDIRECT_URI` / `MICROSOFT_OAUTH_REDIRECT_URI` explicitly pins a value; the browser preserves the selected SMTP security mode during connect and reopens Settings after the callback.
+
+Microsoft (Outlook / Office 365) specifics:
+
+- `/api/email/oauth/microsoft/authorize` redirects to `login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize` with `openid email offline_access` plus the Exchange delegated scopes `IMAP.AccessAsUser.All` and `SMTP.Send`. The tenant comes from `MICROSOFT_OAUTH_TENANT_ID` (default `common`) and is validated against a tenant-id pattern before interpolation, so it cannot repoint the authority URL;
+- the callback reads the mailbox address and display name from the `id_token` claims (`email`, then `preferred_username`, then `upn`) — Microsoft exposes no userinfo endpoint on the mail resource, and Graph `/me` would require a second consent. Claims are used only for auto-fill and the mailbox-identity check, never as an authorization decision, so the signature is not re-validated;
+- a token response without a refresh token is refused (it means `offline_access` was not granted and the mailbox would stop working an hour later);
+- Microsoft rotates refresh tokens on every refresh, so `_refresh_microsoft_token` persists the returned token; dropping it would break the account on the following refresh;
+- token refresh uses `MICROSOFT_OAUTH_CLIENT_ID` and `MICROSOFT_OAUTH_CLIENT_SECRET`.
 
 MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs. Built-in signature-learning and daily-brief actions also use UID SEARCH/FETCH rather than sequence-number commands.
 
@@ -183,7 +192,7 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 ## Degraded Behavior
 
 - IMAP/SMTP providers can be slow or inconsistent; folder resolution, pooled connections, and reconnect behavior should fail with clear errors.
-- Google OAuth requires external Google endpoints plus configured `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`; missing client credentials or refresh failures degrade to reconnect-required or generic OAuth error paths.
+- Google OAuth requires external Google endpoints plus configured `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`; Microsoft OAuth requires `login.microsoftonline.com` plus `MICROSOFT_OAUTH_CLIENT_ID`/`MICROSOFT_OAUTH_CLIENT_SECRET`, and the mailbox's Exchange Online tenant must allow IMAP/SMTP AUTH. Missing client credentials or refresh failures degrade to reconnect-required or generic OAuth error paths.
 - Scheduled email delivery depends on `scheduled_emails.db`, poller runtime, and configured SMTP.
 - Attachment handling must tolerate missing staged files, unsupported formats, and inaccessible remote messages.
 - CardDAV local fallback applies only when CardDAV is unconfigured; configured CardDAV outages are not treated as local-write mode.
@@ -191,7 +200,7 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header/envelope/IMAP/SMTP behavior, serialized default accounts, Google OAuth state/callback/token-refresh/XOAUTH2/redirect/settings behavior, shared-adapter summaries, authoritative read/mark-seen and frontend dedup, idle prewarm, UID-only mutations, scheduled-email claims and urgency checkpoint transactions, MCP full-message/owner behavior, owner scope/caches/signatures, thread/sanitizer behavior, CardDAV password encryption, mail CLI behavior, contacts basics, and selected frontend/security regressions.
+Existing coverage includes header/envelope/IMAP/SMTP behavior, serialized default accounts, Google and Microsoft OAuth state/callback/token-refresh/XOAUTH2/redirect/settings behavior (including Microsoft tenant validation, refresh-token rotation, and id_token identity verification), shared-adapter summaries, authoritative read/mark-seen and frontend dedup, idle prewarm, UID-only mutations, scheduled-email claims and urgency checkpoint transactions, MCP full-message/owner behavior, owner scope/caches/signatures, thread/sanitizer behavior, CardDAV password encryption, mail CLI behavior, contacts basics, and selected frontend/security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security outside the OAuth path, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 

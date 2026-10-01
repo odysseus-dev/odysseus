@@ -2,12 +2,14 @@
 
 import logging
 import json
+import os
 import re
+import time
 import uuid
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
@@ -148,24 +150,36 @@ def _resolve_base_uid(uid: str) -> str:
     return base
 
 
-async def _push_caldav_event_after_commit(owner: str, uid: str, action: str):
-    """Best-effort CalDAV write-through. Local writes stay authoritative if
+# Calendars whose events live on a remote server and must be written back.
+REMOTE_CALENDAR_SOURCES = ("caldav", "msgraph")
+
+
+def _writeback_module(source: str):
+    """The sync module that owns write-back for a calendar source."""
+    if source == "msgraph":
+        import src.msgraph_calendar as mod
+        return mod
+    import src.caldav_sync as mod
+    return mod
+
+
+async def _push_remote_event_after_commit(owner: str, uid: str, action: str,
+                                          source: str = "caldav"):
+    """Best-effort remote write-through. Local writes stay authoritative if
     the remote server is unreachable; pending flags let /sync retry later."""
     try:
+        mod = _writeback_module(source)
         result = {"ok": True}
         if action == "create":
-            from src.caldav_sync import push_event_create
-            result = await push_event_create(owner, uid)
+            result = await mod.push_event_create(owner, uid)
         elif action == "update":
-            from src.caldav_sync import push_event_update
-            result = await push_event_update(owner, uid)
+            result = await mod.push_event_update(owner, uid)
         elif action == "delete":
-            from src.caldav_sync import push_event_delete
-            result = await push_event_delete(owner, uid)
+            result = await mod.push_event_delete(owner, uid)
         if result and not result.get("ok") and not result.get("skipped"):
             raise RuntimeError(result.get("error") or result)
     except Exception as e:
-        logger.warning("CalDAV %s push failed for uid=%s: %s", action, uid, e)
+        logger.warning("%s %s push failed for uid=%s: %s", source, action, uid, e)
         if action in {"create", "update"}:
             db = SessionLocal()
             try:
@@ -178,8 +192,56 @@ async def _push_caldav_event_after_commit(owner: str, uid: str, action: str):
                 db.close()
 
 
+async def _push_caldav_event_after_commit(owner: str, uid: str, action: str):
+    """Backwards-compatible alias for the CalDAV-only write-through."""
+    await _push_remote_event_after_commit(owner, uid, action, "caldav")
+
+
+# Microsoft's OAuth failure hints are parsed and sanitized once, in
+# email_routes; the calendar flow reuses them rather than keeping a second
+# copy of the same allow-lists in step with the first.
+def _oauth_failure_codes(error, description) -> tuple[str, str]:
+    from routes.email_routes import _oauth_failure_hints
+
+    return _oauth_failure_hints(error, description)
+
+
+def _identity_from_id_token(id_token: str) -> str:
+    """The mailbox address an id_token identifies, or "" when it has none."""
+    from routes.email_routes import _microsoft_identity_from_id_token
+
+    return _microsoft_identity_from_id_token(id_token)[0]
+
+
+def _oauth_code_patterns():
+    from routes.email_routes import _AADSTS_CODE_RE, _OAUTH_ERROR_CODE_RE
+
+    return _OAUTH_ERROR_CODE_RE, _AADSTS_CODE_RE
+
+
+def _merge_sync_results(*results: dict) -> dict:
+    """Combine per-backend sync results into one payload.
+
+    `direction=both` nests its counts under "push"/"pull", so merge those
+    branches recursively and add up the flat counters everywhere else.
+    """
+    merged: dict = {}
+    for result in results:
+        for key, value in (result or {}).items():
+            if isinstance(value, dict):
+                merged[key] = _merge_sync_results(merged.get(key) or {}, value)
+            elif isinstance(value, list):
+                merged[key] = list(merged.get(key) or []) + list(value)
+            elif isinstance(value, int):
+                merged[key] = int(merged.get(key) or 0) + value
+            else:
+                merged.setdefault(key, value)
+    return merged
+
+
 def _record_caldav_delete_tombstone(db, ev: CalendarEvent, owner: str) -> None:
-    if not (ev.calendar and ev.calendar.source == "caldav"):
+    """Retain what a remote delete needs after the local row is gone."""
+    if not (ev.calendar and ev.calendar.source in REMOTE_CALENDAR_SOURCES):
         return
     tombstone = db.query(CalendarDeletedEvent).filter(
         CalendarDeletedEvent.uid == ev.uid,
@@ -980,6 +1042,190 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         _save_caldav_accounts(owner, new_accounts)
         return {"ok": True}
 
+    # ── Microsoft 365 calendar (Graph) ───────────────────────────────────────
+
+    def _msgraph_redirect_uri(request: Request) -> str:
+        return (
+            os.environ.get("MICROSOFT_CALENDAR_REDIRECT_URI")
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}"
+               "/api/calendar/oauth/microsoft/callback"
+        )
+
+    def _msgraph_result_redirect(reason: str, code: str = "", aadsts: str = "") -> str:
+        """Send the browser back to the UI with a sanitized failure marker.
+
+        Everything here reaches the URL bar, so only allow-listed shapes pass;
+        an provider-supplied string is never interpolated raw.
+        """
+        import urllib.parse
+
+        code_re, aadsts_re = _oauth_code_patterns()
+        params = {"section": "integrations", "calendar_oauth_error": reason}
+        if code and code_re.match(code):
+            params["calendar_oauth_code"] = code
+        if aadsts and aadsts_re.fullmatch(aadsts):
+            params["calendar_oauth_aadsts"] = aadsts
+        return "/?" + urllib.parse.urlencode(params)
+
+    @router.get("/config/microsoft")
+    async def list_msgraph_accounts(request: Request):
+        """Connected Microsoft calendars. Tokens are never returned."""
+        owner = _require_user(request)
+        from src.msgraph_calendar import _load_msgraph_accounts
+
+        return {
+            "configured": bool(os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()),
+            "accounts": [
+                {
+                    "id": acc.get("id", ""),
+                    "label": acc.get("label") or acc.get("email") or "Microsoft 365",
+                    "email": acc.get("email", ""),
+                    "connected": bool(acc.get("refresh_token")),
+                }
+                for acc in _load_msgraph_accounts(owner)
+            ],
+        }
+
+    @router.delete("/config/microsoft/{account_id}")
+    async def disconnect_msgraph_account(account_id: str, request: Request):
+        """Disconnect a Microsoft calendar and drop its synced calendars."""
+        owner = _require_user(request)
+        from src.msgraph_calendar import _load_msgraph_accounts, _save_msgraph_accounts
+
+        accounts = _load_msgraph_accounts(owner)
+        remaining = [a for a in accounts if a.get("id") != account_id]
+        if len(remaining) == len(accounts):
+            raise HTTPException(404, "Account not found")
+        _save_msgraph_accounts(owner, remaining)
+
+        db = SessionLocal()
+        try:
+            stale = db.query(CalendarCal).filter(
+                CalendarCal.owner == owner,
+                CalendarCal.source == "msgraph",
+                CalendarCal.account_id == account_id,
+            ).all()
+            for cal in stale:
+                db.delete(cal)     # cascade drops the events with it
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+        return {"ok": True}
+
+    @router.get("/oauth/microsoft/authorize")
+    async def msgraph_oauth_authorize(request: Request, owner: str = Depends(require_user)):
+        """Start the consent flow for Calendars.ReadWrite."""
+        import urllib.parse
+        from routes.email_helpers import make_oauth_state
+        from src.msgraph_calendar import MSGRAPH_CALENDAR_SCOPES, _authorize_url
+
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
+        if not client_id:
+            raise HTTPException(400, "MICROSOFT_OAUTH_CLIENT_ID not set — add it to .env")
+        # The account row is created by the callback; the id is minted here so
+        # the signed state can bind the flow to it.
+        account_id = str(uuid.uuid4())
+        params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "redirect_uri": _msgraph_redirect_uri(request),
+            "response_type": "code",
+            "scope": MSGRAPH_CALENDAR_SCOPES,
+            "prompt": "select_account",
+            "state": make_oauth_state(account_id, owner),
+        })
+        from fastapi.responses import RedirectResponse as _RR
+        return _RR(f"{_authorize_url()}?{params}")
+
+    @router.get("/oauth/microsoft/callback")
+    async def msgraph_oauth_callback(
+        request: Request,
+        code: str = None,
+        state: str = None,
+        error: str = None,
+        error_description: str = None,
+    ):
+        import httpx
+
+        from fastapi.responses import RedirectResponse as _RR
+        from routes.email_helpers import verify_oauth_state
+        from src.msgraph_calendar import (
+            MSGRAPH_CALENDAR_SCOPES, _load_msgraph_accounts,
+            _save_msgraph_accounts, _token_url,
+        )
+        from src.secret_storage import encrypt
+
+        if error:
+            hint_code, aadsts = _oauth_failure_codes(error, error_description)
+            logger.warning(
+                "Microsoft calendar authorization was refused (code=%s aadsts=%s)",
+                hint_code or "unknown", aadsts or "none",
+            )
+            return _RR(_msgraph_result_redirect("microsoft_error", hint_code, aadsts))
+        if not code or not state:
+            return _RR(_msgraph_result_redirect("missing_code"))
+        state_data = verify_oauth_state(state)
+        if not state_data:
+            return _RR(_msgraph_result_redirect("invalid_state"))
+        account_id = state_data.get("a", "")
+        owner = state_data.get("o", "")
+        if not account_id or not owner:
+            return _RR(_msgraph_result_redirect("invalid_state"))
+
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "").strip()
+        resp = None
+        try:
+            resp = httpx.post(_token_url(), data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": _msgraph_redirect_uri(request),
+                "grant_type": "authorization_code",
+                "scope": MSGRAPH_CALENDAR_SCOPES,
+            }, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            # A rejected exchange carries its AADSTS code in the body, and
+            # raise_for_status throws it away — read it back before reporting.
+            body_error, body_description = "", ""
+            if resp is not None:
+                try:
+                    payload = resp.json()
+                    body_error = payload.get("error") or ""
+                    body_description = payload.get("error_description") or ""
+                except Exception:
+                    pass
+            hint_code, aadsts = _oauth_failure_codes(body_error, body_description)
+            logger.warning(
+                "Microsoft calendar token exchange failed (code=%s aadsts=%s)",
+                hint_code or "unknown", aadsts or "none",
+            )
+            return _RR(_msgraph_result_redirect("token_exchange_failed", hint_code, aadsts))
+
+        refresh_token = data.get("refresh_token") or ""
+        if not refresh_token:
+            # Without offline_access consent there is nothing to refresh with,
+            # so the connection would die at the first token expiry.
+            return _RR(_msgraph_result_redirect("no_refresh_token"))
+
+        mailbox = _identity_from_id_token(data.get("id_token") or "")
+        accounts = [a for a in _load_msgraph_accounts(owner) if a.get("email") != mailbox or not mailbox]
+        accounts.append({
+            "id": account_id,
+            "label": mailbox or "Microsoft 365",
+            "email": mailbox,
+            "access_token": encrypt(data.get("access_token") or ""),
+            "refresh_token": encrypt(refresh_token),
+            "token_expiry": str(int(time.time()) + int(data.get("expires_in") or 3600)),
+        })
+        _save_msgraph_accounts(owner, accounts)
+        logger.info("Connected Microsoft calendar for owner=%s", owner)
+        return _RR("/?section=integrations&calendar_oauth_success=1&calendar_oauth_provider=microsoft")
+
     @router.post("/test")
     async def test_connection(request: Request):
         """Probe a CalDAV server with a PROPFIND. Accepts an optional body:
@@ -1084,13 +1330,25 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             return {"ok": False, "error": str(e)[:200]}
 
     @router.post("/sync")
-    async def sync_caldav_endpoint(request: Request, direction: str = "pull"):
-        """Sync events with the configured CalDAV server.
-        Returns counts + any per-calendar errors. Called by the frontend
-        on calendar open and by the periodic scheduler loop."""
+    async def sync_remote_endpoint(request: Request, direction: str = "pull"):
+        """Sync events with every configured remote calendar.
+
+        Covers CalDAV servers and Microsoft Graph (Office 365 / Outlook.com),
+        merging their counts so the caller sees one result. Returns counts +
+        per-calendar errors. Called by the frontend on calendar open and by
+        the periodic scheduler loop.
+        """
         owner = _require_user(request)
         from src.caldav_sync import sync_caldav_direction
-        return await sync_caldav_direction(owner, direction)
+        from src.msgraph_calendar import _load_msgraph_accounts, sync_msgraph_direction
+
+        result = await sync_caldav_direction(owner, direction)
+        # Only reach for Graph when a mailbox is actually connected, so an
+        # unconfigured install does not collect a second "not configured".
+        if not _load_msgraph_accounts(owner):
+            return result
+        graph = await sync_msgraph_direction(owner, direction)
+        return _merge_sync_results(result, graph)
 
 
     @router.delete("/calendars/{cal_id}")
@@ -1248,12 +1506,12 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 is_utc=_is_utc and not data.all_day,
                 rrule=data.rrule or "",
                 color=data.color or None,
-                caldav_sync_pending="create" if cal.source == "caldav" else None,
+                caldav_sync_pending="create" if cal.source in REMOTE_CALENDAR_SOURCES else None,
             )
             db.add(ev)
             db.commit()
-            if cal.source == "caldav":
-                await _push_caldav_event_after_commit(owner, uid, "create")
+            if cal.source in REMOTE_CALENDAR_SOURCES:
+                await _push_remote_event_after_commit(owner, uid, "create", cal.source)
             return {"ok": True, "uid": uid}
         except HTTPException:
             raise
@@ -1300,12 +1558,14 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 ev.rrule = data.rrule
             if data.color is not None:
                 ev.color = data.color if data.color else None
-            is_caldav = ev.calendar and ev.calendar.source == "caldav"
-            if is_caldav:
+            remote_source = ev.calendar.source if (
+                ev.calendar and ev.calendar.source in REMOTE_CALENDAR_SOURCES
+            ) else ""
+            if remote_source:
                 ev.caldav_sync_pending = "update"
             db.commit()
-            if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "update")
+            if remote_source:
+                await _push_remote_event_after_commit(owner, base_uid, "update", remote_source)
             return {"ok": True}
         except HTTPException:
             raise
@@ -1327,7 +1587,10 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         try:
             ev = _get_or_404_event(db, base_uid, owner)
             is_occurrence_delete = scope in {"occurrence", "instance"} and "::" in uid and bool(ev.rrule)
-            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            remote_source = ev.calendar.source if (
+                ev.calendar and ev.calendar.source in REMOTE_CALENDAR_SOURCES
+            ) else ""
+            is_caldav = bool(remote_source)
             if is_occurrence_delete:
                 key = _occurrence_exdate_key(uid, ev)
                 if not key:
@@ -1340,14 +1603,14 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     ev.caldav_sync_pending = "update"
                 db.commit()
                 if is_caldav:
-                    await _push_caldav_event_after_commit(owner, base_uid, "update")
+                    await _push_remote_event_after_commit(owner, base_uid, "update", remote_source)
                 return {"ok": True, "scope": "occurrence", "exdate": key}
             if is_caldav:
                 _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
             if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "delete")
+                await _push_remote_event_after_commit(owner, base_uid, "delete", remote_source)
             return {"ok": True}
         except HTTPException:
             raise
