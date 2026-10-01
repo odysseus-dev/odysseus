@@ -13,6 +13,7 @@ import math
 from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
+from src.constants import APP_VERSION
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
 from urllib.parse import urlparse
 
@@ -982,6 +983,8 @@ def _detect_provider(url: str) -> str:
         return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
+    if _host_match(url, "perplexity.ai"):
+        return "perplexity"
     if _host_match(url, "groq.com"):
         return "groq"
     if _host_match(url, "nvidia.com"):
@@ -1101,6 +1104,8 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if provider == "openrouter":
         h.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
         h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "perplexity" and not any(key.lower() == "x-pplx-integration" for key in h):
+        h["X-Pplx-Integration"] = f"odysseus/{APP_VERSION}"
     if provider == "copilot":
         # Ensure the Copilot-required headers are present even when the caller
         # didn't pass pre-built headers (e.g. model listing). build_headers()
@@ -1121,6 +1126,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "perplexity.ai"): return "Perplexity"
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
@@ -1912,9 +1918,7 @@ def list_model_ids(
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
     try:
-        h = {}
-        if headers:
-            h.update(headers)
+        h = _provider_headers(provider, headers)
         if provider == "ollama":
             models_url = _ollama_api_root(base_chat_url) + "/tags"
         else:
@@ -1970,7 +1974,6 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
-    h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
     # element #0 has length 1; 2 is required".
@@ -1979,8 +1982,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             headers = json.loads(headers)
         except Exception:
             headers = None
-    if isinstance(headers, dict):
-        h.update(headers)
+    h = _provider_headers(_detect_provider(url), headers)
 
     messages_copy = _sanitize_llm_messages(messages)
 

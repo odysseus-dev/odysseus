@@ -19,8 +19,10 @@ real module is side-effect free.
 """
 import pytest
 
+from src.constants import APP_VERSION
 from src.llm_core import (
     _detect_provider,
+    _provider_headers,
     _provider_label,
 )
 
@@ -35,6 +37,7 @@ class TestDetectProvider:
         ("https://api.anthropic.com/v1", "anthropic"),
         ("https://anthropic.com/v1", "anthropic"),
         ("https://openrouter.ai/api/v1", "openrouter"),
+        ("https://api.perplexity.ai", "perplexity"),
         ("https://api.groq.com/openai/v1", "groq"),
         ("https://integrate.api.nvidia.com/v1", "nvidia"),
         ("http://localhost:11434/api", "ollama"),
@@ -56,6 +59,7 @@ class TestDetectProvider:
         # Host merely *starts* with the provider domain as a label — a classic
         # substring-match trap (anthropic.com.evil.example is not Anthropic).
         assert _detect_provider("https://anthropic.com.evil.example/v1") == "openai"
+        assert _detect_provider("https://api.perplexity.ai.evil.example/v1") == "openai"
 
     def test_provider_domain_in_path_is_not_matched(self):
         # The provider domain appears only in the path, not the host.
@@ -80,6 +84,7 @@ class TestProviderLabel:
         ("https://api.x.ai/v1", "xAI"),
         ("https://api.openai.com/v1", "OpenAI"),
         ("https://openrouter.ai/api/v1", "OpenRouter"),
+        ("https://api.perplexity.ai", "Perplexity"),
         ("https://api.groq.com/openai/v1", "Groq"),
         ("https://integrate.api.nvidia.com/v1", "NVIDIA"),
         ("https://api.mistral.ai/v1", "Mistral"),
@@ -113,3 +118,12 @@ class TestProviderLabel:
     @pytest.mark.parametrize("url", ["", None])
     def test_empty_returns_generic(self, url):
         assert _provider_label(url) == "provider"
+
+
+class TestProviderHeaders:
+    def test_perplexity_attribution(self):
+        assert _provider_headers("perplexity")["X-Pplx-Integration"] == f"odysseus/{APP_VERSION}"
+
+    def test_perplexity_attribution_preserves_case_insensitive_override(self):
+        headers = _provider_headers("perplexity", {"x-pplx-integration": "custom"})
+        assert headers == {"Content-Type": "application/json", "x-pplx-integration": "custom"}
