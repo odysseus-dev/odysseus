@@ -162,6 +162,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`censor.js`** | Text/image censor overlay toggles. |
 | **`a11y.js`** | Accessibility helpers. |
 | **`platform.js`** | Platform detection (macOS/Windows/Linux) and keyboard-modifier helpers. |
+| **`whisperIndicator.js`** | Keeps the group-whisper indicator's accessible name synchronized with its active participant. |
 | **`escMenuStack.js`** | Stack manager for dismissible popups. |
 | **`dragSort.js`** | Drag-to-sort shared behavior. |
 | **`tourHints.js`** / **`tourAutoplay.js`** | Onboarding tour helpers. |

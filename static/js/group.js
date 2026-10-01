@@ -19,6 +19,7 @@ let _abortControllers = [];
 let _mode = 'round-robin';    // 'parallel' or 'round-robin'
 let _roundRobinIdx = 0;
 let _parentSessionId = null;
+let _whisperTargetSessionId = null;
 const GROUP_STATE_KEY = 'odysseus-group-state';
 
 export function init(apiBase) {
@@ -379,6 +380,74 @@ export function setActive(v) { _active = v; }
 export function getMode() { return _mode; }
 export function setMode(m) { _mode = m; }
 
+function _participantDisplayName(modelIdx) {
+  const model = _models[modelIdx] || {};
+  return model._groupName ||
+    (model.character ? model.character.characterName : '') ||
+    model.display ||
+    (model.mid ? chatRenderer.shortModel(model.mid) : '') ||
+    `Participant ${modelIdx + 1}`;
+}
+
+function _participantTargetForSession(sessionId) {
+  if (!sessionId) return null;
+  const targetId = String(sessionId);
+  const idx = _participantSessions.findIndex(sid => sid && String(sid) === targetId);
+  if (idx < 0 || !_models[idx]) return null;
+  const model = _models[idx];
+  return {
+    index: idx,
+    sessionId: String(_participantSessions[idx]),
+    name: _participantDisplayName(idx),
+    model: model.display || model.mid || '',
+  };
+}
+
+function _syncWhisperTargetUi() {
+  const target = getWhisperTarget();
+  document.querySelectorAll('.group-participant-row').forEach(row => {
+    const active = !!target && row.dataset.groupParticipantId === target.sessionId;
+    row.classList.toggle('whisper-active', active);
+    row.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  if (window._updateSendBtnIcon) window._updateSendBtnIcon();
+}
+
+function _whisperUserMetadata(target) {
+  if (!target) return null;
+  const model = _models[target.index] || {};
+  return {
+    group_whisper: true,
+    whisper_to: target.name,
+    whisper_to_session: target.sessionId,
+    whisper_to_model: model.mid || '',
+  };
+}
+
+function _whisperPrompt(msg, target) {
+  return `This is a private direct message from the user to you. Other group participants cannot see it.\n\n${msg}`;
+}
+
+export function getWhisperTarget() {
+  return _participantTargetForSession(_whisperTargetSessionId);
+}
+
+export function getWhisperUserMetadata() {
+  return _whisperUserMetadata(getWhisperTarget());
+}
+
+export function setWhisperTarget(sessionId) {
+  const target = _participantTargetForSession(sessionId);
+  _whisperTargetSessionId = target ? target.sessionId : null;
+  _syncWhisperTargetUi();
+  return target;
+}
+
+export function clearWhisperTarget() {
+  _whisperTargetSessionId = null;
+  _syncWhisperTargetUi();
+}
+
 // ── Model Picker ─────────────────────────────────────
 
 export async function showModelPicker() {
@@ -675,6 +744,7 @@ export async function startGroup(models, parentSessionId) {
   }
 
   _saveState();
+  await _saveStateToServer();
 
   // Now select the session so the UI switches to it.
   if (_parentSessionId && window.sessionModule) {
@@ -700,6 +770,8 @@ export function stopGroup() {
   _active = false;
   _models = [];
   _participantSessions = [];
+  _whisperTargetSessionId = null;
+  _syncWhisperTargetUi();
   localStorage.removeItem(GROUP_STATE_KEY);
 }
 
@@ -711,13 +783,24 @@ export async function sendMessage(msg) {
   const box = document.getElementById('chat-history');
   if (!box) return;
 
+  const whisperTarget = getWhisperTarget();
+
   // Save user message to parent session for persistence
   if (_parentSessionId) {
     fetch(`${API_BASE}/api/session/${_parentSessionId}/inject_messages`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: msg }] }),
+      body: JSON.stringify({ messages: [{
+        role: 'user',
+        content: msg,
+        metadata: whisperTarget ? _whisperUserMetadata(whisperTarget) : null,
+      }] }),
     }).catch(() => {});
+  }
+
+  if (whisperTarget) {
+    await _sendWhisper(msg, box, whisperTarget);
+    return;
   }
 
   if (_mode === 'parallel') {
@@ -727,14 +810,15 @@ export async function sendMessage(msg) {
   }
 }
 
-function _createGroupBubble(model, box) {
+function _createGroupBubble(model, box, options = {}) {
   const wrap = document.createElement('div');
-  wrap.className = 'msg msg-ai msg-group';
+  wrap.className = 'msg msg-ai msg-group' + (options.whisper ? ' msg-whisper' : '');
   wrap.style.position = 'relative';
 
   // Role label — use character name if assigned, otherwise model name
-  const roleLabel = model._groupName || (model.character ? model.character.characterName : chatRenderer.shortModel(model.mid));
+  const participantLabel = model._groupName || (model.character ? model.character.characterName : chatRenderer.shortModel(model.mid));
   const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const roleLabel = options.whisper ? `Whisper from ${participantLabel}` : participantLabel;
   wrap.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
   chatRenderer.applyModelColor(wrap.querySelector('.role'), model.mid);
 
@@ -747,6 +831,20 @@ function _createGroupBubble(model, box) {
 
   box.appendChild(wrap);
   return wrap;
+}
+
+async function _sendWhisper(msg, box, target) {
+  const model = _models[target.index];
+  const holder = _createGroupBubble(model, box, { whisper: true });
+  uiModule.scrollHistory();
+
+  const ac = new AbortController();
+  _abortControllers = [ac];
+  await _streamToHolder(target.index, target.sessionId, msg, holder, ac, { whisper: true });
+  _abortControllers = [];
+
+  _saveState();
+  _saveStateToServer().catch(() => {});
 }
 
 async function _sendParallel(msg, box) {
@@ -811,6 +909,7 @@ async function _sendRoundRobin(msg, box) {
   // Order is randomized per-message now, so _roundRobinIdx no longer drives
   // turn order; left in state for backward compat only.
   _saveState();
+  _saveStateToServer().catch(() => {});
 }
 
 /** After parallel responses, inject each model's response into all other sessions. */
@@ -836,15 +935,17 @@ async function _syncAllResponses(holders) {
   }
 }
 
-async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
+async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl, options = {}) {
   if (!sessionId) {
     holderEl.querySelector('.body').innerHTML = '<i style="opacity:0.5;">[Session creation failed]</i>';
     return;
   }
 
   const fd = new FormData();
-  fd.append('message', msg);
+  const target = options.whisper ? _participantTargetForSession(sessionId) : null;
+  fd.append('message', target ? _whisperPrompt(msg, target) : msg);
   fd.append('session', sessionId);
+  fd.append('group_internal', 'true');
 
   let accumulated = '';
   let _buffer = '';
@@ -962,12 +1063,18 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
   // Save response to parent session for persistence
   if (accumulated && _parentSessionId) {
     const gName = _models[modelIdx]._groupName || _models[modelIdx].display;
+    const metadata = { group_model: gName, model: _models[modelIdx].mid };
+    if (options.whisper) {
+      metadata.group_whisper = true;
+      metadata.whisper_from = gName;
+      metadata.whisper_from_session = String(sessionId);
+    }
     fetch(`${API_BASE}/api/session/${_parentSessionId}/inject_messages`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{
         role: 'assistant', content: accumulated,
-        metadata: { group_model: gName, model: _models[modelIdx].mid }
+        metadata
       }]}),
     }).catch(() => {});
   }
@@ -975,32 +1082,79 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
 
 // ── State Persistence ────────────────────────────────
 
+function _buildState() {
+  return {
+    active: _active,
+    mode: _mode,
+    models: _models,
+    participantSessions: _participantSessions,
+    parentSessionId: _parentSessionId,
+    roundRobinIdx: _roundRobinIdx,
+  };
+}
+
+function _applyState(s, sessionId) {
+  if (!s || !s.active || s.parentSessionId !== sessionId) return false;
+  const models = Array.isArray(s.models) ? s.models : [];
+  if (models.length < 2) return false;
+  _active = true;
+  _mode = s.mode || 'parallel';
+  _models = models;
+  _participantSessions = Array.isArray(s.participantSessions) ? s.participantSessions : [];
+  while (_participantSessions.length < _models.length) _participantSessions.push(null);
+  _parentSessionId = s.parentSessionId;
+  _roundRobinIdx = s.roundRobinIdx || 0;
+  if (_whisperTargetSessionId && !_participantTargetForSession(_whisperTargetSessionId)) {
+    _whisperTargetSessionId = null;
+  }
+  setTimeout(_syncWhisperTargetUi, 0);
+  return true;
+}
+
 function _saveState() {
   try {
-    localStorage.setItem(GROUP_STATE_KEY, JSON.stringify({
-      active: _active,
-      mode: _mode,
-      models: _models,
-      participantSessions: _participantSessions,
-      parentSessionId: _parentSessionId,
-      roundRobinIdx: _roundRobinIdx,
-    }));
+    localStorage.setItem(GROUP_STATE_KEY, JSON.stringify(_buildState()));
   } catch (e) {}
 }
 
-export function restoreState(sessionId) {
+async function _saveStateToServer() {
+  if (!_parentSessionId || !_active || _models.length < 2) return;
   try {
-    const s = JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || 'null');
-    if (s && s.active && s.parentSessionId === sessionId) {
-      _active = true;
-      _mode = s.mode || 'parallel';
-      _models = s.models || [];
-      _participantSessions = s.participantSessions || [];
-      _parentSessionId = s.parentSessionId;
-      _roundRobinIdx = s.roundRobinIdx || 0;
+    const res = await fetch(`${API_BASE}/api/session/${_parentSessionId}/group_state`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_buildState()),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.warn('[group] Failed to persist group state:', e);
+  }
+}
+
+export async function restoreState(sessionId) {
+  try {
+    const s = Storage.getJSON(GROUP_STATE_KEY, null);
+    if (_applyState(s, sessionId)) {
+      _saveState();
       return true;
     }
   } catch (e) {}
+
+  try {
+    const res = await fetch(`${API_BASE}/api/session/${sessionId}/group_state`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const s = data.group_state || data.groupState;
+    if (data.ok && _applyState(s, sessionId)) {
+      _saveState();
+      return true;
+    }
+  } catch (e) {
+    console.warn('[group] Failed to restore group state:', e);
+  }
   return false;
 }
 
@@ -1011,6 +1165,7 @@ const groupModule = {
   init, isActive, setActive, getMode, setMode, showModelPicker,
   startGroup, stopGroup, sendMessage, restoreState,
   getModels, getModelCount,
+  setWhisperTarget, clearWhisperTarget, getWhisperTarget, getWhisperUserMetadata,
 };
 
 export default groupModule;

@@ -12,6 +12,10 @@ class ChatRequest(BaseModel):
     use_research: Optional[bool] = Field(default=False, description="Enable deep research")
     time_filter: Optional[str] = Field(default=None, description="Time filter for search")
     preset_id: Optional[str] = Field(default=None, description="Preset identifier")
+    group_internal: Optional[bool] = Field(
+        default=False,
+        description="Internal group-chat turn; suppress parent whisper mirroring",
+    )
     selected_endpoint_id: Optional[str] = Field(default=None, description="Selected model endpoint ID")
     
     @field_validator('message')

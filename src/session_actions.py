@@ -53,6 +53,15 @@ def is_session_recently_active(row, now=None, grace=_FRESH_SESSION_GRACE) -> boo
     return False
 
 
+def _group_participant_ids_from_state(state) -> set[str]:
+    if not isinstance(state, dict):
+        return set()
+    participants = state.get("participantSessions")
+    if not isinstance(participants, list):
+        return set()
+    return {str(session_id) for session_id in participants if session_id}
+
+
 async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bool = True) -> str:
     """Run session cleanup + (optional) AI folder sort for the given owner.
 
@@ -65,7 +74,8 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
 
     Returns a human-readable summary of what was done.
     """
-    from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg
+    from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg, GroupChatState
+    from src.auth_helpers import owner_filter
     from src.llm_core import llm_call_async
     from src.task_endpoint import resolve_task_endpoint
 
@@ -75,13 +85,25 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         deleted_empty = 0
         deleted_throwaway = 0
 
-        rows = db.query(DbSession).filter(
-            DbSession.archived == False,
-            *([DbSession.owner == owner] if owner else []),
+        rows = owner_filter(
+            db.query(DbSession).filter(DbSession.archived == False),
+            DbSession,
+            owner,
         ).all()
+        group_query = db.query(GroupChatState.parent_session_id, GroupChatState.state)
+        group_query = owner_filter(group_query, GroupChatState, owner)
+        group_parent_to_participants = {}
+        group_participant_ids: set[str] = set()
+        for parent_id, state in group_query.all():
+            participants = _group_participant_ids_from_state(state)
+            group_parent_to_participants[parent_id] = participants
+            group_participant_ids.update(participants)
+        protected_group_ids = set(group_parent_to_participants) | group_participant_ids
 
         cleanup_now = _utcnow_naive()
         for row in rows:
+            if row.id in protected_group_ids:
+                continue
             if getattr(row, 'is_important', False):
                 continue
             created_at = _as_naive_utc(row.created_at or row.updated_at) or _utcnow_naive()
@@ -141,14 +163,17 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
             logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
 
         # ── Phase 2: AI folder assignment ──
-        remaining = db.query(DbSession).filter(
-            DbSession.archived == False,
-            *([DbSession.owner == owner] if owner else []),
+        remaining = owner_filter(
+            db.query(DbSession).filter(DbSession.archived == False),
+            DbSession,
+            owner,
         ).all()
 
         session_list = []
         for row in remaining:
             if row.name == "Incognito":
+                continue
+            if row.id in group_participant_ids:
                 continue
             session_list.append({
                 "id": row.id,
@@ -240,6 +265,13 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
                     if db_sess:
                         db_sess.folder = folder_name
                         db_sess.updated_at = _utcnow_naive()
+                        participant_ids = group_parent_to_participants.get(full_id, set())
+                        if participant_ids:
+                            child_query = db.query(DbSession).filter(DbSession.id.in_(participant_ids))
+                            child_query = owner_filter(child_query, DbSession, owner)
+                            for child in child_query.all():
+                                child.folder = folder_name
+                                child.updated_at = _utcnow_naive()
                         updated += 1
         db.commit()
 

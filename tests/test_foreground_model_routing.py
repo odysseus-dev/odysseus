@@ -40,6 +40,9 @@ class _EmptyQuery:
     def order_by(self, *args, **kwargs):
         return self
 
+    def all(self):
+        return []
+
     def first(self):
         return None
 
