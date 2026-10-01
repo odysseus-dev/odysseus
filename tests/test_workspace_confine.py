@@ -298,7 +298,7 @@ async def test_binding_does_not_leak(ws, admin):
 # must still surface the file tools, otherwise the agent says it has no file
 # access (the bug this guards against).
 
-def _sent_tool_names(monkeypatch, *, workspace, message="look at the local project", force_keyword_fallback=False):
+def _sent_tool_names(monkeypatch, *, workspace, message="look at the local project", force_keyword_fallback=False, relevant_tools=None):
     import asyncio
     import src.agent_loop as al
 
@@ -328,7 +328,7 @@ def _sent_tool_names(monkeypatch, *, workspace, message="look at the local proje
         gen = al.stream_agent_loop(
             "https://api.openai.com/v1", "gpt-test",
             [{"role": "user", "content": message}],
-            max_rounds=1, relevant_tools=None, owner="admin", workspace=workspace,
+            max_rounds=1, relevant_tools=relevant_tools, owner="admin", workspace=workspace,
         )
         return [c async for c in gen]
 
@@ -366,6 +366,35 @@ def test_workspace_coding_request_surfaces_edit_and_verify_tools(monkeypatch):
     assert "todowrite" in names
     assert "bash" in names
     assert "python" in names
+
+
+def test_plain_english_on_phrase_is_not_a_machine_reference():
+    from src.agent_loop import _looks_like_local_computer_request as looks_local
+
+    # "on <bare word>" used to match any word, so ordinary assistant phrasing
+    # flipped the turn into Terminus mode and replaced its toolset.
+    assert not looks_local("recall 'waiting on' items tied to this owner")
+    assert not looks_local("One line on anything tomorrow that needs prep today.")
+    assert not looks_local("Skip anything from newsletters unless it has a deadline.")
+    # Real machine references still resolve.
+    assert looks_local("tail the serve log on mac-mini")
+    assert looks_local("list cached models on nas.local")
+    assert looks_local("run the build on this machine")
+
+
+def test_caller_provided_tools_survive_machine_reference(monkeypatch):
+    # A scheduled task composes its own toolset; a machine-reference match in
+    # the prompt must not replace it with the Terminus file/shell tools.
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        message="check my inbox on nas.local and write the check-in",
+        relevant_tools={"list_emails", "manage_calendar", "manage_notes"},
+    )
+    assert "list_emails" in names
+    assert "manage_calendar" in names
+    assert "bash" not in names
+    assert "apply_patch" not in names
 
 
 def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
