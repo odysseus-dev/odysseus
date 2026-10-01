@@ -120,6 +120,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
   [/(^|\.)nvidia\.com$/i, "NVIDIA"],
   [/(^|\.)x\.ai$/i, "xAI"],
+  [/(^|\.)conifer\.build$/i, "Conifer"],
 ];
 
 /**

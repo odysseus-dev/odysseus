@@ -232,6 +232,13 @@ class TestMatchProviderCurated:
     def test_kimi_code_url(self):
         assert _match_provider_curated("https://api.kimi.com/coding/v1", "openai") == "kimi-code"
 
+    def test_conifer_url(self):
+        assert _match_provider_curated("https://api.conifer.build/v1", "openai") == "openrouter"
+        assert _match_provider_curated("https://conifer.build/v1", "openai") == "openrouter"
+
+    def test_conifer_lookalike_url_not_matched(self):
+        assert _match_provider_curated("https://conifer.build.attacker.example/v1", "openai") == "openai"
+
     def test_no_url_match_returns_provider(self):
         assert _match_provider_curated("https://localhost:1234", "openai") == "openai"
 
@@ -336,6 +343,19 @@ class TestCurateModels:
     def test_unknown_provider_returns_all_as_curated(self):
         models = ["model-a", "model-b"]
         curated, extra = _curate_models(models, "unknown_provider")
+        assert curated == models
+        assert extra == []
+
+    def test_openrouter_sentinel_returns_all_as_curated(self):
+        models = ["model-a", "model-b", "any-custom-model"]
+        curated, extra = _curate_models(models, "openrouter")
+        assert curated == models
+        assert extra == []
+
+    def test_conifer_curate_models_via_match(self):
+        models = ["conifer-model-1", "conifer-model-2"]
+        curated_key = _match_provider_curated("https://api.conifer.build/v1", "openai")
+        curated, extra = _curate_models(models, curated_key)
         assert curated == models
         assert extra == []
 
