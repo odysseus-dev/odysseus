@@ -101,6 +101,24 @@ def _merge_continue_rows_to_delete(db_messages, db1, db2):
     return to_delete
 
 
+def _merge_continue_metadata(meta1: Any, meta2: Any) -> Dict[str, Any]:
+    """Merge continuation metadata while preserving a fresh round-limit stop."""
+
+    first = meta1 if isinstance(meta1, dict) else {}
+    second = meta2 if isinstance(meta2, dict) else {}
+    merged = {**first, **second}
+    merged.pop("stopped", None)
+    second_hit_round_limit = (
+        second.get("completion_status") == "incomplete"
+        and second.get("incomplete_reason") == "round_limit"
+    )
+    if not second_hit_round_limit:
+        merged.pop("completion_status", None)
+        merged.pop("incomplete_reason", None)
+        merged.pop("rounds_exhausted", None)
+    return merged
+
+
 def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(
         tags=["history"],
@@ -533,8 +551,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             # Merge metadata
             meta1 = (msg1.metadata if isinstance(msg1, ChatMessage) else msg1.get('metadata')) or {}
             meta2 = (msg2.metadata if isinstance(msg2, ChatMessage) else msg2.get('metadata')) or {}
-            merged_meta = {**meta1, **meta2}
-            merged_meta.pop('stopped', None)  # no longer stopped after continue
+            merged_meta = _merge_continue_metadata(meta1, meta2)
 
             # Update first message, remove second
             if isinstance(msg1, ChatMessage):

@@ -2558,6 +2558,44 @@ export function renderAskUserCard(payload, options) {
 /**
  * Add a message to the chat history.
  */
+function appendRoundLimitIndicator(parent, wrap, metadata) {
+  if (
+    !parent || !wrap ||
+    metadata?.completion_status !== 'incomplete' ||
+    metadata?.incomplete_reason !== 'round_limit'
+  ) return null;
+
+  const roundsIndicator = document.createElement('div');
+  roundsIndicator.className = 'stopped-indicator rounds-exhausted';
+  const roundsLabel = document.createElement('span');
+  roundsLabel.className = 'rounds-exhausted-label';
+  const roundCount = metadata.rounds_exhausted || '';
+  roundsLabel.textContent = `Reached the ${roundCount}-step limit — not finished.`;
+  roundsIndicator.appendChild(roundsLabel);
+
+  const continueBtn = document.createElement('button');
+  continueBtn.className = 'continue-btn';
+  continueBtn.title = 'Continue the task';
+  continueBtn.textContent = 'Continue ▸';
+  continueBtn.addEventListener('click', () => {
+    roundsIndicator.remove();
+    if (window.chatModule) {
+      window.chatModule.setHideUserBubble();
+      window.chatModule.setPendingContinue(wrap);
+      const msgInput = document.getElementById('message');
+      if (msgInput) {
+        msgInput.value = 'Your previous response was interrupted because it reached the step limit before finishing. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+        const sb = document.querySelector('.send-btn');
+        if (sb) sb.click();
+      }
+    }
+  });
+  roundsIndicator.appendChild(continueBtn);
+  parent.appendChild(roundsIndicator);
+  return roundsIndicator;
+}
+
+
 export function addMessage(role, content, modelName, metadata) {
   try {
     hideWelcomeScreen();
@@ -2757,6 +2795,31 @@ export function addMessage(role, content, modelName, metadata) {
         // removes this card; if there is none, the pending choice survives a
         // refresh.  Avoid stealing focus while the history is loading.
         renderAskUserCard(pendingAskUser, { focus: false, scroll: false });
+      }
+      if (
+        metadata?.completion_status === 'incomplete' &&
+        metadata?.incomplete_reason === 'round_limit'
+      ) {
+        // Tool-only capped turns have no assistant bubble to attach recovery
+        // UI to. Create a small message-shaped anchor so Continue can still
+        // use the normal merge path after a reload.
+        if (!lastMsgAi) {
+          const recoveryWrap = document.createElement('div');
+          recoveryWrap.className = 'msg msg-ai msg-continuation round-limit-recovery';
+          recoveryWrap.dataset.raw = '';
+          if (metadata?._db_id) recoveryWrap.dataset.dbId = metadata._db_id;
+          const recoveryBody = document.createElement('div');
+          recoveryBody.className = 'body';
+          recoveryWrap.appendChild(recoveryBody);
+          box.appendChild(recoveryWrap);
+          lastMsgAi = recoveryWrap;
+          lastWrap = recoveryWrap;
+        }
+        appendRoundLimitIndicator(
+          lastMsgAi.querySelector('.body'),
+          lastMsgAi,
+          metadata,
+        );
       }
       return lastWrap;
     }
@@ -2962,6 +3025,11 @@ export function addMessage(role, content, modelName, metadata) {
       }
       b.appendChild(stoppedIndicator);
     }
+
+    // A round-limit stop is a recoverable incomplete result, not a completed
+    // answer. Rebuild the same Continue affordance from persisted metadata so
+    // it survives background streaming, session switches, and page reloads.
+    if (role === 'assistant') appendRoundLimitIndicator(b, wrap, metadata);
 
     if (metadata?.edited) {
       const editedIndicator = document.createElement('div');

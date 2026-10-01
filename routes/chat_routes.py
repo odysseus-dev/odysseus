@@ -83,6 +83,19 @@ logger = logging.getLogger(__name__)
 _active_streams: Dict[str, dict] = {}
 
 
+def _with_round_limit_metadata(metrics: dict | None, rounds: Any) -> dict:
+    """Mark a saved assistant reply as incomplete after round exhaustion."""
+
+    metadata = dict(metrics or {})
+    metadata["completion_status"] = "incomplete"
+    metadata["incomplete_reason"] = "round_limit"
+    try:
+        metadata["rounds_exhausted"] = int(rounds)
+    except (TypeError, ValueError):
+        metadata["rounds_exhausted"] = rounds
+    return metadata
+
+
 def _stream_failure_status(chunk: str) -> Optional[int]:
     """Extract a provider status without retaining provider-supplied detail."""
 
@@ -2306,6 +2319,7 @@ def setup_chat_routes(
                 _agent_round_models = {1: _requested_model}
                 _agent_round_endpoint_ids = {1: _agent_actual_endpoint_id}
                 _agent_round_endpoint_labels = {1: _agent_actual_endpoint_label}
+                _rounds_exhausted_count = None
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -2415,6 +2429,8 @@ def setup_chat_routes(
                                         )
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
+                                    elif data.get("type") == "rounds_exhausted":
+                                        _rounds_exhausted_count = data.get("rounds") or _max_rounds
                                     yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
@@ -2516,6 +2532,11 @@ def setup_chat_routes(
                             if full_response or _has_tool_events:
                                 _response_to_save = full_response or "Done."
                                 _metrics_to_save = dict(last_metrics or {})
+                                if _rounds_exhausted_count is not None:
+                                    _metrics_to_save = _with_round_limit_metadata(
+                                        _metrics_to_save,
+                                        _rounds_exhausted_count,
+                                    )
                                 if thinking_response.strip() and not _metrics_to_save.get("thinking"):
                                     _metrics_to_save["thinking"] = thinking_response.strip()
                                 _saved_id = save_assistant_response(

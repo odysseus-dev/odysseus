@@ -3325,7 +3325,7 @@ import { loadPanel } from './panels.js';
                     _pendingContinue = _holder;
                     const msgInput = uiModule.el('message');
                     if (msgInput) {
-                      msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+                      msgInput.value = 'Your previous response was interrupted because it reached the step limit before finishing. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
                       const sb = document.querySelector('.send-btn');
                       if (sb) sb.click();
                     }
