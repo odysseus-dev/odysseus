@@ -78,11 +78,11 @@ def _build_context_harness(monkeypatch, chat_helpers, history):
     monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
     monkeypatch.setattr(chat_helpers, "extract_preset", fake_extract_preset)
     monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
-    monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda user: {})
-    monkeypatch.setattr(chat_helpers, "effective_user", lambda request: "tester")
+    monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda user, **kwargs: {})
+    monkeypatch.setattr(chat_helpers, "effective_user", lambda request, **kwargs: "tester")
     monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
     monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
-    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
+    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length, **kwargs: messages)
 
     sess = SimpleNamespace(
         endpoint_url="http://192.168.1.50:1234/v1",

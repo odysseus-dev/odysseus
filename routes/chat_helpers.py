@@ -795,11 +795,11 @@ async def build_chat_context(
             sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
         )
     _before_trim_messages = len(messages)
-    _before_trim_tokens = estimate_tokens(messages)
+    _before_trim_tokens = estimate_tokens(messages, sess.model)
     if not defer_context_shaping:
-        messages = trim_for_context(messages, context_length)
+        messages = trim_for_context(messages, context_length, model=sess.model)
     _after_trim_messages = len(messages)
-    _after_trim_tokens = estimate_tokens(messages)
+    _after_trim_tokens = estimate_tokens(messages, sess.model)
     _context_trimmed = _after_trim_messages < _before_trim_messages or _after_trim_tokens < _before_trim_tokens
 
     return ChatContext(

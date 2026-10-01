@@ -511,7 +511,7 @@ async def _build_context_owner_probe(monkeypatch, request_state):
     monkeypatch.setattr(chat_helpers, "_normalize_model_id_from_cache", lambda sess: None)
     monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
     monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
-    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
+    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length, model="": messages)
 
     import src.user_time as user_time
 

@@ -16,6 +16,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Optional tiktoken for accurate token counting. Falls back to heuristic.
+try:
+    import tiktoken
+    _TIKTOKEN_AVAILABLE = True
+except Exception:
+    tiktoken = None
+    _TIKTOKEN_AVAILABLE = False
+
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
 _PRIVATE_NETWORKS = (
     ipaddress.ip_network("10.0.0.0/8"),
@@ -480,17 +488,97 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     return DEFAULT_CONTEXT, False
 
 
-def estimate_tokens(messages: List[Dict]) -> int:
-    """Rough token estimate for a list of messages.
+# ---------------------------------------------------------------------------
+# Token estimation
+# ---------------------------------------------------------------------------
 
-    Uses chars * 0.3 which is closer to real BPE tokenizer output
-    than the commonly-cited chars/4 (which underestimates by ~20-30%).
-    Also adds ~4 tokens per message for role/formatting overhead, and counts
-    assistant tool_calls (name + arguments) — a tool-only turn carries
-    content=None with the real payload in tool_calls, so ignoring them made the
-    estimate (and the compaction/trim gates that rely on it) blind to large
-    tool arguments.
+# Map model prefixes to tiktoken encodings. Order matters: longest prefix first.
+_ENCODING_MAP = [
+    ("gpt-4o", "o200k_base"),
+    ("gpt-4.1", "o200k_base"),
+    ("gpt-5", "o200k_base"),
+    ("o1", "o200k_base"),
+    ("o3", "o200k_base"),
+    ("o4", "o200k_base"),
+    ("gpt-4", "cl100k_base"),
+    ("gpt-3.5", "cl100k_base"),
+    ("text-embedding", "cl100k_base"),
+    # Default for unknown OpenAI-compatible models
+    ("", "cl100k_base"),
+]
+
+_encoding_cache: Dict[str, "tiktoken.Encoding"] = {}
+
+
+def _get_encoding(model: str) -> Optional["tiktoken.Encoding"]:
+    """Get tiktoken encoding for a model, with caching."""
+    if not _TIKTOKEN_AVAILABLE:
+        return None
+    name = (model or "").lower()
+    for prefix, enc_name in _ENCODING_MAP:
+        if prefix and name.startswith(prefix):
+            if enc_name not in _encoding_cache:
+                try:
+                    _encoding_cache[enc_name] = tiktoken.get_encoding(enc_name)
+                except Exception:
+                    return None
+            return _encoding_cache[enc_name]
+    return None
+
+
+def _estimate_tokens_tiktoken(messages: List[Dict], model: str = "") -> Optional[int]:
+    """Accurate token count using tiktoken. Returns None if unavailable."""
+    enc = _get_encoding(model)
+    if enc is None:
+        return None
+    total = 0
+    for msg in messages:
+        # Per-message overhead (role + formatting) ~3-4 tokens
+        total += 4
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += len(enc.encode(content))
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    total += len(enc.encode(item.get("text", "")))
+        # Tool calls
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else tc
+                name = fn.get("name", "") or ""
+                args = fn.get("arguments", "") or ""
+                if not isinstance(args, str):
+                    args = str(args)
+                total += 4  # tool call overhead
+                total += len(enc.encode(name)) + len(enc.encode(args))
+    return total
+
+
+def estimate_tokens(messages: List[Dict], model: str = "") -> int:
+    """Token estimate for a list of messages.
+
+    Uses tiktoken when available for accurate BPE token counts.
+    Falls back to chars * 0.3 heuristic (adds ~4 tokens/message overhead
+    and counts tool_calls) when tiktoken is not installed.
+
+    Args:
+        messages: List of message dicts with role, content, tool_calls
+        model: Model name for selecting the correct tiktoken encoding
+
+    Returns:
+        Estimated token count
     """
+    # Try tiktoken first for accuracy
+    if _TIKTOKEN_AVAILABLE:
+        tiktoken_count = _estimate_tokens_tiktoken(messages, model)
+        if tiktoken_count is not None:
+            return tiktoken_count
+
+    # Fallback: rough heuristic (chars * 0.3 ≈ BPE tokens)
     total = 0
     for msg in messages:
         total += 4  # per-message overhead (role, separators)

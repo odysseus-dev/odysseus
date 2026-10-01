@@ -209,7 +209,7 @@ def _chat_candidate_request_factory(
         )
         if not context_length:
             context_length = fallback_context_length
-        request_messages = trim_for_context(candidate_messages, context_length)
+        request_messages = trim_for_context(candidate_messages, context_length, model=candidate_model)
         state["requests"][index] = request_messages
         state["context_lengths"][index] = context_length
         state["compactions"][index] = compaction_state
@@ -217,8 +217,8 @@ def _chat_candidate_request_factory(
         state["trim_stats"][index] = {
             "messages_before": len(messages),
             "messages_after": len(request_messages),
-            "tokens_before": estimate_tokens(messages),
-            "tokens_after": estimate_tokens(request_messages),
+            "tokens_before": estimate_tokens(messages, candidate_model),
+            "tokens_after": estimate_tokens(request_messages, candidate_model),
         }
         return {"messages": request_messages}
 

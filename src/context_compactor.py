@@ -131,32 +131,52 @@ def _message_text_token_estimate(text: str) -> int:
     return int(len(text) * 0.3) + 4
 
 
-def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
+def _truncate_text_to_token_budget(text: str, token_budget: int, model: str = "") -> str:
     """Trim a too-large current user message instead of dropping it entirely."""
     if token_budget <= 32:
         return "[Current user message omitted: it exceeded the model context window.]"
 
     if not isinstance(text, str):
-        # This helper is typed/used as text downstream, so return an empty
-        # string rather than the raw non-string (which would move the crash
-        # into the caller that concatenates/measures the result).
         return ""
-    # Match src.model_context.estimate_tokens' rough chars * 0.3 estimate.
-    max_chars = max(200, int((token_budget - 16) / 0.3))
-    if len(text) <= max_chars:
-        return text
 
+    # Accurate token count via tiktoken (falls back to heuristic inside)
+    # Reserve tokens for the notice (~40 tokens)
     notice = (
         "\n\n[Notice: the pasted message was too large for this model's context "
         "window, so Odysseus kept the beginning and end.]"
     )
-    keep_chars = max(200, max_chars - len(notice))
-    head_len = max(100, int(keep_chars * 0.7))
-    tail_len = max(80, keep_chars - head_len)
+    notice_tokens = estimate_tokens([{"role": "user", "content": notice}], model)
+    available_tokens = max(0, token_budget - notice_tokens)
+    if available_tokens <= 0:
+        return "[Current user message omitted: it exceeded the model context window.]"
+
+    # Binary search for the largest prefix+suffix that fits
+    # Use tiktoken-accurate estimate_tokens for the actual count
+    if estimate_tokens([{"role": "user", "content": text}], model) <= available_tokens:
+        return text
+
+    # Heuristic starting point: chars * 0.3 ≈ tokens
+    # Binary search for head_len (70%) / tail_len (30%) split
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        head_len = max(100, int(mid * 0.7))
+        tail_len = max(80, mid - head_len)
+        candidate = text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
+        if estimate_tokens([{"role": "user", "content": candidate}], model) <= token_budget:
+            low = mid
+        else:
+            high = mid - 1
+
+    if low == 0:
+        return "[Current user message omitted: it exceeded the model context window.]"
+
+    head_len = max(100, int(low * 0.7))
+    tail_len = max(80, low - head_len)
     return text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
 
 
-def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
+def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int, model: str = "") -> Dict[str, Any]:
     """Shrink oversized assistant ``tool_calls`` arguments to fit ``token_budget``.
 
     A tool-only turn persists ``content=None`` with its whole payload in
@@ -173,20 +193,25 @@ def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str
         return msg
     # Budget left after whatever content survived (estimate_tokens counts tool
     # arguments too, so measure content alone here).
-    content_tokens = estimate_tokens([{"role": msg.get("role", "assistant"), "content": msg.get("content")}])
+    content_tokens = estimate_tokens([{"role": msg.get("role", "assistant"), "content": msg.get("content")}], model)
     per_call = max(16, (max(0, token_budget - content_tokens)) // len(tool_calls))
     new_calls = []
     changed = False
     for tc in tool_calls:
         fn = tc.get("function") if isinstance(tc, dict) else None
         args = fn.get("arguments") if isinstance(fn, dict) else None
-        if isinstance(args, str) and int(len(args) * 0.3) > per_call:
-            new_fn = dict(fn)
-            new_fn["arguments"] = json.dumps({"_truncated_for_context": len(args)})
-            new_tc = dict(tc)
-            new_tc["function"] = new_fn
-            new_calls.append(new_tc)
-            changed = True
+        if isinstance(args, str):
+            # Use tiktoken-accurate estimate
+            args_tokens = estimate_tokens([{"role": "user", "content": args}], model)
+            if args_tokens > per_call:
+                new_fn = dict(fn)
+                new_fn["arguments"] = json.dumps({"_truncated_for_context": len(args)})
+                new_tc = dict(tc)
+                new_tc["function"] = new_fn
+                new_calls.append(new_tc)
+                changed = True
+            else:
+                new_calls.append(tc)
         else:
             new_calls.append(tc)
     if not changed:
@@ -196,12 +221,12 @@ def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str
     return out
 
 
-def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
+def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int, model: str = "") -> Dict[str, Any]:
     """Return a copy of msg whose text content (and tool-call args) fit token_budget."""
     out = dict(msg)
     content = out.get("content", "")
     if isinstance(content, str):
-        out["content"] = _truncate_text_to_token_budget(content, token_budget)
+        out["content"] = _truncate_text_to_token_budget(content, token_budget, model)
     elif isinstance(content, list):
         remaining = token_budget
         new_content = []
@@ -210,18 +235,24 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
                 new_content.append(item)
                 continue
             text = item.get("text", "")
-            truncated = _truncate_text_to_token_budget(text, remaining)
-            cloned = dict(item)
-            cloned["text"] = truncated
-            new_content.append(cloned)
-            remaining -= _message_text_token_estimate(truncated)
+            # Use accurate estimate for multimodal items
+            item_tokens = estimate_tokens([{"role": "user", "content": text}], model)
+            if item_tokens > remaining:
+                truncated = _truncate_text_to_token_budget(text, remaining, model)
+                cloned = dict(item)
+                cloned["text"] = truncated
+                new_content.append(cloned)
+                remaining -= estimate_tokens([{"role": "user", "content": truncated}], model)
+            else:
+                new_content.append(item)
+                remaining -= item_tokens
         out["content"] = new_content
     # A tool-only turn (content=None) carries its payload in tool_calls args,
     # which the branches above can't shrink — handle it so the message can fit.
-    return _truncate_tool_call_args(out, token_budget)
+    return _truncate_tool_call_args(out, token_budget, model)
 
 
-def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
+def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512, model: str = "") -> List[Dict]:
     """Trim system messages to fit within context_length.
 
     For small-context models, progressively strips:
@@ -230,7 +261,7 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     Reserves space for the response.
     """
     budget = context_length - reserve_tokens
-    used = estimate_tokens(messages)
+    used = estimate_tokens(messages, model)
     if used <= budget:
         return messages
 
@@ -313,7 +344,7 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     if current_msg and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
         prefix = essential_system + protected_msgs + convo_msgs[:-1]
         available_for_current = max(64, budget - estimate_tokens(prefix))
-        convo_msgs[-1] = _truncate_message_to_token_budget(convo_msgs[-1], available_for_current)
+        convo_msgs[-1] = _truncate_message_to_token_budget(convo_msgs[-1], available_for_current, model)
 
     result = _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
     logger.info(f"Trimmed to {estimate_tokens(result)} tokens ({len(result)} messages)")
@@ -336,7 +367,7 @@ async def maybe_compact(
     Returns (messages, context_length, was_compacted).
     """
     context_length = get_context_length(endpoint_url, model)
-    used = estimate_tokens(messages)
+    used = estimate_tokens(messages, model)
     pct = (used / context_length) * 100 if context_length else 0
 
     if pct < COMPACT_THRESHOLD * 100:

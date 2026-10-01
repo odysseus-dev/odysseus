@@ -202,7 +202,7 @@ def _chat_stream_endpoint(
     else:
         monkeypatch.setattr(chat_routes, "save_assistant_response", lambda *args, **kwargs: None)
         monkeypatch.setattr(chat_routes, "run_post_response_tasks", lambda *args, **kwargs: None)
-    monkeypatch.setattr(chat_routes, "estimate_tokens", lambda messages: 10)
+    monkeypatch.setattr(chat_routes, "estimate_tokens", lambda messages, model="": 10)
     monkeypatch.setattr(
         chat_routes,
         "accumulate_token_usage",
@@ -558,7 +558,7 @@ async def test_streaming_chat_shapes_each_candidate_from_route_neutral_history(
     monkeypatch.setattr(
         chat_routes,
         "trim_for_context",
-        lambda messages, budget: list(messages) if budget >= 1000 else list(messages[-1:]),
+        lambda messages, budget, model="": list(messages) if budget >= 1000 else list(messages[-1:]),
     )
 
     async def fake_stream(candidates, messages, **kwargs):
@@ -1325,7 +1325,7 @@ async def test_nonstream_chat_shapes_each_candidate_from_route_neutral_history(
     monkeypatch.setattr(
         chat_routes,
         "trim_for_context",
-        lambda messages, budget: list(messages) if budget >= 1000 else list(messages[-1:]),
+        lambda messages, budget, model="": list(messages) if budget >= 1000 else list(messages[-1:]),
     )
 
     async def fake_call(url, model, messages, **kwargs):
@@ -2629,7 +2629,7 @@ def test_direct_low_signal_fallback_estimates_winning_route_prompt(
     monkeypatch.setattr(
         agent_loop,
         "estimate_tokens",
-        lambda request_messages: (
+        lambda request_messages, model="": (
             99
             if any(
                 message.get("content") == "larger backup route prompt"
@@ -3306,7 +3306,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
 
     monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
-    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda messages: len(messages) * 10)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda messages, model="": len(messages) * 10)
     monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
     monkeypatch.setattr(
         agent_loop,
@@ -3334,7 +3334,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
     def fake_compute(soft_budget, candidate_context, explicit, hard_max=None):
         return candidate_context
 
-    def fake_trim(messages, effective_budget, reserve_tokens=0):
+    def fake_trim(messages, effective_budget, reserve_tokens=0, model=""):
         trim_budgets.append(effective_budget)
         if effective_budget != 100:
             return list(messages)
