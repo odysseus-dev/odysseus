@@ -61,6 +61,40 @@ ASSISTANT_ALWAYS_AVAILABLE = frozenset({
     "ui_control",
 })
 
+# MCP tools that must never be indexed for retrieval.
+#
+# Retrieval returns a top-K (8 by default), and @playwright/mcp alone exposes
+# 30 tools. In practice that means the agent is handed browser_drop,
+# browser_handle_dialog or browser_close while browser_navigate — the only tool
+# that opens a page — does not surface at all. The model then reports that it
+# cannot browse the web, which is accurate but reads as a refusal.
+#
+# Matched against the bare tool name (the part after the server prefix), so
+# this holds whatever server id the browser is registered under. Denied tools
+# stay connected and callable; they just no longer compete for a slot.
+MCP_INDEX_DENIED = frozenset({
+    # Low-level pointer primitives — browser_click/browser_hover work off the
+    # accessibility snapshot and need no coordinates.
+    "browser_mouse_click_xy", "browser_mouse_down", "browser_mouse_up",
+    "browser_mouse_move_xy", "browser_mouse_drag_xy", "browser_mouse_wheel",
+    "browser_drag", "browser_drop",
+    # Debugging aids, not task tools.
+    "browser_console_messages", "browser_network_request",
+    "browser_network_requests", "browser_evaluate",
+    # Arbitrary JavaScript in the page. Deliberately out of reach.
+    "browser_run_code_unsafe",
+    # Session plumbing the agent should not spend its budget on.
+    "browser_close", "browser_resize", "browser_tabs",
+    "browser_handle_dialog", "browser_file_upload",
+})
+
+# Tools that are worthless on their own. If retrieval surfaces any browser
+# tool, the agent also needs the two that open a page and read it back —
+# otherwise it receives, say, browser_find with no way to reach a page first.
+MCP_COMPANIONS = {
+    "browser_": ("browser_navigate", "browser_snapshot"),
+}
+
 COLLECTION_NAME = "odysseus_tool_index"
 
 # ── Tool description registry ──
@@ -266,6 +300,10 @@ class ToolIndex:
                 if len(name_desc) == 2:
                     name = name_desc[0].strip()
                     desc = name_desc[1].strip()
+                    # Keep denied tools out of the index entirely, so they
+                    # cannot crowd out the ones that do the actual work.
+                    if name.rsplit("__", 1)[-1] in MCP_INDEX_DENIED:
+                        continue
                     # Include server identity in the indexed text so RAG can
                     # distinguish "list_emails for server-a" from "list_emails for server-b"
                     server_ctx = f" (server: {current_server})" if current_server else ""
@@ -522,6 +560,16 @@ class ToolIndex:
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
+        # Pull in the companions of anything retrieved. The server prefix is
+        # taken from the hit itself rather than hardcoded, so this keeps
+        # working if the browser is registered under a different id.
+        for name in retrieved:
+            prefix, _, bare = name.rpartition("__")
+            for marker, companions in MCP_COMPANIONS.items():
+                if bare.startswith(marker):
+                    base.update(
+                        f"{prefix}__{c}" if prefix else c for c in companions
+                    )
         # Keyword-based force-include for common intents. Match on word
         # boundaries, not raw substrings, so short hints like "fix", "line",
         # "serve", "reply" or "unread" don't fire inside unrelated words
