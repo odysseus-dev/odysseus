@@ -301,15 +301,77 @@ def to_http_exception(exc: Exception) -> HTTPException:
 
 def build_responses_input(messages: list[dict]) -> list[dict]:
     input_items: list[dict] = []
+
     for msg in messages or []:
         role = msg.get("role") or "user"
+
+        # Tool execution result: Responses API expects a
+        # function_call_output linked to the original call_id.
         if role == "tool":
-            role = "user"
+            call_id = msg.get("tool_call_id")
+            if call_id:
+                content = msg.get("content")
+                if isinstance(content, str):
+                    output = content
+                elif content is None:
+                    output = ""
+                else:
+                    output = json.dumps(content)
+
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                })
+            continue
+
+        # Preserve ordinary message content.
         content = msg.get("content")
         if isinstance(content, list):
-            text = "\n".join(str(part.get("text") or part.get("content") or "") for part in content if isinstance(part, dict))
+            text = "\n".join(
+                str(part.get("text") or part.get("content") or "")
+                for part in content
+                if isinstance(part, dict)
+            )
         else:
             text = "" if content is None else str(content)
-        input_type = "output_text" if role == "assistant" else "input_text"
-        input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+
+        # An assistant message may contain both text and native tool calls.
+        # Do not emit an empty assistant message when its only purpose was
+        # requesting tools.
+        if text or role != "assistant" or not msg.get("tool_calls"):
+            input_type = "output_text" if role == "assistant" else "input_text"
+            input_items.append({
+                "role": role,
+                "content": [{
+                    "type": input_type,
+                    "text": text,
+                }],
+            })
+
+        # Convert Odysseus/OpenAI Chat Completions-style tool calls into
+        # Responses API function_call input items.
+        if role == "assistant":
+            for tool_call in msg.get("tool_calls") or []:
+                if tool_call.get("type") != "function":
+                    continue
+
+                function = tool_call.get("function") or {}
+                name = function.get("name") or ""
+                call_id = tool_call.get("id") or ""
+
+                if not name or not call_id:
+                    continue
+
+                arguments = function.get("arguments") or "{}"
+                if not isinstance(arguments, str):
+                    arguments = json.dumps(arguments)
+
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                })
+
     return input_items

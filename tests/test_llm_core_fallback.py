@@ -87,6 +87,52 @@ def _run_provider_stream(monkeypatch, url, lines):
 
     return asyncio.run(run())
 
+def test_chatgpt_subscription_stream_emits_function_call_as_tool_calls(monkeypatch):
+    lines = [
+        "event: response.output_item.done",
+        "data: " + json.dumps({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "id": "fc_123",
+                "call_id": "call_123",
+                "name": "read_file",
+                "arguments": '{"path":"greeting.txt"}',
+            },
+        }),
+        "event: response.completed",
+        "data: " + json.dumps({
+            "type": "response.completed",
+            "response": {},
+        }),
+    ]
+
+    chunks = _run_provider_stream(
+        monkeypatch,
+        "https://chatgpt.com/backend-api/codex/responses",
+        lines,
+    )
+
+    tool_events = [
+        json.loads(chunk.split("data: ", 1)[1])
+        for chunk in chunks
+        if chunk.startswith("data: ")
+        and chunk.split("data: ", 1)[1].startswith("{")
+        and json.loads(chunk.split("data: ", 1)[1]).get("type") == "tool_calls"
+    ]
+
+    assert tool_events == [
+        {
+            "type": "tool_calls",
+            "calls": [
+                {
+                    "id": "call_123",
+                    "name": "read_file",
+                    "arguments": '{"path":"greeting.txt"}',
+                }
+            ],
+        }
+    ]
 
 def test_fallback_emits_indicator_when_primary_fails(monkeypatch):
     def per_model(model):

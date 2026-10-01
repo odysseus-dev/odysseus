@@ -28,6 +28,50 @@ def test_reasoning_models_restrict_temperature(model):
 def test_normal_models_allow_temperature(model):
     assert llm_core._restricts_temperature(model) is False
 
+def test_chatgpt_subscription_payload_converts_function_tools_for_responses():
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file from disk.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        }
+    ]
+
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.1-codex",
+        [{"role": "user", "content": "Read greeting.txt"}],
+        temperature=0.2,
+        max_tokens=0,
+        tools=tools,
+    )
+
+    assert payload["tools"] == [
+        {
+            "type": "function",
+            "name": "read_file",
+            "description": "Read a file from disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "offset": {"type": "integer"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["path"],
+            },
+        }
+    ]
 
 def _capture_openai_payload(
     monkeypatch,

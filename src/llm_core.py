@@ -1280,6 +1280,7 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    tools: Optional[List[Dict]] = None,
 ) -> Dict:
     from src.chatgpt_subscription import build_responses_input
 
@@ -1291,8 +1292,25 @@ def _build_chatgpt_responses_payload(
         "stream": stream,
         "store": False,
     }
+
+    if tools:
+        response_tools = []
+        for tool in tools:
+            if tool.get("type") != "function":
+                continue
+            function = tool.get("function") or {}
+            response_tools.append({
+                "type": "function",
+                "name": function.get("name", ""),
+                "description": function.get("description", ""),
+                "parameters": copy.deepcopy(function.get("parameters") or {}),
+            })
+        if response_tools:
+            payload["tools"] = response_tools
+
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
+
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
@@ -2625,7 +2643,14 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model,
+            messages_copy,
+            temperature,
+            max_tokens,
+            stream=True,
+            tools=tools,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2733,6 +2758,20 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                 yield _degenerate
                                 return
                             yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif evt == "response.output_item.done":
+                        item = data.get("item") or {}
+                        if isinstance(item, dict) and item.get("type") == "function_call":
+                            name = item.get("name") or ""
+                            if name:
+                                call_id = item.get("call_id") or item.get("id") or "call_0"
+                                arguments = item.get("arguments") or "{}"
+                                if not isinstance(arguments, str):
+                                    arguments = json.dumps(arguments)
+                                yield f'data: {json.dumps({"type": "tool_calls", "calls": [{
+                                    "id": call_id,
+                                    "name": name,
+                                    "arguments": arguments,
+                                }]})}\n\n'
                     elif evt == "response.completed":
                         usage = (data.get("response") or {}).get("usage") or data.get("usage") or {}
                         if isinstance(usage, dict):
