@@ -225,3 +225,35 @@ def test_route_tool_mode_matches_credential_distinct_endpoint(monkeypatch):
         "custom-model",
         headers={"Authorization": "Bearer key-two"},
     )[0] is False
+
+
+def test_subscription_route_preserves_explicit_tool_opt_out(monkeypatch):
+    from core import database
+    from src.chatgpt_subscription import DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL
+
+    endpoint = SimpleNamespace(
+        id="subscription",
+        base_url=DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL,
+        supports_tools=False,
+    )
+
+    class Query:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return [endpoint]
+
+    class Db:
+        def query(self, *args, **kwargs):
+            return Query()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(database, "SessionLocal", lambda: Db())
+
+    assert _agent_route_tool_mode(
+        DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL,
+        "gpt-5.5",
+    )[0] is False

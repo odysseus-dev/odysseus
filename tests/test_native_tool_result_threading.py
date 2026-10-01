@@ -9,7 +9,10 @@ answered with an empty string. _resolve_tool_blocks now returns the converted
 calls aligned 1:1 with tool_blocks/tool_result_texts, and that aligned list is
 what is threaded back.
 """
+import pytest
+
 import src.agent_loop as al
+from src import tool_execution
 
 
 def test_resolve_returns_converted_calls_aligned():
@@ -22,6 +25,45 @@ def test_resolve_returns_converted_calls_aligned():
     assert len(tool_blocks) == 1           # only web_search converted
     assert [c["name"] for c in converted] == ["web_search"]
     assert len(converted) == len(tool_blocks)  # aligned 1:1
+
+
+def test_resolve_rejects_native_calls_not_advertised_for_round():
+    native = [
+        {"name": "web_search", "arguments": '{"query": "hello"}', "id": "A"},
+        {"name": "mcp__private__hidden", "arguments": "{}", "id": "B"},
+    ]
+
+    tool_blocks, used_native, converted = al._resolve_tool_blocks(
+        "",
+        native,
+        1,
+        allowed_native_tool_names={"web_search"},
+    )
+
+    assert used_native is True
+    assert [block.tool_type for block in tool_blocks] == ["web_search"]
+    assert [call["id"] for call in converted] == ["A"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_dispatch_rechecks_native_round_visibility(monkeypatch):
+    class Manager:
+        async def call_tool(self, *_args, **_kwargs):
+            raise AssertionError("hidden MCP tool must not be dispatched")
+
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: Manager())
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda _owner: True)
+
+    desc, result = await tool_execution.execute_tool_block(
+        al.ToolBlock("mcp__private__hidden", "{}"),
+        owner="admin",
+        security_context=tool_execution.NO_TOOL_SECURITY_CONTEXT,
+        advertised_native_tool_names={"mcp__private__visible"},
+    )
+
+    assert desc == "mcp__private__hidden: BLOCKED"
+    assert result["blocked"] is True
+    assert result["policy"] == "native_tool_visibility"
 
 
 def test_append_threads_result_to_correct_tool_call_id():

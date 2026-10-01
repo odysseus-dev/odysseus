@@ -1,5 +1,6 @@
 """DB-backed ChatGPT Subscription endpoint provisioning tests."""
 
+import base64
 import json
 
 import pytest
@@ -8,6 +9,23 @@ from sqlalchemy.orm import sessionmaker
 
 from core.database import Base, ModelEndpoint, ProviderAuthSession
 import routes.chatgpt_subscription_routes as csr
+
+
+def _jwt(payload):
+    def enc(obj):
+        raw = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    return f"{enc({'alg': 'none'})}.{enc(payload)}.sig"
+
+
+def _id_token(account_id="acct_test"):
+    return _jwt({
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": account_id,
+            "chatgpt_user_id": "user_test",
+        }
+    })
 
 
 def _mem_db(monkeypatch):
@@ -25,7 +43,11 @@ def test_provision_creates_owner_scoped_auth_session_and_endpoint(monkeypatch):
     TestSessionLocal = _mem_db(monkeypatch)
     monkeypatch.setattr(csr.chatgpt_subscription, "fetch_available_models", lambda token: ["gpt-5.5", "o4-mini"])
 
-    res = csr._provision_endpoint({"access_token": "AT", "refresh_token": "RT"}, "alice")
+    res = csr._provision_endpoint({
+        "access_token": "AT",
+        "refresh_token": "RT",
+        "id_token": _id_token("acct_alice"),
+    }, "alice")
 
     assert res["name"] == "ChatGPT Subscription"
     assert res["base_url"] == csr.chatgpt_subscription.DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL
@@ -40,14 +62,16 @@ def test_provision_creates_owner_scoped_auth_session_and_endpoint(monkeypatch):
         assert auth.provider == csr.chatgpt_subscription.CHATGPT_SUBSCRIPTION_PROVIDER
         assert auth.access_token == "AT"
         assert auth.refresh_token == "RT"
+        assert auth.chatgpt_account_id == "acct_alice"
         assert auth.auth_mode == "chatgpt"
+        assert csr.chatgpt_subscription.chatgpt_headers("AT")["ChatGPT-Account-Id"] == "acct_alice"
         assert ep is not None
         assert ep.owner == "alice"
         assert ep.api_key is None
         assert ep.provider_auth_id == auth.id
         assert ep.endpoint_kind == "api"
         assert ep.model_refresh_mode == "manual"
-        assert ep.supports_tools is False
+        assert ep.supports_tools is True
         assert json.loads(ep.cached_models) == ["gpt-5.5", "o4-mini"]
     finally:
         db.close()
@@ -70,6 +94,28 @@ def test_provision_refreshes_existing_auth_session_and_endpoint(monkeypatch):
         assert auth_rows[0].access_token == "NEW"
         assert auth_rows[0].refresh_token == "NEW-RT"
         assert ep_rows[0].provider_auth_id == auth_rows[0].id
+    finally:
+        db.close()
+
+
+def test_provision_preserves_existing_tool_capability_opt_out(monkeypatch):
+    TestSessionLocal = _mem_db(monkeypatch)
+    monkeypatch.setattr(csr.chatgpt_subscription, "fetch_available_models", lambda token: ["gpt-5.5"])
+
+    first = csr._provision_endpoint({"access_token": "OLD", "refresh_token": "OLD-RT"}, "bob")
+    db = TestSessionLocal()
+    try:
+        endpoint = db.query(ModelEndpoint).filter(ModelEndpoint.id == first["id"]).one()
+        endpoint.supports_tools = False
+        db.commit()
+    finally:
+        db.close()
+
+    csr._provision_endpoint({"access_token": "NEW", "refresh_token": "NEW-RT"}, "bob")
+    db = TestSessionLocal()
+    try:
+        endpoint = db.query(ModelEndpoint).filter(ModelEndpoint.id == first["id"]).one()
+        assert endpoint.supports_tools is False
     finally:
         db.close()
 
