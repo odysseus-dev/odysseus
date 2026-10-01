@@ -85,6 +85,12 @@ _BUILTIN_NPX_SERVERS = {
     }
 }
 
+# Desktop control (screenshots + mouse/keyboard on the host) is opt-in: it only
+# works on a native install, and it hands the agent the user's whole machine.
+DESKTOP_SERVER_ID = "builtin_desktop"
+_DESKTOP_SERVER = ("mcp_servers/desktop_server.py", "Built-in: Desktop Control")
+DESKTOP_CONTROL_ENABLED = os.environ.get("ODYSSEUS_DESKTOP_CONTROL", "").lower() in ("1", "true", "yes")
+
 # Global flag to disable MCP if there are compatibility issues
 MCP_DISABLED = os.environ.get("ODYSSEUS_DISABLE_MCP", "").lower() in ("1", "true", "yes")
 BROWSER_MCP_REQUIRE_CACHE = os.environ.get("ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE", "").lower() in ("1", "true", "yes")
@@ -189,7 +195,15 @@ async def register_builtin_servers(mcp_manager):
         except BaseException as e:
             logger.warning(f"Built-in MCP server {name} error: {type(e).__name__}: {e}")
 
-    for server_id, (script, name) in _BUILTIN_SERVERS.items():
+    servers = dict(_BUILTIN_SERVERS)
+    if DESKTOP_CONTROL_ENABLED:
+        servers[DESKTOP_SERVER_ID] = _DESKTOP_SERVER
+        logger.warning(
+            "Desktop control is ENABLED (ODYSSEUS_DESKTOP_CONTROL=1): admin "
+            "agents can see and control this machine's screen, mouse and keyboard."
+        )
+
+    for server_id, (script, name) in servers.items():
         script_path = os.path.join(base_dir, script)
         if not os.path.exists(script_path):
             logger.warning(f"Built-in MCP server script not found: {script_path}")

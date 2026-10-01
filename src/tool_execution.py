@@ -1353,6 +1353,9 @@ _FORMATTER_HANDLED_KEYS = {
     "response", "results", "session_id", "name", "model", "session_name",
     "success", "path", "action", "title", "doc_id", "version", "applied",
     "error", "output",
+    # Base64 screenshots from MCP tools: rendered in the UI (and, for desktop
+    # control, sent to the model as an image) — never as a text dump.
+    "images",
 }
 
 

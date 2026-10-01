@@ -710,6 +710,9 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 "search": ["web_search", "web_fetch"],
                 "web": ["web_search", "web_fetch"],
                 "browser": ["builtin_browser"],
+                "desktop": [f"mcp__builtin_desktop__desktop_{t}" for t in (
+                    "screenshot", "click", "move_mouse", "drag", "scroll",
+                    "type", "key", "cursor_position", "wait")],
                 "documents": ["create_document", "edit_document", "update_document", "suggest_document"],
                 "doc": ["create_document", "edit_document", "update_document", "suggest_document"],
                 "memory": ["manage_memory"],
