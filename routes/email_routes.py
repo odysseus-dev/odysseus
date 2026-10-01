@@ -5194,11 +5194,16 @@ def setup_email_routes():
             settings = _load_settings()
             style = _get_email_writing_style_for_account(settings, account_id)
 
-            # Try session's endpoint first if session_id provided
             url = None
             model = requested_model
             headers = None
-            if session_id:
+            # A dedicated email-draft model (email_draft_endpoint_id /
+            # email_draft_model) wins over the open chat's model when set.
+            if (settings.get("email_draft_endpoint_id") or "").strip():
+                url, model, headers = resolve_endpoint("email_draft", owner=owner)
+
+            # Otherwise try the session's endpoint if session_id provided
+            if session_id and not url:
                 try:
                     # The chat-session ORM model is `Session`, not `ChatSession`
                     # — the old import threw ImportError, was swallowed by the
