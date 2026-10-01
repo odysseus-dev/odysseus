@@ -27,7 +27,7 @@ import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js?v=20260722memoryloading1';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js';
+import { loadPanel } from './js/panels.js';
 import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js';
 import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
 import calendarModule from './js/calendar.js';
@@ -1041,16 +1041,28 @@ function initializeEventListeners() {
     });
   }
 
-  // Gallery tool button
+  // Gallery tool button. gallery.js is 145 KB and most sessions never open the
+  // panel, so it loads on first use via the panel registry. Modals.toggle runs
+  // first, unchanged: a minimized gallery can only exist if the module already
+  // loaded, so restoring one must not wait on an import.
   const toolGalleryBtn = el('tool-gallery-btn');
   if (toolGalleryBtn) {
     toolGalleryBtn.addEventListener('click', async () => {
-      if (!galleryModule) return;
       const Modals = await import('./js/modalManager.js');
-      if (!Modals.toggle('gallery-modal')) {
-        if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
-        else galleryModule.openGallery();
+      if (Modals.toggle('gallery-modal')) return;
+      let galleryModule;
+      try {
+        galleryModule = (await loadPanel('gallery')).default;
+      } catch (e) {
+        // Previously unreachable — a static import either loaded or the whole
+        // page failed. Now it can fail on its own (offline before the module
+        // was ever cached), so say so instead of doing nothing.
+        console.error('[app] gallery failed to load', e);
+        uiModule?.showError?.('Failed to load the gallery');
+        return;
       }
+      if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
+      else galleryModule.openGallery();
     });
   }
 
