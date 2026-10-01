@@ -24,7 +24,7 @@ import {
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
 import { getSettings } from './appConfig.js';
-import { collapseSidebarToRail } from './modalSnap.js';
+import { collapseSidebarToRail, leftNavRight, rightNavInset, safeInsetPx } from './modalSnap.js';
 import { emailApiUrl } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
@@ -1014,7 +1014,13 @@ function _readCssPx(name) {
 }
 
 function _emailSplitLeftEdge() {
-  return _readCssPx('--icon-rail-w') + _readCssPx('--sidebar-w');
+  return leftNavRight();
+}
+
+// Keeps a floating window between the nav and the safe areas
+function _clampWindowLeft(left, width) {
+  const max = window.innerWidth - rightNavInset() - width;
+  return Math.max(leftNavRight(), Math.min(left, max));
 }
 
 function _setEmailDocumentSplit(leftEdge, emailWidth) {
@@ -1090,7 +1096,8 @@ function _clearEmailDocumentSplit() {
 // rail. Used by the "try collapsing the sidebar first" path so we can decide
 // whether collapsing recovers enough room before minimizing email.
 function _emailSplitLeftEdgeIfSidebarCollapsed() {
-  return _readCssPx('--icon-rail-w');
+  const navOnRight = document.getElementById('sidebar')?.classList.contains('right-side');
+  return safeInsetPx('left') + (navOnRight ? 0 : _readCssPx('--icon-rail-w'));
 }
 
 function _hasDesktopRoomForEmailAndDocument(modal, opts = {}) {
@@ -2759,7 +2766,7 @@ export function openEmailLibrary(opts = {}) {
       requestAnimationFrame(() => {
         const w = content.offsetWidth;
         const refH = window.innerHeight * 0.85;
-        content.style.left = Math.max(20, (window.innerWidth - w) / 2) + 'px';
+        content.style.left = _clampWindowLeft(Math.max(20, (window.innerWidth - w) / 2), w) + 'px';
         content.style.top = Math.max(20, (window.innerHeight - refH) / 2) + 'px';
         content.style.transform = 'none';
       });
@@ -7300,7 +7307,7 @@ async function _openEmailWindow(em, folder) {
     requestAnimationFrame(() => {
       const w = content.offsetWidth, h = content.offsetHeight;
       const off = (_emailWindowSeq % 6) * 28;
-      content.style.left = Math.max(20, (window.innerWidth  - w) / 2 + off) + 'px';
+      content.style.left = _clampWindowLeft(Math.max(20, (window.innerWidth  - w) / 2 + off), w) + 'px';
       content.style.top  = Math.max(20, (window.innerHeight - h) / 3 + off) + 'px';
     });
   }

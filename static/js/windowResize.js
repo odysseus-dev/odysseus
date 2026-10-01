@@ -220,12 +220,19 @@ export function makeWindowResizable(content, options = {}) {
       try {
         const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
         if (saved && saved.w && saved.h) {
-          const w = Math.max(minW, Math.min(saved.w, window.innerWidth));
+          const bodyStyle = getComputedStyle(document.body);
+          const padLeft = parseFloat(bodyStyle.paddingLeft) || 0;
+          const padRight = parseFloat(bodyStyle.paddingRight) || 0;
+          const w = Math.max(minW, Math.min(saved.w, window.innerWidth - padLeft - padRight));
           const h = Math.max(minH, Math.min(saved.h, window.innerHeight));
           content.style.width = w + 'px';
           content.style.height = h + 'px';
           content.style.maxWidth = 'none';
           content.style.maxHeight = 'none';
+          const left = parseFloat(content.style.left);
+          if (Number.isFinite(left) && left + w > window.innerWidth - padRight) {
+            content.style.left = Math.max(padLeft, window.innerWidth - padRight - w) + 'px';
+          }
         }
       } catch (_) {}
     });

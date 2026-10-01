@@ -66,6 +66,28 @@
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
+
+  /* Device safe areas (notch, Dynamic Island, home indicator) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Full-height sheets start clear of the status-bar blur; flush when there is no inset */
+  --sheet-top: calc(var(--safe-top) + min(var(--safe-top), 24px));
+  --app-height: 100dvh;
+}
+/* The on-screen keyboard covers the home indicator */
+:root.keyboard-open { --safe-bottom: 0px; }
+/* iOS standalone web apps report dvh (and the viewport) short by the status bar
+   height; lvh still matches the screen. Body becomes the containing block for
+   fixed elements so overlays reach the real bottom edge as well. Containment
+   stops body's background reaching the canvas, so html paints it instead. */
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    :root { --app-height: 100lvh; }
+    html { height: var(--app-height); background-color: var(--bg); }
+    body { contain: layout; overflow: clip; }
+  }
 }
 
 :root.light {
@@ -105,9 +127,12 @@ body {
   font-family: var(--font-family, 'Fira Code', monospace);
   display: flex;
   height: 100%;
-  height: 100dvh; /* dynamic viewport height — adapts when mobile keyboard opens */
+  height: var(--app-height);
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   overflow: hidden;
 }
+/* iOS keeps the full height when the keyboard opens; size the shell to what is visible */
+:root.keyboard-open body { height: var(--keyboard-viewport-height, var(--app-height)); }
 
 /* Self-hosted Fira Code font */
 @font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
@@ -171,7 +196,8 @@ html {
    pushes the bottom-pinned sidebar account/settings row below the fold (and
    body's overflow:hidden then clips it). Shrink the shell by the same factor
    so it fits the viewport exactly. */
-:root.ui-scale-125 body { height: calc(100dvh / 1.25); }
+:root.ui-scale-125 body { height: calc(var(--app-height) / 1.25); }
+:root.ui-scale-125.keyboard-open body { height: calc(var(--keyboard-viewport-height, var(--app-height)) / 1.25); }
 /* Modals/panels under the 1.25x scale: zoom renders a centred, viewport-sized
    panel ~1.25x taller, pushing its draggable header + close button off-screen
    (a catch-22 — you can't reach the control to turn the size back down). Divide
@@ -673,8 +699,8 @@ body.bg-pattern-sparkles {
     /* Fixed hamburger — always visible, toggles sidebar */
     .hamburger-btn {
       position: fixed;
-      top: 12px;
-      left: 9px;
+      top: calc(12px + var(--safe-top));
+      left: calc(9px + var(--safe-left));
       right: auto;
       z-index: 210;
       width: 30px;
@@ -694,7 +720,7 @@ body.bg-pattern-sparkles {
     }
     body.hamburger-right .hamburger-btn {
       left: auto;
-      right: 9px;
+      right: calc(9px + var(--safe-right));
     }
     .mobile-new-chat-btn {
       display: none;
@@ -765,6 +791,25 @@ body.bg-pattern-sparkles {
       margin: 0;
       border-right: none;
       border-left: 1px solid var(--border);
+    }
+    /* Edge columns bleed into the safe-area strips instead of leaving bare background */
+    @media (min-width: 769px) {
+      .sidebar:not(.hidden) {
+        margin-bottom: calc(-1 * var(--safe-bottom));
+        padding-bottom: var(--safe-bottom);
+      }
+      .sidebar:not(.hidden):not(.right-side) {
+        margin-left: calc(-1 * var(--safe-left));
+        padding-left: var(--safe-left);
+      }
+      .sidebar.right-side:not(.hidden) {
+        margin-right: calc(-1 * var(--safe-right));
+        padding-right: var(--safe-right);
+      }
+      .icon-rail {
+        margin-bottom: calc(-1 * var(--safe-bottom));
+        padding-bottom: calc(8px + var(--safe-bottom));
+      }
     }
     .icon-rail-divider {
       width: 24px;
@@ -4437,7 +4482,7 @@ body.bg-pattern-sparkles {
 
     .toast {
       position:fixed;
-      top: 16px; right: 16px;
+      top: calc(16px + var(--safe-top)); right: calc(16px + var(--safe-right));
       left: auto; bottom: auto;
       background:var(--panel); color:var(--fg);
       border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -4533,8 +4578,8 @@ body.bg-pattern-sparkles {
     body:has(.notes-pane.modal-right-docked) .toast.exiting { transform: translateX(120%); }
     @media (max-width: 768px) {
       .toast {
-        top: 12px;
-        right: 12px;
+        top: calc(12px + var(--safe-top));
+        right: calc(12px + var(--safe-right));
         max-width: calc(100vw - 24px);
         /* Receive touches so the swipe-to-dismiss gesture works (desktop keeps
            pointer-events:none so the toast never blocks clicks). Horizontal pan
@@ -4653,6 +4698,7 @@ body.bg-pattern-sparkles {
            label show through the sidebar. */
         background: var(--panel) !important;
         backdrop-filter: none !important;
+        padding: var(--safe-top) 0 var(--safe-bottom) var(--safe-left);
       }
       .sidebar.hidden {
         width: 80% !important;
@@ -4666,6 +4712,8 @@ body.bg-pattern-sparkles {
       .sidebar.right-side {
         left: auto; right: 0;
         box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+        padding-left: 0;
+        padding-right: var(--safe-right);
       }
       html.ody-sidebar-off .sidebar,
       html.ody-mobile-startup-sidebar-hidden .sidebar {
@@ -4785,9 +4833,9 @@ body.bg-pattern-sparkles {
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
         position: fixed;
-        top: 12px;
+        top: calc(12px + var(--safe-top));
         left: auto !important;
-        right: 48px !important;
+        right: calc(48px + var(--safe-right)) !important;
         transform: none;
         width: 32px;
         height: 32px;
@@ -4847,9 +4895,9 @@ body.bg-pattern-sparkles {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: calc(6px + var(--safe-top));
         left: auto !important;
-        right: 4px !important;
+        right: calc(4px + var(--safe-right)) !important;
         -webkit-tap-highlight-color: transparent;
       }
       .hamburger-btn:hover,
@@ -4862,8 +4910,8 @@ body.bg-pattern-sparkles {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
-        left: 8px;
+        top: calc(12px + var(--safe-top));
+        left: calc(8px + var(--safe-left));
         z-index: 210;
         width: 32px;
         height: 32px;
@@ -4932,10 +4980,6 @@ body.bg-pattern-sparkles {
         padding: 6px !important;
         border-radius: 12px !important;
       }
-      /* Safe area padding for notched devices */
-      .chat-input-bar {
-        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-      }
       /* Mode toggle — larger touch targets */
       .mode-toggle {
         height: 34px;
@@ -4979,15 +5023,15 @@ body.bg-pattern-sparkles {
            URL-bar show/hide. Order matters: later same-specificity rule
            wins, so dvh must come after vh. */
         max-height: 100vh !important;
-        max-height: 100dvh !important;
+        max-height: calc(var(--app-height) - var(--sheet-top)) !important;
         height: 100vh;
-        height: 100dvh;
+        height: calc(var(--app-height) - var(--sheet-top));
         border-radius: 14px 14px 0 0 !important;
         border: none !important;
         border-top: 1px solid var(--border) !important;
         box-shadow: none !important;
         padding: 6px !important;
-        padding-bottom: env(safe-area-inset-bottom, 6px) !important;
+        padding-bottom: var(--safe-bottom) !important;
         margin: 0 !important;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
@@ -5068,7 +5112,7 @@ body.bg-pattern-sparkles {
            (against the flex-sized grid) as a definite height, so grid/flex
            children never filled. An explicit px height is unambiguous. */
         margin: 0 !important;
-        padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+        padding: 8px 10px calc(8px + var(--safe-bottom)) !important;
         background: var(--bg) !important;
         /* Flex column. JS (_fillSkillCardHeight) sets EXPLICIT px heights on
            the preview + <pre>; in a flex column an explicit-height item
@@ -5144,7 +5188,7 @@ body.bg-pattern-sparkles {
       /* Small bottom padding now that the load-more no longer steals space —
          the action bar sits low, just clearing the home-indicator safe area. */
       #doclib-modal [data-doclib-panel="documents"] .doclib-card.doclib-card-expanded .doclib-card-preview {
-        padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important;
+        padding-bottom: calc(18px + var(--safe-bottom)) !important;
       }
       #doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview pre,
       #doclib-modal .doclib-card.doclib-card-expanded .doclib-card-preview .doclib-card-pdf-frame,
@@ -5602,6 +5646,7 @@ body.bg-pattern-sparkles {
       z-index:250;
       backdrop-filter:none;
       pointer-events:none;
+      padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
     }
     /* Cookbook always sits above Gallery so the "Serve a model in
        Cookbook…" flow (and any other "open Cookbook from inside another
@@ -5634,6 +5679,17 @@ body.bg-pattern-sparkles {
         /* Slide in sync with the sidebar's 0.25s collapse/expand so the
            centered window glides instead of jumping when the nav toggles. */
         transition: left 0.25s ease, width 0.25s ease;
+      }
+      /* A right-side nav reserves its width on the right instead */
+      body.hamburger-right :is(#calendar-modal, #gallery-modal, #tasks-modal, #memory-modal, #doclib-modal,
+        #compare-model-overlay, #research-overlay, #theme-modal, #settings-modal, #email-lib-modal) {
+        left: 0;
+      }
+      /* Windows never grow past the area between the nav and the safe areas */
+      :is(#calendar-modal, #gallery-modal, #tasks-modal, #memory-modal, #doclib-modal,
+        #compare-model-overlay, #research-overlay, #theme-modal, #settings-modal, #email-lib-modal)
+        > :is(.modal-content, .memory-modal-content, .settings-modal-content, .doclib-modal-content) {
+        max-width: calc(100vw - var(--safe-left) - var(--safe-right) - var(--icon-rail-w, 48px) - var(--sidebar-w, 0px));
       }
     }
     .modal-content {
@@ -6116,8 +6172,8 @@ body.bg-pattern-sparkles {
     /* Agent indicator */
     #agent-indicator {
       position: fixed;
-      top: 20px;
-      right: 20px;
+      top: calc(20px + var(--safe-top));
+      right: calc(20px + var(--safe-right));
       background: var(--bg);
       color: var(--fg);
       border: 1px solid var(--border);
@@ -6431,7 +6487,7 @@ body.bg-pattern-sparkles {
     #compare-model-overlay .modal-content {
       display: flex;
       flex-direction: column;
-      max-height: min(720px, calc(100dvh - 48px));
+      max-height: min(720px, calc(var(--app-height) - 48px));
       overflow: hidden;
       min-height: 180px;
     }
@@ -6852,7 +6908,7 @@ body.bg-pattern-sparkles {
     
     #recording-indicator {
       position: fixed;
-      top: 10px;
+      top: calc(10px + var(--safe-top));
       left: 0;
       right: 0;
       background: rgba(0, 0, 0, 0.8);
@@ -7288,9 +7344,8 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
            position:fixed; height:100% = the layout viewport, whose bottom sits
            UNDER Firefox Android's bottom URL bar — so flex-end parked the sheet
            (and its footer / Start button) beneath the bar. dvh excludes the bar
-           so the footer lands above it. Extra safe-area pad for iOS home bar. */
-        height: 100dvh;
-        padding-bottom: env(safe-area-inset-bottom, 0px);
+           so the footer lands above it. */
+        height: var(--app-height);
       }
       /* Confirm dialog stays centered, not a bottom sheet */
       #styled-confirm-overlay {
@@ -7320,7 +7375,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         border-radius: 14px 14px 0 0;
         border: none;
         border-top: 1px solid var(--border);
-        padding: 6px 12px 12px;
+        padding: 6px 12px calc(12px + var(--safe-bottom));
         animation: sheet-enter 0.2s ease-out forwards;
         overflow-y: hidden !important;
       }
@@ -7372,13 +7427,13 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal .modal-content,
       #doclib-modal .doclib-modal-content {
         max-height: 100vh !important;
-        max-height: 100dvh !important;
+        max-height: calc(var(--app-height) - var(--sheet-top)) !important;
         height: 100vh !important;
-        height: 100dvh !important;
+        height: calc(var(--app-height) - var(--sheet-top)) !important;
         /* Reserve the iOS home-indicator / bottom-bar strip so an expanded
            skill card's footer (Delete / Edit / Run) isn't hidden under it.
            dvh already excludes the URL bar; this handles the safe area. */
-        padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+        padding-bottom: var(--safe-bottom) !important;
       }
       /* Grab handle pill on the non-standard content classes too. Memory's
          desktop rule defines a radial-glow ::before later in the file —
@@ -7427,9 +7482,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
            visible viewport on Chrome/Safari mobile (URL bar covered the
            action buttons row). */
         max-height: 100vh !important;
-        max-height: 100dvh !important;
+        max-height: calc(var(--app-height) - var(--sheet-top)) !important;
         height: 100vh !important;
-        height: 100dvh !important;
+        height: calc(var(--app-height) - var(--sheet-top)) !important;
       }
       /* Anchor those modals to the top so the full height is usable */
       #cookbook-modal,
@@ -7437,8 +7492,11 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
-      #tasks-modal {
-        padding-top: 0 !important;
+      #tasks-modal,
+      #memory-modal,
+      #settings-modal {
+        padding-top: var(--sheet-top) !important;
+        padding-bottom: 0 !important;
         align-items: stretch !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the
@@ -8758,8 +8816,8 @@ button.hamburger {
 /* Agent indicator */
 #agent-indicator {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  top: calc(20px + var(--safe-top));
+  right: calc(20px + var(--safe-right));
   background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   border: 1px solid var(--border);
@@ -9236,7 +9294,7 @@ button.hamburger {
 /* Recording indicator */
 #recording-indicator {
   position: fixed;
-  top: 10px;
+  top: calc(10px + var(--safe-top));
   left: 0;
   right: 0;
   background: rgba(0, 0, 0, 0.8);
@@ -14584,11 +14642,13 @@ mark.doc-find-mark.current {
        render it as a narrow side pane ("sidebar") on a phone. */
     position: fixed !important;
     inset: 0 !important;
-    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    top: var(--sheet-top) !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    height: auto !important;
     max-width: 100% !important;
     width: 100% !important;
     flex: none !important;
     z-index: 170;
+    padding-bottom: var(--safe-bottom);
     /* Stroke the top edge so the rounded corners read as a curved sheet edge. */
     border: 1px solid var(--border);
     border-bottom: none;
@@ -16125,8 +16185,8 @@ span[id$="-logo"] svg:not([width]) {
     opacity: 0;
     transform-origin: center center;
     position: absolute;
-    right: calc(16px + env(safe-area-inset-right, 0px));
-    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    right: calc(16px + var(--safe-right));
+    bottom: calc(18px + var(--safe-bottom));
     height: var(--fab-size);
     min-width: var(--fab-size);
     padding: 0 20px 0 18px;
@@ -16242,16 +16302,22 @@ span[id$="-logo"] svg:not([width]) {
    instead of becoming a side panel. */
 #doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
   position: fixed !important;
-  top: 0 !important;
-  left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  top: var(--safe-top) !important;
+  left: calc(var(--safe-left) + var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  right: var(--safe-right) !important;
+  bottom: var(--safe-bottom) !important;
   width: auto !important;
   max-width: none !important;
-  height: 100vh !important;
-  max-height: 100vh !important;
+  height: auto !important;
+  max-height: none !important;
   border-radius: 0 !important;
   transform: none !important;
+}
+@media (min-width: 769px) {
+  body.hamburger-right #doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+    left: var(--safe-left) !important;
+    right: calc(var(--safe-right) + var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  }
 }
 #doclib-modal.doclib-fullscreen .modal-header,
 #doclib-modal.doclib-fullscreen .lib-tabs,
@@ -16359,10 +16425,10 @@ span[id$="-logo"] svg:not([width]) {
    panes reserve room with margins so left + right docks can be active at the
    same time without skewing the entire body box. */
 body.right-dock-active {
-  padding-right: 0;
+  padding-right: var(--safe-right);
 }
 body.left-dock-active {
-  padding-left: 0;
+  padding-left: var(--safe-left);
 }
 body.left-dock-active:not(.email-doc-split-active) .chat-container {
   margin-left: var(--left-dock-w, 0px);
@@ -16759,13 +16825,11 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
    edges and let the inner body absorb the remaining height. */
 body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .modal-content {
   position: fixed !important;
-  inset: 0 !important;
-  left: 0 !important;
-  top: 0 !important;
-  width: 100vw !important;
-  max-width: 100vw !important;
-  height: 100vh !important;
-  max-height: 100vh !important;
+  inset: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left) !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
   border-radius: 0 !important;
   transform: none !important;
   display: flex !important;
@@ -16784,16 +16848,22 @@ body:not(.email-doc-split-active) .email-window-modal.email-window-fullscreen .e
    one of the two CSS vars is 0 at any given time, set by init.js). */
 body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
   position: fixed !important;
-  top: 0 !important;
-  left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  top: var(--safe-top) !important;
+  left: calc(var(--safe-left) + var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  right: var(--safe-right) !important;
+  bottom: var(--safe-bottom) !important;
   width: auto !important;
   max-width: none !important;
-  height: 100vh !important;
-  max-height: 100vh !important;
+  height: auto !important;
+  max-height: none !important;
   border-radius: 0 !important;
   transform: none !important;
+}
+@media (min-width: 769px) {
+  body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
+    left: var(--safe-left) !important;
+    right: calc(var(--safe-right) + var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  }
 }
 /* Mobile: the /email route adds .email-lib-fullscreen, but the desktop full-
    bleed rule above squares off the corners and offsets the email by the icon
@@ -16802,12 +16872,14 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
    so it wins on mobile. */
 @media (max-width: 768px) {
   body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content {
-    left: 0 !important;
-    right: 0 !important;
-    width: 100vw !important;
-    max-width: 100vw !important;
-    height: 100dvh !important;
-    max-height: 100dvh !important;
+    top: var(--sheet-top) !important;
+    left: var(--safe-left) !important;
+    right: var(--safe-right) !important;
+    bottom: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
     border-radius: 14px 14px 0 0 !important;
     border-top: 1px solid var(--border) !important;
   }
@@ -29864,7 +29936,7 @@ button .spinner-whirlpool {
     left: 8px !important;
     right: 8px !important;
     top: auto !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+    bottom: calc(var(--safe-bottom) + 8px) !important;
     width: auto !important;
     min-width: 0 !important;
     max-width: calc(100vw - 16px) !important;
@@ -33662,13 +33734,14 @@ body.notes-view .chat-container { flex: 1; min-width: 0; }
 @media (max-width: 768px) {
   body.notes-view .notes-pane {
     position: fixed;
-    inset: 0;
+    inset: var(--sheet-top) 0 0;
     max-width: 100%;
     width: 100% !important;
     /* Desktop sets height: min(80vh, 820px) which wins over inset:0's bottom:0
        and leaves a gap at the bottom of the viewport. Force full height here. */
-    height: 100dvh !important;
-    max-height: 100dvh !important;
+    height: calc(var(--app-height) - var(--sheet-top)) !important;
+    max-height: calc(var(--app-height) - var(--sheet-top)) !important;
+    padding-bottom: var(--safe-bottom);
     z-index: 170;
     /* Bottom-sheet treatment like the document editor: stroked, rounded top,
        slides up from the bottom. */
@@ -40364,7 +40437,7 @@ body.theme-frosted .modal {
   /* Bottom-sheet: 90dvh tall (a touch smaller than full-screen) anchored to the
      bottom, so there's a small gap at the top and it reads as a sheet. The body
      still scrolls within the bounded height. */
-  #research-overlay { align-items: flex-end !important; justify-content: stretch !important; }
+  #research-overlay { align-items: flex-end !important; justify-content: stretch !important; padding-bottom: 0 !important; }
   #research-pane {
     height: 90dvh !important;
     max-height: 90dvh !important;
@@ -40376,7 +40449,7 @@ body.theme-frosted .modal {
      browser's bottom toolbar / safe area and can always be scrolled into view
      (otherwise the form fits the viewport and there's no room to reach them). */
   #research-pane .research-pane-body {
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px) !important;
+    padding-bottom: calc(var(--safe-bottom) + 40px) !important;
     touch-action: pan-y;
     overscroll-behavior: contain;
   }

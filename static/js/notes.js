@@ -1219,7 +1219,7 @@ export function openPanel() {
   // which left it as a side panel squeezing the chat).
   if (window.innerWidth <= 768) {
     pane.style.position = 'fixed';
-    pane.style.inset = '0';
+    pane.style.inset = 'var(--sheet-top) 0 0';
     pane.style.width = '100%';
     pane.style.maxWidth = '100%';
     pane.style.zIndex = '170';
