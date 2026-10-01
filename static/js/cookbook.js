@@ -8,7 +8,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
-import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
+import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, recipeUsesVenv, recipeRunnable, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
 
 // Sub-modules
@@ -1191,11 +1191,12 @@ async function _fetchDependencies() {
       // For backends with a recipe catalog (vllm / sglang / llama_cpp),
       // append a caret button that toggles a per-row recipe panel below.
       const hasRecipe = RECIPE_BACKENDS.has(pkg.name);
-      // Standalone recipe-caret button removed — the "Pick install
-      // command" action lives inside the Installed ▾ dropdown menu
-      // (see _showDepMenu) so each row only has ONE caret to click.
-      // Kept the variable so downstream concat code stays the same.
-      const recipeCaret = '';
+      // The caret is the only entry point to the recipe panel below the row
+      // (the Installed menu has no recipe item), so keep it on every row that
+      // has a recipe catalog.
+      const recipeCaret = hasRecipe
+        ? `<button class="cookbook-dep-tag cookbook-dep-recipe-caret" data-dep-recipe-toggle="${esc(pkg.name)}" title="Pick a model to see the exact install commands" aria-expanded="false" style="background:none;border:1px solid var(--border);padding:2px 6px;display:inline-flex;align-items:center;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg></button>`
+        : '';
       const recipePanel = hasRecipe ? _recipePanelHtml(pkg.name) : '';
       // When llama_cpp (or any future engine) reports build_deps_missing
       // from its system_prereqs probe, surface a one-tap install button
@@ -1246,9 +1247,9 @@ async function _fetchDependencies() {
       const py = _shellQuote(`${envPath}/bin/python3`);
       return commands.map(cmd => String(cmd || '').replace(/^python(\s+-m\s+pip\b)/, `${py}$1`));
     }
-    function _recipeDisplayText(commands, variant) {
+    function _recipeDisplayText(commands, variant, usesVenv = true) {
       const runtimeCommands = _recipeRuntimeCommands(commands, variant);
-      if (variant === 'docker') return commands.join('\n');
+      if (variant === 'docker' || !usesVenv) return commands.join('\n');
       const envPath = (_envState.envPath || '').replace(/\/+$/, '');
       const activate = envPath
         ? `source ${envPath}${envPath.endsWith('/bin/activate') ? '' : '/bin/activate'}`
@@ -1289,7 +1290,7 @@ async function _fetchDependencies() {
             </div>
           </div>
           <div style="position:relative;">
-            <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialRuntimeCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre;">${esc(_recipeDisplayText(initialCmds, initialVariant))}</pre>
+            <pre class="cookbook-dep-recipe-cmds" data-dep-recipe-cmds="${esc(backend)}" data-dep-recipe-install="${esc(initialRuntimeCmds.join('\n'))}" style="margin:0;padding:8px 36px 8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;font-size:11px;line-height:1.5;overflow-x:auto;white-space:pre;">${esc(_recipeDisplayText(initialCmds, initialVariant, recipeUsesVenv(initial, initialVariant)))}</pre>
             <button type="button" id="recipe-copy-${esc(backend)}" class="cookbook-dep-recipe-copy" data-dep-recipe-copy="${esc(backend)}" title="Copy" aria-label="Copy" style="position:absolute;top:6px;right:6px;padding:3px 5px;background:none;border:none;color:inherit;opacity:0.7;cursor:pointer;display:inline-flex;align-items:center;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
           </div>
           <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
@@ -1665,7 +1666,7 @@ async function _fetchDependencies() {
       const runtimeCmds = _recipeRuntimeCommands(cmds, variant);
       const pre = panel.querySelector('[data-dep-recipe-cmds]');
       if (pre) {
-        pre.textContent = _recipeDisplayText(cmds, variant);
+        pre.textContent = _recipeDisplayText(cmds, variant, recipeUsesVenv(recipe, variant));
         pre.dataset.depRecipeInstall = runtimeCmds.join('\n');
       }
     }
@@ -1722,6 +1723,13 @@ async function _fetchDependencies() {
         const backend = btn.dataset.depRecipeRun;
         const pre = list.querySelector(`[data-dep-recipe-cmds="${CSS.escape(backend)}"]`);
         if (!pre) return;
+        const runPanel = list.querySelector(`[data-dep-recipe-panel="${CSS.escape(backend)}"]`);
+        const runModel = (runPanel?.querySelector('[data-dep-recipe-pick]') || {}).value || '';
+        const runVariant = runPanel?.dataset.depRecipeActiveVariant || RECIPE_DEFAULT_VARIANT;
+        if (!recipeRunnable(pickRecipe(backend, runModel), runVariant)) {
+          uiModule.showToast('This recipe is a multi-step installer. Use Copy and run it in a terminal.');
+          return;
+        }
         // Use the install-only command list (no activate line) — the
         // displayed source line is for the user's reading; env_prefix
         // handles it for the actual run.
