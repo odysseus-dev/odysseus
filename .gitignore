@@ -103,6 +103,9 @@ output.txt.txt
 !assets/branding/**/*.tiff
 !assets/branding/**/*.pdf
 
+# …except the Home Assistant add-on icon and logo.
+!/hass-addon/**/*.png
+
 # Reports and temp files
 reports/
 tasks/
