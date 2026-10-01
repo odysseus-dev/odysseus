@@ -8,6 +8,7 @@ and their helpers (_load_vault_config, _run_bw).
 import json
 from typing import Dict, Optional
 
+from core.atomic_io import atomic_write_json
 from src.constants import VAULT_FILE
 from src.tools._common import _parse_tool_args
 
@@ -179,7 +180,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     cfg["session"] = session
     from datetime import datetime as _dt
     cfg["unlocked_at"] = _dt.utcnow().isoformat()
-    p.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    atomic_write_json(str(p), cfg, indent=2)
     try:
         import os as _os
         _os.chmod(str(p), 0o600)
