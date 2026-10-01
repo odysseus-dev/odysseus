@@ -144,8 +144,112 @@ def _append_venv_nvidia_library_path_lines(lines: list[str], *, cmd: str = "") -
 
 
 def _serve_port_from_cmd(cmd: str) -> str:
-    m = re.search(r"--port(?:=|\s+)(\d+)", cmd or "")
-    return m.group(1) if m else ""
+    command = cmd or ""
+    for pattern in (
+        r"--port(?:=|\s+)(\d+)",
+        r"(?:^|\s)-p(?:=|\s+)(\d+)",
+        r"OLLAMA_HOST\s*=\s*(?:['\"])?(?:\[[^\]]+\]|[^:\s'\"]+):(\d+)(?:['\"])?",
+    ):
+        match = re.search(pattern, command, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    if re.search(r"\bollama\s+serve\b", command, re.IGNORECASE):
+        return "11434"
+    if re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", command, re.IGNORECASE):
+        return "11434"
+    return ""
+
+
+def _serve_launch_result(
+    *, session_id: str, remote: str | None, endpoint_id: str | None, cmd: str
+) -> dict:
+    """Return the exact launch metadata the browser must persist for Stop."""
+    runtime_port = _serve_port_from_cmd(cmd)
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "remote": remote or "local",
+        "endpoint_id": endpoint_id,
+        "effective_cmd": cmd,
+        "runtime_port": int(runtime_port) if runtime_port else None,
+    }
+
+
+def _windows_serve_command_lines(cmd: str) -> list[str]:
+    """Translate the validated canonical Ollama bind prefix for PowerShell.
+
+    The response keeps the POSIX-style ``OLLAMA_HOST=... ollama serve`` form so
+    restart can safely submit it through the normal command validator. Only the
+    generated remote-Windows runner needs PowerShell assignment syntax.
+    """
+    command = (cmd or "").strip()
+    env_name = "OLLAMA_HOST"
+    if command[: len(env_name)].upper() != env_name:
+        return [command]
+
+    remainder = command[len(env_name) :].lstrip()
+    if not remainder.startswith("="):
+        return [command]
+    remainder = remainder[1:].lstrip()
+    if not remainder:
+        return [command]
+
+    if remainder[0] in {"'", '"'}:
+        quote = remainder[0]
+        value_end = remainder.find(quote, 1)
+        if value_end < 0:
+            return [command]
+        host = remainder[1:value_end]
+        serve_command = remainder[value_end + 1 :].strip()
+    else:
+        value_end = next(
+            (index for index, char in enumerate(remainder) if char.isspace()),
+            len(remainder),
+        )
+        host = remainder[:value_end]
+        serve_command = remainder[value_end:].strip()
+
+    serve_parts = serve_command.split(None, 2)
+    if (
+        not host
+        or "'" in host
+        or '"' in host
+        or len(serve_parts) < 2
+        or serve_parts[0].lower() != "ollama"
+        or serve_parts[1].lower() != "serve"
+    ):
+        return [command]
+    return [
+        f"$env:OLLAMA_HOST = '{_ps_squote(host)}'",
+        serve_command,
+    ]
+
+
+def _remote_ollama_port_probe_command(
+    start_port: int,
+    max_offset: int,
+    *,
+    is_windows: bool,
+) -> str:
+    """Build the target-shell command used to choose an unused Ollama port."""
+    probe_values = [start_port + i for i in range(max_offset + 1)]
+    if is_windows:
+        import base64
+        ps = (
+            "$used = @([System.Net.NetworkInformation.IPGlobalProperties]::"
+            "GetIPGlobalProperties().GetActiveTcpListeners() | "
+            "ForEach-Object { $_.Port }); "
+            f"foreach ($p in @({','.join(str(p) for p in probe_values)})) {{ "
+            "if ($used -notcontains $p) { Write-Output $p; exit 0 } }; exit 1"
+        )
+        encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
+        return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+    probe_ports = " ".join(str(p) for p in probe_values)
+    return (
+        f"for p in {probe_ports}; do "
+        "if ! (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null; then "
+        "echo $p; exit 0; fi; exec 3<&-; exec 3>&-; done; exit 1"
+    )
 
 
 def _append_openai_port_preflight_lines(lines: list[str], *, cmd: str, expected_model: str) -> None:
@@ -1524,9 +1628,9 @@ def setup_cookbook_routes() -> APIRouter:
         from core.database import SessionLocal, ModelEndpoint
         from src.settings import load_settings, save_settings
 
-        # Parse port from command (--port NNNN), default 8100 for diffusion_server
-        port_match = re.search(r'--port\s+(\d+)', req.cmd)
-        port = int(port_match.group(1)) if port_match else 8100
+        # Use the same parser as task persistence and stop verification.
+        parsed_port = _serve_port_from_cmd(req.cmd)
+        port = int(parsed_port) if parsed_port else 8100
 
         # Determine host
         if remote:
@@ -1593,7 +1697,12 @@ def setup_cookbook_routes() -> APIRouter:
             db.close()
 
     def _pick_free_port_for_ollama(
-        remote: str | None, ssh_port: str | None, start_port: int, max_offset: int
+        remote: str | None,
+        ssh_port: str | None,
+        start_port: int,
+        max_offset: int,
+        *,
+        is_windows: bool = False,
     ) -> int | None:
         """Return the first free port in [start_port, start_port+max_offset] on
         the target host. Used to pick a real bind for `ollama serve` so we
@@ -1601,8 +1710,9 @@ def setup_cookbook_routes() -> APIRouter:
         Cookbook Stop button can't kill."""
         import socket
         if remote:
-            # Probe over SSH. Bash's /dev/tcp gives a portable "is anything
-            # listening" check without requiring ss/netstat/nmap.
+            # Probe over SSH. Remote Windows uses a PowerShell/.NET listener
+            # query; POSIX targets use Bash's /dev/tcp without requiring
+            # ss/netstat/nmap.
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if ssh_port and str(ssh_port) != "22":
                 try:
@@ -1616,11 +1726,10 @@ def setup_cookbook_routes() -> APIRouter:
                 return None
             if not host_arg:
                 return None
-            probe_ports = " ".join(str(start_port + i) for i in range(max_offset + 1))
-            script = (
-                f"for p in {probe_ports}; do "
-                "if ! (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null; then "
-                "echo $p; exit 0; fi; exec 3<&-; exec 3>&-; done; exit 1"
+            script = _remote_ollama_port_probe_command(
+                start_port,
+                max_offset,
+                is_windows=is_windows,
             )
             try:
                 import subprocess
@@ -1774,26 +1883,10 @@ def setup_cookbook_routes() -> APIRouter:
         import re
         from core.database import SessionLocal, ModelEndpoint
 
-        # Port: ordered fallbacks so we match whatever the user actually
-        # asked for, not a hardcoded default:
-        #   1. explicit `--port N`  (vllm / sglang / llama-server)
-        #   2. `OLLAMA_HOST=host:port`  (the way Ollama specifies its bind)
-        #   3. fallback by backend (11434 ollama / 8080 llama.cpp)
-        # Previously the OLLAMA_HOST form was silently ignored and we
-        # registered every Ollama endpoint at 11434 — even if the user
-        # set OLLAMA_HOST=0.0.0.0:11435 to avoid colliding with an
-        # existing systemd Ollama, the registered endpoint pointed at
-        # the OLD port and showed as offline.
-        port_match = re.search(r'--port\s+(\d+)', req.cmd)
-        ollama_host_match = re.search(r'OLLAMA_HOST=[^\s]*?:(\d+)', req.cmd)
-        if port_match:
-            port = int(port_match.group(1))
-        elif ollama_host_match:
-            port = int(ollama_host_match.group(1))
-        elif "ollama" in req.cmd:
-            port = 11434
-        else:
-            port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
+        # Task persistence, endpoint registration, and Stop must agree on the
+        # effective port, including --port=, -p, and OLLAMA_HOST forms.
+        parsed_port = _serve_port_from_cmd(req.cmd)
+        port = int(parsed_port) if parsed_port else 8080
 
         # Determine host. The cookbook tmux for `local=true` serves runs INSIDE
         # the odysseus container — so the right URL for the in-container
@@ -2047,9 +2140,15 @@ def setup_cookbook_routes() -> APIRouter:
             _ollama_bind_host = "0.0.0.0" if remote else "127.0.0.1"
             _ollama_chosen_port = _pick_free_port_for_ollama(
                 remote, req.ssh_port, start_port=11434, max_offset=10,
+                is_windows=is_windows,
             )
-            if _ollama_chosen_port:
-                req.cmd = f"OLLAMA_HOST={_ollama_bind_host}:{_ollama_chosen_port} {req.cmd}"
+            if not _ollama_chosen_port:
+                return {
+                    "ok": False,
+                    "error": "No free Ollama serve port was found in 11434-11444.",
+                    "session_id": session_id,
+                }
+            req.cmd = f"OLLAMA_HOST={_ollama_bind_host}:{_ollama_chosen_port} {req.cmd}"
         # LOCAL execution on a native-Windows host never uses tmux (detached
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
@@ -2110,7 +2209,7 @@ def setup_cookbook_routes() -> APIRouter:
             elif "vllm" in req.cmd:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
                 ps_lines.append('exit 1')
-            ps_lines.append(req.cmd)
+            ps_lines.extend(_windows_serve_command_lines(req.cmd))
             if is_pip_install:
                 ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
             ps_lines.append('Write-Host ""')
@@ -2297,22 +2396,12 @@ def setup_cookbook_routes() -> APIRouter:
                     req.cmd,
                     default_host=_ollama_default_host,
                 )
-                # Always launch a fresh ollama under tmux so Stop reliably
-                # kills it. If the requested port is busy (e.g. a systemd
-                # ollama on 11434), scan upward for a free one rather than
-                # silently reattaching to an external service that Stop
-                # can't reach.
+                # The backend selected this exact free port before building the
+                # runner and returns it to the browser. Do not scan again here:
+                # a second choice would make the persisted stop metadata stale.
+                # A bind race should fail the launch instead of moving silently.
                 runner_lines.append(f'ODYSSEUS_OLLAMA_HOST={_bash_squote(_ollama_host)}')
                 runner_lines.append(f'ODYSSEUS_OLLAMA_PORT="{_ollama_port}"')
-                runner_lines.append('for _ody_off in 0 1 2 3 4 5 6 7 8 9; do')
-                runner_lines.append('  _ody_try_port=$((ODYSSEUS_OLLAMA_PORT + _ody_off))')
-                runner_lines.append('  if ! (exec 3<>/dev/tcp/127.0.0.1/$_ody_try_port) 2>/dev/null; then')
-                runner_lines.append('    exec 3<&-; exec 3>&-')
-                runner_lines.append('    ODYSSEUS_OLLAMA_PORT="$_ody_try_port"')
-                runner_lines.append('    break')
-                runner_lines.append('  fi')
-                runner_lines.append('  exec 3<&-; exec 3>&-')
-                runner_lines.append('done')
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
                 # Single-quoted on purpose: backticks inside a double-quoted
                 # echo are command substitution, and this line used to run the
@@ -2825,8 +2914,12 @@ def setup_cookbook_routes() -> APIRouter:
         except Exception:
             pass
 
-        return {"ok": True, "session_id": session_id, "remote": remote or "local",
-                "endpoint_id": endpoint_id}
+        return _serve_launch_result(
+            session_id=session_id,
+            remote=remote,
+            endpoint_id=endpoint_id,
+            cmd=req.cmd,
+        )
 
     # ── Server setup (install deps on remote) ──
 

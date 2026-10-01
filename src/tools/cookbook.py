@@ -180,8 +180,13 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
 
     env_kind = per_host.get("env") or env_root.get("env") or "none"
     env_path = per_host.get("envPath") or env_root.get("envPath") or ""
-    platform = per_host.get("platform") or env_root.get("platform") or "linux"
-    ssh_port = per_host.get("sshPort") or env_root.get("sshPort") or ""
+    platform = (
+        per_host.get("platform")
+        or (env_root.get("hostPlatform") if not host else "")
+        or env_root.get("platform")
+        or "linux"
+    )
+    ssh_port = per_host.get("sshPort") or per_host.get("port") or env_root.get("sshPort") or ""
 
     env_prefix = ""
     if env_kind == "venv" and env_path:
@@ -213,21 +218,38 @@ def _infer_serve_port(cmd: str) -> int:
     """Infer likely listen port from a serve command."""
     if not cmd:
         return 8080
-    m = re.search(r"--port\\s+(\\d+)", cmd)
-    if m:
-        try:
-            return int(m.group(1))
-        except Exception:
-            pass
-    m = re.search(r"OLLAMA_HOST=[^\\s]*?:(\\d+)", cmd)
-    if m:
-        try:
-            return int(m.group(1))
-        except Exception:
-            pass
-    if "ollama" in cmd:
+    for pattern in (
+        r"--port(?:=|\s+)(\d+)",
+        r"(?:^|\s)-p(?:=|\s+)(\d+)",
+        r"OLLAMA_HOST\s*=\s*(?:['\"])?(?:\[[^\]]+\]|[^:\s'\"]+):(\d+)(?:['\"])?",
+    ):
+        match = re.search(pattern, cmd, re.IGNORECASE)
+        if match:
+            port = int(match.group(1))
+            if 1 <= port <= 65535:
+                return port
+    if re.search(r"\bollama\s+serve\b", cmd, re.IGNORECASE):
+        return 11434
+    if re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", cmd, re.IGNORECASE):
         return 11434
     return 8080
+
+
+def _serve_response_metadata(data: Dict[str, Any], fallback_cmd: str) -> tuple[str, Optional[int]]:
+    """Return server-authoritative launch metadata with safe fallbacks."""
+    raw_cmd = data.get("effective_cmd")
+    effective_cmd = raw_cmd.strip() if isinstance(raw_cmd, str) else ""
+    if not effective_cmd:
+        effective_cmd = (fallback_cmd or "").strip()
+
+    runtime_port: Optional[int] = None
+    try:
+        candidate = int(data.get("runtime_port"))
+        if 1 <= candidate <= 65535:
+            runtime_port = candidate
+    except (TypeError, ValueError):
+        pass
+    return effective_cmd, runtime_port
 
 
 def _infer_serve_host(host: str | None) -> tuple[str, bool]:
@@ -243,12 +265,13 @@ async def _ensure_served_endpoint(
     model: str,
     cmd: str,
     host: str | None,
+    runtime_port: int | None = None,
 ) -> Dict[str, Any]:
     """Register/fetch a model endpoint for a running serve session."""
     from src.tool_implementations import _internal_headers, _INTERNAL_BASE  # shared, lives in facade
     import httpx
     endpoint_host, container_local = _infer_serve_host(host)
-    port = _infer_serve_port(cmd)
+    port = runtime_port if runtime_port is not None else _infer_serve_port(cmd)
     base_url = f"http://{endpoint_host}:{port}/v1"
     short_name = model.split("/")[-1] if "/" in model else model
     is_image = "diffusion_server.py" in (cmd or "") or "mlx_image_server.py" in (cmd or "")
@@ -293,6 +316,9 @@ async def _cookbook_register_task(
     *,
     endpoint_added: bool = False,
     endpoint_id: str = "",
+    runtime_port: int | None = None,
+    platform: str = "",
+    ssh_port: str = "",
 ) -> bool:
     """Append a task entry to cookbook_state.json after the agent
     launches via /api/model/serve or /api/model/download. The route
@@ -330,6 +356,17 @@ async def _cookbook_register_task(
         f"  target:  {target}{(cmd.split() or [''])[0] if cmd else ''}\n"
         f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
     )
+    task_payload = {
+        "repo_id": model,
+        "remote_host": host or "",
+        "_cmd": cmd,
+    }
+    if runtime_port is not None:
+        task_payload["runtime_port"] = str(runtime_port)
+    if platform:
+        task_payload["platform"] = platform
+    if ssh_port:
+        task_payload["ssh_port"] = str(ssh_port)
     tasks.append({
         "id": session_id,
         "sessionId": session_id,
@@ -339,10 +376,10 @@ async def _cookbook_register_task(
         "status": "running",
         "output": placeholder,
         "ts": int(_time.time() * 1000),
-        "payload": {"repo_id": model, "remote_host": host or "", "_cmd": cmd},
+        "payload": task_payload,
         "remoteHost": host or "",
-        "sshPort": "",
-        "platform": "linux",
+        "sshPort": str(ssh_port or ""),
+        "platform": platform or "linux",
         "_serveReady": False,
         "_endpointAdded": bool(endpoint_added),
         "_endpointId": endpoint_id or "",
@@ -735,16 +772,25 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
         if data.get("ok"):
             sid = data.get("session_id", "?")
             endpoint_id = data.get("endpoint_id") or ""
+            effective_cmd, runtime_port = _serve_response_metadata(data, cmd)
             if endpoint_id:
                 endpoint_added = True
             else:
-                endpoint_meta = await _ensure_served_endpoint(model=repo_id, cmd=cmd, host=host)
+                endpoint_meta = await _ensure_served_endpoint(
+                    model=repo_id,
+                    cmd=effective_cmd,
+                    host=host,
+                    runtime_port=runtime_port,
+                )
                 endpoint_added = bool(endpoint_meta.get("added"))
                 endpoint_id = endpoint_meta.get("endpoint_id", "") or endpoint_id
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id,
-                host=host, cmd=cmd, task_type="serve",
+                host=host, cmd=effective_cmd, task_type="serve",
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
+                runtime_port=runtime_port,
+                platform=env_cfg.get("platform") or "",
+                ssh_port=str(env_cfg.get("ssh_port") or ""),
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
             where = host or "local"
@@ -761,6 +807,8 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
                 "phase": "running",
                 "host": host,
                 "endpoint_id": endpoint_id,
+                "effective_cmd": effective_cmd,
+                "runtime_port": runtime_port,
                 "log_path": log_path,
                 "next_tools": [
                     {"name": "list_served_models", "arguments": {}},
@@ -1516,19 +1564,36 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
         if data.get("ok"):
             sid = data.get("session_id", "?")
             endpoint_id = data.get("endpoint_id") or ""
+            effective_cmd, runtime_port = _serve_response_metadata(data, cmd)
             if endpoint_id:
                 endpoint_added = True
             else:
-                endpoint_meta = await _ensure_served_endpoint(model=repo_id, cmd=cmd, host=host)
+                endpoint_meta = await _ensure_served_endpoint(
+                    model=repo_id,
+                    cmd=effective_cmd,
+                    host=host,
+                    runtime_port=runtime_port,
+                )
                 endpoint_added = bool(endpoint_meta.get("added"))
                 endpoint_id = endpoint_meta.get("endpoint_id", "") or endpoint_id
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id, host=host,
-                cmd=cmd, task_type="serve",
+                cmd=effective_cmd, task_type="serve",
                 endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
+                runtime_port=runtime_port,
+                platform=env_cfg.get("platform") or "",
+                ssh_port=str(env_cfg.get("ssh_port") or ""),
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
-            return {"output": f"Launched preset {chosen.get('name')!r}: {repo_id} on {host or 'local'} (session: {sid}){note}", "session_id": sid, "host": host, "endpoint_id": endpoint_id, "exit_code": 0}
+            return {
+                "output": f"Launched preset {chosen.get('name')!r}: {repo_id} on {host or 'local'} (session: {sid}){note}",
+                "session_id": sid,
+                "host": host,
+                "endpoint_id": endpoint_id,
+                "effective_cmd": effective_cmd,
+                "runtime_port": runtime_port,
+                "exit_code": 0,
+            }
         return {"error": data.get("error", "Serve failed"), "exit_code": 1}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}

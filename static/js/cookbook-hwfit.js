@@ -34,7 +34,8 @@ import {
 } from './cookbook.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
-import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
+import { _loadTasks, _nextAvailablePort, _taskPort, _stopTaskFromElement } from './cookbookRunning.js';
+import { withEffectiveServeMetadata } from './cookbookPorts.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
 // Map a serve-backend code (vllm / sglang / llamacpp / mlx) → the package name
@@ -1730,23 +1731,25 @@ export function _expandModelRow(row, modelData) {
           } else {
             quickRunBtn.disabled = true;
             quickRunBtn.textContent = 'Stopping…';
+            let _stopFailed = false;
             for (const t of _clashing) {
               try {
                 const _taskEl = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-                const _stopBtn = _taskEl?.querySelector('.cookbook-task-action-stop');
-                if (_stopBtn) {
-                  _stopBtn.click();
-                } else {
-                  await fetch('/api/shell/exec', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: _tmuxGracefulKill(t) }),
-                  });
+                if (!await _stopTaskFromElement(_taskEl, t, { showFailure: false })) {
+                  _stopFailed = true;
+                  break;
                 }
-              } catch (_killErr) { /* best-effort */ }
+              } catch (_killErr) {
+                _stopFailed = true;
+                break;
               }
-            await new Promise(r => setTimeout(r, 2500));
+            }
+            if (_stopFailed) {
+              quickRunBtn.disabled = false;
+              quickRunBtn.textContent = 'Run';
+              uiModule.showToast(`Launch aborted: the existing server on port ${_qrPort} could not be confirmed stopped.`, 'error');
+              return;
+            }
           }
         }
       } catch (_e) { /* best-effort */ }
@@ -1950,7 +1953,15 @@ export function _expandModelRow(row, modelData) {
         const data = await res.json();
         if (data.ok) {
           const shortName = modelData.name.split('/').pop();
-          _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
+          const taskPayload = withEffectiveServeMetadata({
+            repo_id: modelData.name,
+            model: modelData.name,
+            backend: runBackend,
+            remote_host: host,
+            ssh_port: (_srv && _srv.port) || undefined,
+            platform: _envState.platform || undefined,
+          }, data, cmd);
+          _addTask(data.session_id, shortName, 'serve', taskPayload);
           _renderRunningTab();
           uiModule.showToast(`Launching ${shortName}...`);
           // Switch to Running tab
