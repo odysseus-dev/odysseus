@@ -120,3 +120,8 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Rust & Tauri Build Output
+src-tauri/target/
+target/
+src-tauri/gen/
