@@ -90,8 +90,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         nonce = secrets.token_hex(16)
         request.state.csp_nonce = nonce
 
+        # Read the path BEFORE call_next. Starlette's Mount rewrites this same
+        # scope dict when it matches -- it moves the mount prefix into root_path
+        # and strips it from path -- so classifying afterwards would judge
+        # "/static/api/tools/x/render" as "/api/tools/x/render" and hand a
+        # static-mount 404 the relaxed tool-render policy.
+        #
+        # Application-relative, not request.url.path: uvicorn's --root-path
+        # leaves the mount prefix on the raw URL, and the three route classes
+        # below would then miss their own routes behind a reverse-proxy mount.
+        # Same rule AuthMiddleware follows -- see get_application_route_path.
+        path = get_application_route_path(request.scope)
+
         response = await call_next(request)
-        path = request.url.path
 
         # Tool render endpoints
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
