@@ -103,8 +103,27 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
             lines = [f"{len(rows)} contacts:"]
             for c in rows:
                 em = ", ".join(c.get("emails") or [])
-                lines.append(f"- {c.get('name') or '(no name)'} <{em}>  [uid={c.get('uid','')}]")
+                ph = ", ".join(c.get("phones") or [])
+                detail = f"<{em}>" if em else ""
+                if ph:
+                    detail += f"  phone: {ph}"
+                lines.append(f"- {c.get('name') or '(no name)'} {detail}  [uid={c.get('uid','')}]")
             return {"output": "\n".join(lines), "exit_code": 0}
+
+        if action == "view":
+            uid = (args.get("uid") or "").strip()
+            if not uid:
+                return {"error": "uid is required for view (use action=list to find it)", "exit_code": 1}
+            rows = await asyncio.to_thread(cc._fetch_contacts, True)
+            c = next((r for r in rows if r.get("uid") == uid), None)
+            if not c:
+                return {"output": f"No contact found with uid={uid}.", "exit_code": 0}
+            detail = f"Name: {c.get('name') or '(no name)'}\n"
+            detail += f"UID: {c.get('uid','')}\n"
+            detail += f"Emails: {', '.join(c.get('emails') or ['(none)'])}\n"
+            detail += f"Phones: {', '.join(c.get('phones') or ['(none)'])}\n"
+            detail += f"Address: {c.get('address') or '(none)'}"
+            return {"output": detail, "exit_code": 0}
 
         if action == "add":
             email = (args.get("email") or "").strip()
@@ -136,14 +155,28 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
             if not uid:
                 return {"error": "uid is required for update (use action=list to find it)", "exit_code": 1}
             name = (args.get("name") or "").strip()
-            emails = args.get("emails")
-            if emails is None and args.get("email"):
-                emails = [args["email"]]
-            emails = [e.strip() for e in (emails or []) if e and e.strip()]
-            phones = [p.strip() for p in (args.get("phones") or []) if p and p.strip()]
-            address = (args.get("address") or "").strip()
-            if not name and not emails and not phones and not address:
-                return {"error": "Provide a name, emails, phones, or address to update", "exit_code": 1}
+            # Preserve existing emails/phones when caller passes neither —
+            # prevents data loss on partial updates like "rename Lisa".
+            # Fetch whenever *either* field is missing (not just when both
+            # are absent), so single-field updates like {uid, emails:[new]}
+            # don't wipe the other field.
+            existing = None
+            if "emails" not in args and "email" not in args or "phones" not in args:
+                rows = await asyncio.to_thread(cc._fetch_contacts, True)
+                existing = next((r for r in rows if r.get("uid") == uid), None)
+            if "emails" in args or "email" in args:
+                emails = args.get("emails")
+                if emails is None and args.get("email"):
+                    emails = [args["email"]]
+                emails = [e.strip() for e in (emails or []) if e and e.strip()]
+            else:
+                emails = list(existing.get("emails") or []) if existing else []
+            if "phones" in args:
+                phones = [p.strip() for p in (args.get("phones") or []) if p and p.strip()]
+            else:
+                phones = list(existing.get("phones") or []) if existing else []
+            if not name and not emails:
+                return {"error": "Provide a name or emails to update", "exit_code": 1}
             if not name and emails:
                 name = emails[0].split("@")[0]
             ok = await asyncio.to_thread(cc._update_contact, uid, name, emails, phones, address)
@@ -156,6 +189,6 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
             ok = await asyncio.to_thread(cc._delete_contact, uid)
             return {"output": "Contact deleted." if ok else "Delete failed.", "exit_code": 0 if ok else 1}
 
-        return {"error": f"Unknown action '{action}'. Use list, add, update, or delete.", "exit_code": 1}
+        return {"error": f"Unknown action '{action}'. Use list, view, add, update, or delete.", "exit_code": 1}
     except Exception as e:
         return {"error": f"Contact operation failed: {e}", "exit_code": 1}
