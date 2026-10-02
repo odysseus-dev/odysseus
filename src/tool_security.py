@@ -75,6 +75,22 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "stop_served_model",
     "cancel_download",
     "adopt_served_model",
+    # Read-only Cookbook inspection tools. They look harmless, but every one
+    # of them calls a require_admin route over the internal loopback with the
+    # process-wide INTERNAL_TOOL_TOKEN and never checks the session owner, so
+    # a non-admin agent would inherit admin reach through them:
+    # list_cached_models forwards a caller-chosen `host` into
+    # /api/model/cached, which SSHes to that host with the app user's keys and
+    # walks caller-chosen `model_dir`s; list_served_models / tail_serve_output
+    # expose serve/download logs and running process command lines. Model
+    # serving is admin-only in THREAT_MODEL.md, so block the read side too.
+    "list_served_models",
+    "tail_serve_output",
+    "list_downloads",
+    "search_hf_models",
+    "list_cached_models",
+    "list_serve_presets",
+    "list_cookbook_servers",
 }
 
 
