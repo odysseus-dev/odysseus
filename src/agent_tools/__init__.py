@@ -33,6 +33,7 @@ from .admin_tools import (
     do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
     do_manage_tokens, do_manage_settings,
 )
+from .system_tools import ManageTasksTool, ManageSkillsTool, ApiCallTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -63,6 +64,9 @@ TOOL_HANDLERS = {
     "list_sessions": ListSessionsTool().execute,
     "send_to_session": SendToSessionTool().execute,
     "manage_session": ManageSessionTool().execute,
+    "manage_tasks": ManageTasksTool().execute,
+    "manage_skills": ManageSkillsTool().execute,
+    "api_call": ApiCallTool().execute,
 }
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
