@@ -2097,6 +2097,166 @@ body.bg-pattern-sparkles {
       font-weight: 500;
       letter-spacing: 0.3px;
     }
+    /* ── Homescreen dashboard ──
+       Lives on the new-chat screen, stacked ABOVE the composer in normal
+       flow. The splash is absolutely positioned + centred by default (it
+       floats over an empty chat area); with widgets it instead becomes a
+       real flex item so its height pushes the composer down rather than
+       overlapping it. */
+    .chat-container.welcome-active #welcome-screen {
+      position: static;
+      transform: none;
+      /* The default entrance (welcome-enter) ends on translate(-50%,-50%) and
+         fill-mode:both keeps that frame applied forever — an animated value
+         beats the transform:none above, which is what shoved the whole block
+         left/up. Swap in a translate-free fade for the in-flow case. */
+      animation-name: welcome-enter-flow;
+      width: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      justify-content: flex-start;
+      padding: 10px 0 4px;
+    }
+    @keyframes welcome-enter-flow {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    /* Empty while the welcome screen is up; stop it claiming the free space
+       (flex:1) that now belongs to the splash + widgets. */
+    .chat-container.welcome-active #chat-history { flex: 0 0 auto; }
+    /* The 30vh push that floated the composer mid-screen is what the widgets
+       would have collided with — with them in flow the composer just sits
+       under them. Tag-qualified so it beats the equal-specificity
+       margin-bottom:30vh rule that appears LATER in this file. */
+    main.chat-container.welcome-active .chat-input-bar { margin-bottom: 0; }
+    .dashboard-grid {
+      pointer-events: auto;
+      width: min(96%, 1000px);
+      margin: 16px auto 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      align-content: start;
+      text-align: left;
+    }
+    .dashboard-grid:empty { display: none; }
+    @media (max-width: 768px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-height: 500px) {
+      .dashboard-grid { display: none; }
+    }
+    .dash-card {
+      background: color-mix(in srgb, var(--fg) 3%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .dash-card-clock { align-items: center; text-align: center; }
+    .dash-card-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 400;
+      color: color-mix(in srgb, var(--fg) 65%, transparent);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .dash-card-icon {
+      display: inline-flex;
+      stroke: var(--accent, var(--red));
+      color: var(--accent, var(--red));
+      flex-shrink: 0;
+    }
+    .dash-card-body {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12.5px;
+    }
+    .dash-loading, .dash-empty {
+      opacity: 0.5;
+      font-size: 11.5px;
+      padding: 4px 0;
+    }
+    .dash-link-btn {
+      pointer-events: auto;
+      align-self: flex-start;
+      background: none;
+      border: none;
+      color: var(--accent, var(--red));
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 2px 0;
+    }
+    .dash-link-btn:hover { text-decoration: underline; }
+    .dash-clock-time { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+    .dash-clock-date { font-size: 11.5px; opacity: 0.6; }
+    .dash-weather-top { display: flex; align-items: baseline; gap: 8px; }
+    .dash-weather-temp { font-size: 1.5rem; font-weight: 700; }
+    .dash-weather-cond { font-size: 12px; opacity: 0.75; }
+    .dash-weather-hilo, .dash-weather-loc { font-size: 11px; opacity: 0.6; }
+    .dash-weather-setup-row { display: flex; gap: 6px; align-items: center; }
+    .dash-weather-input {
+      pointer-events: auto;
+      flex: 1;
+      min-width: 0;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 11.5px;
+      padding: 5px 8px;
+    }
+    .dash-list-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0;
+      border-radius: 4px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .dash-clickable { pointer-events: auto; cursor: pointer; }
+    .dash-clickable:hover { color: var(--accent, var(--red)); }
+    .dash-today-label, .dash-event-label { overflow: hidden; text-overflow: ellipsis; }
+    .dash-today-badge {
+      flex-shrink: 0;
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      opacity: 0.55;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0 4px;
+    }
+    .dash-event-when {
+      flex-shrink: 0;
+      font-size: 10.5px;
+      opacity: 0.6;
+      min-width: 62px;
+    }
+    .dash-email-row { gap: 8px; }
+    .dash-email-count {
+      flex-shrink: 0;
+      background: var(--accent, var(--red));
+      color: var(--bg);
+      border-radius: 10px;
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 1px 7px;
+    }
+
     /* When welcome is active, push input bar up toward center */
     .chat-container .chat-input-bar {
       transition: margin 0.3s ease, max-width 0.3s ease;
@@ -2129,6 +2289,18 @@ body.bg-pattern-sparkles {
       .chat-container.welcome-active:has(#model-picker-wrap:not(.picker-auto-hidden) .model-picker-menu:not(.hidden)) #welcome-screen {
         opacity: 0.45;
         transform: translate(-50%, -76%) scale(0.94);
+      }
+      /* Those two states nudge the splash while it fades. That offset assumes
+         the absolutely-centred splash; in welcome-active it is an in-flow
+         flex item (see the dashboard block above), so drop the translate and
+         let the fade alone do the work. Same specificity as the rules above,
+         later in source, so it wins only for this in-flow case. */
+      .chat-container.welcome-active:has(.chat-input-bar:focus-within) #welcome-screen,
+      .chat-container.welcome-active:has(textarea#message:not(:placeholder-shown)) #welcome-screen,
+      .chat-container.welcome-active:has(.input-icon-btn.expanded) #welcome-screen,
+      .chat-container.welcome-active:has(.send-btn.newchat-expanded) #welcome-screen,
+      .chat-container.welcome-active:has(#model-picker-wrap:not(.picker-auto-hidden) .model-picker-menu:not(.hidden)) #welcome-screen {
+        transform: none;
       }
       .chat-container.welcome-active:has(.input-icon-btn.expanded) #welcome-screen .welcome-tip,
       .chat-container.welcome-active:has(.send-btn.newchat-expanded) #welcome-screen .welcome-tip,
