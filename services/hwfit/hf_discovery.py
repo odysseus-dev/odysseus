@@ -176,9 +176,24 @@ def _quant_bytes_per_param(quant):
     }.get(quant, 2.2)
 
 
+# Multimodal LLMs (text output, image/audio/video input). Their pipeline tags
+# contain "image"/"audio"/"video", but they are long-context chat models, not
+# generation/ASR models, so they must not get the short media fallback.
+_MULTIMODAL_LLM_TAGS = {
+    "image-text-to-text",
+    "image-to-text",
+    "video-text-to-text",
+    "audio-text-to-text",
+    "any-to-any",
+}
+
+
 def _infer_context(repo_id, pipeline_tag):
-    text = f"{repo_id or ''} {pipeline_tag or ''}".lower()
-    if any(k in text for k in ("whisper", "asr", "speech-recognition", "tts", "audio", "image", "video", "diffusion")):
+    tag = (pipeline_tag or "").lower()
+    text = f"{repo_id or ''} {tag}".lower()
+    if tag not in _MULTIMODAL_LLM_TAGS and any(
+        k in text for k in ("whisper", "asr", "speech-recognition", "tts", "audio", "image", "video", "diffusion")
+    ):
         return 4096
     if any(k in text for k in ("glm-5.2", "deepseek-v4", "minimax-m3")):
         return 1_000_000
