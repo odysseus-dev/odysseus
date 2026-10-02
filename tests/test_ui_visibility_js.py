@@ -87,7 +87,7 @@ def test_defaults_everything_visible_except_default_off():
     assert m[TOOLS] is True
     assert m[CAL] is True
     assert m[NEWCHAT] is True
-    assert m[RAG] is False  # rag-toggle-btn is default-off
+    assert m[RAG] is True  # rag-toggle-btn is visible by default
 
 
 def test_email_off_hides_email_and_its_rail_only():
@@ -135,5 +135,20 @@ def test_rail_new_chat_off_hides_new_session():
 
 
 def test_explicit_false_takes_precedence_over_default_on():
-    m = _resolve({"rag-toggle-btn": True})
-    assert m[RAG] is True
+    m = _resolve({"rag-toggle-btn": False})
+    assert m[RAG] is False
+
+
+def test_rag_toggle_has_a_customize_row():
+    """A key resolveVisibility can resolve to False needs a row to set it back.
+
+    rag-toggle-btn is no longer hidden by default, but UI_VIS_MAP still honors a
+    stored `false` — so a profile carrying one (set by hand, or persisted before
+    the default flipped) hides #overflow-rag-btn with no in-app way to undo it
+    unless the Customize panel offers the row.
+    """
+    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'data-ui-key="rag-toggle-btn"' in html, (
+        "no Customize row for rag-toggle-btn: a stored false would be "
+        "unrecoverable from the UI"
+    )
