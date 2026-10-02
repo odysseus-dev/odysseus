@@ -46,14 +46,20 @@ def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[st
         ip = ip.ipv4_mapped
     if ip.is_link_local:
         return f"link-local address blocked (SSRF metadata risk): {ip}"
+    # Loopback must be checked before is_reserved — CPython reports ::1 as
+    # both is_loopback and is_reserved, so without this guard ::1 is rejected
+    # in default (local-first) mode, while 127.0.0.1 is accepted.
+    if ip.is_loopback:
+        if block_private:
+            return f"loopback address blocked: {ip}"
+        return None
     if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
         return f"disallowed address: {ip}"
     if block_private and (
         ip.is_private
-        or ip.is_loopback
         or (isinstance(ip, ipaddress.IPv4Address) and ip in _SHARED_ADDRESS_SPACE_V4)
     ):
-        return f"private/shared/loopback address blocked: {ip}"
+        return f"private/shared address blocked: {ip}"
     return None
 
 

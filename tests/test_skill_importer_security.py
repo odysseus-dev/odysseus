@@ -125,7 +125,7 @@ def test_check_outbound_url_blocks_cgnat():
 
     ok, reason = check_outbound_url("http://example.com", block_private=True, resolver=mock_resolver)
     assert not ok
-    assert "private/shared/loopback" in reason  # Updated to match your codebase's error string
+    assert "private/shared" in reason  # Updated to match your codebase's error string
 
 def test_check_outbound_url_blocks_loopback():
     """Ensure loopback IPs (127.0.0.1) are blocked by default."""
