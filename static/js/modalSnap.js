@@ -1,3 +1,6 @@
+import { dockOwnersForSide } from './edgeDockOwners.js';
+import { nextToolWindowZ } from './toolWindowZOrder.js';
+
 // Right-edge snap docking for draggable modals.
 //
 // Adds a "drag-to-right" gesture that docks a modal as a right-side panel
@@ -23,6 +26,7 @@ const MIN_CHAT_WIDTH = 380;
 const EMAIL_DOC_SPLIT_WIDTH_KEY = 'odysseus-email-doc-split-width';
 const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
 const MIN_EDGE_DOCK_WIDTH = 320;
+const EDGE_DOCK_SWITCHER_FLAG = 'odysseus-edge-dock-switcher';
 
 let _edgeDockHandlePositioner = null;
 
@@ -30,13 +34,105 @@ function _positionEdgeDockResizeHandles() {
   try { _edgeDockHandlePositioner && _edgeDockHandlePositioner(); } catch (_) {}
 }
 
+function _notifyEdgeDockChanged(side, owner = null) {
+  try {
+    window.dispatchEvent(new CustomEvent('odysseus:edge-dock-changed', {
+      detail: { side, owner },
+    }));
+  } catch (_) {}
+}
+
 function _dockClassForSide(side) {
   return side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
 }
 
+function _dockOwnerSurface(owner) {
+  return owner?.closest?.('.notes-pane-backdrop') || owner;
+}
+
+function _zIndexForElement(el, fallback = 250) {
+  const raw = el ? window.getComputedStyle(el).zIndex : '';
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function _dockOwnersForSide(side) {
+  return dockOwnersForSide(side, {
+    root: document,
+    resolveContent: (candidate) => _resolveDockNodes(candidate)?.content,
+  });
+}
+
+function _activeDockOwnerForSide(side) {
+  let best = null;
+  let bestZ = -Infinity;
+  _dockOwnersForSide(side).forEach((owner) => {
+    const z = _zIndexForElement(_dockOwnerSurface(owner), 250);
+    if (z >= bestZ) {
+      best = owner;
+      bestZ = z;
+    }
+  });
+  return best;
+}
+
+function _applyDockWidthToOwner(owner, side, width, left = _leftNavRight()) {
+  const content = _resolveDockNodes(owner)?.content;
+  if (!content || !width) return;
+  const w = Math.round(width);
+  content._userDockWidth = w;
+  if (side === 'right') {
+    content.style.left = 'auto';
+    content.style.right = '0';
+    content.style.width = w + 'px';
+    content.style.maxWidth = w + 'px';
+    if (_shouldAutoCollapseSidebar(w)) {
+      _collapseSidebarToRail();
+      if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
+    }
+  } else {
+    content._emailDocSplitUserW = w;
+    content.style.left = left + 'px';
+    content.style.right = 'auto';
+    content.style.width = w + 'px';
+    content.style.maxWidth = w + 'px';
+  }
+}
+
+export function syncDockSideWidth(side, requestedWidth, owners = _dockOwnersForSide(side)) {
+  if (side !== 'left' && side !== 'right') return 0;
+  if (!owners.length) return 0;
+  let w = 0;
+  if (side === 'right') {
+    w = _clampRightDockWidth(requestedWidth || _activeDockWidth('right') || _defaultDockWidth());
+    document.body.classList.add('right-dock-active');
+    document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+    owners.forEach((owner) => _applyDockWidthToOwner(owner, side, w));
+  } else {
+    const left = _leftNavRight();
+    const splitActive = document.body.classList.contains('email-doc-split-active')
+      && document.body.classList.contains('doc-view');
+    const fallbackWidth = _resolveDockNodes(owners.find(_isEmailDockOwner))?.content?.getBoundingClientRect?.().width
+      || _activeDockWidth('left')
+      || _defaultDockWidth();
+    w = splitActive
+      ? _clampEmailDocSplitWidth(requestedWidth || fallbackWidth, left)
+      : _clampLeftDockWidth(requestedWidth || fallbackWidth, left);
+    document.body.classList.add('left-dock-active');
+    document.documentElement.style.setProperty(
+      '--left-dock-w',
+      splitActive ? '0px' : w + 'px',
+    );
+    document.documentElement.style.setProperty('--left-dock-visual-w', w + 'px');
+    owners.forEach((owner) => _applyDockWidthToOwner(owner, side, w, left));
+    if (splitActive) _applyEmailDocSplitGeometry(left, w);
+  }
+  _positionEdgeDockResizeHandles();
+  return w;
+}
+
 function _hasOtherDockedWindow(side, owner) {
-  const cls = _dockClassForSide(side);
-  return Array.from(document.querySelectorAll(`.${cls}`)).some((el) => {
+  return _dockOwnersForSide(side).some((el) => {
     if (!el || el === owner) return false;
     if (owner && el.contains && el.contains(owner)) return false;
     if (owner && owner.contains && owner.contains(el)) return false;
@@ -53,10 +149,23 @@ export function clearDockSide(side, owner = null) {
   if (_hasOtherDockedWindow(side, owner)) return;
   document.body.classList.remove(side === 'left' ? 'left-dock-active' : 'right-dock-active');
   document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-w' : '--right-dock-w');
+  if (side === 'left') document.documentElement.style.removeProperty('--left-dock-visual-w');
   if (side === 'left') {
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
   }
   _positionEdgeDockResizeHandles();
+}
+
+export function reconcileDockSide(side, requestedWidth = 0) {
+  const owners = _dockOwnersForSide(side);
+  if (!owners.length) {
+    clearDockSide(side);
+    _notifyEdgeDockChanged(side);
+    return 0;
+  }
+  const width = syncDockSideWidth(side, requestedWidth, owners);
+  _notifyEdgeDockChanged(side, owners[owners.length - 1]);
+  return width;
 }
 
 // Default dock width: ~38% of viewport, clamped to a reasonable band.
@@ -98,6 +207,14 @@ function _activeDockWidth(side) {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(prop);
   const n = parseFloat(raw || '');
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function _activeDockVisualWidth(side) {
+  if (side !== 'left') return _activeDockWidth(side);
+  if (!document.body.classList.contains('left-dock-active')) return 0;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--left-dock-visual-w');
+  const n = parseFloat(raw || '');
+  return Number.isFinite(n) && n > 0 ? n : _activeDockWidth(side);
 }
 
 function _clampDockWidthToSpace(width, min, max) {
@@ -277,8 +394,13 @@ function _resolveEmailDocSplitWidth(content, left) {
 function _anchorLeftDock(content) {
   if (!content || content._dockSide !== 'left') return;
   const left = _leftNavRight();
-  const w = document.body.classList.contains('doc-view')
-    ? _resolveEmailDocSplitWidth(content, left)
+  const owners = _dockOwnersForSide('left');
+  const emailOwner = owners.find(_isEmailDockOwner)
+    || (_isEmailDockOwner(content._dockOwner) ? content._dockOwner : null);
+  const splitContent = _resolveDockNodes(emailOwner)?.content || content;
+  const splitActive = document.body.classList.contains('doc-view') && !!emailOwner;
+  const w = splitActive
+    ? _resolveEmailDocSplitWidth(splitContent, left)
     : _resolveLeftDockWidth(content, left);
   content.style.left = left + 'px';
   content.style.width = w + 'px';
@@ -288,17 +410,20 @@ function _anchorLeftDock(content) {
   // the doc-pane becomes position:fixed starting at the email's right edge.
   // No flex/max-width fighting; the doc just owns the right side from the
   // email's right edge to the viewport edge — they touch flush, no gap.
-  const docOpen = document.body.classList.contains('doc-view') && _isEmailDockOwner(content._dockOwner);
-  if (docOpen) {
+  if (splitActive) {
     if (!document.body.classList.contains('email-doc-split-active')) {
       document.body.classList.add('email-doc-split-active');
     }
     document.documentElement.style.setProperty('--left-dock-w', '0px');
+    document.documentElement.style.setProperty('--left-dock-visual-w', w + 'px');
+    owners.forEach((owner) => _applyDockWidthToOwner(owner, 'left', w, left));
     _applyEmailDocSplitGeometry(left, w);
-  } else if (document.body.classList.contains('email-doc-split-active')) {
-    _clearEmailDocSplitGeometry();
   } else {
+    if (document.body.classList.contains('email-doc-split-active')) {
+      _clearEmailDocSplitGeometry();
+    }
     document.documentElement.style.setProperty('--left-dock-w', w + 'px');
+    document.documentElement.style.setProperty('--left-dock-visual-w', w + 'px');
   }
 }
 
@@ -347,6 +472,7 @@ function _applyDockInternal(modal, side, dockClass) {
   if (!nodes) return 0;
   const content = nodes.content;
   if (!content) return 0;
+  const existingSideWidth = _hasOtherDockedWindow(side, modal) ? _activeDockVisualWidth(side) : 0;
   // If the modal is currently docked on the OTHER side (e.g. the user
   // manually docked it right, then a reply re-docks it left), clear that
   // side's class + body push first. Otherwise both sides' state coexist —
@@ -357,8 +483,10 @@ function _applyDockInternal(modal, side, dockClass) {
   // the floating window's real left/right inline styles below.
   const otherSide = side === 'left' ? 'right' : 'left';
   const otherClass = _dockClassForSide(otherSide);
-  if (modal.classList.contains(otherClass)) {
+  const hadLegacyLeftClass = otherSide === 'left' && modal.classList.contains('email-snap-left');
+  if (modal.classList.contains(otherClass) || hadLegacyLeftClass) {
     modal.classList.remove(otherClass);
+    if (hadLegacyLeftClass) modal.classList.remove('email-snap-left');
     clearDockSide(otherSide, modal);
     // Reset the edge anchors so the new side positions from a clean slate
     // (the right dock pins right:0; the left dock pins left:<nav>).
@@ -418,6 +546,7 @@ function _applyDockInternal(modal, side, dockClass) {
       '--left-dock-w',
       document.body.classList.contains('email-doc-split-active') ? '0px' : w + 'px',
     );
+    document.documentElement.style.setProperty('--left-dock-visual-w', w + 'px');
     // Re-anchor the email when the sidebar is toggled (expanded/collapsed) so
     // the nav slides the window over instead of growing on top of it. Also
     // re-anchor when the document editor pane appears/disappears (signaled by
@@ -509,7 +638,13 @@ function _applyDockInternal(modal, side, dockClass) {
   }
   content._dockSide = side;
   content._dockOwner = modal;
-  _positionEdgeDockResizeHandles();
+  const sideOwners = _dockOwnersForSide(side);
+  if (sideOwners.length > 1) {
+    const syncedWidth = syncDockSideWidth(side, existingSideWidth || w, sideOwners);
+    if (syncedWidth) w = syncedWidth;
+  } else {
+    _positionEdgeDockResizeHandles();
+  }
   // Watch for the docked modal disappearing (removed from DOM or hidden
   // via .hidden class) and clean up the body padding + sidebar in that
   // case. Without this, closing a docked window leaves a phantom strip
@@ -539,6 +674,7 @@ function _applyDockInternal(modal, side, dockClass) {
       modal._dockCloseWatcher = { obs };
     }
   }
+  _notifyEdgeDockChanged(side, modal);
   return w;
 }
 
@@ -556,7 +692,8 @@ function _onDockedModalGone(modal, dockClass) {
   const _c = modal.querySelector ? modal.querySelector('.modal-content') : null;
   _disconnectLeftDockObservers(_c);
   const hadRight = modal.classList.contains('modal-right-docked');
-  const hadLeft = modal.classList.contains('modal-left-docked');
+  const hadLegacyLeft = modal.classList.contains('email-snap-left');
+  const hadLeft = modal.classList.contains('modal-left-docked') || hadLegacyLeft;
   // Clear body-level dock state only for the side this modal owned, and only
   // when another docked window is not still using that side.
   if (hadRight) clearDockSide('right', modal);
@@ -571,6 +708,9 @@ function _onDockedModalGone(modal, dockClass) {
   }
   modal.classList.remove('modal-right-docked');
   modal.classList.remove('modal-left-docked');
+  modal.classList.remove('email-snap-left');
+  if (hadRight) _notifyEdgeDockChanged('right', modal);
+  if (hadLeft) _notifyEdgeDockChanged('left', modal);
   // Clear the content's docked inline geometry. Singleton modals (plan,
   // workspace, calendar, …) reuse the same element across open/close, so if we
   // only drop the body push the element stays positioned (position:fixed;
@@ -610,10 +750,13 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   const content = nodes.content;
   if (!content) return;
   // Figure out which side was docked — fall back to right for legacy callers.
-  const side = content._dockSide || (modal.classList.contains('modal-left-docked') ? 'left' : 'right');
+  const side = content._dockSide
+    || (modal.classList.contains('modal-left-docked') || modal.classList.contains('email-snap-left') ? 'left' : 'right');
   if (!dockClass) dockClass = side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
-  if (!modal.classList.contains(dockClass)) return;
+  const hasLegacyLeftClass = side === 'left' && modal.classList.contains('email-snap-left');
+  if (!modal.classList.contains(dockClass) && !hasLegacyLeftClass) return;
   modal.classList.remove(dockClass);
+  if (hasLegacyLeftClass) modal.classList.remove('email-snap-left');
   clearDockSide(side, modal);
   if (side === 'left' && !_hasOtherDockedWindow('left', modal)) {
     _clearEmailDocSplitGeometry();
@@ -666,6 +809,7 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   delete content._preDockSnapshot;
   delete content._dockSuspended;
   _positionEdgeDockResizeHandles();
+  _notifyEdgeDockChanged(side, modal);
 }
 
 // Temporarily release a docked modal's body push (chat returns to full
@@ -711,6 +855,7 @@ export function suspendDock(modal) {
   }
   content._dockSuspended = side;
   _positionEdgeDockResizeHandles();
+  _notifyEdgeDockChanged(side, modal);
   return side;
 }
 
@@ -785,6 +930,192 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   };
 }
 
+(function _initEdgeDockSwitcher() {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return;
+
+  const bars = { left: null, right: null };
+  let refreshTimer = 0;
+  let refreshInterval = 0;
+
+  const _enabled = () => {
+    try { return localStorage.getItem(EDGE_DOCK_SWITCHER_FLAG) !== '0'; }
+    catch (_) { return true; }
+  };
+
+  const _ownerSurface = _dockOwnerSurface;
+
+  const _bringOwnerToFront = (owner) => {
+    const surface = _ownerSurface(owner);
+    if (!surface) return;
+    const z = nextToolWindowZ({
+      exclude: surface,
+      current: window.getComputedStyle(surface).zIndex,
+    });
+    surface.style.setProperty('z-index', String(z), 'important');
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus:modal-opened', {
+        detail: { id: owner?.id || '', modal: owner },
+      }));
+    } catch (_) {}
+  };
+
+  const _simpleTitleForOwner = (owner) => {
+    const id = owner?.id || '';
+    const labels = {
+      'assistant-settings-modal': 'Assistant',
+      'calendar-modal': 'Calendar',
+      'compare-model-overlay': 'Compare',
+      'cookbook-modal': 'Cookbook',
+      'doc-editor-pane': 'Document',
+      'doclib-modal': 'Library',
+      'email-lib-modal': 'Email',
+      'gallery-modal': 'Gallery',
+      'library-modal': 'Library',
+      'notes-pane': 'Notes',
+      'research-overlay': 'Deep Research',
+      'research-pane': 'Deep Research',
+      'settings-modal': 'Settings',
+      'tasks-modal': 'Tasks',
+    };
+    return labels[id] || '';
+  };
+
+  const _cleanTabLabel = (label) => (label || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+\d+\s+(photos?|research|tasks?|notes?|documents?|docs?|items?|emails?|chats?|sessions?|models?)$/i, '')
+    .trim();
+
+  const _labelForOwner = (owner) => {
+    const simple = _simpleTitleForOwner(owner);
+    if (simple) return simple;
+    const content = _resolveDockNodes(owner)?.content || owner;
+    const titleEl = content?.querySelector?.('.modal-header h4, .notes-pane-title, .modal-title, [data-window-title]');
+    const text = _cleanTabLabel(titleEl?.textContent || owner?.getAttribute?.('aria-label') || owner?.id || 'Window');
+    return text || 'Window';
+  };
+
+  const _activeOwner = (owners) => {
+    let best = null;
+    let bestZ = -Infinity;
+    owners.forEach((owner) => {
+      const z = _zIndexForElement(_ownerSurface(owner), 250);
+      if (z >= bestZ) {
+        best = owner;
+        bestZ = z;
+      }
+    });
+    return best || owners[owners.length - 1] || null;
+  };
+
+  const _hideBar = (side) => {
+    const bar = bars[side];
+    if (!bar) return;
+    bar.replaceChildren();
+    bar.hidden = true;
+    bar.parentElement?.classList?.remove('edge-dock-switcher-host');
+  };
+
+  const _ensureBar = (side) => {
+    if (!bars[side]?.isConnected) {
+      const bar = document.createElement('div');
+      bar.className = `edge-dock-switcher edge-dock-switcher-${side}`;
+      bar.hidden = true;
+      bar.setAttribute('role', 'tablist');
+      bar.setAttribute('aria-label', `${side} docked windows`);
+      bar.addEventListener('pointerdown', (event) => event.stopPropagation());
+      bar.addEventListener('mousedown', (event) => event.stopPropagation());
+      bar.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+      bars[side] = bar;
+    }
+    const oldParent = bars[side]?.parentElement;
+    if (oldParent && oldParent !== document.body) oldParent.classList.remove('edge-dock-switcher-host');
+    if (bars[side].parentElement !== document.body) document.body.appendChild(bars[side]);
+    return bars[side];
+  };
+
+  const _renderSide = (side) => {
+    const owners = _enabled() && window.innerWidth > 768 ? _dockOwnersForSide(side) : [];
+    if (owners.length < 2) {
+      _hideBar(side);
+      return;
+    }
+    const active = _activeOwner(owners);
+    const bar = _ensureBar(side);
+    bar.replaceChildren();
+    owners.forEach((owner) => {
+      const label = _labelForOwner(owner);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `edge-dock-switcher-tab${owner === active ? ' active' : ''}`;
+      btn.title = label;
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', owner === active ? 'true' : 'false');
+      btn.addEventListener('pointerdown', (event) => event.stopPropagation());
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        _bringOwnerToFront(owner);
+        _scheduleRefresh(40);
+      });
+      const labelEl = document.createElement('span');
+      labelEl.className = 'edge-dock-switcher-tab-label';
+      labelEl.textContent = label;
+      btn.appendChild(labelEl);
+      bar.appendChild(btn);
+    });
+    bar.hidden = false;
+  };
+
+  function _refresh() {
+    if (!document.body) return;
+    _renderSide('left');
+    _renderSide('right');
+  }
+
+  function _scheduleRefresh(delay = 180) {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = 0;
+      requestAnimationFrame(_refresh);
+    }, delay);
+  }
+
+  const _start = () => {
+    _scheduleRefresh(0);
+    window.addEventListener('resize', () => _scheduleRefresh(120));
+    window.addEventListener('odysseus:modal-opened', () => _scheduleRefresh(120));
+    window.addEventListener('odysseus:edge-dock-changed', () => _scheduleRefresh(320));
+    document.addEventListener('keyup', (event) => {
+      if (event.key === 'Escape') _scheduleRefresh(120);
+    }, true);
+    refreshInterval = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') _refresh();
+    }, 1500);
+    window.odysseusEdgeDockSwitcher = {
+      refresh: _refresh,
+      disable() {
+        try { localStorage.setItem(EDGE_DOCK_SWITCHER_FLAG, '0'); } catch (_) {}
+        _refresh();
+      },
+      enable() {
+        try { localStorage.removeItem(EDGE_DOCK_SWITCHER_FLAG); } catch (_) {}
+        _refresh();
+      },
+      stop() {
+        if (refreshInterval) window.clearInterval(refreshInterval);
+        refreshInterval = 0;
+        bars.left?.remove();
+        bars.right?.remove();
+        bars.left = null;
+        bars.right = null;
+      },
+    };
+  };
+
+  if (document.body) _start();
+  else document.addEventListener('DOMContentLoaded', _start, { once: true });
+})();
+
 (function _initEdgeDockResizeHandles() {
   if (typeof document === 'undefined') return;
   if (!document.body) {
@@ -820,33 +1151,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     document.body.appendChild(handle);
   }
 
-  const _isUsableDockOwner = (owner) => {
-    if (!owner || !owner.isConnected) return false;
-    if (owner.classList?.contains('hidden')) return false;
-    if (owner.style?.display === 'none') return false;
-    const nodes = _resolveDockNodes(owner);
-    const content = nodes?.content;
-    if (!content || !content.isConnected) return false;
-    if (content.classList?.contains('hidden')) return false;
-    if (content.style?.display === 'none') return false;
-    const r = content.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  };
-
-  const _activeDockOwner = (side) => {
-    const cls = _dockClassForSide(side);
-    const all = Array.from(document.querySelectorAll(`.${cls}`));
-    for (const owner of all.reverse()) {
-      if (_isUsableDockOwner(owner)) return owner;
-    }
-    return null;
-  };
-
-  const _zIndexFor = (el, fallback = 250) => {
-    const raw = el ? window.getComputedStyle(el).zIndex : '';
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : fallback;
-  };
+  const _activeDockOwner = (side) => _activeDockOwnerForSide(side);
 
   const _hasVisibleFloatingModal = (owner) => {
     const all = Array.from(document.querySelectorAll('.modal:not(.hidden):not(.modal-minimized)'));
@@ -863,40 +1168,18 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     });
   };
 
-  const _setWidth = (owner, side, clientX) => {
-    const nodes = _resolveDockNodes(owner);
-    const content = nodes?.content;
-    if (!content) return 0;
+  const _setWidth = (owner, side, clientX, resizeOwners = null) => {
+    const targets = (resizeOwners && resizeOwners.length) ? resizeOwners : [owner].filter(Boolean);
+    if (!targets.length) return 0;
     let w = 0;
     if (side === 'right') {
       w = _clampRightDockWidth(window.innerWidth - clientX);
-      content._userDockWidth = w;
-      content.style.left = 'auto';
-      content.style.right = '0';
-      content.style.width = w + 'px';
-      content.style.maxWidth = w + 'px';
-      document.body.classList.add('right-dock-active');
-      document.documentElement.style.setProperty('--right-dock-w', w + 'px');
-      if (_shouldAutoCollapseSidebar(w)) {
-        _collapseSidebarToRail();
-        if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
-      }
+      syncDockSideWidth(side, w, targets);
     } else {
       const left = _leftNavRight();
       w = _clampLeftDockWidth(clientX - left, left);
-      content._userDockWidth = w;
-      content._emailDocSplitUserW = w;
-      content.style.left = left + 'px';
-      content.style.right = 'auto';
-      content.style.width = w + 'px';
-      content.style.maxWidth = w + 'px';
-      document.body.classList.add('left-dock-active');
-      document.documentElement.style.setProperty(
-        '--left-dock-w',
-        document.body.classList.contains('email-doc-split-active') ? '0px' : w + 'px',
-      );
+      syncDockSideWidth(side, w, targets);
     }
-    _positionEdgeDockResizeHandles();
     return w;
   };
 
@@ -928,7 +1211,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       }
       _setStyle(handle, 'display', 'block');
       _setStyle(handle, 'left', (x - 5) + 'px');
-      _setStyle(handle, 'zIndex', String(_zIndexFor(owner) + 1));
+      _setStyle(handle, 'zIndex', String(_zIndexForElement(_dockOwnerSurface(owner), 250) + 1));
     }
   };
 
@@ -943,15 +1226,17 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       handle.setPointerCapture?.(e.pointerId);
       const nodes = _resolveDockNodes(owner);
       const content = nodes?.content;
+      const resizeOwners = _dockOwnersForSide(side);
+      if (!resizeOwners.includes(owner)) resizeOwners.push(owner);
       const prevCursor = document.body.style.cursor;
       const prevUserSelect = document.body.style.userSelect;
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
       document.body.classList.add('edge-dock-resizing');
-      _setWidth(owner, side, e.clientX);
+      _setWidth(owner, side, e.clientX, resizeOwners);
       const onMove = (ev) => {
         ev.preventDefault();
-        _setWidth(owner, side, ev.clientX);
+        _setWidth(owner, side, ev.clientX, resizeOwners);
       };
       const onUp = (ev) => {
         try { handle.releasePointerCapture?.(e.pointerId); } catch (_) {}
@@ -964,7 +1249,12 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         const finalW = side === 'right'
           ? parseFloat(document.documentElement.style.getPropertyValue('--right-dock-w')) || content?.getBoundingClientRect?.().width || 0
           : content?.getBoundingClientRect?.().width || 0;
-        if (finalW) _saveDockWidth(owner, content, side, finalW);
+        if (finalW) {
+          resizeOwners.forEach((dockOwner) => {
+            const dockContent = _resolveDockNodes(dockOwner)?.content;
+            if (dockContent) _saveDockWidth(dockOwner, dockContent, side, finalW);
+          });
+        }
         ev.preventDefault();
       };
       document.addEventListener('pointermove', onMove, true);
@@ -1031,11 +1321,9 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     if (!content) return;
     const left = _leftNavRight();
     const w = _clampEmailDocSplitWidth(clientX - left, left);
-    content._emailDocSplitUserW = w;
-    content.style.left = left + 'px';
-    content.style.width = w + 'px';
-    content.style.maxWidth = w + 'px';
-    _applyEmailDocSplitGeometry(left, w);
+    const owners = _dockOwnersForSide('left');
+    if (!owners.length) return;
+    syncDockSideWidth('left', w, owners);
     _position();
   };
 
@@ -1063,7 +1351,14 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       document.body.style.userSelect = prevUserSelect;
       const rightX = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--email-doc-split-right-x')) || 0;
       const left = _leftNavRight();
-      if (rightX > left) _saveEmailDocSplitWidth(rightX - left);
+      if (rightX > left) {
+        const width = rightX - left;
+        _saveEmailDocSplitWidth(width);
+        _dockOwnersForSide('left').forEach((owner) => {
+          const dockContent = _resolveDockNodes(owner)?.content;
+          if (dockContent) _saveDockWidth(owner, dockContent, 'left', width);
+        });
+      }
       ev.preventDefault();
     };
     document.addEventListener('pointermove', onMove, true);

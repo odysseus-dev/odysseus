@@ -24,7 +24,7 @@ import {
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
 import { getSettings } from './appConfig.js';
-import { collapseSidebarToRail } from './modalSnap.js';
+import { collapseSidebarToRail, reconcileDockSide, syncDockSideWidth } from './modalSnap.js';
 import { emailApiUrl } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
@@ -1162,6 +1162,7 @@ function _prepareEmailWindowForDocument(modal) {
   if (modal.classList.contains('email-snap-left') || modal.classList.contains('modal-left-docked')) {
     const rect = modal.querySelector('.modal-content')?.getBoundingClientRect?.();
     _setEmailDocumentSplit(rect?.left || _emailSplitLeftEdge(), rect?.width || 420);
+    syncDockSideWidth('left', rect?.width || 420);
     _scheduleEmailDocumentSplitMeasure(modal);
     return false;
   }
@@ -3338,12 +3339,17 @@ export async function openEmailLibrarySettings() {
 export function closeEmailLibrary() {
   _cancelEmailPrewarm();
   const modal = document.getElementById('email-lib-modal');
+  const dockWidth = (modal?.classList?.contains('email-snap-left')
+    || modal?.classList?.contains('modal-left-docked'))
+    ? modal.querySelector('.modal-content')?.getBoundingClientRect?.().width || 0
+    : 0;
   if (modal) modal.remove();
   if (_libSyncTicker) {
     clearInterval(_libSyncTicker);
     _libSyncTicker = null;
   }
   _clearEmailDocumentSplit();
+  if (dockWidth) reconcileDockSide('left', dockWidth);
   if (state._libEscHandler) {
     document.removeEventListener('keydown', state._libEscHandler, true);
     state._libEscHandler = null;
@@ -3404,6 +3410,7 @@ function _makeDraggable(content, modal, fsClass) {
       if (!modal.classList.contains('email-snap-left')) return;
       modal.classList.remove('email-snap-left');
       _clearEmailDocumentSplit();
+      reconcileDockSide('left', rect.width || 0);
       content.style.position = 'fixed';
       content.style.left = `${Math.round(rect.left)}px`;
       content.style.top = `${Math.round(rect.top)}px`;
@@ -3461,6 +3468,7 @@ function _snapEmailModalToLeftSidebar(modal) {
   content.style.transform = 'none';
   content.style.margin = '0';
   _setEmailDocumentSplit(left, W);
+  syncDockSideWidth('left', W);
   _scheduleEmailDocumentSplitMeasure(modal);
   return true;
 }
