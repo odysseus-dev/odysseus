@@ -132,6 +132,20 @@ def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[
             raise ValueError("No enabled endpoints found" +
                              (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
 
+        # Two-pass, cross-endpoint resolution. A single-pass-per-endpoint
+        # search previously returned the first endpoint with *any* match,
+        # which let a loose substring hit on one endpoint (e.g. OpenRouter
+        # listing "anthropic/claude-sonnet-5") win over an exact match on
+        # the correct native endpoint (Anthropic's own "claude-sonnet-5"),
+        # since Anthropic also used a hardcoded model list that goes stale
+        # as new models ship and can fail to match at all. Now: collect
+        # every endpoint's candidate list without returning early, prefer
+        # any exact (case-insensitive) match across ALL endpoints, and
+        # only fall back to substring matching if nothing matched exactly.
+        exact_candidates = []
+        partial_candidates = []
+        image_fallback_candidates = []
+
         for ep in endpoints:
             try:
                 base, api_key = resolve_endpoint_runtime(ep, owner=owner)
@@ -141,14 +155,16 @@ def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[
             headers = build_headers(api_key, base)
 
             if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
-                matched = None
-                for am in ANTHROPIC_MODELS:
-                    if model_name.lower() in am.lower() or am.lower() in model_name.lower():
-                        matched = am
-                        break
-                if matched:
-                    return build_chat_url(base), matched, headers
+                # Prefer the endpoint's own live cached_models (refreshed
+                # from the real API) over the hardcoded ANTHROPIC_MODELS
+                # list, which is a fallback for when cached_models is empty.
+                try:
+                    model_ids = json.loads(ep.cached_models or "[]")
+                except Exception:
+                    model_ids = []
+                model_ids = [m for m in model_ids if isinstance(m, str)]
+                if not model_ids:
+                    model_ids = list(ANTHROPIC_MODELS)
             else:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
                 endpoint_reachable = False
@@ -183,22 +199,28 @@ def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[
                         if extra not in model_ids:
                             model_ids.append(extra)
 
-                # Exact match first
-                for mid in model_ids:
-                    if mid.lower() == model_name.lower():
-                        return build_chat_url(base), mid, headers
+            for mid in model_ids:
+                if not isinstance(mid, str):
+                    continue
+                if mid.lower() == model_name.lower():
+                    exact_candidates.append((build_chat_url(base), mid, headers))
+                elif model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                    partial_candidates.append((build_chat_url(base), mid, headers))
 
-                # Partial match
-                for mid in model_ids:
-                    if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
-                        return build_chat_url(base), mid, headers
+            # Last resort for local image endpoints: if the requested model
+            # name is clearly an image model, use the endpoint's first known
+            # image model id. This prevents a harmless alias mismatch from
+            # blocking image generation. Weaker than a partial match, so it
+            # only gets used if nothing else matched anywhere.
+            if model_type == "image" and provider != "anthropic" and _image_like(model_name) and model_ids:
+                image_fallback_candidates.append((build_chat_url(base), model_ids[0], headers))
 
-                # Last resort for local image endpoints: if the requested model
-                # name is clearly an image model, use the endpoint's first known
-                # image model id. This prevents a harmless alias mismatch from
-                # blocking image generation.
-                if model_type == "image" and _image_like(model_name) and model_ids:
-                    return build_chat_url(base), model_ids[0], headers
+        if exact_candidates:
+            return exact_candidates[0]
+        if partial_candidates:
+            return partial_candidates[0]
+        if image_fallback_candidates:
+            return image_fallback_candidates[0]
 
         raise ValueError(f"Model '{spec}' not found on any configured endpoint")
     finally:
