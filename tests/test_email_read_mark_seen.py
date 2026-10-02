@@ -149,6 +149,46 @@ async def test_cached_read_awaits_one_seen_store_without_refetch(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_cached_read_refreshes_urgency_when_seen_store_fails(monkeypatch, tmp_path):
+    email_routes, connections, _ = _install_fakes(monkeypatch, tmp_path, store_status="NO")
+    import routes.email_helpers as email_helpers
+
+    email_helpers.upsert_email_urgency_assignment(
+        owner="alice",
+        account_id="acct-a",
+        message_id="<single-open@example.com>",
+        uid="42",
+        folder="INBOX",
+        urgency_slug="urgent",
+        source="manual",
+    )
+    router = email_routes.setup_email_routes()
+    read_email = _route_endpoint(router, "/api/email/read/{uid}", "GET")
+
+    first = await read_email(
+        "42", folder="INBOX", account_id="acct-a", mark_seen=False, full=False, owner="alice"
+    )
+    email_helpers.upsert_email_urgency_assignment(
+        owner="alice",
+        account_id="acct-a",
+        message_id="<single-open@example.com>",
+        uid="42",
+        folder="INBOX",
+        urgency_slug="reply-soon",
+        source="manual",
+    )
+    second = await read_email(
+        "42", folder="INBOX", account_id="acct-a", mark_seen=True, full=False, owner="alice"
+    )
+
+    assert first["urgency"]["slug"] == "urgent"
+    assert second["urgency"]["slug"] == "reply-soon"
+    assert second["mark_seen_failed"] is True
+    assert second["body"] == first["body"]
+    assert [command[0] for command in connections[1].commands] == ["STORE"]
+
+
+@pytest.mark.asyncio
 async def test_seen_store_failure_returns_the_body_and_reports_the_failure(monkeypatch, tmp_path):
     """A failed STORE must not cost the reader the message.
 

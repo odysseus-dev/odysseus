@@ -2840,7 +2840,10 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # classified items; message_id lives on the cached verdict so this is cheap.
         try:
             import sqlite3 as _sql3
-            from routes.email_helpers import SCHEDULED_DB, _init_scheduled_db
+            from routes.email_helpers import (
+                SCHEDULED_DB, _init_scheduled_db,
+                email_urgency_slug_for_score, _upsert_email_urgency_assignment_row,
+            )
             from datetime import datetime as _dt2
             _init_scheduled_db()
             _conn = _sql3.connect(SCHEDULED_DB)
@@ -2867,6 +2870,27 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     # _key is "<account_id>:<uid>" — extract uid for the row.
                     _acc_id, _uid_only = (_key.split(":", 1) + [""])[:2]
                     _owner_key = owner or ""
+                    try:
+                        _urgency_slug = email_urgency_slug_for_score(_owner_key, _score)
+                        if _urgency_slug:
+                            _now_assign = _dt2.utcnow().isoformat()
+                            _upsert_email_urgency_assignment_row(
+                                _conn,
+                                owner=_owner_key,
+                                account_id=_acc_id,
+                                message_id=_msg_id,
+                                uid=_uid_only,
+                                folder="INBOX",
+                                urgency_slug=_urgency_slug,
+                                confidence=min(1.0, max(0.0, float(_score or 0) / 3.0)),
+                                reason=_v.get("reason", ""),
+                                source="classifier",
+                                subject=_v.get("subject", ""),
+                                sender=_v.get("from", ""),
+                                now=_now_assign,
+                            )
+                    except Exception as _ue:
+                        logger.debug(f"urgency: assignment write skipped for {_key}: {_ue}")
                     _row = _conn.execute(
                         "SELECT tags FROM email_tags WHERE message_id=? AND owner=? AND account_id=?",
                         (_msg_id, _owner_key, _acc_id),

@@ -526,6 +526,331 @@ document.addEventListener('odysseus:email-filter-tag', (e) => {
   _applyTagFilterFromPill(e.detail?.tag);
 });
 
+const _URGENCY_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
+
+function _normalizeUrgencySlug(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+}
+
+function _urgencyLevelBySlug(slug) {
+  const key = _normalizeUrgencySlug(slug);
+  return (state._libUrgencyLevels || []).find(level => _normalizeUrgencySlug(level?.slug) === key) || null;
+}
+
+function _urgencyColorValue(color) {
+  const c = String(color || '').trim().toLowerCase();
+  if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/.test(c)) return c;
+  if (c === 'red' || c === 'urgent') return 'var(--red, #e56b75)';
+  if (c === 'orange' || c === 'amber') return 'var(--accent-warn, #d99a52)';
+  if (c === 'blue' || c === 'info') return 'var(--accent-primary, #83c7e8)';
+  if (c === 'green') return 'var(--green, #7ac47f)';
+  return 'var(--fg-muted, var(--fg))';
+}
+
+function _emailUrgencyFromMessage(em) {
+  const urgency = em?.urgency && typeof em.urgency === 'object' ? em.urgency : null;
+  if (!urgency?.slug) return null;
+  const level = _urgencyLevelBySlug(urgency.slug) || urgency;
+  return { ...level, ...urgency };
+}
+
+function _emailUrgencyPillHtml(em) {
+  const urgency = _emailUrgencyFromMessage(em);
+  if (!urgency) return '';
+  const slug = _normalizeUrgencySlug(urgency.slug);
+  if ((slug === 'ignore' || Number(urgency.rank || 0) <= 0) && urgency.source !== 'manual') return '';
+  const label = urgency.name || slug.replace(/-/g, ' ');
+  const color = _urgencyColorValue(urgency.color);
+  const title = urgency.reason ? `${label}: ${urgency.reason}` : `Show ${label} emails`;
+  return `<button type="button" class="email-urgency-pill" data-email-filter-urgency="${_esc(slug)}" title="${_esc(title)}" style="--email-urgency-color:${_esc(color)};"><span class="email-urgency-dot" aria-hidden="true"></span>${_esc(label)}</button>`;
+}
+
+function _emailReaderUrgencyRowHtml(em) {
+  const pill = _emailUrgencyPillHtml(em);
+  return `<div class="email-reader-meta-row email-reader-urgency-row" style="${pill ? '' : 'display:none;'}"><strong>Urgency:</strong><span class="email-reader-urgency-slot">${pill}</span></div>`;
+}
+
+function _applyUrgencyFilterFromPill(slug) {
+  const normalized = _normalizeUrgencySlug(slug);
+  if (!normalized) return;
+  const level = _urgencyLevelBySlug(normalized);
+  const value = `filter:urgency:${normalized}`;
+  const existingIdx = Array.isArray(state._libSearchPills)
+    ? state._libSearchPills.findIndex(p => p?.type === 'filter' && p.value === value)
+    : -1;
+  if (existingIdx >= 0) {
+    _removeSearchPillAt(existingIdx);
+    return;
+  }
+  _addSearchPill({
+    type: 'filter',
+    value,
+    label: level?.name || normalized.replace(/-/g, ' '),
+  });
+}
+
+async function _loadUrgencyLevels({ force = false } = {}) {
+  if (!force && Array.isArray(state._libUrgencyLevels) && state._libUrgencyLevels.length) {
+    return state._libUrgencyLevels;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/email/urgency-levels`, { credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.detail || data?.error || `HTTP ${res.status}`);
+    state._libUrgencyLevels = Array.isArray(data.levels) ? data.levels : [];
+  } catch (err) {
+    console.error('Failed to load urgency levels:', err);
+    state._libUrgencyLevels = [];
+  }
+  _syncUrgencyFilterOptions();
+  return state._libUrgencyLevels;
+}
+
+function _syncUrgencyFilterOptions() {
+  const sel = document.getElementById('email-lib-filter');
+  if (!sel) return;
+  let group = sel.querySelector('optgroup[data-email-urgency-options]');
+  if (!group) {
+    group = document.createElement('optgroup');
+    group.label = 'Urgency';
+    group.dataset.emailUrgencyOptions = '1';
+    sel.appendChild(group);
+  }
+  const levels = (state._libUrgencyLevels || [])
+    .filter(level => level && level.active !== false)
+    .sort((a, b) => Number(b.rank || 0) - Number(a.rank || 0) || String(a.name || '').localeCompare(String(b.name || '')));
+  group.innerHTML = levels.map(level => {
+    const slug = _normalizeUrgencySlug(level.slug);
+    if (!slug) return '';
+    return `<option value="urgency:${_esc(slug)}">${_esc(level.name || slug.replace(/-/g, ' '))}</option>`;
+  }).join('');
+  _refreshFilterPickerMenu();
+  _renderFilterPickerCurrent();
+}
+
+async function _setEmailUrgency(em, urgencySlug) {
+  const folder = (em && em.folder) || state._libFolder || 'INBOX';
+  const slug = _normalizeUrgencySlug(urgencySlug);
+  const payload = {
+    uid: String(em?.uid || ''),
+    message_id: em?.message_id || '',
+    folder,
+    account_id: state._libAccountId || '',
+    urgency_slug: slug,
+    source: 'manual',
+    subject: em?.subject || '',
+    sender: em?.from_address || em?.from_name || '',
+  };
+  const res = await fetch(`${API_BASE}/api/email/urgency-assignment`, {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) throw new Error(data?.detail || data?.error || 'Failed to update urgency');
+  const next = data.urgency || null;
+  const applyOne = (target) => {
+    if (!target) return;
+    if (next) target.urgency = next;
+    else delete target.urgency;
+  };
+  applyOne(em);
+  for (const item of state._libEmails || []) {
+    if (String(item.uid) === String(em?.uid)) applyOne(item);
+  }
+  _libCacheWriteBack();
+  _refreshEmailUrgencyDom(em);
+  return next;
+}
+
+function _refreshEmailUrgencyDom(em) {
+  const uid = String(em?.uid || '');
+  const card = uid ? document.querySelector(`#email-lib-grid .doclib-card[data-uid="${CSS.escape(uid)}"]`) : null;
+  if (card && !card.classList.contains('email-card-expanded')) {
+    _renderGrid();
+    return;
+  }
+  if (card) {
+    const row = card.querySelector('.email-card-titlerow');
+    row?.querySelector('.email-urgency-pill')?.remove();
+    const html = _emailUrgencyPillHtml(em);
+    if (html) {
+      const tags = row?.querySelector('.email-tags');
+      if (tags) tags.insertAdjacentHTML('beforebegin', html);
+      else row?.querySelector('.memory-item-title')?.insertAdjacentHTML('afterend', html);
+    }
+    _wireUrgencyPillClicks(card);
+  }
+  document.querySelectorAll(`.email-card-reader[data-email-uid="${CSS.escape(uid)}"]`).forEach(reader => {
+    const target = reader.querySelector('.email-reader-urgency-slot');
+    if (target) {
+      target.innerHTML = _emailUrgencyPillHtml(em);
+      const row = target.closest('.email-reader-urgency-row');
+      if (row) row.style.display = target.innerHTML ? '' : 'none';
+      _wireUrgencyPillClicks(target);
+    }
+  });
+}
+
+function _wireUrgencyPillClicks(root) {
+  root?.querySelectorAll?.('[data-email-filter-urgency]').forEach(btn => {
+    if (btn.dataset.emailUrgencyBound === '1') return;
+    btn.dataset.emailUrgencyBound = '1';
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _applyUrgencyFilterFromPill(btn.dataset.emailFilterUrgency);
+    });
+  });
+}
+
+async function _showUrgencyManager() {
+  await _loadUrgencyLevels({ force: true });
+  document.querySelectorAll('.email-urgency-manager-overlay').forEach(el => el.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'email-urgency-manager-overlay';
+  overlay.style.zIndex = String(topPortalZ());
+  overlay.innerHTML = `
+    <div class="modal-content email-urgency-manager" role="dialog" aria-modal="true" aria-labelledby="email-urgency-manager-title">
+      <div class="modal-header">
+        <h4 id="email-urgency-manager-title">Urgency</h4>
+        <button class="close-btn" type="button" data-act="close">&#x2716;</button>
+      </div>
+      <div class="email-urgency-manager-body">
+        <div class="email-urgency-level-list" data-level-list></div>
+        <form class="email-urgency-form" data-form>
+          <label>Name<input class="memory-search-input" name="name" maxlength="80" required></label>
+          <label>Description<textarea class="memory-search-input" name="description" rows="3" maxlength="600"></textarea></label>
+          <label>Examples<textarea class="memory-search-input" name="examples" rows="3" placeholder="One example per line"></textarea></label>
+          <div class="email-urgency-form-grid">
+            <label>Rank<input class="memory-search-input" name="rank" type="number" step="1" min="-1000" max="1000"></label>
+            <label>Color
+              <select class="memory-sort-select" name="color">
+                <option value="red">Red</option>
+                <option value="orange">Orange</option>
+                <option value="blue">Blue</option>
+                <option value="green">Green</option>
+                <option value="muted">Muted</option>
+              </select>
+            </label>
+          </div>
+          <label class="email-urgency-check"><input type="checkbox" name="notify"> Notify when assigned by scanner</label>
+          <div class="email-urgency-actions">
+            <button class="memory-toolbar-btn" type="button" data-act="new">New</button>
+            <button class="memory-toolbar-btn" type="button" data-act="delete">Archive</button>
+            <button class="memory-toolbar-btn active" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const form = overlay.querySelector('[data-form]');
+  const list = overlay.querySelector('[data-level-list]');
+  const fields = form.elements;
+
+  const fill = (level = null) => {
+    form.dataset.editingSlug = level?.slug || '';
+    fields.name.value = level?.name || '';
+    fields.description.value = level?.description || '';
+    fields.examples.value = Array.isArray(level?.examples) ? level.examples.join('\n') : '';
+    fields.rank.value = Number.isFinite(Number(level?.rank)) ? String(level.rank) : '0';
+    fields.color.value = level?.color || 'muted';
+    fields.notify.checked = !!level?.notify;
+    overlay.querySelector('[data-act="delete"]').disabled = !level?.slug;
+    fields.name.focus();
+  };
+
+  const renderList = () => {
+    const levels = (state._libUrgencyLevels || [])
+      .filter(level => level && level.active !== false)
+      .sort((a, b) => Number(b.rank || 0) - Number(a.rank || 0) || String(a.name || '').localeCompare(String(b.name || '')));
+    list.innerHTML = levels.map(level => {
+      const slug = _normalizeUrgencySlug(level.slug);
+      const active = slug === form.dataset.editingSlug ? ' active' : '';
+      return `<button type="button" class="email-urgency-level-row${active}" data-slug="${_esc(slug)}">
+        <span class="email-urgency-dot" style="background:${_esc(_urgencyColorValue(level.color))}"></span>
+        <span class="email-urgency-level-main">
+          <span class="email-urgency-level-name">${_esc(level.name || slug)}</span>
+          <span class="email-urgency-level-desc">${_esc(level.description || '')}</span>
+        </span>
+        <span class="email-urgency-level-rank">${Number(level.rank || 0)}</span>
+      </button>`;
+    }).join('');
+    list.querySelectorAll('[data-slug]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const level = _urgencyLevelBySlug(btn.dataset.slug);
+        fill(level);
+        renderList();
+      });
+    });
+  };
+
+  overlay.querySelector('[data-act="close"]').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) overlay.remove(); });
+  overlay.querySelector('[data-act="new"]').addEventListener('click', () => { fill(null); renderList(); });
+  overlay.querySelector('[data-act="delete"]').addEventListener('click', async () => {
+    const slug = form.dataset.editingSlug;
+    const level = _urgencyLevelBySlug(slug);
+    if (!slug || !level) return;
+    const ok = await styledConfirm(`Archive urgency level "${level.name || slug}"? Existing assignments using it will be cleared.`, {
+      confirmText: 'Archive',
+      cancelText: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    const res = await fetch(`${API_BASE}/api/email/urgency-levels/${encodeURIComponent(slug)}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      showToast(data?.detail || data?.error || 'Failed to archive urgency level');
+      return;
+    }
+    state._libUrgencyLevels = Array.isArray(data.levels) ? data.levels : [];
+    _syncUrgencyFilterOptions();
+    fill(null);
+    renderList();
+    _loadEmailsFresh();
+  });
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const name = fields.name.value.trim();
+    if (!name) { fields.name.focus(); return; }
+    const payload = {
+      name,
+      description: fields.description.value.trim(),
+      examples: fields.examples.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean),
+      rank: Number(fields.rank.value || 0),
+      color: fields.color.value || 'muted',
+      notify: !!fields.notify.checked,
+    };
+    const slug = form.dataset.editingSlug || '';
+    const res = await fetch(slug
+      ? `${API_BASE}/api/email/urgency-levels/${encodeURIComponent(slug)}`
+      : `${API_BASE}/api/email/urgency-levels`, {
+      method: slug ? 'PUT' : 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      showToast(data?.detail || data?.error || 'Failed to save urgency level');
+      return;
+    }
+    state._libUrgencyLevels = Array.isArray(data.levels) ? data.levels : [];
+    _syncUrgencyFilterOptions();
+    fill(data.level || null);
+    renderList();
+    _renderGrid();
+  });
+  fill((state._libUrgencyLevels || [])[0] || null);
+  renderList();
+}
+
 function _emailTagPillHtml(tag, em) {
   const normalized = String(tag || '').trim().toLowerCase().replace(/_/g, '-');
   if (!normalized) return '';
@@ -2617,6 +2942,7 @@ export function openEmailLibrary(opts = {}) {
                   <option value="tag:travel">Travel</option>
                   <option value="tag:spam">Spam</option>
                 </optgroup>
+                <optgroup label="Urgency" data-email-urgency-options></optgroup>
               </select>
               <div class="email-filter-picker" id="email-filter-picker" style="flex:1;min-width:0;position:relative;">
                 <button type="button" class="email-filter-btn" id="email-filter-btn" aria-haspopup="listbox" aria-expanded="false">
@@ -2625,6 +2951,9 @@ export function openEmailLibrary(opts = {}) {
                 </button>
                 <div class="email-filter-menu" id="email-filter-menu" role="listbox" hidden></div>
               </div>
+              <button class="memory-toolbar-btn email-filter-refresh-btn email-urgency-manage-btn" id="email-urgency-manage-btn" title="Manage urgency levels">
+                ${_URGENCY_ICON}
+              </button>
               <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select</button>
               <button class="memory-toolbar-btn email-filter-refresh-btn" id="email-lib-refresh-btn" title="Refresh">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
@@ -2808,6 +3137,10 @@ export function openEmailLibrary(opts = {}) {
     _renderFilterPickerCurrent();
   });
   _initFilterPicker();
+  document.getElementById('email-urgency-manage-btn')?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    _showUrgencyManager();
+  });
   document.getElementById('email-attach-btn')?.addEventListener('click', () => {
     const btn = document.getElementById('email-attach-btn');
     state._libHasAttachments = !state._libHasAttachments;
@@ -3148,6 +3481,7 @@ export function openEmailLibrary(opts = {}) {
   // otherwise waited on `/accounts` before even trying the cheap indexed list.
   (async () => {
     await _loadAccounts();
+    await _loadUrgencyLevels({ force: true });
     _loadFolders();
     _loadEmailReminderBellVisibility();
     if (!fastAccountAtOpen || fastAccountAtOpen !== (state._libAccountId || '')) {
@@ -3700,10 +4034,26 @@ const _LIB_FILTER_OPTIONS = [
   { value: 'filter:tag:spam',        label: 'Spam',            keywords: ['spam', 'junk'] },
 ];
 
+function _libFilterOptions() {
+  const urgency = (state._libUrgencyLevels || [])
+    .filter(level => level && level.active !== false)
+    .map(level => {
+      const slug = _normalizeUrgencySlug(level.slug);
+      const label = level.name || slug.replace(/-/g, ' ');
+      return {
+        value: `filter:urgency:${slug}`,
+        label,
+        keywords: ['urgency', 'urgent', label.toLowerCase(), slug.replace(/-/g, ' ')].filter(Boolean),
+      };
+    });
+  return _LIB_FILTER_OPTIONS.concat(urgency);
+}
+
 function _libFilterIconFor(value) {
   // value is 'filter:<X>' — strip prefix and reuse the existing icon map.
   const v = String(value || '').replace(/^filter:/, '');
   if (v === 'has-attachments') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+  if (v.startsWith('urgency:')) return _URGENCY_ICON;
   return _EMAIL_FILTER_ICONS[v] || _EMAIL_FILTER_ICONS['all'];
 }
 
@@ -3723,7 +4073,7 @@ function _filterSuggestions(needle, limit = 10) {
   // Filter / attachment matches first — typing 'unread' should surface
   // the filter row before contact suggestions, since 'unread' isn't a
   // person.
-  const filterMatches = _LIB_FILTER_OPTIONS
+  const filterMatches = _libFilterOptions()
     .map(opt => ({ s: { kind: 'filter', value: opt.value, label: opt.label, icon: _libFilterIconFor(opt.value) }, score: _scoreFilterOption(opt, n) }))
     .filter(x => x.score > 0);
   const src = _libSuggestionCache || [];
@@ -4481,6 +4831,7 @@ const _EMAIL_FILTER_ICONS = {
 };
 
 function _filterIcon(value) {
+  if (String(value || '').startsWith('urgency:')) return _URGENCY_ICON;
   return _EMAIL_FILTER_ICONS[value] || _EMAIL_FILTER_ICONS['all'];
 }
 
@@ -4495,6 +4846,32 @@ function _renderFilterPickerCurrent() {
   const labelEl = btn.querySelector('.email-filter-label');
   if (iconWrap) iconWrap.innerHTML = _filterIcon(value);
   if (labelEl) labelEl.textContent = label;
+}
+
+function _refreshFilterPickerMenu() {
+  const sel = document.getElementById('email-lib-filter');
+  const menu = document.getElementById('email-filter-menu');
+  if (!sel || !menu) return;
+  const items = [];
+  for (const child of sel.children) {
+    if (child.tagName === 'OPTGROUP') {
+      items.push({ group: child.label });
+      for (const o of child.children) {
+        items.push({ value: o.value, label: o.textContent, group: child.label });
+      }
+    } else if (child.tagName === 'OPTION') {
+      items.push({ value: child.value, label: child.textContent });
+    }
+  }
+  menu.innerHTML = items.map(it => {
+    if (!it.value) {
+      return `<div class="email-filter-group">${it.group}</div>`;
+    }
+    return `<button type="button" role="option" class="email-filter-item" data-value="${it.value}">
+      <span class="email-filter-item-icon">${_filterIcon(it.value)}</span>
+      <span class="email-filter-item-label">${it.label}</span>
+    </button>`;
+  }).join('');
 }
 
 function _initFilterPicker() {
@@ -5131,6 +5508,13 @@ function _createCard(em) {
     titleRow.appendChild(att);
   }
 
+  const urgencyHtml = _emailUrgencyPillHtml(em);
+  if (urgencyHtml) {
+    const wrap = document.createElement('span');
+    wrap.innerHTML = urgencyHtml;
+    titleRow.appendChild(wrap.firstElementChild);
+  }
+
   const tags = state._libShowTags ? _visibleEmailTagsForRender(em) : [];
   if (state._libShowTags && (tags.length || em.is_spam_verdict)) {
     const tagWrap = document.createElement('span');
@@ -5314,6 +5698,7 @@ function _createCard(em) {
     await _toggleCardPreview(card, em);
   });
 
+  _wireUrgencyPillClicks(card);
   return card;
 }
 
@@ -5569,6 +5954,7 @@ async function _toggleCardPreview(card, em) {
             ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
             ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
           </div>` : ''}
+          ${_emailReaderUrgencyRowHtml({ ...em, ...data })}
           <div class="email-reader-actions-inline">
             <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
@@ -5700,6 +6086,7 @@ async function _toggleCardPreview(card, em) {
     }
 
     _wireRecipientChips(reader);
+    _wireUrgencyPillClicks(reader);
     // Always stop bubbling so the card's click doesn't fire while reading.
     reader.addEventListener('click', (ev) => { ev.stopPropagation(); });
   } catch (e) {
@@ -7202,6 +7589,7 @@ async function _openEmailAsTab(em, folder) {
             ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildChips(data.to)}</span></div>` : ''}
             ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildChips(data.cc)}</span></div>` : ''}
           </div>` : ''}
+          ${_emailReaderUrgencyRowHtml({ ...em, ...data })}
           <div class="email-reader-actions-inline">
             <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
@@ -7220,6 +7608,7 @@ async function _openEmailAsTab(em, folder) {
     _markEmailReaderActive(reader);
     reader.classList.remove('email-card-reader-loading');
     _wireRecipientChips(reader);
+    _wireUrgencyPillClicks(reader);
     _wireEmailAttachmentWrap(reader, useFolder);
     _wireEmailInlineImages(reader);
     _loadDeferredAttachmentsIntoReader(reader, em.uid, useFolder, data, !!em.has_attachments);
@@ -7357,6 +7746,7 @@ async function _openEmailWindow(em, folder) {
             ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${_chipsFor(data.to)}</span></div>` : ''}
             ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${_chipsFor(data.cc)}</span></div>` : ''}
           </div>` : ''}
+          ${_emailReaderUrgencyRowHtml({ ...em, ...data })}
           <div class="email-reader-actions-inline">
             <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
@@ -7374,6 +7764,7 @@ async function _openEmailWindow(em, folder) {
     `;
     _markEmailReaderActive(bodyEl);
     _wireRecipientChips(bodyEl);
+    _wireUrgencyPillClicks(bodyEl);
     // Wire all the same action handlers the inline reader has.
     _wireEmailAttachmentWrap(bodyEl, useFolder);
     _wireEmailInlineImages(bodyEl);
@@ -7730,6 +8121,11 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       icon: _translateIcon,
       submenu: 'translate',
     },
+    {
+      label: 'Urgency',
+      icon: _URGENCY_ICON,
+      submenu: 'urgency',
+    },
     { separator: true },
     {
       label: em.is_read ? 'Mark as Unread' : 'Mark as Read',
@@ -7906,6 +8302,10 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         _showEmailTranslateSubmenu(reader, dropdown);
         return;
       }
+      if (a.submenu === 'urgency') {
+        _showEmailUrgencySubmenu(em, dropdown);
+        return;
+      }
       close();
       a.action();
     });
@@ -7966,6 +8366,7 @@ function _showCardMenu(em, anchor) {
       await _openEmailAsTab(em, folder);
     }},
     { label: 'Remind to reply', icon: _cardBellIcon, submenu: 'remind' },
+    { label: 'Urgency', icon: _URGENCY_ICON, submenu: 'urgency' },
   ];
 
   if (!isSentFolder) {
@@ -8111,6 +8512,10 @@ function _showCardMenu(em, anchor) {
       e.stopPropagation();
       if (a.submenu === 'remind') {
         _showLibRemindSubmenu(em, dropdown);
+        return;
+      }
+      if (a.submenu === 'urgency') {
+        _showEmailUrgencySubmenu(em, dropdown);
         return;
       }
       close();
@@ -8541,6 +8946,64 @@ function _hasMultipleRecipients(data) {
 }
 
 // _esc lives in ./emailLibrary/utils.js
+
+function _showEmailUrgencySubmenu(em, parentDropdown) {
+  parentDropdown.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'dropdown-item-compact';
+  header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
+  header.innerHTML = '<span>Set urgency</span>';
+  parentDropdown.appendChild(header);
+
+  const currentSlug = _normalizeUrgencySlug(em?.urgency?.slug || '');
+  const levels = (state._libUrgencyLevels || [])
+    .filter(level => level && level.active !== false)
+    .sort((a, b) => Number(b.rank || 0) - Number(a.rank || 0) || String(a.name || '').localeCompare(String(b.name || '')));
+  for (const level of levels) {
+    const slug = _normalizeUrgencySlug(level.slug);
+    if (!slug) continue;
+    const item = document.createElement('div');
+    item.className = 'dropdown-item-compact';
+    const checked = currentSlug === slug ? '<span style="margin-left:auto;opacity:0.7;">✓</span>' : '';
+    item.innerHTML = `<span class="dropdown-icon"><span class="email-urgency-dot" style="background:${_esc(_urgencyColorValue(level.color))}"></span></span><span>${_esc(level.name || slug)}</span>${checked}`;
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await _setEmailUrgency(em, slug);
+        parentDropdown.remove();
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to update urgency');
+      }
+    });
+    parentDropdown.appendChild(item);
+  }
+
+  const clear = document.createElement('div');
+  clear.className = 'dropdown-item-compact';
+  clear.innerHTML = '<span class="dropdown-icon">×</span><span>Clear urgency</span>';
+  clear.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await _setEmailUrgency(em, '');
+      parentDropdown.remove();
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to clear urgency');
+    }
+  });
+  parentDropdown.appendChild(clear);
+
+  const manage = document.createElement('div');
+  manage.className = 'dropdown-item-compact';
+  manage.innerHTML = `<span class="dropdown-icon">${_URGENCY_ICON}</span><span>Manage levels</span>`;
+  manage.addEventListener('click', (e) => {
+    e.stopPropagation();
+    parentDropdown.remove();
+    _showUrgencyManager();
+  });
+  parentDropdown.appendChild(manage);
+}
 
 function _showEmailTranslateSubmenu(reader, parentDropdown) {
   parentDropdown.innerHTML = '';
