@@ -127,6 +127,29 @@ def test_workspace_auto_escalation_keeps_shell_tools():
     assert "if auto_escalated and not _workspace_agent_intent:" in source
 
 
+def test_each_chat_request_path_classifies_once_for_shadow_observation():
+    """Both valid prompt paths should produce one reusable semantic route."""
+    source = _CHAT_ROUTES.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    request_paths = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name in {"chat_endpoint", "chat_stream"}
+    }
+
+    assert set(request_paths) == {"chat_endpoint", "chat_stream"}
+    for name, function in request_paths.items():
+        calls = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "classify_intent_route"
+        ]
+        assert len(calls) == 1, f"{name} must classify each request exactly once"
+
+
 # ── Functional tests of the disabled-tools logic ───────────────
 
 

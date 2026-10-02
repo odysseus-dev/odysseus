@@ -67,6 +67,7 @@ from routes.chat_helpers import (
 )
 from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
 from src.image_model_ids import looks_like_image_generation_model
+from src.intent_router import IntentRoute, classify_intent_route
 from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
@@ -316,6 +317,38 @@ _BROWSER_MCP_TOOLS = {
     "mcp__builtin_browser__browser_navigate_back",
     "mcp__builtin_browser__browser_close",
 }
+
+_TOOL_INTENT_DOMAINS = {
+    "calendar": "notes_calendar_tasks",
+    "notes": "notes_calendar_tasks",
+    "email": "email",
+    "web": "web",
+    "research": "web",
+    "ui": "ui",
+    "workspace": "files",
+    "shell": "files",
+}
+
+
+def _log_shadow_intent_route(
+    route: IntentRoute,
+    *,
+    endpoint: str,
+    deterministic_needs_tools: bool,
+    deterministic_domains: tuple[str, ...],
+) -> None:
+    """Log aggregate shadow output without retaining or emitting prompt text."""
+
+    if route.rollout_mode != "shadow":
+        return
+    logger.info(
+        "[intent-router] endpoint=%s route=%s",
+        endpoint,
+        route.log_fields(
+            deterministic_needs_tools=deterministic_needs_tools,
+            deterministic_domains=deterministic_domains,
+        ),
+    )
 
 
 def _recent_session_text(sess, limit: int = 8, max_chars: int = 2000) -> str:
@@ -808,6 +841,15 @@ def setup_chat_routes(
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
+
+        _intent_route = await classify_intent_route(message)
+        _nonstream_domains = ("web",) if use_web or use_research else ()
+        _log_shadow_intent_route(
+            _intent_route,
+            endpoint="chat",
+            deterministic_needs_tools=bool(_nonstream_domains),
+            deterministic_domains=_nonstream_domains,
+        )
 
         tool_policy = build_effective_tool_policy(last_user_message=message)
         allow_tool_preprocessing = not tool_policy.block_all_tool_calls
@@ -1308,6 +1350,28 @@ def setup_chat_routes(
         # Admins always have full privileges via get_privileges (returns
         # ADMIN_PRIVILEGES wholesale) so this is a no-op for them.
         _enforce_chat_privileges(request, sess)
+
+        _intent_route = await classify_intent_route(message)
+        _deterministic_domains = set()
+        _comparison_tool_intent = _tool_intent
+        if not _comparison_tool_intent or not _comparison_tool_intent.needs_tools:
+            _comparison_tool_intent = _classify_tool_intent(message)
+        if _comparison_tool_intent:
+            _mapped_domain = _TOOL_INTENT_DOMAINS.get(
+                _comparison_tool_intent.category
+            )
+            if _mapped_domain:
+                _deterministic_domains.add(_mapped_domain)
+        if _search_enabled or _explicit_web_intent or _explicit_browser_intent:
+            _deterministic_domains.add("web")
+        if _workspace_agent_intent:
+            _deterministic_domains.add("files")
+        _log_shadow_intent_route(
+            _intent_route,
+            endpoint="chat_stream",
+            deterministic_needs_tools=bool(_deterministic_domains),
+            deterministic_domains=tuple(sorted(_deterministic_domains)),
+        )
 
         # Ensure session has auth headers
         resolve_session_auth(sess, session, owner=effective_user(request))
