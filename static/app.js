@@ -193,11 +193,46 @@ function initRailHoverLabels() {
   });
 }
 
-// Redirect to login on 401 from any fetch
+// Redirect to login on 401 from any fetch — but retry once first to avoid
+// spurious redirects on mobile when background tabs resume after cookie staleness.
+// If the user is mid-typing, delay the redirect so their draft isn't wiped.
+// Retry is restricted to safe methods (GET/HEAD/OPTIONS) so a 401 never causes a
+// durable POST/PATCH/DELETE to be silently replayed by the interceptor.
+const _SAFE_RETRY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+function _fetchRetryAllowed(args) {
+  const input = args[0];
+  const method = (
+    input && typeof input === 'object' && typeof input.method === 'string'
+      ? input.method
+      : (args[1] && args[1].method) || 'GET'
+  ).toUpperCase();
+  return _SAFE_RETRY_METHODS.has(method);
+}
+let _401Cooldown = false;
 const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
-  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
+  if (res.status !== 401 || String(args[0]).includes('/api/auth/')) return res;
+  // Deduplicate: if a 401 redirect is already pending, don't stack more
+  if (_401Cooldown) return res;
+  // Retry once after a short delay — transient 401s are common on mobile
+  // when background tabs resume with stale cookies. Only safe methods are
+  // replayed; a failed state-changing request must reach its caller as-is.
+  if (_fetchRetryAllowed(args)) {
+    _401Cooldown = true;
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const retry = await _origFetch.apply(this, args);
+      if (retry.status !== 401) { _401Cooldown = false; return retry; }
+    } catch (_) {}
+  }
+  // Don't redirect while the user is typing — preserve their input
+  const msgInput = document.getElementById('message');
+  const isTyping = msgInput && msgInput === document.activeElement && msgInput.value.trim().length > 0;
+  if (isTyping) {
+    const _onBlur = () => { msgInput.removeEventListener('blur', _onBlur); window.location.href = '/login'; };
+    msgInput.addEventListener('blur', _onBlur);
+  } else {
     window.location.href = '/login';
   }
   return res;
