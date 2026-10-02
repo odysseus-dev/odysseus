@@ -68,6 +68,13 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("calendar", "calendar agenda question", r"\bwhat(?:'s| is)\s+on\s+(?:my\s+)?calendar\b"),
         ("calendar", "next calendar item question", r"\bwhen\s+(?:is|are)\s+(?:my\s+)?next\s+(?:event|meeting|appointment|class)\b"),
 
+        # Broader calendar data reads without time qualifiers.
+        # Distinguish "show my calendar events" (data) from "show my calendar" (panel).
+        ("calendar", "calendar events list request", rf"\b(?:list|show|read|get|view)\b.{{0,80}}\b(?:my\s+|the\s+)?calendar\s+(?:events?|meetings?|appointments?|classes?|schedule)\b"),
+        ("calendar", "calendar schedule list request", rf"\b(?:list|show|read|get|view)\b.{{0,80}}\b(?:my\s+|the\s+)(?:events?|meetings?|appointments?|classes?|schedule)\b"),
+        ("calendar", "calendar events question", rf"\b(?:what|which)\b.{{0,80}}\b(?:events?|meetings?|appointments?|classes?|schedule)\b.{{0,80}}\b(?:my\s+|the\s+)?calendar\b"),
+        ("calendar", "calendar content question", rf"\b(?:what|which)\b.{{0,80}}\b(?:is\s+)?(?:in|on)\b.{{0,80}}\b(?:my\s+|the\s+)?calendar\b"),
+        
         # Notes, todos, checklists, and reminders.
         ("notes", "reminder request", r"\bremind\s+me\b"),
         ("notes", "assistant note/todo action request", rf"{_ACTION_QUESTION}(?:add|create|make|take|jot|write\s+down|set)\b.{{0,120}}\b(?:note|todo|task|checklist|reminder)\b"),
