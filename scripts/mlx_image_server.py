@@ -63,12 +63,45 @@ def _size(size: str) -> tuple[int, int]:
         return int(_args.width), int(_args.height)
 
 
-def _cli_for_model(model: str) -> str:
-    lower = model.lower()
-    if "qwen" in lower:
-        return "mflux-generate-qwen"
-    if "flux" in lower:
-        return "mflux-generate"
+# mflux ships one generate CLI per model family. Keyed on the canonical
+# registry names mflux itself uses, longest/most specific prefix first. A key
+# that matches nothing here goes to the generic ``mflux-generate``, which is
+# FLUX.1-only and is what the server ran for everything before.
+_CLI_BY_REGISTRY_PREFIX = (
+    ("qwen-image-2.1", "mflux-generate-qwen-2.1"),
+    ("qwen-image", "mflux-generate-qwen"),
+    ("flux2-klein", "mflux-generate-flux2"),
+    ("z-image-turbo", "mflux-generate-z-image-turbo"),
+    ("z-image", "mflux-generate-z-image"),
+)
+
+
+def _mflux_registry_key(model: str, base_model: str = "") -> str | None:
+    """Canonical mflux registry key for a built-in name, Hugging Face repo id,
+    or local weights directory, using mflux's own alias resolution so every
+    spelling mflux accepts is accepted here. ``base_model`` is the server's
+    ``--base-model`` and disambiguates custom checkpoints whose name carries
+    no family alias. Returns None when mflux is not importable or the name
+    resolves to nothing, so the caller can keep the pre-existing behaviour."""
+    try:
+        from mflux.models.common.resolution.config_resolution import ConfigResolution
+    except Exception:
+        return None
+    try:
+        return ConfigResolution.resolve_key(model, base_model or None)
+    except Exception:
+        return None
+
+
+def _cli_for_model(model: str, base_model: str = "") -> str:
+    key = _mflux_registry_key(model, base_model)
+    if key is None:
+        # mflux missing or name unknown: the historical name sniff, so a setup
+        # that worked before keeps working and mflux reports the real error.
+        return "mflux-generate-qwen" if "qwen" in model.lower() else "mflux-generate"
+    for prefix, cli in _CLI_BY_REGISTRY_PREFIX:
+        if key == prefix or key.startswith(prefix + "-"):
+            return cli
     return "mflux-generate"
 
 
@@ -346,7 +379,7 @@ def generate(req: ImageRequest):
             elif _is_lama_inpaint(model) or _is_ddcolor(model):
                 raise _unsupported_swift_mlx_runtime(model)
             else:
-                cli = _cli_for_model(model)
+                cli = _cli_for_model(model, _args.base_model)
                 cli_path = _resolve_cli(cli)
                 if not cli_path:
                     raise HTTPException(
