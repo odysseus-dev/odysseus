@@ -1,10 +1,10 @@
 """Regression test for the CORS-preflight auth bypass.
 
-AuthMiddleware is the outermost middleware, so it used to 401 the credential-less
-OPTIONS preflight before CORSMiddleware could answer it -- which blocks every
-cross-origin browser/WebView client before the real request is ever sent. The
-fix lets a genuine preflight through; `is_cors_preflight` is the pure predicate
-it uses. Guard it so the bypass can't silently regress.
+AuthMiddleware runs outside CORSMiddleware, so it used to 401 the credential-less
+OPTIONS preflight before CORS could answer it -- which blocks every cross-origin
+browser/WebView client before the real request is ever sent. The fix lets a
+genuine preflight through; `is_cors_preflight` is the pure predicate it uses.
+Guard it so the bypass can't silently regress.
 """
 
 import os

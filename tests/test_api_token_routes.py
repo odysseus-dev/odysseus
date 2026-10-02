@@ -192,7 +192,12 @@ def test_create_token_attributes_owner_hashes_secret_and_returns_raw_once(monkey
     invalidator.assert_called_once()
 
 
-def test_create_token_accepts_cookbook_read_scope(monkeypatch, token_routes_mod):
+@pytest.mark.parametrize("retired_scope", ["cookbook:read", "cookbook:launch"])
+def test_create_token_rejects_retired_cookbook_scopes(
+    monkeypatch,
+    token_routes_mod,
+    retired_scope,
+):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
 
@@ -202,24 +207,13 @@ def test_create_token_accepts_cookbook_read_scope(monkeypatch, token_routes_mod)
 
     req = _req("alice", is_admin=True)
     create_token = _get_handler(mod, "POST", "/tokens")
-    resp = create_token(request=req, name="cookbook-reader", scopes="cookbook:read")
 
-    assert resp["scopes"] == ["cookbook:read"]
+    with pytest.raises(HTTPException) as exc:
+        create_token(request=req, name="retired-scope", scopes=retired_scope)
 
-
-def test_cookbook_launch_scope_implies_read(monkeypatch, token_routes_mod):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    mod = token_routes_mod
-
-    fake_session = MagicMock()
-    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
-    monkeypatch.setattr(mod, "get_current_user", lambda req: req.state.current_user)
-
-    req = _req("alice", is_admin=True)
-    create_token = _get_handler(mod, "POST", "/tokens")
-    resp = create_token(request=req, name="cookbook-launcher", scopes="cookbook:launch")
-
-    assert resp["scopes"] == ["cookbook:read", "cookbook:launch"]
+    assert exc.value.status_code == 400
+    assert exc.value.detail == f"Unknown token scope: {retired_scope}"
+    fake_session.add.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +268,50 @@ def test_list_tokens_returns_safe_display_fields_only(monkeypatch, token_routes_
 
     assert result[0]["scopes"] == ["chat", "research"]
     assert result[1]["scopes"] == ["chat"]
+
+
+def test_legacy_cookbook_scope_rows_are_listed_without_being_rewritten(
+    monkeypatch,
+    token_routes_mod,
+):
+    """Removing a scope must not migrate or silently edit existing DB rows."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+    row = SimpleNamespace(
+        id="legacy1",
+        name="Legacy",
+        owner="alice",
+        token_prefix="ody_lega",
+        token_hash="$2b$12$NOTRETURNED",
+        scopes="cookbook:read,cookbook:launch",
+        is_active=True,
+        last_used_at=None,
+        created_at=None,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.all.return_value = [row]
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    list_tokens = _get_handler(mod, "GET", "/tokens")
+    result = list_tokens(request=_req("alice", is_admin=True))
+
+    assert result[0]["scopes"] == ["cookbook:read", "cookbook:launch"]
+    assert row.scopes == "cookbook:read,cookbook:launch"
+    fake_session.add.assert_not_called()
+
+
+def test_token_profiles_do_not_advertise_retired_cookbook_scopes(token_routes_mod):
+    mod = token_routes_mod
+    token_profiles = _get_handler(mod, "GET", "/tokens/profiles")
+
+    result = token_profiles(request=_req("alice", is_admin=True))
+
+    assert "cookbook:read" not in result["allowed_scopes"]
+    assert "cookbook:launch" not in result["allowed_scopes"]
+    assert all(
+        "cookbook:read" not in scopes and "cookbook:launch" not in scopes
+        for scopes in result["profiles"].values()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +429,37 @@ def test_update_token_applies_explicit_scopes(monkeypatch, token_routes_mod):
 
     assert token.scopes == "chat"
     assert resp["scopes"] == ["chat"]
+
+
+@pytest.mark.parametrize("retired_scope", ["cookbook:read", "cookbook:launch"])
+def test_update_token_rejects_retired_cookbook_scopes_without_mutation(
+    monkeypatch,
+    token_routes_mod,
+    retired_scope,
+):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="chat", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _patch_request(invalidator, {"scopes": [retired_scope]})
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_token(request=req, token_id="tok123"))
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == f"Unknown token scope: {retired_scope}"
+    assert token.scopes == "chat"
+    fake_session.add.assert_not_called()
+    invalidator.assert_not_called()
 
 
 def test_update_missing_token_returns_404(monkeypatch, token_routes_mod):

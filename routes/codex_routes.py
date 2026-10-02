@@ -12,18 +12,16 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from core.middleware import require_admin
+from core.middleware import require_admin, require_codex_cookbook_browser
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
 
 
-COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
-COOKBOOK_LAUNCH_SCOPES = {"cookbook:launch"}
 TODO_READ_SCOPES = {"todos:read", "todos:write"}
 TODO_WRITE_SCOPES = {"todos:write"}
 EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
@@ -35,6 +33,20 @@ CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
 CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
+CODEX_CAPABILITY_SCOPES = set().union(
+    {"chat"},
+    TODO_READ_SCOPES,
+    TODO_WRITE_SCOPES,
+    EMAIL_READ_SCOPES,
+    EMAIL_DRAFT_SCOPES,
+    EMAIL_SEND_SCOPES,
+    MEMORY_READ_SCOPES,
+    MEMORY_WRITE_SCOPES,
+    CALENDAR_READ_SCOPES,
+    CALENDAR_WRITE_SCOPES,
+    DOCS_READ_SCOPES,
+    DOCS_WRITE_SCOPES,
+)
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
 
 
@@ -110,18 +122,19 @@ def _scope_owner_all(request: Request, required: set[str]) -> str:
     return require_user(request)
 
 
-def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
-    """Authorize a Codex cookbook route.
+def _require_cookbook_admin(request: Request) -> None:
+    """Keep the duplicate Codex Cookbook surface browser-admin only.
 
-    For API-token callers, enforce the given scope set.
-    For cookie-session callers, additionally require admin privileges
-    because cookbook surfaces expose host topology, task logs, tmux
-    commands, and model-serving controls.
+    API tokens and internal-tool loopback identities are deliberately denied
+    with the same response before a route body, Cookbook state, credentials,
+    filesystem, network, process, or endpoint operation is evaluated. Trusted
+    in-app Cookbook/model operations use their canonical route families.
     """
-    owner = _scope_owner(request, allowed)
-    if not getattr(request.state, "api_token", False):
-        require_admin(request)
-    return owner
+    require_codex_cookbook_browser(request)
+    require_admin(request)
+
+
+COOKBOOK_ROUTE_DEPENDENCIES = (Depends(_require_cookbook_admin),)
 
 
 def _find_endpoint(router: APIRouter | None, method: str, path: str):
@@ -166,7 +179,10 @@ def setup_codex_routes(
 
     @router.get("/capabilities")
     def capabilities(request: Request):
-        token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+        token_scopes = (
+            set(getattr(request.state, "api_token_scopes", []) or [])
+            & CODEX_CAPABILITY_SCOPES
+        )
         has_token = bool(getattr(request.state, "api_token", False))
         def scoped(allowed):
             return bool(token_scopes.intersection(allowed)) if has_token else True
@@ -202,11 +218,6 @@ def setup_codex_routes(
                     "write": scoped(DOCS_WRITE_SCOPES),
                     "actions": ["library", "read", "create", "delete"],
                     "available": documents_library_endpoint is not None,
-                },
-                "cookbook": {
-                    "read": scoped(COOKBOOK_READ_SCOPES),
-                    "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
-                    "actions": ["tasks", "servers", "output", "serve", "stop"],
                 },
             },
             "safety": {
@@ -512,16 +523,12 @@ def setup_codex_routes(
             raise HTTPException(400, f"Invalid document payload: {exc}")
         return await _as_owner(request, owner, documents_create_endpoint, request, req)
 
-    # ── Cookbook surface ──
-    # Lets the agent run the same launch / monitor / kill loop the user
-    # would do by hand in the Cookbook UI: read the current task list +
-    # tmux output, launch a serve task, stop one.  Two scopes:
-    #   cookbook:read   — list tasks + tail output + list servers
-    #   cookbook:launch — also start/stop serves (host shell exec)
-    # `cookbook:launch` is genuinely powerful: /api/model/serve runs SSH'd
-    # commands on the user's hosts. The existing _validate_serve_cmd
-    # allowlist (vllm/python3/sglang/llama-server/etc., no shell metachars)
-    # keeps the agent inside the same sandbox the UI uses.
+    # ── Browser-admin compatibility surface ──
+    # This duplicate route family is retained for cookie-session compatibility.
+    # The outer middleware rejects API-token and internal-tool callers before
+    # body parsing; the router dependency and first handler call are backstops.
+    # Canonical in-app Cookbook and model operations continue to use
+    # /api/cookbook and /api/model.
 
     async def _run_shell(cmd: str, timeout: float = 15.0) -> dict:
         """Run a shell command, return {exit_code, stdout, stderr}."""
@@ -565,16 +572,22 @@ def setup_codex_routes(
                                 if k not in ("hf_token", "_secrets")}
         return clean
 
-    @router.get("/cookbook/tasks")
+    @router.get(
+        "/cookbook/tasks",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_tasks(request: Request):
-        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_admin(request)
         state = _read_cookbook_state()
         tasks = state.get("tasks") or []
         return {"tasks": [_redact_task(t) for t in tasks]}
 
-    @router.get("/cookbook/servers")
+    @router.get(
+        "/cookbook/servers",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_servers(request: Request):
-        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_admin(request)
         state = _read_cookbook_state()
         servers = state.get("env", {}).get("servers") or []
         # Strip ssh creds / passwords; keep only what's needed to pick a host.
@@ -591,9 +604,12 @@ def setup_codex_routes(
             })
         return {"servers": cleaned}
 
-    @router.get("/cookbook/output/{session_id}")
+    @router.get(
+        "/cookbook/output/{session_id}",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_output(request: Request, session_id: str, tail: int = 400):
-        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_admin(request)
         # Defensive: session_id must be the tmux-style id we issue
         # (`serve-XXXX` / `cookbook-XXXX` / `queue-XXXX`); anything else
         # would let the agent run arbitrary `tmux capture-pane` targets.
@@ -633,9 +649,12 @@ def setup_codex_routes(
             "task": _redact_task(task),
         }
 
-    @router.post("/cookbook/serve")
+    @router.post(
+        "/cookbook/serve",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_serve(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_admin(request)
         # Wraps /api/model/serve with the SAME validation the UI uses.
         # _validate_serve_cmd (called inside model_serve) rejects shell
         # metachars and requires the leading binary to be in the
@@ -672,9 +691,12 @@ def setup_codex_routes(
             raise HTTPException(503, "model serve endpoint unavailable")
         return await serve_endpoint(request, req)
 
-    @router.post("/cookbook/stop/{session_id}")
+    @router.post(
+        "/cookbook/stop/{session_id}",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_stop(request: Request, session_id: str):
-        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_admin(request)
         import re as _re
         if not _re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
             raise HTTPException(400, "Invalid session id")
@@ -689,12 +711,15 @@ def setup_codex_routes(
         result = await _run_shell(cmd, timeout=10)
         return {"session_id": session_id, "exit_code": result.get("exit_code"), "host": host or "local"}
 
-    @router.get("/cookbook/cached")
+    @router.get(
+        "/cookbook/cached",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_cached(request: Request, host: str | None = None):
         """List cached models on a configured server (or local if host is omitted).
         Mirrors `list_cached_models` from the chat agent so external agents have
         the same inventory view before deciding what to serve/download."""
-        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_admin(request)
         # Hit /api/model/cached internally, with the same modelDirs the chat
         # agent's list_cached_models would resolve from cookbook state.
         state = _read_cookbook_state()
@@ -751,12 +776,15 @@ def setup_codex_routes(
             platform=params.get("platform") or None,
         )
 
-    @router.get("/cookbook/presets")
+    @router.get(
+        "/cookbook/presets",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_presets(request: Request):
         """List saved serve presets (model + host + port + launch cmd).
         Counterpart to `list_serve_presets`. Use BEFORE composing a `serve`
         body — the user's saved preset usually has the working cmd already."""
-        _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
+        _require_cookbook_admin(request)
         state = _read_cookbook_state()
         presets = state.get("presets") or []
         out = []
@@ -772,11 +800,14 @@ def setup_codex_routes(
             })
         return {"presets": out, "default_host": (state.get("env") or {}).get("defaultServer", "")}
 
-    @router.post("/cookbook/preset/{name}")
+    @router.post(
+        "/cookbook/preset/{name}",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_serve_preset(request: Request, name: str):
         """Launch a saved preset by name. Reuses the working cmd + host the
         user already saved, avoiding the cmd-allowlist trial-and-error loop."""
-        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_admin(request)
         import re as _re
         if not _re.fullmatch(r"[A-Za-z0-9 _.:@\-]+", name):
             raise HTTPException(400, "Invalid preset name")
@@ -822,13 +853,16 @@ def setup_codex_routes(
             raise HTTPException(503, "model serve endpoint unavailable")
         return await serve_endpoint(request, req)
 
-    @router.post("/cookbook/adopt")
+    @router.post(
+        "/cookbook/adopt",
+        dependencies=COOKBOOK_ROUTE_DEPENDENCIES,
+    )
     async def codex_cookbook_adopt(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         """Adopt an existing tmux session (one started via raw ssh+tmux) into
         cookbook tracking. Needed when serve_model rejects a cmd and the
         agent falls back to direct ssh — without adoption the session is
         invisible to the UI. Body: {tmux_session, model, host?, port?}."""
-        _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
+        _require_cookbook_admin(request)
         norm = dict(body or {})
         sess = (norm.get("tmux_session") or norm.get("session_id") or "").strip()
         model = (norm.get("model") or norm.get("repo_id") or "").strip()
