@@ -71,7 +71,7 @@ Runtime behavior:
 - update per-server disabled tool lists;
 - Google OAuth authorize/callback/manual exchange pages and generic Streamable HTTP OAuth redirect handling.
 
-`core.database.McpServer` persists transport, command, args, env, URL, enabled state, OAuth config, disabled tool names, and encrypted generic OAuth token/client state. `McpServer.env` is plaintext JSON in the database.
+`core.database.McpServer` persists transport, command, args, env, URL, enabled state, OAuth config, disabled tool names, and encrypted generic OAuth token/client state. Remote SSE and Streamable HTTP servers can also store encrypted static request headers (for example `{"Authorization":"Bearer <token>"}`); configured headers disable the automatic Streamable HTTP OAuth flow. `McpServer.env` is plaintext JSON in the database.
 
 `src.mcp_manager.McpManager` owns live connection state, stdio/SSE/Streamable HTTP transports, sessions, tool schemas, qualified names, and tool calls. HTTP route operations update both database state and live manager state where applicable. Streamable HTTP connects in a background task, can report `connecting` or `needs_auth`, and surfaces an authorization URL when the OAuth client flow redirects. Enabled configured servers connect concurrently at startup; each server has its own 20-second connection timeout and records `timeout` state without delaying siblings. The startup task has no second outer timeout.
 
@@ -146,7 +146,7 @@ After model-visible external/workspace context, arbitrary MCP actions classify f
 - Shell helper paths use argv-based SSH, reject option-like hosts, validate SSH ports through shared helpers, restrict remote venv characters, and allowlist package installs.
 - Non-admin/public tool policy blocks `bash`, `python`, file tools, `manage_mcp`, and all `mcp__*` tools.
 - MCP stdio server registration is arbitrary host process execution and is admin-only.
-- MCP OAuth key/token file paths supplied through routes are confined under `data/mcp_oauth`; generic Streamable HTTP OAuth token state is encrypted in the database.
+- MCP OAuth key/token file paths supplied through routes are confined under `data/mcp_oauth`; generic Streamable HTTP OAuth token state and configured remote request headers are encrypted in the database. Header names and values reject CR/LF characters to prevent HTTP header injection.
 - Built-in MCP servers are local/admin trust-boundary tools and are not
   automatically equivalent to owner-scoped HTTP route behavior. Email MCP is
   the current exception with explicit owner filtering; other built-ins need

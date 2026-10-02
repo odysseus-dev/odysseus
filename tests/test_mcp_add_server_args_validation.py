@@ -145,3 +145,51 @@ def test_add_server_still_defaults_empty_args_to_empty_list(monkeypatch):
 
     assert result["connected"] is True
     assert manager.connect_server.call_args.kwargs["args"] == []
+
+
+def test_add_remote_server_persists_and_forwards_valid_headers(monkeypatch):
+    add_server, manager = _add_server(monkeypatch)
+    fake_session = _FakeSession()
+    monkeypatch.setattr(mcp_routes, "SessionLocal", lambda: fake_session)
+    headers = {"Authorization": "Bearer gate-token"}
+
+    result = asyncio.run(add_server(
+        request=None,
+        name="portainer",
+        transport="http",
+        command=None,
+        args="[]",
+        env="{}",
+        url="https://portainer.example/mcp",
+        oauth_file=None,
+        oauth_config=None,
+        headers=json.dumps(headers),
+    ))
+
+    assert result["connected"] is True
+    assert manager.connect_server.call_args.kwargs["headers"] == headers
+    assert fake_session.added[0].request_headers == json.dumps(headers)
+
+
+@pytest.mark.parametrize("headers", ['[]', '{"Authorization": 123}', '{"Bad\\nHeader": "x"}'])
+def test_add_remote_server_rejects_unsafe_headers(monkeypatch, headers):
+    add_server, manager = _add_server(monkeypatch)
+    monkeypatch.setattr(mcp_routes, "SessionLocal", lambda: (_ for _ in ()).throw(
+        AssertionError("must not reach the DB when headers are rejected")))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(add_server(
+            request=None,
+            name="portainer",
+            transport="http",
+            command=None,
+            args="[]",
+            env="{}",
+            url="https://portainer.example/mcp",
+            oauth_file=None,
+            oauth_config=None,
+            headers=headers,
+        ))
+
+    assert exc.value.status_code == 400
+    manager.connect_server.assert_not_called()

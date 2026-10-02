@@ -78,6 +78,24 @@ def _mcp_oauth_token_missing(oauth_cfg, *, strict: bool = True) -> bool:
     return bool(token_file and not os.path.exists(token_file))
 
 
+def _parse_mcp_request_headers(raw_headers) -> dict[str, str]:
+    """Validate static remote-MCP headers before encrypted persistence."""
+    if not isinstance(raw_headers, str) or not raw_headers.strip():
+        return {}
+    try:
+        headers = json.loads(raw_headers)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, "headers must be a JSON object") from exc
+    if not isinstance(headers, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        and key.strip() and "\r" not in key and "\n" not in key
+        and "\r" not in value and "\n" not in value
+        for key, value in headers.items()
+    ):
+        raise HTTPException(400, "headers must map non-empty names to single-line string values")
+    return {key.strip(): value for key, value in headers.items()}
+
+
 def _apply_mcp_oauth_env(env: dict, oauth_cfg) -> None:
     """Pass sanitized Gmail package paths to MCP servers that honor them."""
     if not oauth_cfg or not isinstance(env, dict):
@@ -141,6 +159,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "args": json.loads(srv.args) if srv.args else [],
                     "env": json.loads(srv.env) if srv.env else {},
                     "url": srv.url,
+                    "has_request_headers": bool(srv.request_headers),
                     "is_enabled": srv.is_enabled,
                     "status": status.get("status", "disconnected"),
                     "tool_count": total_tools,
@@ -166,6 +185,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         url: str = Form(None),
         oauth_file: str = Form(None),
         oauth_config: str = Form(None),
+        headers: str = Form("{}"),
     ):
         """Add a new MCP server config and attempt connection. Admin-only:
         registering a stdio server is equivalent to executing arbitrary
@@ -199,6 +219,9 @@ def setup_mcp_routes(mcp_manager: McpManager):
             parsed_env = {}
         if not isinstance(parsed_env, dict):
             parsed_env = {}
+        parsed_headers = _parse_mcp_request_headers(headers)
+        if parsed_headers and transport not in {"sse", "http"}:
+            raise HTTPException(400, "headers are supported only for SSE or Streamable HTTP")
 
         # Parse OAuth config
         parsed_oauth_config = None
@@ -254,6 +277,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 url=url,
                 is_enabled=True,
                 oauth_config=json.dumps(parsed_oauth_config) if parsed_oauth_config else None,
+                request_headers=json.dumps(parsed_headers) if parsed_headers else None,
             )
             db.add(srv)
             db.commit()
@@ -275,6 +299,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=parsed_args,
                 env=parsed_env,
                 url=url,
+                headers=parsed_headers,
             )
 
         status = mcp_manager.get_server_status(server_id)
@@ -305,6 +330,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
             args = json.loads(srv.args) if srv.args else []
             env = json.loads(srv.env) if srv.env else {}
+            headers = json.loads(srv.request_headers) if srv.request_headers else {}
             connected = await mcp_manager.connect_server(
                 server_id=server_id,
                 name=srv.name,
@@ -313,6 +339,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                headers=headers,
             )
 
             status = mcp_manager.get_server_status(server_id)
@@ -344,6 +371,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if enabled:
                 args = json.loads(srv.args) if srv.args else []
                 env = json.loads(srv.env) if srv.env else {}
+                headers = json.loads(srv.request_headers) if srv.request_headers else {}
                 await mcp_manager.connect_server(
                     server_id=server_id,
                     name=srv.name,
@@ -352,6 +380,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     args=args,
                     env=env,
                     url=srv.url,
+                    headers=headers,
                 )
             else:
                 await mcp_manager.disconnect_server(server_id)
@@ -580,6 +609,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             # Attempt to connect the MCP server now
             args = json.loads(srv.args) if srv.args else []
             env = json.loads(srv.env) if srv.env else {}
+            headers = json.loads(srv.request_headers) if srv.request_headers else {}
             connected = await mcp_manager.connect_server(
                 server_id=server_id,
                 name=srv.name,
@@ -588,6 +618,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 args=args,
                 env=env,
                 url=srv.url,
+                headers=headers,
             )
 
             if connected:
