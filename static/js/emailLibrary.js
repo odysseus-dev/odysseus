@@ -4,7 +4,7 @@
  */
 
 import spinnerModule from './spinner.js';
-import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
+import { styledConfirm, styledPrompt, showToast, emptyStateIcon } from './ui.js';
 import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260815approvalsave1';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
@@ -522,8 +522,35 @@ function _applyTagFilterFromPill(tag) {
   });
 }
 
+function _normalizeEmailLabelSlug(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+function _applyLabelFilterFromPill(label) {
+  const slug = _normalizeEmailLabelSlug(label);
+  if (!slug) return;
+  const meta = (state._libLabels || []).find(l => l.slug === slug);
+  const value = `filter:label:${slug}`;
+  const existingIdx = Array.isArray(state._libSearchPills)
+    ? state._libSearchPills.findIndex(p => p?.type === 'filter' && p.value === value)
+    : -1;
+  if (existingIdx >= 0) {
+    _removeSearchPillAt(existingIdx);
+    return;
+  }
+  _addSearchPill({
+    type: 'filter',
+    value,
+    label: meta?.name || slug.replace(/-/g, ' '),
+  });
+}
+
 document.addEventListener('odysseus:email-filter-tag', (e) => {
   _applyTagFilterFromPill(e.detail?.tag);
+});
+
+document.addEventListener('odysseus:email-filter-label', (e) => {
+  _applyLabelFilterFromPill(e.detail?.label);
 });
 
 function _emailTagPillHtml(tag, em) {
@@ -539,14 +566,77 @@ function _emailTagPillHtml(tag, em) {
   return `<button type="button" class="email-tag email-tag-${_esc(normalized)} email-tag-clickable" data-email-filter-tag="${_esc(normalized)}" title="Show ${_esc(normalized)} emails">${_esc(normalized)}</button>`;
 }
 
-function _emailTagGroupHtml(tags, em) {
-  const visible = (Array.isArray(tags) ? tags : [])
+function _emailLabelPillHtml(label) {
+  const slug = _normalizeEmailLabelSlug(label?.slug || label?.name);
+  const name = String(label?.name || slug.replace(/-/g, ' ')).trim();
+  if (!slug || !name) return '';
+  const color = /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/.test(label?.color || '') ? label.color : '';
+  const style = color ? ` style="--email-label-color:${_esc(color)}"` : '';
+  return `<button type="button" class="email-tag email-label-pill email-tag-clickable" data-email-filter-label="${_esc(slug)}" title="Show ${_esc(name)} emails"${style}><span class="email-label-dot"></span>${_esc(name)}</button>`;
+}
+
+function _emailTagGroupHtml(tags, em, labels = []) {
+  const visibleTags = (Array.isArray(tags) ? tags : [])
     .map(t => _emailTagPillHtml(t, em))
     .filter(Boolean);
+  const visibleLabels = (Array.isArray(labels) ? labels : [])
+    .map(l => _emailLabelPillHtml(l))
+    .filter(Boolean);
+  const visible = visibleTags.concat(visibleLabels);
   if (!visible.length) return '';
   if (visible.length === 1) return visible[0];
   const extra = visible.slice(1).map(html => `<span class="email-tag-extra">${html}</span>`).join('');
-  return `${visible[0]}${extra}<button type="button" class="email-tags-more" data-email-tags-more aria-expanded="false" title="Show all tags">+${visible.length - 1}<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>`;
+  const moreCount = visible.length - 1;
+  return `${visible[0]}${extra}<button type="button" class="email-tags-more" data-email-tags-more aria-expanded="false" aria-label="Show ${moreCount} more tags" title="Show more tags"><span class="email-tags-more-count">+${moreCount}</span><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>`;
+}
+
+function _wireEmailTagWrap(tagWrap) {
+  if (!tagWrap || tagWrap.dataset.emailTagsWired === '1') return;
+  tagWrap.dataset.emailTagsWired = '1';
+  tagWrap.addEventListener('click', (ev) => {
+    const calBtn = ev.target.closest('[data-calendar-event-uid]');
+    const tagBtn = ev.target.closest('[data-email-filter-tag]');
+    const labelBtn = ev.target.closest('[data-email-filter-label]');
+    const moreBtn = ev.target.closest('[data-email-tags-more]');
+    if (!calBtn && !tagBtn && !labelBtn && !moreBtn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (moreBtn) {
+      const expanded = tagWrap.classList.toggle('email-tags-expanded');
+      moreBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      moreBtn.setAttribute('aria-label', expanded ? 'Collapse tags' : `Show ${tagWrap.querySelectorAll('.email-tag-extra').length} more tags`);
+      moreBtn.title = expanded ? 'Collapse tags' : 'Show more tags';
+    } else if (calBtn) _openCalendarEventFromEmail(calBtn.dataset.calendarEventUid);
+    else if (tagBtn) _applyTagFilterFromPill(tagBtn.dataset.emailFilterTag);
+    else if (labelBtn) _applyLabelFilterFromPill(labelBtn.dataset.emailFilterLabel);
+  });
+}
+
+function _buildEmailCardTagWrap(em) {
+  const tags = state._libShowTags ? _visibleEmailTagsForRender(em) : [];
+  const labels = state._libShowTags ? _visibleEmailLabelsForRender(em) : [];
+  if (!state._libShowTags || (!tags.length && !labels.length && !em?.is_spam_verdict)) return null;
+  const tagWrap = document.createElement('span');
+  tagWrap.className = 'email-tags email-card-tags' + ((tags.length + labels.length) > 1 ? ' email-tags-collapsed' : '');
+  tagWrap.innerHTML = _emailTagGroupHtml(tags, em, labels);
+  if (em?.is_spam_verdict) {
+    tagWrap.insertAdjacentHTML('beforeend', '<span class="email-tag email-tag-spam">spam</span>');
+  }
+  _wireEmailTagWrap(tagWrap);
+  return tagWrap;
+}
+
+function _refreshEmailCardTags(em, card) {
+  const targetCard = card?.closest?.('.doclib-card') || document.querySelector(`.doclib-card[data-uid="${CSS.escape(String(em?.uid || ''))}"]`);
+  const titleRow = targetCard?.querySelector?.('.email-card-titlerow');
+  if (!targetCard?.isConnected || !titleRow) return false;
+  titleRow.querySelector('.email-card-tags')?.remove();
+  const tagWrap = _buildEmailCardTagWrap(em);
+  if (!tagWrap) return true;
+  const before = titleRow.querySelector('.email-card-done, .email-card-unread-dot, [data-unread-dot], .email-card-favorite, .email-card-nav-arrows');
+  if (before) titleRow.insertBefore(tagWrap, before);
+  else titleRow.appendChild(tagWrap);
+  return true;
 }
 
 const _DONE_RESPONSE_TAGS = new Set(['urgent', 'reply-soon', 'action-needed']);
@@ -555,6 +645,10 @@ function _visibleEmailTagsForRender(em) {
   const tags = Array.isArray(em?.tags) ? em.tags : [];
   if (!em?.is_answered) return tags;
   return tags.filter(t => !_DONE_RESPONSE_TAGS.has(String(t || '').trim().toLowerCase().replace(/_/g, '-')));
+}
+
+function _visibleEmailLabelsForRender(em) {
+  return Array.isArray(em?.labels) ? em.labels : [];
 }
 
 function _clearDoneResponseTagsLocal(em) {
@@ -2625,6 +2719,9 @@ export function openEmailLibrary(opts = {}) {
                 </button>
                 <div class="email-filter-menu" id="email-filter-menu" role="listbox" hidden></div>
               </div>
+              <button class="memory-toolbar-btn email-labels-manage-btn" id="email-labels-manage-btn" title="Manage custom labels" aria-label="Manage custom labels">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3H4a1 1 0 0 0-1 1v5.59A2 2 0 0 0 3.59 11l9.59 9.59a2 2 0 0 0 2.82 0l4.59-4.59a2 2 0 0 0 0-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+              </button>
               <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select</button>
               <button class="memory-toolbar-btn email-filter-refresh-btn" id="email-lib-refresh-btn" title="Refresh">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
@@ -2828,6 +2925,10 @@ export function openEmailLibrary(opts = {}) {
       document.dispatchEvent(new CustomEvent('odysseus:email-tags-toggle', { detail: { show: state._libShowTags } }));
     });
   }
+  document.getElementById('email-labels-manage-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _openLabelManager(e.currentTarget);
+  });
   document.getElementById('email-reminders-clear-btn')?.addEventListener('click', async () => {
     const ok = await styledConfirm('Permanently delete all Odysseus reminder emails?', {
       confirmText: 'Delete',
@@ -3148,6 +3249,7 @@ export function openEmailLibrary(opts = {}) {
   // otherwise waited on `/accounts` before even trying the cheap indexed list.
   (async () => {
     await _loadAccounts();
+    await _loadLabels();
     _loadFolders();
     _loadEmailReminderBellVisibility();
     if (!fastAccountAtOpen || fastAccountAtOpen !== (state._libAccountId || '')) {
@@ -3193,6 +3295,250 @@ async function _loadAccounts({ force = false } = {}) {
   _refreshAccountUnreadHighlights().catch(() => {});
 }
 
+async function _loadLabels() {
+  try {
+    const qs = state._libAccountId ? `?account_id=${encodeURIComponent(state._libAccountId)}` : '';
+    const r = await fetch(`${API_BASE}/api/email/labels${qs}`, { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    state._libLabels = Array.isArray(d.labels) ? d.labels : [];
+  } catch (err) {
+    state._libLabels = [];
+    console.debug('Email labels load failed:', err);
+  }
+  _syncLabelFilterOptions();
+}
+
+function _labelAccountQuery(prefix = '?') {
+  return state._libAccountId ? `${prefix}account_id=${encodeURIComponent(state._libAccountId)}` : '';
+}
+
+function _labelColorForName(name) {
+  const palette = ['#60a5fa', '#4ade80', '#facc15', '#fb7185', '#a78bfa', '#2dd4bf'];
+  const raw = String(name || '');
+  let acc = 0;
+  for (let i = 0; i < raw.length; i += 1) acc = (acc + raw.charCodeAt(i) * (i + 1)) % 997;
+  return palette[acc % palette.length];
+}
+
+async function _createEmailLabel(defaultName = '') {
+  const name = await styledPrompt('Label name', {
+    title: 'New label',
+    defaultValue: defaultName,
+    placeholder: 'Work, Family, Receipts...',
+    confirmText: 'Create',
+    maxLength: 48,
+  });
+  if (!name) return null;
+  const body = {
+    name,
+    color: _labelColorForName(name),
+    account_id: state._libAccountId || null,
+  };
+  const res = await fetch(`${API_BASE}/api/email/labels`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    showToast(data?.detail || data?.error || 'Could not create label');
+    return null;
+  }
+  await _loadLabels();
+  showToast('Label created');
+  return data.label;
+}
+
+async function _renameEmailLabel(label) {
+  const name = await styledPrompt('Label name', {
+    title: 'Rename label',
+    defaultValue: label?.name || '',
+    confirmText: 'Rename',
+    maxLength: 48,
+  });
+  if (!name) return;
+  const qs = _labelAccountQuery('?');
+  const res = await fetch(`${API_BASE}/api/email/labels/${encodeURIComponent(label.slug)}${qs}`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    showToast(data?.detail || data?.error || 'Could not rename label');
+    return;
+  }
+  await _loadLabels();
+  await _loadEmailsFresh();
+  showToast('Label renamed');
+}
+
+async function _deleteEmailLabel(label) {
+  const ok = await styledConfirm(`Delete label "${label?.name || label?.slug}"? Existing email assignments will stop showing.`, {
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    danger: true,
+  });
+  if (!ok) return;
+  const qs = _labelAccountQuery('?');
+  const res = await fetch(`${API_BASE}/api/email/labels/${encodeURIComponent(label.slug)}${qs}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.success === false) {
+    showToast(data?.detail || data?.error || 'Could not delete label');
+    return;
+  }
+  await _loadLabels();
+  if (state._libFilter === `label:${label.slug}`) {
+    state._libFilter = 'all';
+    const filterEl = document.getElementById('email-lib-filter');
+    if (filterEl) filterEl.value = 'all';
+    state._libSearchPills = (state._libSearchPills || []).filter(p => p?.value !== `filter:label:${label.slug}`);
+    _renderSearchPills();
+    _renderFilterPickerCurrent();
+  }
+  await _loadEmailsFresh();
+  showToast('Label deleted');
+}
+
+function _emailLabelPayload(em, label) {
+  const folder = em?.folder || state._libFolder || 'INBOX';
+  return {
+    label: label?.slug || label?.name || label,
+    uid: String(em?.uid || ''),
+    folder,
+    account_id: state._libAccountId || null,
+    message_id: em?.message_id || '',
+    subject: em?.subject || '',
+    sender: em?.from_address || em?.from_name || '',
+  };
+}
+
+async function _refreshEmailLabelUi(em, opts = {}) {
+  if (!opts?.preserveOpenReader) {
+    _renderGrid();
+    return;
+  }
+  const sourceCard = opts.card?.closest?.('.doclib-card') || opts.reader?.closest?.('.doclib-card') || null;
+  if (sourceCard && _refreshEmailCardTags(em, sourceCard)) {
+    return;
+  }
+  if (!String(em?.uid || '')) {
+    _renderGrid();
+    return;
+  }
+
+  _renderGrid();
+}
+
+async function _toggleEmailLabel(em, label, shouldAdd, opts = {}) {
+  if (!em || !label?.slug) return;
+  const qs = _labelAccountQuery('&');
+  try {
+    if (shouldAdd) {
+      const res = await fetch(`${API_BASE}/api/email/labels/message`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(_emailLabelPayload(em, label)),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const labels = Array.isArray(em.labels) ? em.labels.slice() : [];
+      if (!labels.some(l => l.slug === label.slug)) labels.push(label);
+      em.labels = labels;
+      showToast('Label added');
+    } else {
+      const folder = em?.folder || state._libFolder || 'INBOX';
+      const params = `${qs}&uid=${encodeURIComponent(em.uid || '')}&folder=${encodeURIComponent(folder)}&message_id=${encodeURIComponent(em.message_id || '')}`;
+      const res = await fetch(`${API_BASE}/api/email/labels/message/${encodeURIComponent(label.slug)}?${params.replace(/^&/, '')}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      em.labels = (Array.isArray(em.labels) ? em.labels : []).filter(l => l.slug !== label.slug);
+      showToast('Label removed');
+    }
+    await _refreshEmailLabelUi(em, opts);
+    _libCacheWriteBack();
+  } catch (err) {
+    console.error('Email label toggle failed:', err);
+    showToast('Could not update label');
+  }
+}
+
+function _openLabelManager(anchor) {
+  document.querySelectorAll('.email-card-dropdown').forEach(dismissOrRemove);
+  const dropdown = document.createElement('div');
+  dropdown.className = 'email-card-dropdown email-label-manager-menu';
+  const rect = anchor.getBoundingClientRect();
+  dropdown.style.cssText = `position:fixed;z-index:${topPortalZ()};min-width:220px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:5px;font-size:12px;top:${rect.bottom + 4}px;left:${Math.max(8, Math.min(rect.left, window.innerWidth - 236))}px;`;
+  const render = () => {
+    const labels = state._libLabels || [];
+    const rows = labels.map(label => `
+      <div class="email-label-manager-row" data-label-slug="${_esc(label.slug)}">
+        <button type="button" class="email-label-manager-filter" title="Filter by ${_esc(label.name)}">
+          <span class="email-label-dot" style="--email-label-color:${_esc(label.color || '#60a5fa')}"></span>
+          <span>${_esc(label.name)}</span>
+        </button>
+        <button type="button" class="email-label-manager-icon" data-label-edit="${_esc(label.slug)}" title="Rename label" aria-label="Rename label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
+        <button type="button" class="email-label-manager-icon danger" data-label-delete="${_esc(label.slug)}" title="Delete label" aria-label="Delete label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+        </button>
+      </div>
+    `).join('');
+    dropdown.innerHTML = `
+      <button type="button" class="dropdown-item-compact email-label-create-row" data-label-create>
+        <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span>
+        <span>New label</span>
+      </button>
+      ${labels.length ? '<div class="dropdown-divider"></div>' + rows : '<div class="email-label-empty">No labels yet</div>'}
+    `;
+  };
+  render();
+  dropdown.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const create = e.target.closest('[data-label-create]');
+    if (create) {
+      const label = await _createEmailLabel();
+      if (label) render();
+      return;
+    }
+    const edit = e.target.closest('[data-label-edit]');
+    if (edit) {
+      const label = (state._libLabels || []).find(l => l.slug === edit.dataset.labelEdit);
+      if (label) {
+        await _renameEmailLabel(label);
+        render();
+      }
+      return;
+    }
+    const del = e.target.closest('[data-label-delete]');
+    if (del) {
+      const label = (state._libLabels || []).find(l => l.slug === del.dataset.labelDelete);
+      if (label) {
+        await _deleteEmailLabel(label);
+        render();
+      }
+      return;
+    }
+    const row = e.target.closest('[data-label-slug]');
+    if (row) {
+      close();
+      _applyLabelFilterFromPill(row.dataset.labelSlug);
+    }
+  });
+  document.body.appendChild(dropdown);
+  _fitEmailDropdown(dropdown, rect);
+  const close = bindMenuDismiss(dropdown, () => dropdown.remove(), (ev) => !dropdown.contains(ev.target) && ev.target !== anchor);
+}
+
 function _renderAccountsStrip() {
   const strip = document.getElementById('email-lib-accounts');
   if (!strip) return;
@@ -3230,6 +3576,7 @@ function _renderAccountsStrip() {
       _publishActiveAccount();
       _resetEmailListForFreshLoad({ useCache: false });
       _renderAccountsStrip();
+      await _loadLabels();
       _loadEmails({ force: true, useCache: false });
       _loadFolders({ resetMissing: true }).catch(() => {});
       _refreshAccountUnreadHighlights().catch(() => {});
@@ -3700,9 +4047,26 @@ const _LIB_FILTER_OPTIONS = [
   { value: 'filter:tag:spam',        label: 'Spam',            keywords: ['spam', 'junk'] },
 ];
 
+function _labelFilterOptions() {
+  return (state._libLabels || []).map(label => {
+    const slug = _normalizeEmailLabelSlug(label?.slug || label?.name);
+    const name = String(label?.name || slug).trim();
+    return {
+      value: `filter:label:${slug}`,
+      label: name,
+      keywords: [name.toLowerCase(), slug.replace(/-/g, ' '), 'label', `label ${name.toLowerCase()}`],
+    };
+  }).filter(opt => opt.value !== 'filter:label:' && opt.label);
+}
+
+function _allLibFilterOptions() {
+  return _LIB_FILTER_OPTIONS.concat(_labelFilterOptions());
+}
+
 function _libFilterIconFor(value) {
   // value is 'filter:<X>' — strip prefix and reuse the existing icon map.
   const v = String(value || '').replace(/^filter:/, '');
+  if (v.startsWith('label:')) return '<span class="email-filter-label-dot" aria-hidden="true"></span>';
   if (v === 'has-attachments') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
   return _EMAIL_FILTER_ICONS[v] || _EMAIL_FILTER_ICONS['all'];
 }
@@ -3723,7 +4087,7 @@ function _filterSuggestions(needle, limit = 10) {
   // Filter / attachment matches first — typing 'unread' should surface
   // the filter row before contact suggestions, since 'unread' isn't a
   // person.
-  const filterMatches = _LIB_FILTER_OPTIONS
+  const filterMatches = _allLibFilterOptions()
     .map(opt => ({ s: { kind: 'filter', value: opt.value, label: opt.label, icon: _libFilterIconFor(opt.value) }, score: _scoreFilterOption(opt, n) }))
     .filter(x => x.score > 0);
   const src = _libSuggestionCache || [];
@@ -4481,6 +4845,7 @@ const _EMAIL_FILTER_ICONS = {
 };
 
 function _filterIcon(value) {
+  if (String(value || '').startsWith('label:')) return '<span class="email-filter-label-dot" aria-hidden="true"></span>';
   return _EMAIL_FILTER_ICONS[value] || _EMAIL_FILTER_ICONS['all'];
 }
 
@@ -4497,15 +4862,10 @@ function _renderFilterPickerCurrent() {
   if (labelEl) labelEl.textContent = label;
 }
 
-function _initFilterPicker() {
+function _renderFilterPickerMenu() {
   const sel = document.getElementById('email-lib-filter');
-  const picker = document.getElementById('email-filter-picker');
-  const btn = document.getElementById('email-filter-btn');
   const menu = document.getElementById('email-filter-menu');
-  if (!sel || !picker || !btn || !menu || picker._wired) return;
-  picker._wired = true;
-
-  // Build menu from the hidden <select> contents (preserves optgroup labels).
+  if (!sel || !menu) return;
   const items = [];
   for (const child of sel.children) {
     if (child.tagName === 'OPTGROUP') {
@@ -4519,13 +4879,47 @@ function _initFilterPicker() {
   }
   menu.innerHTML = items.map(it => {
     if (!it.value) {
-      return `<div class="email-filter-group">${it.group}</div>`;
+      return `<div class="email-filter-group">${_esc(it.group)}</div>`;
     }
-    return `<button type="button" role="option" class="email-filter-item" data-value="${it.value}">
+    return `<button type="button" role="option" class="email-filter-item" data-value="${_esc(it.value)}">
       <span class="email-filter-item-icon">${_filterIcon(it.value)}</span>
-      <span class="email-filter-item-label">${it.label}</span>
+      <span class="email-filter-item-label">${_esc(it.label)}</span>
     </button>`;
   }).join('');
+}
+
+function _syncLabelFilterOptions() {
+  const sel = document.getElementById('email-lib-filter');
+  if (!sel) return;
+  sel.querySelectorAll('optgroup[data-custom-label-group]').forEach(g => g.remove());
+  const labels = state._libLabels || [];
+  if (labels.length) {
+    const group = document.createElement('optgroup');
+    group.label = 'Labels';
+    group.dataset.customLabelGroup = '1';
+    for (const label of labels) {
+      const slug = _normalizeEmailLabelSlug(label?.slug || label?.name);
+      if (!slug) continue;
+      const opt = document.createElement('option');
+      opt.value = `label:${slug}`;
+      opt.textContent = label.name || slug.replace(/-/g, ' ');
+      group.appendChild(opt);
+    }
+    if (group.children.length) sel.appendChild(group);
+  }
+  _renderFilterPickerMenu();
+  _renderFilterPickerCurrent();
+}
+
+function _initFilterPicker() {
+  const sel = document.getElementById('email-lib-filter');
+  const picker = document.getElementById('email-filter-picker');
+  const btn = document.getElementById('email-filter-btn');
+  const menu = document.getElementById('email-filter-menu');
+  if (!sel || !picker || !btn || !menu || picker._wired) return;
+  picker._wired = true;
+
+  _renderFilterPickerMenu();
 
   const close = () => {
     menu.hidden = true;
@@ -5131,27 +5525,8 @@ function _createCard(em) {
     titleRow.appendChild(att);
   }
 
-  const tags = state._libShowTags ? _visibleEmailTagsForRender(em) : [];
-  if (state._libShowTags && (tags.length || em.is_spam_verdict)) {
-    const tagWrap = document.createElement('span');
-    tagWrap.className = 'email-tags email-card-tags' + (tags.length > 1 ? ' email-tags-collapsed' : '');
-    tagWrap.innerHTML = _emailTagGroupHtml(tags, em);
-    if (em.is_spam_verdict) {
-      tagWrap.insertAdjacentHTML('beforeend', '<span class="email-tag email-tag-spam">spam</span>');
-    }
-    tagWrap.addEventListener('click', (ev) => {
-      const calBtn = ev.target.closest('[data-calendar-event-uid]');
-      const tagBtn = ev.target.closest('[data-email-filter-tag]');
-      const moreBtn = ev.target.closest('[data-email-tags-more]');
-      if (!calBtn && !tagBtn && !moreBtn) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (moreBtn) {
-        const expanded = tagWrap.classList.toggle('email-tags-expanded');
-        moreBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      } else if (calBtn) _openCalendarEventFromEmail(calBtn.dataset.calendarEventUid);
-      else _applyTagFilterFromPill(tagBtn.dataset.emailFilterTag);
-    });
+  const tagWrap = _buildEmailCardTagWrap(em);
+  if (tagWrap) {
     titleRow.appendChild(tagWrap);
   }
 
@@ -5205,6 +5580,7 @@ function _createCard(em) {
 
   if (em.is_flagged) {
     const star = document.createElement('span');
+    star.className = 'email-card-favorite';
     star.title = 'Favorited';
     star.style.cssText = 'color:var(--accent, var(--red));opacity:0.85;flex-shrink:0;display:inline-flex;';
     star.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
@@ -7683,6 +8059,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   const _newTabIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
   const _checkIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const _translateIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-primary, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>';
+  const _labelIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3H4a1 1 0 0 0-1 1v5.59A2 2 0 0 0 3.59 11l9.59 9.59a2 2 0 0 0 2.82 0l4.59-4.59a2 2 0 0 0 0-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>';
 
   const closeAndRemove = async () => {
     // Pick the next neighbour BEFORE we re-render so we know which email to
@@ -7729,6 +8106,11 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       label: 'Translate',
       icon: _translateIcon,
       submenu: 'translate',
+    },
+    {
+      label: 'Labels',
+      icon: _labelIcon,
+      submenu: 'labels',
     },
     { separator: true },
     {
@@ -7906,6 +8288,10 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         _showEmailTranslateSubmenu(reader, dropdown);
         return;
       }
+      if (a.submenu === 'labels') {
+        _showEmailLabelSubmenu(em, dropdown, { preserveOpenReader: true, card, reader });
+        return;
+      }
       close();
       a.action();
     });
@@ -7946,6 +8332,7 @@ function _showCardMenu(em, anchor) {
   const _unreadIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
   const _checkIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const _cardBellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+  const _labelIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 11 3.83A2 2 0 0 0 9.59 3H4a1 1 0 0 0-1 1v5.59A2 2 0 0 0 3.59 11l9.59 9.59a2 2 0 0 0 2.82 0l4.59-4.59a2 2 0 0 0 0-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>';
 
   const isSentFolder = /sent/i.test(state._libFolder);
 
@@ -7966,6 +8353,7 @@ function _showCardMenu(em, anchor) {
       await _openEmailAsTab(em, folder);
     }},
     { label: 'Remind to reply', icon: _cardBellIcon, submenu: 'remind' },
+    { label: 'Labels', icon: _labelIcon, submenu: 'labels' },
   ];
 
   if (!isSentFolder) {
@@ -8111,6 +8499,10 @@ function _showCardMenu(em, anchor) {
       e.stopPropagation();
       if (a.submenu === 'remind') {
         _showLibRemindSubmenu(em, dropdown);
+        return;
+      }
+      if (a.submenu === 'labels') {
+        _showEmailLabelSubmenu(em, dropdown);
         return;
       }
       close();
@@ -8594,6 +8986,54 @@ function _showEmailTranslateSubmenu(reader, parentDropdown) {
       e.stopPropagation();
       parentDropdown.remove();
       await _translateEmail(reader, language);
+    });
+    parentDropdown.appendChild(item);
+  }
+}
+
+function _showEmailLabelSubmenu(em, parentDropdown, opts = {}) {
+  parentDropdown.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'dropdown-item-compact';
+  header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
+  header.innerHTML = '<span>Labels</span>';
+  parentDropdown.appendChild(header);
+
+  const newItem = document.createElement('div');
+  newItem.className = 'dropdown-item-compact';
+  newItem.innerHTML = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg></span><span>New label</span>';
+  newItem.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const label = await _createEmailLabel();
+    if (label) await _toggleEmailLabel(em, label, true, opts);
+    parentDropdown.remove();
+  });
+  parentDropdown.appendChild(newItem);
+
+  const labels = state._libLabels || [];
+  if (!labels.length) {
+    const empty = document.createElement('div');
+    empty.className = 'email-label-empty';
+    empty.textContent = 'No labels yet';
+    parentDropdown.appendChild(empty);
+    return;
+  }
+  const sep = document.createElement('div');
+  sep.className = 'dropdown-divider';
+  parentDropdown.appendChild(sep);
+  const assigned = new Set((Array.isArray(em?.labels) ? em.labels : []).map(l => l.slug));
+  for (const label of labels) {
+    const selected = assigned.has(label.slug);
+    const item = document.createElement('div');
+    item.className = 'dropdown-item-compact';
+    item.innerHTML = `
+      <span class="dropdown-icon">${selected ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>' : '<span class="email-label-dot" style="--email-label-color:' + _esc(label.color || '#60a5fa') + '"></span>'}</span>
+      <span>${_esc(label.name)}</span>
+    `;
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      parentDropdown.remove();
+      await _toggleEmailLabel(em, label, !selected, opts);
     });
     parentDropdown.appendChild(item);
   }
