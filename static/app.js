@@ -330,7 +330,13 @@ function initializeEventListeners() {
   el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
     const box = el('chat-history');
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    uiModule.setAutoScroll(atBottom);
+    if (atBottom) {
+      uiModule.setAutoScroll(true);
+    } else if (!uiModule.isAutoScrollAnimating()) {
+      // A scrollbar drag or keyboard scroll has no wheel/touch signal. Do not
+      // mistake frames from our own smooth scroll for user intent.
+      uiModule.setAutoScroll(false);
+    }
   }, 100));
   // Close all footer popups immediately on any scroll
   el('chat-history').addEventListener('scroll', () => {
