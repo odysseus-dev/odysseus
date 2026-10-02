@@ -13,8 +13,9 @@ set -e
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
-GOSU_BIN="$(command -v gosu)"
-PYTHON_BIN="$(command -v python)"
+SYSTEM_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+GOSU_BIN="$(PATH="$SYSTEM_PATH" command -v gosu)"
+PYTHON_BIN="$(PATH="$SYSTEM_PATH" command -v python)"
 
 # Reuse an existing matching group/user if the host's UID/GID already
 # corresponds to one in /etc/passwd (e.g. when the image is rebuilt
@@ -143,6 +144,15 @@ export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 # Make Cookbook-installed Python CLIs visible after `pip install --user`.
 # vLLM and helper scripts land here because /app is the non-root user's HOME.
 export PATH="/app/.local/bin:$PATH"
+
+# The deployment boundary is part of the supported Docker contract. Run the
+# check after dropping to the configured service user, before setup or uvicorn,
+# so a missing host profile or broken namespace cannot silently become an
+# unrestricted application runtime.
+if ! "$GOSU_BIN" "$ODY_USER" /usr/bin/env PATH="$SYSTEM_PATH" /usr/local/bin/odysseus-sandbox-self-test; then
+    echo "Odysseus sandbox boot check failed; refusing to start without the supported container boundary." >&2
+    exit 78
+fi
 
 # Run first-time setup as the app user so data/ files get the right ownership.
 # setup.py is idempotent — skips auth.json / .env if they already exist.

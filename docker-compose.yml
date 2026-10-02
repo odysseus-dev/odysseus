@@ -10,6 +10,18 @@ services:
     # :latest and bare :X.Y.Z tags move on every main push.
     image: ${ODYSSEUS_IMAGE:-ghcr.io/odysseus-dev/odysseus:latest}
     build: .
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/seccomp/odysseus-bubblewrap.json
+      - apparmor=odysseus-sandbox
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:

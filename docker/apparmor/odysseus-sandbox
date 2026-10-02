@@ -1,0 +1,66 @@
+# AppArmor policy for the Odysseus Docker service.
+#
+# This profile is loaded on the Ubuntu Docker host and selected by Compose as
+# `apparmor=odysseus-sandbox`. It permits Bubblewrap's unprivileged user- and
+# mount-namespace bootstrap, while the OCI capability set remains explicitly
+# dropped to the small entrypoint set in Compose. The namespaced bootstrap
+# permissions below are not an OCI CAP_SYS_ADMIN grant and do not provide a
+# host mount capability. The generated outer seccomp profile and the inner
+# launcher filter remain the syscall boundary for the payload.
+#
+# There is intentionally no `unconfined` mode or fallback profile here.
+
+#include <tunables/global>
+
+profile odysseus-sandbox flags=(attach_disconnected,mediate_deleted) {
+    # The app image and its declared bind mounts need ordinary application
+    # access. The explicit write rules below keep the profile's writable view
+    # limited to runtime paths rather than host paths.
+    #include <abstractions/base>
+    file,
+    network,
+    unix,
+    signal,
+    userns create,
+    mount,
+    umount,
+    pivot_root,
+
+    # Bubblewrap needs these capabilities only while creating its own
+    # unprivileged namespace. Compose never adds them to the container's OCI
+    # capability set, and Bubblewrap drops them before executing the payload.
+    capability chown,
+    capability dac_override,
+    capability net_admin,
+    capability setgid,
+    capability setuid,
+    capability sys_admin,
+    capability sys_chroot,
+    capability sys_ptrace,
+
+    /app/** rwix,
+    /bin/** rix,
+    /dev/** rw,
+    /etc/** rwix,
+    /lib/** rix,
+    /lib64/** rix,
+    /proc/** r,
+    /run/** rw,
+    /sys/** r,
+    /tmp/** rwix,
+    /usr/** rix,
+    /var/** rwix,
+
+    # The container does not need raw packet sockets or packet capture. The
+    # process sandbox itself additionally creates a private network namespace.
+    deny network raw,
+    deny network packet,
+
+    # /proc is a read-only observation surface for the service. Bubblewrap
+    # mounts the payload's fresh procfs; the inner generated filter denies the
+    # payload mount syscalls after that bootstrap is complete.
+    deny /proc/** wklx,
+    deny /sys/** wklx,
+    deny /sys/firmware/** rwklx,
+    deny /sys/kernel/security/** rwklx,
+}
