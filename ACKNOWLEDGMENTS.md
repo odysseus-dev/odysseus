@@ -156,6 +156,12 @@ concerns from earlier are resolved:
 - **`markitdown`** (Microsoft) is **MIT** and used only as an *optional* dependency for Office/EPUB text
   extraction (`src/markitdown_runtime.py`), lazy-imported with graceful fallback — the MIT core runs without
   it. The cloud `az-doc-intel` extra is deliberately **not** installed, keeping extraction fully local.
+- **`laya`** (Convai Innovations) is **Apache-2.0**, permissive and MIT-compatible.
+  It is **not** bundled into the Odysseus image: it runs as an **optional sidecar**
+  (`laya-serve`, enabled via `compose.laya.yaml`) that Odysseus talks to over HTTP,
+  keeping laya's heavy `torch`/`transformers` stack out of the core image. Off
+  unless `LAYA_ENABLED=true`. Its model checkpoints download from Hugging Face at
+  runtime (pin with `LAYA_REVISION`). See `docs/laya.md`.
 
 ---
 

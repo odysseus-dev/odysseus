@@ -732,6 +732,11 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# laya decision-engine integration (sidecar, off unless LAYA_ENABLED=true).
+# M1: admin-gated health passthrough only — no request-path behavior changes.
+from routes.laya_routes import setup_laya_routes
+app.include_router(setup_laya_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

@@ -2,7 +2,7 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, Float, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -640,6 +640,37 @@ class TaskRun(Base):
 
     __table_args__ = (
         Index('ix_task_runs_task', 'task_id', 'started_at'),
+    )
+
+
+class LayaRun(Base):
+    """Audit record of one call to the laya decision engine.
+
+    The integration never acts without leaving one of these behind. Input text is
+    NOT stored verbatim — only a short redacted preview, a length, and a SHA-256
+    so runs can be correlated and spot-checked without persisting user content.
+    A brand-new table, created by init_db()'s create_all (no migration needed).
+    """
+    __tablename__ = "laya_runs"
+
+    id                = Column(String, primary_key=True, index=True)
+    created_at        = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+    capability        = Column(String, nullable=False)   # route | guard | moderate | triage
+    owner             = Column(String, nullable=True)     # owner-scope, if any
+    shadow            = Column(Boolean, nullable=False, default=True)   # observed, not acted on
+    acted             = Column(Boolean, nullable=False, default=False)  # did Odysseus use the decision
+    reachable         = Column(Boolean, nullable=False, default=False)  # was laya reachable
+    model             = Column(String, nullable=True)     # laya checkpoint that answered
+    decision          = Column(Text, nullable=True)       # JSON of the normalized decision
+    answer_confidence = Column(Float, nullable=True)      # primary answer confidence
+    input_sha256      = Column(String, nullable=True)     # hash of the input (not the text)
+    input_preview     = Column(String, nullable=True)     # short, redacted preview
+    input_len         = Column(Integer, nullable=True)
+    latency_ms        = Column(Integer, nullable=True)
+    error             = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_laya_runs_cap_time", "capability", "created_at"),
     )
 
 

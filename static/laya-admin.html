@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>laya · admin</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --border:#262b36; --text:#e6e9ef;
+    --muted:#8b93a7; --accent:#6ea8fe; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:18px 22px; border-bottom:1px solid var(--border); display:flex;
+           align-items:center; gap:12px; }
+  header h1 { font-size:18px; margin:0; font-weight:650; }
+  .wrap { padding:22px; max-width:1100px; margin:0 auto; display:grid; gap:18px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--muted); margin:0 0 12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .stat .k { color:var(--muted); font-size:12px; }
+  .stat .v { font-size:18px; font-weight:600; margin-top:2px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.ok { background:rgba(63,185,80,.15); color:var(--ok); }
+  .pill.bad { background:rgba(248,81,73,.15); color:var(--bad); }
+  .pill.warn { background:rgba(210,153,34,.15); color:var(--warn); }
+  .pill.mut { background:rgba(139,147,167,.15); color:var(--muted); }
+  button { background:#232834; color:var(--text); border:1px solid var(--border);
+           border-radius:7px; padding:7px 13px; font-size:13px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#0b1020; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  select, textarea, input { background:#0d0f14; color:var(--text); border:1px solid var(--border);
+            border-radius:7px; padding:8px; font:inherit; }
+  textarea { width:100%; min-height:70px; resize:vertical; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
+  td.mono, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .muted { color:var(--muted); }
+  .scroll { max-height:420px; overflow:auto; }
+  pre { background:#0d0f14; border:1px solid var(--border); border-radius:7px; padding:10px;
+        overflow:auto; font-size:12px; margin:10px 0 0; }
+  .err { color:var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>laya decision engine</h1>
+  <span id="masterPill" class="pill mut">loading…</span>
+  <span style="flex:1"></span>
+  <button id="refreshBtn">Refresh</button>
+</header>
+
+<div class="wrap">
+  <section class="card">
+    <h2>Status</h2>
+    <div class="grid" id="statusGrid"></div>
+    <div class="row" style="margin-top:14px">
+      <button id="pauseBtn">Pause</button>
+      <button id="resumeBtn">Resume</button>
+      <span id="controlMsg" class="muted"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Manual run (observe-only)</h2>
+    <div class="row">
+      <select id="runCap">
+        <option value="route">route</option>
+        <option value="guard">guard</option>
+        <option value="moderate">moderate</option>
+        <option value="triage">triage</option>
+      </select>
+      <button id="runBtn" class="primary">Run</button>
+    </div>
+    <textarea id="runText" placeholder="Text to classify (e.g. a sample user message)…" style="margin-top:10px"></textarea>
+    <pre id="runOut" style="display:none"></pre>
+  </section>
+
+  <section class="card">
+    <h2>Summary</h2>
+    <div class="grid" id="summaryGrid"></div>
+  </section>
+
+  <section class="card">
+    <h2>Run history</h2>
+    <div class="row" style="margin-bottom:10px">
+      <select id="histCap">
+        <option value="">all capabilities</option>
+        <option value="route">route</option>
+        <option value="guard">guard</option>
+        <option value="moderate">moderate</option>
+        <option value="triage">triage</option>
+      </select>
+      <span id="histMsg" class="muted"></span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>time</th><th>cap</th><th>owner</th><th>mode</th><th>reach</th>
+          <th>model</th><th>conf</th><th>ms</th><th>input (redacted)</th><th>error</th>
+        </tr></thead>
+        <tbody id="histBody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script nonce="{{CSP_NONCE}}">
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => { const d = document.createElement("div"); d.textContent = (s == null ? "" : String(s)); return d.innerHTML; };
+
+  async function api(path, opts) {
+    const res = await fetch(path, Object.assign({ credentials: "same-origin",
+      headers: { "Content-Type": "application/json" } }, opts || {}));
+    if (!res.ok) throw new Error("HTTP " + res.status + " " + (await res.text()).slice(0, 200));
+    return res.json();
+  }
+
+  function pill(label, kind) { return '<span class="pill ' + kind + '">' + esc(label) + "</span>"; }
+  function stat(k, vHtml) { return '<div class="stat"><div class="k">' + esc(k) + '</div><div class="v">' + vHtml + "</div></div>"; }
+
+  async function loadStatus() {
+    let d;
+    try { d = await api("/api/laya/status"); }
+    catch (e) { $("masterPill").className = "pill bad"; $("masterPill").textContent = "error"; $("statusGrid").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; return; }
+
+    const master = !d.enabled ? pill("disabled", "mut")
+      : d.paused ? pill("paused", "warn")
+      : d.active ? pill("active", "ok") : pill("inactive", "mut");
+    $("masterPill").outerHTML = '<span id="masterPill">' + master + "</span>";
+
+    const h = d.health || {};
+    const reach = h.reachable ? pill("reachable", "ok") : pill("unreachable", h.enabled ? "bad" : "mut");
+    const caps = Object.entries(d.capabilities || {})
+      .map(([k, v]) => pill(k + ":" + v, v === "shadow" ? "warn" : "mut")).join(" ");
+    const models = (h.detail && (h.detail.models || h.detail.loaded || h.detail.checkpoints)) || "—";
+    const device = (h.detail && h.detail.device) || "—";
+
+    $("statusGrid").innerHTML = [
+      stat("enabled", d.enabled ? pill("yes", "ok") : pill("no", "mut")),
+      stat("sidecar", reach),
+      stat("endpoint", '<span class="mono" style="font-size:13px">' + esc(d.config.url) + "</span>"),
+      stat("api key", d.config.api_key_set ? pill("set", "ok") : pill("none", "warn")),
+      stat("resident models", '<span style="font-size:14px">' + esc(JSON.stringify(models)) + "</span>"),
+      stat("device", '<span style="font-size:14px">' + esc(device) + "</span>"),
+      stat("capabilities", '<div style="font-size:12px">' + caps + "</div>"),
+    ].join("");
+    if (h.error) $("statusGrid").innerHTML += '<div class="err" style="grid-column:1/-1">' + esc(h.error) + "</div>";
+
+    const s = d.summary || {};
+    $("summaryGrid").innerHTML = [
+      stat("total runs", esc(s.total)),
+      stat("reachable", esc(s.reachable)),
+      stat("errors", '<span class="' + (s.errors ? "err" : "") + '">' + esc(s.errors) + "</span>"),
+      stat("acted", esc(s.acted)),
+      stat("last run", '<span style="font-size:13px">' + esc(s.last_run || "—") + "</span>"),
+      stat("by capability", '<span style="font-size:13px">' + esc(JSON.stringify(s.by_capability || {})) + "</span>"),
+    ].join("");
+
+    $("pauseBtn").disabled = !d.enabled || d.paused;
+    $("resumeBtn").disabled = !d.enabled || !d.paused;
+  }
+
+  async function loadRuns() {
+    const cap = $("histCap").value;
+    $("histMsg").textContent = "loading…";
+    let d;
+    try { d = await api("/api/laya/runs?limit=100" + (cap ? "&capability=" + encodeURIComponent(cap) : "")); }
+    catch (e) { $("histMsg").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; return; }
+    const rows = d.runs || [];
+    $("histMsg").textContent = rows.length + " run(s)";
+    $("histBody").innerHTML = rows.map((r) => {
+      const mode = r.acted ? pill("acted", "ok") : pill("shadow", "warn");
+      const reach = r.reachable ? pill("y", "ok") : pill("n", "bad");
+      const conf = (r.answer_confidence == null) ? "—" : Number(r.answer_confidence).toFixed(2);
+      const t = (r.created_at || "").replace("T", " ").slice(0, 19);
+      return "<tr>"
+        + "<td class='mono'>" + esc(t) + "</td>"
+        + "<td>" + esc(r.capability) + "</td>"
+        + "<td>" + esc(r.owner || "—") + "</td>"
+        + "<td>" + mode + "</td>"
+        + "<td>" + reach + "</td>"
+        + "<td>" + esc(r.model || "—") + "</td>"
+        + "<td class='mono'>" + esc(conf) + "</td>"
+        + "<td class='mono'>" + esc(r.latency_ms == null ? "—" : r.latency_ms) + "</td>"
+        + "<td class='muted'>" + esc(r.input_preview || "") + "</td>"
+        + "<td class='err'>" + esc(r.error || "") + "</td>"
+        + "</tr>";
+    }).join("") || '<tr><td colspan="10" class="muted">no runs yet</td></tr>';
+  }
+
+  async function control(path) {
+    $("controlMsg").textContent = "…";
+    try { await api(path, { method: "POST" }); $("controlMsg").textContent = ""; }
+    catch (e) { $("controlMsg").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+    await loadStatus();
+  }
+
+  async function manualRun() {
+    const out = $("runOut");
+    out.style.display = "block"; out.textContent = "running…";
+    try {
+      const d = await api("/api/laya/run", { method: "POST",
+        body: JSON.stringify({ capability: $("runCap").value, text: $("runText").value }) });
+      out.textContent = JSON.stringify(d, null, 2);
+      await loadRuns(); await loadStatus();
+    } catch (e) { out.innerHTML = '<span class="err">' + esc(e.message) + "</span>"; }
+  }
+
+  function refreshAll() { loadStatus(); loadRuns(); }
+
+  $("refreshBtn").addEventListener("click", refreshAll);
+  $("pauseBtn").addEventListener("click", () => control("/api/laya/pause"));
+  $("resumeBtn").addEventListener("click", () => control("/api/laya/resume"));
+  $("runBtn").addEventListener("click", manualRun);
+  $("histCap").addEventListener("change", loadRuns);
+
+  refreshAll();
+})();
+</script>
+</body>
+</html>

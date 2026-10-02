@@ -1,0 +1,53 @@
+# compose.laya.yaml — optional overlay adding the laya decision-engine sidecar.
+#
+# Usage (opt-in):
+#   docker compose -f docker-compose.yml -f compose.laya.yaml up -d --build
+#
+# Without this overlay, Odysseus runs exactly as before and never contacts laya.
+# With it, the sidecar is reachable only on the internal compose network as
+# `http://laya:8000` — it is NOT published to the host — and Odysseus still only
+# *uses* it when LAYA_ENABLED=true.
+services:
+  laya:
+    build:
+      context: .
+      dockerfile: docker/laya/Dockerfile
+    # Internal-only: no `ports:` mapping, so the sidecar is not exposed to the
+    # host network. Odysseus reaches it via the compose DNS name `laya`.
+    expose:
+      - "8000"
+    environment:
+      # Bearer token clients must send. Share the same value with Odysseus below.
+      - LAYA_API_KEY=${LAYA_API_KEY:-}
+      # Preload checkpoints at boot for steady sub-second latency.
+      - LAYA_PRELOAD=${LAYA_PRELOAD:-1}
+      - LAYA_MODELS=${LAYA_MODELS:-english,multilingual}
+      - LAYA_DEVICE=${LAYA_DEVICE:-cpu}
+      - LAYA_MAX_CONCURRENT=${LAYA_MAX_CONCURRENT:-4}
+      # Pin checkpoint weights for reproducibility / supply-chain control.
+      - LAYA_REVISION=${LAYA_REVISION:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      # Persist downloaded checkpoints so a container recreate doesn't re-fetch.
+      - laya-hf-cache:/root/.cache/huggingface
+    healthcheck:
+      # First boot downloads checkpoints, so allow a long start_period + retries.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(1)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 30
+      start_period: 90s
+    restart: unless-stopped
+
+  odysseus:
+    # Overlay only adds laya wiring; base service definition is unchanged.
+    environment:
+      - LAYA_ENABLED=${LAYA_ENABLED:-false}
+      - LAYA_URL=${LAYA_URL:-http://laya:8000}
+      - LAYA_API_KEY=${LAYA_API_KEY:-}
+    depends_on:
+      laya:
+        condition: service_started
+
+volumes:
+  laya-hf-cache:

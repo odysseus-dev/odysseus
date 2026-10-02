@@ -44,6 +44,25 @@ from src.tool_policy import build_effective_tool_policy
 
 logger = logging.getLogger(__name__)
 
+
+async def _laya_guard_or_block(message, *, owner=None) -> None:
+    """Run the laya prompt guardrail; raise HTTPException(400) if it blocks.
+
+    Fail-open: a guard call that errors must never block a chat, so the call is
+    wrapped and failures proceed. Only an explicit ``blocked`` outcome (block mode
+    + flagged input) rejects the request — and that raise is intentionally OUTSIDE
+    the try so it propagates. No-op unless LAYA_ENABLED + LAYA_GUARD_MODE!=off.
+    """
+    try:
+        from services.laya import get_laya_service
+        outcome = await get_laya_service().guard_gate(message, owner=owner)
+    except Exception:
+        logger.debug("laya guard gate error (fail-open, proceeding)", exc_info=True)
+        return
+    if outcome.blocked:
+        raise HTTPException(400, outcome.user_message or "Blocked by safety filter")
+
+
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
@@ -351,6 +370,21 @@ def setup_chat_routes(
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
 
+        # laya prompt guardrail (M4): opt-in via LAYA_GUARD_MODE. In 'block' mode a
+        # flagged input is rejected (audited + a clear message, never silent); in
+        # 'warn'/'off' it never blocks. Fail-open: a down/disabled laya never
+        # blocks. See services/laya/ and docs/laya.md.
+        await _laya_guard_or_block(message, owner=owner)
+
+        # laya shadow routing (M2): observe-only. Fire-and-forget — adds no
+        # latency and never affects which model serves this request. No-op unless
+        # LAYA_ENABLED=true.
+        try:
+            from services.laya import fire_shadow_route
+            fire_shadow_route(message, owner=owner, current_model=getattr(sess, "model", "") or None)
+        except Exception:
+            pass
+
         tool_policy = build_effective_tool_policy(last_user_message=message)
         allow_tool_preprocessing = not tool_policy.block_all_tool_calls
 
@@ -534,6 +568,11 @@ def setup_chat_routes(
         # Admins always have full privileges via get_privileges (returns
         # ADMIN_PRIVILEGES wholesale) so this is a no-op for them.
         _enforce_chat_privileges(request, sess)
+
+        # laya prompt guardrail (M4): same gate as /api/chat so the stream path
+        # can't bypass it. Opt-in via LAYA_GUARD_MODE; fail-open; blocks (in block
+        # mode) before any streaming starts.
+        await _laya_guard_or_block(message, owner=get_current_user(request))
 
         # Ensure session has auth headers
         resolve_session_auth(sess, session, owner=get_current_user(request))
