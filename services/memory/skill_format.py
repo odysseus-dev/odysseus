@@ -126,10 +126,15 @@ def _parse_scalar(raw: str) -> Any:
 def _split_top_level(s: str, sep: str) -> List[str]:
     """Split `s` on `sep` ignoring separators inside [] or quotes."""
     out, buf, depth, quote = [], [], 0, None
+    escaped = False
     for ch in s:
         if quote:
             buf.append(ch)
-            if ch == quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\" and quote == '"':
+                escaped = True
+            elif ch == quote:
                 quote = None
             continue
         if ch in ("'", '"'):
