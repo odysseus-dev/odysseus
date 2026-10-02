@@ -233,19 +233,32 @@ function _allGpuIds(count) {
   return Array.from({ length: Math.floor(n) }, (_, i) => String(i)).join(',');
 }
 
-function _shellSplitForPreview(cmd) {
+export function _shellSplitForPreview(cmd) {
   const s = String(cmd || '');
   const out = [];
   let cur = '';
   let quote = '';
   let escNext = false;
-  for (const ch of s) {
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
     if (escNext) {
       cur += ch;
       escNext = false;
       continue;
     }
     if (ch === '\\') {
+      // A backslash immediately followed by whitespace outside quotes is the
+      // display formatter's continuation marker kept inline by a single-line
+      // paste (`llama-server \ --host`); treat it as a token boundary so the
+      // flag does not fuse into a `\ --host` token (#5979). Inside quotes the
+      // backslash still escapes the next character (quoted paths).
+      if (!quote && /\s/.test(s[i + 1] || ' ')) {
+        if (cur) {
+          out.push(cur);
+          cur = '';
+        }
+        continue;
+      }
       cur += ch;
       escNext = true;
       continue;
@@ -273,7 +286,7 @@ function _shellSplitForPreview(cmd) {
   return out;
 }
 
-function _formatServeCmdPreview(cmd) {
+export function _formatServeCmdPreview(cmd) {
   let raw = String(cmd || '');
   const mlxDeepSeekV4Compat = /\bmlx_lm\.server\b/i.test(raw)
     && /--model\s+['"]?mlx-community\/[^'"\s]*deepseek-v4/i.test(raw);
@@ -340,12 +353,12 @@ function _formatServeCmdPreview(cmd) {
   return formatted;
 }
 
-function _normalizeServeCmdForLaunch(cmd) {
+export function _normalizeServeCmdForLaunch(cmd) {
   let raw = String(cmd || '');
   const lines = raw.split(/\r?\n/)
     .map(s => s.trim().replace(/\s*\\$/, '').trim())
     .filter(s => s && !s.startsWith('#'));
-  if (lines.some(line => /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=/.test(line))) {
+  if (lines.length) {  // always rebuild from the stripped lines: the old env-only guard left continuation backslashes inline for plain commands (#5979)
     const env = [];
     const body = [];
     for (const line of lines) {
