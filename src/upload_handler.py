@@ -74,6 +74,20 @@ ATTACHMENT_REFERENCE_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+TEXT_ATTACHMENT_EXTENSIONS = frozenset({
+    ".txt", ".py", ".js", ".html", ".htm", ".css", ".json", ".md",
+    ".csv", ".log", ".xml", ".yml", ".yaml", ".nix", ".sql", ".sh",
+    ".bash", ".c", ".cpp", ".h", ".java", ".go", ".rs", ".php", ".rb",
+    ".ts", ".jsx", ".tsx",
+})
+
+
+def is_text_attachment(filename: str, content_type: str | None = None) -> bool:
+    """Return True for supported text/code extensions or a ``text/*`` MIME."""
+    _, ext = os.path.splitext((filename or "").lower())
+    mime = (content_type or "").partition(";")[0].strip().lower()
+    return ext in TEXT_ATTACHMENT_EXTENSIONS or mime.startswith("text/")
+
 
 def is_valid_upload_id(upload_id: str) -> bool:
     """Return True when *upload_id* matches the canonical uploads.json id format."""
@@ -319,10 +333,6 @@ class UploadHandler:
         """Check if a file is a document based on extension or content type."""
         document_extensions = {
             '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
-            '.txt', '.py', '.js', '.html', '.htm',
-            '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml',
-            '.yaml', '.nix', '.sql', '.sh', '.bash', '.c', '.cpp', '.h',
-            '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
         }
         document_mime_types = {
             'application/pdf', 
@@ -331,8 +341,10 @@ class UploadHandler:
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
             'application/vnd.ms-excel',
             'application/epub+zip',
-            'text/plain'
         }
+
+        if is_text_attachment(filename, content_type):
+            return True
         
         # Check by extension
         _, ext = os.path.splitext(filename.lower())
@@ -340,7 +352,8 @@ class UploadHandler:
             return True
             
         # Check by content type if provided
-        if content_type and content_type in document_mime_types:
+        mime = (content_type or '').partition(';')[0].strip().lower()
+        if mime in document_mime_types:
             return True
             
         return False
