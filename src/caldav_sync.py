@@ -583,7 +583,7 @@ def _load_caldav_accounts(owner: str) -> list:
     """Return the list of CalDAV accounts for *owner*, auto-migrating the legacy
     single-account ``caldav`` key to the new ``caldav_accounts`` list on first call.
 
-    The save step is best-effort: if ``_save_for_user`` is unavailable (e.g. in a
+    The save step is best-effort: if ``_update_for_user`` is unavailable (e.g. in a
     test with a minimal prefs mock) the migrated accounts are still returned; the
     next real call will just re-run the cheap migration again.
     """
@@ -603,11 +603,9 @@ def _load_caldav_accounts(owner: str) -> list:
             "username": legacy.get("username", ""),
             "password": legacy.get("password", ""),
         }]
-        prefs["caldav_accounts"] = accounts
-        prefs.pop("caldav", None)
         try:
-            from routes.prefs_routes import _save_for_user
-            _save_for_user(owner, prefs)
+            from routes.prefs_routes import _update_for_user
+            _update_for_user(owner, {"caldav_accounts": accounts}, remove=("caldav",))
         except (ImportError, AttributeError):
             pass  # best-effort; next call re-migrates from the still-present legacy key
         return accounts
