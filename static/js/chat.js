@@ -8,6 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
+import { getLastPickedRoute } from './lastPickedRoute.js';
 import chatRenderer from './chatRenderer.js?v=20260819approvalcontrol1';
 import chatStream from './chatStream.js?v=20260819approvalcontrol1';
 import { addAITTSButton } from './tts-ai.js';
@@ -469,10 +470,9 @@ import { loadPanel } from './panels.js';
       if (pending && pending.modelId) return pending.modelId;
     } catch (_) {}
     try {
-      const lastPicked = window.__odysseusLastPickedRoute || null;
-      if (lastPicked && lastPicked.model && Date.now() - (lastPicked.picked_at || 0) < 10 * 60 * 1000) {
-        return lastPicked.model;
-      }
+      const sid = sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+      const lastPicked = getLastPickedRoute(sid);
+      if (lastPicked && lastPicked.model) return lastPicked.model;
     } catch (_) {}
     if (routeSnapshot && routeSnapshot.model) return routeSnapshot.model;
     try {
@@ -1330,8 +1330,9 @@ import { loadPanel } from './panels.js';
 
     const selectedRouteForSend = (() => {
       try {
-        const lastPicked = window.__odysseusLastPickedRoute || null;
-        if (lastPicked && lastPicked.model && Date.now() - (lastPicked.picked_at || 0) < 10 * 60 * 1000) {
+        const sid = sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+        const lastPicked = getLastPickedRoute(sid);
+        if (lastPicked && lastPicked.model) {
           return {
             model: lastPicked.model || '',
             endpoint_url: lastPicked.endpoint_url || '',
