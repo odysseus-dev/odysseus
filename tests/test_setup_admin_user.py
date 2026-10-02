@@ -70,3 +70,62 @@ def test_main_loads_admin_password_from_env_file(tmp_path, monkeypatch):
     assert bcrypt.checkpw(
         b"fromenvfile12345", data["users"]["presetuser"]["password_hash"].encode()
     ), "admin password from .env was ignored; a random one was generated"
+
+
+class _TtyStdin:
+    def isatty(self):
+        return True
+
+
+def _generated_password(output):
+    for line in output.splitlines():
+        if "Temporary password:" in line:
+            return line.split("Temporary password:", 1)[1].strip()
+    return None
+
+
+def test_skip_prompt_in_terminal_still_prints_generated_password(tmp_path, monkeypatch, capsys):
+    """Regression: with ODYSSEUS_SKIP_ADMIN_PROMPT set in a real terminal, a
+    random password was generated but never printed, locking the admin out."""
+    import bcrypt
+
+    setup_module = _load_setup_module()
+    auth_path = tmp_path / "auth.json"
+    monkeypatch.setattr(setup_module, "AUTH_FILE", str(auth_path))
+    monkeypatch.delenv("ODYSSEUS_ADMIN_USER", raising=False)
+    monkeypatch.delenv("ODYSSEUS_ADMIN_PASSWORD", raising=False)
+    monkeypatch.setenv("ODYSSEUS_SKIP_ADMIN_PROMPT", "1")
+    monkeypatch.setattr(setup_module.sys, "stdin", _TtyStdin())
+
+    assert setup_module.create_default_admin() == "created"
+
+    password = _generated_password(capsys.readouterr().out)
+    assert password, "generated password was not printed"
+    data = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert bcrypt.checkpw(password.encode(), data["users"]["admin"]["password_hash"].encode())
+
+
+def test_prompt_eof_falls_back_to_generated_password(tmp_path, monkeypatch, capsys):
+    """Regression: a TTY-looking but closed stdin raised EOFError from input()
+    and aborted admin creation with a misleading permissions message."""
+    import bcrypt
+
+    setup_module = _load_setup_module()
+    auth_path = tmp_path / "auth.json"
+    monkeypatch.setattr(setup_module, "AUTH_FILE", str(auth_path))
+    monkeypatch.delenv("ODYSSEUS_ADMIN_USER", raising=False)
+    monkeypatch.delenv("ODYSSEUS_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("ODYSSEUS_SKIP_ADMIN_PROMPT", raising=False)
+    monkeypatch.setattr(setup_module.sys, "stdin", _TtyStdin())
+
+    def _eof(*_args, **_kwargs):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _eof)
+
+    assert setup_module.create_default_admin() == "created"
+
+    password = _generated_password(capsys.readouterr().out)
+    assert password, "generated password was not printed"
+    data = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert bcrypt.checkpw(password.encode(), data["users"]["admin"]["password_hash"].encode())
