@@ -1768,7 +1768,333 @@ def test_api_models_scopes_api_token_to_token_owner(monkeypatch):
     assert admin_checks == ["alice"]
 
 
-def test_api_models_returns_only_pinned_proxy_models_without_refresh_probe(monkeypatch):
+def test_foreground_fallback_catalog_is_owner_scoped_and_allowlist_filtered(
+    monkeypatch,
+):
+    image = _route_ep(
+        "alice-image",
+        "http://alice-image.example/v1",
+        cached_models=["image-model"],
+        owner="alice",
+    )
+    image.model_type = "image"
+    rows = [
+        _route_ep(
+            "alice",
+            "http://alice.example/v1",
+            cached_models=["allowed-model", "blocked-model"],
+            owner="alice",
+        ),
+        _route_ep(
+            "shared",
+            "http://shared.example/v1",
+            cached_models=["shared-model"],
+            owner=None,
+        ),
+        _route_ep(
+            "bob",
+            "http://bob.example/v1",
+            cached_models=["allowed-model"],
+            owner="bob",
+        ),
+        image,
+    ]
+    db = _RouteDb(rows)
+    router = model_routes.setup_model_routes(model_discovery=None)
+    privileges = {
+        "allowed_models_restricted": True,
+        "allowed_models": ["allowed-model", "shared-model"],
+    }
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="alice"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: False,
+                    get_privileges=lambda user: privileges,
+                ),
+            ),
+        ),
+    )
+
+    result = _route_endpoint(router, "/api/models")(
+        request,
+        foreground_fallback=True,
+    )
+
+    assert [item["endpoint_name"] for item in result["items"]] == [
+        "alice",
+        "shared",
+    ]
+    assert result["items"][0]["models"] == ["allowed-model"]
+    assert result["items"][1]["models"] == ["shared-model"]
+    assert result["items"][0]["model_catalog_unknown"] is False
+    assert all("api_key" not in item for item in result["items"])
+
+    privileges.clear()
+    privileges["block_all_models"] = True
+    blocked = _route_endpoint(router, "/api/models")(
+        request,
+        foreground_fallback=True,
+    )
+    assert blocked["items"] == []
+
+
+def test_foreground_fallback_catalog_distinguishes_unknown_and_hidden_models(
+    monkeypatch,
+):
+    unknown = _route_ep(
+        "unknown",
+        "http://unknown.example/v1",
+        cached_models=[],
+        owner="alice",
+    )
+    hidden_only = _route_ep(
+        "hidden-only",
+        "http://hidden-only.example/v1",
+        cached_models=[],
+        owner="alice",
+    )
+    hidden_only.hidden_models = json.dumps(["blocked-model"])
+    hidden = _route_ep(
+        "hidden",
+        "http://hidden.example/v1",
+        cached_models=["hidden-model"],
+        owner="alice",
+    )
+    hidden.hidden_models = json.dumps(["hidden-model"])
+    db = _RouteDb([unknown, hidden_only, hidden])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="alice"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: False,
+                    get_privileges=lambda user: {
+                        "allowed_models_restricted": True,
+                        "allowed_models": ["allowed-model"],
+                    },
+                ),
+            ),
+        ),
+    )
+
+    result = _route_endpoint(router, "/api/models")(
+        request,
+        foreground_fallback=True,
+    )
+    by_name = {item["endpoint_name"]: item for item in result["items"]}
+
+    assert by_name["unknown"]["model_catalog_unknown"] is True
+    assert by_name["unknown"]["allowed_unknown_models"] == ["allowed-model"]
+    assert by_name["hidden-only"]["model_catalog_unknown"] is False
+    assert by_name["hidden-only"]["allowed_unknown_models"] is None
+    assert by_name["hidden"]["model_catalog_unknown"] is False
+    assert by_name["hidden"]["allowed_unknown_models"] is None
+
+    ordinary = _route_endpoint(router, "/api/models")(request)
+    assert all(
+        "_foreground_model_catalog_unknown" not in item
+        for item in ordinary["items"]
+    )
+
+
+def test_foreground_fallback_catalog_keeps_admin_on_exact_owner_boundary(
+    monkeypatch,
+):
+    rows = [
+        _route_ep(
+            "admin",
+            "http://admin.example/v1",
+            cached_models=["admin-model"],
+            owner="admin",
+        ),
+        _route_ep(
+            "shared",
+            "http://shared.example/v1",
+            cached_models=["shared-model"],
+            owner=None,
+        ),
+        _route_ep(
+            "alice",
+            "http://alice.example/v1",
+            cached_models=["alice-model"],
+            owner="alice",
+        ),
+    ]
+    db = _RouteDb(rows)
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: True,
+                    get_privileges=lambda user: {},
+                ),
+            ),
+        ),
+    )
+
+    ordinary = _route_endpoint(router, "/api/models")(request)
+    foreground = _route_endpoint(router, "/api/models")(
+        request,
+        foreground_fallback=True,
+    )
+
+    assert [item["endpoint_name"] for item in ordinary["items"]] == [
+        "admin",
+        "shared",
+        "alice",
+    ]
+    assert [item["endpoint_name"] for item in foreground["items"]] == [
+        "admin",
+        "shared",
+    ]
+
+
+def test_foreground_fallback_catalog_omits_runtime_unresolvable_credentials(
+    monkeypatch,
+):
+    static = _route_ep(
+        "static",
+        "http://static.example/v1",
+        cached_models=["static-model"],
+        owner="alice",
+    )
+    expired = _route_ep(
+        "expired",
+        "http://subscription.example/v1",
+        cached_models=["subscription-model"],
+        owner="alice",
+    )
+    expired.provider_auth_id = "expired-auth"
+    db = _RouteDb([static, expired])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+    monkeypatch.setattr(
+        model_routes,
+        "resolve_endpoint_runtime",
+        lambda endpoint, owner=None: (
+            (_ for _ in ()).throw(RuntimeError("expired"))
+            if endpoint.id == "expired"
+            else (endpoint.base_url, endpoint.api_key)
+        ),
+    )
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="alice"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: False,
+                    get_privileges=lambda user: {},
+                ),
+            ),
+        ),
+    )
+
+    ordinary = _route_endpoint(router, "/api/models")(request)
+    foreground = _route_endpoint(router, "/api/models")(
+        request,
+        foreground_fallback=True,
+    )
+
+    assert [item["endpoint_name"] for item in ordinary["items"]] == [
+        "static",
+        "expired",
+    ]
+    assert [item["endpoint_name"] for item in foreground["items"]] == [
+        "static",
+    ]
+
+
+def test_foreground_fallback_catalog_applies_allowlist_before_credentials(
+    monkeypatch,
+):
+    rows = [
+        _route_ep(
+            "allowed",
+            "http://allowed.example/v1",
+            cached_models=["allowed-model"],
+            owner="alice",
+        ),
+        _route_ep(
+            "blocked",
+            "http://blocked.example/v1",
+            cached_models=["blocked-model"],
+            owner="alice",
+        ),
+    ]
+    db = _RouteDb(rows)
+    router = model_routes.setup_model_routes(model_discovery=None)
+    resolved = []
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    def resolve_runtime(endpoint, owner=None):
+        resolved.append((endpoint.id, owner))
+        if endpoint.id == "blocked":
+            raise AssertionError("blocked model credentials must not resolve")
+        return endpoint.base_url, endpoint.api_key
+
+    monkeypatch.setattr(model_routes, "resolve_endpoint_runtime", resolve_runtime)
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="alice"),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: False,
+                    get_privileges=lambda user: {
+                        "allowed_models_restricted": True,
+                        "allowed_models": ["allowed-model"],
+                    },
+                ),
+            ),
+        ),
+    )
+
+    result = _route_endpoint(router, "/api/models")(
+        request,
+        foreground_fallback=True,
+    )
+
+    assert resolved == [("allowed", "alice")]
+    assert {
+        item["endpoint_name"]: item["models"] for item in result["items"]
+    } == {
+        "allowed": ["allowed-model"],
+        "blocked": [],
+    }
+
+
+def test_api_models_returns_cached_proxy_models_without_refresh_probe(monkeypatch):
     row = _route_ep(
         "proxy",
         "http://100.117.136.97:34521/v1",

@@ -143,6 +143,25 @@ def _endpoint_enabled_models(ep) -> list:
     return [m for m in merged if m not in hidden]
 
 
+def _endpoint_has_known_model_inventory(ep) -> bool:
+    """Return whether endpoint configuration proves its catalog is known.
+
+    Hidden model ids remain evidence of a configured inventory even when every
+    cached or pinned model is hidden.  Exact foreground resolution must not
+    reinterpret that state as an unknown catalog where arbitrary model ids are
+    accepted.
+    """
+
+    return any(
+        isinstance(model, str) and bool(model.strip())
+        for model in [
+            *_endpoint_cached_models(ep),
+            *_endpoint_pinned_models(ep),
+            *_endpoint_hidden_models(ep),
+        ]
+    )
+
+
 def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """Resolve a ModelEndpoint row to its runtime base URL and bearer/API key.
 
@@ -440,6 +459,7 @@ def _resolve_endpoint_by_id_with_descriptor(
     owner: Optional[str] = None,
     *,
     require_exact_model: bool = False,
+    required_model_type: Optional[str] = None,
 ) -> Optional[Tuple[Tuple[str, str, Dict], dict]]:
     """Resolve a concrete endpoint/model plus its non-secret descriptor.
 
@@ -460,6 +480,10 @@ def _resolve_endpoint_by_id_with_descriptor(
         ep = q.first()
         if not ep:
             return None
+        if required_model_type:
+            model_type = getattr(ep, "model_type", None) or "llm"
+            if model_type != required_model_type:
+                return None
         try:
             base, api_key = resolve_endpoint_runtime(ep, owner=owner)
         except Exception as e:
@@ -475,7 +499,7 @@ def _resolve_endpoint_by_id_with_descriptor(
             # silently substituting another model from the endpoint.
             if not m or m in _endpoint_hidden_models(ep):
                 return None
-            if enabled_models and m not in enabled_models:
+            if _endpoint_has_known_model_inventory(ep) and m not in enabled_models:
                 return None
         else:
             # Legacy Utility/Vision chains retain their model-repair behavior.
@@ -648,6 +672,7 @@ def resolve_fallback_entries_with_descriptors(
     owner: Optional[str] = None,
     *,
     require_exact_model: bool = False,
+    required_model_type: Optional[str] = None,
 ) -> list:
     """Resolve ordered entries while retaining safe endpoint provenance."""
 
@@ -661,6 +686,7 @@ def resolve_fallback_entries_with_descriptors(
             entry.get("model", ""),
             owner=owner,
             require_exact_model=require_exact_model,
+            required_model_type=required_model_type,
         )
         if not resolved:
             continue

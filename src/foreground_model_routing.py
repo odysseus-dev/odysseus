@@ -132,6 +132,7 @@ def resolve_foreground_model_policy(
             entries,
             owner=owner,
             require_exact_model=True,
+            required_model_type="llm",
         )
     candidates = [candidate for candidate, _descriptor in resolved_routes]
     if not candidates:
