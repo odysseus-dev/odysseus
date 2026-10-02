@@ -28,7 +28,7 @@ cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
-To include optional extras in the image (PDF viewer, Office extraction; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`.
+To include optional extras in the image (PDF viewer, Office extraction, local speech-to-text via faster-whisper; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`. The default image intentionally omits these, so the "Local (faster-whisper)" STT provider reports unavailable until the image is rebuilt with that flag (or you use the Browser or API providers instead).
 
 **Official Docker images.** The compose files reference the official multi-arch image `ghcr.io/odysseus-dev/odysseus`, which CI (the `ci / docker publish` workflow) publishes on every push to `main` and `dev`. When the image is reachable, Compose pulls it instead of building — so the same files work on hosts without a build toolchain (Portainer stacks, Coolify, etc.). `--build` forces a local build regardless.
 

@@ -172,6 +172,24 @@ function _revokePreviewUrl(f) {
  */
 export function init(apiBase) {
   API_BASE = apiBase;
+  // Failed-chip Retry re-enters the automatic flow by queue key.
+  try {
+    window._sttRetryPending = (key) => {
+      const f = _pendingByKey.get(key);
+      if (f && window._sttAutoEnqueuePending) window._sttAutoEnqueuePending(f, key, { retry: true });
+    };
+    // Finished chips drop themselves from the strip (their transcript is
+    // already buffered for the document); manual clear-all also abandons
+    // the running combined document.
+    window._sttDropPendingFile = (key) => {
+      const idx = pendingFiles.findIndex((f) => f && f._sttKey === key);
+      if (idx < 0) return;
+      _pendingByKey.delete(key);
+      _revokePreviewUrl(pendingFiles[idx]);
+      pendingFiles.splice(idx, 1);
+      renderAttachStrip();
+    };
+  } catch (_) {}
 }
 
 /**
@@ -198,6 +216,11 @@ export function renderAttachStrip() {
 
   const total = pendingFiles.length;
   const collapsed = total > MAX_VISIBLE && !_expanded;
+
+  // NOTE: no Transcribe / Transcribe-all / Open-doc buttons here. Audio
+  // transcription starts automatically the moment a file is attached
+  // (see addFiles -> window._sttAutoEnqueuePending in chatRenderer.js);
+  // the chip only shows status text plus the equalizer while active.
 
   if (collapsed) {
     // Single compact badge: "5 files ×"
@@ -230,6 +253,39 @@ export function renderAttachStrip() {
   if (window._updateSendBtnIcon) window._updateSendBtnIcon();
 }
 
+/** Registry so a failed chip can retry by queue key. */
+const _pendingByKey = new Map(); // sttKey -> File
+
+/** Extensions both STT providers transcribe. Keep in sync with
+ *  upload_handler.is_audio_file and _isAudioAttachment (chatRenderer.js). */
+const _AUDIO_EXT_RE = /\.(webm|weba|wav|mp3|m4a|ogg|oga|opus|flac|aac|aiff|aif)$/i;
+
+function _isAudioFile(f) {
+  const mime = (f?.type || '').toLowerCase();
+  const name = (f?.name || '').toLowerCase();
+  if (mime.startsWith('audio/')) return true;
+  return _AUDIO_EXT_RE.test(name);
+}
+
+/** Audio-looking but not transcribable (e.g. audio/* mime with an exotic
+ *  container): never skip silently, say so out loud. */
+function _isUnsupportedAudio(f) {
+  if (_isAudioFile(f)) return false;
+  const mime = (f?.type || '').toLowerCase();
+  return mime.startsWith('audio/');
+}
+
+/**
+ * Stable per-file key for queue dedup across chip re-renders. Attached to
+ * the File object (same reference survives renderAttachStrip rebuilds).
+ */
+function _pendingAudioKey(f) {
+  if (!f._sttKey) {
+    f._sttKey = 'pending:' + (f.name || 'audio') + ':' + (f.size || 0) + ':' + (f.lastModified || 0);
+  }
+  return f._sttKey;
+}
+
 function _createChip(f, idx) {
   const chip = document.createElement('div');
   chip.className = 'thumb';
@@ -246,6 +302,36 @@ function _createChip(f, idx) {
     span.textContent = f.name || 'pasted-image';
     chip.appendChild(span);
   }
+  // Attached audio is transcribed automatically (no buttons): the chip
+  // carries an equalizer (active job only), a status line, and a Retry
+  // button that appears solely for failed items.
+  if (!isImage && _isAudioFile(f)) {
+    const key = _pendingAudioKey(f);
+    chip.dataset.sttKey = key;
+    _pendingByKey.set(key, f);
+    const eq = document.createElement('span');
+    eq.className = 'stt-eq stt-eq-thumb';
+    eq.setAttribute('hidden', '');
+    eq.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 5; i++) eq.appendChild(document.createElement('span'));
+    const st = document.createElement('span');
+    st.className = 'thumb-stt-status';
+    st.setAttribute('aria-live', 'polite');
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'stt-retry-btn';
+    retry.textContent = 'Retry';
+    retry.title = 'Retry transcription';
+    retry.setAttribute('hidden', '');
+    retry.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try { window._sttRetryPending && window._sttRetryPending(key); } catch (_) {}
+    });
+    chip.appendChild(eq);
+    chip.appendChild(st);
+    chip.appendChild(retry);
+    try { window._sttPaintPendingChip && window._sttPaintPendingChip(key); } catch (_) {}
+  }
   const x = document.createElement('button');
   x.textContent = '\u00d7';
   x.setAttribute('aria-label', 'Remove attachment');
@@ -259,6 +345,8 @@ function _createChip(f, idx) {
  */
 export function removePending(idx) {
   if (_uploading) cancelUpload();
+  const f = pendingFiles[idx];
+  try { if (f && f._sttKey) _pendingByKey.delete(f._sttKey); } catch (_) {}
   _revokePreviewUrl(pendingFiles[idx]);
   pendingFiles.splice(idx, 1);
   renderAttachStrip();
@@ -326,7 +414,21 @@ export async function uploadPending(opts = {}) {
       try { localStorage.setItem('gallery-fresh-chat-upload', String(Date.now())); } catch (_) {}
       window.dispatchEvent(new CustomEvent('gallery-refresh', { detail: { source: 'chat-upload' } }));
     }
+    // Link freshly uploaded file ids back to their pending STT queue keys
+    // (same order on both sides, mirroring chat.js id stamping) so sent
+    // audio cards adopt the already-running/finished job instead of
+    // transcribing the same bytes a second time.
+    try {
+      if (window._sttAdoptSentFiles) {
+        window._sttAdoptSentFiles(pendingFiles.map((f, i) => ({
+          key: (f && f._sttKey) || null,
+          fileId: uploaded[i] && uploaded[i].id,
+          name: (uploaded[i] && uploaded[i].name) || (f && f.name) || '',
+        })).filter((p) => p.key && p.fileId));
+      }
+    } catch (_) { /* adoption is best-effort; cards fall back to id jobs */ }
     pendingFiles = [];          // clear only on success
+    _pendingByKey.clear();
     // Stash the full meta (incl. width/height for images) on the module so
     // callers that want it can grab it via getLastUploadedMeta(). Keep the
     // returned shape as `ids` for backward-compatibility with existing call sites.
@@ -372,6 +474,20 @@ export async function addFiles(files, opts = {}) {
       if (!nextFile) continue;
     }
     pendingFiles.push(nextFile);
+    // Attached audio starts transcribing immediately — no Send, no button.
+    // The queue (concurrency 1) serializes; the chip paints from queue
+    // truth once renderAttachStrip rebuilds it below.
+    if (_isAudioFile(nextFile)) {
+      try {
+        if (window._sttAutoEnqueuePending) {
+          window._sttAutoEnqueuePending(nextFile, _pendingAudioKey(nextFile));
+        } else {
+          _showToast('Transcription unavailable — reload the page and retry');
+        }
+      } catch (_) {}
+    } else if (_isUnsupportedAudio(nextFile)) {
+      _showToast('"' + (nextFile.name || 'audio') + '" skipped — unsupported audio format');
+    }
   }
   renderAttachStrip();
 }
@@ -437,6 +553,7 @@ export function clearPending() {
   if (_uploading) cancelUpload();
   pendingFiles.forEach(_revokePreviewUrl);
   pendingFiles = [];
+  _pendingByKey.clear();
   renderAttachStrip();
 }
 

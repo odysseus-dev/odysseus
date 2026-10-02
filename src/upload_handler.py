@@ -346,10 +346,21 @@ class UploadHandler:
         return False
             
     def is_audio_file(self, filename: str, content_type: str = None) -> bool:
-        """Check if a file is an audio file based on extension or content type."""
-        audio_extensions = {'.webm', '.wav', '.mp3', '.m4a', '.ogg'}
+        """Check if a file is an audio file based on extension or content type.
+
+        Kept in sync with the frontend detectors (_isAudioFile in
+        fileHandler.js, _isAudioAttachment in chatRenderer.js): anything
+        either side accepts must be transcribable, never silently skipped.
+        """
+        audio_extensions = {
+            '.webm', '.weba', '.wav', '.mp3', '.m4a',
+            '.ogg', '.oga', '.opus', '.flac', '.aac', '.aiff', '.aif',
+        }
         audio_mime_types = {
-            'audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg'
+            'audio/webm', 'audio/wav', 'audio/x-wav', 'audio/mpeg',
+            'audio/mp4', 'audio/x-m4a', 'audio/ogg', 'audio/opus',
+            'audio/flac', 'audio/x-flac', 'audio/aac', 'audio/aiff',
+            'audio/x-aiff',
         }
         
         # Check by extension

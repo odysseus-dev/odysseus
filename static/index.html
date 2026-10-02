@@ -1200,6 +1200,9 @@
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
             <button type="button" class="mode-toggle-btn" id="mode-chat-btn" aria-pressed="false">Chat</button>
           </div>
+          <button type="button" class="input-icon-btn mic-btn" id="mic-btn" title="Record voice" aria-label="Record voice" aria-pressed="false" style="display:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </button>
           <button type="submit" form="chat-form" class="send-btn newchat-mode" data-mode="newchat" aria-label="New chat">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="send-btn-label">+ New</span>
           </button>
@@ -1626,6 +1629,49 @@
                 </select>
               </div>
               <div id="set-imgSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>Speech to Text<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-sttEnabledToggle"><span class="admin-slider"></span></label></h2>
+            <div id="set-sttConfigWrap" style="display:flex;flex-direction:column;gap:0.5rem;">
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Provider</label>
+                <select id="set-sttProviderSelect" class="settings-select">
+                  <option value="disabled">Disabled</option>
+                  <optgroup label="Browser">
+                    <option value="browser">Browser (built-in)</option>
+                  </optgroup>
+                  <optgroup label="Local">
+                    <option value="local">Local (faster-whisper)</option>
+                  </optgroup>
+                  <optgroup label="API (Experimental)">
+                  </optgroup>
+                </select>
+              </div>
+              <div id="set-sttProviderHelp" class="admin-toggle-sub"></div>
+              <div id="set-sttModelRow" style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Model</label>
+                <select id="set-sttModelSelect" class="settings-select">
+                  <option value="tiny">tiny — ~39M params · low resource · fastest</option>
+                  <option value="base" selected>base — ~74M params · low resource · balanced (default)</option>
+                  <option value="small">small — ~244M params · moderate · better quality</option>
+                  <option value="medium">medium — ~769M params · high · good quality</option>
+                  <option value="large-v2">large-v2 — ~1550M params · very high · best quality</option>
+                  <option value="large-v3">large-v3 — ~1550M params · very high · best quality</option>
+                  <option value="turbo">turbo — ~809M params · high · near-best quality, faster</option>
+                </select>
+                <input id="set-sttModelInput" type="text" placeholder="model ID supported by this endpoint" style="flex:1;padding:5px;display:none;">
+              </div>
+              <div id="set-sttModelHelp" class="admin-toggle-sub"></div>
+              <div id="set-sttLangRow" style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Language</label>
+                <input id="set-sttLangInput" type="text" placeholder="auto (empty) — e.g. sk, cs, en" style="flex:1;padding:5px;" autocomplete="off" spellcheck="false">
+              </div>
+              <div id="set-sttKeepRow" style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Keep model loaded</label>
+                <label class="admin-switch" title="Keep the local Whisper model in RAM between requests"><input type="checkbox" id="set-sttKeepLoadedToggle"><span class="admin-slider"></span></label>
+              </div>
+              <div id="set-sttSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
           <!-- TTS panel hidden — user opted out of read-aloud entirely. Kept

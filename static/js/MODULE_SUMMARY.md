@@ -58,7 +58,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 |---|---|
 | **`chat.js`** | Main chat controller. Handles `handleChatSubmit`, stops/continues, builds `FormData`, posts to `/api/chat_stream`, reads the SSE stream, and dispatches each JSON event to the appropriate renderer. Tracks background streams, stalls, auto-recovery, and multi-round agent state. |
 | **`chatStream.js`** | Helpers shared between streaming consumers: browser notifications, background-stream completion toasts, and `ui_control` event handling. |
-| **`chatRenderer.js`** | Message DOM construction: `addMessage`, role labels, model route labels, color coding, footers, metrics, code blocks, sources boxes (`web`/`research`/`RAG`), findings box, images, report links, ask-user cards, welcome screen, and transcript utilities. |
+| **`chatRenderer.js`** | Message DOM construction: `addMessage`, role labels, model route labels, color coding, footers, metrics, code blocks, sources boxes (`web`/`research`/`RAG`), findings box, images, report links, ask-user cards, welcome screen, and transcript utilities. Sent audio attachment cards auto-enqueue transcription jobs (by upload ID); transcripts save as `<stem>_raw.md` documents (separate) or one combined `.md`, auto-opened once per batch. |
 | **`streamingRenderer.js`** | Incremental streaming renderer used by `chat.js`. Freezes finalized DOM blocks and only re-renders the growing tail to avoid flicker and O(N²) re-parsing. |
 | **`streamingSegmenter.js`** | Splits a token stream into display units (text vs code fences) for `streamingRenderer.js`. |
 | **`liveThinkingThrottle.js`** | Trailing-edge coalescer for the live thinking block in `chat.js`: one DOM commit per 100 ms carrying the latest reasoning text, with `flush`/`cancel` for terminal and session-switch paths. |
@@ -67,8 +67,10 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`composerArrowUpRecall.js`** | Recall last user message with `↑` on an empty composer. |
 | **`assistant.js`** | Assistant/persona behaviors and message styling helpers. |
 | **`tts-ai.js`** | AI text-to-speech manager, enqueueing, streaming TTS, and playback button injection. |
-| **`voiceRecorder.js`** | Voice recording from the composer microphone. |
-| **`fileHandler.js`** | Attachment picker, paste/drop handling, upload, attachment strip rendering, pending-file management. |
+| **`voiceRecorder.js`** | Voice recording from the dedicated composer mic button (`#mic-btn`). `startRecording`/`stopRecording` (secure-context + permission handling), `transcribeOnServer[Detailed]` (`POST /api/stt/transcribe`), `transcribeUploadById` (`POST /api/stt/transcribe-upload`), raw `insertTranscription` into `#message`. |
+| **`fileHandler.js`** | Attachment picker, paste/drop handling, upload, attachment strip rendering, pending-file management. Attached audio auto-starts transcription at attach time (chips show status + equalizer, Retry on failure); upload links file ids to pending queue keys for sent-card adoption. |
+| **`sttTranscribeQueue.js`** | Shared singleton sequential transcription queue (concurrency 1): FIFO, dedup, failure isolation, per-file states, queue positions, idle detection. Single source of truth for sent-audio auto-transcription. Mic dictation bypasses it. |
+| **`sttTranscriptDoc.js`** | Raw-transcript document helpers: `<stem>_raw.md` titling, `POST /api/document` save, existing-viewer open. |
 | **`codeRunner.js`** | Client-side execution affordances for code blocks returned by the model. |
 
 ---

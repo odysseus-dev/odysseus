@@ -886,7 +886,8 @@ import { loadPanel } from './panels.js';
       isStreaming = false;
       _setForegroundChatBusy(false);
       _stopStallWatchdog();
-      // Defer to global updater which handles mic/newchat/send modes
+      // Defer to global updater which handles newchat/send modes
+      // (voice lives on the dedicated #mic-btn, not the send button)
       if (window._updateSendBtnIcon) {
         setTimeout(window._updateSendBtnIcon, 50);
       } else {

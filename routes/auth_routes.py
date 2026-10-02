@@ -86,6 +86,47 @@ class SetOpenRegistrationRequest(BaseModel):
 SESSION_COOKIE = "odysseus_session"
 
 
+_STT_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-/]{0,127}$")
+_STT_LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z]{2,8})?$")
+
+
+def _validate_stt_provider(val):
+    """Keep provider values compatible; reject anything the service can't parse."""
+    if not isinstance(val, str):
+        raise HTTPException(400, "stt_provider must be a string")
+    v = val.strip()
+    if v in ("disabled", "browser", "local"):
+        return v
+    if v.startswith("endpoint:") and len(v) > len("endpoint:"):
+        return v
+    raise HTTPException(400, "stt_provider must be disabled, browser, local, or endpoint:<id>")
+
+
+def _validate_stt_model(val):
+    if not isinstance(val, str):
+        raise HTTPException(400, "stt_model must be a string")
+    v = val.strip()
+    if not v or len(v) > 128 or ".." in v or v.startswith(("/", ".")):
+        raise HTTPException(400, "stt_model is malformed")
+    if not _STT_MODEL_RE.match(v):
+        raise HTTPException(400, "stt_model is malformed")
+    return v
+
+
+def _validate_stt_language(val):
+    # Empty string = auto-detect. Otherwise a short code like en/sk/cs.
+    if val is None:
+        return ""
+    if not isinstance(val, str):
+        raise HTTPException(400, "stt_language must be a string")
+    v = val.strip().lower()
+    if v == "":
+        return ""
+    if len(v) > 16 or not _STT_LANGUAGE_RE.match(v):
+        raise HTTPException(400, "stt_language must be empty (auto) or a language code like en, sk, cs")
+    return v
+
+
 def _secure_cookie(request: Request) -> bool:
     """Decide the ``Secure`` attribute of the session cookie.
 
@@ -731,6 +772,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         body = await request.json()
         current = _load_settings()
+        # STT lifecycle: a model/provider change must drop the cached local
+        # Whisper model WITHOUT loading the replacement (lazy lifecycle —
+        # the next real transcription request loads it on demand).
+        old_stt_model = current.get("stt_model")
+        old_stt_provider = current.get("stt_provider")
         # Per-key validation for numeric settings: coerce to int and clamp to a
         # sane range so a bad value can't disable the agent or let it run away.
         _INT_RANGES = {
@@ -750,8 +796,32 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+            if key == "stt_provider":
+                val = _validate_stt_provider(val)
+            elif key == "stt_model":
+                val = _validate_stt_model(val)
+            elif key == "stt_language":
+                val = _validate_stt_language(val)
+            elif key == "stt_enabled":
+                if not isinstance(val, bool):
+                    raise HTTPException(400, "stt_enabled must be a boolean")
+            elif key == "keep_model_loaded":
+                if not isinstance(val, bool):
+                    raise HTTPException(400, "keep_model_loaded must be a boolean")
             current[key] = val
         _save_settings(current)
+        if (
+            current.get("stt_model") != old_stt_model
+            or current.get("stt_provider") != old_stt_provider
+        ):
+            # Invalidate only — never load here. Lazy import keeps the
+            # settings route decoupled from the STT service; a failure must
+            # never break the settings save itself.
+            try:
+                from services.stt import get_stt_service
+                get_stt_service().invalidate_model()
+            except Exception as e:
+                logger.warning(f"STT cache invalidation skipped: {e}")
         return without_retired_settings(current)
 
     # ---- Integrations CRUD ----
