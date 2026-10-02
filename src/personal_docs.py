@@ -220,6 +220,25 @@ class PersonalDocsManager:
         self._load_excluded()
         self.refresh_index()
 
+    def get_rag_manager(self):
+        """Return the live RAG manager and adopt lazy startup recovery.
+
+        The application may start while Chroma is unavailable. Personal routes
+        already retry the singleton later, but the long-lived manager retained
+        the startup ``None`` and chat/agent retrieval stayed keyword-only. Keep
+        the recovered singleton on this shared manager so every caller sees the
+        same live provider.
+        """
+        if self.rag_manager is not None:
+            return self.rag_manager
+
+        from src.rag_singleton import get_rag_manager
+
+        recovered = get_rag_manager()
+        if recovered is not None:
+            self.rag_manager = recovered
+        return recovered
+
     def load_directories(self):
         """Load the list of indexed directories from persistent storage."""
         try:
@@ -297,9 +316,10 @@ class PersonalDocsManager:
             # If RAG manager is available, index the directory immediately.
             # Callers that already indexed with owner metadata can pass
             # index=False so we do not create a second ownerless copy.
-            if index and self.rag_manager:
+            rag_manager = self.get_rag_manager() if index else None
+            if rag_manager:
                 try:
-                    result = self.rag_manager.index_personal_documents(directory, owner=owner)
+                    result = rag_manager.index_personal_documents(directory, owner=owner)
                     logger.info(f"Indexed {result.get('indexed_count', 0)} chunks from {directory}")
                 except Exception as e:
                     logger.error(f"Failed to index directory {directory}: {e}")
@@ -328,9 +348,10 @@ class PersonalDocsManager:
             # re-indexed only the remaining tracked dirs — ownerless and never
             # personal_dir — a catastrophic wipe (#1660). remove_directory now
             # removes exactly this directory's chunks and leaves the rest intact.
-            if self.rag_manager:
+            rag_manager = self.get_rag_manager()
+            if rag_manager:
                 try:
-                    self.rag_manager.remove_directory(directory)
+                    rag_manager.remove_directory(directory)
                 except Exception as e:
                     logger.error(f"Failed to remove directory from RAG index: {e}")
         else:
@@ -417,7 +438,7 @@ class PersonalDocsManager:
 
     def retrieve(self, query: str, k: int = 5) -> List[str]:
         """Retrieve relevant documents for a query."""
-        return retrieve_personal(self.index, query, k, self.rag_manager)
+        return retrieve_personal(self.index, query, k, self.get_rag_manager())
 
     def get_file_list(self) -> List[Dict[str, Any]]:
         """Get list of indexed files with metadata."""
@@ -447,7 +468,8 @@ class PersonalDocsManager:
         
     def index_all_directories(self):
         """Re-index all tracked directories in the RAG system."""
-        if not self.rag_manager:
+        rag_manager = self.get_rag_manager()
+        if not rag_manager:
             logger.warning("No RAG manager available for indexing")
             return
         
@@ -456,7 +478,7 @@ class PersonalDocsManager:
         
         # Index the base personal directory
         try:
-            result = self.rag_manager.index_personal_documents(self.personal_dir)
+            result = rag_manager.index_personal_documents(self.personal_dir)
             if result.get('success'):
                 success_count += 1
                 logger.info(f"Indexed base directory: {self.personal_dir}")
@@ -472,7 +494,7 @@ class PersonalDocsManager:
                 continue
             
             try:
-                result = self.rag_manager.index_personal_documents(directory)
+                result = rag_manager.index_personal_documents(directory)
                 if result.get('success'):
                     success_count += 1
                     logger.info(f"Indexed directory: {directory}")
