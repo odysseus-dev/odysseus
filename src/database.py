@@ -23,6 +23,8 @@ from core.database import (  # explicit re-exports for IDE/type-checker visibili
     CrewMember,
     ScheduledTask,
     TaskRun,
+    NotificationEvent,
+    NotificationInboxItem,
     Memory,
     init_db,
     get_db,

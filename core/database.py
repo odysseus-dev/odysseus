@@ -830,6 +830,81 @@ class TaskRun(Base):
     )
 
 
+NOTIFICATION_RETENTION_DAYS = {
+    "system_event": 30,
+    "inbox_record": 90,
+    "actionable": 180,
+}
+
+
+class NotificationEvent(Base):
+    """Durable notification/audit event.
+
+    System events are logged here even when they do not deserve a visible UI
+    entry. Events that should appear in the notification inbox are paired with
+    one or more NotificationInboxItem rows.
+    """
+    __tablename__ = "notification_events"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    event_class = Column(String, nullable=False, default="system_event", index=True)
+    title = Column(String, nullable=False, default="")
+    body = Column(Text, nullable=True)
+    source_type = Column(String, nullable=True, index=True)
+    source_id = Column(String, nullable=True, index=True)
+    source_url = Column(Text, nullable=True)
+    severity = Column(String, nullable=False, default="info", index=True)
+    category = Column(String, nullable=True, index=True)
+    dedupe_key = Column(String, nullable=True, index=True)
+    metadata_json = Column(JSON, nullable=True)
+    retention_expires_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+
+    __table_args__ = (
+        Index('ix_notification_events_owner_created', 'owner', 'created_at'),
+        Index('ix_notification_events_owner_class_created', 'owner', 'event_class', 'created_at'),
+        Index('ix_notification_events_owner_dedupe', 'owner', 'dedupe_key'),
+        Index(
+            'uq_notification_events_owner_dedupe',
+            func.coalesce(owner, ''),
+            dedupe_key,
+            unique=True,
+            sqlite_where=dedupe_key.is_not(None),
+            postgresql_where=dedupe_key.is_not(None),
+        ),
+    )
+
+
+class NotificationInboxItem(Base):
+    """Visible/dismissible notification inbox entry derived from an event."""
+    __tablename__ = "notification_inbox_items"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    event_id = Column(String, ForeignKey("notification_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    notification_kind = Column(String, nullable=False, default="inbox_record", index=True)
+    primary_action = Column(String, nullable=True)
+    action_url = Column(Text, nullable=True)
+    is_read = Column(Boolean, default=False, nullable=False, index=True)
+    read_at = Column(DateTime, nullable=True)
+    dismissed_at = Column(DateTime, nullable=True, index=True)
+    archived_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+
+    event = relationship(
+        "NotificationEvent",
+        backref=backref("inbox_items", cascade="all, delete-orphan"),
+    )
+
+    __table_args__ = (
+        Index('ix_notification_inbox_owner_created', 'owner', 'created_at'),
+        Index('ix_notification_inbox_owner_unread', 'owner', 'is_read', 'created_at'),
+        Index('ix_notification_inbox_owner_visible', 'owner', 'archived_at', 'dismissed_at', 'created_at'),
+        Index('uq_notification_inbox_event', 'event_id', unique=True),
+    )
+
+
 class Memory(Base):
     """
     SQLAlchemy model for Memory table.
@@ -2054,6 +2129,131 @@ def _migrate_seed_email_account():
             db.close()
 
 
+def _migrate_notification_retention_and_uniqueness():
+    """Backfill retention and enforce durable notification deduplication.
+
+    The notification tables were introduced without unique constraints, so a
+    database that has already run that schema may contain duplicate events or
+    inbox mappings. Collapse those rows before adding the indexes. This is an
+    idempotent SQLite migration; fresh databases receive the same indexes from
+    SQLAlchemy metadata during ``create_all``.
+    """
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    try:
+        with engine.begin() as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(text(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('notification_events', 'notification_inbox_items')"
+                ))
+            }
+            if tables != {"notification_events", "notification_inbox_items"}:
+                return
+
+            system_days = NOTIFICATION_RETENTION_DAYS["system_event"]
+            inbox_days = NOTIFICATION_RETENTION_DAYS["inbox_record"]
+            actionable_days = NOTIFICATION_RETENTION_DAYS["actionable"]
+            conn.execute(text(f"""
+                UPDATE notification_events
+                   SET retention_expires_at = CASE event_class
+                       WHEN 'actionable' THEN datetime(created_at, '+{actionable_days} days')
+                       WHEN 'inbox_record' THEN datetime(created_at, '+{inbox_days} days')
+                       ELSE datetime(created_at, '+{system_days} days')
+                   END
+                 WHERE retention_expires_at IS NULL
+            """))
+
+            duplicate_events = conn.execute(text("""
+                SELECT COALESCE(owner, '') AS owner_key, dedupe_key
+                  FROM notification_events
+                 WHERE dedupe_key IS NOT NULL
+                 GROUP BY COALESCE(owner, ''), dedupe_key
+                HAVING COUNT(*) > 1
+            """)).fetchall()
+            for owner_key, dedupe_key in duplicate_events:
+                params = {"owner_key": owner_key, "dedupe_key": dedupe_key}
+                event_ids = [
+                    row[0]
+                    for row in conn.execute(text("""
+                        SELECT id
+                          FROM notification_events
+                         WHERE COALESCE(owner, '') = :owner_key
+                           AND dedupe_key = :dedupe_key
+                         ORDER BY created_at DESC, id DESC
+                    """), params)
+                ]
+                keeper_event_id = event_ids[0]
+                keeper_item = conn.execute(text("""
+                    SELECT id
+                      FROM notification_inbox_items
+                     WHERE event_id IN (
+                         SELECT id FROM notification_events
+                          WHERE COALESCE(owner, '') = :owner_key
+                            AND dedupe_key = :dedupe_key
+                     )
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT 1
+                """), params).fetchone()
+                if keeper_item:
+                    params["keeper_item_id"] = keeper_item[0]
+                    conn.execute(text("""
+                        DELETE FROM notification_inbox_items
+                         WHERE event_id IN (
+                             SELECT id FROM notification_events
+                              WHERE COALESCE(owner, '') = :owner_key
+                                AND dedupe_key = :dedupe_key
+                         )
+                           AND id != :keeper_item_id
+                    """), params)
+                    conn.execute(text("""
+                        UPDATE notification_inbox_items
+                           SET event_id = :keeper_event_id
+                         WHERE id = :keeper_item_id
+                    """), {**params, "keeper_event_id": keeper_event_id})
+                conn.execute(text("""
+                    DELETE FROM notification_events
+                     WHERE COALESCE(owner, '') = :owner_key
+                       AND dedupe_key = :dedupe_key
+                       AND id != :keeper_event_id
+                """), {**params, "keeper_event_id": keeper_event_id})
+
+            duplicate_items = conn.execute(text("""
+                SELECT event_id
+                  FROM notification_inbox_items
+                 GROUP BY event_id
+                HAVING COUNT(*) > 1
+            """)).fetchall()
+            for (event_id,) in duplicate_items:
+                keeper_item_id = conn.execute(text("""
+                    SELECT id
+                      FROM notification_inbox_items
+                     WHERE event_id = :event_id
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT 1
+                """), {"event_id": event_id}).scalar()
+                conn.execute(text("""
+                    DELETE FROM notification_inbox_items
+                     WHERE event_id = :event_id
+                       AND id != :keeper_item_id
+                """), {"event_id": event_id, "keeper_item_id": keeper_item_id})
+
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_events_owner_dedupe
+                    ON notification_events(COALESCE(owner, ''), dedupe_key)
+                 WHERE dedupe_key IS NOT NULL
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_inbox_event
+                    ON notification_inbox_items(event_id)
+            """))
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "notification retention/uniqueness migration failed: %s", e
+        )
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
@@ -2065,6 +2265,7 @@ def init_db():
     """
     _migrate_model_endpoints()
     Base.metadata.create_all(bind=engine)
+    _migrate_notification_retention_and_uniqueness()
     # Lock the DB file (and any SQLite sidecars) to 0o600 — it holds bearer-token
     # + bcrypt hashes and encrypted provider keys. POSIX only; safe_chmod no-ops
     # on Windows (ACL-restricted profile dir) and the path helper returns None for

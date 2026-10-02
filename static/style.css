@@ -4519,6 +4519,205 @@ body.bg-pattern-sparkles {
       border-left-color: var(--color-error);
       color: var(--color-error);
     }
+    .notification-inbox-btn,
+    .notification-sidebar-item {
+      position: relative;
+    }
+    .notification-inbox-btn {
+      color: var(--accent, var(--red));
+    }
+    .notification-inbox-btn:hover,
+    .notification-inbox-btn.has-unread {
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+      color: var(--accent, var(--red));
+      background: color-mix(in srgb, var(--panel) 86%, var(--accent, var(--red)) 14%);
+    }
+    .notification-sidebar-item.has-unread {
+      background: color-mix(in srgb, var(--panel) 86%, var(--accent, var(--red)) 14%);
+    }
+    .notification-inbox-btn:active,
+    .notification-sidebar-item:active { transform: translateY(1px); }
+    .notification-sidebar-item svg {
+      flex-shrink: 0;
+      color: var(--accent, var(--red));
+      opacity: 1;
+    }
+    .notification-inbox-badge {
+      position: absolute;
+      min-width: 16px;
+      height: 16px;
+      top: 2px;
+      right: 2px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: var(--color-error);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 16px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .notification-sidebar-badge {
+      position: relative;
+      top: auto;
+      right: auto;
+      margin-left: auto;
+      margin-right: 2px;
+      flex-shrink: 0;
+    }
+    .notification-inbox-panel {
+      position: fixed;
+      top: 10px;
+      left: calc(var(--icon-rail-w, 48px) + 10px);
+      right: auto;
+      z-index: 9299;
+      width: min(360px, calc(100vw - 24px));
+      max-height: min(520px, calc(100vh - 20px));
+      border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel) 96%, #000 4%);
+      color: var(--fg);
+      box-shadow: 0 18px 52px rgba(0,0,0,0.42);
+      backdrop-filter: blur(18px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .notification-inbox-panel.hidden {
+      display: none;
+    }
+    .notification-inbox-head {
+      height: 42px;
+      flex: 0 0 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 10px 0 12px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    }
+    .notification-inbox-title {
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .notification-inbox-tools,
+    .notification-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .notification-icon-btn {
+      width: 26px;
+      height: 26px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: color-mix(in srgb, var(--fg) 76%, transparent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .notification-icon-btn:hover {
+      border-color: color-mix(in srgb, var(--border) 75%, transparent);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      color: var(--fg);
+    }
+    .notification-inbox-list {
+      min-height: 86px;
+      overflow: auto;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .notification-item {
+      border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+      border-left: 3px solid color-mix(in srgb, var(--fg) 22%, transparent);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--panel) 91%, var(--fg) 4%);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: stretch;
+      overflow: hidden;
+    }
+    .notification-item.severity-error { border-left-color: var(--color-error); }
+    .notification-item.severity-urgent { border-left-color: var(--accent-primary, var(--accent)); }
+    .notification-item.severity-attention { border-left-color: var(--color-warning, var(--warn)); }
+    .notification-item.is-read {
+      opacity: 0.72;
+      background: color-mix(in srgb, var(--panel) 95%, transparent);
+    }
+    .notification-main {
+      min-width: 0;
+      border: 0;
+      padding: 9px 4px 9px 10px;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 3px 8px;
+      align-content: start;
+      font: inherit;
+    }
+    .notification-main.static {
+      cursor: default;
+      grid-column: 1 / -1;
+    }
+    .notification-item-title {
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.25;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .notification-item-meta {
+      font-size: 10px;
+      color: color-mix(in srgb, var(--fg) 54%, transparent);
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .notification-body {
+      grid-column: 1 / -1;
+      color: color-mix(in srgb, var(--fg) 74%, transparent);
+      font-size: 11px;
+      line-height: 1.35;
+      max-height: 4.05em;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .notification-actions {
+      align-self: start;
+      padding: 7px 6px 0 0;
+    }
+    .notification-empty {
+      min-height: 74px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      font-size: 12px;
+    }
+    @media (max-width: 768px) {
+      .notification-inbox-panel {
+        top: 10px;
+        left: 10px;
+        right: auto;
+        width: calc(100vw - 24px);
+      }
+    }
     /* When the notes panel is docked to the right, the default top-right toast
        sits directly over the Archive / View-toggle buttons in the panel header.
        Flip it to the top-left so you can still reach the header after an

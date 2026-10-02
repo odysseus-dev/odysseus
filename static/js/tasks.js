@@ -3128,6 +3128,9 @@ async function _pollTaskNotifications() {
     if (!res.ok) return;
     const data = await res.json();
     const notes = data.notifications || [];
+    if (notes.length) {
+      document.dispatchEvent(new CustomEvent('odysseus:notifications-changed'));
+    }
     for (const n of notes) {
       const ok = n.status === 'success';
       if (ok) {
