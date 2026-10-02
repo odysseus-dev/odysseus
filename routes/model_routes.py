@@ -604,8 +604,11 @@ _NON_CHAT_PREFIXES = (
     "snowflake/arctic-embed", "nvidia/nv-embed", "embed",
 )
 _NON_CHAT_CONTAINS = (
-    "-realtime", "-transcribe", "-tts", "-codex",
-    "codex-", "content-safety", "-safety", "-reward", "nvclip",
+    # "codex" is a chat family name (gpt-5.x-codex, and gateway routes named
+    # after it), not a completions-only marker: the legacy completions models
+    # are code-davinci-002 / code-cushman-001, which contain no "codex". See #6218.
+    "-realtime", "-transcribe", "-tts",
+    "content-safety", "-safety", "-reward", "nvclip",
     "kosmos", "fuyu", "deplot", "vila", "neva",
     "gliner", "riva", "-parse", "-embedqa", "-nemoretriever",
     "topic-control", "calibration",
