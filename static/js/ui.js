@@ -142,7 +142,9 @@ function _closeHoveredWindow() {
 function _spaceIsBlocked(e, surface) {
   const target = _targetEl(e.target);
   if (!target) return false;
-  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  // Hover is not focus: Space belongs to the field the caret is in, not to
+  // whichever surface the pointer happens to rest on (#4856).
+  if (_isTextEditingTarget(target)) return true;
   const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
   return !!(blocked && (!surface || surface.contains(blocked)));
 }
