@@ -79,6 +79,43 @@ def test_explanatory_calendar_questions_stay_plain_chat():
     assert intent.reason == "explanatory feature question"
 
 
+def test_contacts_lookup_promotes_to_agent():
+    assert message_needs_tools("mi dici il numero di Paolo?")
+    assert message_needs_tools("what is the phone number of Mario?")
+    assert message_needs_tools("tell me Anna address")
+    assert message_needs_tools("cerca Francesca nei contatti")
+    assert message_needs_tools("do you have Giorgio phone?")
+    assert classify_tool_intent("mi dici il numero di Paolo?").category == "contacts"
+    assert classify_tool_intent("look up Marco in contacts").category == "contacts"
+
+
+def test_files_lookup_promotes_to_agent():
+    assert message_needs_tools("leggi il file README")
+    assert message_needs_tools("read the CHANGELOG")
+    assert message_needs_tools("what's in config.yaml")
+    assert message_needs_tools("open Makefile")
+    assert message_needs_tools("cosa c'è in server.log")
+    assert classify_tool_intent("show me package.json").category == "files"
+    assert classify_tool_intent("what does app.py contain").category == "files"
+    # UI panel names must NOT be classified as files
+    assert classify_tool_intent("open settings").category == "ui"
+    assert classify_tool_intent("open my calendar").category == "ui"
+    # Explanatory questions must NOT promote
+    assert not message_needs_tools("how do I read files?")
+    assert not message_needs_tools("what is a file system?")
+
+
+def test_sessions_lookup_promotes_to_agent():
+    assert message_needs_tools("search my chats for the bitcoin discussion")
+    assert message_needs_tools("find the conversation about the project")
+    assert message_needs_tools("cerca nelle chat il progetto")
+    assert message_needs_tools("trova la conversazione sul viaggio")
+    assert message_needs_tools("cosa abbiamo detto sul budget")
+    assert classify_tool_intent("look through my conversations").category == "sessions"
+    # Ambiguous "find" must NOT trigger sessions
+    assert not message_needs_tools("find me a restaurant")
+
+
 def test_router_reports_non_calendar_categories():
     assert classify_tool_intent("reply to that email").category == "email"
     assert classify_tool_intent("open my calendar").category == "ui"
