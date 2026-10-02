@@ -489,7 +489,9 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   let selectedServerKey = '';
   if (hostOverride !== undefined) {
     host = hostOverride || '';
-    selectedServer = host ? (_serverByVal?.(host) || (_envState.servers || []).find(s => s.host === host) || null) : null;
+    selectedServer = host
+      ? (_serverByVal?.(host) || (_envState.servers || []).find(s => s.host === host) || null)
+      : (_serverByVal?.('local') || null);
     selectedServerKey = selectedServer ? (typeof window.cookbookModule?._serverKey === 'function' ? window.cookbookModule._serverKey(selectedServer) : '') : '';
   } else {
     // No explicit host passed: resolve from the visible server dropdown rather
@@ -505,19 +507,23 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       selectedServerKey = _ssv || '';
     } else if (ssEl && ssEl.value === 'local') {
       host = '';
+      selectedServer = _serverByVal?.('local') || null;
+      selectedServerKey = 'local';
     } else {
       host = _envState.remoteHost || '';
-      selectedServer = host ? ((_envState.servers || []).find(s => s.host === host) || _serverByVal?.(host) || null) : null;
+      selectedServer = host
+        ? ((_envState.servers || []).find(s => s.host === host) || _serverByVal?.(host) || null)
+        : (_serverByVal?.('local') || null);
     }
   }
-  const srv = selectedServer || _serverByVal?.(host) || {};
-  let env = host ? (srv.env || 'none') : (_envState.env || 'none');
-  const envPath = host ? (srv.envPath || '') : (_envState.envPath || '');
+  const srv = selectedServer || _serverByVal?.(host || 'local') || {};
+  let env = srv.env || 'none';
+  const envPath = srv.envPath || '';
   if ((!env || env === 'none') && envPath) {
-    env = /(?:^|\/)(?:\.?venv|env)(?:\/|$)|\/bin\/activate$/i.test(envPath) ? 'venv' : env;
+    env = /(?:^|[\\/])(?:\.?venv|env)(?:[\\/]|$)|[\\/]bin[\\/]activate$|[\\/]Scripts[\\/]Activate\.ps1$/i.test(envPath) ? 'venv' : env;
   }
-  const platform = host ? (srv.platform || '') : (_envState.platform || '');
-  const isWin = host ? (platform === 'windows') : _isWindows();
+  const platform = srv.platform || (host ? (_envState.platform || '') : (_envState.hostPlatform || _envState.platform || ''));
+  const isWin = platform ? platform === 'windows' : _isWindows();
 
   const payload = { repo_id: repo, backend };
   if (include) payload.include = include;
