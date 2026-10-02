@@ -24,6 +24,9 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 
+# Install legacy build requirements before wheel generation.
+pip install --no-cache-dir "setuptools<70" wheel "cython<3.0"
+
 # Pinned to the versions Real-ESRGAN 0.3.0 resolves to.
 SPECS="basicsr==1.4.2 gfpgan==1.3.8 facexlib==0.3.0"
 
@@ -48,9 +51,9 @@ PY
   tar xzf "${name}.tar.gz"
 done
 
-echo ">> patching get_version()"
+echo ">> patching get_version() and stripping setup_requires"
 python - <<'PY'
-import pathlib
+import pathlib, re
 old_exec = "exec(compile(f.read(), version_file, 'exec'))"
 new_exec = "_ver_ns = {}\n        exec(compile(f.read(), version_file, 'exec'), _ver_ns)"
 old_ret = "return locals()['__version__']"
@@ -59,12 +62,15 @@ patched = 0
 for setup in pathlib.Path(".").glob("*/setup.py"):
     s = setup.read_text()
     if old_exec in s and old_ret in s:
-        setup.write_text(s.replace(old_exec, new_exec).replace(old_ret, new_ret))
+        s = s.replace(old_exec, new_exec).replace(old_ret, new_ret)
+        # Strip torch from setup_requires to prevent large network downloads/timeouts during wheel build
+        s = re.sub(r"setup_requires\s*=\s*\[[^\]]*\]", "setup_requires=[]", s)
+        setup.write_text(s)
         print("   patched", setup)
         patched += 1
 assert patched == 3, f"expected to patch 3 setup.py files, patched {patched}"
 PY
 
 echo ">> building wheels into ${OUT}"
-pip wheel --no-deps -w "$OUT" ./basicsr-* ./gfpgan-* ./facexlib-*
+pip wheel --no-build-isolation --no-deps -w "$OUT" ./basicsr-* ./gfpgan-* ./facexlib-*
 ls -l "$OUT"
