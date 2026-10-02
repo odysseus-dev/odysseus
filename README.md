@@ -3,6 +3,11 @@
 </p>
 
 <p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README.ko.md">한국어</a>
+</p>
+
+<p align="center">
   A self-hosted AI workspace for chat, agents, research, documents, email, notes, calendar, and local model workflows.
 </p>
 
