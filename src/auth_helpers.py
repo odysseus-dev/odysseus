@@ -20,9 +20,9 @@ def effective_user(request: Request) -> Optional[str]:
     cookie/user routes by default, but their token was minted by, and belongs
     to, a real owner stamped on ``request.state.api_token_owner``. Routes that
     should attribute a token's actions to that owner (sessions, chat history)
-    call this instead of :func:`get_current_user`, so a paired client sees and
-    creates the SAME data as the owner's desktop UI rather than a separate
-    "api"-owned silo.
+    call this instead of :func:`get_current_user`, so a scope-aware API client
+    sees and creates the SAME data as the owner's browser session rather than a
+    separate "api"-owned silo.
 
     For cookie sessions this is identical to :func:`get_current_user`, so
     swapping a route over is a no-op for browser users. A bearer token with no
