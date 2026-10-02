@@ -16,6 +16,12 @@ from src.constants import AUTH_FILE
 
 logger = logging.getLogger(__name__)
 
+# Strong references to fire-and-forget tasks. asyncio only keeps weak
+# references to tasks created via create_task(), so without this the GC can
+# collect a task mid-execution and the event handler silently never runs.
+# Mirrors _BG_TASKS in routes/chat_helpers.py and src/builtin_mcp.py.
+_BG_TASKS: set[asyncio.Task] = set()
+
 _task_scheduler = None
 
 
@@ -37,7 +43,9 @@ def fire_event(event_name: str, owner: Optional[str] = None):
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_handle_event(event_name, owner))
+        task = loop.create_task(_handle_event(event_name, owner))
+        _BG_TASKS.add(task)
+        task.add_done_callback(_BG_TASKS.discard)
     except RuntimeError:
         # No running loop — run in a new one (shouldn't happen in FastAPI)
         asyncio.run(_handle_event(event_name, owner))
