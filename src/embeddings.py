@@ -129,6 +129,71 @@ class EmbeddingClient:
         return [emb["embedding"] for emb in embeddings]
 
 
+_GPU_PRIORITY = [
+    "TensorrtExecutionProvider",   # NVIDIA, optimized
+    "CUDAExecutionProvider",       # NVIDIA
+    "MIGraphXExecutionProvider",   # AMD, current (ROCm >= 6.x, ORT >= 1.23)
+    "ROCmExecutionProvider",       # AMD, legacy (removed from ORT as of 1.23;
+                                   #   kept for older ROCm/ORT installs)
+    "CoreMLExecutionProvider",     # Apple Silicon
+    "DirectMLExecutionProvider",   # Windows, any vendor GPU
+    "OpenVINOExecutionProvider",   # Intel
+    "DnnlExecutionProvider",       # Intel
+]
+
+
+def select_gpu_providers(available_providers):
+    """Pick the best ONNX provider chain for the host's available providers.
+
+    Vendor-agnostic: returns [chosen_gpu, ...other_gpu_fallbacks, CPU] where
+    chosen_gpu is the highest-priority GPU provider available, or ["CPU"]
+    when no GPU provider exists. Pure function — unit-testable without a GPU.
+
+    An optional EMBEDDING_GPU_PROVIDER env override allows an operator to
+    force a specific provider (or "cpu" to disable GPU entirely):
+      - unset / "auto"  -> auto-detect the best provider
+      - "cpu"           -> never use a GPU
+      - "nvidia"        -> NVIDIA TensorRT/CUDA
+      - "amd"           -> AMD MIGraphX (or legacy ROCm)
+      - a provider name -> exactly that provider (must be available)
+    """
+    import os as _os
+    override = (_os.environ.get("EMBEDDING_GPU_PROVIDER") or "auto").strip().lower()
+    available = set(available_providers)
+    if override in ("cpu", "none", "off", "false", "0"):
+        return ["CPUExecutionProvider"]
+    if override == "nvidia":
+        chosen = next((p for p in ("TensorrtExecutionProvider",
+                                   "CUDAExecutionProvider")
+                       if p in available), None)
+        if chosen:
+            fallbacks = [p for p in _GPU_PRIORITY
+                         if p in available and p != chosen]
+            return [chosen] + fallbacks + ["CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    if override == "amd":
+        chosen = next((p for p in ("MIGraphXExecutionProvider",
+                                   "ROCmExecutionProvider")
+                       if p in available), None)
+        if chosen:
+            fallbacks = [p for p in _GPU_PRIORITY
+                         if p in available and p != chosen]
+            return [chosen] + fallbacks + ["CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    if override != "auto":
+        # explicit provider name — only use it if the host actually has it
+        if override in available:
+            return [override] + [p for p in _GPU_PRIORITY
+                                 if p in available and p != override] \
+                   + ["CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
+    chosen = next((p for p in _GPU_PRIORITY if p in available), None)
+    if chosen is None:
+        return ["CPUExecutionProvider"]
+    fallbacks = [p for p in _GPU_PRIORITY if p in available and p != chosen]
+    return [chosen] + fallbacks + ["CPUExecutionProvider"]
+
+
 class FastEmbedClient:
     """Local embedding client using fastembed (ONNX). No external service needed."""
 
@@ -178,6 +243,25 @@ class FastEmbedClient:
             except Exception as _e:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
+        # GPU acceleration — vendor-agnostic. Provider selection is handled by
+        # select_gpu_providers() (above); see the docstring there for the
+        # hardware-family priority chain and CPU fallback.
+        try:
+            import onnxruntime as ort
+            providers = select_gpu_providers(ort.get_available_providers())
+            kwargs["providers"] = providers
+            chosen = providers[0] if len(providers) > 1 else None
+            if chosen:
+                logger.info("FastEmbed: using %s (fallbacks %s) for ONNX inference",
+                            chosen, providers[1:])
+            else:
+                logger.info("FastEmbed: no GPU provider available; using CPU")
+            self._is_gpu = chosen is not None
+            self._gpu_provider = chosen
+        except Exception as _e:
+            logger.warning(f"FastEmbed: could not query ONNX providers, defaulting to CPU: {_e}")
+            self._is_gpu = False
+            self._gpu_provider = None
         self._embedding = TextEmbedding(**kwargs)
         self._dim: Optional[int] = None
         self.url = "local://fastembed"
