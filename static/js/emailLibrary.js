@@ -4,7 +4,7 @@
  */
 
 import spinnerModule from './spinner.js';
-import { styledConfirm, showToast, emptyStateIcon } from './ui.js';
+import { styledConfirm, styledPrompt, showToast, emptyStateIcon } from './ui.js';
 import { folderDisplayName, sortedFolders } from './emailInbox.js?v=20260815approvalsave1';
 import settingsModule from './settings.js';
 import * as Modals from './modalManager.js';
@@ -1783,6 +1783,61 @@ function _rememberedEmailAccountId() {
   }
 }
 
+function _acctStart() {
+  return state._libAccountId ? `?account_id=${encodeURIComponent(state._libAccountId)}` : '';
+}
+
+function _emailFolderApiUrl(path = '', params = {}) {
+  const query = new URLSearchParams();
+  if (state._libAccountId) query.set('account_id', state._libAccountId);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+  });
+  const qs = query.toString();
+  return `${API_BASE}/api/email/folders${path}${qs ? `?${qs}` : ''}`;
+}
+
+function _emailFolderRole(folder) {
+  const f = String(folder || '').trim().toLowerCase();
+  if (!f) return '';
+  if (f === '__scheduled__') return 'scheduled';
+  const tokens = f.split(/[^a-z0-9]+/).filter(Boolean);
+  const tokenSet = new Set(tokens);
+  const text = tokens.join(' ');
+  if (text === 'inbox') return 'inbox';
+  if (tokenSet.has('sent')) return 'sent';
+  if (tokenSet.has('starred') || tokenSet.has('flagged')) return 'starred';
+  if (tokenSet.has('draft') || tokenSet.has('drafts')) return 'drafts';
+  if (text === 'all mail' || tokenSet.has('archive') || tokenSet.has('archives')) return 'archive';
+  if (tokenSet.has('spam') || tokenSet.has('junk')) return 'junk';
+  if (tokenSet.has('trash') || tokenSet.has('bin') || tokenSet.has('deleted')) return 'trash';
+  return '';
+}
+
+function _isCustomEmailFolder(folder) {
+  return Boolean(String(folder || '').trim()) && !_emailFolderRole(folder);
+}
+
+function _syncFolderManagementControls() {
+  const renameBtn = document.getElementById('email-lib-rename-folder-btn');
+  const deleteBtn = document.getElementById('email-lib-delete-folder-btn');
+  const canManage = _isCustomEmailFolder(state._libFolder);
+  const controls = [renameBtn, deleteBtn].filter(Boolean);
+  for (const btn of controls) {
+    btn.disabled = !canManage;
+  }
+  if (renameBtn) {
+    renameBtn.title = canManage
+      ? `Rename folder "${folderDisplayName(state._libFolder)}"`
+      : 'Built-in folders cannot be renamed';
+  }
+  if (deleteBtn) {
+    deleteBtn.title = canManage
+      ? `Delete folder "${folderDisplayName(state._libFolder)}"`
+      : 'Built-in folders cannot be deleted';
+  }
+}
+
 // Per-(account, folder, filter, attachments) cache of the most recent
 // first-page list response. Lets reopen-after-close paint the previous
 // list instantly while the network refresh runs behind it — the modal
@@ -2596,6 +2651,15 @@ export function openEmailLibrary(opts = {}) {
               <select class="memory-sort-select" id="email-lib-folder" style="flex:1;min-width:0;text-overflow:ellipsis;">
                 <option value="INBOX">Inbox</option>
               </select>
+              <button type="button" class="memory-toolbar-btn email-folder-create-btn" id="email-lib-new-folder-btn" title="New folder" aria-label="New folder">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></svg>
+              </button>
+              <button type="button" class="memory-toolbar-btn email-folder-rename-btn" id="email-lib-rename-folder-btn" title="Rename folder" aria-label="Rename selected folder" disabled>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              </button>
+              <button type="button" class="memory-toolbar-btn email-folder-delete-btn" id="email-lib-delete-folder-btn" title="Delete folder" aria-label="Delete selected folder" disabled>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+              </button>
               <!-- Hidden native select kept as the source of truth — all
                    existing change handlers still fire via the custom picker
                    dispatching 'change' on it. -->
@@ -2794,8 +2858,12 @@ export function openEmailLibrary(opts = {}) {
 
   document.getElementById('email-lib-folder').addEventListener('change', (e) => {
     state._libFolder = e.target.value;
+    _syncFolderManagementControls();
     _loadEmailsFresh();
   });
+  document.getElementById('email-lib-new-folder-btn')?.addEventListener('click', _createFolderFromLibrary);
+  document.getElementById('email-lib-rename-folder-btn')?.addEventListener('click', _renameFolderFromLibrary);
+  document.getElementById('email-lib-delete-folder-btn')?.addEventListener('click', _deleteFolderFromLibrary);
   document.getElementById('email-lib-filter').addEventListener('change', (e) => {
     state._libFilter = e.target.value;
     _syncUnreadWindowGlow();
@@ -3502,11 +3570,23 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
       if (f === state._libFolder) opt.selected = true;
       sel.appendChild(opt);
     }
-    if (priority.length > 0 && others.length > 0) {
+    if (priority.length > 0) {
       const sep = document.createElement('option');
       sep.disabled = true;
       sep.textContent = '─────────';
       sel.appendChild(sep);
+    }
+    // Scheduled (special virtual folder)
+    const schedOpt = document.createElement('option');
+    schedOpt.value = '__scheduled__';
+    schedOpt.textContent = 'Scheduled';
+    if (state._libFolder === '__scheduled__') schedOpt.selected = true;
+    sel.appendChild(schedOpt);
+    if (others.length > 0) {
+      const sep3 = document.createElement('option');
+      sep3.disabled = true;
+      sep3.textContent = '─────────';
+      sel.appendChild(sep3);
     }
     for (const f of others) {
       const opt = document.createElement('option');
@@ -3515,18 +3595,188 @@ async function _loadFolders({ resetMissing = false, live = false } = {}) {
       if (f === state._libFolder) opt.selected = true;
       sel.appendChild(opt);
     }
-    // Scheduled (special virtual folder)
-    const sep2 = document.createElement('option');
-    sep2.disabled = true;
-    sep2.textContent = '─────────';
-    sel.appendChild(sep2);
-    const schedOpt = document.createElement('option');
-    schedOpt.value = '__scheduled__';
-    schedOpt.textContent = 'Scheduled';
-    if (state._libFolder === '__scheduled__') schedOpt.selected = true;
-    sel.appendChild(schedOpt);
     sel.value = state._libFolder;
+    _syncFolderManagementControls();
   } catch (e) {}
+}
+
+async function _createFolderFromLibrary() {
+  const requested = await styledPrompt('Folder name', {
+    title: 'New folder',
+    placeholder: 'Clients',
+    confirmText: 'Create',
+    maxLength: 255,
+  });
+  const folder = String(requested || '').trim();
+  if (!folder) return;
+
+  const btn = document.getElementById('email-lib-new-folder-btn');
+  btn?.setAttribute('disabled', 'disabled');
+  try {
+    const res = await fetch(`${API_BASE}/api/email/folders${_acctStart()}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: folder }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      showToast(data.error || 'Failed to create folder');
+      return;
+    }
+
+    state._libFolder = data.folder || folder;
+    state._libOffset = 0;
+    _libListCache.clear();
+    if (Array.isArray(data.folders)) state._libFolders = data.folders;
+    await _loadFolders();
+    const sel = document.getElementById('email-lib-folder');
+    if (sel) sel.value = state._libFolder;
+    _syncFolderManagementControls();
+    await _loadEmails({ force: true, useCache: false });
+    showToast(`Created folder "${folderDisplayName(state._libFolder)}"`);
+  } catch (err) {
+    console.error('Create email folder failed:', err);
+    showToast('Failed to create folder');
+  } finally {
+    btn?.removeAttribute('disabled');
+  }
+}
+
+async function _deleteFolderRequest(folder, confirmNonempty = false) {
+  const res = await fetch(_emailFolderApiUrl('', {
+    folder,
+    confirm_delete: 'true',
+    confirm_nonempty: confirmNonempty ? 'true' : 'false',
+  }), {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success === false) return { ok: false, data };
+  return { ok: true, data };
+}
+
+async function _renameFolderFromLibrary() {
+  const folder = String(state._libFolder || '').trim();
+  if (!_isCustomEmailFolder(folder)) {
+    showToast('Only custom folders can be renamed');
+    _syncFolderManagementControls();
+    return;
+  }
+
+  const requested = await styledPrompt('Folder name', {
+    title: 'Rename folder',
+    defaultValue: folder,
+    confirmText: 'Rename',
+    maxLength: 255,
+  });
+  const newFolder = String(requested || '').trim();
+  if (!newFolder || newFolder === folder) return;
+
+  const btn = document.getElementById('email-lib-rename-folder-btn');
+  btn?.setAttribute('disabled', 'disabled');
+  try {
+    const res = await fetch(_emailFolderApiUrl(), {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, name: newFolder }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      showToast(data.error || 'Failed to rename folder');
+      return;
+    }
+
+    const renamed = data.folder || newFolder;
+    state._libFolder = renamed;
+    state._libOffset = 0;
+    _libListCache.clear();
+    if (Array.isArray(data.folders)) state._libFolders = data.folders;
+    await _loadFolders();
+    const sel = document.getElementById('email-lib-folder');
+    if (sel) sel.value = state._libFolder;
+    _syncFolderManagementControls();
+    await _loadEmails({ force: true, useCache: false });
+    showToast(`Renamed folder to "${folderDisplayName(renamed)}"`);
+  } catch (err) {
+    console.error('Rename email folder failed:', err);
+    showToast('Failed to rename folder');
+  } finally {
+    btn?.removeAttribute('disabled');
+    _syncFolderManagementControls();
+  }
+}
+
+async function _deleteFolderFromLibrary() {
+  const folder = String(state._libFolder || '').trim();
+  if (!_isCustomEmailFolder(folder)) {
+    showToast('Only custom folders can be deleted');
+    _syncFolderManagementControls();
+    return;
+  }
+
+  const btn = document.getElementById('email-lib-delete-folder-btn');
+  btn?.setAttribute('disabled', 'disabled');
+  try {
+    const statusRes = await fetch(_emailFolderApiUrl('/status', { folder }), {
+      credentials: 'same-origin',
+    });
+    const statusData = await statusRes.json().catch(() => ({}));
+    if (!statusRes.ok || statusData.success === false) {
+      showToast(statusData.error || 'Failed to check folder');
+      return;
+    }
+
+    const resolvedFolder = statusData.folder || folder;
+    const display = folderDisplayName(resolvedFolder);
+    const rawCount = statusData.message_count;
+    const count = rawCount === null || rawCount === undefined ? null : Number(rawCount);
+    const countKnown = Number.isFinite(count);
+    const deliveryRisk = 'New mail can arrive before deletion. Any messages present when the provider deletes this folder may also be permanently deleted.';
+    const message = countKnown && count === 0
+      ? `PERMANENTLY DELETE empty folder "${display}"?\n\n${deliveryRisk}`
+      : `PERMANENTLY DELETE folder "${display}"?\n\n${countKnown ? `It contains ${count} email${count === 1 ? '' : 's'}.` : 'Odysseus could not confirm whether it is empty.'} Deleting this folder can permanently delete every message inside it.`;
+    const ok = await styledConfirm(message, {
+      confirmText: 'Delete Folder',
+      cancelText: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+
+    let result = await _deleteFolderRequest(resolvedFolder, !(countKnown && count === 0));
+    if (!result.ok && result.data?.needs_confirmation) {
+      const confirmAgain = await styledConfirm(
+        `PERMANENTLY DELETE folder "${display}"?\n\nIt is not empty. Deleting this folder can permanently delete every message inside it.`,
+        { confirmText: 'Delete Folder', cancelText: 'Cancel', danger: true },
+      );
+      if (!confirmAgain) return;
+      result = await _deleteFolderRequest(resolvedFolder, true);
+    }
+    if (!result.ok) {
+      showToast(result.data?.error || 'Failed to delete folder');
+      return;
+    }
+
+    if (Array.isArray(result.data.folders)) state._libFolders = result.data.folders;
+    const folders = Array.isArray(state._libFolders) ? state._libFolders : [];
+    state._libFolder = folders.includes('INBOX') ? 'INBOX' : (folders[0] || 'INBOX');
+    state._libOffset = 0;
+    _libListCache.clear();
+    await _loadFolders({ resetMissing: true });
+    const sel = document.getElementById('email-lib-folder');
+    if (sel) sel.value = state._libFolder;
+    _syncFolderManagementControls();
+    await _loadEmails({ force: true, useCache: false });
+    showToast(`Deleted folder "${display}"`);
+  } catch (err) {
+    console.error('Delete email folder failed:', err);
+    showToast('Failed to delete folder');
+  } finally {
+    btn?.removeAttribute('disabled');
+    _syncFolderManagementControls();
+  }
 }
 
 function _crossFolderCandidates() {
