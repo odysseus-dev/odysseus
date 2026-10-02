@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 # ── module-load stubbing (matches other tests in this repo) ──────────
-for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative"):
+for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext"):
     if _mod not in sys.modules:
         try:
             __import__(_mod)

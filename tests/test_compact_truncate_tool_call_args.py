@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
+    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database',
     'core.models', 'core.database',

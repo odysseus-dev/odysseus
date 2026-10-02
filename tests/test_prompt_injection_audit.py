@@ -20,7 +20,7 @@ import pytest
 
 # ── stub heavy imports before loading agent_loop ────────────────────────────
 for _mod in [
-    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
+    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
     "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",
     "src.database",
     "src.agent_tools",
