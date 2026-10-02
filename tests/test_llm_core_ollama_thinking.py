@@ -2,8 +2,8 @@
 
 Covers:
 - _is_ollama_openai_compat_url: URL classification (local host + /v1 path)
-- think: false is injected into the payload for Ollama /v1 thinking models
-- think: false is NOT injected for non-thinking models or non-Ollama /v1 endpoints
+- think: false and reasoning_effort: none are injected for Ollama /v1 thinking models
+- those fields are NOT injected for non-thinking models or non-Ollama /v1 endpoints
 """
 import asyncio
 import json
@@ -131,21 +131,23 @@ class TestIsOllamaOpenAICompatUrl:
 # ---------------------------------------------------------------------------
 
 class TestThinkSuppression:
-    """Assert think:false is present/absent in the outgoing HTTP payload."""
+    """Assert think:false + reasoning_effort:none are present/absent in the payload."""
 
     def test_think_false_for_ollama_v1_thinking_model(self, monkeypatch):
-        """think:false must be set for qwen3 on Ollama /v1."""
+        """think:false and reasoning_effort:none must be set for qwen3 on Ollama /v1."""
         payload = _capture_payload(
             monkeypatch, "http://127.0.0.1:11434/v1/chat/completions", "qwen3:14b"
         )
         assert payload.get("think") is False
+        assert payload.get("reasoning_effort") == "none"
 
     def test_no_think_for_ollama_v1_non_thinking_model(self, monkeypatch):
-        """think must NOT be set for a plain (non-thinking) model on Ollama /v1."""
+        """think/reasoning_effort must NOT be set for a plain model on Ollama /v1."""
         payload = _capture_payload(
             monkeypatch, "http://127.0.0.1:11434/v1/chat/completions", "llama3.2:3b"
         )
         assert "think" not in payload
+        assert "reasoning_effort" not in payload
 
     def test_no_think_for_openai_endpoint_with_thinking_model_name(self, monkeypatch):
         """think must NOT leak to a real OpenAI endpoint even if the model name
@@ -154,12 +156,15 @@ class TestThinkSuppression:
             monkeypatch, "https://api.openai.com/v1/chat/completions", "qwen3:14b"
         )
         assert "think" not in payload
+        # Do not force reasoning_effort on real OpenAI just because the model
+        # name looks like a local thinking model.
+        assert "reasoning_effort" not in payload
 
     def test_think_false_for_non_default_port_thinking_model(self, monkeypatch):
         """Custom-port localhost Ollama (e.g. OLLAMA_HOST=0.0.0.0:11435) must
-        also receive think:false — this is the regression guarded by the
-        host-set check added in this fix."""
+        also receive think:false + reasoning_effort:none."""
         payload = _capture_payload(
             monkeypatch, "http://127.0.0.1:11435/v1/chat/completions", "qwen3:14b"
         )
         assert payload.get("think") is False
+        assert payload.get("reasoning_effort") == "none"
