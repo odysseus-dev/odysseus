@@ -120,3 +120,9 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Local Docker Compose override (per-machine mounts, GPU tweaks, etc.)
+docker-compose.override.yml
+
+# Personal Kimi Code configuration
+.kimi-code/
