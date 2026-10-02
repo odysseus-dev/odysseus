@@ -20,6 +20,7 @@ from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
+from core.guard_deco import content_type, suspicious_frequency, usage_monitor
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -232,6 +233,7 @@ def setup_codex_routes(
         return StreamingResponse(buf, media_type="application/zip", headers=headers)
 
     @router.get("/todos")
+    @suspicious_frequency(0.5, 60, "log")
     async def list_todos(request: Request, archived: bool = False, label: str | None = None):
         owner = _scope_owner(request, TODO_READ_SCOPES)
         args: dict[str, Any] = {"action": "list", "archived": archived}
@@ -240,6 +242,7 @@ def setup_codex_routes(
         return await do_manage_notes(json.dumps(args), owner=owner)
 
     @router.post("/todos")
+    @content_type(["application/json"])
     async def manage_todos(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         action = str(body.get("action") or "add").replace("-", "_").strip().lower()
         allowed = TODO_WRITE_SCOPES if action in WRITE_ACTIONS else TODO_READ_SCOPES
@@ -249,6 +252,7 @@ def setup_codex_routes(
         return await do_manage_notes(json.dumps(args), owner=owner)
 
     @router.get("/emails")
+    @suspicious_frequency(0.5, 60, "log")
     async def list_emails(
         request: Request,
         folder: str = "INBOX",
@@ -281,6 +285,7 @@ def setup_codex_routes(
         )
 
     @router.get("/emails/{uid}")
+    @suspicious_frequency(0.5, 60, "log")
     async def read_email(
         request: Request,
         uid: str,
@@ -336,6 +341,7 @@ def setup_codex_routes(
         return "\n".join(lines).rstrip() + "\n"
 
     @router.post("/emails/draft-document")
+    @content_type(["application/json"])
     async def codex_email_draft_document(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
         docs_owner = _scope_owner_all(request, DOCS_WRITE_SCOPES)
@@ -361,6 +367,7 @@ def setup_codex_routes(
         return result
 
     @router.post("/emails/draft")
+    @content_type(["application/json"])
     async def codex_email_draft(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
         if email_draft_endpoint is None:
@@ -374,6 +381,8 @@ def setup_codex_routes(
         return await email_draft_endpoint(req=req, owner=owner)
 
     @router.post("/emails/send")
+    @usage_monitor(10, 3600, "log")
+    @content_type(["application/json"])
     async def codex_email_send(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, EMAIL_SEND_SCOPES)
         if email_send_endpoint is None:
@@ -389,6 +398,7 @@ def setup_codex_routes(
     # ── Memory ────────────────────────────────────────────────────────────
 
     @router.get("/memory")
+    @suspicious_frequency(0.5, 60, "log")
     async def codex_memory_list(request: Request):
         owner = _scope_owner(request, MEMORY_READ_SCOPES)
         if memory_list_endpoint is None:
@@ -396,6 +406,7 @@ def setup_codex_routes(
         return await _as_owner(request, owner, memory_list_endpoint, request)
 
     @router.post("/memory")
+    @content_type(["application/json"])
     async def codex_memory_add(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, MEMORY_WRITE_SCOPES)
         if memory_add_endpoint is None:
@@ -425,6 +436,7 @@ def setup_codex_routes(
         return await _as_owner(request, owner, calendar_list_events, request, start, end, calendar)
 
     @router.post("/calendar/events")
+    @content_type(["application/json"])
     async def codex_calendar_create(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, CALENDAR_WRITE_SCOPES)
         if calendar_create_event is None:
@@ -440,6 +452,7 @@ def setup_codex_routes(
     # ── Documents ─────────────────────────────────────────────────────────
 
     @router.get("/documents")
+    @suspicious_frequency(0.5, 60, "log")
     async def codex_documents_library(
         request: Request,
         search: str | None = None,
@@ -466,6 +479,7 @@ def setup_codex_routes(
         return result
 
     @router.get("/documents/{doc_id}")
+    @suspicious_frequency(0.5, 60, "log")
     async def codex_documents_get(request: Request, doc_id: str):
         owner = _scope_owner(request, DOCS_READ_SCOPES)
         if documents_get_endpoint is None:
@@ -500,6 +514,7 @@ def setup_codex_routes(
         return await _as_owner(request, owner, documents_delete_endpoint, request, doc_id)
 
     @router.post("/documents")
+    @content_type(["application/json"])
     async def codex_documents_create(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         owner = _scope_owner(request, DOCS_WRITE_SCOPES)
         if documents_create_endpoint is None:
@@ -566,6 +581,7 @@ def setup_codex_routes(
         return clean
 
     @router.get("/cookbook/tasks")
+    @suspicious_frequency(0.5, 60, "log")
     async def codex_cookbook_tasks(request: Request):
         _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         state = _read_cookbook_state()
@@ -592,6 +608,7 @@ def setup_codex_routes(
         return {"servers": cleaned}
 
     @router.get("/cookbook/output/{session_id}")
+    @suspicious_frequency(0.5, 60, "log")
     async def codex_cookbook_output(request: Request, session_id: str, tail: int = 400):
         _require_cookbook_scope(request, COOKBOOK_READ_SCOPES)
         # Defensive: session_id must be the tmux-style id we issue
@@ -634,6 +651,8 @@ def setup_codex_routes(
         }
 
     @router.post("/cookbook/serve")
+    @usage_monitor(5, 3600, "log")
+    @content_type(["application/json"])
     async def codex_cookbook_serve(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         # Wraps /api/model/serve with the SAME validation the UI uses.
@@ -673,6 +692,7 @@ def setup_codex_routes(
         return await serve_endpoint(request, req)
 
     @router.post("/cookbook/stop/{session_id}")
+    @usage_monitor(5, 3600, "log")
     async def codex_cookbook_stop(request: Request, session_id: str):
         _require_cookbook_scope(request, COOKBOOK_LAUNCH_SCOPES)
         import re as _re
@@ -773,6 +793,7 @@ def setup_codex_routes(
         return {"presets": out, "default_host": (state.get("env") or {}).get("defaultServer", "")}
 
     @router.post("/cookbook/preset/{name}")
+    @usage_monitor(5, 3600, "log")
     async def codex_cookbook_serve_preset(request: Request, name: str):
         """Launch a saved preset by name. Reuses the working cmd + host the
         user already saved, avoiding the cmd-allowlist trial-and-error loop."""
@@ -823,6 +844,8 @@ def setup_codex_routes(
         return await serve_endpoint(request, req)
 
     @router.post("/cookbook/adopt")
+    @usage_monitor(5, 3600, "log")
+    @content_type(["application/json"])
     async def codex_cookbook_adopt(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         """Adopt an existing tmux session (one started via raw ssh+tmux) into
         cookbook tracking. Needed when serve_model rejects a cmd and the

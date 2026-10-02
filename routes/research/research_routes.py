@@ -17,6 +17,7 @@ from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.constants import DEEP_RESEARCH_DIR
+from core.guard_deco import content_type, usage_monitor
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -341,6 +342,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         url: str
 
     @router.post("/api/research/{session_id}/hide-image")
+    @content_type(["application/json"])
     async def research_hide_image(session_id: str, body: HideImageRequest, request: Request):
         """Mark an image URL as hidden for this research's visual report.
         Persisted to the research JSON so subsequent /report renders skip it."""
@@ -490,6 +492,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         category: Optional[str] = None
 
     @router.post("/api/research/start")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def research_start(body: ResearchStartRequest, request: Request):
         """Launch a research job from the dedicated panel."""
         from src.auth_helpers import require_privilege

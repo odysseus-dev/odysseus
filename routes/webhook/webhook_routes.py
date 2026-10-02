@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Webhook, ModelEndpoint
+from core.guard_deco import content_type, suspicious_frequency, usage_monitor
 from src.auth_helpers import owner_filter
 from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
@@ -93,6 +94,7 @@ def setup_webhook_routes(
             db.close()
 
     @router.post("/webhooks")
+    @usage_monitor(10, 3600, "log")
     def create_webhook(
         request: Request,
         name: str = Form(""),
@@ -235,6 +237,8 @@ def setup_webhook_routes(
         provider: Optional[str] = Field(None, max_length=50)
 
     @router.post("/v1/chat")
+    @suspicious_frequency(0.5, 60, "log")
+    @content_type(["application/json"])
     async def sync_chat(request: Request, body: SyncChatRequest):
         if not getattr(request.state, "api_token", False):
             raise HTTPException(403, "This endpoint requires an API token")

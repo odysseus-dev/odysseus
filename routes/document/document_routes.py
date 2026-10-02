@@ -11,6 +11,7 @@ from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, _auth_disabled
+from core.guard_deco import content_type, no_waf, usage_monitor
 from src.constants import MAIL_ATTACHMENTS_DIR
 from src.upload_handler import reserve_upload_references
 
@@ -103,6 +104,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document ----
     @router.post("/api/document")
+    @content_type(["application/json"])
     async def create_document(request: Request, req: DocumentCreate) -> Dict[str, Any]:
         from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_documents")
@@ -219,6 +221,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/import-pdf ----
     @router.post("/api/documents/import-pdf")
+    @no_waf()
     async def import_pdf(
         request: Request,
         file: UploadFile = File(...),
@@ -557,6 +560,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/export-zip — bundle selected docs into a .zip ----
     @router.post("/api/documents/export-zip")
+    @content_type(["application/json"])
     async def documents_export_zip(request: Request):
         """Zip the selected documents (each as a text file with the right
         extension) — mirrors the gallery's bulk download-zip so multi-export
@@ -621,6 +625,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     VERSION_COALESCE_SECONDS = 60
 
     @router.put("/api/document/{doc_id}")
+    @content_type(["application/json"])
     async def update_document(request: Request, doc_id: str, req: DocumentUpdate) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
@@ -696,6 +701,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- PATCH /api/document/{doc_id} — metadata only ----
     @router.patch("/api/document/{doc_id}")
+    @content_type(["application/json"])
     async def patch_document(request: Request, doc_id: str, req: DocumentPatch) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
@@ -809,6 +815,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/restore/{num} ----
     @router.post("/api/document/{doc_id}/restore/{num}")
+    @usage_monitor(30, 3600, "log")
     async def restore_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
@@ -965,6 +972,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/ai-tidy — AI-powered cleanup of junk/test documents ----
     @router.post("/api/documents/ai-tidy")
+    @usage_monitor(10, 3600, "log")
     async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
@@ -1236,6 +1244,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/ai-fill-annotations ----
     @router.post("/api/document/{doc_id}/ai-fill-annotations")
+    @content_type(["application/json"])
     async def ai_fill_annotations(doc_id: str, request: Request) -> Dict[str, Any]:
         """Ask a vision-capable LLM to locate fillable areas on a flat PDF and
         propose annotation values for each, given a free-form user instruction.

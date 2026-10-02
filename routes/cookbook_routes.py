@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from routes._validators import validate_remote_host, validate_ssh_port
+from core.guard_deco import content_type, usage_monitor
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -932,6 +933,7 @@ def setup_cookbook_routes() -> APIRouter:
         }
 
     @router.post("/api/cookbook/ssh-key")
+    @usage_monitor(5, 3600, "log")
     async def generate_cookbook_ssh_key(request: Request):
         require_admin(request)
         ssh_dir = _cookbook_ssh_dir()
@@ -1062,6 +1064,8 @@ def setup_cookbook_routes() -> APIRouter:
         return {"pid": proc.pid, "log_path": str(log_path)}
 
     @router.post("/api/model/download")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def model_download(request: Request, req: ModelDownloadRequest):
         """Download a HuggingFace model in a tmux session.
         Uses `hf download` CLI directly — runs in tmux via `script -qc`
@@ -1959,6 +1963,8 @@ def setup_cookbook_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/model/serve")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def model_serve(request: Request, req: ServeRequest):
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
 
@@ -2835,6 +2841,8 @@ def setup_cookbook_routes() -> APIRouter:
         ssh_port: str | None = None
 
     @router.post("/api/cookbook/setup")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def server_setup(request: Request, req: SetupRequest):
         """Install required dependencies on a remote server via SSH."""
         require_admin(request)
@@ -3314,6 +3322,8 @@ def setup_cookbook_routes() -> APIRouter:
         signal: str = "TERM"  # TERM (graceful) or KILL (force)
 
     @router.post("/api/cookbook/kill-pid")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def kill_pid(request: Request, req: KillPidRequest):
         """Kill a PID that's holding GPU memory.
 
@@ -3393,6 +3403,8 @@ def setup_cookbook_routes() -> APIRouter:
         return client_state
 
     @router.post("/api/cookbook/state")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def save_cookbook_state(request: Request):
         """Save cookbook state for cross-device sync.
 

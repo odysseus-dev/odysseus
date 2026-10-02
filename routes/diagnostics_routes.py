@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Form, Request
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
 from core.constants import DEFAULT_HOST, DATA_DIR
 from core.middleware import require_admin
+from core.guard_deco import usage_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ def setup_diagnostics_routes(
             return {"error": str(e)}
 
     @router.post("/api/test-research")
+    @usage_monitor(20, 3600, "log")
     async def test_research(request: Request, query: str = Form("What is machine learning?")) -> Dict[str, Any]:
         require_admin(request)
         try:
