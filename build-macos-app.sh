@@ -20,6 +20,16 @@ PORT="${ODYSSEUS_PORT:-7860}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
+# This app is a launcher for the checkout it was built from; it does not bundle
+# Python or project dependencies. Refuse to package a launcher that can never
+# start, instead of turning a missing venv into a misleading privacy prompt
+# after installation.
+if [ ! -f "$INSTALL_DIR/venv/pyvenv.cfg" ] || [ ! -x "$INSTALL_DIR/venv/bin/uvicorn" ]; then
+  echo "Error: Odysseus is not set up in $INSTALL_DIR." >&2
+  echo "Create the venv and install dependencies before building the macOS app." >&2
+  exit 1
+fi
+
 echo "Building $APP_NAME.app"
 echo "  install dir: $INSTALL_DIR"
 echo "  port:        $PORT"
@@ -61,13 +71,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>        <string>odysseus</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
-    <key>LSUIElement</key>             <false/>
+    <key>LSUIElement</key>             <true/>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Odysseus needs access to its installation folder to start the local server.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Odysseus needs access to its installation folder to start the local server.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Odysseus needs access to its installation folder to start the local server.</string>
 </dict>
 </plist>
 PLIST
 
-# ── Launcher executable (placeholders filled below) ──
-cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
+# ── Launcher script (placeholders filled below) ──
+#
+# Keep this in Resources and start it from a native bundle executable. If the
+# CFBundleExecutable is itself a shell script, macOS attributes protected-folder
+# access to "sh" instead of Odysseus and cannot use this bundle's privacy usage
+# descriptions to present a useful consent prompt.
+cat > "$APP/Contents/Resources/$APP_NAME-launcher.tmpl" <<'LAUNCHER'
 #!/bin/bash
 # Odysseus.app — start the local server and open the UI in an app window.
 INSTALL_DIR="__INSTALL_DIR__"
@@ -80,6 +101,7 @@ export APP_PORT="$PORT"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
+PYVENV_CFG="$INSTALL_DIR/venv/pyvenv.cfg"
 LOG="$INSTALL_DIR/logs/odysseus-app.log"
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Odysseus\"" >/dev/null 2>&1; }
@@ -87,6 +109,24 @@ die_gui() {
   /usr/bin/osascript -e "display dialog \"$1\" with title \"Odysseus\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
   exit 1
 }
+
+# A Finder-launched app is subject to macOS Files & Folders privacy controls.
+# Probe a file Python itself must read so a protected install location prompts
+# before startup, and turn a previous denial into an actionable error instead
+# of Python's opaque init_import_site/pyvenv.cfg traceback.
+if ! /bin/cat "$PYVENV_CFG" >/dev/null 2>&1; then
+  die_gui "macOS blocked the Odysseus shell launcher from reading:
+
+$PYVENV_CFG
+
+To allow access:
+1. Open System Settings → Privacy & Security → Files & Folders.
+2. Expand “Odysseus”.
+3. Turn on “Documents Folder”.
+4. Reopen Odysseus.
+
+There is no Add button in Files & Folders; apps appear there after requesting access."
+fi
 
 [ -x "$UVICORN" ] || die_gui "Odysseus isn't set up yet. Open Terminal and run:
 
@@ -113,7 +153,10 @@ open_ui() {
   /usr/bin/open "$URL"
 }
 
-mkdir -p "$INSTALL_DIR/logs"
+mkdir -p "$INSTALL_DIR/logs" || die_gui "Odysseus can't write to its logs folder:
+$INSTALL_DIR/logs
+
+Allow access in System Settings → Privacy & Security → Files & Folders, then reopen the app."
 
 # Already running? Just open the UI.
 if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
@@ -151,9 +194,167 @@ wait "$SERVER_PID"
 LAUNCHER
 
 sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" -e "s|__PORT__|$PORT|g" \
-    "$APP/Contents/MacOS/$APP_NAME.tmpl" > "$APP/Contents/MacOS/$APP_NAME"
-rm -f "$APP/Contents/MacOS/$APP_NAME.tmpl"
-chmod +x "$APP/Contents/MacOS/$APP_NAME"
+    "$APP/Contents/Resources/$APP_NAME-launcher.tmpl" > "$APP/Contents/Resources/$APP_NAME-launcher"
+rm -f "$APP/Contents/Resources/$APP_NAME-launcher.tmpl"
+chmod +x "$APP/Contents/Resources/$APP_NAME-launcher"
+printf '%s\n' "$INSTALL_DIR" > "$APP/Contents/Resources/install-dir"
+
+# A native menu-bar parent gives TCC/Files & Folders the app's bundle identity.
+# It stays alive while the shell launcher runs; Exit Odysseus terminates the
+# shell, whose existing cleanup trap then stops the server.
+NATIVE_SRC="$(mktemp)"
+cat > "$NATIVE_SRC" <<'NATIVE_LAUNCHER'
+#import <Cocoa/Cocoa.h>
+
+@interface OdysseusDelegate : NSObject <NSApplicationDelegate>
+@property(nonatomic, strong) NSStatusItem *statusItem;
+@property(nonatomic, strong) NSTask *launcherTask;
+@end
+
+@implementation OdysseusDelegate
+
+- (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    (void)notification;
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    [[NSProcessInfo processInfo]
+        disableAutomaticTermination:@"Odysseus server is running"];
+    [[NSProcessInfo processInfo] disableSuddenTermination];
+
+    NSString *resources = [[NSBundle mainBundle] resourcePath];
+    NSString *installDirFile = [resources stringByAppendingPathComponent:@"install-dir"];
+    NSError *pathError = nil;
+    NSString *installDir = [NSString stringWithContentsOfFile:installDirFile
+                                                     encoding:NSUTF8StringEncoding
+                                                        error:&pathError];
+    installDir = [installDir stringByTrimmingCharactersInSet:
+        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    NSString *pyvenvConfig = [installDir stringByAppendingPathComponent:@"venv/pyvenv.cfg"];
+    NSError *accessError = nil;
+    NSData *configData = [NSData dataWithContentsOfFile:pyvenvConfig
+                                                options:NSDataReadingMappedIfSafe
+                                                  error:&accessError];
+    if (pathError != nil || installDir.length == 0) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp activateIgnoringOtherApps:YES];
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Odysseus could not find its installation folder";
+        alert.informativeText = @"Rebuild Odysseus.app from the checkout you want it to run.";
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        [NSApp terminate:nil];
+        return;
+    }
+    if (configData == nil) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [NSApp activateIgnoringOtherApps:YES];
+        NSAlert *alert = [[NSAlert alloc] init];
+        if ([accessError.domain isEqualToString:NSCocoaErrorDomain] &&
+            accessError.code == NSFileReadNoSuchFileError) {
+            alert.messageText = @"Odysseus is not set up in its build checkout";
+            alert.informativeText = [NSString stringWithFormat:
+                @"The Python environment does not exist at %@. Create the venv "
+                 "and install dependencies there, then rebuild Odysseus.app.",
+                 pyvenvConfig];
+        } else {
+            alert.messageText = @"Odysseus cannot access its Python environment";
+            alert.informativeText = [NSString stringWithFormat:
+                @"Odysseus needs permission to read %@. Open System Settings > "
+                 "Privacy & Security > Files & Folders, enable Documents Folder "
+                 "for Odysseus, then reopen the app.", pyvenvConfig];
+        }
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        [NSApp terminate:nil];
+        return;
+    }
+
+    self.statusItem = [[NSStatusBar systemStatusBar]
+        statusItemWithLength:NSSquareStatusItemLength];
+    NSStatusBarButton *button = self.statusItem.button;
+    NSImage *icon = [NSImage imageNamed:NSImageNameApplicationIcon];
+    icon.size = NSMakeSize(18.0, 18.0);
+    button.image = icon;
+    button.toolTip = @"Odysseus is running";
+
+    NSMenu *menu = [[NSMenu alloc] init];
+    NSMenuItem *status = [[NSMenuItem alloc]
+        initWithTitle:@"Odysseus is running" action:nil keyEquivalent:@""];
+    status.enabled = NO;
+    [menu addItem:status];
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *exitItem = [[NSMenuItem alloc]
+        initWithTitle:@"Exit Odysseus"
+               action:@selector(exitOdysseus:)
+        keyEquivalent:@"q"];
+    exitItem.target = self;
+    [menu addItem:exitItem];
+    self.statusItem.menu = menu;
+
+    NSString *launcher = [[[NSBundle mainBundle] resourcePath]
+        stringByAppendingPathComponent:@"Odysseus-launcher"];
+    self.launcherTask = [[NSTask alloc] init];
+    self.launcherTask.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
+    self.launcherTask.arguments = @[launcher];
+
+    __weak OdysseusDelegate *weakSelf = self;
+    self.launcherTask.terminationHandler = ^(NSTask *task) {
+        (void)task;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (weakSelf != nil) [NSApp terminate:nil];
+        });
+    };
+
+    NSError *error = nil;
+    if (![self.launcherTask launchAndReturnError:&error]) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Odysseus could not start";
+        alert.informativeText = error.localizedDescription;
+        [alert runModal];
+        [NSApp terminate:nil];
+    }
+}
+
+- (void)exitOdysseus:(id)sender {
+    (void)sender;
+    [NSApp terminate:nil];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    (void)notification;
+    if (self.launcherTask.running) {
+        [self.launcherTask terminate];
+        [self.launcherTask waitUntilExit];
+    }
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    (void)sender;
+    return NSTerminateNow;
+}
+
+@end
+
+int main(int argc, const char *argv[]) {
+    (void)argc;
+    (void)argv;
+    @autoreleasepool {
+        NSApplication *application = [NSApplication sharedApplication];
+        static OdysseusDelegate *delegate;
+        delegate = [[OdysseusDelegate alloc] init];
+        application.delegate = delegate;
+        [application run];
+    }
+    return 0;
+}
+NATIVE_LAUNCHER
+xcrun clang -Os -Wall -Wextra -mmacosx-version-min=11.0 \
+    -fobjc-arc -framework Cocoa -x objective-c "$NATIVE_SRC" \
+    -o "$APP/Contents/MacOS/$APP_NAME"
+rm -f "$NATIVE_SRC"
+
+# Give Launch Services and TCC a code identity even for local, non-notarized
+# builds. Release distribution can replace this with a Developer ID signature.
+codesign --force --deep --sign - "$APP"
 
 # Refresh Finder's icon cache for the new bundle.
 touch "$APP"
