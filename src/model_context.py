@@ -236,6 +236,7 @@ KNOWN_CONTEXT_WINDOWS = {
 # Cache
 # ---------------------------------------------------------------------------
 _context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
+_ollama_runtime_endpoints: set[str] = set()
 
 
 def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool]:
@@ -243,19 +244,23 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     bare DEFAULT_CONTEXT fallback (no endpoint report and not in the known table)."""
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = is_local_endpoint(endpoint_url)
+    has_dynamic_runtime_context = endpoint_url in _ollama_runtime_endpoints
     # Key on (endpoint_url, model): the same model id can be served by two
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
-    if not is_local and cache_key in _context_cache:
+    if not is_local and not has_dynamic_runtime_context and cache_key in _context_cache:
         return _context_cache[cache_key]
 
     ctx, known = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
+    has_dynamic_runtime_context = endpoint_url in _ollama_runtime_endpoints
+    if not is_local and not has_dynamic_runtime_context and (
+        ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")
+    ):
         _context_cache[cache_key] = (ctx, known)
     logger.info(f"Context length for {model}: {ctx}")
     return ctx, known
@@ -393,12 +398,135 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     return None
 
 
+def _ollama_ps_url(endpoint_url: str, configured_kind: Optional[str]) -> Optional[str]:
+    """Return a local Ollama ``/api/ps`` URL for a compatible endpoint URL."""
+
+    if configured_kind == "proxy":
+        return None
+    try:
+        parsed = urlparse(endpoint_url or "")
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme not in ("http", "https") or not host:
+            return None
+        named_local_ollama = (
+            configured_kind in ("api", "local")
+            and "." not in host
+            and "ollama" in host
+        )
+        network_local = (
+            host in _LOCAL_HOSTS
+            or _is_private_ip_literal(host)
+            or _in_tailscale_range(host)
+            or named_local_ollama
+        )
+        path = (parsed.path or "").rstrip("/")
+        ollama_looking = (
+            parsed.port == 11434
+            or "ollama" in host
+            or path == "/api"
+            or "/api/" in path
+            or (host in _LOCAL_HOSTS and configured_kind == "api")
+        )
+        if not network_local or not ollama_looking:
+            return None
+
+        api_path = ""
+        for suffix in (
+            "/v1/chat/completions",
+            "/v1/completions",
+            "/v1/models",
+            "/v1",
+        ):
+            if path.endswith(suffix):
+                api_path = path[: -len(suffix)] + "/api"
+                break
+        if not api_path:
+            for suffix in ("/api/chat", "/api/generate", "/api/tags", "/api/ps"):
+                if path.endswith(suffix):
+                    api_path = path[: -len(suffix)] + "/api"
+                    break
+        if not api_path and (path == "/api" or path.endswith("/api")):
+            api_path = path
+        if not api_path and not path:
+            api_path = "/api"
+        if not api_path:
+            return None
+
+        return parsed._replace(
+            path=api_path.rstrip("/") + "/ps",
+            params="",
+            query="",
+            fragment="",
+        ).geturl()
+    except Exception:
+        return None
+
+
+def _probe_ollama_runtime_context(
+    endpoint_url: str,
+    model: str,
+    *,
+    configured_kind: Optional[str],
+) -> Optional[int]:
+    """Ask Ollama for the allocation of a currently loaded model."""
+
+    ps_url = _ollama_ps_url(endpoint_url, configured_kind)
+    if not ps_url:
+        return None
+    try:
+        response = httpx.get(ps_url, timeout=REQUEST_TIMEOUT)
+        if not response.is_success:
+            return None
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+            return None
+
+        # A valid /api/ps response means this endpoint has dynamic runtime
+        # allocation even when the requested model is not loaded yet. Avoid
+        # pinning a static-table fallback in the remote/API cache in that case.
+        _ollama_runtime_endpoints.add(endpoint_url)
+
+        from src.model_capability_readers import ollama
+
+        runtime = ollama.runtime_context_from_ps_payload(
+            model,
+            payload,
+            base_url=endpoint_url,
+        )
+        return runtime.allocated_context_tokens if runtime is not None else None
+    except Exception as exc:
+        logger.debug("Ollama runtime context probe failed for %s: %s", model, exc)
+        return None
+
+
 def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     """Query the model API for context length. Returns (context_length, known) where
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
+
+    # Manually registered local Ollama endpoints may be stored as
+    # endpoint_kind="api". Ask the native runtime endpoint before that kind's
+    # static/catalog short-circuit.
+    if configured_kind == "api":
+        runtime_ctx = _probe_ollama_runtime_context(
+            endpoint_url,
+            model,
+            configured_kind=configured_kind,
+        )
+        if runtime_ctx:
+            logger.info(
+                "Ollama loaded runtime allocation for %s: %s",
+                model,
+                runtime_ctx,
+            )
+            return runtime_ctx, True
+        if endpoint_url in _ollama_runtime_endpoints:
+            # The endpoint answered as Ollama, but this model is not loaded, so
+            # no effective allocation exists yet. Do not promote a model-table
+            # maximum into runtime truth or send it back as options.num_ctx.
+            return DEFAULT_CONTEXT, False
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
@@ -431,6 +559,22 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
                         return n_ctx, True
         except Exception:
             pass
+
+    if configured_kind != "api":
+        runtime_ctx = _probe_ollama_runtime_context(
+            endpoint_url,
+            model,
+            configured_kind=configured_kind,
+        )
+        if runtime_ctx:
+            logger.info(
+                "Ollama loaded runtime allocation for %s: %s",
+                model,
+                runtime_ctx,
+            )
+            return runtime_ctx, True
+        if endpoint_url in _ollama_runtime_endpoints:
+            return DEFAULT_CONTEXT, False
 
     # GitHub Copilot's /models requires auth + X-GitHub-Api-Version headers that
     # aren't available here; an unauthenticated probe just 400s. All Copilot
