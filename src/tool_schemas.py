@@ -1033,6 +1033,23 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_image",
+            "description": "Generate an image from a text prompt using the configured image model. Only available when image generation is enabled and an image model is configured.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Detailed description of the image to generate."},
+                    "model": {"type": "string", "description": "Optional model name override. Leave blank to use the configured image model."},
+                    "size": {"type": "string", "description": "Optional output dimensions, e.g. '1024x1024'."},
+                    "quality": {"type": "string", "enum": ["low", "medium", "high"], "description": "Optional quality level (default: medium)."},
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "edit_image",
             "description": "Edit a gallery image: upscale, remove background, inpaint, or harmonize.",
             "parameters": {
