@@ -1765,7 +1765,83 @@ def test_api_models_scopes_api_token_to_token_owner(monkeypatch):
     result = _route_endpoint(router, "/api/models")(request)
 
     assert [item["endpoint_name"] for item in result["items"]] == ["alice", "shared"]
-    assert admin_checks == ["alice"]
+    assert admin_checks == []
+
+
+def test_api_models_admin_owned_token_does_not_reuse_cookie_admin_inventory(monkeypatch):
+    rows = [
+        _route_ep("admin", "http://admin.example/v1", cached_models=["admin-model"], owner="admin"),
+        _route_ep("shared", "http://shared.example/v1", cached_models=["shared-model"], owner=None),
+        _route_ep("alice", "http://alice.example/v1", cached_models=["alice-model"], owner="alice"),
+    ]
+    db = _RouteDb(rows)
+    router = model_routes.setup_model_routes(model_discovery=None)
+    admin_checks = []
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+
+    auth_manager = SimpleNamespace(
+        is_configured=True,
+        is_admin=lambda user: admin_checks.append(user) or True,
+    )
+    cookie_request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin", api_token=False),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=auth_manager)),
+    )
+    token_request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="admin",
+            api_token_scopes=["chat"],
+        ),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=auth_manager)),
+    )
+
+    endpoint = _route_endpoint(router, "/api/models")
+    cookie_result = endpoint(cookie_request)
+    token_result = endpoint(token_request)
+
+    assert [item["endpoint_name"] for item in cookie_result["items"]] == ["admin", "shared", "alice"]
+    assert [item["endpoint_name"] for item in token_result["items"]] == ["admin", "shared"]
+    assert admin_checks == ["admin"]
+
+
+@pytest.mark.parametrize("refresh_kwargs", [{"refresh": True}, {"background": True}])
+def test_api_models_api_token_never_starts_global_refresh(monkeypatch, refresh_kwargs):
+    rows = [
+        _route_ep("alice", "http://alice.example/v1", cached_models=["alice-model"], owner="alice"),
+        _route_ep("bob", "http://bob.example/v1", cached_models=["bob-model"], owner="bob"),
+    ]
+    db = _RouteDb(rows)
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+
+    def fail_thread(*args, **kwargs):
+        raise AssertionError("bearer model inventory must not start the global refresher")
+
+    monkeypatch.setattr(threading, "Thread", fail_thread)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="alice",
+            api_token_scopes=["chat"],
+        ),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(is_configured=True, is_admin=lambda user: True),
+            ),
+        ),
+    )
+
+    result = _route_endpoint(router, "/api/models")(request, **refresh_kwargs)
+
+    assert [item["endpoint_name"] for item in result["items"]] == ["alice"]
 
 
 def test_api_models_returns_only_pinned_proxy_models_without_refresh_probe(monkeypatch):

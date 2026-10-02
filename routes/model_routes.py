@@ -1621,8 +1621,10 @@ def setup_model_routes(model_discovery):
         legacy/shared null-owner rows). Cached per-user for 30s."""
         # Require auth; "" is the unconfigured single-user mode, treated as
         # "see everything" by _fetch_models.
+        is_api_token = False
         try:
-            if getattr(request.state, "api_token", False):
+            is_api_token = bool(getattr(request.state, "api_token", False))
+            if is_api_token:
                 scopes = set(getattr(request.state, "api_token_scopes", []) or [])
                 if "chat" not in scopes:
                     raise HTTPException(403, "API token is not scoped for chat")
@@ -1640,15 +1642,17 @@ def setup_model_routes(model_discovery):
         except Exception as e:
             logger.error("Auth gate error in GET /api/models, failing closed: %s", e)
             raise HTTPException(status_code=500, detail="Internal error")
-        # Admins see every endpoint (they manage the global pool); regular
-        # users get the owner-scoped view.
+        # Browser admins see every endpoint because they manage the global
+        # pool. Bearer tokens are integrations, not browser-admin sessions:
+        # even an admin-owned token stays limited to owner + shared endpoints.
         _is_admin = False
-        try:
-            auth_mgr = getattr(request.app.state, "auth_manager", None)
-            if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
-                _is_admin = bool(auth_mgr.is_admin(owner))
-        except Exception:
-            _is_admin = False
+        if not is_api_token:
+            try:
+                auth_mgr = getattr(request.app.state, "auth_manager", None)
+                if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+                    _is_admin = bool(auth_mgr.is_admin(owner))
+            except Exception:
+                _is_admin = False
         now = _time.time()
         # Cache key includes the admin flag so a demotion / promotion doesn't
         # serve the wrong scoped view from cache.
@@ -1661,7 +1665,7 @@ def setup_model_routes(model_discovery):
         # Kick off background refresh to update caches from live endpoints.
         # Page boot can opt out with background=false so opening Odysseus does
         # not start endpoint probes against slow/offline model servers.
-        if background or refresh:
+        if not is_api_token and (background or refresh):
             _refresh_caches_bg(force=refresh)
         return result
 

@@ -5,14 +5,15 @@ Odysseus server offers and pair to it, without duplicating any LLM logic.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/api/companion/ping` | session or token | cheap, auth-validated health check |
-| GET | `/api/companion/info` | session or token | server identity + capability flags |
-| GET | `/api/companion/models` | session or token | the **caller's own** model endpoints |
+| GET | `/api/companion/ping` | session or chat-scoped token | cheap, auth-validated health check |
+| GET | `/api/companion/info` | session or chat-scoped token | server identity + capability flags |
+| GET | `/api/companion/models` | session or chat-scoped token | the **caller's own** model endpoints |
 | GET | `/api/companion/pair` | **admin cookie** | pairing page (a form; never mints) |
 | POST | `/api/companion/pair` | **admin cookie** | mint a one-time pairing token (`?format=json` for an in-app screen) |
 
-`/models` scopes to the caller's real owner plus legacy null-owner shared rows
-(same rule as `owner_filter`) and never returns API-key material.
+Bearer reads use the existing chat scope. `/models` scopes to the caller's real
+owner plus legacy null-owner shared rows (same rule as `owner_filter`) and never
+returns API-key material.
 
 ## Pairing CSRF posture
 
