@@ -487,19 +487,32 @@ def setup_mcp_routes(mcp_manager: McpManager):
             db.close()
 
     @router.get("/oauth/callback")
-    async def oauth_callback(code: str, state: str, request: Request):
+    async def oauth_callback(code: str = "", state: str = "", request: Request = None):
         """Handle OAuth callback. Generic MCP OAuth flows resolve via the
         pending-state registry; Google flows fall through to the legacy path."""
-        require_admin(request)
         from src.mcp_oauth import resolve_pending
-        if resolve_pending(state, code):
+        if state and code and resolve_pending(state, code):
             return HTMLResponse(_oauth_result_page(
                 "Authorization Successful",
                 "The MCP server is connecting. You can close this window and return to Odysseus.",
                 success=True,
             ))
+
         # Legacy Google path: state is the server_id
-        return await _exchange_and_connect(state, code, request)
+        if state:
+            db = SessionLocal()
+            try:
+                srv = db.query(McpServer).filter(McpServer.id == state).first()
+                if srv and srv.oauth_config:
+                    require_admin(request)
+                    return await _exchange_and_connect(state, code, request)
+            finally:
+                db.close()
+
+        return HTMLResponse(_oauth_result_page(
+            "Authorization Expired",
+            "This authorization round has expired. Press Reconnect in Odysseus and try again.",
+        ), status_code=400)
 
     @router.post("/oauth/exchange/{server_id}")
     async def oauth_exchange(server_id: str, request: Request, callback_url: str = Form(...)):
@@ -524,6 +537,19 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "The MCP server is connecting. You can close this window and return to Odysseus.",
                 success=True,
             ))
+
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv:
+                return HTMLResponse(_oauth_result_page("Error", "Server not found."), status_code=404)
+            if not srv.oauth_config:
+                return HTMLResponse(_oauth_result_page(
+                    "Authorization Expired",
+                    "This authorization round has expired. Press Reconnect in Odysseus and try again.",
+                ), status_code=400)
+        finally:
+            db.close()
 
         return await _exchange_and_connect(server_id, code, request)
 
