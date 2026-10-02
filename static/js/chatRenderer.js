@@ -1153,8 +1153,9 @@ export function buildSourcesBox(sources, type, expanded) {
 /**
  * Build the RAG "Sources (N documents)" box — mirrors the live render in
  * chat.js so persisted rag_sources survive a refresh. Items carry a
- * filename, similarity %, and snippet (not URLs, unlike web sources).
- * @param {Array<{filename, similarity, snippet}>} sources
+ * filename, similarity %, snippet, and optional project/org provenance tags
+ * (not URLs, unlike web sources).
+ * @param {Array<{filename, similarity, snippet, project?, org?}>} sources
  */
 export function buildRagSourcesBox(sources) {
   if (!sources || !sources.length) return '';
@@ -1163,8 +1164,13 @@ export function buildRagSourcesBox(sources) {
   for (var i = 0; i < sources.length; i++) {
     var s = sources[i] || {};
     var pct = (typeof s.similarity === 'number') ? (s.similarity * 100).toFixed(1) + '%' : '';
+    // Provenance chips (project/org) render only when tagged (#5666).
+    var tags = '';
+    if (s.project) tags += '<span class="rag-source-tag">' + esc(s.project) + '</span>';
+    if (s.org) tags += '<span class="rag-source-tag">' + esc(s.org) + '</span>';
     items += '<div class="rag-source-item"><strong>' + esc(s.filename || '') + '</strong>'
       + (pct ? ' <span class="rag-similarity">' + pct + '</span>' : '')
+      + tags
       + '<div class="rag-snippet">' + esc(s.snippet || '') + '</div></div>';
   }
   return '<details class="rag-sources"><summary>Sources (' + sources.length + ' documents)</summary>' + items + '</details>';
