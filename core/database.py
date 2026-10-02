@@ -221,6 +221,7 @@ class Session(TimestampMixin, Base):
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
+    tool_profile = Column(String, nullable=True)  # fixed per-session capability profile
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -1259,6 +1260,34 @@ def _migrate_add_mode_column():
         except Exception:
             pass
 
+def _migrate_add_tool_profile_column():
+    """Add tool_profile column to sessions table if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "tool_profile" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN tool_profile TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info(
+                "Migrated: added 'tool_profile' column to sessions"
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"Migration check for tool_profile failed: {e}"
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_folder_column():
     """Add folder column to sessions table if it doesn't exist."""
     import sqlite3
@@ -2116,6 +2145,7 @@ def init_db():
     _migrate_add_folder_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()
+    _migrate_add_tool_profile_column()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_gallery_caption_column()
     _migrate_add_api_token_scopes_column()

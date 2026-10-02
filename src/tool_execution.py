@@ -533,6 +533,127 @@ def _resolve_search_root(raw_path: str) -> str:
         raise ValueError("default agent workspace is not a safe readable data subdirectory")
     return _resolve_tool_path(raw)
 
+
+# ClawCodes is an external MCP server. Generic MCP dispatch normally forwards
+# its arguments unchanged, so native Odysseus workspace confinement does not
+# automatically protect ClawCodes file tools.
+#
+# When an Odysseus workspace is active, confine the filesystem-bearing
+# arguments of the five ClawCodes tools exposed to Friends.
+_CLAWCODES_MCP_SERVER_ID = "5fc31d2c"
+_CLAWCODES_FILE_TOOLS = frozenset(
+    {"Read", "Write", "Edit", "Glob", "Grep"}
+)
+
+
+def _glob_pattern_escapes_workspace(pattern: Any) -> bool:
+    """Return True when a ClawCodes Glob pattern can change search roots.
+
+    Ripgrep treats the pattern as a filter under a fixed base directory, but
+    ClawCodes also has a stdlib fallback that joins base_dir / pattern.
+    Absolute patterns and explicit '..' path segments could therefore escape
+    the bounded workspace in that fallback.
+    """
+    if not isinstance(pattern, str):
+        return False
+
+    value = pattern.strip()
+    if not value:
+        return False
+
+    # Ripgrep supports leading ! for an exclusion glob. Ignore that marker
+    # while checking the actual path expression.
+    while value.startswith("!"):
+        value = value[1:]
+
+    normalized = value.replace("\\", "/")
+
+    if normalized.startswith("/"):
+        return True
+
+    # Reject Windows drive-qualified patterns too, even though Odysseus
+    # currently runs inside a POSIX container.
+    if re.match(r"^[A-Za-z]:/", normalized):
+        return True
+
+    return any(
+        segment == ".."
+        for segment in normalized.split("/")
+    )
+
+
+def _confine_clawcodes_mcp_args(
+    qualified_tool: str,
+    args: Dict,
+) -> tuple[Dict, Optional[str]]:
+    """Apply the active Odysseus workspace to ClawCodes file MCP tools.
+
+    No active workspace means no behavior change.
+
+    Read/Write/Edit:
+        Canonicalize and confine file_path.
+
+    Glob/Grep:
+        Canonicalize an explicit path, or inject the active workspace when
+        path is omitted so ClawCodes cannot fall back to its broader /workspace
+        container cwd.
+
+    Glob additionally rejects absolute or parent-traversing patterns because
+    its stdlib fallback combines base_dir / pattern directly.
+    """
+    workspace = get_active_workspace()
+    if not workspace:
+        return args, None
+
+    parts = qualified_tool.split("__", 2)
+
+    if (
+        len(parts) != 3
+        or parts[0] != "mcp"
+        or parts[1] != _CLAWCODES_MCP_SERVER_ID
+        or parts[2] not in _CLAWCODES_FILE_TOOLS
+    ):
+        return args, None
+
+    tool_name = parts[2]
+    confined = dict(args or {})
+
+    try:
+        if tool_name in {"Read", "Write", "Edit"}:
+            confined["file_path"] = _resolve_tool_path_in_workspace(
+                workspace,
+                confined.get("file_path"),
+            )
+
+        elif tool_name in {"Glob", "Grep"}:
+            if "path" not in confined or confined.get("path") is None:
+                confined["path"] = os.path.realpath(workspace)
+            else:
+                confined["path"] = _resolve_tool_path_in_workspace(
+                    workspace,
+                    confined.get("path"),
+                )
+
+            if (
+                tool_name == "Glob"
+                and _glob_pattern_escapes_workspace(
+                    confined.get("pattern")
+                )
+            ):
+                raise ValueError(
+                    "Glob pattern may not be absolute or contain "
+                    "'..' path traversal while a workspace is active"
+                )
+
+    except ValueError as exc:
+        return {}, (
+            "ClawCodes MCP workspace confinement blocked this tool call: "
+            + str(exc)
+        )
+
+    return confined, None
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -811,6 +932,7 @@ async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
     disabled_tools: Optional[set] = None,
+    allowed_tools: Optional[set] = None,
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
@@ -840,6 +962,29 @@ async def execute_tool_block(
         raise TypeError(
             "security_context must be a ToolRunSecurityContext or "
             "NO_TOOL_SECURITY_CONTEXT"
+        )
+
+    tool_name = getattr(block, "tool_type", None)
+
+    # Immutable positive session capability boundary.
+    # Approval can authorize an action, but cannot expand which tools
+    # this session is permitted to execute.
+    if allowed_tools is not None and tool_name not in allowed_tools:
+        logger.warning(
+            "Session tool profile blocked tool=%r",
+            tool_name,
+        )
+        return (
+            f"{tool_name}: BLOCKED",
+            {
+                "error": (
+                    f"Tool '{tool_name}' is not allowed by this session's "
+                    "fixed tool profile."
+                ),
+                "exit_code": 1,
+                "blocked": True,
+                "policy": "session_tool_profile",
+            },
         )
 
     approval_claimed = False
@@ -1313,10 +1458,23 @@ async def _execute_tool_block_impl(
             if parse_error:
                 result = {"error": parse_error, "exit_code": 1}
             else:
-                if tool.startswith("mcp__email__") and owner:
-                    args = dict(args)
-                    args[_EMAIL_MCP_OWNER_ARG] = owner
-                result = await mcp.call_tool(tool, args)
+                args, workspace_error = _confine_clawcodes_mcp_args(
+                    tool,
+                    args,
+                )
+
+                if workspace_error:
+                    result = {
+                        "error": workspace_error,
+                        "exit_code": 1,
+                        "blocked": True,
+                        "policy": "workspace",
+                    }
+                else:
+                    if tool.startswith("mcp__email__") and owner:
+                        args = dict(args)
+                        args[_EMAIL_MCP_OWNER_ARG] = owner
+                    result = await mcp.call_tool(tool, args)
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
