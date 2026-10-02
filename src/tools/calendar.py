@@ -22,6 +22,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
     from routes.calendar_routes import (
         _ensure_default_calendar,
+        _ensure_positive_duration,
+        _parse_date_only,
         _parse_dt,
         _parse_dt_pair,
         parse_due_for_user,
@@ -330,13 +332,19 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
             all_day = bool(args.get("all_day", False))
             try:
-                dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
+                if all_day:
+                    dtstart, dtstart_is_utc = _parse_date_only(dtstart_str), False
+                else:
+                    dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
             except ValueError as e:
                 return {"error": f"Could not parse dtstart {dtstart_str!r}: {e}", "exit_code": 1}
             dtend_raw = args.get("dtend") or args.get("end") or args.get("end_time")
             if dtend_raw:
                 try:
-                    dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
+                    if all_day:
+                        dtend, dtend_is_utc = _parse_date_only(dtend_raw), False
+                    else:
+                        dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
                     dtstart_is_utc = dtstart_is_utc or dtend_is_utc
                 except ValueError as e:
                     return {"error": f"Could not parse dtend {dtend_raw!r}: {e}", "exit_code": 1}
@@ -427,6 +435,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     "exit_code": 1,
                 }
 
+            if all_day:
+                dtend = _ensure_positive_duration(dtstart, dtend, True)
+
             uid = str(_uuid.uuid4())
             ev = CalendarEvent(
                 uid=uid, calendar_id=cal.id, summary=summary,
@@ -501,20 +512,29 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.description = args["description"]
             if args.get("location") is not None:
                 ev.location = args["location"]
+            # Resolve the effective all-day flag FIRST: how the datetimes
+            # below must be parsed depends on it, and the same payload may
+            # be flipping it.
+            if args.get("all_day") is not None:
+                ev.all_day = args["all_day"]
+            _eff_all_day = bool(ev.all_day)
             if args.get("dtstart") is not None:
                 # Anchor naive/natural-language input to the USER's timezone and
                 # refresh is_utc, exactly like create_event. Parsing with the
                 # raw server-local _parse_dt here (and never touching is_utc)
                 # silently shifted an updated event by the user's UTC offset.
-                _eff_all_day = (
-                    args["all_day"] if args.get("all_day") is not None else ev.all_day
-                )
-                ev.dtstart, _su = _parse_event_dt(args["dtstart"])
-                ev.is_utc = bool(_su and not _eff_all_day)
+                if _eff_all_day:
+                    ev.dtstart, ev.is_utc = _parse_date_only(args["dtstart"]), False
+                else:
+                    ev.dtstart, _su = _parse_event_dt(args["dtstart"])
+                    ev.is_utc = bool(_su)
             if args.get("dtend") is not None:
-                ev.dtend, _eu = _parse_event_dt(args["dtend"])
-            if args.get("all_day") is not None:
-                ev.all_day = args["all_day"]
+                if _eff_all_day:
+                    ev.dtend = _parse_date_only(args["dtend"])
+                else:
+                    ev.dtend, _eu = _parse_event_dt(args["dtend"])
+            if _eff_all_day:
+                ev.dtend = _ensure_positive_duration(ev.dtstart, ev.dtend, True)
             # Tag/category + importance updates (any of these aliases).
             _tag = (args.get("event_type") or args.get("tag")
                     or args.get("category") or args.get("type"))
