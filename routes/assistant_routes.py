@@ -1,10 +1,9 @@
 """Personal assistant routes — resolve the per-user singleton, read/write
 its settings, and list its scheduled check-in tasks.
 
-The personal assistant is just a specially-flagged CrewMember that owns one
-pinned Session and three daily ScheduledTasks ("Morning/Midday/Evening
-check-in"). Everything about it is user-editable: name, personality, model,
-enabled tools, timezone, and the three check-in times/prompts/enabled flags.
+The personal assistant is a specially-flagged CrewMember that owns one pinned
+Session. Users can attach recurring check-in ScheduledTasks explicitly; those
+tasks remain editable here, but assistant creation does not seed them.
 """
 
 import json
@@ -86,10 +85,9 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             raise HTTPException(status_code=401, detail="Not authenticated")
         return owner
 
-    # Synthetic / non-human owners that should NEVER get an assistant +
-    # check-in tasks seeded. Hitting any /assistant route under one of these
-    # used to seed a full CrewMember + Morning/Midday/Evening tasks under that
-    # owner, which then double-fired alongside the real user's check-ins.
+    # Synthetic / non-human owners must never get a personal assistant. Older
+    # versions also seeded check-in tasks for these owners, which could
+    # double-fire alongside tasks belonging to the real user.
     # REQUEST_SENTINEL_OWNERS covers request-only identities; Default/Local is a
     # reserved login name but remains a valid storage owner.
 
@@ -135,7 +133,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
 
     @router.get("/settings")
     async def get_assistant_settings(request: Request):
-        """Return CrewMember fields + the three check-in task rows + task IDs for logs."""
+        """Return CrewMember fields and any user-configured check-in tasks."""
         owner = _owner(request)
         crew = await _get_or_create(owner)
         if not crew:
@@ -156,7 +154,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
 
     @router.patch("/settings")
     async def update_assistant_settings(payload: AssistantSettingsUpdate, request: Request):
-        """Update CrewMember fields and/or check-in tasks in one call."""
+        """Update CrewMember fields and/or existing check-in tasks in one call."""
         owner = _owner(request)
         crew = await _get_or_create(owner)
         if not crew:
