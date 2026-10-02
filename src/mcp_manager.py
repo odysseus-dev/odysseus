@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 import asyncio 
 from typing import Any, Dict, List, Optional, Set, Tuple
 from src.database import McpServer, SessionLocal
@@ -104,6 +105,15 @@ _MCP_READONLY_VERBS = (
 )
 
 
+# A reconnect must not hang a caller forever on a stalled transport, and must
+# not be attempted concurrently for the same server (see _reconnect_any).
+# The bound covers one attempt; a transport may add its own teardown grace.
+_MCP_RECONNECT_TIMEOUT = 30.0
+# After a failed recovery, don't re-attempt on every single tool call: a
+# permanently dead server would make each call pay the full timeout.
+_MCP_RECONNECT_COOLDOWN = 15.0
+
+
 def mcp_tool_is_readonly(tool: Dict) -> bool:
     """Classify an MCP tool as safe (non-mutating) for plan mode.
 
@@ -146,6 +156,23 @@ class McpManager:
         self._stacks: Dict[str, Any] = {}
         # server_id -> background connect task (HTTP transport / OAuth)
         self._connect_tasks: Dict[str, Any] = {}
+        # server_id -> original connect_server kwargs, kept so a user-added
+        # server whose session died can be reconnected (issue #1789)
+        self._connect_params: Dict[str, Dict[str, Any]] = {}
+        # server_id -> session identity, bumped on every connect AND disconnect.
+        # A caller records the epoch it used so a stale in-flight failure can
+        # never act on (or resurrect) a session that has since been replaced,
+        # explicitly disabled, or deleted.
+        self._session_epoch: Dict[str, int] = {}
+        # server_id -> lock, so concurrent failures coalesce onto ONE reconnect
+        # instead of racing to spawn duplicate processes.
+        self._reconnect_locks: Dict[str, asyncio.Lock] = {}
+        # Servers taken down explicitly (disable/delete/shutdown). Auto-recovery
+        # must never resurrect these — including builtins, which carry no
+        # user-supplied connect params to revoke.
+        self._revoked: Set[str] = set()
+        # server_id -> monotonic timestamp of the last failed recovery.
+        self._reconnect_failed_at: Dict[str, float] = {}
         # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
 
@@ -160,6 +187,19 @@ class McpManager:
         url: Optional[str] = None,
     ) -> bool:
         """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
+        self._connect_params[server_id] = {
+            "name": name,
+            "transport": transport,
+            "command": command,
+            "args": list(args or []),
+            "env": dict(env or {}),
+            "url": url,
+        }
+        # An explicit connect request is the un-revoke signal: clear it here,
+        # not on success, so a failed first attempt cannot leave the server
+        # permanently ineligible for automatic recovery.
+        self._revoked.discard(server_id)
+        self._reconnect_failed_at.pop(server_id, None)
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
@@ -171,6 +211,7 @@ class McpManager:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
             if res:
+                self._session_epoch[server_id] = self._session_epoch.get(server_id, 0) + 1
                 self._generation += 1
             return res
         except Exception as e:
@@ -366,6 +407,7 @@ class McpManager:
                     "name": tool.name,
                     "description": tool.description or "",
                     "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    "annotations": getattr(tool, "annotations", None),
                 })
 
             self._sessions[server_id] = session
@@ -375,6 +417,12 @@ class McpManager:
                 "status": "connected", "name": name, "transport": "http",
                 "tool_count": len(tools),
             }
+            # This can complete long after connect_server returned (background
+            # OAuth), so do the session accounting here too — otherwise the
+            # epoch guard would not see this session at all.
+            self._session_epoch[server_id] = self._session_epoch.get(server_id, 0) + 1
+            self._revoked.discard(server_id)
+            self._reconnect_failed_at.pop(server_id, None)
             clear_auth_url(server_id)
             # Tools changed (this can complete after connect_server already
             # returned, via the background OAuth flow), so bump the generation
@@ -391,8 +439,14 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
             return False
 
-    async def disconnect_server(self, server_id: str):
-        """Disconnect from an MCP server."""
+    async def disconnect_server(self, server_id: str, *, revoke_params: bool = True):
+        """Disconnect from an MCP server.
+
+        `revoke_params=True` (the default, i.e. an explicit disable/delete)
+        also drops the cached connect parameters so a late in-flight call
+        cannot silently respawn the server from that snapshot. Internal
+        recycling (reconnect) passes False to keep the config for the retry.
+        """
         # Cancel any in-flight HTTP/OAuth background connect so it stops
         # publishing status for a server that may be getting deleted.
         task = self._connect_tasks.pop(server_id, None)
@@ -414,6 +468,12 @@ class McpManager:
         self._sessions.pop(server_id, None)
         self._tools.pop(server_id, None)
         self._connections.pop(server_id, None)
+        if revoke_params:
+            self._connect_params.pop(server_id, None)
+            self._revoked.add(server_id)
+        # Invalidate the session identity either way: a caller holding the old
+        # epoch must not treat the next session as the one it was using.
+        self._session_epoch[server_id] = self._session_epoch.get(server_id, 0) + 1
         self._generation += 1
         logger.info(f"MCP server disconnected: {server_id}")
 
@@ -476,35 +536,115 @@ class McpManager:
         server_id = parts[1]
         tool_name = parts[2]
 
+        # Record which session generation this call uses, so a failure can
+        # never act on a session that was replaced or revoked meanwhile.
+        epoch = self._session_epoch.get(server_id, 0)
+        # Snapshot the schema now: a reconnect clears the live tool table, and
+        # replay safety must not fall back to "unknown tool" because of that.
+        tool_schema = self._find_tool_schema(server_id, tool_name)
         session = self._sessions.get(server_id)
         if not session:
-            return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
+            # An earlier reconnect may have failed after tearing the session
+            # down. Retry once from the cached config so one transient failure
+            # doesn't strand the server until a manual reconnect (#1789).
+            # expected_epoch matters here too: without it this path skips the
+            # single-flight check, and concurrent callers each run a full
+            # reconnect that tears down the session a peer just restored.
+            # Only for servers we actually know: the tool name is model-supplied,
+            # so an invented id must not allocate recovery state.
+            known = self.is_builtin(server_id) or server_id in self._connect_params
+            if known and await self._reconnect_any(server_id, expected_epoch=epoch):
+                epoch = self._session_epoch.get(server_id, 0)
+                session = self._sessions.get(server_id)
+                # The tool table was empty before the reconnect, so re-resolve
+                # the schema — otherwise an annotated read-only tool would be
+                # reported as having an unknown outcome.
+                if tool_schema is None:
+                    tool_schema = self._find_tool_schema(server_id, tool_name)
+            if not session:
+                return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
 
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
-            # Auto-reconnect for builtin servers whose subprocess may have died
-            if self.is_builtin(server_id):
-                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
-                reconnected = await self._reconnect_builtin(server_id)
-                if reconnected:
-                    session = self._sessions.get(server_id)
-                    if session:
-                        try:
-                            result = await self._do_call(session, tool_name, arguments)
-                        except Exception as e2:
-                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
-                            return {"error": str(e2), "exit_code": 1}
-                    else:
-                        return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
-                else:
-                    logger.error(f"MCP reconnect failed for {server_id}")
-                    return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
-            else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+            # The session may have died — a builtin subprocess crash, or a
+            # stdio session whose creating asyncio task has exited (#1789).
+            # Reconnect so later calls succeed, but only REPLAY this call when
+            # that cannot duplicate a side effect: a transport error can arrive
+            # after the server already committed the operation.
+            logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
+            replay_safe = self._replay_is_safe(tool_schema)
+            if not await self._reconnect_any(server_id, expected_epoch=epoch):
+                logger.error(f"MCP reconnect failed for {server_id}")
+                return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
+            session = self._sessions.get(server_id)
+            if not session:
+                return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
+            if not replay_safe:
+                logger.warning(
+                    f"Not replaying {qualified_name} after reconnect: the tool is not "
+                    f"declared read-only/idempotent, so its outcome is indeterminate"
+                )
+                return {
+                    "error": (
+                        f"MCP call '{tool_name}' failed in flight and its outcome is UNKNOWN — "
+                        "the server may have applied it before the connection dropped. The "
+                        "session was reconnected, but the call was not replayed automatically "
+                        "because the tool is not declared read-only or idempotent. Check the "
+                        "server's state before retrying."
+                    ),
+                    "exit_code": 1,
+                    "indeterminate": True,
+                }
+            try:
+                result = await self._do_call(session, tool_name, arguments)
+            except Exception as e2:
+                logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
+                return {"error": str(e2), "exit_code": 1}
 
         return result
+
+    def _find_tool_schema(self, server_id: str, tool_name: str) -> Optional[Dict]:
+        """Return the advertised schema for a tool, or None if unknown."""
+        for tool in self._tools.get(server_id) or []:
+            if (tool.get("name") or "") == tool_name:
+                return tool
+        return None
+
+    @staticmethod
+    def _replay_is_safe(tool: Optional[Dict]) -> bool:
+        """May a failed call be transparently replayed after a reconnect?
+
+        Only when the SERVER ITSELF declares a read-only or idempotent
+        contract (MCP `readOnlyHint` / `idempotentHint`). A transport error can
+        arrive AFTER the server committed the write, so replaying anything else
+        can execute a user-visible action (send, create, delete, ...) twice
+        while the caller sees only one result.
+
+        The name-verb heuristic used for plan mode is deliberately NOT accepted
+        here: names like `get_or_create_issue` read as "get" but mutate, and a
+        guess is not a contract. Fails closed — unknown or unannotated tools
+        are never replayed.
+        """
+        if not tool:
+            return False
+        ann = tool.get("annotations")
+        if ann is None:
+            return False
+        if isinstance(ann, dict):
+            read_hint = ann.get("readOnlyHint")
+            idempotent = ann.get("idempotentHint")
+            destructive = ann.get("destructiveHint")
+        else:
+            read_hint = getattr(ann, "readOnlyHint", None)
+            idempotent = getattr(ann, "idempotentHint", None)
+            destructive = getattr(ann, "destructiveHint", None)
+        # Contradictory annotations (read-only AND destructive) are malformed —
+        # fail closed unless the server also promises idempotency, which by
+        # definition makes a repeat harmless.
+        if destructive is True and idempotent is not True:
+            return False
+        return read_hint is True or idempotent is True
 
     async def _do_call(self, session, tool_name: str, arguments: Dict) -> Dict:
         """Execute a single MCP tool call and return result dict."""
@@ -536,6 +676,79 @@ class McpManager:
             result_dict["images"] = images
         return result_dict
 
+    async def _reconnect_any(self, server_id: str, *, expected_epoch: Optional[int] = None) -> bool:
+        """Tear down and reconnect any MCP server, builtin or user-added.
+
+        Serialized per server: concurrent failures coalesce onto ONE recovery
+        instead of racing to spawn duplicate processes and overwrite the shared
+        session/cleanup slots. `expected_epoch` pins the recovery to the
+        session the caller actually used — if it changed while we waited for
+        the lock (another caller recovered, or an admin disabled/deleted the
+        server), we adopt that outcome instead of reconnecting on top of it.
+
+        One attempt is bounded by _MCP_RECONNECT_TIMEOUT (plus the transport's
+        own teardown grace), and a failure starts a short cooldown so a dead
+        server doesn't make every later tool call pay that timeout.
+        """
+        lock = self._reconnect_locks.setdefault(server_id, asyncio.Lock())
+        async with lock:
+            if expected_epoch is not None and self._session_epoch.get(server_id, 0) != expected_epoch:
+                # Someone else already resolved this server's fate while we
+                # waited for the lock — adopt their outcome instead of
+                # reconnecting on top of it.
+                return self._sessions.get(server_id) is not None
+            last_failure = self._reconnect_failed_at.get(server_id)
+            if last_failure is not None and (time.monotonic() - last_failure) < _MCP_RECONNECT_COOLDOWN:
+                # A permanently dead server would otherwise make every tool
+                # call pay the full reconnect timeout.
+                logger.debug(f"Skipping MCP reconnect for {server_id}: in cooldown")
+                return False
+            try:
+                # asyncio.timeout (not wait_for): wait_for runs the coroutine in
+                # a NEW task, which would close the transport's anyio cancel
+                # scope from a different task than the one that entered it —
+                # the very failure mode this reconnect exists to recover from.
+                async with asyncio.timeout(_MCP_RECONNECT_TIMEOUT):
+                    ok = await self._do_reconnect(server_id)
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"MCP reconnect for {server_id} timed out after "
+                    f"{_MCP_RECONNECT_TIMEOUT:.0f}s; closing partial connection"
+                )
+                # Close whatever the cancelled connect left behind, but keep
+                # the config so a later call can retry.
+                await self.disconnect_server(server_id, revoke_params=False)
+                ok = False
+            if not ok:
+                self._reconnect_failed_at[server_id] = time.monotonic()
+            return ok
+
+    async def _do_reconnect(self, server_id: str) -> bool:
+        """One reconnect attempt. Callers hold the per-server lock."""
+        if server_id in self._revoked:
+            # Explicitly disabled, deleted, or shut down: an in-flight call
+            # that failed afterwards must not respawn it. Applies to builtins
+            # too, which have no user-supplied params to revoke.
+            logger.info(f"Not reconnecting MCP server {server_id}: explicitly disconnected")
+            return False
+        if self.is_builtin(server_id):
+            return await self._reconnect_builtin(server_id)
+        params = self._connect_params.get(server_id)
+        if not params:
+            # Never connected, or explicitly disabled/deleted (params revoked)
+            # — do not resurrect a server from a stale snapshot.
+            logger.error(f"No stored connect params to reconnect MCP server {server_id}")
+            return False
+        await self.disconnect_server(server_id, revoke_params=False)
+        try:
+            ok = await self.connect_server(server_id=server_id, **params)
+            if ok:
+                logger.info(f"Reconnected user MCP server: {params.get('name', server_id)}")
+            return ok
+        except Exception as e:
+            logger.error(f"Failed to reconnect MCP server {server_id}: {e}")
+            return False
+
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
         import sys
@@ -548,8 +761,8 @@ class McpManager:
         base_dir = get_app_root()
         script_path = os.path.join(base_dir, script_rel)
 
-        # Clean up old connection
-        await self.disconnect_server(server_id)
+        # Clean up old connection (internal recycle — keep the config)
+        await self.disconnect_server(server_id, revoke_params=False)
 
         try:
             ok = await self.connect_server(
