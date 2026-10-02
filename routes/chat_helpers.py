@@ -260,6 +260,10 @@ async def auto_name_session(session_manager, sess):
         # Find first user message
         first_msg = ""
         for msg in sess.history:
+            # Hidden user-role messages are seeded context (e.g. a research
+            # spin-off report), not something the user typed.
+            if (getattr(msg, "metadata", None) or {}).get("hidden"):
+                continue
             if msg.role == "user":
                 content = msg.content
                 if isinstance(content, list):

@@ -238,11 +238,17 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
 
     # Separate system messages from conversation.
     # Messages marked _protected (e.g. active document) are never trimmed.
+    # A research-spinoff report seeded as guarded user-role data (metadata
+    # research_spinoff_from on a non-system message) is the Discuss chat's
+    # whole knowledge base, so it is protected too — the system-role primer
+    # is handled by the essential_system logic below.
     system_msgs = []
     protected_msgs = []
     convo_msgs = []
     for msg in messages:
         if msg.get("_protected"):
+            protected_msgs.append(msg)
+        elif msg.get("role") != "system" and (msg.get("metadata") or {}).get("research_spinoff_from"):
             protected_msgs.append(msg)
         elif msg.get("role") == "system":
             system_msgs.append(msg)
