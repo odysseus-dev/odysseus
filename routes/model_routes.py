@@ -30,8 +30,42 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, effective_user, owner_filter
+from src.model_control_capabilities import (
+    allowed_control_values,
+    parse_catalog_records,
+    record_for_model,
+    serialize_catalog_records,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _set_cached_model_catalog(endpoint: ModelEndpoint, models) -> None:
+    """Persist model IDs and any canonical records carried by the catalog."""
+    endpoint.cached_models = json.dumps(list(models))
+    serialized = serialize_catalog_records(models)
+    endpoint.cached_model_capabilities = serialized
+
+
+def _visible_capability_records(endpoint: ModelEndpoint, model_ids: list[str]) -> list[dict[str, Any]]:
+    visible = set(model_ids)
+    return [
+        record
+        for record in parse_catalog_records(getattr(endpoint, "cached_model_capabilities", None))
+        if record.get("model_id") in visible
+    ]
+
+
+def _endpoint_probe_target(endpoint: ModelEndpoint) -> tuple[str, Optional[str]]:
+    """Resolve refreshable provider credentials before an explicit catalog probe."""
+    base = _normalize_base(getattr(endpoint, "base_url", "") or "")
+    api_key = getattr(endpoint, "api_key", None)
+    if getattr(endpoint, "provider_auth_id", None):
+        from src.endpoint_resolver import resolve_endpoint_runtime
+
+        base, api_key = resolve_endpoint_runtime(endpoint, owner=getattr(endpoint, "owner", None))
+        base = _normalize_base(base)
+    return base, api_key
 
 _SPEECH_ENDPOINT_SETTINGS = (
     ("tts_provider", "tts_model", "tts-1", "Text to Speech"),
@@ -1423,13 +1457,19 @@ def setup_model_routes(model_discovery):
         category = _classify_endpoint(base, kind)
         mode = _endpoint_refresh_mode(ep, kind)
         cached = _cached_model_ids(ep)
-        key = _refresh_key(base, getattr(ep, "api_key", None))
+        api_key = getattr(ep, "api_key", None)
+        if getattr(ep, "provider_auth_id", None) and (force or mode not in ("manual", "disabled")):
+            try:
+                base, api_key = _endpoint_probe_target(ep)
+            except Exception as exc:
+                logger.warning("Could not resolve provider credentials for endpoint %s refresh: %s", getattr(ep, "id", ""), exc)
+        key = _refresh_key(base, api_key)
         state = _refresh_state.get(key, {})
 
         info = {
             "id": getattr(ep, "id", ""),
             "base": base,
-            "api_key": getattr(ep, "api_key", None),
+            "api_key": api_key,
             "kind": kind,
             "category": category,
             "mode": mode,
@@ -1514,7 +1554,7 @@ def setup_model_routes(model_discovery):
                                     for ep_id in endpoint_ids:
                                         ep_obj = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                                         if ep_obj:
-                                            ep_obj.cached_models = json.dumps(ids)
+                                            _set_cached_model_catalog(ep_obj, ids)
                                             changed = True
                                     st["last_success"] = _time.time()
                                     st["fail_count"] = 0
@@ -1581,6 +1621,7 @@ def setup_model_routes(model_discovery):
                     if m not in curated:
                         curated.append(m)
                 extra = [m for m in extra if m not in pinned]
+                visible_model_ids = [*curated, *extra]
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -1594,6 +1635,7 @@ def setup_model_routes(model_discovery):
                     "category": category,
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
+                    "model_capabilities": _visible_capability_records(ep, visible_model_ids),
                 })
             else:
                 # Endpoint unreachable but still show it greyed out
@@ -1610,6 +1652,7 @@ def setup_model_routes(model_discovery):
                     "category": category,
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
+                    "model_capabilities": [],
                     "offline": True,
                 })
 
@@ -1851,11 +1894,16 @@ def setup_model_routes(model_discovery):
             # Detach from session
             ep_data = []
             for ep in endpoints:
+                try:
+                    probe_base, probe_key = _endpoint_probe_target(ep)
+                except Exception as exc:
+                    logger.warning("Could not resolve provider credentials for endpoint %s probe: %s", ep.id, exc)
+                    probe_base, probe_key = _normalize_base(ep.base_url), None
                 ep_data.append({
                     "id": ep.id,
                     "name": ep.name,
-                    "base_url": ep.base_url,
-                    "api_key": ep.api_key,
+                    "base_url": probe_base,
+                    "api_key": probe_key,
                 })
         finally:
             db.close()
@@ -1877,7 +1925,7 @@ def setup_model_routes(model_discovery):
                     try:
                         ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep["id"]).first()
                         if ep_obj:
-                            ep_obj.cached_models = json.dumps(all_models)
+                            _set_cached_model_catalog(ep_obj, all_models)
                             db2.commit()
                     finally:
                         db2.close()
@@ -1964,6 +2012,7 @@ def setup_model_routes(model_discovery):
                     "api_key_fingerprint": _api_key_fingerprint(r.api_key),
                     "is_enabled": r.is_enabled,
                     "models": visible,
+                    "model_capabilities": _visible_capability_records(r, visible),
                     "model_count": model_inventory_count,
                     "picker_requires_pinning": picker_requires_pinning,
                     "pinned_models": pinned,
@@ -2106,7 +2155,7 @@ def setup_model_routes(model_discovery):
                         timeout=_explicit_model_list_timeout(base_url, existing_kind_for_probe, refresh_timeout),
                     )
                     if probed_models:
-                        existing.cached_models = json.dumps(probed_models)
+                        _set_cached_model_catalog(existing, probed_models)
                         changed = True
                 if changed:
                     _db_dedup.commit()
@@ -2168,6 +2217,7 @@ def setup_model_routes(model_discovery):
                 model_refresh_interval=refresh_interval,
                 model_refresh_timeout=refresh_timeout,
                 cached_models=json.dumps(model_ids) if model_ids else None,
+                cached_model_capabilities=serialize_catalog_records(model_ids) if model_ids else None,
                 pinned_models=json.dumps(_pinned) if _pinned else None,
                 supports_tools=_st,
                 owner=_owner_val,
@@ -2263,7 +2313,8 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            probe_base, probe_key = _endpoint_probe_target(ep)
+            ep_data = {"id": ep.id, "name": ep.name, "base_url": probe_base, "api_key": probe_key}
         finally:
             db.close()
 
@@ -2294,7 +2345,7 @@ def setup_model_routes(model_discovery):
                 if ep_obj:
                     ep_obj.hidden_models = json.dumps(failed) if failed else None
                     if all_models:
-                        ep_obj.cached_models = json.dumps(all_models)
+                        _set_cached_model_catalog(ep_obj, all_models)
                     db2.commit()
             finally:
                 db2.close()
@@ -2328,13 +2379,14 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probe_base, probe_key = _endpoint_probe_target(ep)
+                    probed = _probe_endpoint(probe_base, probe_key, timeout=timeout)
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
                 if probed:
                     all_models = probed
-                    ep.cached_models = json.dumps(all_models)
+                    _set_cached_model_catalog(ep, all_models)
                     db.commit()
                     _invalidate_models_cache()
                     response.headers["X-Model-Refresh-Status"] = "refreshed"
@@ -2442,6 +2494,8 @@ def setup_model_routes(model_discovery):
             _user_prefs = _load_for_user(_user) or {}
             ep_id = (_user_prefs.get("default_endpoint_id") or "").strip()
             model = (_user_prefs.get("default_model") or "").strip()
+            default_reasoning_effort = (_user_prefs.get("default_reasoning_effort") or "").strip()
+            default_verbosity = (_user_prefs.get("default_verbosity") or "").strip()
             # If user has no personal default, fall back to global default
             # But only based on the "share_defaults_with_users" flag
             # (only if share_defaults_with_users is enabled)
@@ -2450,9 +2504,36 @@ def setup_model_routes(model_discovery):
                     ep_id = settings.get("default_endpoint_id", "")
                 if not model:
                     model = settings.get("default_model", "")
+                if not default_reasoning_effort:
+                    default_reasoning_effort = (settings.get("default_reasoning_effort") or "").strip()
+                if not default_verbosity:
+                    default_verbosity = (settings.get("default_verbosity") or "").strip()
         else:
             ep_id = settings.get("default_endpoint_id", "")
             model = settings.get("default_model", "")
+            default_reasoning_effort = (settings.get("default_reasoning_effort") or "").strip()
+            default_verbosity = (settings.get("default_verbosity") or "").strip()
+
+        def _clean_default_reasoning(value: str) -> str:
+            cleaned = (value or "").strip().lower().replace("-", "_")
+            if cleaned in {"", "auto", "default"}:
+                return ""
+            if cleaned == "none":
+                return "off"
+            if cleaned == "x_high":
+                cleaned = "xhigh"
+            return cleaned if re.fullmatch(r"[a-z][a-z0-9_]{0,31}", cleaned) else ""
+
+        def _clean_default_verbosity(value: str) -> str:
+            cleaned = (value or "").strip().lower()
+            if cleaned in {"", "auto", "default"}:
+                return ""
+            return cleaned if cleaned in {"low", "medium", "high"} else ""
+
+        default_controls = {
+            "default_reasoning_effort": _clean_default_reasoning(default_reasoning_effort),
+            "default_verbosity": _clean_default_verbosity(default_verbosity),
+        }
         db = SessionLocal()
         try:
             ep = None
@@ -2478,7 +2559,7 @@ def setup_model_routes(model_discovery):
                     _last_q = owner_filter(_last_q, ModelEndpoint, _user, include_shared=False)
                 ep = _last_q.first()
             if not ep:
-                return {"endpoint_id": "", "endpoint_url": "", "model": ""}
+                return {"endpoint_id": "", "endpoint_url": "", "model": "", "default_reasoning_effort": "", "default_verbosity": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
             if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
@@ -2488,7 +2569,14 @@ def setup_model_routes(model_discovery):
                         model = visible[0]
                 except Exception:
                     pass
-            return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
+            record = record_for_model(getattr(ep, "cached_model_capabilities", None), model)
+            reasoning_value = default_controls["default_reasoning_effort"]
+            provider_reasoning = "none" if reasoning_value == "off" else reasoning_value
+            if provider_reasoning not in allowed_control_values(record, "reasoning_effort"):
+                default_controls["default_reasoning_effort"] = ""
+            if default_controls["default_verbosity"] not in allowed_control_values(record, "verbosity"):
+                default_controls["default_verbosity"] = ""
+            return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model, **default_controls}
         finally:
             db.close()
 

@@ -16,12 +16,13 @@ with preserve_import_state("core.database", "src.database", "routes.model_routes
 
 class _FakeEndpoint:
     """Minimal fake endpoint for testing"""
-    def __init__(self, id, base_url, is_enabled=True, owner=None):
+    def __init__(self, id, base_url, is_enabled=True, owner=None, cached_model_capabilities=None):
         self.id = id
         self.base_url = base_url
         self.is_enabled = is_enabled
         self.owner = owner
         self.cached_models = None
+        self.cached_model_capabilities = cached_model_capabilities
         self.hidden_models = None
         self.pinned_models = None
 
@@ -175,6 +176,8 @@ def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
         "default_model_fallbacks": [
             {"endpoint_id": "fallback-ep", "model": "fallback-model"}
         ],
+        "default_reasoning_effort": "ultra",
+        "default_verbosity": "high",
         "share_defaults_with_users": True,
     })
     monkeypatch.setattr(model_routes, "_load_settings", lambda: guarded_settings)
@@ -186,6 +189,7 @@ def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
         id="global-ep-123",
         base_url="http://global-endpoint:8000/v1",
         is_enabled=True,
+        cached_model_capabilities='[{"model_id":"qwen-3.6","deterministic_controls":[{"control":"reasoning_effort","status":"claimed","evidence":{"allowed_values":["ultra"]}},{"control":"verbosity","status":"claimed","evidence":{"allowed_values":["high"]}}]}]',
     )
     fake_db = _make_db_session([endpoint], user="regular_user")
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: fake_db)
@@ -200,3 +204,5 @@ def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
 
     assert test_data["endpoint_id"] == "global-ep-123"
     assert test_data["model"] == "qwen-3.6"
+    assert test_data["default_reasoning_effort"] == "ultra"
+    assert test_data["default_verbosity"] == "high"

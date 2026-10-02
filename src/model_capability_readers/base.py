@@ -19,6 +19,7 @@ from src import model_capabilities as mc
 
 VENDOR_GENERIC_OPENAI = "generic_openai"
 VENDOR_OPENAI = "openai"
+VENDOR_CHATGPT_SUBSCRIPTION = "chatgpt_subscription"
 VENDOR_OPENROUTER = "openrouter"
 VENDOR_GOOGLE = "google"
 VENDOR_ANTHROPIC = "anthropic"
@@ -101,6 +102,11 @@ def as_list(value: Any) -> list[Any]:
 
 def compact_str(value: Any) -> str:
     return str(value or "").strip()
+
+
+def identity_str(value: Any) -> str:
+    """Return a provider identity only when the payload supplied a string."""
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _identity_part(value: Any) -> str:
@@ -272,6 +278,7 @@ def detect_vendor(base_url: Any = "", endpoint_kind: Any = "") -> str:
     kind = compact_str(endpoint_kind).lower().replace("-", "_")
     kind_map = {
         "openai": VENDOR_OPENAI,
+        "chatgpt_subscription": VENDOR_CHATGPT_SUBSCRIPTION,
         "openrouter": VENDOR_OPENROUTER,
         "google": VENDOR_GOOGLE,
         "gemini": VENDOR_GOOGLE,

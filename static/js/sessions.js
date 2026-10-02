@@ -1814,7 +1814,11 @@ export async function loadSessions() {
         try {
           const dc = await _getPreferredDefaultChat();
           if (dc && dc.endpoint_url && dc.model) {
-              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+                source: 'default',
+                reasoning_effort: dc.default_reasoning_effort || '',
+                verbosity: dc.default_verbosity || '',
+              });
           }
         } catch (_) { /* no default model — that's fine, user can /setup */ }
         _autoCreateInProgress = false;
@@ -1877,6 +1881,9 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
+    if (window.odysseusModelControls && window.odysseusModelControls.applySession) {
+      window.odysseusModelControls.applySession(meta || {});
+    }
 
     // Detach any in-flight stream to background instead of aborting
     try {
@@ -2168,7 +2175,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
 }
 
 // Pending session — stored locally until the first message is sent
-let _pendingChat = null; // { url, modelId, endpointId }
+let _pendingChat = null; // { url, modelId, endpointId, reasoning_effort, verbosity }
 let _pendingMaterializePromise = null;
 
 async function _getPreferredDefaultChat() {
@@ -2181,13 +2188,25 @@ async function _getPreferredDefaultChat() {
       dc = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
     } catch (_) {}
   }
-  if (dc && dc.endpoint_url && dc.model) return dc;
+  if (dc && dc.endpoint_url && dc.model) {
+    try {
+      window.__odysseusModelControlDefaults = {
+        reasoning_effort: dc.default_reasoning_effort || 'auto',
+        verbosity: dc.default_verbosity || 'auto',
+      };
+    } catch (_) {}
+    return dc;
+  }
   try {
     const dcRes = await fetch(`${API_BASE}/api/default-chat`);
     dc = await dcRes.json();
     if (dc && dc.endpoint_url && dc.model) {
       try {
         window.__odysseusDefaultChat = dc;
+        window.__odysseusModelControlDefaults = {
+          reasoning_effort: dc.default_reasoning_effort || 'auto',
+          verbosity: dc.default_verbosity || 'auto',
+        };
         localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
       } catch (_) {}
       return dc;
@@ -2196,8 +2215,56 @@ async function _getPreferredDefaultChat() {
   return null;
 }
 
+function _normalizePendingReasoning(value) {
+  let v = String(value || '').trim().toLowerCase().replace(/-/g, '_');
+  if (v === 'x_high') v = 'xhigh';
+  if (v === 'none') v = 'off';
+  return /^[a-z][a-z0-9_]{0,31}$/.test(v) && !['auto', 'default'].includes(v) ? v : '';
+}
+
+function _normalizePendingVerbosity(value) {
+  const v = String(value || '').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(v) ? v : '';
+}
+
+function _resolveInitialModelControls(modelControls) {
+  const defaults = (window.odysseusModelControls && window.odysseusModelControls.getDefaults)
+    ? window.odysseusModelControls.getDefaults()
+    : (window.__odysseusModelControlDefaults || {});
+  const source = modelControls || defaults || {};
+  return {
+    reasoning_effort: _normalizePendingReasoning(source.reasoning_effort || source.default_reasoning_effort || ''),
+    verbosity: _normalizePendingVerbosity(source.verbosity || source.default_verbosity || ''),
+  };
+}
+
+function _hasExplicitModelControls(modelControls) {
+  if (!modelControls) return false;
+  return Object.prototype.hasOwnProperty.call(modelControls, 'reasoning_effort')
+    || Object.prototype.hasOwnProperty.call(modelControls, 'default_reasoning_effort')
+    || Object.prototype.hasOwnProperty.call(modelControls, 'verbosity')
+    || Object.prototype.hasOwnProperty.call(modelControls, 'default_verbosity');
+}
+
+function _defaultsForPendingModel(pending) {
+  if (
+    window.odysseusModelControls
+    && typeof window.odysseusModelControls.resolveDefaultsForContext === 'function'
+  ) {
+    return window.odysseusModelControls.resolveDefaultsForContext({
+      model: (pending && pending.modelId) || '',
+      endpointUrl: (pending && pending.url) || '',
+    });
+  }
+  return _resolveInitialModelControls(null);
+}
+
 export function createDirectChat(url, modelId, endpointId, opts = {}) {
   const incomingSource = opts.source || 'manual';
+  const defaults = _defaultsForPendingModel({ url, modelId, endpointId });
+  const initialControls = _resolveInitialModelControls(
+    _hasExplicitModelControls(opts) ? opts : defaults,
+  );
   if (
     _pendingChat &&
     _pendingChat.modelId &&
@@ -2220,8 +2287,23 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
-  _pendingChat = { url, modelId, endpointId, source: incomingSource };
+  _pendingChat = {
+    url,
+    modelId,
+    endpointId,
+    source: incomingSource,
+    reasoning_effort: initialControls.reasoning_effort || null,
+    verbosity: initialControls.verbosity || null,
+  };
   _pendingMaterializePromise = null;
+  if (window.odysseusModelControls && window.odysseusModelControls.applySession) {
+    window.odysseusModelControls.applySession({
+      model: modelId || '',
+      endpoint_url: url || '',
+      reasoning_effort: initialControls.reasoning_effort || null,
+      verbosity: initialControls.verbosity || null,
+    });
+  }
   _skipAutoSelect = true;
   _suppressNextSessionLoading = true;
   currentSessionId = null;
@@ -2292,6 +2374,19 @@ export async function materializePendingSession() {
     }
     if (pending.endpointId) {
       fd.append('endpoint_id', pending.endpointId);
+    }
+    const modelControls = {
+      ...Storage.loadToggleState(),
+      reasoning_effort: pending.reasoning_effort || Storage.loadToggleState().reasoning_effort || 'auto',
+      verbosity: pending.verbosity || Storage.loadToggleState().verbosity || 'auto',
+    };
+    const reasoningEffort = String(modelControls.reasoning_effort || 'auto').toLowerCase();
+    const verbosity = String(modelControls.verbosity || 'auto').toLowerCase();
+    if (reasoningEffort && reasoningEffort !== 'auto') {
+      fd.append('reasoning_effort', reasoningEffort);
+    }
+    if (verbosity && verbosity !== 'auto') {
+      fd.append('verbosity', verbosity);
     }
 
     let res;
@@ -2795,7 +2890,20 @@ function _initAllDropdowns() {
     getCurrentSessionId: () => currentSessionId,
     getSessions: () => sessions,
     getPendingChat: () => _pendingChat,
-    setPendingChat: (v) => { _pendingChat = v; },
+    setPendingChat: (v) => {
+      const controls = _hasExplicitModelControls(v)
+        ? _resolveInitialModelControls(v)
+        : _resolveInitialModelControls(_defaultsForPendingModel(v));
+      _pendingChat = v ? { ...v, ...controls } : v;
+      if (_pendingChat && window.odysseusModelControls && window.odysseusModelControls.applySession) {
+        window.odysseusModelControls.applySession({
+          model: _pendingChat.modelId || '',
+          endpoint_url: _pendingChat.url || '',
+          reasoning_effort: _pendingChat.reasoning_effort || null,
+          verbosity: _pendingChat.verbosity || null,
+        });
+      }
+    },
     createDirectChat,
   });
   _initDropdownDismiss();

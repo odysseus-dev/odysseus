@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
+from src.model_capability_readers import chatgpt_subscription, generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
 from src.model_capability_readers.base import (
     ModelCapabilityRecord,
+    VENDOR_CHATGPT_SUBSCRIPTION,
     VENDOR_ANTHROPIC,
     VENDOR_GENERIC_OPENAI,
     VENDOR_GOOGLE,
@@ -27,6 +28,7 @@ from src.model_capability_readers.base import (
 
 READER_MODULES = {
     VENDOR_GENERIC_OPENAI: generic_openai,
+    VENDOR_CHATGPT_SUBSCRIPTION: chatgpt_subscription,
     VENDOR_OPENAI: openai,
     VENDOR_OPENROUTER: openrouter,
     VENDOR_GOOGLE: google,
@@ -77,6 +79,7 @@ __all__ = [
     "PLACEHOLDER_VENDOR_IDS",
     "READER_MODULES",
     "VENDOR_ANTHROPIC",
+    "VENDOR_CHATGPT_SUBSCRIPTION",
     "VENDOR_GENERIC_OPENAI",
     "VENDOR_GOOGLE",
     "VENDOR_HUGGINGFACE",

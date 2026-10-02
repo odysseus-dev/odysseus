@@ -89,6 +89,8 @@ def _install_model_route_import_stubs(monkeypatch):
     db_mod.GalleryImage = MagicMock()
     middleware_mod = types.ModuleType("core.middleware")
     middleware_mod.require_admin = lambda request: None
+    log_safety_mod = types.ModuleType("core.log_safety")
+    log_safety_mod.redact_url = lambda url: url
     multipart_mod = types.ModuleType("python_multipart")
     multipart_mod.__version__ = "0.0.13"
     models_mod = types.ModuleType("core.models")
@@ -104,6 +106,7 @@ def _install_model_route_import_stubs(monkeypatch):
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", db_mod)
     monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
+    monkeypatch.setitem(sys.modules, "core.log_safety", log_safety_mod)
     monkeypatch.setitem(sys.modules, "python_multipart", multipart_mod)
     monkeypatch.setitem(sys.modules, "core.models", models_mod)
     monkeypatch.setitem(sys.modules, "core.exceptions", exceptions_mod)
@@ -210,6 +213,8 @@ def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypa
         "endpoint_id": "",
         "endpoint_url": "",
         "model": "",
+        "default_reasoning_effort": "",
+        "default_verbosity": "",
     }
 
 
@@ -252,6 +257,38 @@ def test_default_chat_uses_owned_endpoint_as_regular_user_last_resort(monkeypatc
         "endpoint_id": "owned",
         "endpoint_url": "http://localhost:11434/chat/completions",
         "model": "owned-model",
+        "default_reasoning_effort": "",
+        "default_verbosity": "",
+    }
+
+
+def test_default_chat_drops_controls_without_endpoint_capability_evidence(monkeypatch):
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {
+        "default_endpoint_id": "",
+        "default_model": "",
+        "default_model_fallbacks": [],
+        "default_reasoning_effort": "ultra",
+        "default_verbosity": "high",
+    })
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    assert _default_chat_endpoint()(request) == {
+        "endpoint_id": "",
+        "endpoint_url": "",
+        "model": "",
+        "default_reasoning_effort": "",
+        "default_verbosity": "",
     }
 
 

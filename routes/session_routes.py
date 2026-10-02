@@ -47,6 +47,39 @@ def _public_model(name: str, model: str) -> str:
     return model
 
 
+_SESSION_VERBOSITY_VALUES = {"auto", "low", "medium", "high"}
+
+
+def _normalize_session_control(value, allowed_values, field_name: str):
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("-", "_")
+    if normalized == "x_high":
+        normalized = "xhigh"
+    if normalized in ("", "auto", "default"):
+        return None
+    if normalized not in allowed_values:
+        raise HTTPException(400, f"Unsupported {field_name}: {value}")
+    return normalized
+
+
+def _normalize_session_reasoning(value):
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("-", "_")
+    if normalized == "x_high":
+        normalized = "xhigh"
+    if normalized in ("", "auto", "default"):
+        return None
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", normalized):
+        raise HTTPException(400, f"Unsupported reasoning_effort: {value}")
+    return normalized
+
+
+def _normalize_session_verbosity(value):
+    return _normalize_session_control(value, _SESSION_VERBOSITY_VALUES, "verbosity")
+
+
 def _content_to_text(content) -> str:
     """Flatten a message's content to plain text for text-based exports.
 
@@ -298,7 +331,22 @@ def setup_session_routes(
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
+            reasoning_map = {}
+            verbosity_map = {}
+            q = db.query(
+                DbSession.id,
+                DbSession.folder,
+                DbSession.total_input_tokens,
+                DbSession.total_output_tokens,
+                DbSession.is_important,
+                DbSession.created_at,
+                DbSession.updated_at,
+                DbSession.last_message_at,
+                DbSession.mode,
+                DbSession.message_count,
+                DbSession.reasoning_effort,
+                DbSession.verbosity,
+            ).filter(DbSession.archived == False)
             q = owner_filter(q, DbSession, user)
             rows = q.all()
             for row in rows:
@@ -316,6 +364,8 @@ def setup_session_routes(
                 )
                 mode_map[row.id] = row.mode
                 msg_count_map[row.id] = row.message_count or 0
+                reasoning_map[row.id] = row.reasoning_effort
+                verbosity_map[row.id] = row.verbosity
             # Sessions with active documents that have content
             from sqlalchemy import func
             doc_session_ids = set(
@@ -348,6 +398,8 @@ def setup_session_routes(
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
+                     "reasoning_effort": reasoning_map.get(s.id),
+                     "verbosity": verbosity_map.get(s.id),
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
                     if not s.archived
@@ -366,6 +418,8 @@ def setup_session_routes(
         skip_validation: str = Form(None),
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
+        reasoning_effort: str = Form(None),
+        verbosity: str = Form(None),
     ):
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
@@ -459,6 +513,8 @@ def setup_session_routes(
         
         sid = str(uuid.uuid4())
         user = effective_user(request)
+        saved_reasoning = _normalize_session_reasoning(reasoning_effort)
+        saved_verbosity = _normalize_session_verbosity(verbosity)
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",
@@ -466,6 +522,8 @@ def setup_session_routes(
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
+            reasoning_effort=saved_reasoning,
+            verbosity=saved_verbosity,
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
@@ -490,7 +548,9 @@ def setup_session_routes(
             name=session.name,
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
-            archived=False
+            archived=False,
+            reasoning_effort=saved_reasoning,
+            verbosity=saved_verbosity,
         )    
     @router.patch("/session/{sid}")
     def rename_session(
@@ -498,6 +558,7 @@ def setup_session_routes(
         name: str = Form(None), folder: str = Form(None),
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
+        reasoning_effort: str = Form(None), verbosity: str = Form(None),
     ):
         _verify_session_owner(request, sid)
         try:
@@ -568,6 +629,23 @@ def setup_session_routes(
                 db.close()
             result["model"] = model
             result["endpoint_url"] = endpoint_url
+        if reasoning_effort is not None or verbosity is not None:
+            saved_reasoning = _normalize_session_reasoning(reasoning_effort) if reasoning_effort is not None else session.reasoning_effort
+            saved_verbosity = _normalize_session_verbosity(verbosity) if verbosity is not None else session.verbosity
+            session.reasoning_effort = saved_reasoning
+            session.verbosity = saved_verbosity
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                if db_session:
+                    db_session.reasoning_effort = saved_reasoning
+                    db_session.verbosity = saved_verbosity
+                    db_session.updated_at = utcnow_naive()
+                    db.commit()
+            finally:
+                db.close()
+            result["reasoning_effort"] = saved_reasoning
+            result["verbosity"] = saved_verbosity
         return result
     
     @router.post("/session/{sid}/inject_messages")

@@ -53,7 +53,10 @@ Provider support and model support are different facts. A provider may expose
 tools, reasoning, vision, or multiple APIs while individual models differ.
 Provider-native readers describe where model evidence can appear. Current
 concrete readers cover generic OpenAI-compatible identity, OpenAI, OpenRouter,
-Google, Ollama, LM Studio, and llama.cpp. Identity-only model lists remain
+Google, Ollama, LM Studio, llama.cpp, and ChatGPT Subscription. ChatGPT's
+account catalog contributes explicit per-model reasoning and verbosity
+control evidence; the picker and Responses request builder consume the same
+cached record and otherwise fail closed. Identity-only model lists remain
 unknown.
 
 Reader dispatch uses an explicit vendor first, then endpoint kind, label-bounded hostname suffix, and common local-port hints. Generic payload handling accepts `data[]`
@@ -63,10 +66,14 @@ the in-memory raw record. See [model-capability-canonical.md](model-capability-c
 [model-quirks.md](model-quirks.md), and the
 [provider map](model-providers/_readme.md).
 
-This canonical layer is currently exercised by focused unit tests but is not
-wired into runtime discovery, endpoint resolution, model context, request
-shaping, or frontend pickers. `routes/model_routes.py` model probes continue to
-return model IDs through their existing runtime path.
+ChatGPT Subscription model discovery now carries native deterministic-control
+evidence through the endpoint cache. `/api/models` exposes the visible records
+to the chat picker, `/api/model-endpoints` exposes them to the default-model
+Settings surface, and both browser surfaces fail closed for missing,
+duplicated, or mismatched endpoint/model records. Settings persistence and the
+Responses request builder revalidate the exact cached record server-side.
+Other providers continue to return model IDs through their existing runtime
+paths until a native reader supplies equivalent evidence.
 
 Route-level probe helpers in `routes/model_routes.py` are the current exception: they build minimal provider-specific probe payloads using `llm_core` detection helpers. Keep probe behavior aligned with `llm_core` provider adapters. LLM provider HTTP clients and endpoint probes share `src.tls_overrides.llm_verify()`, which can add an operator-provided `LLM_CA_BUNDLE` on top of normal certificate verification without turning verification off or widening that trust to arbitrary URL fetches.
 
@@ -86,7 +93,12 @@ OpenAI-compatible model-list URL construction preserves `/v1` bases and inserts 
 
 `routes/session_routes.py` owns binding sessions to endpoint IDs, owner-scoped header construction, raw-endpoint rejection for non-admin users, model validation, and persisted session headers. Compare panes and normal chat session creation use this path.
 
-`ModelEndpoint` rows own API keys, base URLs, cached/hidden/pinned models, model type, endpoint kind, refresh mode/interval/timeout, supports-tools state, nullable owner, optional provider-auth linkage, and provider metadata. `owner = NULL` means legacy/shared; non-null rows are private to that owner, while admins can see all. Secret fields must remain encrypted and scrubbed in responses.
+`ModelEndpoint` rows own API keys, base URLs, cached/hidden/pinned models,
+cached canonical capability records, model type, endpoint kind, refresh
+mode/interval/timeout, supports-tools state, nullable owner, optional
+provider-auth linkage, and provider metadata. `owner = NULL` means
+legacy/shared; non-null rows are private to that owner, while admins can see
+all. Secret fields must remain encrypted and scrubbed in responses.
 
 Decrypted endpoint headers can be copied into session metadata for chat use. Endpoint deletion must clear dependent settings and copied session headers.
 
@@ -94,7 +106,7 @@ Decrypted endpoint headers can be copied into session metadata for chat use. End
 
 `src.model_discovery` owns host/env/Tailscale/local-port scanning for model servers. Admin `/api/providers` and `/api/discover` use that scanner; endpoint CRUD, test, refresh, and hidden-model controls are frontend-owned by `static/js/admin.js`.
 
-`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. API/proxy endpoint inventory is visible by default until an explicit `pinned_models` allow-list is saved; an explicit empty list means show none, and legacy hidden-list state is upgraded to the equivalent pins so endpoint settings, picker checkboxes, and chat agree. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. Local endpoints get cheap reachability probes before expensive refreshes where possible, and endpoint responses can include explicit `supports_tools` state for schema-emission heuristics. Google Gemini API endpoints use the native paginated `generativelanguage.googleapis.com/v1beta/models` catalog, send API keys in `x-goog-api-key`, retain only content-generation model IDs, and default to manual refresh unless the caller explicitly chooses another mode. Probe failure returns no curated Google fallback. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
+`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. API/proxy endpoint inventory is visible by default until an explicit `pinned_models` allow-list is saved; an explicit empty list means show none, and legacy hidden-list state is upgraded to the equivalent pins so endpoint settings, picker checkboxes, and chat agree. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. Local endpoints get cheap reachability probes before expensive refreshes where possible, and endpoint responses can include explicit `supports_tools` state for schema-emission heuristics. Visible endpoint/model-scoped deterministic-control records accompany model IDs when a native reader supplied them; unknown or stale plain catalogs expose no controls. Google Gemini API endpoints use the native paginated `generativelanguage.googleapis.com/v1beta/models` catalog, send API keys in `x-goog-api-key`, retain only content-generation model IDs, and default to manual refresh unless the caller explicitly chooses another mode. Probe failure returns no curated Google fallback. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
 
 `src.task_endpoint` owns background-task endpoint/model resolution for task routes and scheduler callers. It resolves `task_endpoint_id`/`task_model` through the normal endpoint resolver with owner context.
 

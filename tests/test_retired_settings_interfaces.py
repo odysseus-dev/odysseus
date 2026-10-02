@@ -83,6 +83,36 @@ async def test_generic_settings_hide_and_preserve_retired_fallbacks(monkeypatch)
     assert store["tts_enabled"] is False
 
 
+@pytest.mark.asyncio
+async def test_reasoning_default_requires_selected_model_capability_evidence(monkeypatch):
+    import src.model_control_capabilities as controls
+
+    store = {
+        **settings_mod.DEFAULT_SETTINGS,
+        "default_endpoint_id": "ep-1",
+        "default_model": "opaque-model",
+    }
+    record = {
+        "model_id": "opaque-model",
+        "deterministic_controls": [{
+            "control": "reasoning_effort",
+            "status": "claimed",
+            "evidence": {"allowed_values": ["low", "ultra"]},
+        }],
+    }
+    monkeypatch.setattr(auth_routes, "migrate_from_settings", lambda: None)
+    monkeypatch.setattr(auth_routes, "_load_settings", lambda: dict(store))
+    monkeypatch.setattr(auth_routes, "_save_settings", lambda updated: store.update(updated))
+    monkeypatch.setattr(controls, "resolve_cached_model_record", lambda **kwargs: record)
+    set_settings = _route(auth_routes.setup_auth_routes(_AuthManager()), "/api/auth/settings", "POST")
+
+    response = await set_settings(_Request({"default_reasoning_effort": "ultra"}, admin=True))
+
+    assert response["default_reasoning_effort"] == "ultra"
+    with pytest.raises(auth_routes.HTTPException, match="selected model endpoint"):
+        await set_settings(_Request({"default_reasoning_effort": "max"}, admin=True))
+
+
 def test_manage_settings_tombstones_legacy_fallback_key(monkeypatch):
     store = {
         **settings_mod.DEFAULT_SETTINGS,

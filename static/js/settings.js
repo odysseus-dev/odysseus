@@ -23,6 +23,7 @@ import {
   hideSettingsModal,
 } from './settings/lifecycle.js';
 import { sortModelIds } from './modelSort.js';
+import { modelControlCapabilities, normalizeModelControlValue } from './modelControls.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
 import { bindMenuDismiss } from './escMenuStack.js';
@@ -381,6 +382,9 @@ async function initDefaultChat() {
   var epSel = el('set-defaultEpSelect');
   var modelSel = el('set-defaultModelSelect');
   var msg = el('set-defaultChatMsg');
+  var reasoningSel = el('set-defaultReasoningSelect');
+  var verbositySel = el('set-defaultVerbositySelect');
+  var controlsMsg = el('set-defaultControlsMsg');
   var _endpoints = [];
 
   // Fill any <select> with the models for a given endpoint id.
@@ -399,31 +403,95 @@ async function initDefaultChat() {
     _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
     refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
   }
+  function selectedCapabilityRecord() {
+    var ep = _endpoints.find(function(item) { return item.id === epSel.value; });
+    var matches = (ep && ep.model_capabilities || []).filter(function(record) {
+      return record && record.model_id === modelSel.value;
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+  function titleForControlValue(value) {
+    return String(value).replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  }
+  function fillControlSelect(selectEl, capability, selected) {
+    if (!selectEl) return;
+    while (selectEl.options.length) selectEl.remove(0);
+    capability.allowed.forEach(function(value) {
+      var option = document.createElement('option');
+      option.value = value === 'auto' ? '' : value;
+      option.textContent = value === 'auto' ? 'Auto' : titleForControlValue(value);
+      selectEl.appendChild(option);
+    });
+    var normalized = normalizeModelControlValue(selected);
+    selectEl.value = capability.allowed.includes(normalized) && normalized !== 'auto' ? normalized : '';
+    selectEl.disabled = !capability.supported;
+    selectEl.title = capability.supported ? '' : capability.reason;
+  }
+  function refreshControlOptions(reasoningValue, verbosityValue) {
+    var context = { model: modelSel.value, modelCapability: selectedCapabilityRecord() };
+    var reasoning = modelControlCapabilities('reasoning_effort', context);
+    var verbosity = modelControlCapabilities('verbosity', context);
+    fillControlSelect(reasoningSel, reasoning, reasoningValue !== undefined ? reasoningValue : reasoningSel.value);
+    fillControlSelect(verbositySel, verbosity, verbosityValue !== undefined ? verbosityValue : verbositySel.value);
+    if (controlsMsg) {
+      controlsMsg.textContent = reasoning.supported || verbosity.supported
+        ? ''
+        : 'No response controls advertised for this model.';
+    }
+  }
+  function currentControlDefaults() {
+    return {
+      reasoning_effort: normalizeModelControlValue(reasoningSel ? reasoningSel.value : ''),
+      verbosity: normalizeModelControlValue(verbositySel ? verbositySel.value : ''),
+    };
+  }
+  function publishControlDefaults() {
+    var defaults = currentControlDefaults();
+    try { window.__odysseusModelControlDefaults = defaults; } catch (_) {}
+    if (window.odysseusModelControls && window.odysseusModelControls.setDefaults) {
+      window.odysseusModelControls.setDefaults(defaults);
+    }
+  }
 
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
+    refreshControlOptions(settings.default_reasoning_effort, settings.default_verbosity);
+    publishControlDefaults();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
-  modelSel.addEventListener('change', saveDefault);
+  epSel.addEventListener('change', function() { refreshModels(''); refreshControlOptions(); saveDefault(); });
+  modelSel.addEventListener('change', function() { refreshControlOptions(); saveDefault(); });
 
   async function saveDefault() {
     try {
       await _postSettings({
         default_endpoint_id: epSel.value,
-        default_model: modelSel.value
+        default_model: modelSel.value,
+        default_reasoning_effort: currentControlDefaults().reasoning_effort,
+        default_verbosity: currentControlDefaults().verbosity
       });
+      publishControlDefaults();
+      if (controlsMsg) {
+        controlsMsg.textContent = 'Saved';
+        controlsMsg.style.color = 'var(--fg)';
+        setTimeout(function() { controlsMsg.textContent = ''; }, 2000);
+      }
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
+  if (reasoningSel) reasoningSel.addEventListener('change', saveDefault);
+  if (verbositySel) verbositySel.addEventListener('change', saveDefault);
+
   _registerAiEndpointRefresh(function(endpoints) {
+    var defaults = currentControlDefaults();
     _endpoints = endpoints;
     refreshEndpointOptions(epSel.value, modelSel.value);
+    refreshControlOptions(defaults.reasoning_effort, defaults.verbosity);
   });
 }
 
