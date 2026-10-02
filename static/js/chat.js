@@ -1661,7 +1661,8 @@ import { loadPanel } from './panels.js';
       if (_pendingAttachInfo && !ids.length && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) {
         if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
         if (fileHandlerModule.wasLastUploadCancelled && !fileHandlerModule.wasLastUploadCancelled()) {
-          uiModule.showError && uiModule.showError('Upload failed. Attachment kept so you can retry.');
+          const _uploadErr = fileHandlerModule.getLastUploadError ? fileHandlerModule.getLastUploadError() : 'Upload failed';
+          uiModule.showError && uiModule.showError(_uploadErr + '. Attachment kept so you can retry.');
         }
         updateSubmitButton('idle', submitBtn);
         _releaseSendFlag();
