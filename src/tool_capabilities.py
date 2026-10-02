@@ -8,8 +8,10 @@ run-local integrity gates before dispatch.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass, field
+from functools import lru_cache
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
@@ -295,6 +297,43 @@ _BROWSER_MCP_READ_TOOLS = frozenset(
 )
 
 
+LOCAL_MCP_READ_TOOLS_ENV = "ODYSSEUS_LOCAL_MCP_READ_TOOLS"
+LOCAL_MCP_WRITE_TOOLS_ENV = "ODYSSEUS_LOCAL_MCP_WRITE_TOOLS"
+
+_LOCAL_MCP_READ_CAPABILITIES = _capabilities(ToolEffect.READ_PRIVATE)
+_LOCAL_MCP_WRITE_CAPABILITIES = _capabilities(ToolEffect.WRITE_PRIVATE)
+
+
+@lru_cache(maxsize=None)
+def _local_mcp_tools(variable: str) -> frozenset[str]:
+    """Tool names a deployment declares as touching only the local store.
+
+    Tools served by a user-configured MCP server are absent from the registry
+    above, so they are classified as unknown and fail high. That is the right
+    default for a server whose output may come from anywhere, but it makes a
+    server with both a read and a write tool unusable: the read result arms the
+    post-external gate, because unknown results are not SYSTEM integrity, and
+    the write that follows is then refused until separately authorized. Every
+    second call needs an approval, for a server that never leaves the host.
+
+    Declaring the tools resolves that without widening the gate:
+
+        ODYSSEUS_LOCAL_MCP_READ_TOOLS=mcp__<server>__search_notes,mcp__<server>__read_note
+        ODYSSEUS_LOCAL_MCP_WRITE_TOOLS=mcp__<server>__create_note
+
+    Read tools become READ_PRIVATE with SYSTEM integrity, so their output no
+    longer arms the gate. Write tools become WRITE_PRIVATE, which remains in
+    POST_EXTERNAL_BLOCKED_EFFECTS: once genuinely external content has entered
+    the run, the approval is still required.
+
+    Only for servers whose results are the operator's own data and whose writes
+    stay local. A server that fetches from the network or sends anything
+    outwards must not be listed, or the gate stops protecting the run.
+    """
+    raw = os.getenv(variable, "") or ""
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
 def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
     """Return deterministic capabilities; malformed and unknown tools fail high."""
     if not isinstance(tool_name, str) or not tool_name:
@@ -309,6 +348,10 @@ def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
             return capabilities
     if tool_name in _BROWSER_MCP_READ_TOOLS:
         return _BROWSER_MCP_READ_CAPABILITIES
+    if tool_name in _local_mcp_tools(LOCAL_MCP_READ_TOOLS_ENV):
+        return _LOCAL_MCP_READ_CAPABILITIES
+    if tool_name in _local_mcp_tools(LOCAL_MCP_WRITE_TOOLS_ENV):
+        return _LOCAL_MCP_WRITE_CAPABILITIES
     return _UNKNOWN_CAPABILITIES
 
 
