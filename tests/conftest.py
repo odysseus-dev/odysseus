@@ -40,7 +40,7 @@ def _has_module(mod_name: str) -> bool:
 # Stub optional dependencies only when they are not installed. Do not replace
 # real FastAPI/Starlette/Pydantic modules: route tests import their subpackages.
 for mod_name in [
-    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.types", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
+    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.types", "sqlalchemy.ext",
     "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",
     "sqlalchemy.sql.sqltypes", "bcrypt", "pyotp",
     "httpx", "fastapi", "fastapi.responses", "fastapi.routing",

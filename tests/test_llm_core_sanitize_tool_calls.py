@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 # Mock heavy dependencies before importing (mirrors tests/test_agent_loop.py).
 for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
+    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database', 'src.agent_tools', 'core.models', 'core.database',
 ]:
