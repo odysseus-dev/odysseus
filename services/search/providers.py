@@ -1,6 +1,7 @@
 """Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
 
 import json
+import re
 import logging
 import os
 from typing import List, Optional
@@ -647,6 +648,21 @@ def exa_search(query: str, count: Optional[int] = None, time_filter: Optional[st
 
 # ── Serper.dev ──
 
+_OPERATOR_TOKEN = re.compile(r"^(?:site|inurl|intitle|intext|filetype|ext|before|after):", re.IGNORECASE)
+
+
+def _plain_query(query: str) -> str:
+    """Strip search operators for providers whose plan only accepts plain words:
+    quotes, OR/AND/|, site:/inurl:/filetype: tokens, -exclusions and parentheses."""
+    text = query.replace('"', " ").replace("«", " ").replace("»", " ").replace("(", " ").replace(")", " ")
+    words = []
+    for w in text.split():
+        if w.upper() in ("OR", "AND", "|") or w.startswith("-") or _OPERATOR_TOKEN.match(w):
+            continue
+        words.append(w)
+    return " ".join(words)
+
+
 def serper_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Serper.dev API. Requires search_api_key or SERPER_API_KEY env var."""
     count = count if count is not None else _get_result_count()
@@ -667,13 +683,25 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         if time_filter in time_map:
             payload["tbs"] = time_map[time_filter]
 
-    try:
-        response = httpx.post(
+    def _post():
+        return httpx.post(
             "https://google.serper.dev/search",
             json=payload,
             headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
             timeout=REQUEST_TIMEOUT,
         )
+
+    try:
+        response = _post()
+        # Serper's free plan rejects search operators (quotes, OR, site: ...) with
+        # 400 "Query pattern not allowed for free accounts". Agents build exactly
+        # such queries, so retry once as plain words instead of failing the search.
+        if response.status_code == 400 and "pattern not allowed" in (response.text or "").lower():
+            plain = _plain_query(query)
+            if plain and plain != query:
+                logger.info("Serper: free plan rejected search operators, retrying as plain words")
+                payload["q"] = plain
+                response = _post()
         if response.status_code == 429:
             raise RateLimitError("Serper rate limit hit")
         response.raise_for_status()

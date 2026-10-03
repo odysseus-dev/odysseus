@@ -7,3 +7,15 @@ search:
   formats:
     - html
     - json
+
+# From the Timeweb IP only Bing answers reliably: Brave rate-limits, DuckDuckGo and
+# Startpage serve CAPTCHAs. Keep the dead engines off so queries don't wait on them.
+engines:
+  - name: bing
+    disabled: false
+  - name: brave
+    disabled: true
+  - name: duckduckgo
+    disabled: true
+  - name: startpage
+    disabled: true
