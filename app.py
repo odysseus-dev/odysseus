@@ -187,6 +187,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/gallery/style-transfer",  # img2img via diffusion server — can queue behind model load like /api/image
     "/api/memory/audit",    # retains own 120s LLM inactivity timeout
 )
 

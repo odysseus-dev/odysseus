@@ -587,47 +587,132 @@ async function initTeacherModel() {
   });
 }
 
-/* ── Image Generation ── */
+/* ── Image Generation ──
+   Universal image-endpoint flow (variant B): any OpenAI-compatible server
+   with GET /v1/models -> {data:[{id}]} and POST /v1/images/generations|edits
+   can be registered as model_type=image (LLM-style endpoint setup, no
+   hardcoded IPs). Identity is endpoint-scoped internally
+   (endpoint_id + bare model_id); the UI shows the bare id plus the endpoint
+   label so two servers exposing the same model id stay distinguishable.
+   Previously the dropdown flattened all endpoints into bare ids with no
+   dedupe and no endpoint stored, so 8100+8101 with the same 4 ids looked
+   like duplicates and resolution picked whichever row came first. */
 async function initImageSettings() {
+  const epSel = el('set-imgEndpointSelect');
   const modelSel = el('set-imgModelSelect');
   const qualSel = el('set-imgQualitySelect');
   const msg = el('set-imgSettingsMsg');
   const enabledToggle = el('set-imgEnabledToggle');
   const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
-  try {
-    const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
-    const modelsData = await modelsRes.json();
-    // Inpaint-compat allowlist — image gen here is scoped to inpainting only,
-    // so DALL-E / GPT-Image-1 (no inpaint API) are excluded. Currently:
-    //   - any model with 'inpaint' in the id
-    //   - Stable Diffusion 3.5 Medium (inpaint via diffusers pipeline)
-    const _isInpaintModel = (mid) => {
-      const lower = String(mid || '').toLowerCase();
-      return lower.includes('inpaint')
-        || lower.includes('3.5-medium')
-        || lower.includes('3-5-medium')
-        || lower.includes('sd-3.5-med');
-    };
-    const imageModels = [];
-    (modelsData.items || []).forEach(item => {
-      (item.models || []).forEach(mid => {
-        if (_isInpaintModel(mid)) imageModels.push(mid);
+  let _imgEndpoints = [];
+  function _imgEpLabel(ep) {
+    return (ep.name || ep.id) + (ep.online === false ? ' (offline)' : '');
+  }
+  function _imgModelsOf(ep) {
+    const ids = Array.isArray(ep.models) ? ep.models : [];
+    const seen = new Set();
+    return ids.filter((m) => {
+      const k = String(m || '').trim();
+      if (!k || seen.has(k.toLowerCase())) return false;
+      seen.add(k.toLowerCase());
+      return true;
+    });
+  }
+  function fillEndpoints(selected) {
+    if (!epSel) return;
+    const prev = selected !== undefined ? selected : epSel.value;
+    while (epSel.options.length) epSel.remove(0);
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = _imgEndpoints.length ? 'Auto-detect' : 'Auto-detect (no image endpoint yet)';
+    epSel.appendChild(auto);
+    _imgEndpoints.forEach((ep) => {
+      const opt = document.createElement('option');
+      opt.value = ep.id;
+      opt.textContent = _imgEpLabel(ep);
+      epSel.appendChild(opt);
+    });
+    if (prev && Array.from(epSel.options).some((o) => o.value === prev)) epSel.value = prev;
+    else epSel.value = '';
+  }
+  function fillModels(selectedModel) {
+    if (!modelSel) return;
+    while (modelSel.options.length) modelSel.remove(0);
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = 'Auto-detect';
+    modelSel.appendChild(auto);
+    const epId = epSel ? epSel.value : '';
+    if (epId) {
+      const ep = _imgEndpoints.find((e) => e.id === epId);
+      sortModelIds(_imgModelsOf(ep || {})).forEach((mid) => {
+        const opt = document.createElement('option');
+        opt.value = mid;
+        opt.textContent = String(mid).split('/').pop();
+        modelSel.appendChild(opt);
       });
-    });
-    sortModelIds(imageModels).forEach(mid => { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid; modelSel.appendChild(opt); });
-    // Hardcoded fallbacks shown as "(not detected)" so users know what to
-    // download/serve to enable inpaint here.
-    ['stable-diffusion-3.5-medium', 'stable-diffusion-inpainting'].forEach(mid => {
-      if (!imageModels.includes(mid)) { const opt = document.createElement('option'); opt.value = mid; opt.textContent = mid + ' (not detected)'; modelSel.appendChild(opt); }
-    });
-  } catch (e) { console.warn('Failed to load models for image settings', e); }
+    } else {
+      // Auto-detect: show every endpoint's models, labelled so identical
+      // ids on different servers stay distinguishable (endpoint-scoped).
+      const seenPairs = new Set();
+      _imgEndpoints.forEach((ep) => {
+        sortModelIds(_imgModelsOf(ep)).forEach((mid) => {
+          const pair = ep.id + '::' + String(mid).toLowerCase();
+          if (seenPairs.has(pair)) return;
+          seenPairs.add(pair);
+          const opt = document.createElement('option');
+          opt.value = mid;
+          opt.textContent = String(mid).split('/').pop() + ' (' + (ep.name || ep.id) + ')';
+          opt.dataset.endpointId = ep.id;
+          modelSel.appendChild(opt);
+        });
+      });
+    }
+    if (selectedModel && Array.from(modelSel.options).some((o) => o.value === selectedModel)) {
+      modelSel.value = selectedModel;
+    } else if (selectedModel && !epId) {
+      // Legacy bare id not in any current list (endpoint offline/renamed):
+      // keep it selectable so a later save does not silently wipe it.
+      const opt = document.createElement('option');
+      opt.value = selectedModel;
+      opt.textContent = selectedModel + ' (not detected)';
+      modelSel.appendChild(opt);
+      modelSel.value = selectedModel;
+    }
+    _syncModelLogo(modelSel);
+  }
+  try {
+    const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const all = await epRes.json();
+    _imgEndpoints = (Array.isArray(all) ? all : []).filter(
+      (ep) => ep && ep.is_enabled && String(ep.model_type || '').toLowerCase() === 'image'
+    );
+    fillEndpoints('');
+    fillModels('');
+  } catch (e) { console.warn('Failed to load image endpoints', e); }
   try {
     const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await settingsRes.json();
-    if (settings.image_model) modelSel.value = settings.image_model;
+    let savedEp = (settings.image_endpoint_id || '').trim();
+    const savedModel = settings.image_model || '';
+    // Legacy: bare model id with no endpoint stored — pin the first
+    // endpoint that actually exposes it so resolution stays deterministic.
+    if (!savedEp && savedModel) {
+      const hit = _imgEndpoints.find((ep) => _imgModelsOf(ep).some(
+        (m) => String(m).toLowerCase() === String(savedModel).toLowerCase()
+      ));
+      if (hit) savedEp = hit.id;
+    }
+    if (savedEp && !_imgEndpoints.some((ep) => ep.id === savedEp)) {
+      // Endpoint was removed/disabled: fall back to Auto-detect, keep model.
+      savedEp = '';
+    }
+    if (epSel) { fillEndpoints(savedEp); }
+    fillModels(savedModel);
+    if (savedModel) modelSel.value = savedModel;
     if (settings.image_quality) qualSel.value = settings.image_quality;
     if (enabledToggle) enabledToggle.checked = settings.image_gen_enabled === true;
-  } catch (e) { console.warn('Failed to load settings', e); }
+  } catch (e) { console.warn('Failed to load image settings', e); }
 
   function syncImgDisabled() {
     var off = enabledToggle && !enabledToggle.checked;
@@ -639,14 +724,25 @@ async function initImageSettings() {
 
   async function saveSettings() {
     try {
-      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value });
+      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_endpoint_id: epSel ? epSel.value : '', image_model: modelSel.value, image_quality: qualSel.value });
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
+  if (epSel) epSel.addEventListener('change', function() { fillModels(''); saveSettings(); });
   modelSel.addEventListener('change', saveSettings);
   qualSel.addEventListener('change', saveSettings);
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncImgDisabled(); saveSettings(); });
+  _registerAiEndpointRefresh(function(endpoints) {
+    const prevEp = epSel ? epSel.value : '';
+    const prevModel = modelSel ? modelSel.value : '';
+    _imgEndpoints = (Array.isArray(endpoints) ? endpoints : []).filter(
+      (ep) => ep && ep.is_enabled && String(ep.model_type || '').toLowerCase() === 'image'
+    );
+    fillEndpoints(prevEp);
+    fillModels(prevModel);
+    if (prevModel) modelSel.value = prevModel;
+  });
 }
 
 /* ── Vision ── */

@@ -305,6 +305,35 @@ def _first_visible_image_endpoint(db, owner: str | None):
     return endpoints[0] if endpoints else None
 
 
+def _configured_image_endpoint(db, owner: str | None):
+    """Prefer the admin-configured image endpoint (variant B).
+
+    Settings stores ``image_endpoint_id`` alongside the bare ``image_model``,
+    so two servers exposing the same model id resolve deterministically.
+    Falls back to the first visible image endpoint for legacy configs with
+    only a bare model id (or Auto-detect).
+    """
+    try:
+        from src.settings import load_settings
+        wanted = (load_settings().get("image_endpoint_id", "") or "").strip()
+    except Exception:
+        wanted = ""
+    if wanted:
+        ep = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == wanted,
+            ModelEndpoint.model_type == "image",
+            ModelEndpoint.is_enabled == True,  # noqa: E712
+        ).first()
+        if ep is not None:
+            try:
+                from src.auth_helpers import owner_filter as _of
+                if _of(db.query(ModelEndpoint).filter(ModelEndpoint.id == ep.id), ModelEndpoint, owner).first() is not None:
+                    return ep
+            except Exception:
+                return ep
+    return _first_visible_image_endpoint(db, owner)
+
+
 def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
     target = _normalize_image_endpoint_base(base)
     if not target:
@@ -571,10 +600,11 @@ def setup_gallery_routes() -> APIRouter:
         image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
-        # Find image endpoint
+        # Find image endpoint (prefer the configured one so multi-server
+        # setups stay deterministic — same as inpaint/harmonize).
         db = SessionLocal()
         try:
-            ep = _first_visible_image_endpoint(db, user)
+            ep = _configured_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -586,11 +616,13 @@ def setup_gallery_routes() -> APIRouter:
             base_url += "/v1"
 
         # Use img2img endpoint if available, otherwise upscale via canvas on client
+        request_id = form.get("request_id", "")
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(f"{base_url}/images/upscale", json={
-                    "image": b64, "scale": scale,
-                })
+                payload = {"image": b64, "scale": scale}
+                if request_id:
+                    payload["request_id"] = request_id
+                resp = await client.post(f"{base_url}/images/upscale", json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
                     return {"image": data.get("data", [{}])[0].get("b64_json", "")}
@@ -611,6 +643,7 @@ def setup_gallery_routes() -> APIRouter:
         file = form.get("image")
         prompt = form.get("prompt", "")
         strength = float(form.get("strength", "0.55"))
+        request_id = form.get("request_id", "")
         if not file: raise HTTPException(400, "No image")
 
         image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
@@ -618,7 +651,7 @@ def setup_gallery_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            ep = _first_visible_image_endpoint(db, user)
+            ep = _configured_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -630,13 +663,20 @@ def setup_gallery_routes() -> APIRouter:
             base_url += "/v1"
 
         try:
-            async with httpx.AsyncClient(timeout=180) as client:
-                resp = await client.post(f"{base_url}/images/generations", json={
+            # 750s — full 1024px/high SDXL job observed ~526 s, worst case
+            # ~12 min. /api/gallery/style-transfer is exempt from the 45s
+            # hard request timeout (see app.py). The UI additionally polls
+            # /api/gallery/progress/<request_id> for live status.
+            async with httpx.AsyncClient(timeout=750) as client:
+                payload = {
                     "prompt": prompt,
                     "image": b64,
                     "strength": strength,
                     "response_format": "b64_json",
-                })
+                }
+                if request_id:
+                    payload["request_id"] = request_id
+                resp = await client.post(f"{base_url}/images/generations", json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
                     img_data = data.get("data", [{}])[0].get("b64_json", "")
@@ -646,6 +686,53 @@ def setup_gallery_routes() -> APIRouter:
         except Exception:
             logger.exception("style_transfer: request failed")
             return {"error": "Style transfer failed"}
+
+    # ---- GET /api/gallery/progress/{request_id} ----
+    @router.get("/api/gallery/progress/{request_id}")
+    async def gallery_progress(request_id: str, request: Request):
+        """Proxy diffusion-server progress for a request_id.
+
+        Browsers can't poll the LAN diffusion server directly (CORS), so
+        Odysseus forwards GET <image-endpoint>/v1/images/progress/<id>.
+        Returns the upstream JSON unchanged: {id, status, step, total,
+        percent, ...}. Unknown ids answer {"status":"unknown"} — the UI
+        treats that as "no info yet", not failure.
+        """
+        import httpx
+
+        user = require_privilege(request, "can_generate_images")
+        rid = (request_id or "").strip()
+        # Strict id shape (server mints [A-Za-z0-9_-] ids): no slashes or
+        # dots, so it can never escape into another path.
+        if not rid or len(rid) > 128 or not re.fullmatch(r"[A-Za-z0-9_-]+", rid):
+            raise HTTPException(400, "Bad request id")
+
+        db = SessionLocal()
+        try:
+            ep = _configured_image_endpoint(db, user)
+        finally:
+            db.close()
+        if not ep:
+            raise HTTPException(400, "No image generation endpoint configured.")
+
+        base = (ep.base_url or "").rstrip("/")
+        if not base.endswith("/v1"):
+            base += "/v1"
+        # NOTE: not via _join_checked_gallery_endpoint — its allowlist only
+        # permits fixed paths, while progress needs /images/progress/<id>.
+        # The id shape is strictly validated above (no slashes/dots).
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(base + "/images/progress/" + rid)
+        except Exception:
+            logger.warning("gallery progress proxy unreachable")
+            raise HTTPException(502, "Diffusion server unreachable")
+        if r.status_code != 200:
+            raise HTTPException(502, "Progress not available")
+        try:
+            return r.json()
+        except Exception:
+            raise HTTPException(502, "Bad progress response")
 
     # ---- GET /api/gallery/tags ----
     @router.get("/api/gallery/tags")
@@ -1265,6 +1352,8 @@ def setup_gallery_routes() -> APIRouter:
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup.
         # Store as requested_base to avoid carrying user input into the outbound request.
         requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
+        # Extract request_id for progress polling
+        request_id = body.pop("request_id", "")
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
         if requested_base:
@@ -1280,7 +1369,7 @@ def setup_gallery_routes() -> APIRouter:
         if not requested_base:
             db = SessionLocal()
             try:
-                ep = _first_visible_image_endpoint(db, user)
+                ep = _configured_image_endpoint(db, user)
                 if not ep:
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
                 base = ep.base_url.rstrip("/")
@@ -1371,6 +1460,8 @@ def setup_gallery_routes() -> APIRouter:
                 "size": size,
                 "n": "1",
             }
+            if request_id:
+                data["request_id"] = request_id
             headers = {"Authorization": f"Bearer {api_key}"}
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
@@ -1427,7 +1518,7 @@ def setup_gallery_routes() -> APIRouter:
             # supports multiple models per process. Harmless if ignored.
             if chosen_model:
                 body["model"] = chosen_model
-            async with httpx.AsyncClient(timeout=240) as client:
+            async with httpx.AsyncClient(timeout=600) as client:
                 try:
                     import base64, io
                     from PIL import Image
@@ -1453,6 +1544,8 @@ def setup_gallery_routes() -> APIRouter:
                         "size": f"{int(body.get('width') or source_png.width)}x{int(body.get('height') or source_png.height)}",
                         "n": "1",
                     }
+                    if request_id:
+                        data["request_id"] = request_id
                     r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), data=data, files=files)
                     if r.status_code == 200:
                         result = r.json()
@@ -1487,6 +1580,11 @@ def setup_gallery_routes() -> APIRouter:
                             logger.info("inpaint_proxy self-hosted edits unsupported; falling back to /images/inpaint")
                         else:
                             raise HTTPException(r.status_code, detail)
+                except httpx.TimeoutException:
+                    # External servers serialize on one lock — overlapping
+                    # clicks queue for minutes. Report the timeout honestly
+                    # instead of "failed to prepare".
+                    raise HTTPException(504, "Image server timed out (600s) — it may still be working on a queued request. Wait for GPU idle, then retry once.")
                 except HTTPException:
                     raise
                 except Exception:
@@ -1499,7 +1597,7 @@ def setup_gallery_routes() -> APIRouter:
                     raise HTTPException(r.status_code, "Inpaint request failed")
                 return r.json()
         except httpx.TimeoutException:
-            raise HTTPException(504, "Inpaint request timed out (240s)")
+            raise HTTPException(504, "Inpaint request timed out (600s)")
         except HTTPException:
             raise
         except Exception:
@@ -1527,6 +1625,7 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
 
         requested_base = (body.get("_endpoint") or "").rstrip("/")
+        request_id = body.get("request_id", "")
         # SSRF hardening: a client-supplied endpoint is fetched server-side
         # below, so validate it first (mirrors routes/embedding_routes.py).
         # Local-first means loopback/LAN is allowed by default; the cloud
@@ -1545,7 +1644,7 @@ def setup_gallery_routes() -> APIRouter:
         if not requested_base:
             db = SessionLocal()
             try:
-                ep = _first_visible_image_endpoint(db, user)
+                ep = _configured_image_endpoint(db, user)
                 if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
                 base = ep.base_url.rstrip("/")
@@ -1619,6 +1718,8 @@ def setup_gallery_routes() -> APIRouter:
             # `body_mask` over `mask`, so sending both is safe.
             "strength": color_match,
         }
+        if request_id:
+            harmonize_payload["request_id"] = request_id
         if body_mask_b64:
             harmonize_payload["body_mask"] = body_mask_b64
             harmonize_payload["mask"] = body_mask_b64
@@ -1648,6 +1749,10 @@ def setup_gallery_routes() -> APIRouter:
                 **({"override_settings": {"sd_model_checkpoint": model}} if model else {}),
             }),
         ]
+        if request_id:
+            for _, _, payload in candidates:
+                if isinstance(payload, dict):
+                    payload["request_id"] = request_id
 
         # Strip the /v1 for the AUTOMATIC1111 path which uses /sdapi/v1/...
         base_root = base[:-3] if base.endswith("/v1") else base
@@ -1657,10 +1762,9 @@ def setup_gallery_routes() -> APIRouter:
             headers["Authorization"] = f"Bearer {api_key}"
 
         last_err = None
-        # Cold-start SDXL inpaint can take 60-90s on first request (loading
-        # weights to GPU). 240s gives headroom for both that and a full
-        # 1024×1024 inference pass on slower setups.
-        async with httpx.AsyncClient(timeout=240) as client:
+        # Cold-load SDXL full job observed ~526 s. 600s ceiling so
+        # long-running local edits don't get cut off.
+        async with httpx.AsyncClient(timeout=600) as client:
             for path, kind, payload in candidates:
                 _effective_base = base_root if path.startswith("/sdapi") else base
                 target = _join_checked_gallery_endpoint(_effective_base, path)
@@ -1705,7 +1809,7 @@ def setup_gallery_routes() -> APIRouter:
                     logger.warning("harmonize: can't reach diffusion server at %s", base)
                     raise HTTPException(502, "Can't reach diffusion server")
                 except httpx.TimeoutException:
-                    raise HTTPException(504, "Harmonize timed out (240s) — restart the diffusion server or lower Color match / disable Seam fix")
+                    raise HTTPException(504, "Harmonize timed out (600s) — restart the diffusion server or lower Color match / disable Seam fix")
         raise HTTPException(502,
             "No supported img2img route responded. "
             "Your diffusion server needs to expose one of: "

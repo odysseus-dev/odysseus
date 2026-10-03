@@ -1611,8 +1611,12 @@
           <!-- Agent card moved to the Agent Tools tab. -->
           <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-imgEnabledToggle"><span class="admin-slider"></span></label></h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Configure which model to use for image generation.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Configure which model to use for image generation. Any OpenAI-compatible server works: <code>GET /v1/models</code> + <code>POST /v1/images/generations|edits</code>.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
+              <div style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label">Endpoint</label>
+                <select id="set-imgEndpointSelect" class="settings-select"><option value="">Auto-detect</option></select>
+              </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Model</label>
                 <select id="set-imgModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
@@ -2308,6 +2312,10 @@
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:0.55;pointer-events:none;"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
                     <input id="adm-epApiKey" type="password" placeholder="API key, e.g. sk-proj-AbCdEf…" autocomplete="off" style="flex:1;padding-left:28px;height:32px;box-sizing:border-box;">
                   </div>
+                  <select id="adm-epType" title="Endpoint type — Image accepts any OpenAI-compatible image server (GET /v1/models + POST /v1/images/*)" style="height:32px;box-sizing:border-box;">
+                    <option value="llm" selected>LLM</option>
+                    <option value="image">Image</option>
+                  </select>
                   <button class="admin-btn-add" id="adm-epAddBtn" style="height:32px;min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;box-sizing:border-box;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add
                   </button>

@@ -4195,7 +4195,12 @@ import { loadPanel } from './panels.js';
         if (!footerTarget.querySelector('.msg-footer')) {
           footerTarget.appendChild(createMsgFooter(footerTarget));
         }
-        if (_generatedImagesForTurn.length && !_isBg) {
+        // NOTE: `_isBg` from the SSE data-block is NOT in scope here (it is a
+        // block-scoped const inside the line loop) — referencing it throws
+        // `ReferenceError: _isBg is not defined` and aborts the final render
+        // whenever a turn produced images. Recompute locally instead.
+        const _isBgFinalRender = (sessionModule.getCurrentSessionId() !== streamSessionId);
+        if (_generatedImagesForTurn.length && !_isBgFinalRender) {
           _generatedImagesForTurn.forEach(imgData => _appendGeneratedImageBubble(imgData));
         }
         // Add "View Report" link for completed research

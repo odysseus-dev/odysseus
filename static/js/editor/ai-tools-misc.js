@@ -162,10 +162,13 @@ export function wireAIToolsMisc({
   });
   document.getElementById('ge-style-run')?.addEventListener('click', async () => {
     const btn = document.getElementById('ge-style-run');
+    const cmdStatus = document.getElementById('ge-ai-command-status');
+    const setCmd = (text, kind) => { if (cmdStatus) { cmdStatus.textContent = text || ''; cmdStatus.dataset.kind = kind || ''; } };
     const prompt = document.getElementById('ge-style-prompt').value.trim();
     if (!prompt) { uiModule.showToast('Enter a style prompt'); return; }
     const strength = parseInt(document.getElementById('ge-style-strength').value) / 100;
     btn.disabled = true; btn.textContent = 'Applying...';
+    const requestId = 'st-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     try {
       const flat = flatten();
       const blob = await new Promise(r => flat.toBlob(r, 'image/png'));
@@ -173,10 +176,32 @@ export function wireAIToolsMisc({
       fd.append('image', blob, 'style.png');
       fd.append('prompt', prompt);
       fd.append('strength', String(strength));
-      const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd });
+      fd.append('request_id', requestId);
+      setCmd('Starting style transfer...', 'running');
+      // Run the long POST and the progress poll concurrently: the poll
+      // gives live "step X/Y" status while the POST waits (up to 750s).
+      let fetchDone = false;
+      const poller = pollProgress(apiBase, requestId,
+        prog => {
+          if (typeof prog.step === 'number' && typeof prog.total === 'number' && prog.total > 0) {
+            setCmd(`Generating... step ${prog.step}/${prog.total} (${prog.percent || 0}%)`, 'running');
+          } else {
+            setCmd('Generating... (server working)', 'running');
+          }
+        },
+        () => fetchDone
+      ).catch(() => null);
+      let res;
+      try {
+        res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd });
+      } finally {
+        fetchDone = true;
+      }
+      await poller;
       if (!res.ok) throw new Error('Server returned ' + res.status);
       const data = await res.json();
       if (data.image) {
+        // Success without polling
         const img = new Image();
         img.onload = () => {
           if (!state.editorOpen) return;
@@ -188,16 +213,74 @@ export function wireAIToolsMisc({
           composite();
           renderLayerPanel();
           uiModule.showToast('Style applied');
+          setCmd('Style applied.', 'done');
         };
         img.src = 'data:image/png;base64,' + data.image;
       } else {
-        throw new Error(data.error || 'No image returned');
+        // Poll for progress
+        await pollProgress(apiBase, requestId,
+          prog => setCmd(`Generating... step ${prog.step}/${prog.total} (${prog.percent}%)`, 'running'),
+          e => { throw e; }
+        );
+        // After polling, data should have image from final response
+        const img = new Image();
+        img.onload = () => {
+          if (!state.editorOpen) return;
+          saveState();
+          const layer = createLayer('Styled: ' + prompt.substring(0, 20), state.imgWidth, state.imgHeight);
+          layer.ctx.drawImage(img, 0, 0, state.imgWidth, state.imgHeight);
+          state.layers.push(layer);
+          state.activeLayerId = layer.id;
+          composite();
+          renderLayerPanel();
+          uiModule.showToast('Style applied');
+          setCmd('Style applied.', 'done');
+        };
+        img.src = 'data:image/png;base64,' + data.image;
       }
     } catch (e) {
       uiModule.showToast('Style transfer failed: ' + e.message);
+      setCmd('Style transfer failed: ' + e.message, 'error');
     }
     btn.disabled = false; btn.textContent = 'Apply Style';
   });
+
+  // Progress polling helper (via Odysseus proxy — browsers can't hit
+  // the LAN diffusion server directly due to CORS).
+  // Resolves with the final progress object on done; rejects on error,
+  // stall (>60s without step movement, only after live progress was seen
+  // at least once — queued jobs report "unknown" until they start) or
+  // absolute ceiling (750s). `isDone()` lets the caller stop polling
+  // once its own fetch finished.
+  async function pollProgress(apiBase, requestId, onProgress, isDone) {
+    const pollMs = 5000;
+    const stallLimitMs = 60000;
+    const ceilingMs = 750000;
+    const started = Date.now();
+    let lastStep = -1;
+    let lastMove = Date.now();
+    let seenLive = false;
+    for (;;) {
+      if (isDone && isDone()) return null;
+      if (Date.now() - started > ceilingMs) throw new Error('Timed out waiting for image generation (12+ min)');
+      let prog = null;
+      try {
+        const res = await fetch(`${apiBase}/api/gallery/progress/${encodeURIComponent(requestId)}`, { credentials: 'same-origin' });
+        if (res.ok) prog = await res.json();
+      } catch (_) { /* transient — keep waiting */ }
+      if (prog && (prog.status === 'done' || prog.status === 'error')) {
+        if (prog.status === 'error') throw new Error(prog.error || 'Generation failed');
+        return prog;
+      }
+      if (prog && prog.status && prog.status !== 'unknown') {
+        seenLive = true;
+        if (prog.step !== lastStep) { lastStep = prog.step; lastMove = Date.now(); }
+        if (onProgress) onProgress(prog);
+      }
+      if (seenLive && Date.now() - lastMove > stallLimitMs) throw new Error('Server stalled (no progress for 60s)');
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+  }
 
   // ── Add empty layer (used by the layer-panel header button + the
   // Ctrl+Alt+J keyboard shortcut). Returned so keyboard-shortcuts.js
