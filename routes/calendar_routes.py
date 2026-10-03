@@ -1695,8 +1695,8 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 ],
                 headers=headers,
                 temperature=0.0,
-                max_tokens=512,
-                timeout=20,
+                max_tokens=6144,
+                timeout=60,
             )
         except Exception as e:
             return {"ok": False, "error": f"LLM call failed: {e}"}
