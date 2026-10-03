@@ -27,6 +27,7 @@ import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { invalidateSettings } from './appConfig.js';
+import { MCP_PRESETS, presetServerName } from './mcpPresets.js';
 
 let initialized = false;
 let modalEl = null;
@@ -5002,6 +5003,8 @@ async function initUnifiedIntegrations() {
         <div class="admin-card" style="margin-top:8px">
           <h2 style="font-size:13px">Add MCP Server</h2>
           <div class="settings-col">
+            <div class="settings-row"><label class="settings-label">Preset</label><select id="uf-mcp-preset" class="settings-input"><option value="">— pick a preset, or fill in manually —</option></select></div>
+            <div id="uf-mcp-preset-help" style="display:none;font-size:11px;opacity:0.75;white-space:pre-wrap;margin:-2px 0 4px"></div>
             <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
             <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option><option value="http">Streamable HTTP</option></select></div>
             <div id="uf-mcp-stdio-fields" style="display:flex;flex-direction:column;gap:6px;">
@@ -5028,6 +5031,32 @@ async function initUnifiedIntegrations() {
         if (urlInput) urlInput.placeholder = (v === 'http') ? 'https://mcp.example.com/mcp' : 'http://localhost:3001/sse';
       });
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
+
+      // Preset catalog: fills Name/Command/Args/Env and shows setup help.
+      const presetSel = el('uf-mcp-preset');
+      if (presetSel) {
+        MCP_PRESETS.forEach((p, i) => {
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.textContent = p.name;
+          presetSel.appendChild(opt);
+        });
+        presetSel.addEventListener('change', () => {
+          const helpEl = el('uf-mcp-preset-help');
+          if (presetSel.value === '') { if (helpEl) helpEl.style.display = 'none'; return; }
+          const p = MCP_PRESETS[parseInt(presetSel.value)];
+          el('uf-mcp-name').value = presetServerName(p.name);
+          el('uf-mcp-transport').value = 'stdio';
+          el('uf-mcp-transport').dispatchEvent(new Event('change'));
+          el('uf-mcp-cmd').value = p.command;
+          el('uf-mcp-args').value = JSON.stringify(p.args);
+          el('uf-mcp-env').value = JSON.stringify(p.env);
+          if (helpEl) {
+            if (p.help) { helpEl.textContent = p.help; helpEl.style.display = ''; }
+            else helpEl.style.display = 'none';
+          }
+        });
+      }
       el('uf-mcp-save').addEventListener('click', async () => {
         const transport = el('uf-mcp-transport').value;
         // routes/mcp_routes.py uses FastAPI Form(...) — send multipart, not JSON.
