@@ -872,5 +872,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     # ascending → truncate kept the 50 SMALLEST models and "highest VRAM"
     # could never appear, breaking the column-click toggle.
     results.sort(key=sort_fn, reverse=True)
-    results = results[:limit]
+
+    if limit is not None:
+        results = results[:limit]
     return results

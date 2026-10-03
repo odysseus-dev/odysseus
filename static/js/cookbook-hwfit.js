@@ -803,7 +803,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     // Sorting is a table operation, not a different backend query. Fetch a
     // broad candidate set once, then sort it client-side so VRAM/Params/etc.
     // do not appear to "filter out" rows by returning a different top-80 slice.
-    const params = new URLSearchParams({ limit: '2500', sort: 'score' });
+    const params = new URLSearchParams({ all_models: 'true', sort: 'score' });
     if (fresh) params.set('fresh', '1');   // bypass the hardware-scan cache
     if (search) params.set('search', search);
     if (remoteHost) {
@@ -1328,9 +1328,22 @@ function _sortHwfitRows(models) {
   return rows;
 }
 
+function _renderHwfitFromCache() {
+  // Re-render the current HW Fit results from memory for sort-only changes.
+  // Avoids re-probing hardware and re-ranking models when the dataset is unchanged.
+  const list = document.getElementById('hwfit-list');
+
+  if (!list || !_hwfitCache || !Array.isArray(_hwfitCache.models)) {
+    return false;
+  }
+
+  _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
+  return true;
+}
+
 export function _hwfitRenderList(el, models) {
   if (!el) return;
-  models = _sortHwfitRows(models);
+  models = _sortHwfitRows(models).slice(0, 2500);
   if (!models.length) {
     // Disambiguate WHY the list is empty so capable servers don't read as "too weak":
     // active filters vs. a likely under-reported probe vs. genuinely low hardware.
@@ -1503,7 +1516,9 @@ export function _hwfitRenderList(el, models) {
         // buries qwen/gemma-sized rows below absurd impossible footprints.
         sel.dataset.reverse = sortKey === 'vram' ? '1' : '0';
       }
-      _hwfitFetch();
+      if (!_renderHwfitFromCache()) {
+        _hwfitFetch();
+      }
     });
   });
 }
@@ -2170,7 +2185,11 @@ export function _hwfitInit() {
   _syncCtxControl();
   if (uc) _bindHwfitUsecasePicker(uc);
   if (uc) uc.addEventListener('change', () => _hwfitFetch());
-  if (sort) sort.addEventListener('change', () => _hwfitFetch());
+  if (sort) sort.addEventListener('change', () => {
+    if (!_renderHwfitFromCache()) {
+      _hwfitFetch();
+    }
+  });
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
   // Engine filter is a pure client-side view filter over the already-fetched
   // list (HF + Ollama merged), so just re-render from cache.
