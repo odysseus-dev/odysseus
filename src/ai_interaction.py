@@ -75,12 +75,20 @@ from src.endpoint_resolver import build_chat_url, build_headers, build_models_ur
 from src.image_model_ids import looks_like_image_generation_model, model_id_leaf
 
 
-def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[str] = None) -> Tuple[str, str, Dict]:
+def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[str] = None, endpoint_id: Optional[str] = None) -> Tuple[str, str, Dict]:
     """Resolve a model specifier to (endpoint_url, model_id, headers).
 
     Accepts:
       "model_name"              — searches all configured endpoints
       "model_name@endpoint_name" — looks up specific endpoint by display name
+
+    When ``endpoint_id`` is given (universal image-endpoint flow, variant B),
+    only that endpoint row is considered. This makes the selection
+    deterministic when several image servers expose the same model id
+    (e.g. two LAN diffusion servers on different ports). ``spec`` stays a
+    bare model id so the UI can display it without an encoding hack.
+    The ``model@endpoint`` suffix form keeps working for backwards
+    compatibility with older saved settings.
 
     Raises ValueError if model not found.
     """
@@ -122,7 +130,9 @@ def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[
         query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
         if model_type:
             query = query.filter(ModelEndpoint.model_type == model_type)
-        if target_endpoint_name:
+        if endpoint_id:
+            query = query.filter(ModelEndpoint.id == endpoint_id)
+        elif target_endpoint_name:
             query = query.filter(ModelEndpoint.name.ilike(f"%{target_endpoint_name}%"))
         if owner:
             query = owner_filter(query, ModelEndpoint, owner)
@@ -968,9 +978,14 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     except Exception:
         _settings = {}
 
-    # Use admin-configured model/quality if not specified by the tool call
+    # Use admin-configured model/quality if not specified by the tool call.
+    # image_endpoint_id makes the choice deterministic when several image
+    # servers expose the same model id (universal endpoint flow). Empty
+    # means "search all image endpoints" (legacy behaviour).
+    _image_endpoint_id = ""
     if not model_spec:
         model_spec = _settings.get("image_model", "")
+        _image_endpoint_id = (_settings.get("image_endpoint_id", "") or "").strip()
     if quality == "medium" and _settings.get("image_quality"):
         quality = _settings["image_quality"]
 
@@ -978,12 +993,19 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     if not model_spec:
         for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
             try:
-                await asyncio.to_thread(_resolve_model, candidate, owner=owner)
+                await asyncio.to_thread(
+                    _resolve_model, candidate, owner=owner, model_type="image",
+                    endpoint_id=_image_endpoint_id or None,
+                )
                 model_spec = candidate
                 break
             except ValueError:
                 continue
-        # Fallback: find any locally registered image-type endpoint
+        # Fallback: find any locally registered image-type endpoint.
+        # Universal contract: any OpenAI-compatible server with
+        # GET /v1/models -> {data:[{id}]} and POST /v1/images/generations.
+        # When image_endpoint_id is configured, prefer that endpoint so two
+        # servers exposing the same model id stay deterministic.
         if not model_spec:
             try:
                 from src.database import SessionLocal, ModelEndpoint
@@ -995,9 +1017,19 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         ModelEndpoint.is_enabled == True,
                         ModelEndpoint.model_type == "image",
                     )
+                    if _image_endpoint_id:
+                        _img_q = _img_q.filter(ModelEndpoint.id == _image_endpoint_id)
                     if owner:
                         _img_q = owner_filter(_img_q, ModelEndpoint, owner)
                     _img_eps = _img_q.all()
+                    if not _img_eps and _image_endpoint_id:
+                        _img_q = _idb.query(ModelEndpoint).filter(
+                            ModelEndpoint.is_enabled == True,
+                            ModelEndpoint.model_type == "image",
+                        )
+                        if owner:
+                            _img_q = owner_filter(_img_q, ModelEndpoint, owner)
+                        _img_eps = _img_q.all()
                     for _iep in _img_eps:
                         _ibase = _iep.base_url.rstrip("/")
                         if not _ibase.endswith("/v1"):
@@ -1023,7 +1055,10 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     async def _resolve_image_model(model_name: str):
         def _call():
             try:
-                return _resolve_model(model_name, owner=owner, model_type="image")
+                return _resolve_model(
+                    model_name, owner=owner, model_type="image",
+                    endpoint_id=_image_endpoint_id or None,
+                )
             except TypeError as exc:
                 if "model_type" not in str(exc):
                     raise
@@ -1081,8 +1116,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
 
     try:
-        # GPT image models can take 30-120s+ depending on quality
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
+        # Cold-load SDXL full job observed ~526 s. Use 600 s ceiling
+        # so long-running local generations don't get cut off.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)) as client:
             resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
@@ -1218,6 +1254,7 @@ async def do_edit_image(
 
     if not model_spec:
         model_spec = _settings.get("image_model", "")
+    _image_endpoint_id = (_settings.get("image_endpoint_id", "") or "").strip()
     if quality == "medium" and _settings.get("image_quality"):
         quality = _settings["image_quality"]
     if not model_spec:
@@ -1227,7 +1264,10 @@ async def do_edit_image(
         try:
             def _call():
                 try:
-                    return _resolve_model(model_spec, owner=owner, model_type="image")
+                    return _resolve_model(
+                        model_spec, owner=owner, model_type="image",
+                        endpoint_id=_image_endpoint_id or None,
+                    )
                 except TypeError as exc:
                     if "model_type" not in str(exc):
                         raise
