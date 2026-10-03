@@ -342,6 +342,36 @@ def _normalize_chat_endpoint(url: str) -> str:
         return url
 
 
+def _resolve_research_settings(get_setting_fn):
+    """Resolve the scheduled-research settings with crash-proof fallbacks.
+
+    A hand-edited or agent-written data/settings.json can hold non-numeric
+    values for the research_* keys; the bare int() reads previously raised
+    inside TaskScheduler._execute_research_task and killed every scheduled
+    research run until settings.json was fixed by hand (#5049).
+    src/research_handler.py already guards the same reads defensively —
+    this mirrors that for the scheduler. Valid values pass through
+    unchanged (numeric strings like "4096" still parse).
+    """
+    try:
+        max_tokens = int(get_setting_fn("research_max_tokens", 8192))
+    except (TypeError, ValueError):
+        max_tokens = 8192
+    try:
+        extraction_timeout = int(
+            get_setting_fn("research_extraction_timeout_seconds", 90) or 90
+        )
+    except (TypeError, ValueError):
+        extraction_timeout = 90
+    try:
+        extraction_concurrency = int(
+            get_setting_fn("research_extraction_concurrency", 3) or 3
+        )
+    except (TypeError, ValueError):
+        extraction_concurrency = 3
+    return max_tokens, extraction_timeout, extraction_concurrency
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -2068,9 +2098,9 @@ class TaskScheduler:
         except Exception:
             pass
 
-        max_tokens = int(get_setting("research_max_tokens", 8192))
-        extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
-        extraction_concurrency = int(get_setting("research_extraction_concurrency", 3) or 3)
+        max_tokens, extraction_timeout, extraction_concurrency = (
+            _resolve_research_settings(get_setting)
+        )
 
         researcher = DeepResearcher(
             llm_endpoint=endpoint_url,
