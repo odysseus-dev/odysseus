@@ -1111,7 +1111,10 @@ def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
 
 
 def test_gmail_mcp_preset_uses_contained_oauth_paths():
-    src = Path(__file__).resolve().parents[1] / "static" / "js" / "admin.js"
+    # The preset catalog lives in mcpPresets.js (shared by the live Add Server
+    # form in settings.js and the legacy admin form). Pin the contained OAuth
+    # paths at the source of truth so both consumers inherit them.
+    src = Path(__file__).resolve().parents[1] / "static" / "js" / "mcpPresets.js"
     text = src.read_text()
     preset = text.split('{ name: "Gmail"', 1)[1].split('{ name: "Email (IMAP/SMTP)"', 1)[0]
 
