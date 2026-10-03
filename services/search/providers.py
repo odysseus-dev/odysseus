@@ -136,6 +136,15 @@ _NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "i
 _GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presearch")
 
 
+_CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+
+
+def _searxng_language(query: str) -> str:
+    """English pin keeps brand-ambiguous English queries clean, but with
+    language=en Bing returns nothing for Cyrillic queries — pin Russian then."""
+    return "ru" if _CYRILLIC.search(query) else "en"
+
+
 def searxng_search_api(query: str, count: Optional[int] = None, categories: str = "general",
                        time_filter: Optional[str] = None) -> List[dict]:
     """Search using SearXNG JSON API. Returns list of {title, url, snippet}."""
@@ -158,7 +167,7 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
     params = {
         "q": query,
         "format": "json",
-        "language": "en",
+        "language": _searxng_language(query),
         "safesearch": _safesearch_for("searxng"),
     }
     q_lc = query.lower()
@@ -207,7 +216,7 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             fallback = {
                 "q": query,
                 "format": "json",
-                "language": "en",
+                "language": _searxng_language(query),
                 "categories": "general",
                 "safesearch": _safesearch_for("searxng"),
             }

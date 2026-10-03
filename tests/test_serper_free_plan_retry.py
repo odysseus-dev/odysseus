@@ -62,3 +62,9 @@ def test_serper_other_400_is_not_retried(monkeypatch):
     except Exception:
         pass
     assert len(sent) == 1
+
+
+def test_searxng_language_follows_query_script():
+    # language=en makes SearXNG/Bing return nothing for Cyrillic queries.
+    assert providers._searxng_language("психолог Пилипцова") == "ru"
+    assert providers._searxng_language("Odyssey release notes") == "en"
