@@ -156,17 +156,54 @@ def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
     return None
 
 
+# (host, port, model) -> (True | None, expiry); None = not confirmed by Ollama.
+_ollama_vision_cache: dict = {}
+
+
+def ollama_supports_vision(url: str, model: str) -> Optional[bool]:
+    """True when Ollama's /api/show lists "vision" for `model`, or None so
+    callers fall back. Never False: llama.cpp also answers /api/show with a
+    partial capability list, and a false negative drops the image (#124)."""
+    if not model:
+        return None
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    # Never probe a remote provider; Ollama is always a local/LAN host.
+    if not _is_local_host(host):
+        return None
+    key = (host, parsed.port, model.strip().lower())
+    now = time.time()
+    cached = _ollama_vision_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    authority = host if parsed.port is None else f"{host}:{parsed.port}"
+    probe_url = f"{parsed.scheme or 'http'}://{authority}/api/show"
+    try:
+        r = httpx.post(probe_url, json={"model": model}, timeout=1.0)
+    except Exception:
+        return None
+    try:
+        data = r.json() if r.is_success else {}
+    except Exception:
+        data = {}
+    caps = data.get("capabilities") if isinstance(data, dict) else None
+    result = True if isinstance(caps, list) and "vision" in caps else None
+    _ollama_vision_cache[key] = (result, now + _PROVIDER_FINGERPRINT_TTL)
+    return result
+
+
 def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
     """Whether a model accepts images, using the endpoint's reported
-    capability when available (LM Studio) and falling back to name-based
-    detection otherwise."""
+    capability when available (LM Studio, Ollama) and falling back to
+    name-based detection otherwise."""
     if endpoint_url:
-        try:
-            advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
-        except Exception:
-            advertised = None
-        if advertised is not None:
-            return advertised
+        for probe in (lmstudio_supports_vision, ollama_supports_vision):
+            try:
+                advertised = probe(endpoint_url, model_name or "")
+            except Exception:
+                advertised = None
+            if advertised is not None:
+                return advertised
     return is_vision_model(model_name)
 
 

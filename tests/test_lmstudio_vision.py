@@ -100,5 +100,63 @@ class TestModelSupportsVision:
     def test_falls_back_to_name_when_endpoint_unknown(self, monkeypatch):
         # Endpoint doesn't advertise (None) → name heuristic decides.
         monkeypatch.setattr(chat_helpers, "lmstudio_supports_vision", lambda url, m: None)
+        monkeypatch.setattr(chat_helpers, "ollama_supports_vision", lambda url, m: None)
         assert chat_helpers.model_supports_vision("qwen2-vl-7b", "http://host/v1") is True
         assert chat_helpers.model_supports_vision("plain-llm", "http://host/v1") is False
+
+    def test_ollama_capability_overrides_name_heuristic(self, monkeypatch):
+        # devstral-small-2 has no vision keyword, but Ollama reports vision.
+        monkeypatch.setattr(chat_helpers, "lmstudio_supports_vision", lambda url, m: None)
+        monkeypatch.setattr(chat_helpers, "ollama_supports_vision", lambda url, m: True)
+        assert chat_helpers.model_supports_vision("devstral-small-2:latest",
+                                                  "http://localhost:11434/v1") is True
+
+
+# ════════════════════════════════════════════════════════════
+# ollama_supports_vision — reads /api/show capabilities
+# ════════════════════════════════════════════════════════════
+
+class TestOllamaSupportsVision:
+    URL = "http://localhost:11434/v1"
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        chat_helpers._ollama_vision_cache.clear()
+        yield
+        chat_helpers._ollama_vision_cache.clear()
+
+    def _serve(self, monkeypatch, payload, ok=True):
+        calls = []
+
+        def fake_post(url, json=None, timeout=None):
+            calls.append((url, json))
+            return _FakeResponse(payload, ok=ok)
+
+        monkeypatch.setattr(chat_helpers.httpx, "post", fake_post)
+        return calls
+
+    def test_vision_capability_returns_true(self, monkeypatch):
+        calls = self._serve(monkeypatch, {"capabilities": ["completion", "vision", "tools"]})
+        assert chat_helpers.ollama_supports_vision(self.URL, "devstral-small-2:latest") is True
+        assert calls == [("http://localhost:11434/api/show", {"model": "devstral-small-2:latest"})]
+
+    def test_missing_vision_returns_none_not_false(self, monkeypatch):
+        # A partial list (e.g. llama.cpp's /api/show) must not veto vision.
+        self._serve(monkeypatch, {"capabilities": ["completion"]})
+        assert chat_helpers.ollama_supports_vision(self.URL, "some-model") is None
+
+    def test_non_ollama_endpoint_returns_none(self, monkeypatch):
+        self._serve(monkeypatch, {"error": "not found"}, ok=False)
+        assert chat_helpers.ollama_supports_vision(self.URL, "some-model") is None
+
+    def test_result_is_cached(self, monkeypatch):
+        calls = self._serve(monkeypatch, {"capabilities": ["vision"]})
+        chat_helpers.ollama_supports_vision(self.URL, "gemma4:e4b")
+        chat_helpers.ollama_supports_vision(self.URL, "gemma4:e4b")
+        assert len(calls) == 1
+
+    def test_remote_endpoint_never_probed(self, monkeypatch):
+        calls = self._serve(monkeypatch, {"capabilities": ["vision"]})
+        assert chat_helpers.ollama_supports_vision(
+            "https://api.openai.com/v1/chat/completions", "gpt-4o") is None
+        assert calls == []
