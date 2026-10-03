@@ -292,3 +292,101 @@ class TestResearchPrimerPreserved:
         trimmed = trim_for_context(msgs, context_length=1024, reserve_tokens=256)
         joined = "\n".join(str(m.get("content", "")) for m in trimmed)
         assert "You are Odysseus." in joined
+
+
+class TestSanitizeToolMessagesPredecessor:
+    """Pass 1 of _sanitize_tool_messages ensures assistant tool_calls have
+    valid predecessors (user or tool). This prevents provider errors like
+    Gemini's "function call turn comes immediately after a user turn or
+    after a function response turn"."""
+
+    def _sanitize(self, msgs):
+        return cc._sanitize_tool_messages(msgs)
+
+    def test_assistant_tool_calls_after_user_kept(self):
+        """User -> Assistant(tool_calls) is valid."""
+        msgs = [
+            {"role": "user", "content": "search for X"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        assert len(result) == 3
+        assert result[1].get("tool_calls") is not None
+
+    def test_assistant_tool_calls_after_tool_kept(self):
+        """Tool -> Assistant(tool_calls) is valid, but first assistant with no predecessor is stripped."""
+        msgs = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c2", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c2", "content": "more results"},
+        ]
+        result = self._sanitize(msgs)
+        # First assistant has no predecessor -> tool_calls stripped -> no content -> removed
+        # First tool becomes orphan -> dropped
+        # Second assistant has tool predecessor -> tool_calls kept
+        # Second tool follows assistant with tool_calls -> kept
+        assert len(result) == 2
+        assert result[0].get("tool_calls") is not None
+        assert result[1].get("role") == "tool"
+
+    def test_assistant_tool_calls_after_assistant_stripped(self):
+        """Assistant(text) -> Assistant(tool_calls) is INVALID; tool_calls stripped."""
+        msgs = [
+            {"role": "user", "content": "search"},
+            {"role": "assistant", "content": "I'll search", "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+            {"role": "assistant", "content": "Found it"},
+            # Next round: model announces tool use but previous was assistant text
+            {"role": "assistant", "content": "Let me search more", "tool_calls": [{"id": "c2", "function": {"name": "web_search"}}]},
+        ]
+        result = self._sanitize(msgs)
+        # Last assistant had tool_calls but predecessor was assistant (not user/tool)
+        # tool_calls should be stripped, content preserved
+        last = result[-1]
+        assert last["role"] == "assistant"
+        assert last.get("tool_calls") is None
+        assert "Let me search more" in last["content"]
+
+    def test_assistant_tool_calls_after_system_stripped(self):
+        """System -> Assistant(tool_calls) is INVALID; tool_calls stripped and message removed if no content."""
+        msgs = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        # First assistant has tool_calls but predecessor is system -> tool_calls stripped
+        # No content -> entire message removed
+        # Tool becomes orphan -> dropped
+        assert len(result) == 1
+        assert result[0]["role"] == "system"
+
+    def test_first_message_assistant_tool_calls_stripped(self):
+        """First message Assistant(tool_calls) has no predecessor; tool_calls stripped and message removed if no content."""
+        msgs = [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        # First assistant has no predecessor -> tool_calls stripped -> no content -> removed
+        # Tool becomes orphan -> dropped
+        assert len(result) == 0
+
+    def test_assistant_tool_calls_with_content_preserved(self):
+        """Assistant with content and tool_calls after invalid predecessor: tool_calls stripped, content kept."""
+        msgs = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "assistant", "content": "I'll search for you", "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        # First assistant has tool_calls but predecessor is system -> tool_calls stripped
+        # Has content -> message kept without tool_calls
+        # Tool becomes orphan -> dropped
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[1]["role"] == "assistant"
+        assert result[1].get("tool_calls") is None
+        assert "I'll search for you" in result[1]["content"]

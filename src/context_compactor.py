@@ -91,29 +91,55 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
       - drops `tool` messages with no valid preceding tool_calls
       - drops assistant `tool_calls` messages whose tool responses were
         all trimmed away (some providers reject unanswered tool_calls)
+
+    Additionally, Gemini and some other providers require that a function
+    call turn (assistant with `tool_calls`) comes immediately after a user
+    turn or a function response turn. This pass also strips `tool_calls`
+    from assistant messages that have invalid predecessors (assistant or
+    system messages).
     """
-    # Pass 1: drop orphan tool messages.
+    # Pass 1: ensure assistant tool_calls have valid predecessors.
+    # Gemini and similar providers require function call turns to come
+    # immediately after a user turn or a tool response turn.
+    # Valid predecessors: "user", "tool"
+    # Invalid predecessors: "assistant", "system", None (first message)
     cleaned: List[Dict] = []
+    for i, m in enumerate(msgs):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            prev = msgs[i - 1] if i > 0 else None
+            prev_role = prev.get("role") if prev else None
+            if prev_role not in ("user", "tool"):
+                # Invalid predecessor — strip tool_calls to avoid provider errors
+                m = {k: v for k, v in m.items() if k != "tool_calls"}
+                if not (m.get("content") or "").strip():
+                    continue  # nothing left worth keeping
+        cleaned.append(m)
+
+    # Pass 2: drop orphan tool messages.
+    # OpenAI's API requires every `role:"tool"` message to immediately
+    # follow an assistant message that carries `tool_calls` (or another
+    # tool message in the same batch).
+    out: List[Dict] = []
     in_batch = False  # are we right after an assistant tool_calls (or mid-batch)?
-    for m in msgs:
+    for m in cleaned:
         role = m.get("role")
         if role == "tool":
             if in_batch:
-                cleaned.append(m)
+                out.append(m)
             # else: orphan — drop
             continue
         if role == "assistant" and m.get("tool_calls"):
             in_batch = True
         else:
             in_batch = False
-        cleaned.append(m)
+        out.append(m)
 
-    # Pass 2: drop assistant tool_calls messages that have NO following
-    # tool response (dangling) — walk backwards so we know what follows.
-    out: List[Dict] = []
-    for i, m in enumerate(cleaned):
+    # Pass 3: drop assistant tool_calls messages that have NO following
+    # tool response (dangling).
+    final: List[Dict] = []
+    for i, m in enumerate(out):
         if m.get("role") == "assistant" and m.get("tool_calls"):
-            nxt = cleaned[i + 1] if i + 1 < len(cleaned) else None
+            nxt = out[i + 1] if i + 1 < len(out) else None
             if not (nxt and nxt.get("role") == "tool"):
                 # Dangling tool_calls — keep the message but strip the
                 # tool_calls so it's a plain assistant turn (preserves any
@@ -121,8 +147,9 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
                 m = {k: v for k, v in m.items() if k != "tool_calls"}
                 if not (m.get("content") or "").strip():
                     continue  # nothing left worth keeping
-        out.append(m)
-    return out
+        final.append(m)
+
+    return final
 
 
 def _message_text_token_estimate(text: str) -> int:
