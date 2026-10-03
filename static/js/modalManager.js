@@ -1423,6 +1423,49 @@ const _AUTO_WIRE = {
   'custom-preset-modal':  { rail: null,             sidebar: null },
 };
 
+// ── Launcher toggle ──
+// Clicking the button that opened a window again closes it, the same as its
+// close button (so the tool tears down normally). Minimized windows still
+// restore on click; buttons nested in a launcher row (e.g. Library's "+")
+// keep their own action. Guarded because app.js imports this module under
+// two URLs.
+const _EXTRA_LAUNCHERS = {
+  'email-lib-modal': ['email-section-title'],
+  'settings-modal':  ['user-bar-settings'],
+};
+function _launcherModalId(btnId) {
+  for (const [modalId, wire] of Object.entries(_AUTO_WIRE)) {
+    if (wire.rail === btnId || wire.sidebar === btnId) return modalId;
+  }
+  for (const [modalId, ids] of Object.entries(_EXTRA_LAUNCHERS)) {
+    if (ids.includes(btnId)) return modalId;
+  }
+  return null;
+}
+function _isShowing(modal) {
+  if (modal.classList.contains('hidden')) return false;
+  const cs = getComputedStyle(modal);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const r = (modal.querySelector('.modal-content') || modal).getBoundingClientRect();
+  return r.width > 0 && r.height > 0;
+}
+if (!window.__odysseusLauncherToggle) {
+  window.__odysseusLauncherToggle = true;
+  document.addEventListener('click', (e) => {
+    const launcher = e.target.closest('button[id], .list-item[id], .section-title[id], .icon-rail-btn[id]');
+    if (!launcher) return;
+    const modalId = _launcherModalId(launcher.id);
+    if (!modalId || _state.get(modalId)?.isMinimized) return;
+    const modal = document.getElementById(modalId);
+    if (!modal || !_isShowing(modal)) return;
+    const closeBtn = modal.querySelector('.modal-header .close-btn, .close-btn, .modal-close, [data-close]');
+    if (!closeBtn) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closeBtn.click();
+  }, true);
+}
+
 function _autoRegister(id) {
   if (_state.has(id)) return _state.get(id);
   const wire = _AUTO_WIRE[id];

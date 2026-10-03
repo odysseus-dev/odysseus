@@ -534,7 +534,11 @@ export function autoResize(textarea) {
   let clone = textarea._resizeClone;
   if (!clone) {
     clone = textarea.cloneNode(false);
-    clone.style.cssText = getComputedStyle(textarea).cssText;
+    // Measurement-only twin: it must not share the real field's id, name,
+    // label or form semantics (a duplicate #message broke id lookups).
+    ['id', 'name', 'required', 'autofocus', 'aria-label'].forEach(a => clone.removeAttribute(a));
+    clone.setAttribute('aria-hidden', 'true');
+    clone.tabIndex = -1;
     clone.style.position = 'absolute';
     clone.style.visibility = 'hidden';
     clone.style.height = '0';
@@ -544,6 +548,16 @@ export function autoResize(textarea) {
     clone.style.zIndex = '-1';
     textarea.parentNode.appendChild(clone);
     textarea._resizeClone = clone;
+  }
+  // Mirror the properties that affect text height on every call (fonts and
+  // breakpoints can change). getComputedStyle().cssText is empty in Chrome,
+  // so the clone used to match only by sharing the real field's #id.
+  const cs = getComputedStyle(textarea);
+  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'minHeight',
+                   'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+                   'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderStyle',
+                   'boxSizing', 'whiteSpace', 'wordBreak', 'overflowWrap', 'tabSize']) {
+    clone.style[p] = cs[p];
   }
   clone.style.width = textarea.offsetWidth + 'px';
   clone.value = textarea.value;

@@ -42,7 +42,7 @@ def _map():
 
 # Selectors (kept in one place so the tests read as plain assertions).
 EMAIL = "#email-section, #rail-email"
-TOOLS = "#tools-section"
+TOOLS = "#tools-section, #workspace-section"
 CAL = "#tool-calendar-btn, #rail-calendar"
 COMPARE = "#tool-compare-btn, #rail-compare"
 LIB = "#tool-library-btn, #rail-archive"
@@ -115,6 +115,13 @@ def test_tools_off_hides_every_tool_rail_but_not_email():
     for sel in (CAL, COMPARE, LIB, RESEARCH):
         assert m[sel] is False, sel
     assert m[EMAIL] is True  # email is independent of the Tools section
+
+
+
+def test_tools_off_keeps_theme_visible():
+    # Theme moved to the sidebar footer, so hiding Tools must not hide it.
+    m = _resolve({"tools-section": False})
+    assert m["#tool-theme-btn, #rail-theme"] is True
 
 
 def test_tools_off_overrides_per_tool_on():

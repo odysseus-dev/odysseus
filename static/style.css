@@ -17,10 +17,10 @@
 
 :root {
   /* Core palette */
-  --bg: #282c34;
-  --fg: #9cdef2;
-  --panel: #111;
-  --border: #355a66;
+  --bg: #131418;
+  --fg: #ececef;
+  --panel: #18191d;
+  --border: #2a2b31;
   --red: #e06c75;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
@@ -542,7 +542,7 @@ body.bg-pattern-sparkles {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--fg);
       opacity: 0.7;
@@ -551,7 +551,7 @@ body.bg-pattern-sparkles {
     }
 
     .user-bar-name {
-      font-size: 9.75px;
+      font-size: 11px;
       font-weight: 500;
       color: var(--fg);
       opacity: 0.8;
@@ -1239,7 +1239,7 @@ body.bg-pattern-sparkles {
       flex: 1; cursor: pointer; user-select: none;
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
-      font-size: 10px; font-weight: 400; font-family: inherit;
+      font-size: 11px; font-weight: 400; font-family: inherit;
       /* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
          Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
          in a fixed-height (29px) header, so this adds headroom without reflow. */
@@ -1589,7 +1589,7 @@ body.bg-pattern-sparkles {
     .item-drag-handle {
       cursor: grab;
       opacity: 0.4;
-      font-size: 10px;
+      font-size: 11px;
       padding: 0 4px;
       user-select: none;
       letter-spacing: -2px;
@@ -1763,7 +1763,7 @@ body.bg-pattern-sparkles {
       margin: 0;
       height: 24px;
       padding: 0 8px;
-      font-size: 9px;
+      font-size: 11px;
     }
     /* Inline "+" action on a tool/section row (Library → new document,
        Email → compose). Sizing forced + min-* zeroed so the mobile
@@ -1813,7 +1813,7 @@ body.bg-pattern-sparkles {
       opacity: 0;
       pointer-events: none;
       white-space: nowrap;
-      font-size: 9.5px;
+      font-size: 11px;
       line-height: 1;
       letter-spacing: 0.02em;
       transition: opacity 0.18s ease, transform 0.22s ease;
@@ -1837,7 +1837,7 @@ body.bg-pattern-sparkles {
     }
     .list-item span {
       color: var(--fg);
-      font-size: 9.75px;
+      font-size: 11px;
     }
     .grow {
       flex: 1;
@@ -2040,14 +2040,14 @@ body.bg-pattern-sparkles {
       color: var(--brand-color, var(--red));
     }
     #welcome-screen .welcome-sub {
-      font-size:0.85rem;
+      font-size:14px;
       color:color-mix(in srgb, var(--fg) 60%, transparent);
       opacity:0.6;
       line-height:1.5;
       max-width:300px;
     }
     #welcome-screen .welcome-version {
-      font-size:0.7rem;
+      font-size:12px;
       opacity:0.25;
       margin-top:12px;
       pointer-events:none;
@@ -2110,7 +2110,7 @@ body.bg-pattern-sparkles {
     }
     @media (max-width:768px) {
       #welcome-screen .welcome-name { font-size:1.8rem; }
-      #welcome-screen .welcome-sub { font-size:0.8rem; }
+      #welcome-screen .welcome-sub { font-size:13px; }
       .chat-container.welcome-active .chat-input-bar {
         margin-bottom:0;
         margin-left:0;
@@ -2276,7 +2276,7 @@ body.bg-pattern-sparkles {
       border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
       color: var(--accent, var(--red));
       background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
-      font-size: 8px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.03em;
@@ -2363,7 +2363,7 @@ body.bg-pattern-sparkles {
     }
     .rag-similarity {
       color: color-mix(in srgb, var(--fg) 50%, transparent);
-      font-size: 10px;
+      font-size: 11px;
       margin-left: 6px;
     }
     .rag-snippet {
@@ -2380,13 +2380,13 @@ body.bg-pattern-sparkles {
       border-radius: 4px;
       color: color-mix(in srgb, var(--fg) 50%, transparent);
       cursor: pointer;
-      font-size: 10px;
+      font-size: 11px;
       padding: 1px 5px;
     }
     .rag-file-delete:hover { color: var(--fg); border-color: var(--fg); }
     .rag-file-size {
       color: color-mix(in srgb, var(--fg) 50%, transparent);
-      font-size: 10px;
+      font-size: 11px;
       margin-left: 4px;
     }
     .rag-upload-zone {
@@ -2404,7 +2404,7 @@ body.bg-pattern-sparkles {
       color: var(--red);
     }
     .msg .timestamp {
-      font-size: 10px;
+      font-size: 11px;
       color: color-mix(in srgb, var(--fg) 45%, transparent);
       margin-top: 4px;
       text-align: right;
@@ -2488,7 +2488,7 @@ body.bg-pattern-sparkles {
 	      border-radius: 999px;
 	      background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--input-bg, var(--panel)));
 		      color: var(--accent, var(--red));
-		      font-size: 10px;
+		      font-size: 11px;
 		      font-weight: 700;
 		      line-height: 1;
 		      transition: opacity 0.22s ease, transform 0.22s ease;
@@ -3078,7 +3078,7 @@ body.bg-pattern-sparkles {
       background: transparent;
       color: color-mix(in srgb, var(--fg) 35%, transparent);
       font-family: inherit;
-      font-size: 0.7rem;
+      font-size: 12px;
       font-weight: 400;
       line-height: 1;
       cursor: pointer;
@@ -3751,7 +3751,7 @@ body.bg-pattern-sparkles {
     }
     .msg:hover .copy-btn { opacity:1; }
     .role-timestamp {
-      font-size:0.7rem; color:var(--color-muted-alt); font-weight:normal; margin-left:6px;
+      font-size:12px; color:var(--color-muted-alt); font-weight:normal; margin-left:6px;
     }
     .msg-footer {
       display:flex; align-items:center; gap:6px;
@@ -3800,7 +3800,7 @@ body.bg-pattern-sparkles {
       color: var(--ctx-color);
     }
     .ctx-ring-pct {
-      font-size: 0.7rem;
+      font-size: 12px;
       font-weight: 600;
       line-height: 1;
     }
@@ -3815,7 +3815,7 @@ body.bg-pattern-sparkles {
       box-shadow: 0 4px 20px rgba(0,0,0,0.4);
       min-width: 220px;
       max-width: 280px;
-      font-size: 0.85rem;
+      font-size: 14px;
       color: var(--fg);
     }
     .ctx-bar-wrap {
@@ -3839,7 +3839,7 @@ body.bg-pattern-sparkles {
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--fg);
-      font-size: 0.8rem;
+      font-size: 13px;
       cursor: pointer;
       transition: border-color 0.15s, color 0.15s;
     }
@@ -3864,7 +3864,7 @@ body.bg-pattern-sparkles {
       background: var(--panel);
       border: 1px solid var(--border);
       color: var(--fg);
-      font-size: 0.7rem;
+      font-size: 12px;
       padding: 2px 8px;
       border-radius: 10px;
       cursor: pointer;
@@ -3935,7 +3935,7 @@ body.bg-pattern-sparkles {
     .footer-delete-btn:hover { color: var(--red); }
     .regen-btn {
       background:none; border:none;
-      color:var(--color-muted-alt); font-size:1.1rem; cursor:pointer;
+      color:var(--color-muted-alt); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -3943,7 +3943,7 @@ body.bg-pattern-sparkles {
     .regen-btn:hover { color:var(--accent); }
     .fork-btn {
       background:none; border:none;
-      color:var(--color-muted-alt); font-size:1.1rem; cursor:pointer;
+      color:var(--color-muted-alt); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -3951,7 +3951,7 @@ body.bg-pattern-sparkles {
     .fork-btn:hover { color:var(--accent); }
     .msg-action-btn {
       background:none; border:none;
-      color:var(--muted, var(--color-muted-alt)); font-size:1.1rem; cursor:pointer;
+      color:var(--muted, var(--color-muted-alt)); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -3961,7 +3961,7 @@ body.bg-pattern-sparkles {
     .msg-delete-btn { position:relative; top:1px; }
     .msg-delete-btn:hover { color:var(--red); }
     .msg-more-btn {
-      font-size:0.7rem; letter-spacing:0.5px;
+      font-size:12px; letter-spacing:0.5px;
     }
     .msg-overflow-menu {
       position:fixed;
@@ -3982,7 +3982,7 @@ body.bg-pattern-sparkles {
       border:none;
       border-bottom:1px solid color-mix(in srgb, var(--border) 40%, transparent);
       color:var(--fg);
-      font-size:0.8rem;
+      font-size:13px;
       padding:5px 8px;
       border-radius:4px;
       cursor:pointer;
@@ -4176,7 +4176,7 @@ body.bg-pattern-sparkles {
       border:1px solid var(--border);
       border-radius:8px;
       padding:10px 14px;
-      font-size:0.8rem;
+      font-size:13px;
       color:var(--fg);
       box-shadow:0 8px 24px rgba(0,0,0,0.4);
       min-width:180px;
@@ -4190,7 +4190,7 @@ body.bg-pattern-sparkles {
     }
     .edit-btn {
       background:none; border:none;
-      color:var(--color-muted-alt); font-size:1.1rem; cursor:pointer;
+      color:var(--color-muted-alt); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -4199,7 +4199,7 @@ body.bg-pattern-sparkles {
     .edit-textarea {
       width:100%; background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
-      padding:8px; font-family:inherit; font-size:0.95rem;
+      padding:8px; font-family:inherit; font-size:16px;
       resize:vertical; outline:none;
       min-height:80px;
     }
@@ -4207,7 +4207,7 @@ body.bg-pattern-sparkles {
     .edit-save-btn, .edit-cancel-btn {
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
-      padding:4px 12px; cursor:pointer; font-size:0.8rem;
+      padding:4px 12px; cursor:pointer; font-size:13px;
     }
     .edit-save-btn:hover { background:var(--panel); }
     .edit-cancel-btn:hover { background:var(--panel); }
@@ -4339,7 +4339,7 @@ body.bg-pattern-sparkles {
     pre.pre-compact .run-code {
       height: 20px;
       padding: 0;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 500;
       line-height: 20px;
       top: 3px;
@@ -4573,7 +4573,7 @@ body.bg-pattern-sparkles {
       flex:1; 
       display:flex; 
       align-items:center; 
-      font-size: 9.75px;
+      font-size: 11px;
     }
     .model-fav-btn {
       width: 8px; height: 8px;
@@ -4611,7 +4611,7 @@ body.bg-pattern-sparkles {
       background: var(--bg);
       color: var(--fg);
       font-family: inherit;
-      font-size: 0.8rem;
+      font-size: 13px;
       outline: none;
       box-sizing: border-box;
       transition: border-color 0.15s;
@@ -4623,7 +4623,7 @@ body.bg-pattern-sparkles {
       color: color-mix(in srgb, var(--fg) 30%, transparent);
     }
     .models-row button {
-      font-size: 9px;
+      font-size: 11px;
       height: 24px;
       padding: 0 8px;
     }
@@ -4708,7 +4708,7 @@ body.bg-pattern-sparkles {
         min-height: 44px;
       }
       .sidebar-brand-title {
-        font-size: 1.2rem;
+        font-size: 18px;
         left: 0 !important;
       }
       /* Sidebar inner — bigger spacing */
@@ -4780,7 +4780,7 @@ body.bg-pattern-sparkles {
       /* Incognito — smaller on mobile */
       .incognito-btn {
         padding: 4px 10px;
-        font-size: 10px;
+        font-size: 11px;
       }
       /* Incognito indicator — right side next to hamburger on mobile */
       .incognito-indicator {
@@ -5308,7 +5308,7 @@ body.bg-pattern-sparkles {
       .email-reader-tab-modal .reader-btn-label,
       .email-window-modal .reader-btn-label {
         display: inline-block !important;
-        font-size: 8.5px !important;
+        font-size: 11px !important;
         font-weight: 500 !important;
         line-height: 1 !important;
         letter-spacing: 0.02em !important;
@@ -5447,7 +5447,7 @@ body.bg-pattern-sparkles {
          mobile too — those have no mobile enlargement, so neither should
          these (otherwise the doc footer reads in a larger/different font). */
       .doclib-card-action-btn {
-        font-size: 10px;
+        font-size: 11px;
         padding: 3px 8px;
       }
       /* Chat top bar — adjusted for reduced height */
@@ -5873,7 +5873,7 @@ body.bg-pattern-sparkles {
     }
     .styled-confirm-box .modal-header { margin-bottom:4px; }
     .styled-confirm-box .modal-body p {
-      margin:8px 0 12px; color:var(--fg); font-size:0.92rem; line-height:1.45;
+      margin:8px 0 12px; color:var(--fg); font-size:14px; line-height:1.45;
       white-space:pre-line;
     }
     .styled-confirm-box .modal-footer {
@@ -5884,18 +5884,18 @@ body.bg-pattern-sparkles {
       .styled-confirm-box {
         width: 85vw;
         padding: 12px 16px;
-        font-size: 0.88rem;
+        font-size: 14px;
         border-radius: 12px;
       }
-      .styled-confirm-box .modal-header h4 { font-size: 0.9rem; }
-      .styled-confirm-box .modal-body p { font-size: 0.85rem; margin: 6px 0 10px; }
+      .styled-confirm-box .modal-header h4 { font-size: 14px; }
+      .styled-confirm-box .modal-body p { font-size: 14px; margin: 6px 0 10px; }
       .styled-confirm-box .modal-footer { gap: 10px; }
       .styled-confirm-box .confirm-btn {
         flex: 1;
         /* More bottom than top padding nudges the label up ~2px so it isn't
            sitting low in the taller mobile buttons. */
         padding: 8px 12px 12px;
-        font-size: 0.85rem;
+        font-size: 14px;
         border-radius: 8px;
         text-align: center;
       }
@@ -5903,7 +5903,7 @@ body.bg-pattern-sparkles {
     .confirm-btn {
       /* Asymmetric padding nudges the label UP ~2px from where it was (more
          bottom than top padding), so the confirm-dialog text isn't sitting low. */
-      padding:3px 16px 5px; border-radius:4px; font-size:0.85rem;
+      padding:3px 16px 5px; border-radius:4px; font-size:14px;
       cursor:pointer; border:1px solid var(--border);
       font-family:inherit;
     }
@@ -5985,13 +5985,13 @@ body.bg-pattern-sparkles {
       white-space:nowrap;
     }
     .cookbook-gguf-delete-main {
-      font-size:0.86rem;
+      font-size:14px;
       color:var(--fg);
     }
     .cookbook-gguf-delete-path {
       grid-column:2;
       margin-top:-2px;
-      font-size:0.74rem;
+      font-size:12px;
       opacity:0.58;
     }
     .cookbook-gguf-delete-actions {
@@ -6025,7 +6025,7 @@ body.bg-pattern-sparkles {
       background:var(--bg);
       color:var(--fg);
       font:inherit;
-      font-size:0.95rem;
+      font-size:16px;
       outline:none;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
@@ -6035,7 +6035,7 @@ body.bg-pattern-sparkles {
     }
     @media (max-width:768px) {
       .styled-prompt-box { width: 85vw; }
-      .styled-prompt-input { font-size: 0.9rem; padding: 10px 12px; }
+      .styled-prompt-input { font-size: 14px; padding: 10px 12px; }
     }
     /* Scroll navigation buttons */
     .scroll-nav-btn {
@@ -6235,7 +6235,7 @@ body.bg-pattern-sparkles {
       background: var(--bg);
       color: var(--fg);
       font-family: 'Fira Code', monospace;
-      font-size: 10.2px; /* 15% smaller than 12px */
+      font-size: 11px; /* 15% smaller than 12px */
       cursor: pointer;
       transition: all 0.2s ease;
     }
@@ -6441,7 +6441,7 @@ body.bg-pattern-sparkles {
       min-height: 0;
     }
     .vis-hint {
-      font-size: 10px;
+      font-size: 11px;
       color: color-mix(in srgb, var(--fg) 30%, transparent);
       font-weight: 400;
       margin-left: 2px;
@@ -6518,7 +6518,7 @@ body.bg-pattern-sparkles {
       border-radius: 10px;
       padding: 12px 14px 10px;
       width: 240px;
-      font-size: 0.78rem;
+      font-size: 13px;
       line-height: 1.5;
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32);
       opacity: 0;
@@ -6547,7 +6547,7 @@ body.bg-pattern-sparkles {
       padding: 3px 12px;
       cursor: pointer;
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: 12px;
       opacity: 0.85;
       transition: opacity 0.15s, background 0.15s;
     }
@@ -6587,7 +6587,7 @@ body.bg-pattern-sparkles {
       left: 8px;
       background: var(--red);
       color: var(--bg);
-      font-size: 0.7rem;
+      font-size: 12px;
       padding: 2px 8px;
       border-radius: 4px;
       white-space: nowrap;
@@ -6608,7 +6608,7 @@ body.bg-pattern-sparkles {
     }
     .generated-image:hover { transform: scale(1.02); }
     .generated-image-caption {
-      font-size: 0.8rem;
+      font-size: 13px;
       opacity: 0.5;
       margin-top: 6px;
       font-style: italic;
@@ -6617,19 +6617,19 @@ body.bg-pattern-sparkles {
 
     /* Setup wizard */
     .setup-wizard { padding: 16px; max-width: 500px; }
-    .setup-wizard .setup-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
-    .setup-wizard .setup-label { font-size: 0.85rem; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
+    .setup-wizard .setup-title { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
+    .setup-wizard .setup-label { font-size: 14px; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
     .setup-wizard .setup-presets { display: flex; flex-wrap: wrap; gap: 8px; }
     .setup-wizard .setup-preset-btn {
       padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
+      font-size: 14px; transition: all 0.2s;
     }
     .setup-wizard .setup-preset-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
     .setup-wizard .setup-input {
       display: block; width: 100%; padding: 8px 12px; margin-bottom: 8px;
       background: var(--panel); border: 1px solid var(--border);
-      border-radius: 6px; color: var(--fg); font-size: 0.85rem; box-sizing: border-box;
+      border-radius: 6px; color: var(--fg); font-size: 14px; box-sizing: border-box;
     }
     .setup-wizard .setup-input:focus { border-color: var(--red); outline: none; }
     .setup-wizard .setup-connect-btn {
@@ -6637,12 +6637,12 @@ body.bg-pattern-sparkles {
       border: none; border-radius: 6px; cursor: pointer; font-weight: 600; margin-top: 4px;
     }
     .setup-wizard .setup-connect-btn:hover { opacity: 0.9; }
-    .setup-wizard .setup-status { font-size: 0.8rem; margin-top: 8px; color: var(--fg); opacity: 0.7; }
+    .setup-wizard .setup-status { font-size: 13px; margin-top: 8px; color: var(--fg); opacity: 0.7; }
     .setup-wizard .setup-model-list { display: flex; flex-wrap: wrap; gap: 8px; }
     .setup-wizard .setup-model-btn {
       padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
+      font-size: 14px; transition: all 0.2s;
     }
     .setup-wizard .setup-model-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
     .setup-wizard .setup-step.hidden { display: none; }
@@ -6701,7 +6701,7 @@ body.bg-pattern-sparkles {
 
     .dropdown-item .menu-text h4 {
       margin: 0;
-      font-size: 12.5px;
+      font-size: 13px;
       font-weight: 500;
       color: var(--fg);
       line-height: 1.3;
@@ -6709,7 +6709,7 @@ body.bg-pattern-sparkles {
 
     .dropdown-item .menu-text p {
       margin: 0;
-      font-size: 10.5px;
+      font-size: 11px;
       color: var(--color-subheader);
       line-height: 1.3;
     }
@@ -6751,7 +6751,7 @@ body.bg-pattern-sparkles {
     }
     .dropdown-item-compact .dropdown-shortcut {
       margin-left: auto;
-      font-size: 9.5px;
+      font-size: 11px;
       opacity: 0.35;
       font-weight: 400;
     }
@@ -6985,7 +6985,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: none;
     }
     .search-group-header {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--color-subheader);
       text-transform: uppercase;
@@ -7006,7 +7006,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       background: color-mix(in srgb, var(--red) 10%, transparent);
     }
     .search-result-role {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--color-subheader);
       flex-shrink: 0;
@@ -7021,7 +7021,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       white-space: nowrap;
     }
     .search-result-time {
-      font-size: 10px;
+      font-size: 11px;
       color: color-mix(in srgb, var(--fg) 35%, transparent);
       flex-shrink: 0;
       white-space: nowrap;
@@ -7068,7 +7068,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .theme-swatch {
       border: 2px solid var(--border); border-radius: 8px; cursor: pointer;
-      padding: 5px; text-align: center; font-size: 0.65rem; color: var(--fg);
+      padding: 5px; text-align: center; font-size: 11px; color: var(--fg);
       transition: border-color 0.15s, transform 0.15s;
     }
     .theme-swatch:hover { transform: scale(1.06); }
@@ -7108,7 +7108,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .color-row input.cp-swatch-input:focus { outline: 1px solid var(--red); outline-offset: 1px; }
     .color-reset-btn {
       width: 24px; height: 24px; border: none; background: none; cursor: pointer;
-      color: var(--fg); opacity: 0; font-size: 1.15rem; padding: 0; line-height: 1;
+      color: var(--fg); opacity: 0; font-size: 18px; padding: 0; line-height: 1;
       transition: opacity 0.15s, color 0.15s; flex-shrink: 0; pointer-events: none;
     }
     .color-reset-btn.changed { opacity: 0.4; pointer-events: auto; }
@@ -7182,7 +7182,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-import-area {
       width: 100%; margin-top: 6px; padding: 6px 8px;
       border: 1px solid var(--border); border-radius: 6px;
-      background: var(--bg); color: var(--fg); font-size: 0.7rem;
+      background: var(--bg); color: var(--fg); font-size: 12px;
       font-family: inherit; resize: vertical; min-height: 48px;
     }
     .theme-import-area:focus { outline: none; border-color: var(--red); }
@@ -7267,7 +7267,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-adv-section.hidden { display: none; }
     .theme-adv-group { margin-bottom: 8px; }
     .theme-adv-group-label {
-      font-size: 10px; color: var(--fg); opacity: 0.5;
+      font-size: 11px; color: var(--fg); opacity: 0.5;
       text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
     }
     .theme-adv-clear-btn {
@@ -7638,7 +7638,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .cmp-eval-menu.hidden { display: none; }
     .cmp-eval-group-label {
-      font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
       opacity: 0.45; font-weight: 600;
       padding: 6px 8px 2px;
     }
@@ -7691,7 +7691,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .cmp-eval-expected-label {
       opacity: 0.6;
       text-transform: uppercase;
-      font-size: 9px;
+      font-size: 11px;
       letter-spacing: 0.5px;
       font-weight: 600;
     }
@@ -7763,7 +7763,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-probe-status.fail { color: var(--color-error, #f44); opacity: 1; }
     .compare-probe-action-btn {
       padding: 2px 8px; background: transparent; color: var(--fg); border: 1px solid var(--border);
-      border-radius: 4px; cursor: pointer; font-size: 10px; font-family: inherit;
+      border-radius: 4px; cursor: pointer; font-size: 11px; font-family: inherit;
       opacity: 0.7; transition: opacity 0.15s, border-color 0.15s; white-space: nowrap; flex-shrink: 0;
     }
     .compare-probe-action-btn:hover { opacity: 1; border-color: var(--accent); }
@@ -7905,7 +7905,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     /* Pane title as clickable model-swap button */
     .pane-title-btn {
       background: none; border: none; cursor: pointer;
-      font-size: 10px; font-weight: 400; font-family: inherit;
+      font-size: 11px; font-weight: 400; font-family: inherit;
       color: var(--fg); padding: 0;
       text-align: left; display: flex; align-items: center; gap: 4px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -7940,7 +7940,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .pane-model-item:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
     .pane-model-item.current { color: var(--red); font-weight: 600; }
     .pane-timer {
-      font-size: 10px; font-weight: 400; opacity: 0.45; font-variant-numeric: tabular-nums;
+      font-size: 11px; font-weight: 400; opacity: 0.45; font-variant-numeric: tabular-nums;
       white-space: nowrap; padding-right: 4px;
     }
     /* When 4+ panes, timer wraps to its own row */
@@ -7996,7 +7996,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       margin-bottom: 0;
     }
     .compare-section-label {
-      font-size: 9px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.6px;
       opacity: 0.5;
@@ -8119,7 +8119,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     /* Compare toggle buttons — icon + label stacked */
     .compare-toggle-label {
       display: block;
-      font-size: 9px;
+      font-size: 11px;
       line-height: 1;
       margin-top: 2px;
       font-weight: 500;
@@ -8221,7 +8221,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       .compare-header-bar button { padding: 3px 5px !important; }
       .compare-header-bar #compare-check-btn > span,
       .compare-header-bar #compare-add-btn > span {
-        font-size: 10px; margin-left: 2px;
+        font-size: 11px; margin-left: 2px;
       }
       /* Compare mobile: keep the close X visible — it's the only way out
          now that the hamburger is hidden during compare mode. */
@@ -8385,7 +8385,7 @@ a.chat-link:hover {
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 0.7rem;
+  font-size: 12px;
   color: var(--color-error, #f44);
   opacity: 0.8;
   transition: opacity 0.5s ease;
@@ -8791,7 +8791,7 @@ button.hamburger {
   background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   font-family: inherit;
-  font-size: 10.2px;
+  font-size: 11px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -9058,7 +9058,7 @@ button.hamburger {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1;
   z-index: 3;
   transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
@@ -9181,7 +9181,7 @@ button.hamburger {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1;
     z-index: 3;
     opacity: 1;
@@ -9190,7 +9190,7 @@ button.hamburger {
   .thumb button {
     height: 28px;
     min-width: 28px;
-    font-size: 15px;
+    font-size: 16px;
   }
 }
 .thumb span {
@@ -10646,7 +10646,7 @@ details a:hover {
 
 .preset-temp-hints {
   display: flex;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--color-muted);
   margin-top: -4px;
   margin-bottom: 10px;
@@ -11407,7 +11407,7 @@ textarea.memory-add-input {
    Matches the .memory-desc treatment (same color + 11px size) so it
    visually belongs to the section description, not the switch. */
 .admin-toggle-state {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   font-weight: normal;
   letter-spacing: 0.02em;
@@ -11531,7 +11531,7 @@ textarea.memory-add-input {
   gap: 5px;
   cursor: pointer;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   padding: 4px 8px;
   border-radius: 4px;
   user-select: none;
@@ -11544,7 +11544,7 @@ textarea.memory-add-input {
 
 #memory-selected-count {
   color: color-mix(in srgb, var(--fg) 50%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   flex: 1;
 }
 
@@ -11849,7 +11849,7 @@ textarea.memory-add-input {
   border: 1px solid var(--red);
   border-radius: 4px;
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   padding: 2px 8px;
   cursor: pointer;
   flex-shrink: 0;
@@ -11979,7 +11979,7 @@ textarea.memory-add-input {
 
 /* Research-preview sub-sections — used by the research-tab expand pattern. */
 .doclib-research-section-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -12070,7 +12070,7 @@ textarea.memory-add-input {
   background: none;
   border: 1px solid var(--border);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   height: 22px;
   padding: 0 8px;
   display: inline-flex;
@@ -12269,7 +12269,7 @@ textarea.memory-add-input {
 }
 .email-filter-menu[hidden] { display: none; }
 .email-filter-group {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -12361,7 +12361,7 @@ textarea.memory-add-input {
 .memory-item-source,
 .memory-item-time,
 .memory-item-uses {
-  font-size: 9px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 35%, transparent);
 }
 .memory-item-uses {
@@ -12824,7 +12824,7 @@ textarea.memory-add-input {
   outline: none;
 }
 .doc-tab-lang {
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.5;
 }
 .doc-tab-close {
@@ -12872,7 +12872,7 @@ textarea.memory-add-input {
   opacity: 0.3;
   cursor: pointer;
   padding: 0 2px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   transition: opacity 0.1s, color 0.1s;
   flex-shrink: 0;
@@ -12928,7 +12928,7 @@ textarea.memory-add-input {
 .doc-tab-lang svg { display: block; }
 
 .doc-tab-version {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   padding: 1px 6px;
   cursor: pointer;
@@ -13116,7 +13116,7 @@ textarea.memory-add-input {
   position: relative;
   top: 0;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 20px 2px 8px;
   height: 22px;
   /* Fixed width so the right-anchored chevron doesn't shift when the selected
@@ -13141,7 +13141,7 @@ textarea.memory-add-input {
   color: var(--fg);
   border: none;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
   height: 22px;
   cursor: pointer;
@@ -13183,7 +13183,7 @@ textarea.memory-add-input {
 .doc-fontsize-levels i {
   font-style: normal;
   font-weight: 700;
-  font-size: 7px;
+  font-size: 11px;
   /* Bare --accent is undefined in this codebase, was falling back to the
      hardcoded blue #4a9eff — use the real theme accent. */
   color: var(--accent-primary, var(--red));
@@ -13254,7 +13254,7 @@ textarea.memory-add-input {
   transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
 .md-view-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1;
 }
@@ -13488,7 +13488,7 @@ textarea.memory-add-input {
 /* Pull the icon down toward the "sign" label so they read as one unit. */
 #doc-pdf-add-sign-btn svg { transform: translateY(2px); }
 .doc-pdf-sign-label {
-  font-size: 6.5px;
+  font-size: 11px;
   letter-spacing: 0.3px;
   margin-top: 0;
   opacity: 1;
@@ -13800,9 +13800,9 @@ mark.doc-find-mark.current {
 .doc-font-m .doc-line-numbers { font-size: 13px !important; }
 .doc-font-l .doc-editor-textarea,
 .doc-font-l .doc-editor-highlight,
-.doc-font-l .doc-line-numbers { font-size: 15px !important; }
-.doc-email-richbody.doc-font-m { font-size: 15px !important; }
-.doc-email-richbody.doc-font-l { font-size: 17px !important; }
+.doc-font-l .doc-line-numbers { font-size: 16px !important; }
+.doc-email-richbody.doc-font-m { font-size: 16px !important; }
+.doc-email-richbody.doc-font-l { font-size: 18px !important; }
 /* Markdown base text should match chat text color, not code color */
 .doc-editor-highlight .language-markdown {
   color: var(--fg) !important;
@@ -14144,14 +14144,14 @@ mark.doc-find-mark.current {
 }
 .diff-toolbar-status {
   opacity: 0.5;
-  font-size: 10px;
+  font-size: 11px;
   margin-right: auto;
 }
 .diff-toolbar-btn {
   background: none;
   border: 1px solid var(--border);
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 10px;
   border-radius: 4px;
   cursor: pointer;
@@ -14265,7 +14265,7 @@ mark.doc-find-mark.current {
   border: none;
   border-radius: 5px;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   background: transparent;
   border: 1px solid var(--accent);
@@ -14375,7 +14375,7 @@ mark.doc-find-mark.current {
   overflow-y: auto;
   padding: 8px 12px;
   font-family: 'Fira Code', monospace;
-  font-size: 0.85rem;
+  font-size: 14px;
   line-height: 1.5;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -14387,7 +14387,7 @@ mark.doc-find-mark.current {
   display: flex;
   gap: 10px;
   padding: 4px 0 8px;
-  font-size: 0.8rem;
+  font-size: 13px;
   font-weight: 600;
 }
 .diff-stat-del { color: var(--warn); }
@@ -14415,7 +14415,7 @@ mark.doc-find-mark.current {
 .doc-diff-sep {
   text-align: center;
   padding: 2px 0;
-  font-size: 0.7rem;
+  font-size: 12px;
   opacity: 0.3;
   color: var(--fg);
 }
@@ -14513,7 +14513,7 @@ mark.doc-find-mark.current {
   color: var(--fg);
 }
 .doc-version-source {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg);
   opacity: 0.5;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
@@ -14521,7 +14521,7 @@ mark.doc-find-mark.current {
   border-radius: 4px;
 }
 .doc-version-time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg);
   opacity: 0.4;
   margin-left: auto;
@@ -14537,7 +14537,7 @@ mark.doc-find-mark.current {
   background: none;
   border: 1px solid var(--border);
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
   cursor: pointer;
@@ -14549,7 +14549,7 @@ mark.doc-find-mark.current {
 }
 /* "latest" badge */
 .doc-version-latest {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
@@ -14558,7 +14558,7 @@ mark.doc-find-mark.current {
 }
 /* Diff preview lines — small and muted so they don't dominate the item. */
 .doc-version-diff {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   opacity: 0.8;
   margin-top: 2px;
@@ -14760,7 +14760,7 @@ body:has(.compare-active) .hamburger-btn { display: none !important; }
   background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
   color: var(--accent, var(--red));
 }
-.theme-opacity-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.theme-opacity-label { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .theme-opacity-wrap > svg { flex-shrink: 0; opacity: 0.7; }
 .theme-opacity-wrap input[type="range"] {
   width: 92px;
@@ -15058,7 +15058,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 }
 /* Section headers */
 .admin-priv-section {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   opacity: 0.35;
@@ -15106,7 +15106,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 /* All/None links */
 .priv-models-all,
 .priv-models-none {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   color: var(--fg);
   text-decoration: none;
@@ -15142,14 +15142,14 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   margin-bottom: 6px;
 }
 .mcp-tools-panel .mcp-tools-header span:first-child {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   opacity: 0.35;
   font-weight: 600;
 }
 .mcp-tools-panel .mcp-tools-header a {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   color: var(--fg);
   text-decoration: none;
@@ -15273,7 +15273,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .adm-ep-section-head {
   display: flex;
   align-items: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -15455,7 +15455,7 @@ span[id$="-logo"] svg:not([width]) {
   font-size: 11px; cursor: grab; user-select: none;
 }
 .search-fb-chip.dragging { opacity: 0.4; }
-.search-fb-grip { opacity: 0.35; font-size: 10px; line-height: 1; cursor: grab; }
+.search-fb-grip { opacity: 0.35; font-size: 11px; line-height: 1; cursor: grab; }
 .search-fb-logo {
   width: 12px; height: 12px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -15673,7 +15673,7 @@ span[id$="-logo"] svg:not([width]) {
 .admin-ep-name { color: var(--fg); font-weight: 500; }
 .admin-ep-detail {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -15781,7 +15781,7 @@ span[id$="-logo"] svg:not([width]) {
   margin-bottom: 6px;
 }
 .admin-rag-section-label {
-  font-size: 10px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -15806,11 +15806,11 @@ span[id$="-logo"] svg:not([width]) {
 }
 .admin-rag-item-meta {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   margin: 0 6px;
   flex-shrink: 0;
 }
-.admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
+.admin-rag-item .admin-btn-delete { font-size: 11px; padding: 2px 6px; }
 .admin-rag-status {
   font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
@@ -15918,7 +15918,7 @@ span[id$="-logo"] svg:not([width]) {
 .doclib-chip {
   padding: 2px 10px;
   border-radius: 12px;
-  font-size: 10px;
+  font-size: 11px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg-muted);
@@ -16135,7 +16135,7 @@ span[id$="-logo"] svg:not([width]) {
     background: var(--accent-primary, var(--red));
     color: #fff;
     font-family: inherit;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
     line-height: 1;
     cursor: pointer;
@@ -16471,7 +16471,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   height: 22px;
   display: inline-flex;
   align-items: center;
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 8px;
 }
 /* Library tab panels — Chats / Archive / Research / Documents share the
@@ -16534,7 +16534,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 #doclib-panel-archive .doclib-chip {
   display: inline-flex;
   align-items: center;
-  font-size: 9px;
+  font-size: 11px;
   padding: 0 8px;
   border-radius: 10px;
 }
@@ -16880,7 +16880,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   }
   #email-lib-modal .email-attachment-chip {
     padding: 1px 6px !important;
-    font-size: 10px !important;
+    font-size: 11px !important;
     max-width: min(240px, calc(100vw - 44px)) !important;
     line-height: 18px !important;
   }
@@ -17021,7 +17021,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
   color: var(--accent, var(--red));
-  font-size: 9px;
+  font-size: 11px;
   flex-shrink: 0;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -17038,7 +17038,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
-  font-size: 9px;
+  font-size: 11px;
   text-align: left;
   flex-shrink: 0;
   min-width: 52px;
@@ -17051,7 +17051,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   min-width: 60px;
   width: 100px;
   max-width: 100px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   flex-shrink: 0;
   text-align: left;
@@ -17059,7 +17059,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-card-time {
   flex-shrink: 0;
   opacity: 0.5;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   min-width: 50px;
   text-align: left;
@@ -17074,7 +17074,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   position: relative;
   padding: 8px 12px;
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 9.5px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--code-fg, var(--hl-fg, var(--fg)));
   border-top: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
@@ -17130,7 +17130,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   justify-content: center;
   gap: 4px;
   box-sizing: border-box;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
   background: none;
@@ -17164,7 +17164,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-color: #ff4d4d;
 }
 .doclib-card-expanded-actions > .doclib-card-action-btn {
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
 }
 /* Push the Open/Clone group to the right edge of the action bar — Delete
@@ -17175,7 +17175,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-btn-hint {
   font-weight: normal;
   opacity: 0.35;
-  font-size: 8px;
+  font-size: 11px;
   min-width: 58px;
   padding: 0 8px;
   box-sizing: border-box;
@@ -17260,7 +17260,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
   color: var(--fg-muted);
@@ -17341,7 +17341,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
   background: none;
@@ -17405,7 +17405,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-left-color: color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
 }
 .doclib-chat-preview-messages .doclib-chat-msg-role {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -17450,7 +17450,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 .doclib-chat-msg-model {
   display: inline-block;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -17466,7 +17466,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-chat-bubble-body p:first-child { margin-top: 0; }
 .doclib-chat-bubble-body p:last-child { margin-bottom: 0; }
 .doclib-chat-bubble-body pre {
-  font-size: 10px;
+  font-size: 11px;
   margin: 4px 0;
   padding: 6px 8px;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
@@ -17474,7 +17474,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   overflow-x: auto;
 }
 .doclib-chat-bubble-body code {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 4px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -17555,7 +17555,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   cursor: pointer;
   user-select: none;
   padding: 6px 4px 4px;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.6;
@@ -17573,7 +17573,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .skill-card-section-hidden { display: none !important; }
 /* Warning banner shown when previewing/editing a built-in capability. */
 .skill-builtin-warn {
-  font-size: 9.5px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--color-warning, #f0ad4e);
   background: color-mix(in srgb, var(--color-warning, #f0ad4e) 12%, transparent);
@@ -17642,7 +17642,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   line-height: 1.3;
 }
 .skill-card-desc {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   margin-top: 2px;
   white-space: nowrap;
@@ -17699,7 +17699,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   color: var(--color-danger, #e06c75);
 }
 .skill-stats {
-  font-size: 9px;
+  font-size: 11px;
   font-family: monospace;
   white-space: nowrap;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
@@ -17788,7 +17788,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 /* Section labels separating "Your skills" from the read-only "Built-in
    capabilities" list. */
 .skills-section-label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -17804,7 +17804,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .skill-builtin-card:hover { border-color: var(--border); }
 .skill-card-preview .skill-md-pre {
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -17898,7 +17898,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .skills-audit-log {
   max-height: 22vh; overflow-y: auto;
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 10.5px; line-height: 1.5; opacity: 0.8;
+  font-size: 11px; line-height: 1.5; opacity: 0.8;
 }
 /* ── Skill test monitor + AI eval verdict ── */
 .skill-test { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -17908,7 +17908,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   max-height: 48vh;
   overflow-y: auto;
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 9.5px;
+  font-size: 11px;
   line-height: 1.45;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -17919,7 +17919,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 .skill-test-log > div { margin: 1px 0; }
 .skill-test-meta  { opacity: 0.5; }
-.skill-test-task  { color: var(--accent, var(--red)); font-weight: 500; font-size: 9px; opacity: 0.85; }
+.skill-test-task  { color: var(--accent, var(--red)); font-weight: 500; font-size: 11px; opacity: 0.85; }
 .skill-test-round { opacity: 0.6; margin-top: 6px !important; }
 .skill-test-tool  { color: var(--accent, var(--red)); opacity: 0.85; }
 .skill-test-out   { opacity: 0.7; padding-left: 10px; }
@@ -17976,7 +17976,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   box-sizing: border-box;
   resize: none;
   font-family: ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   padding: 8px;
   border: 1px solid var(--border);
@@ -18082,7 +18082,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--red) 5%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   margin-bottom: 8px;
 }
 .doclib-bulk-bar.hidden {
@@ -18094,11 +18094,11 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   gap: 3px;
   cursor: pointer;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
 }
 #doclib-selected-count {
   color: color-mix(in srgb, var(--fg) 50%, transparent);
-  font-size: 10px;
+  font-size: 11px;
 }
 #doclib-bulk-bar .memory-toolbar-btn {
   position: relative;
@@ -18181,7 +18181,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   align-items: center;
   padding: 4px 10px;
   gap: 6px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.35;
   text-transform: uppercase;
@@ -18295,7 +18295,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   font-size: 1rem;
 }
 .gallery-stats {
-  font-size: 10px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
   margin-bottom: 4px;
 }
@@ -18330,7 +18330,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent, var(--red));
   pointer-events: none;
@@ -18497,9 +18497,9 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-ai-chip {
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
-  border-radius: 10px; padding: 3px 8px; font-size: 10px;
+  border-radius: 10px; padding: 3px 8px; font-size: 11px;
   color: var(--fg); opacity: 0.8;
-  font: inherit; font-size: 10px;
+  font: inherit; font-size: 11px;
   cursor: pointer;
   transition: background 0.12s, opacity 0.12s, border-color 0.12s;
 }
@@ -18522,7 +18522,7 @@ body.gallery-selecting .gallery-dl-btn,
   border-color: color-mix(in srgb, var(--fg) 35%, transparent);
 }
 .gallery-aitag-mark {
-  font-size: 8px;
+  font-size: 11px;
   opacity: 0.55;
   color: var(--accent, var(--red));
 }
@@ -18634,13 +18634,13 @@ body.gallery-selecting .gallery-dl-btn,
   white-space: nowrap;
 }
 .attach-vision-model {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent, var(--red));
   opacity: 0.85;
   margin-top: 3px;
 }
 .attach-image-name {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   margin-top: 1px;
 }
@@ -18699,7 +18699,7 @@ body.gallery-selecting .gallery-dl-btn,
   resize: vertical; outline: none;
 }
 .vision-editor-text:focus { border-color: var(--accent-primary, var(--red)); }
-.vision-editor-hint { font-size: 10.5px; opacity: 0.55; line-height: 1.4; }
+.vision-editor-hint { font-size: 11px; opacity: 0.55; line-height: 1.4; }
 .vision-editor-actions {
   display: flex; gap: 8px; justify-content: flex-end;
   margin-top: 4px;
@@ -18852,7 +18852,7 @@ body.gallery-selecting .gallery-dl-btn,
   color: #fff;
 }
 .gallery-card-prompt {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -18863,7 +18863,7 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: center;
   gap: 6px;
   margin-top: 2px;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.8;
 }
 .gallery-card-model {
@@ -19161,7 +19161,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .gallery-detail-section label {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.6;
   margin-bottom: 3px;
@@ -19232,7 +19232,7 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg);
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 10px;
   border-radius: 4px;
   transition: border-color 0.15s, color 0.15s;
@@ -19279,7 +19279,7 @@ body.gallery-selecting .gallery-dl-btn,
   }
   .gallery-select-btn {
     padding: 6px 8px 8px;
-    font-size: 9px;
+    font-size: 11px;
     flex-shrink: 0;
     /* Push Select to the far right of the single-row toolbar, regardless
        of its DOM position (sits between search and the dropdowns). */
@@ -19437,7 +19437,7 @@ body.gallery-selecting .gallery-dl-btn,
   white-space: nowrap;
 }
 .cookbook-serve-preset-meta {
-  font-size: 9px;
+  font-size: 11px;
   font-family: 'Fira Code', monospace;
   color: var(--fg-muted);
   opacity: 0.5;
@@ -19447,7 +19447,7 @@ body.gallery-selecting .gallery-dl-btn,
   border: none;
   color: #50fa7b;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   padding: 0 2px;
   position: relative;
@@ -19459,7 +19459,7 @@ body.gallery-selecting .gallery-dl-btn,
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.3;
   padding: 0 2px;
   position: relative;
@@ -19706,7 +19706,7 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 .hwfit-cached-header {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.4;
   font-weight: 600;
   text-transform: uppercase;
@@ -19731,7 +19731,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-cached-size,
 .hwfit-cached-files {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   white-space: nowrap;
 }
@@ -19741,7 +19741,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-cached-delete {
   opacity: 0.4;
-  font-size: 10px;
+  font-size: 11px;
 }
 .hwfit-cached-delete:hover {
   opacity: 1;
@@ -19849,7 +19849,7 @@ body.gallery-selecting .gallery-dl-btn,
   }
 }
 .cookbook-clear-btn {
-  font-size: 10px !important;
+  font-size: 11px !important;
   padding: 0 8px !important;
   height: 22px !important;
   border-radius: 6px !important;
@@ -19912,7 +19912,7 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: center;
 }
 .cookbook-serve-dir-pill {
-  font-size: 10px;
+  font-size: 11px;
   font-family: 'Fira Code', monospace;
   padding: 2px 8px;
   border-radius: 4px;
@@ -19931,7 +19931,7 @@ body.gallery-selecting .gallery-dl-btn,
   margin-left: 6px;
   padding: 1px 7px;
   border-radius: 10px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: lowercase;
   letter-spacing: 0.3px;
@@ -19982,7 +19982,7 @@ body.gallery-selecting .gallery-dl-btn,
   left: 2px;
 }
 .cookbook-serve-dir-edit {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   opacity: 0.4;
   cursor: pointer;
@@ -20085,7 +20085,7 @@ body.gallery-selecting .gallery-dl-btn,
   flex: 1;
   font-weight: 400;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .cookbook-gpu-popup-close {
   background: none;
@@ -20149,7 +20149,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 2px 8px;
   cursor: pointer;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
 }
 .cookbook-gpu-kill[data-sig="KILL"] {
   background: color-mix(in srgb, var(--red) 12%, transparent);
@@ -20171,7 +20171,7 @@ body.gallery-selecting .gallery-dl-btn,
   white-space: nowrap;
 }
 .cookbook-hf-link {
-  font-size: 9px;
+  font-size: 11px;
   text-decoration: none;
   color: var(--fg-muted);
   opacity: 0.5;
@@ -20279,7 +20279,7 @@ body.gallery-selecting .gallery-dl-btn,
   top: -3px;
 }
 .cookbook-stop-all-btn {
-  font-size: 10px !important;
+  font-size: 11px !important;
   padding: 0 8px !important;
   height: 22px !important;
   border-radius: 6px !important;
@@ -20303,7 +20303,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 0;
 }
 .cookbook-saved-toggle-header {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -20331,7 +20331,7 @@ body.gallery-selecting .gallery-dl-btn,
   margin: 4px 0 4px 6px;
 }
 .cookbook-saved-host {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
 }
@@ -20342,7 +20342,7 @@ body.gallery-selecting .gallery-dl-btn,
   white-space: nowrap;
 }
 .cookbook-saved-launch {
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
 }
 .cookbook-saved-del {
@@ -20387,7 +20387,7 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-slot-btn {
   min-width: 22px; height: 28px;
   padding: 0 6px;
-  font-size: 10px; font-weight: 600;
+  font-size: 11px; font-weight: 600;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: none;
@@ -20553,7 +20553,7 @@ body.gallery-selecting .gallery-dl-btn,
   letter-spacing: 0.03em;
 }
 .cookbook-dep-section-note {
-  font-size: 10px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
 }
 .cookbook-dep-subgroup {
@@ -20571,18 +20571,18 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: baseline;
   gap: 7px;
   margin: 0 1px 1px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   color: color-mix(in srgb, var(--fg) 78%, transparent);
 }
 .cookbook-dep-subgroup-title em {
-  font-size: 9.5px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 500;
   color: color-mix(in srgb, var(--fg) 48%, transparent);
 }
 .cookbook-dep-tag {
-  font-size: 9px;
+  font-size: 11px;
   padding: 0 8px;
   border-radius: 4px;
   white-space: nowrap;
@@ -20812,7 +20812,7 @@ body.gallery-selecting .gallery-dl-btn,
   }
 }
 .hwfit-serve-row label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   white-space: nowrap;
   letter-spacing: 0.3px;
@@ -20856,7 +20856,7 @@ body.gallery-selecting .gallery-dl-btn,
   height: 28px;
   min-width: 34px;
   padding: 0;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -20923,7 +20923,7 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-auto-ctx-note {
   display: block;
   margin-top: 3px;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.6;
   white-space: nowrap;
   overflow: hidden;
@@ -21139,7 +21139,7 @@ body.gallery-selecting .gallery-dl-btn,
   border: none;
   color: var(--accent, var(--red));
   font-family: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
@@ -21203,7 +21203,7 @@ body.gallery-selecting .gallery-dl-btn,
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   letter-spacing: 0.3px;
 }
@@ -21225,7 +21225,7 @@ body.gallery-selecting .gallery-dl-btn,
   border-radius: 5px;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.3px;
 }
 .hwfit-serve-cmd-summary::-webkit-details-marker {
@@ -21260,7 +21260,7 @@ body.gallery-selecting .gallery-dl-btn,
   border-top-left-radius: 0;
   border-top-right-radius: 0;
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 10px;
+  font-size: 11px;
   white-space: pre;
   word-break: normal;
   width: 100%;
@@ -21389,7 +21389,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-serve-cmd-title {
   margin: 2px 0 3px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   letter-spacing: 0.3px;
 }
@@ -21555,7 +21555,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .cookbook-task-type {
   text-transform: uppercase;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.5px;
   padding: 1px 5px;
@@ -21642,7 +21642,7 @@ body.gallery-selecting .gallery-dl-btn,
 /* Terminal task clear pill. */
 .cookbook-task-done-label,
 .cookbook-task-clear-label {
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   text-transform: lowercase;
 }
@@ -21682,7 +21682,7 @@ body.gallery-selecting .gallery-dl-btn,
   background: transparent;
   color: var(--fg);
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   text-transform: lowercase;
   white-space: nowrap;
@@ -21709,7 +21709,7 @@ body.gallery-selecting .gallery-dl-btn,
   flex-shrink: 0;
   cursor: pointer;
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   text-transform: lowercase;
   background: transparent;
   color: var(--green, #50fa7b);
@@ -21731,26 +21731,26 @@ body.gallery-selecting .gallery-dl-btn,
   gap: 10px;
 }
 .cookbook-task-session {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
   opacity: 0.35;
   letter-spacing: 0.3px;
 }
 .cookbook-task-server {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
   opacity: 0.4;
 }
 .cookbook-task-uptime {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
   opacity: 0.4;
 }
 .cookbook-task-status {
-  font-size: 9px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 3px;
   font-weight: 600;
@@ -21976,7 +21976,7 @@ body.gallery-selecting .gallery-dl-btn,
   .cookbook-task-name { font-size: 13px; }
   .cookbook-task-sub { font-size: 11px; }
   .cookbook-task-status {
-    font-size: 10px;
+    font-size: 11px;
     /* Vertical alignment of the phase/loading badge against the task title. */
     position: relative;
     top: 2px;
@@ -22529,7 +22529,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* HF link in search panel */
 .hwfit-panel-hf-link {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--red);
   text-decoration: none;
   margin-left: auto;
@@ -22580,7 +22580,7 @@ body.gallery-selecting .gallery-dl-btn,
   margin-bottom: 8px;
 }
 .cookbook-settings-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
 }
 .cookbook-settings-hint {
@@ -22593,7 +22593,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 4px 6px;
 }
 .cookbook-settings-subtitle {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -22857,7 +22857,7 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-server-rm {
   width: 22px;
   height: 22px;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -22879,7 +22879,7 @@ body.gallery-selecting .gallery-dl-btn,
   width: auto;
   height: auto;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   background: none;
   color: var(--red);
@@ -22896,7 +22896,7 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-server-save-btn {
   width: auto;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   background: none;
@@ -22910,7 +22910,7 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-server-cancel-btn {
   width: auto;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   background: none;
@@ -22972,7 +22972,7 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 5px;
   cursor: pointer;
   min-width: 20px;
@@ -22999,7 +22999,7 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   height: 28px;
   padding: 0 4px;
   cursor: pointer;
@@ -23045,10 +23045,10 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-toolbar input:focus { outline: none; border-color: var(--red); }
 .hwfit-toolbar .hwfit-server-select { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
-.hwfit-toolbar .hwfit-usecase-btn { min-width: 0; width: 96px; flex-shrink: 0; font-size: 10px; }
-.hwfit-toolbar .hwfit-quant { min-width: 0; width: 78px; flex-shrink: 0; font-size: 10px; }
-.hwfit-toolbar .hwfit-engine { min-width: 0; width: 86px; flex-shrink: 0; font-size: 10px; }
-.hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 86px; flex-shrink: 0; font-size: 10px; }
+.hwfit-toolbar .hwfit-usecase-btn { min-width: 0; width: 96px; flex-shrink: 0; font-size: 11px; }
+.hwfit-toolbar .hwfit-quant { min-width: 0; width: 78px; flex-shrink: 0; font-size: 11px; }
+.hwfit-toolbar .hwfit-engine { min-width: 0; width: 86px; flex-shrink: 0; font-size: 11px; }
+.hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 86px; flex-shrink: 0; font-size: 11px; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
 .hwfit-advanced-panel {
   display: flex;
@@ -23117,7 +23117,7 @@ body.gallery-selecting .gallery-dl-btn,
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
   color: color-mix(in srgb, var(--fg) 55%, transparent);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   cursor: help;
@@ -23286,7 +23286,7 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg);
   font-weight: 600;
 }
-.hwfit-server-toggle { flex-shrink: 0; font-size: 10px !important; padding: 3px 8px !important; white-space: nowrap; }
+.hwfit-server-toggle { flex-shrink: 0; font-size: 11px !important; padding: 3px 8px !important; white-space: nowrap; }
 .hwfit-toolbar .hwfit-host { width: 110px; flex-shrink: 0; }
 .hwfit-env-row { gap: 6px; flex-wrap: wrap; }
 .hwfit-env-row .hwfit-envtype { width: auto; min-width: 70px; flex-shrink: 0; }
@@ -23296,7 +23296,7 @@ body.gallery-selecting .gallery-dl-btn,
   display: flex; flex-wrap: wrap; column-gap: 4px; row-gap: 7px; padding: 4px 0;
 }
 .hwfit-hw-chip {
-  font-size: 10px; padding: 0 8px; border-radius: 6px;
+  font-size: 11px; padding: 0 8px; border-radius: 6px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg); opacity: 0.7; white-space: nowrap;
   border: 0;
@@ -23353,7 +23353,7 @@ body.gallery-selecting .gallery-dl-btn,
      was winning over the plain rule and leaving the manual chip's
      button at the browser-default ~13px. Forcing it locally so the
      manual chip's text matches every other chip's text. */
-  font-size: 10px !important;
+  font-size: 11px !important;
   line-height: 1 !important;
   transform: translateY(-3px);
 }
@@ -23405,7 +23405,7 @@ body.gallery-selecting .gallery-dl-btn,
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
 }
 .hwfit-manual-panel select,
@@ -23417,7 +23417,7 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg);
   border-radius: 4px;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 6px;
   box-sizing: border-box;
 }
@@ -23481,14 +23481,14 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 4px 8px; font-weight: 600;
 }
 .hwfit-header:hover { background: var(--panel); }
-.hwfit-header .hwfit-col { font-size: 9px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; }
-.hwfit-header .hwfit-name { font-size: 9px; }
+.hwfit-header .hwfit-col { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.hwfit-header .hwfit-name { font-size: 11px; }
 .hwfit-sortable { cursor: pointer; user-select: none; }
 .hwfit-sortable:hover { color: var(--fg) !important; }
 .hwfit-sort-active { color: var(--red) !important; }
 .hwfit-col {
   flex-shrink: 0; white-space: nowrap; text-align: left;
-  font-size: 9px; color: var(--fg-muted);
+  font-size: 11px; color: var(--fg-muted);
 }
 .hwfit-fit { width: 52px; font-weight: 700; text-transform: uppercase; }
 .hwfit-name {
@@ -23505,7 +23505,7 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-moe {
   display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
   background: color-mix(in srgb, var(--red) 15%, transparent);
-  color: var(--red); font-weight: 600; font-size: 8px;
+  color: var(--red); font-weight: 600; font-size: 11px;
 }
 .hwfit-sort, .hwfit-quant { width: auto; min-width: 70px; flex-shrink: 0; }
 .hwfit-row-active { background: color-mix(in srgb, var(--red) 8%, transparent); }
@@ -23538,7 +23538,7 @@ body.gallery-selecting .gallery-dl-btn,
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
 }
 .hwfit-panel-fields label, .hwfit-adv-grid label {
-  display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--fg-muted); white-space: nowrap;
+  display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fg-muted); white-space: nowrap;
 }
 .hwfit-panel-fields input, .hwfit-panel-fields select,
 .hwfit-adv-grid input, .hwfit-adv-grid select {
@@ -23558,16 +23558,16 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-cb { cursor: pointer; }
 .hwfit-cb input[type="checkbox"] { margin: 0 2px 0 0; }
 .hwfit-panel-advanced, .hwfit-panel-settings {
-  font-size: 10px;
+  font-size: 11px;
 }
 .hwfit-panel-advanced summary, .hwfit-panel-settings summary {
-  cursor: pointer; color: var(--fg-muted); font-size: 10px;
+  cursor: pointer; color: var(--fg-muted); font-size: 11px;
   user-select: none; padding: 2px 0;
 }
 .hwfit-panel-advanced summary:hover, .hwfit-panel-settings summary:hover { color: var(--fg); }
 .hwfit-panel-cmd {
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 10px; padding: 6px 8px; border-radius: 4px;
+  font-size: 11px; padding: 6px 8px; border-radius: 4px;
   background: var(--bg); border: 1px solid var(--border);
   white-space: pre-wrap; word-break: break-all; max-height: 60px; overflow-y: auto;
   color: var(--fg-muted);
@@ -23576,7 +23576,7 @@ body.gallery-selecting .gallery-dl-btn,
   display: flex; gap: 4px; flex-wrap: wrap;
 }
 .hwfit-panel-note {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.35;
   color: var(--fg-muted);
   background: color-mix(in srgb, var(--yellow, #f1fa8c) 8%, transparent);
@@ -23593,8 +23593,8 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .hwfit-preset:hover { border-color: var(--red); }
 .hwfit-preset-name { font-weight: 600; color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hwfit-preset-model { font-size: 9px; color: var(--fg-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hwfit-preset-backend { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-muted); }
+.hwfit-preset-model { font-size: 11px; color: var(--fg-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hwfit-preset-backend { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-muted); }
 
 @media (max-width: 600px) {
   .hwfit-c-ctx, .hwfit-c-speed, .hwfit-c-mode { display: none; }
@@ -23674,7 +23674,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
 .settings-sidebar-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -23722,7 +23722,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* Keyboard shortcuts */
 .shortcut-category {
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
   opacity: 0.4; padding: 8px 0 4px; margin-top: 4px;
 }
 .shortcut-category:first-child { margin-top: 0; padding-top: 0; }
@@ -23737,13 +23737,13 @@ body.gallery-selecting .gallery-dl-btn,
 .shortcut-warn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%; background: var(--warn); color: #fff;
-  font-size: 9px; font-weight: 700; margin-left: 4px;
+  font-size: 11px; font-weight: 700; margin-left: 4px;
 }
 .shortcut-controls { display: flex; align-items: center; gap: 4px; }
 /* Inline hint shown while rebinding a shortcut ("press a key" → "↵ Enter
    to save"). Subtle so it doesn't compete with the key caps. */
 .shortcut-hint {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   color: var(--accent, var(--red));
   white-space: nowrap;
@@ -23758,9 +23758,9 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .shortcut-key:hover { background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, transparent); }
 /* Unbound shortcut — show a dashed "Set" placeholder instead of keycaps. */
-.shortcut-key-unset { font-size: 10px; }
+.shortcut-key-unset { font-size: 11px; }
 .shortcut-unset {
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
   border: 1px dashed var(--border);
   border-radius: 4px;
@@ -24188,7 +24188,7 @@ body:not(.welcome-ready) #welcome-screen {
 }
 .task-log-failed-tag {
   color: var(--red, #f87171);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
@@ -24216,7 +24216,7 @@ body:not(.welcome-ready) #welcome-screen {
   margin-left: -4px;
 }
 .task-log-repeat {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1;
   color: color-mix(in srgb, var(--fg) 62%, transparent);
@@ -24274,7 +24274,7 @@ body:not(.welcome-ready) #welcome-screen {
   justify-content: center;
   gap: 3px;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
   position: relative;
@@ -24337,7 +24337,7 @@ body:not(.welcome-ready) #welcome-screen {
 
 .task-log-account-tag {
   display: inline-block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   padding: 1px 7px;
@@ -24471,7 +24471,7 @@ body:not(.welcome-ready) #welcome-screen {
   border-radius: 5px;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 6px;
   cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
@@ -24655,7 +24655,7 @@ a.chat-link[href^="#research-"] {
   color: var(--red);
   background: color-mix(in srgb, var(--red) 12%, var(--panel, #111));
   border: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1;
   z-index: 7;
@@ -24720,13 +24720,13 @@ a.chat-link[href^="#research-"] {
 }
 
 .task-card-schedule {
-  font-size: 10.5px;
+  font-size: 11px;
   opacity: 0.5;
   margin-left: auto;
 }
 
 .task-card-output {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.45;
 }
 
@@ -24738,7 +24738,7 @@ a.chat-link[href^="#research-"] {
 }
 
 .task-card-meta {
-  font-size: 10.5px;
+  font-size: 11px;
   opacity: 0.45;
   margin-bottom: 6px;
 }
@@ -24776,7 +24776,7 @@ a.chat-link[href^="#research-"] {
 .task-btn-danger:hover { opacity: 1; border-color: var(--red); }
 
 .tasks-clock {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.35;
   text-align: center;
   padding: 6px 0 8px;
@@ -24796,7 +24796,7 @@ a.chat-link[href^="#research-"] {
 }
 .task-preset-icon { font-size: 20px; margin-bottom: 2px; }
 .task-preset-label { font-size: 12px; font-weight: 600; }
-.task-preset-desc { font-size: 10px; opacity: 0.5; line-height: 1.3; }
+.task-preset-desc { font-size: 11px; opacity: 0.5; line-height: 1.3; }
 
 .task-form { display: flex; flex-direction: column; gap: 4px; }
 .task-form-label {
@@ -24891,7 +24891,7 @@ select.task-form-input { text-overflow: ellipsis; }
   display: flex; gap: 4px;
 }
 .task-toggle-btn {
-  flex: 1; padding: 4px 8px; font-size: 10px; font-family: inherit;
+  flex: 1; padding: 4px 8px; font-size: 11px; font-family: inherit;
   border: 1px solid var(--border); border-radius: 6px; background: transparent;
   color: var(--fg); opacity: 0.4; cursor: pointer; transition: all 0.15s;
 }
@@ -24932,7 +24932,7 @@ select.task-form-input { text-overflow: ellipsis; }
   gap: 4px;
   font-size: 11px;
 }
-.task-run-time { margin-left: auto; font-size: 10px; opacity: 0.45; }
+.task-run-time { margin-left: auto; font-size: 11px; opacity: 0.45; }
 .task-run-result {
   font-size: 11px;
   opacity: 0.6;
@@ -25441,11 +25441,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-weight: 500;
 }
 .admin-tool-desc {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.4;
 }
 .admin-tool-ctx {
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.3;
   flex-shrink: 0;
   min-width: 35px;
@@ -25463,7 +25463,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-radius: 50%;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.35;
   cursor: help;
@@ -25482,7 +25482,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: 0.7;
 }
 .hwfit-parser-tag {
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.4;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   padding: 1px 5px;
@@ -25605,7 +25605,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .cookbook-srv-default:hover { opacity: 0.8; }
 .cookbook-srv-default.active { opacity: 1; color: var(--accent, var(--red)); }
-.cookbook-srv-default-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.cookbook-srv-default-label { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 /* Download-target toggle inside a model-dir tag */
 .cookbook-modeldir-dl {
   cursor: pointer;
@@ -25629,7 +25629,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .cookbook-modeldir-rm {
   cursor: pointer;
   opacity: 0.4;
-  font-size: 10px;
+  font-size: 11px;
 }
 .cookbook-modeldir-rm:hover {
   opacity: 1;
@@ -25639,7 +25639,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   height: 19.5px;
   box-sizing: border-box;
@@ -25668,7 +25668,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   white-space: nowrap;
 }
 .hwfit-opts-desc {
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.4;
   font-style: italic;
 }
@@ -25712,7 +25712,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
   color: var(--accent, var(--red));
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   margin-left: 4px;
   line-height: 1;
@@ -25830,8 +25830,8 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   position: relative;
 }
 .research-synapse-compact .rs-stage { height: 130px; }
-.research-synapse-compact .rs-meta { padding: 4px 8px 5px; font-size: 10px; }
-.research-synapse-compact .rs-label-sub { font-size: 8px; }
+.research-synapse-compact .rs-meta { padding: 4px 8px 5px; font-size: 11px; }
+.research-synapse-compact .rs-label-sub { font-size: 11px; }
 .research-synapse svg {
   display: block;
   width: 100%;
@@ -25898,13 +25898,13 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .research-synapse .rs-label {
   fill: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   font-family: ui-monospace, "JetBrains Mono", monospace;
   pointer-events: none;
   opacity: 0.85;
 }
 .research-synapse .rs-label-sub {
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.7;
 }
 .research-synapse .rs-meta {
@@ -26264,7 +26264,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-vision-link:hover { opacity: 0.8; }
 .ge-alpha-tag {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -26472,7 +26472,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   text-overflow: ellipsis;
 }
 .gallery-editor-draft-meta {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   white-space: nowrap;
   overflow: hidden;
@@ -26598,7 +26598,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   cursor: pointer;
 }
 .ge-topbar-mask-color-label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -26651,7 +26651,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex-shrink: 0;
 }
 .ge-tool-sep {
-  font-size: 8px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-muted);
@@ -26728,7 +26728,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
    the highlight pill (which still anchors to the button bounds). */
 .ge-tool-btn > * { position: relative; z-index: 1; left: -2px; }
 .ge-tool-icon { font-size: 18px; line-height: 1; }
-.ge-tool-label { font-size: 9px; line-height: 1.25; }
+.ge-tool-label { font-size: 11px; line-height: 1.25; }
 /* AI badge — same ✦ glyph the Enhance tool uses, pinned to the top-
    left of any tool button marked `ai: true`. Same color as the icon
    itself (inherits foreground) so it reads as part of the tool, not
@@ -27013,11 +27013,11 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .ge-ai-command-status {
   margin-top: 4px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
   color: var(--fg-muted);
 }
@@ -27266,7 +27266,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 /* Small "Merge" text label next to each merge / flatten button so the
    icons read at a glance instead of needing the title-tooltip. */
 .ge-merge-label {
-  font-size: 10px;
+  font-size: 11px;
   margin-left: 4px;
   opacity: 0.75;
 }
@@ -27351,7 +27351,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: transparent;
   color: var(--fg-muted);
   border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  font-size: 7px;
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;
@@ -27377,7 +27377,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   right: 20px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   pointer-events: none;
 }
@@ -27446,7 +27446,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
 }
 .ge-transform-popup-hint {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   margin: 0;
   line-height: 1.3;
@@ -27621,7 +27621,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-size-slider:active::-moz-range-thumb {
   width: 16px; height: 16px;
 }
-.ge-size-label { font-size: 10px; opacity: 0.5; min-width: 28px; text-align: right; }
+.ge-size-label { font-size: 11px; opacity: 0.5; min-width: 28px; text-align: right; }
 
 /* Eraser controls: tighter rows + a small brush preview on the left of
    each label so the user can see what each slider affects. The three
@@ -27644,7 +27644,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   padding: 0 4px;
   border-radius: 3px;
   cursor: text;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
@@ -27658,7 +27658,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex: 0 0 auto;
   margin: 0 0 0 6px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
   min-width: 34px;
@@ -27689,7 +27689,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-tool-model {
   flex: 1 1 0;
   min-width: 0;
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 4px;
   background: var(--bg);
   color: var(--fg);
@@ -27699,7 +27699,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 
 /* Section label inside a dropdown — small uppercase header. */
 .dropdown-section-label {
-  font-size: 9px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.5;
@@ -27718,7 +27718,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   position: absolute;
   z-index: 11;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   padding: 1px 4px;
   border: 1px solid var(--red);
@@ -27767,7 +27767,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 
 /* Small explanatory paragraph under AI tool section labels. */
 .ge-section-hint {
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.45;
   opacity: 0.55;
   margin: 0 0 8px;
@@ -27799,7 +27799,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-radius: 50%;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
   color: var(--fg-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   cursor: help;
   user-select: none;
@@ -27816,7 +27816,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
    the mask actions (Eye / Invert / Clear) under a "Selection" header. */
 .ge-section-title {
   margin: 10px 0 4px;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.5;
@@ -27833,7 +27833,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex: 0 0 auto;
 }
 .ge-inpaint-mask-label {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.5;
@@ -27845,7 +27845,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
    the same length when unused. Without this, "Flow" (4 chars) leaves
    more room than "Opacity" (7 chars). */
 .ge-eraser-row label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   flex: 0 0 78px;
   white-space: nowrap;
@@ -27920,7 +27920,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   width: 14px;
   height: 14px;
   margin-left: 4px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -27968,13 +27968,13 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-top: 1px solid var(--border);
 }
 .ge-fx-group-title {
-  font-size: 10px; font-weight: 600; opacity: 0.6;
+  font-size: 11px; font-weight: 600; opacity: 0.6;
   text-transform: uppercase; letter-spacing: 0.5px;
   margin: 8px 0 4px;
 }
 .ge-fx-group-title:first-child { margin-top: 0; }
 .ge-fx-cb-tone {
-  font-size: 10px; opacity: 0.55; font-style: italic;
+  font-size: 11px; opacity: 0.55; font-style: italic;
   margin: 4px 0 2px;
 }
 .ge-fx-row {
@@ -27982,7 +27982,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   padding: 2px 0;
 }
 .ge-fx-row-label {
-  font-size: 10px; opacity: 0.7;
+  font-size: 11px; opacity: 0.7;
   flex: 0 0 110px; white-space: nowrap;
 }
 .ge-fx-row input[type="range"] {
@@ -28002,7 +28002,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: var(--red); border: none; cursor: pointer;
 }
 .ge-fx-row-value {
-  font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums;
+  font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums;
   flex: 0 0 40px; text-align: right;
 }
 
@@ -28240,7 +28240,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex-shrink: 0;
 }
 .ge-history-row-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ge-history-row-time { font-size: 9px; opacity: 0.55; flex-shrink: 0; }
+.ge-history-row-time { font-size: 11px; opacity: 0.55; flex-shrink: 0; }
 
 /* Tight button group in popup heads — min + close sit immediately next
    to each other with no inherited flex gap, pushed to the right edge. */
@@ -28311,7 +28311,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-dep-notice-text strong { display: block; margin-bottom: 2px; }
 .ge-dep-notice-text code {
   font-family: 'Fira Code', monospace;
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 4px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
@@ -28451,7 +28451,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-adj-row > label {
   flex: 0 0 96px;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
 }
 .ge-adj-row input[type="range"] {
@@ -28505,14 +28505,14 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   flex: 0 0 34px;
   margin-left: 0;
   padding: 0 2px;
-  font-size: 10px; opacity: 0.7; text-align: left;
+  font-size: 11px; opacity: 0.7; text-align: left;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: text;
 }
 .ge-adj-value:hover { opacity: 1; }
 .ge-adj-cb-tone {
-  font-size: 10px; opacity: 0.55; font-style: italic;
+  font-size: 11px; opacity: 0.55; font-style: italic;
   margin: 2px 0 0;
   line-height: 1;
 }
@@ -28611,7 +28611,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   opacity: 0.85;
   border-left: 2px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
   margin-left: 6px;
-  font-size: 10.5px;
+  font-size: 11px;
 }
 .ge-adj-sub-item .ge-layer-name {
   opacity: 0.85;
@@ -28680,7 +28680,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   border-color: var(--accent, var(--red));
   color: var(--accent, var(--red));
 }
-.ge-btn-sm { padding: 3px 6px; font-size: 10px; }
+.ge-btn-sm { padding: 3px 6px; font-size: 11px; }
 /* Busy state on AI tool buttons — whirlpool + verb text side by side. */
 .ge-btn-processing {
   display: inline-flex;
@@ -28743,7 +28743,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   height: 22px;
   padding: 0 10px !important;
   border-radius: 999px !important;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   transition: opacity 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
@@ -28768,7 +28768,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-topbar input { position: relative; top: -2px; }
 /* The tiny "Gen" / "Inpaint" inline labels now look too high relative to
    the shifted-up controls — nudge them down 2 px to re-align. */
-.ge-topbar span[style*="font-size:9px"] { position: relative; top: 2px; }
+.ge-topbar span[style*="font-size:11px"] { position: relative; top: 2px; }
 /* The Gen and Inpaint model selects — must visually sit on the same line as
    the small "Gen" / "Inpaint" labels (which are at top:2px). Use !important
    so this beats the generic `.ge-topbar select` rule above no matter what
@@ -28802,7 +28802,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 }
 .ge-stacked-btn .ge-stacked-glyph svg { display: block; }
 .ge-stacked-btn .ge-stacked-label {
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   opacity: 0.65;
   font-weight: 600;
@@ -28835,7 +28835,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   height: 16px;
 }
 .ge-zoom-stack .ge-zoom-label {
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   opacity: 0.65;
   font-weight: 600;
@@ -28937,7 +28937,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 /* Sub-menu label inside the Filter / Image dropdown — small uppercase
    header so "Blur" / "Selection" reads as a category, not an action. */
 .ge-filter-submenu-label {
-  font-size: 9px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   opacity: 0.45;
@@ -28991,7 +28991,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 2px;
 }
 .ge-filter-row label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
   display: flex;
   justify-content: space-between;
@@ -29042,7 +29042,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
 .ge-edge-actions .ge-btn { flex: 1; }
 .ge-edge-hint {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   line-height: 1.4;
 }
@@ -29102,7 +29102,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   font-weight: 600;
 }
 .ge-btn-primary:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
-.ge-zoom-label { font-size: 10px; opacity: 0.5; }
+.ge-zoom-label { font-size: 11px; opacity: 0.5; }
 
 /* Nudge whirlpool spinners 1px down so they sit on the text baseline
    when placed inside action buttons (Generate, Harmonize, etc). */
@@ -29277,7 +29277,7 @@ button .spinner-whirlpool {
   flex: 0 0 auto;
   min-width: 0;
   padding: 4px 8px;
-  font-size: 10px;
+  font-size: 11px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -29648,13 +29648,13 @@ button .spinner-whirlpool {
 }
 .ge-inpaint-model-row label {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.65;
 }
 .ge-inpaint-model-row #ge-ai-inpaint {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 10px;
+  font-size: 11px;
   padding: 4px 6px;
   background: var(--bg);
   color: var(--fg);
@@ -30353,12 +30353,12 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
   color: var(--accent, var(--red));
-  border-radius: 10px; padding: 1px 6px; font-size: 9px; font-weight: 600;
+  border-radius: 10px; padding: 1px 6px; font-size: 11px; font-weight: 600;
   text-transform: lowercase; letter-spacing: 0.3px;
 }
 .email-spam-unflag {
   background: none; border: none; color: inherit; cursor: pointer;
-  padding: 0 2px; font-size: 10px; line-height: 1; opacity: 0.6;
+  padding: 0 2px; font-size: 11px; line-height: 1; opacity: 0.6;
 }
 .email-spam-unflag:hover { opacity: 1; color: var(--fg); }
 /* Unread state is now a subtle icon, not full styling */
@@ -30874,7 +30874,7 @@ button .spinner-whirlpool {
     max-width: 44px;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 8px;
+    font-size: 11px;
     line-height: 1;
   }
   /* Tighten the right-side padding now that the cluster is 158px
@@ -31002,7 +31002,7 @@ button .spinner-whirlpool {
 .recipient-chip {
   display: inline-flex; align-items: center;
   gap: 5px;
-  padding: 1px 8px; font-size: 10px;
+  padding: 1px 8px; font-size: 11px;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -31262,7 +31262,7 @@ button .spinner-whirlpool {
   white-space: nowrap;
 }
 .email-inline-image-sub {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.58;
 }
 .email-inline-image-actions {
@@ -31285,7 +31285,7 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   color: inherit;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   text-decoration: none;
   cursor: pointer;
 }
@@ -31356,7 +31356,7 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   color: inherit;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   cursor: pointer;
 }
 .email-inline-image-load-all button:hover {
@@ -31473,7 +31473,7 @@ button .spinner-whirlpool {
 }
 .email-summary-header {
   display: flex; align-items: center; gap: 5px;
-  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
   color: var(--accent-primary, var(--red)); opacity: 0.85;
   margin-bottom: 6px; letter-spacing: 0.4px;
 }
@@ -31526,7 +31526,7 @@ button .spinner-whirlpool {
 .email-reader-atts-header {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 14px;
-  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
   color: var(--fg); opacity: 0.7;
   cursor: pointer; user-select: none;
   letter-spacing: 0.4px;
@@ -31543,7 +31543,7 @@ button .spinner-whirlpool {
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
   color: var(--accent-primary, var(--red));
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: none;
   letter-spacing: 0;
@@ -31572,7 +31572,7 @@ button .spinner-whirlpool {
 .email-reader-atts-wrap.collapsed .email-summary-chevron { transform: rotate(-90deg); }
 .email-reader-atts-hidden-note {
   padding: 0 14px 6px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   opacity: 0.65;
 }
@@ -31662,7 +31662,7 @@ button .spinner-whirlpool {
 /* "From … · Date …" chip appended to the summary line */
 .email-fold-summary-meta {
   margin-left: 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0;
@@ -31689,7 +31689,7 @@ button .spinner-whirlpool {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 14px;
   cursor: pointer; list-style: none;
-  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.4px;
   /* Force neutral page colors regardless of any rich-mail HTML wrapping us */
   color: var(--fg) !important;
@@ -31733,7 +31733,7 @@ button .spinner-whirlpool {
   padding: 4px 0;
   cursor: pointer;
   list-style: none; list-style-type: none;
-  font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--fg); opacity: 0.55;
   user-select: none;
@@ -31791,7 +31791,7 @@ button .spinner-whirlpool {
   padding: 8px 12px;
   border: 1px solid var(--border);
   background: var(--panel);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   word-wrap: break-word;
   overflow-wrap: anywhere;
@@ -31811,7 +31811,7 @@ button .spinner-whirlpool {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 10.5px;
+  font-size: 11px;
   margin-bottom: 4px;
   opacity: 0.7;
   min-width: 0;
@@ -31898,7 +31898,7 @@ button .spinner-whirlpool {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.3px;
   user-select: none;
@@ -32174,7 +32174,7 @@ body.doc-find-active mark.doc-find-mark.current {
   opacity: 0.6;
 }
 .email-filter-chip-clear:hover { opacity: 1; }
-.email-date { font-size: 10px; opacity: 0.5; white-space: nowrap; flex-shrink: 0; }
+.email-date { font-size: 11px; opacity: 0.5; white-space: nowrap; flex-shrink: 0; }
 .email-subject { font-size: 11px; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .email-sent-chip,
 .email-folder-chip {
@@ -32184,7 +32184,7 @@ body.doc-find-active mark.doc-find-mark.current {
   padding: 0 5px;
   margin-right: 5px;
   border-radius: 999px;
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1;
   font-weight: 700;
   text-transform: uppercase;
@@ -32239,7 +32239,7 @@ body.doc-find-active mark.doc-find-mark.current {
   min-width: 23px;
   padding: 1px 4px;
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   opacity: 0.68;
   position: relative;
@@ -32255,7 +32255,7 @@ body.doc-find-active mark.doc-find-mark.current {
   height: 20px !important;
   min-width: 34px;
   padding: 2px 6px !important;
-  font-size: 10px !important;
+  font-size: 11px !important;
   line-height: 1 !important;
   opacity: 0.62;
   border-radius: 999px !important;
@@ -32268,7 +32268,7 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-tag {
   display: inline-block;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   padding: 2px 5px;
   border-radius: 8px;
@@ -32284,7 +32284,7 @@ body.doc-find-active mark.doc-find-mark.current {
   cursor: pointer;
   display: inline-block;
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   height: auto !important;
   min-height: 0 !important;
@@ -32361,7 +32361,7 @@ body.doc-find-active mark.doc-find-mark.current {
 #email-compose-btn .list-item-plus-label {
   top: calc(50% - 0.5px);
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
 }
 #email-compose-btn:hover svg {
   transform: rotate(180deg) scale(1.15);
@@ -32873,7 +32873,7 @@ body.doc-find-active mark.doc-find-mark.current {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.email-attachment-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-attachment-chip .att-size { opacity: 0.5; font-size: 11px; flex-shrink: 0; }
 .email-attachment-chip-muted { opacity: 0.65; }
 .email-attachment-chip-muted:hover { opacity: 1; }
 .email-attachment-chip-related {
@@ -32887,7 +32887,7 @@ body.doc-find-active mark.doc-find-mark.current {
   height: 22px; padding: 0 9px; border-radius: 999px;
   margin-left: 6px; flex: 0 0 auto;
   min-width: 52px; justify-content: center;
-  font-size: 10px; font-weight: 500; letter-spacing: 0.02em;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.02em;
   color: var(--accent-primary, var(--red));
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 40%, transparent);
@@ -32998,7 +32998,7 @@ body.doc-find-active mark.doc-find-mark.current {
   border: 1px solid var(--border); border-radius: 12px; color: var(--fg);
 }
 .email-compose-chip .compose-chip-name { max-width: 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.email-compose-chip .att-size { opacity: 0.5; font-size: 10px; flex-shrink: 0; }
+.email-compose-chip .att-size { opacity: 0.5; font-size: 11px; flex-shrink: 0; }
 .email-compose-chip .compose-chip-remove {
   background: none; border: none; color: var(--fg); opacity: 0.5;
   font-size: 16px; line-height: 1; padding: 0 4px; cursor: pointer;
@@ -33180,7 +33180,7 @@ body.doc-find-active mark.doc-find-mark.current {
   line-height: 1.2;
 }
 .email-odysseus-attach-meta {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.15;
   opacity: 0.52;
 }
@@ -33480,7 +33480,7 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-settings-section-desc {
   margin-top: 10px;
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.25;
   color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
@@ -33502,7 +33502,7 @@ body.doc-find-active mark.doc-find-mark.current {
   flex-shrink: 0;
 }
 .email-settings-enabled-state {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
 }
@@ -33533,7 +33533,7 @@ body.doc-find-active mark.doc-find-mark.current {
 }
 .email-settings-grid span,
 .email-settings-field > span {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0;
@@ -34059,7 +34059,7 @@ body.notes-drag-mode .note-card-pin svg {
   display: inline-flex;
   align-items: center;
   padding: 10px 18px;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   border-radius: 8px;
   letter-spacing: -0.01em;
@@ -34122,7 +34122,7 @@ body.notes-drag-mode .note-card-pin svg {
    linkified content so URLs are tappable. Click anywhere off a link
    to flip to edit mode (focuses the underlying textarea). */
 .note-form-content-reader {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.55;
   padding: 10px 6px;
   white-space: pre-wrap;
@@ -34181,7 +34181,7 @@ body.notes-drag-mode .note-card-pin svg {
 .note-fullscreen-overlay .note-form-content,
 .note-fullscreen-overlay .note-form-content-reader {
   min-height: 55vh;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.55;
 }
 
@@ -34582,7 +34582,7 @@ body.notes-drag-mode .note-card-pin svg {
 /* Mobile: bigger, more legible note cards + a sticky quick-add bar so you can
    add a to-do without scrolling back up; and keep media inside the card. */
 @media (max-width: 768px) {
-  .note-card { padding: 14px 16px; padding-right: 34px; min-height: 84px; font-size: 15px; }
+  .note-card { padding: 14px 16px; padding-right: 34px; min-height: 84px; font-size: 16px; }
   .note-card-image { max-height: 260px; max-width: 100%; object-fit: cover; }
   /* Sticky create-todo bar — pin it to the top of the scrolling list pane.
      Safe now that the cards no longer shrink (the list actually overflows). */
@@ -35309,7 +35309,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
      row reads as one consistent bar. */
   .notes-quick-input {
     height: 36px;
-    font-size: 15px;
+    font-size: 16px;
   }
   .notes-quick-icon {
     padding: 9px;
@@ -35441,7 +35441,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border: none;
   border-radius: 12px;
   padding: 4px 4px 4px 9px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   font-weight: 500;
@@ -35469,7 +35469,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   gap: 4px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   padding: 2px 7px;
   border-radius: 10px;
@@ -35498,7 +35498,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   font-size: 12px;
 }
 .note-reminder-menu-title {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   opacity: 0.5;
@@ -35523,7 +35523,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-reminder-menu-item:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .note-reminder-menu-item.active { color: var(--accent); }
 .note-reminder-menu-sub {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   margin-left: 12px;
 }
@@ -35589,7 +35589,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   line-height: 1;
 }
 .note-reminder-menu-sublabel {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   padding: 6px 14px 2px;
   letter-spacing: 0.3px;
@@ -35723,7 +35723,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border-radius: 999px;
   padding: 2px 6px;
   font: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
   cursor: pointer;
@@ -35908,7 +35908,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: transparent;
   border: 1px solid var(--border);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 10px;
   border-radius: 10px;
   cursor: pointer;
@@ -35941,7 +35941,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border-radius: 7px;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
   color: inherit;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   margin-left: 3px;
 }
@@ -36008,7 +36008,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--accent-warm) 18%, transparent);
   color: var(--accent-warm);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -36098,7 +36098,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   display: none !important;
 }
 .note-form-goal-fresh .note-form-goal-desc {
-  font-size: 15px;
+  font-size: 16px;
   min-height: 90px;
   padding: 12px 14px;
 }
@@ -36200,7 +36200,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .notes-today-progress {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
@@ -36215,7 +36215,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 
 /* Bulk action bar */
 .notes-bulk-info {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   margin-left: 4px;
 }
@@ -36324,7 +36324,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 /* Inline due date next to title */
 .note-due-inline {
-  font-size: 9px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -36375,7 +36375,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-cl-grip {
   cursor: grab;
   opacity: 0.2;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: -2px;
   user-select: none;
   flex-shrink: 0;
@@ -37390,7 +37390,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .cal-quickadd-input::placeholder { color: transparent; }
 .cal-quickadd-status {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   font-variant-numeric: tabular-nums;
 }
@@ -37400,7 +37400,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .cal-title { font-size:13px; font-weight:600; white-space:nowrap; height:24px; line-height:30px; padding:0 6px; display:inline-block; vertical-align:middle; box-sizing:border-box; }
 button.cal-nav { background:color-mix(in srgb, var(--fg) 6%, transparent); border:1px solid var(--border); color:var(--fg); border-radius:5px; padding:0 8px; height:24px; line-height:22px; cursor:pointer; font-size:11px; font-family:inherit; box-sizing:border-box; vertical-align:middle; }
 button.cal-nav:hover { background:color-mix(in srgb, var(--fg) 12%, transparent); }
-button.cal-today-btn { font-size:10px; opacity:0.5; }
+button.cal-today-btn { font-size:11px; opacity:0.5; }
 button.cal-add-btn { background:var(--accent); color:#fff; border:none; border-radius:50%; width:24px; height:24px; line-height:22px; font-size:18px; cursor:pointer; flex-shrink:0; padding:0; box-sizing:border-box; font-family:inherit; vertical-align:middle; text-align:center; }
 button.cal-add-btn.cal-add-btn-text {
   width:auto; min-width:0;
@@ -37486,7 +37486,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover {
    the reference and we want the same rotation centre / motion. The label
    is shrunk and hidden until hover so the pill is compact at rest. */
 button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm .cal-add-label {
-  font-size: 10px;
+  font-size: 11px;
   max-width: 0;
   margin-left: 0;
   opacity: 0;
@@ -37607,7 +37607,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
    icon-only reader buttons. */
 .reader-btn-label {
   display: inline-block;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0.02em;
@@ -37952,7 +37952,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   text-overflow: ellipsis;
 }
 .email-account-unread-count {
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   font-weight: 700;
   color: var(--accent, var(--red));
@@ -37968,7 +37968,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   flex: 0 0 auto;
 }
 .email-accounts-loading-label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   position: relative;
   top: 2px;
@@ -37994,7 +37994,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   gap: 7px;
   padding: 8px 9px 4px;
   color: color-mix(in srgb, var(--fg) 58%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.2;
@@ -38036,7 +38036,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   flex: 0 0 auto;
   min-height: 14px;
   padding: 1px 4px 0;
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.2;
   text-align: center;
   opacity: 0.58;
@@ -38054,7 +38054,7 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
   #email-lib-modal .email-lib-sync-status {
     min-height: 13px;
     padding-right: 5px;
-    font-size: 10px;
+    font-size: 11px;
   }
 }
 /* Nudge the subject + sender/date meta line 4px right inside each
@@ -38142,7 +38142,7 @@ button.cal-view-btn {
 .cal-s-color::-webkit-color-swatch-wrapper { padding: 0; border-radius: 50%; }
 .cal-s-color::-webkit-color-swatch { border: none; border-radius: 50%; }
 .cal-s-color::-moz-color-swatch { border: none; border-radius: 50%; }
-.cal-filter-item { display:inline-flex; align-items:center; gap:4px; cursor:pointer; font-size:10px; padding:1px 8px; line-height:1.4; border-radius:10px; background:color-mix(in srgb, var(--fg) 5%, transparent); border:1px solid var(--border); transition:opacity 0.15s; }
+.cal-filter-item { display:inline-flex; align-items:center; gap:4px; cursor:pointer; font-size:11px; padding:1px 8px; line-height:1.4; border-radius:10px; background:color-mix(in srgb, var(--fg) 5%, transparent); border:1px solid var(--border); transition:opacity 0.15s; }
 .cal-filter-item:hover { background:color-mix(in srgb, var(--fg) 10%, transparent); }
 .cal-filter-item.cal-filter-off { opacity:0.25; text-decoration:line-through; }
 .cal-filter-item.cal-filter-important { font-weight:700; color:#e5a33a; border-color:color-mix(in srgb, #e5a33a 40%, transparent); }
@@ -38192,7 +38192,7 @@ button.cal-view-btn {
 }
 .cal-slide-in-right { animation: cal-slide-from-right 0.22s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .cal-slide-in-left { animation: cal-slide-from-left 0.22s cubic-bezier(0.25, 0.8, 0.25, 1); }
-.cal-weekday { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); text-align:center; font-size:10px; font-weight:600; opacity:0.4; padding:5px 0; }
+.cal-weekday { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); text-align:center; font-size:11px; font-weight:600; opacity:0.4; padding:5px 0; }
 .cal-day { background:var(--bg); min-height:78px; padding:3px; cursor:pointer; position:relative; transition:background 0.12s; overflow:hidden; }
 .cal-day:hover { background:color-mix(in srgb, var(--fg) 5%, var(--bg)); }
 .cal-day.cal-today { box-shadow:inset 0 0 0 2px var(--accent, var(--red)); background:color-mix(in srgb, var(--accent, var(--red)) 15%, var(--bg)); border-radius:8px; }
@@ -38213,7 +38213,7 @@ button.cal-view-btn {
 .cal-day.cal-other { opacity:0.25; }
 .cal-day.cal-drag-over { background:color-mix(in srgb, var(--accent) 18%, var(--bg)); }
 .cal-day.cal-range-select { background:color-mix(in srgb, var(--accent, var(--red)) 25%, var(--bg)); box-shadow:inset 0 0 0 1px var(--accent, var(--red)); }
-.cal-day-num { font-size:10px; font-weight:600; display:block; margin-bottom:1px; opacity:0.7; line-height:1.2; }
+.cal-day-num { font-size:11px; font-weight:600; display:block; margin-bottom:1px; opacity:0.7; line-height:1.2; }
 .cal-dots { display:flex; flex-direction:row; align-items:center; gap:2px; flex-wrap:nowrap; margin-bottom:1px; height:6px; }
 .cal-dot { width:5px; height:5px; border-radius:50%; display:inline-block; cursor:grab; flex-shrink:0; }
 .cal-dot-more { font-size:7px; opacity:0.4; }
@@ -38232,9 +38232,9 @@ button.cal-view-btn {
 }
 .cal-event-row:hover { background:color-mix(in srgb, var(--fg) 10%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 14%, transparent); }
 .cal-event-row-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; box-shadow:0 0 0 1px color-mix(in srgb, var(--bg) 80%, transparent); }
-.cal-event-row-time { font-size:10px; opacity:0.72; font-variant-numeric:tabular-nums; flex-shrink:0; font-weight:600; }
-.cal-event-row-name { font-size:10px; opacity:0.96; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; font-weight:600; }
-.cal-event-more { font-size:9px; opacity:0.55; padding-left:6px; }
+.cal-event-row-time { font-size:11px; opacity:0.72; font-variant-numeric:tabular-nums; flex-shrink:0; font-weight:600; }
+.cal-event-row-name { font-size:11px; opacity:0.96; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; font-weight:600; }
+.cal-event-more { font-size:11px; opacity:0.55; padding-left:6px; }
 /* Multi-day bar — positioned as an absolute overlay inside its
    .cal-week-row so it spans uninterrupted across every column it
    covers. --col is the starting column (0–6), --span is the number
@@ -38252,7 +38252,7 @@ button.cal-view-btn {
   );
   top: calc(2px + var(--slot, 0) * 12px);
   height: 12px;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 12px;
   padding: 0 5px;
   border-radius: 4px;
@@ -38324,7 +38324,7 @@ button.cal-view-btn {
 .cal-event-name { font-size:13px; font-weight:700; line-height:1.25; color:color-mix(in srgb, var(--fg) 96%, transparent); overflow-wrap:anywhere; }
 .cal-event-tag {
   display: inline-block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   padding: 1px 6px;
   border-radius: 8px;
@@ -38480,7 +38480,7 @@ button.cal-view-btn {
 }
 .cal-wk-allday::-webkit-scrollbar { display: none; }
 .cal-wk-allday-event {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 3px 6px;
   border-radius: 4px;
@@ -38540,7 +38540,7 @@ button.cal-view-btn {
 }
 .cal-wk-block:hover { filter: brightness(1.05); transform: translateY(-0.5px); }
 .cal-wk-block-name { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color:color-mix(in srgb, var(--fg) 96%, transparent); }
-.cal-wk-block-time { font-size: 10.5px; opacity: 0.82; font-variant-numeric: tabular-nums; margin-top: 2px; font-weight:600; }
+.cal-wk-block-time { font-size: 11px; opacity: 0.82; font-variant-numeric: tabular-nums; margin-top: 2px; font-weight:600; }
 @media (max-width: 768px) {
   /* Mobile week view: the hour rail already shows the time, so drop it from the
      card and let the title wrap to fill the freed space (more readable text). */
@@ -38597,7 +38597,7 @@ button.cal-view-btn {
   border-radius: 4px;
   pointer-events: none;
   z-index: 3;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -38611,8 +38611,8 @@ button.cal-view-btn {
 .cal-year-month-title { font-size:11px; font-weight:600; text-align:center; margin-bottom:4px; opacity:0.7; }
 .cal-year-month:hover .cal-year-month-title { opacity:1; color:var(--accent); }
 .cal-year-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:1px; }
-.cal-year-wd { font-size:7px; text-align:center; opacity:0.3; padding:1px 0; }
-.cal-year-cell { font-size:8px; text-align:center; padding:2px 0; min-height:14px; border-radius:2px; transition:transform 0.12s, background 0.12s; }
+.cal-year-wd { font-size:11px; text-align:center; opacity:0.3; padding:1px 0; }
+.cal-year-cell { font-size:11px; text-align:center; padding:2px 0; min-height:14px; border-radius:2px; transition:transform 0.12s, background 0.12s; }
 .cal-year-day { cursor:pointer; opacity:0.5; }
 .cal-year-day:hover { background:var(--accent, var(--red)); color:#fff; opacity:1; transform:scale(1.15); font-weight:700; z-index:2; position:relative; }
 .cal-year-today { color:var(--accent, var(--red)); font-weight:700; opacity:1; }
@@ -38642,9 +38642,9 @@ button.cal-view-btn {
   pointer-events: none;
   color: var(--accent, var(--red));
 }
-.cal-day-search-meta { font-size:10px; opacity:0.5; margin:0 2px 6px; }
+.cal-day-search-meta { font-size:11px; opacity:0.5; margin:0 2px 6px; }
 .cal-search-results { display:flex; flex-direction:column; gap:4px; }
-.cal-search-count { font-size:10px; opacity:0.5; padding:4px 2px 8px; }
+.cal-search-count { font-size:11px; opacity:0.5; padding:4px 2px 8px; }
 /* Agenda view */
 .cal-agenda { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
 .cal-agenda-day { display:flex; flex-direction:column; gap:5px; }
@@ -38761,7 +38761,7 @@ button.cal-view-btn {
   min-height: 48px;
 }
 .assistant-checkin-prompt:focus { outline: none; border-color: var(--accent, var(--red)); }
-.assistant-checkin-meta { font-size: 10px; opacity: 0.45; }
+.assistant-checkin-meta { font-size: 11px; opacity: 0.45; }
 .assistant-settings-actions {
   display: flex;
   justify-content: flex-end;
@@ -38788,7 +38788,7 @@ button.cal-view-btn {
   align-items: center;
 }
 .assistant-tool-group-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.5;
   text-transform: uppercase;
@@ -38847,7 +38847,7 @@ button.cal-event-more:hover { opacity:1 !important; }
 /* Stack the "All day" label above its toggle so it doesn't get squeezed /
    truncated next to the date inputs in the row. */
 .cal-allday-ctrl { display:flex; flex-direction:column; align-items:center; gap:3px; flex-shrink:0; }
-.cal-allday-label { font-size:10px; opacity:0.5; white-space:nowrap; line-height:1; }
+.cal-allday-label { font-size:11px; opacity:0.5; white-space:nowrap; line-height:1; }
 .cal-form { display:flex; flex-direction:column; gap:8px; }
 .cal-form-title { font-size:13px; font-weight:600; margin-bottom:2px; }
 .cal-title-wrap { position: relative; }
@@ -39129,12 +39129,12 @@ button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); colo
 @media (max-width: 600px) {
   .cal-modal-container { max-width:100vw; width:100vw; border-radius:0; max-height:100vh; height:100vh; }
   .cal-day { min-height:58px; padding:3px; }
-  .cal-day-num { font-size:10px; }
+  .cal-day-num { font-size:11px; }
   .cal-event-preview { display:none; }
-  .cal-multiday { font-size:8.5px; padding:0 4px; }
+  .cal-multiday { font-size:11px; padding:0 4px; }
   .cal-event-row { min-height:16px; padding:2px 3px; gap:3px; }
   .cal-event-row-name,
-  .cal-event-row-time { font-size:9.5px; }
+  .cal-event-row-time { font-size:11px; }
   /* Two-row toolbar on mobile:
         Row 1 — Title (full width)
         Row 2 — [← Today →] [view toggle] [settings/sync/filters/+New]
@@ -39167,12 +39167,12 @@ button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); colo
     font-size: 13px;
     padding: 0 4px;
   }
-  .cal-nav { padding: 2px 5px; font-size: 10px; }
-  .cal-view-btn { padding: 2px 5px; font-size: 9px; }
+  .cal-nav { padding: 2px 5px; font-size: 11px; }
+  .cal-view-btn { padding: 2px 5px; font-size: 11px; }
   .cal-filters { gap: 3px; margin-top: 4px; }
-  .cal-filter-item { font-size: 9px; padding: 1px 5px; }
+  .cal-filter-item { font-size: 11px; padding: 1px 5px; }
   .cal-year { grid-template-columns:repeat(3, 1fr); gap:6px; }
-  .cal-year-cell { font-size:7px; }
+  .cal-year-cell { font-size:11px; }
 }
 
 /* ═══ Research Panel ═══ */
@@ -39310,7 +39310,7 @@ body.research-panel-view #research-divider { display:none; }
   top: 3px;
 }
 .research-setting-label {
-  font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
+  font-size:11px; text-transform:uppercase; letter-spacing:0.5px;
   opacity:0.5; margin-bottom:2px;
 }
 .research-setting select {
@@ -39359,7 +39359,7 @@ body.research-panel-view #research-divider { display:none; }
 .research-cat {
   padding: 2px 10px;
   border-radius: 12px;
-  font-size: 10px;
+  font-size: 11px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg-muted);
@@ -39553,12 +39553,12 @@ body.research-panel-view #research-divider { display:none; }
 .research-hero-icon svg { width: 100%; height: 100%; }
 .research-hero-text { flex: 1; min-width: 0; }
 .research-hero-label {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
   font-weight: 700; opacity: 0.7; margin-bottom: 3px;
   color: var(--cat-color, var(--accent));
 }
 .research-hero-query {
-  font-size: 15px; font-weight: 600;
+  font-size: 16px; font-weight: 600;
   line-height: 1.3; color: var(--fg);
 }
 
@@ -39655,10 +39655,10 @@ body.research-panel-view #research-divider { display:none; }
 }
 .research-job-time,
 .research-job-meta {
-  font-size:10px; opacity:0.5; white-space:nowrap; font-family:monospace;
+  font-size:11px; opacity:0.5; white-space:nowrap; font-family:monospace;
 }
 .research-job-status {
-  font-size:10px; text-transform:uppercase; opacity:0.6;
+  font-size:11px; text-transform:uppercase; opacity:0.6;
 }
 .research-job-cancel,
 .research-job-remove,
@@ -39680,7 +39680,7 @@ body.research-panel-view #research-divider { display:none; }
 .research-synapse-toggle.active { opacity:1; }
 .research-job-synapse-host.synapse-collapsed { display:none; }
 .research-job-model {
-  font-size:9px; opacity:0.4; white-space:nowrap;
+  font-size:11px; opacity:0.4; white-space:nowrap;
   max-width:120px; overflow:hidden; text-overflow:ellipsis;
 }
 .research-job-actions {
@@ -39740,11 +39740,11 @@ body.research-panel-view #research-divider { display:none; }
   font-size:11px; opacity:0.6; margin-top:4px;
 }
 .research-job-queued-meta {
-  font-size:10px; opacity:0.4; margin-top:2px;
+  font-size:11px; opacity:0.4; margin-top:2px;
 }
 .research-section-divider {
   display:flex; align-items:center; gap:10px;
-  padding:6px 14px; font-size:10px; opacity:0.4;
+  padding:6px 14px; font-size:11px; opacity:0.4;
   text-transform:uppercase; letter-spacing:0.5px;
 }
 .research-section-divider::before,
@@ -39793,7 +39793,7 @@ body.research-panel-view #research-divider { display:none; }
 .research-main-header:hover { background: none; }
 .research-section-count {
   /* Match the panel header's "N research" chip — small, muted, no weight. */
-  font-size: 10px; opacity: 0.6; font-weight: normal;
+  font-size: 11px; opacity: 0.6; font-weight: normal;
   font-variant-numeric: tabular-nums;
 }
 .research-job-error {
@@ -39815,14 +39815,14 @@ body.research-panel-view #research-divider { display:none; }
   display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;
 }
 .research-source-link {
-  font-size:10px; padding:2px 6px;
+  font-size:11px; padding:2px 6px;
   background:color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
   border-radius:3px; color:var(--accent-primary, var(--red));
   text-decoration:none; white-space:nowrap;
   max-width:200px; overflow:hidden; text-overflow:ellipsis;
 }
 .research-source-link:hover { text-decoration:underline; }
-.research-source-more { font-size:10px; opacity:0.5; padding:2px 4px; }
+.research-source-more { font-size:11px; opacity:0.5; padding:2px 4px; }
 .research-job-report-body {
   font-size:12px; line-height:1.55; max-height:400px; overflow-y:auto;
 }
@@ -39857,7 +39857,7 @@ body.research-panel-view #research-divider { display:none; }
   display:flex; gap:4px; margin-left:auto;
 }
 .research-lib-meta {
-  font-size:9px; opacity:0.4; white-space:nowrap; font-family:monospace;
+  font-size:11px; opacity:0.4; white-space:nowrap; font-family:monospace;
 }
 .research-lib-open,
 .research-lib-delete {
@@ -39901,7 +39901,7 @@ body.research-panel-view #research-divider { display:none; }
   min-width: 0;
 }
 .research-sb-status {
-  font-size: 8px;
+  font-size: 11px;
   opacity: 0.5;
   white-space: nowrap;
   overflow: hidden;
@@ -40028,7 +40028,7 @@ input.cp-swatch-input::selection { background: transparent; }
 }
 .cp-eyedropper:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
 .cp-section-label {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
   opacity: 0.5; margin-top: 10px; margin-bottom: 4px;
 }
 .cp-swatches {
@@ -40055,7 +40055,7 @@ input.cp-swatch-input::selection { background: transparent; }
   margin-bottom: 14px;
 }
 .pdf-export-overlay .pdf-export-section-title {
-  font-size: 0.72rem;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--red);
@@ -40070,7 +40070,7 @@ input.cp-swatch-input::selection { background: transparent; }
   padding: 3px 0;
 }
 .pdf-export-overlay .pdf-export-row label {
-  font-size: 0.78rem;
+  font-size: 13px;
   color: var(--fg);
   opacity: 0.85;
 }
@@ -40082,7 +40082,7 @@ input.cp-swatch-input::selection { background: transparent; }
   background: var(--bg);
   color: var(--fg);
   border-radius: 4px;
-  font-size: 0.78rem;
+  font-size: 13px;
   font-family: inherit;
 }
 .pdf-export-input:focus {
@@ -40113,7 +40113,7 @@ input.cp-swatch-input::selection { background: transparent; }
   background: var(--bg);
   color: var(--fg);
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: 14px;
 }
 .sig-modal-overlay .sig-tile {
   position: relative;
@@ -40145,7 +40145,7 @@ input.cp-swatch-input::selection { background: transparent; }
   justify-content: center;
   padding: 0 0 0 1px;
   box-sizing: border-box;
-  font-size: 0.85rem;
+  font-size: 14px;
   line-height: 1;
   border: 1px solid var(--accent, var(--red));
   background: #fff;
@@ -40389,7 +40389,7 @@ body.theme-frosted .modal {
 .research-section-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 /* "Clear all" in the Past header — styled like the cookbook-running clear btn. */
 .research-section-clear {
-  font-size: 10px; padding: 0 8px; height: 22px;
+  font-size: 11px; padding: 0 8px; height: 22px;
   border-radius: 6px; border: 1px solid var(--border);
   color: color-mix(in srgb, var(--fg) 45%, transparent);
   background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
@@ -40514,7 +40514,7 @@ body.theme-frosted .modal {
   display: none;
 }
 .slash-ac-cat {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-muted, #888);
@@ -40647,7 +40647,7 @@ body.theme-frosted .modal {
   gap: 8px;
 }
 .adm-copilot-code-label {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
@@ -40779,7 +40779,7 @@ body.theme-frosted .modal {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   padding: 0;
   cursor: pointer;
@@ -40870,7 +40870,7 @@ body.theme-frosted .modal {
   justify-content: flex-end;
   margin-bottom: 8px;
 }
-.ask-user-close { font-size: 15px; }
+.ask-user-close { font-size: 16px; }
 .ask-user-question {
   margin: -2px 0 10px;
   font-size: 12px !important;
@@ -40933,7 +40933,7 @@ body.theme-frosted .modal {
   flex-basis: 100%;
   width: 100%;
   opacity: 0.65;
-  font-size: 10px !important;
+  font-size: 11px !important;
   line-height: 1.25;
 }
 /* Free-text "Other" row: input + send, on one line. */
@@ -40971,14 +40971,14 @@ body.theme-frosted .modal {
   }
   .ask-user-option {
     padding: 7px 8px;
-    font-size: 10px !important;
+    font-size: 11px !important;
     gap: 6px;
   }
   .ask-user-option-label {
-    font-size: 10px !important;
+    font-size: 11px !important;
   }
   .ask-user-option-desc {
-    font-size: 9px !important;
+    font-size: 11px !important;
   }
   .ask-user-other {
     flex-wrap: wrap;
@@ -41246,14 +41246,14 @@ body.theme-frosted .modal {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.5;
 }
 
 .settings-search-empty {
   padding: 8px;
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
   opacity: 0.55;
 }
