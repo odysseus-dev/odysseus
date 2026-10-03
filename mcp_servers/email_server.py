@@ -286,7 +286,10 @@ def _load_config(account: str | None = None) -> dict:
       3. hardcoded fallbacks (localhost:31143 etc.)
     """
     cache_key = (_current_owner(), (account or "").strip().lower() or "__default__")
-    if cache_key in _ACCOUNT_CACHE:
+    # Refreshes and browser reconnects update OAuth credentials in the DB.
+    # Reload Google accounts so the long-lived MCP process sees those updates
+    # and does not refresh an expired cached token on every operation.
+    if cache_key in _ACCOUNT_CACHE and _ACCOUNT_CACHE[cache_key].get("oauth_provider") != "google":
         return _ACCOUNT_CACHE[cache_key]
 
     cfg = {

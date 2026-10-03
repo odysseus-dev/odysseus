@@ -203,7 +203,7 @@ def test_load_config_populates_oauth_provider_for_google_account():
     import mcp_servers.email_server as es
     with mock.patch.object(es, "_db_path") as mock_path, \
          mock.patch.object(es, "_ACCOUNT_CACHE", {}), \
-         mock.patch.object(es, "_current_owner", return_value=None):
+         mock.patch.object(es, "_current_owner", return_value="alice"):
         mock_path.return_value = mock.MagicMock()
         mock_path.return_value.exists.return_value = True
         with mock.patch("mcp_servers.email_server.sqlite3.connect", return_value=db_conn):
@@ -219,7 +219,7 @@ def test_load_config_populates_all_oauth_fields():
     import mcp_servers.email_server as es
     with mock.patch.object(es, "_db_path") as mock_path, \
          mock.patch.object(es, "_ACCOUNT_CACHE", {}), \
-         mock.patch.object(es, "_current_owner", return_value=None):
+         mock.patch.object(es, "_current_owner", return_value="alice"):
         mock_path.return_value = mock.MagicMock()
         mock_path.return_value.exists.return_value = True
         with mock.patch("mcp_servers.email_server.sqlite3.connect", return_value=db_conn):
@@ -237,7 +237,7 @@ def test_load_config_oauth_provider_empty_for_password_account():
     import mcp_servers.email_server as es
     with mock.patch.object(es, "_db_path") as mock_path, \
          mock.patch.object(es, "_ACCOUNT_CACHE", {}), \
-         mock.patch.object(es, "_current_owner", return_value=None):
+         mock.patch.object(es, "_current_owner", return_value="alice"):
         mock_path.return_value = mock.MagicMock()
         mock_path.return_value.exists.return_value = True
         with mock.patch("mcp_servers.email_server.sqlite3.connect", return_value=db_conn):
@@ -275,6 +275,8 @@ def test_mcp_imap_connect_uses_xoauth2_for_google_account():
     mock_conn.authenticate.assert_called_once()
     assert mock_conn.authenticate.call_args[0][0] == "XOAUTH2", \
         "IMAP auth method must be XOAUTH2 for Google OAuth accounts"
+    response = mock_conn.authenticate.call_args[0][1]
+    assert response(b"") == b"user=me@nia.law\x01auth=Bearer ya29.live_token\x01\x01"
     mock_conn.login.assert_not_called()
 
 
@@ -354,14 +356,16 @@ def test_mcp_smtp_connect_uses_xoauth2_for_google_account():
     }
 
     mock_smtp = mock.MagicMock()
-    with mock.patch("mcp_servers.email_server.smtplib.SMTP", return_value=mock_smtp), \
-         mock.patch("mcp_servers.email_server._load_config", return_value=cfg), \
-         mock.patch("mcp_servers.email_server._smtp_ready", return_value=True):
+    with mock.patch("mcp_servers.email_server.smtplib.SMTP", return_value=mock_smtp):
         es._smtp_connect(cfg=cfg)
 
     mock_smtp.auth.assert_called_once()
     assert mock_smtp.auth.call_args[0][0] == "XOAUTH2", \
         "SMTP auth method must be XOAUTH2 for Google OAuth accounts"
+    response = mock_smtp.auth.call_args[0][1]
+    assert response() == "user=me@nia.law\x01auth=Bearer ya29.live_token\x01\x01"
+    mock_smtp.starttls.assert_called_once()
+    mock_smtp.ehlo.assert_called_once()
     mock_smtp.login.assert_not_called()
 
 
@@ -381,9 +385,7 @@ def test_mcp_smtp_connect_uses_login_for_password_account():
     }
 
     mock_smtp = mock.MagicMock()
-    with mock.patch("mcp_servers.email_server.smtplib.SMTP", return_value=mock_smtp), \
-         mock.patch("mcp_servers.email_server._load_config", return_value=cfg), \
-         mock.patch("mcp_servers.email_server._smtp_ready", return_value=True):
+    with mock.patch("mcp_servers.email_server.smtplib.SMTP", return_value=mock_smtp):
         es._smtp_connect(cfg=cfg)
 
     mock_smtp.login.assert_called_once_with("me@example.com", "app-password")
@@ -410,11 +412,76 @@ def test_mcp_smtp_connect_raises_and_closes_when_token_unavailable():
 
     mock_smtp = mock.MagicMock()
     with mock.patch("mcp_servers.email_server.smtplib.SMTP", return_value=mock_smtp), \
-         mock.patch("mcp_servers.email_server._load_config", return_value=cfg), \
-         mock.patch("mcp_servers.email_server._smtp_ready", return_value=True), \
          mock.patch("routes.email_helpers._get_valid_google_token", return_value=None):
         with pytest.raises(RuntimeError, match="OAuth token unavailable"):
             es._smtp_connect(cfg=cfg)
 
     mock_smtp.close.assert_called()
     mock_smtp.login.assert_not_called()
+
+
+# ── Long-lived MCP process: token refresh and browser reconnect ──────────────
+
+@pytest.fixture
+def oauth_account_db(tmp_path, monkeypatch):
+    import mcp_servers.email_server as es
+
+    path = tmp_path / "accounts.db"
+    source = _make_sqlite_db_with_oauth_account(expiry_offset=-120)
+    with sqlite3.connect(path) as destination:
+        source.backup(destination)
+    source.close()
+    monkeypatch.setattr(es, "APP_DB", str(path))
+    monkeypatch.setattr(es, "_current_owner", lambda: "alice")
+    monkeypatch.setattr(es, "_ACCOUNT_CACHE", {})
+    return path
+
+
+def test_mcp_refresh_persisted_token_is_reused_on_next_operation(oauth_account_db, monkeypatch):
+    import mcp_servers.email_server as es
+    import routes.email_helpers as helpers
+    from src.secret_storage import encrypt, decrypt
+
+    def refresh(account_id):
+        assert account_id == "acct-1"
+        with sqlite3.connect(oauth_account_db) as conn:
+            conn.execute(
+                "UPDATE email_accounts SET oauth_access_token=?, oauth_token_expiry=? WHERE id=?",
+                (encrypt("fresh-test-token"), str(int(time.time()) + 3600), account_id),
+            )
+        return "fresh-test-token"
+
+    refresh_mock = mock.Mock(side_effect=refresh)
+    monkeypatch.setattr(helpers, "_refresh_google_token", refresh_mock)
+    mock_conn = mock.MagicMock()
+    monkeypatch.setattr(es.imaplib, "IMAP4_SSL", mock.Mock(return_value=mock_conn))
+
+    # The first connect refreshes an expired token and persists it; the second
+    # must read that token from SQLite instead of refreshing the stale cache.
+    es._imap_connect("acct-1")
+    es._imap_connect("acct-1")
+
+    refresh_mock.assert_called_once_with("acct-1")
+    assert mock_conn.authenticate.call_count == 2
+    mock_conn.login.assert_not_called()
+    cfg = es._load_config("acct-1")
+    assert cfg["oauth_access_token"] != "fresh-test-token"
+    assert decrypt(cfg["oauth_access_token"]) == "fresh-test-token"
+
+
+def test_mcp_sees_browser_reconnect_after_account_was_cached(oauth_account_db):
+    import mcp_servers.email_server as es
+    from src.secret_storage import encrypt, decrypt
+
+    before = es._load_config("acct-1")
+    with sqlite3.connect(oauth_account_db) as conn:
+        conn.execute(
+            "UPDATE email_accounts SET oauth_access_token=?, oauth_refresh_token=?, oauth_token_expiry=? WHERE id=?",
+            (encrypt("reconnected-access"), encrypt("reconnected-refresh"), "9999999999", "acct-1"),
+        )
+    after = es._load_config("acct-1")
+
+    assert after is not before
+    assert decrypt(after["oauth_access_token"]) == "reconnected-access"
+    assert decrypt(after["oauth_refresh_token"]) == "reconnected-refresh"
+    assert after["oauth_token_expiry"] == "9999999999"
