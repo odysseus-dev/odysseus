@@ -4509,6 +4509,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       }
     });
 
+    updateWordCount();
+
     // Auto-detect language for docs with no language set
     if (!doc.userSetLanguage && !doc.language) {
       setTimeout(attemptAutoDetect, 100);
@@ -4998,6 +5000,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
            pinned to the bottom no matter which pane (editor / md-preview /
            csv / html / pdf) is the one growing to fill. -->
       <div id="doc-actions-footer" class="doc-email-actions">
+        <span id="doc-word-count" class="doc-word-count" style="font-size:11px;opacity:0.65;white-space:nowrap;margin:0 8px;"></span>
         <span class="email-send-split" id="doc-copy-export-split">
           <button type="button" id="doc-footer-copy-btn" class="email-send-btn email-send-main" title="Save new version" data-mode="save"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>
           <button type="button" id="doc-footer-export-btn" class="email-send-btn email-send-caret" title="Export as…" aria-label="Export options"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
@@ -5822,6 +5825,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const pre = document.getElementById('doc-editor-highlight');
     if (ta && pre) {
       ta.addEventListener('input', () => {
+        updateWordCount();
         // Typing invalidates any pinned selection highlight
         if (_selections.length) clearSelection();
         // Auto-create a document if user types/pastes with no active doc.
@@ -7805,6 +7809,23 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       else if (/^---\s*$/.test(line)) score += 1;      // horizontal rule
     }
     return score >= 3;
+  }
+
+  // ── Word count ──
+  function updateWordCount() {
+    const el = document.getElementById('doc-word-count');
+    if (!el) return;
+    const ta = document.getElementById('doc-editor-textarea');
+    if (!ta || !activeDocId) {
+      el.textContent = '';
+      return;
+    }
+    const text = ta.value || '';
+    // Count words: split by whitespace, filter empty strings
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    // Count characters (including spaces)
+    const chars = text.length;
+    el.textContent = `${words} word${words === 1 ? '' : 's'} · ${chars} char${chars === 1 ? '' : 's'}`;
   }
 
   function attemptAutoDetect() {
