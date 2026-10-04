@@ -2239,14 +2239,17 @@ def _migrate_chat_messages_fts():
             END;
             """
         )
+        # message_id is UNINDEXED, so a correlated NOT EXISTS scans the FTS
+        # table once per chat row. Read the ids once. IS NOT NULL keeps a
+        # legacy NULL id from making NOT IN unknown for every row.
         conn.execute(
             f"""
             INSERT INTO chat_messages_fts(content, message_id, session_id, role)
             SELECT {fts_content_expr_cm}, cm.id, cm.session_id, cm.role
             FROM chat_messages cm
-            WHERE NOT EXISTS (
-                SELECT 1 FROM chat_messages_fts fts
-                WHERE fts.message_id = cm.id
+            WHERE cm.id NOT IN (
+                SELECT fts.message_id FROM chat_messages_fts fts
+                WHERE fts.message_id IS NOT NULL
             )
             """
         )

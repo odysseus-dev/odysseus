@@ -227,6 +227,98 @@ def test_session_search_excludes_archived_by_default():
         db.close()
 
 
+def _chat_messages_db(tmp_path, name="app.db"):
+    db_path = tmp_path / name
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL
+        )
+        """
+    )
+    return db_path, conn
+
+
+def _migrate(db_path, monkeypatch):
+    from core import database as cdb
+
+    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{db_path}")
+    cdb._migrate_chat_messages_fts()
+
+
+def test_chat_messages_fts_migration_backfills_missing_rows_once(tmp_path, monkeypatch):
+    db_path, conn = _chat_messages_db(tmp_path)
+    conn.executemany(
+        "INSERT INTO chat_messages(id, session_id, role, content) VALUES (?, ?, ?, ?)",
+        [
+            ("m1", "s1", "user", "alpha backfill"),
+            ("m2", "s1", "assistant", "beta backfill"),
+            ("m3", "s1", "user", "gamma backfill"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    _migrate(db_path, monkeypatch)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DELETE FROM chat_messages_fts WHERE message_id IN ('m2', 'm3')")
+        conn.execute(
+            "INSERT INTO chat_messages_fts(content, message_id, session_id, role) VALUES ('orphan', NULL, 's1', 'user')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _migrate(db_path, monkeypatch)
+    _migrate(db_path, monkeypatch)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT message_id FROM chat_messages_fts WHERE message_id IS NOT NULL ORDER BY message_id"
+        ).fetchall()
+        assert rows == [("m1",), ("m2",), ("m3",)]
+    finally:
+        conn.close()
+
+
+def test_chat_messages_fts_migration_complete_index_stays_cheap(tmp_path, monkeypatch):
+    import time
+
+    db_path, conn = _chat_messages_db(tmp_path, "complete.db")
+    body = "word " * 200
+    conn.executemany(
+        "INSERT INTO chat_messages(id, session_id, role, content) VALUES (?, ?, ?, ?)",
+        [(f"m{i}", "s1", "user", f"{i} {body}") for i in range(4000)],
+    )
+    conn.commit()
+    conn.close()
+
+    _migrate(db_path, monkeypatch)
+
+    started = time.perf_counter()
+    _migrate(db_path, monkeypatch)
+    elapsed = time.perf_counter() - started
+
+    # The old correlated scan took 2.2s for this many rows on a file database.
+    assert elapsed < 1.0, elapsed
+
+    conn = sqlite3.connect(db_path)
+    try:
+        indexed = conn.execute(
+            "SELECT COUNT(*) FROM chat_messages_fts WHERE message_id IS NOT NULL"
+        ).fetchone()[0]
+        assert indexed == 4000
+    finally:
+        conn.close()
+
+
 def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monkeypatch):
     from core import database as cdb
 
