@@ -895,10 +895,25 @@ function _redactTaskForStorage(task) {
   return safe;
 }
 
-function _stripStateSecrets(state) {
+// Same character set the server accepts (_TOKEN_RE in cookbook_helpers.py). The
+// state POST swallows validation errors and fails the whole save, so a token
+// that would be rejected must never be included.
+const _HF_TOKEN_RE = /^[A-Za-z0-9._~+/=-]+$/;
+
+// Last token value the server confirmed it stored. The token is sent to the
+// server only when it differs from this, so it is not re-sent on every sync.
+let _lastSyncedHfToken = '';
+
+function _pendingHfToken() {
+  const token = _envState && typeof _envState.hfToken === 'string' ? _envState.hfToken.trim() : '';
+  return token && token !== _lastSyncedHfToken && _HF_TOKEN_RE.test(token) ? token : '';
+}
+
+function _stripStateSecrets(state, { hfToken: pendingHfToken = '' } = {}) {
   const safe = { ...state };
   if (safe.env && typeof safe.env === 'object') {
-    const { hfToken, ...env } = safe.env;
+    const { hfToken: _dropped, ...env } = safe.env;
+    if (pendingHfToken) env.hfToken = pendingHfToken;
     delete env.hostPlatform;
     safe.env = env;
   }
@@ -1348,11 +1363,18 @@ function _syncToServer() {
         const favorites = JSON.parse(localStorage.getItem(SERVE_FAVORITES_KEY) || '[]');
         state.serveFavorites = Array.isArray(favorites) ? favorites.filter(Boolean).map(String) : [];
       } catch {}
-      await fetch('/api/cookbook/state', {
+      const pendingHfToken = _pendingHfToken();
+      const res = await fetch('/api/cookbook/state', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(_stripStateSecrets(state)),
+        body: JSON.stringify(_stripStateSecrets(state, { hfToken: pendingHfToken })),
       });
+      // The endpoint reports failure as {ok:false} with HTTP 200, so check the
+      // body before treating the token as stored.
+      if (pendingHfToken && res.ok) {
+        const result = await res.json().catch(() => null);
+        if (result && result.ok) _lastSyncedHfToken = pendingHfToken;
+      }
     } catch {}
   }, 400);
 }
