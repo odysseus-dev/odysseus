@@ -152,6 +152,29 @@ def _python_grep_worker(payload: dict, output_queue) -> None:
         except BaseException:
             pass
 
+def _read_text_keep_eol(path: str) -> Tuple[str, str]:
+    """Read a text file without newline translation.
+
+    Returns ``(text, eol)``. A file that uses CRLF everywhere comes back with
+    LF so model-supplied context (always LF) matches it, and ``eol`` is
+    "\\r\\n" so the write can restore it. LF and mixed files come back as-is.
+    """
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        raw = f.read()
+    crlf = raw.count("\r\n")
+    if crlf and crlf == raw.count("\n"):
+        return raw.replace("\r\n", "\n"), "\r\n"
+    return raw, "\n"
+
+
+def _write_text_keep_eol(path: str, text: str, eol: str = "\n") -> None:
+    """Write text with ``eol`` line endings and no platform translation."""
+    if eol != "\n":
+        text = text.replace("\n", eol)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     if old == new:
         return None
@@ -204,16 +227,14 @@ class EditFileTool:
 
         def _apply():
             """Helper function that performs the actual string replacement and file writing logic."""
-            with open(path, "r", encoding="utf-8") as f:
-                original = f.read()
+            original, eol = _read_text_keep_eol(path)
             count = original.count(old)
             if count == 0:
                 return original, None, "not_found"
             if count > 1 and not replace_all:
                 return original, None, f"not_unique:{count}"
             updated = original.replace(old, new) if replace_all else original.replace(old, new, 1)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(updated)
+            _write_text_keep_eol(path, updated, eol)
             return original, updated, "ok"
 
         try:
@@ -466,6 +487,7 @@ class ApplyPatchTool:
             for op in ops:
                 path = _resolve_tool_path(op["path"])
                 kind = op["kind"]
+                eol = "\n"
                 if kind == "add":
                     if os.path.exists(path):
                         return {"error": f"apply_patch: {op['path']}: already exists", "exit_code": 1}
@@ -474,27 +496,24 @@ class ApplyPatchTool:
                 elif kind == "delete":
                     if not os.path.isfile(path):
                         return {"error": f"apply_patch: {op['path']}: not found", "exit_code": 1}
-                    with open(path, "r", encoding="utf-8") as f:
-                        old = f.read()
+                    old, eol = _read_text_keep_eol(path)
                     new = ""
                 else:
                     if not os.path.isfile(path):
                         return {"error": f"apply_patch: {op['path']}: not found", "exit_code": 1}
-                    with open(path, "r", encoding="utf-8") as f:
-                        old = f.read()
+                    old, eol = _read_text_keep_eol(path)
                     new = _apply_patch_hunks(old, op["hunks"], op["path"])
-                prepared.append((kind, path, old, new))
+                prepared.append((kind, path, old, new, eol))
 
             diffs = []
-            for kind, path, old, new in prepared:
+            for kind, path, old, new, eol in prepared:
                 if kind == "delete":
                     os.remove(path)
                 else:
                     directory = os.path.dirname(path)
                     if directory:
                         os.makedirs(directory, exist_ok=True)
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(new)
+                    _write_text_keep_eol(path, new, eol)
                 diff = _unified_diff(old, new, path)
                 if diff:
                     diffs.append(diff)
