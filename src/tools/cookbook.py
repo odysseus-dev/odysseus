@@ -461,8 +461,8 @@ def _cookbook_default_launch_cmd(repo_id: str, engine: str, *, port: int = 8000,
     if engine in {"llama.cpp", "llamacpp", "llama"}:
         siblings = [str(s) for s in ((info or {}).get("siblings") or []) if str(s).lower().endswith(".gguf")]
         if siblings:
-            # llama-server accepts HF repo + filename separately on recent builds.
-            return f"llama-server -hf {repo_id} -hfr {siblings[0]} --host 0.0.0.0 --port {port}"
+            # -hfr is an alias of -hf (repo) on current llama.cpp; the GGUF file flag is --hf-file.
+            return f"llama-server -hf {repo_id} --hf-file {siblings[0]} --host 0.0.0.0 --port {port}"
         return f"llama-server -hf {repo_id} --host 0.0.0.0 --port {port}"
     return f"vllm serve {repo_id} --host 0.0.0.0 --port {port}"
 
