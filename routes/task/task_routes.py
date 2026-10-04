@@ -19,7 +19,7 @@ from src.task_action_policy import (
     is_admin_only_task_action,
     owner_has_admin_task_privileges,
 )
-from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
+from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS, _resolve_task_timezone
 from routes.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,8 @@ class TaskCreate(BaseModel):
     task_type: str = "llm"                        # "llm" | "action" | "research"
     action: Optional[str] = None                  # builtin action name
     schedule: Optional[str] = None                # "once" | "daily" | "weekly" | "monthly" | "cron"
-    scheduled_time: str = "09:00"                 # HH:MM
+    scheduled_time: str = "09:00"                 # HH:MM (UTC, or local to `timezone` when set)
+    timezone: Optional[str] = None                # IANA name, e.g. "America/Chicago"
     scheduled_day: Optional[int] = None           # day-of-week (0=Mon) or day-of-month
     scheduled_date: Optional[str] = None          # ISO datetime for "once"
     cron_expression: Optional[str] = None         # cron string e.g. "*/5 * * * *"
@@ -166,6 +167,7 @@ class TaskUpdate(BaseModel):
     action: Optional[str] = None
     schedule: Optional[str] = None
     scheduled_time: Optional[str] = None
+    timezone: Optional[str] = None
     scheduled_day: Optional[int] = None
     scheduled_date: Optional[str] = None
     cron_expression: Optional[str] = None
@@ -178,6 +180,19 @@ class TaskUpdate(BaseModel):
     then_task_id: Optional[str] = None
     notifications_enabled: Optional[bool] = None
     character_id: Optional[str] = None
+
+
+def _validate_timezone(name: Optional[str]) -> Optional[str]:
+    """Return a valid IANA timezone name, None for blank, or raise 400."""
+    if not name or not name.strip():
+        return None
+    name = name.strip()
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(name)
+    except Exception:
+        raise HTTPException(400, f"Unknown timezone: {name}")
+    return name
 
 
 def _display_task_name(t: ScheduledTask) -> str:
@@ -197,6 +212,7 @@ def _task_to_dict(t: ScheduledTask, include_last_run_result: bool = False) -> di
         "action": t.action,
         "schedule": t.schedule,
         "scheduled_time": t.scheduled_time,
+        "timezone": getattr(t, "timezone", None),
         "scheduled_day": t.scheduled_day,
         "scheduled_date": t.scheduled_date.isoformat() + "Z" if t.scheduled_date else None,
         "cron_expression": t.cron_expression,
@@ -487,6 +503,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             else:
                 name = "Untitled Task"
 
+        task_tz = _validate_timezone(req.timezone)
+
         # Compute next_run for schedule-triggered tasks
         next_run = None
         sched_date = None
@@ -500,6 +518,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 req.schedule, req.scheduled_time,
                 req.scheduled_day, sched_date,
                 cron_expression=req.cron_expression,
+                tz_name=task_tz,
             )
 
         # Generate webhook token if needed
@@ -534,6 +553,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 action=req.action,
                 schedule=req.schedule,
                 scheduled_time=req.scheduled_time,
+                timezone=task_tz,
                 scheduled_day=req.scheduled_day,
                 scheduled_date=sched_date,
                 cron_expression=req.cron_expression,
@@ -725,6 +745,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if req.scheduled_time is not None:
                 task.scheduled_time = req.scheduled_time
                 schedule_changed = True
+            if req.timezone is not None:
+                task.timezone = _validate_timezone(req.timezone)
+                schedule_changed = True
             if req.scheduled_day is not None:
                 task.scheduled_day = req.scheduled_day
                 schedule_changed = True
@@ -745,6 +768,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     task.schedule, task.scheduled_time,
                     task.scheduled_day, task.scheduled_date,
                     cron_expression=task.cron_expression,
+                    tz_name=_resolve_task_timezone(db, task),
                 )
 
             db.commit()
@@ -808,6 +832,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     task.schedule, task.scheduled_time,
                     task.scheduled_day, task.scheduled_date,
                     cron_expression=task.cron_expression,
+                    tz_name=_resolve_task_timezone(db, task),
                 )
             db.commit()
             return {"ok": True, "status": "active", "next_run": task.next_run.isoformat() + "Z" if task.next_run else None}

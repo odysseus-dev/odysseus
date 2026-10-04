@@ -362,7 +362,8 @@ function _scheduleLabel(task) {
     }
     return 'Once';
   }
-  const localTime = _utcTimeToLocal(t);
+  let localTime = task.timezone ? _formatHHMM(t) : _utcTimeToLocal(t);
+  if (task.timezone && task.timezone !== _browserTimeZone()) localTime += ` (${task.timezone})`;
   if (task.schedule === 'daily') return `Daily at ${localTime}`;
   if (task.schedule === 'weekly') {
     const day = DAYS_OF_WEEK[task.scheduled_day ?? 0];
@@ -374,6 +375,18 @@ function _scheduleLabel(task) {
     return `Monthly on ${d}${suffix} at ${localTime}`;
   }
   return task.schedule || '—';
+}
+
+// IANA zone of this browser, e.g. "America/Chicago"; null if unavailable.
+function _browserTimeZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (_) { return null; }
+}
+
+function _formatHHMM(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function _utcTimeToLocal(hhmm) {
@@ -1388,7 +1401,9 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
       // Build time picker
       let initH = 9, initM = 0;
-      if (existing && existing.scheduled_time) {
+      if (existing && existing.scheduled_time && existing.timezone) {
+        [initH, initM] = existing.scheduled_time.split(':').map(Number);
+      } else if (existing && existing.scheduled_time) {
         const [uh, um] = existing.scheduled_time.split(':').map(Number);
         const d = new Date();
         d.setUTCHours(uh, um, 0, 0);
@@ -1748,9 +1763,16 @@ function _showForm(existing, initTaskType, initTriggerType) {
           return;
         }
         payload.cron_expression = cronVal;
+        payload.timezone = '';
       } else {
         const timeVal = _getTimePickerValue('task-form-time-wrap');
-        payload.scheduled_time = _localTimeToUtc(timeVal);
+        const tz = existing?.timezone || _browserTimeZone();
+        if (tz) {
+          payload.scheduled_time = timeVal;
+          payload.timezone = tz;
+        } else {
+          payload.scheduled_time = _localTimeToUtc(timeVal);
+        }
 
         const dayInput = document.getElementById('task-form-day');
         if (dayInput) payload.scheduled_day = parseInt(dayInput.value, 10);
@@ -2850,11 +2872,14 @@ async function _aiDraftTask(inputEl, btnEl) {
       return;
     }
     const draft = data.draft;
-    // The form treats scheduled_time as UTC (it converts UTC→local for the
-    // picker). The AI returns LOCAL time, so convert local→UTC here for the
-    // round-trip to land on the intended local time.
+    // The AI returns LOCAL time. Tag it with the browser timezone so the form
+    // shows it as-is; without one, fall back to the legacy UTC round-trip.
     if (draft.scheduled_time) {
-      try { draft.scheduled_time = _localTimeToUtc(draft.scheduled_time); } catch (_) {}
+      const tz = _browserTimeZone();
+      if (tz) draft.timezone = tz;
+      else {
+        try { draft.scheduled_time = _localTimeToUtc(draft.scheduled_time); } catch (_) {}
+      }
     }
     // Pass the draft as a synthetic "existing" (no id) → form pre-fills every
     // field but still creates via POST on save.

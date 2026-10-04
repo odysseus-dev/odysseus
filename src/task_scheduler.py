@@ -231,17 +231,20 @@ def compute_next_run(schedule: str, scheduled_time: str,
 
 
 def _resolve_task_timezone(db, task) -> str | None:
-    """Look up the IANA timezone name for a task via its linked CrewMember, if any."""
-    if not getattr(task, "crew_member_id", None):
-        return None
-    try:
-        from core.database import CrewMember
-        cm = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
-        if cm and cm.timezone:
-            return cm.timezone
-    except Exception:
-        pass
-    return None
+    """Return the IANA timezone a task's scheduled_time is expressed in.
+
+    A linked CrewMember's timezone wins, then the task's own ``timezone``.
+    None keeps the legacy behaviour (scheduled_time is a UTC wall clock).
+    """
+    if getattr(task, "crew_member_id", None):
+        try:
+            from core.database import CrewMember
+            cm = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
+            if cm and cm.timezone:
+                return cm.timezone
+        except Exception:
+            pass
+    return getattr(task, "timezone", None) or None
 
 
 # Built-in "housekeeping" tasks seeded for every owner, keyed by action.
