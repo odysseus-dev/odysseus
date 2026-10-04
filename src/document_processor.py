@@ -314,12 +314,15 @@ def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
     if configured:
         return _resolve_model(configured, owner=owner)
 
-    # Auto-detect: try known vision-capable models in priority order
+    # Auto-detect: try known vision-capable models in priority order.
+    # Candidates are substring-matched against each endpoint's model list, so
+    # "qwen2-vl" alone misses Ollama's "qwen2.5vl:7b" / "qwen3-vl:8b" tags and
+    # HF-style "Qwen2.5-VL-7B-Instruct" ids (#6487).
     candidates = [
         "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini",
         "claude-sonnet-4-5-20250929", "claude-opus-4-20250514",
         "gemini-2.0-flash", "gemini-2.5-pro",
-        "llava", "pixtral", "qwen2-vl",
+        "llava", "pixtral", "qwen2-vl", "qwen2.5vl", "qwen2.5-vl", "qwen3-vl",
     ]
     for candidate in candidates:
         try:
