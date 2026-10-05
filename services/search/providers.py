@@ -193,7 +193,7 @@ _QUERY_STOPWORDS = frozenset({
 def _query_tokens(query: str) -> frozenset:
     """Significant lowercase tokens a relevant result is expected to mention."""
     return frozenset({
-        t for t in re.findall(r"[a-z0-9]+", query.lower())
+        t for t in re.findall(r"[^\W_]+", query.lower())
         if len(t) >= 4 and t not in _QUERY_STOPWORDS
     })
 
