@@ -343,7 +343,7 @@ def _write_new_file_without_overwrite(path: str, body: str) -> None:
     )
 
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as temporary_file:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as temporary_file:
             fd = None
             temporary_file.write(body)
         os.link(temporary_path, path)
@@ -406,12 +406,11 @@ class WriteFileTool:
             return {"error": f"write_file: {e}", "exit_code": 1}
         try:
             def _write():
-                old = ""
+                old, eol = "", "\n"
                 try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        old = f.read()
+                    old, eol = _read_text_keep_eol(path)
                 except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
-                    old = ""
+                    old, eol = "", "\n"
                 d = os.path.dirname(path)
                 if d:
                     os.makedirs(d, exist_ok=True)
@@ -445,8 +444,13 @@ class WriteFileTool:
                         raise
                     return old, len(body)
 
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(body)
+                # Replacing a file that has line endings keeps its ending (the
+                # majority one); otherwise the body is written as sent.
+                if "\n" in old:
+                    text = _normalize_eol(body)
+                    _write_text_keep_eol(path, text, eol)
+                    return old, len(text.replace("\n", eol))
+                _write_text_keep_eol(path, body)
                 return old, len(body)
             old_content, size = await asyncio.to_thread(_write)
         except _EmptyBodyWouldTruncate as e:
@@ -464,7 +468,7 @@ class WriteFileTool:
             return {"error": f"write_file: {path}: permission denied", "exit_code": 1}
         except OSError as e:
             return {"error": f"write_file: {path}: {e}", "exit_code": 1}
-        diff = _unified_diff(old_content, body, path)
+        diff = _unified_diff(old_content, _normalize_eol(body), path)
         result = {"output": f"Wrote {size} bytes to {path}", "exit_code": 0}
         if diff:
             result["diff"] = diff
