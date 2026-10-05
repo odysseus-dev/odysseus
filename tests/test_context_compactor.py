@@ -292,3 +292,53 @@ class TestResearchPrimerPreserved:
         trimmed = trim_for_context(msgs, context_length=1024, reserve_tokens=256)
         joined = "\n".join(str(m.get("content", "")) for m in trimmed)
         assert "You are Odysseus." in joined
+
+
+class TestSanitizeGeminiFunctionCallTurn:
+    def test_assistant_tool_calls_after_system_gets_user_turn_inserted(self):
+        msgs = [
+            {"role": "system", "content": "You are Odysseus."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "python", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "output"},
+        ]
+        sanitized = cc._sanitize_tool_messages(msgs)
+        roles = [m["role"] for m in sanitized]
+        assert roles == ["system", "user", "assistant", "tool"]
+        # The assistant function call turn is now preceded by user, not system.
+        assert sanitized[1]["role"] == "user"
+        assert sanitized[2]["role"] == "assistant"
+        assert sanitized[2]["tool_calls"][0]["id"] == "c1"
+
+
+class TestTrimAgentLoopToolRounds:
+    def test_trim_preserves_active_user_prompt_in_agent_loop(self):
+        # In an agent loop, convo_msgs ends with a tool message (not user).
+        # When over budget, the initial user prompt must NOT be dropped.
+        user_prompt = "Find all documents and summarize them."
+        msgs = [
+            {"role": "system", "content": "System prompt."},
+            {"role": "user", "content": user_prompt},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "doc", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "tool result " + ("x" * 2000)},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "py", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "c2", "content": "tool result 2 " + ("y" * 2000)},
+        ]
+        # Set small context so trimming triggers
+        trimmed = trim_for_context(msgs, context_length=1500, reserve_tokens=256)
+        user_msgs = [m for m in trimmed if m.get("role") == "user" and user_prompt in m.get("content", "")]
+        assert len(user_msgs) == 1, "The active user prompt must be preserved when trimming tool rounds"
+        # The first non-system message must be the user message
+        non_sys = [m for m in trimmed if m.get("role") != "system"]
+        assert non_sys[0]["role"] == "user"
