@@ -65,6 +65,14 @@ def test_compose_files_forward_companion_base_url():
         assert "COMPANION_BASE_URL" in _compose_env_names(path), path.name
 
 
+def test_compose_files_forward_searxng_language():
+    # .env.example documents SEARXNG_LANGUAGE and _get_search_language reads it
+    # from the process environment, so a compose file that omits it makes the
+    # documented override a no-op for exactly the installs that need it.
+    for path in COMPOSE_FILES:
+        assert "SEARXNG_LANGUAGE" in _compose_env_names(path), path.name
+
+
 def test_default_compose_files_do_not_mount_host_docker_socket():
     for path in COMPOSE_FILES:
         text = path.read_text(encoding="utf-8")

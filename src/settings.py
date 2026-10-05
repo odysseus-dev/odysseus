@@ -88,6 +88,12 @@ DEFAULT_SETTINGS = {
     # backend itself decides, so operators stay in control of self-hosted /
     # niche search instances.
     "search_safesearch": "strict",
+    # SearXNG `language` parameter. Empty means "not configured": the env var
+    # SEARXNG_LANGUAGE is tried next, then the historical "en" pin. Set a code
+    # to pin another language, or "all" to send no pin at all — useful on
+    # instances where the English pin makes non-English queries return filler
+    # (see services/search/providers.py:_get_search_language and #6392).
+    "search_language": "",
     "brave_api_key": "",
     "google_pse_key": "",
     "google_pse_cx": "",
