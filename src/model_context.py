@@ -149,11 +149,18 @@ KNOWN_CONTEXT_WINDOWS = {
     'deepseek-v2': 64000,
 
     # --- Google ---
+    'gemini-3.8-flash': 1048576,
+    'gemini-3.8-pro': 1048576,
+    'gemini-3-flash': 1048576,
+    'gemini-3-pro': 1048576,
     'gemini-2.5-pro': 1048576,
     'gemini-2.5-flash': 1048576,
     'gemini-2.0-flash': 1048576,
     'gemini-1.5-pro': 1048576,
     'gemini-1.5-flash': 1048576,
+    'gemini-flash': 1048576,
+    'gemini-pro': 1048576,
+    'gemini': 1048576,
     'gemma-4': 262144,
     'gemma-3': 128000,
     'gemma-2': 8192,

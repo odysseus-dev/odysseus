@@ -164,6 +164,12 @@ class TestLookupKnown:
     def test_gemini_pro(self):
         assert _lookup_known("gemini-2.5-pro") == 1048576
 
+    def test_gemini_3_8_flash(self):
+        assert _lookup_known("gemini-3.8-flash") == 1048576
+
+    def test_gemini_generic(self):
+        assert _lookup_known("gemini-experimental") == 1048576
+
     def test_unknown_model(self):
         assert _lookup_known("totally-unknown-model-xyz") is None
 

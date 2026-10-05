@@ -165,4 +165,26 @@ def test_build_anthropic_payload_alternating_roles():
     assert anth_messages[0]["content"] == "web search results\n\nuser query"
 
 
+def test_sanitize_ensures_function_call_turn_follows_user_turn():
+    # Google Gemini requirement: function call turn must come immediately after a user turn
+    # or after a function response turn.
+    # When front-trimming leaves an assistant tool-call turn following system:
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "python", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+    ]
+    out = _sanitize_llm_messages(messages)
+    roles = [m["role"] for m in out]
+    # Function call turn must NOT directly follow system; user turn must be inserted.
+    assert roles == ["system", "user", "assistant", "tool"]
+    assert out[1]["role"] == "user"
+    assert out[2]["role"] == "assistant"
+    assert out[2]["tool_calls"][0]["id"] == "call_1"
+
+
 

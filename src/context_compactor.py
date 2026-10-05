@@ -122,7 +122,24 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
                 if not (m.get("content") or "").strip():
                     continue  # nothing left worth keeping
         out.append(m)
-    return out
+
+    # Pass 3: Google Gemini requires:
+    # "Please ensure that function call turn comes immediately after a user turn
+    # or after a function response turn."
+    # If front-trimming or message slicing leaves an assistant tool_calls message
+    # immediately following a system turn (or at index 0 of non-system messages),
+    # Gemini rejects it with HTTP 400.
+    # Insert a synthetic user turn if needed so function calls are always legal.
+    final: List[Dict] = []
+    for m in out:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            prev = final[-1] if final else None
+            prev_role = prev.get("role") if prev else None
+            if prev_role not in ("user", "tool"):
+                final.append({"role": "user", "content": "[Conversation history continued]"})
+        final.append(m)
+    return final
 
 
 def _message_text_token_estimate(text: str) -> int:
@@ -294,26 +311,39 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     # that message with a visible notice instead of dropping it; otherwise the
     # model appears to "ignore" large pastes because it never receives them.
     # Hermes-style: recent context matters more than old context.
-    PROTECT_RECENT = 10
-    current_msg = convo_msgs[-1:] if convo_msgs else []
-    prior_convo = convo_msgs[:-1] if convo_msgs else []
-    if len(prior_convo) >= PROTECT_RECENT:
-        old_msgs = prior_convo[:-(PROTECT_RECENT - 1)]
-        recent_msgs = prior_convo[-(PROTECT_RECENT - 1):] + current_msg
-        while old_msgs and estimate_tokens(essential_system + old_msgs + recent_msgs) > budget:
-            old_msgs.pop(0)
-        convo_msgs = old_msgs + recent_msgs
-    else:
-        convo_msgs = prior_convo + current_msg
-        while prior_convo and estimate_tokens(essential_system + prior_convo + current_msg) > budget:
-            prior_convo.pop(0)
-        convo_msgs = prior_convo + current_msg
+    last_user_idx = max(
+        (i for i, m in enumerate(convo_msgs) if m.get("role") == "user"),
+        default=-1,
+    )
+    if last_user_idx >= 0:
+        prior_convo = convo_msgs[:last_user_idx]
+        current_turn = convo_msgs[last_user_idx:]
+        active_user_msg = current_turn[0]
+        tool_cycles = current_turn[1:]
 
-    # If the current message itself is too large, shrink only that message.
-    if current_msg and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
-        prefix = essential_system + protected_msgs + convo_msgs[:-1]
-        available_for_current = max(64, budget - estimate_tokens(prefix))
-        convo_msgs[-1] = _truncate_message_to_token_budget(convo_msgs[-1], available_for_current)
+        # 1. First, drop older conversation turns from prior_convo (from the front)
+        while prior_convo and estimate_tokens(essential_system + prior_convo + current_turn) > budget:
+            prior_convo.pop(0)
+
+        # 2. If still over budget, drop older tool cycles from current_turn,
+        # but ALWAYS preserve the active user prompt (active_user_msg)
+        while tool_cycles and estimate_tokens(essential_system + prior_convo + [active_user_msg] + tool_cycles) > budget:
+            # Drop one complete tool round (assistant message + following tool responses)
+            tool_cycles.pop(0)
+            while tool_cycles and tool_cycles[0].get("role") == "tool":
+                tool_cycles.pop(0)
+
+        convo_msgs = prior_convo + [active_user_msg] + tool_cycles
+
+        # 3. If the active user message itself exceeds the budget, shrink only that message
+        if estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
+            prefix = essential_system + protected_msgs + prior_convo
+            available_for_user = max(64, budget - estimate_tokens(prefix) - estimate_tokens(tool_cycles))
+            convo_msgs[len(prior_convo)] = _truncate_message_to_token_budget(active_user_msg, available_for_user)
+    else:
+        # Fallback if no user message found in conversation
+        while convo_msgs and estimate_tokens(essential_system + convo_msgs) > budget:
+            convo_msgs.pop(0)
 
     result = _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
     logger.info(f"Trimmed to {estimate_tokens(result)} tokens ({len(result)} messages)")

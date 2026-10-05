@@ -1810,7 +1810,23 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
         else:
             merged.append(item)
 
-    return merged
+    # Google Gemini requirement:
+    # "Please ensure that function call turn comes immediately after a user turn
+    # or after a function response turn."
+    # If any assistant message with tool_calls is not preceded by a user turn
+    # or a tool turn (e.g. following a system message or at index 0), insert
+    # a synthetic user turn so the request satisfies provider validation.
+    final_output: List[Dict] = []
+    for m in merged:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            prev = final_output[-1] if final_output else None
+            prev_role = prev.get("role") if prev else None
+            if prev_role not in ("user", "tool"):
+                final_output.append({"role": "user", "content": "[Conversation history continued]"})
+        final_output.append(m)
+
+    return final_output
 
 
 def _normalize_anthropic_url(url: str) -> str:
