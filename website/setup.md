@@ -72,6 +72,24 @@ downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
+#### Linux application menu shortcut
+
+With Odysseus already running, install `xdg-utils` and run this from the
+source checkout as your regular user:
+
+```bash
+python3 scripts/install-desktop-shortcut.py http://127.0.0.1:7000/
+```
+
+Use your actual server URL if the host or port differs. This adds Odysseus to
+application menus and launchers such as rofi/wofi in drun mode, with its icon,
+a description and search keywords. It opens the default browser; it does not
+start or stop the server. No sudo or additional Python packages are needed.
+The entry and icon follow `XDG_DATA_HOME` (default `~/.local/share`). Running
+the command again updates the shortcut. To remove it, delete
+`applications/odysseus.desktop` and `icons/hicolor/512x512/apps/odysseus.png`
+under that directory.
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
