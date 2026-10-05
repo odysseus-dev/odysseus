@@ -59,11 +59,35 @@ def _get_public_url(url, headers, timeout, max_redirects=5, max_bytes=None):
     )
 
 
-# PDF extraction (optional dependency)
+# PDF extraction: pdfminer.six when installed (optional), else pypdf, which is
+# a hard dependency and what uploaded PDFs already go through (#6493).
 try:
     from pdfminer.high_level import extract_text as pdf_extract_text
 except ImportError:
     pdf_extract_text = None  # type: ignore
+
+
+def _extract_pdf_text(data: bytes, url: str) -> str:
+    """Return the PDF's text, or "" when no extractor can read it."""
+    if pdf_extract_text is not None:
+        try:
+            text = pdf_extract_text(io.BytesIO(data))
+            if text and text.strip():
+                return text
+        except Exception as e:
+            logger.warning(f"pdfminer PDF extraction failed for {url}: {e}")
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(data))
+        return "\n\n".join(
+            page_text.strip()
+            for page_text in ((page.extract_text() or "") for page in reader.pages)
+            if page_text.strip()
+        )
+    except Exception as e:
+        logger.warning(f"PDF extraction failed for {url}: {e}")
+        return ""
 
 
 # ----------------------------------------------------------------------
@@ -262,16 +286,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
                 + (f" (size {_declared:,} bytes)" if _declared else "")
                 + "; retry with a larger budget if it fits under the hard cap",
             )
-        if pdf_extract_text is None:
-            logger.error("pdfminer.six is not installed; cannot extract PDF text.")
-            pdf_text = ""
-        else:
-            try:
-                pdf_bytes = io.BytesIO(response.content)
-                pdf_text = pdf_extract_text(pdf_bytes)
-            except Exception as e:
-                logger.warning(f"PDF extraction failed for {url}: {e}")
-                pdf_text = ""
+        pdf_text = _extract_pdf_text(response.content, url)
         result = {
             "url": url,
             "title": os.path.basename(url),
