@@ -152,23 +152,32 @@ def _python_grep_worker(payload: dict, output_queue) -> None:
         except BaseException:
             pass
 
-def _read_text_keep_eol(path: str) -> Tuple[str, str]:
-    """Read a text file without newline translation.
+_EOL_RE = re.compile(r"\r\n?")
 
-    Returns ``(text, eol)``. A file that uses CRLF everywhere comes back with
-    LF so model-supplied context (always LF) matches it, and ``eol`` is
-    "\\r\\n" so the write can restore it. LF and mixed files come back as-is.
+
+def _normalize_eol(text: str) -> str:
+    """Turn CRLF and lone CR into LF, like text-mode universal newlines."""
+    return _EOL_RE.sub("\n", text)
+
+
+def _read_text_keep_eol(path: str) -> Tuple[str, str]:
+    """Read a text file and remember its line ending.
+
+    Returns ``(text, eol)``. ``text`` is always LF so model-supplied context
+    (LF) matches it. ``eol`` is the ending most lines use ("\\n" on a tie or
+    when there is none), so the write can restore it. A mixed file is written
+    back with that one ending.
     """
     with open(path, "r", encoding="utf-8", newline="") as f:
         raw = f.read()
     crlf = raw.count("\r\n")
-    if crlf and crlf == raw.count("\n"):
-        return raw.replace("\r\n", "\n"), "\r\n"
-    return raw, "\n"
+    counts = {"\n": raw.count("\n") - crlf, "\r\n": crlf, "\r": raw.count("\r") - crlf}
+    eol = max(counts, key=counts.get)
+    return _normalize_eol(raw), eol
 
 
 def _write_text_keep_eol(path: str, text: str, eol: str = "\n") -> None:
-    """Write text with ``eol`` line endings and no platform translation."""
+    """Write LF text with ``eol`` line endings and no platform translation."""
     if eol != "\n":
         text = text.replace("\n", eol)
     with open(path, "w", encoding="utf-8", newline="") as f:
@@ -213,6 +222,11 @@ class EditFileTool:
         raw_path = (args.get("path") or "").strip()
         old = args.get("old_string", "")
         new = args.get("new_string", "")
+        # The file is matched in LF form, so the strings must be LF too.
+        if isinstance(old, str):
+            old = _normalize_eol(old)
+        if isinstance(new, str):
+            new = _normalize_eol(new)
         replace_all = bool(args.get("replace_all", False))
         if not raw_path:
             return {"error": "edit_file: path required", "exit_code": 1}
@@ -496,7 +510,7 @@ class ApplyPatchTool:
                 elif kind == "delete":
                     if not os.path.isfile(path):
                         return {"error": f"apply_patch: {op['path']}: not found", "exit_code": 1}
-                    old, eol = _read_text_keep_eol(path)
+                    old, _ = _read_text_keep_eol(path)
                     new = ""
                 else:
                     if not os.path.isfile(path):
