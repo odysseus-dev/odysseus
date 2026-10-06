@@ -335,6 +335,10 @@ class BashTool:
         try:
             proc = await _create_bash_subprocess(
                 content,
+                # No one can answer a prompt, and an inherited console stdin
+                # makes `cat`, `read` or Git Bash's `cmd /c` (which MSYS turns
+                # into an interactive cmd.exe) block until the timeout.
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
@@ -363,6 +367,8 @@ class PythonTool:
         _subproc_env = ctx.get("subproc_env")
         proc = await asyncio.create_subprocess_exec(
             (sys.executable or "python"), "-I", "-c", content,
+            # Same as bash: input() must fail fast, not wait on the console.
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_subproc_env,
