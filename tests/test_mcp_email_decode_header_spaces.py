@@ -8,6 +8,8 @@ between two adjacent encoded-words to be dropped.
 """
 import json
 import sqlite3
+from email import policy
+from email.parser import BytesParser
 
 import pytest
 
@@ -23,6 +25,14 @@ def _clear_mcp_email_owner_env(monkeypatch):
     es._ACCOUNT_CACHE.clear()
     yield
     es._ACCOUNT_CACHE.clear()
+
+
+def test_raw_utf8_subject_decodes_unknown_8bit():
+    message = BytesParser(policy=policy.compat32).parsebytes(
+        b"Subject: Weekly report \xf0\x9f\x93\x8a\r\n\r\n"
+    )
+
+    assert es._decode_header(message["Subject"]) == "Weekly report \U0001f4ca"
 
 
 def _init_accounts_db(path, rows=None):

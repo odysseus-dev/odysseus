@@ -1458,7 +1458,10 @@ def _decode_header(raw):
         # whitespace), and the whitespace between two adjacent encoded-words is
         # dropped. The old " ".join produced "Re:  Jose"-style double spaces on
         # every non-ASCII subject or sender.
-        return str(email.header.make_header(email.header.decode_header(raw)))
+        parts = email.header.decode_header(raw)
+        parts = [(data, "utf-8" if charset == "unknown-8bit" else charset)
+                 for data, charset in parts]
+        return str(email.header.make_header(parts))
     except Exception:
         # Malformed header or unknown/invalid MIME charset (e.g. a spam header
         # like =?x-unknown-charset?B?...?=) makes make_header raise LookupError;
