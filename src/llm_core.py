@@ -214,6 +214,20 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
     }, sort_keys=True)
     return hashlib.sha256(content.encode()).hexdigest()
 
+
+def _route_identity(url: str, headers=None) -> str:
+    """Opaque per-endpoint + per-credential partition for the shared L2 cache.
+
+    Mirrors the partitioning baked into _get_cache_key so an L2 hit can never be
+    served across routes/accounts (see src/llm_cache.py)."""
+    return f"{url}|{_cache_header_identity(headers)}"
+
+
+# Optional shared L2 cache (Valkey via betterdb-agent-cache). Safe to import at
+# module scope: no heavy top-level work, never imports llm_core back, and every
+# call fails open when VALKEY_URL is unset or the server is unreachable.
+from src import llm_cache
+
 _response_cache = {}
 _response_model_cache = {}
 
@@ -2001,7 +2015,15 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
     )
+    cache_route = _route_identity(url, headers)
     cached_response = _get_cached_response(cache_key)
+    if cached_response is None:
+        # L2: shared Valkey cache. Returns None (fails open) when disabled.
+        cached_response = llm_cache.get(
+            cache_route, model, messages_copy, temperature, max_tokens,
+        )
+        if cached_response is not None:
+            _set_cached_response(cache_key, cached_response)  # warm L1
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
@@ -2060,6 +2082,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             else:
                 response = content or msg.get("reasoning_content") or ""
         _set_cached_response(cache_key, response)
+        llm_cache.set(cache_route, model, messages_copy, temperature, max_tokens, response)
         return response
     except Exception:
         raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
@@ -2294,7 +2317,15 @@ async def llm_call_async(
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
     )
+    cache_route = _route_identity(url, headers)
     cached_response = _get_cached_response(cache_key)
+    if cached_response is None:
+        # L2: shared Valkey cache. Returns None (fails open) when disabled.
+        cached_response = await llm_cache.aget(
+            cache_route, model, messages_copy, temperature, max_tokens,
+        )
+        if cached_response is not None:
+            _set_cached_response(cache_key, cached_response)  # warm L1
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         if return_model_metadata:
@@ -2463,6 +2494,9 @@ async def llm_call_async(
                     cache_key,
                     response,
                     actual_model=actual_model,
+                )
+                await llm_cache.aset(
+                    cache_route, model, messages_copy, temperature, max_tokens, response,
                 )
                 return (
                     (response, actual_model)
