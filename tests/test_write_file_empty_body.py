@@ -11,7 +11,6 @@ import builtins
 import json
 import os
 import re
-import tempfile
 
 import pytest
 
@@ -25,10 +24,11 @@ RECIPE = "# Classic banana cake\n\nMash 3 bananas. Bake 180C for 1 hour.\n"
 
 
 @pytest.fixture
-def target():
-    """A fresh directory under the system temp root, which _tool_path_roots allows."""
-    with tempfile.TemporaryDirectory(prefix="odysseus-6414-") as directory:
-        yield os.path.join(directory, "classic-banana-cake.md")
+def target(tmp_path, monkeypatch):
+    from src import tool_execution
+
+    monkeypatch.setattr(tool_execution, "get_active_workspace", lambda: str(tmp_path))
+    return str(tmp_path / "classic-banana-cake.md")
 
 
 def _seed(path, text=RECIPE):
@@ -124,16 +124,27 @@ async def test_refusal_names_the_byte_count_and_the_explicit_form(target):
     _seed(target)
     res = await WriteFileTool().execute(_text_call(target, ""), {})
     error = res.get("error", "")
-    assert str(len(RECIPE)) in error, error
+    assert str(os.path.getsize(target)) in error, error
     # The caller in a loop has to be able to correct itself in one round.
     assert '"content": ""' in error, error
     assert "output" not in res, res
 
 
 @pytest.mark.asyncio
-async def test_refusal_suggestion_is_valid_json_for_paths_with_quotes(target):
+async def test_refusal_suggestion_is_valid_json_for_paths_with_quotes(target, monkeypatch):
     quoted_path = os.path.join(os.path.dirname(target), 'recipe"draft.md')
-    _seed(quoted_path)
+    # Use an alias for real file I/O: Windows filenames cannot contain quotes.
+    real_open = builtins.open
+    real_isfile = os.path.isfile
+    real_getsize = os.path.getsize
+
+    def disk_path(path):
+        return target if path == quoted_path else path
+
+    monkeypatch.setattr(builtins, "open", lambda path, *a, **kw: real_open(disk_path(path), *a, **kw))
+    monkeypatch.setattr(os.path, "isfile", lambda path: real_isfile(disk_path(path)))
+    monkeypatch.setattr(os.path, "getsize", lambda path: real_getsize(disk_path(path)))
+    _seed(target)
     refused = await WriteFileTool().execute(_text_call(quoted_path, ""), {})
     match = re.search(
         r"explicit empty content: (\{.*\})$", refused["error"], re.S

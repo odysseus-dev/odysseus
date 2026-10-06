@@ -5,8 +5,6 @@ file as LF on Linux whenever write_file replaced it. These tests read and write
 bytes so the check holds on both platforms.
 """
 import json
-import os
-import tempfile
 
 import pytest
 
@@ -14,11 +12,11 @@ from src.agent_tools.filesystem_tools import WriteFileTool
 
 
 @pytest.fixture
-def target():
-    """A fresh directory under /tmp, which the tool path roots allow on every platform."""
-    os.makedirs("/tmp", exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="odysseus-6491-", dir="/tmp") as directory:
-        yield os.path.join(directory, "eol.txt")
+def target(tmp_path, monkeypatch):
+    from src import tool_execution
+
+    monkeypatch.setattr(tool_execution, "get_active_workspace", lambda: str(tmp_path))
+    return str(tmp_path / "eol.txt")
 
 
 def _write(path, data: bytes):
@@ -36,10 +34,12 @@ async def _write_file(path, content):
 
 
 @pytest.mark.asyncio
-async def test_new_file_written_as_sent(target):
-    res = await _write_file(target, "a = 1\nb = 2\n")
+@pytest.mark.parametrize("eol", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+async def test_new_file_written_as_sent(target, eol):
+    body = eol.join(["a = 1", "b = 2", ""])
+    res = await _write_file(target, body)
     assert res["exit_code"] == 0, res
-    assert _read(target) == b"a = 1\nb = 2\n"
+    assert _read(target) == body.encode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -51,11 +51,12 @@ async def test_new_whitespace_only_file_written_as_sent(target):
 
 
 @pytest.mark.asyncio
-async def test_overwriting_crlf_file_keeps_crlf(target):
-    _write(target, b"a = 1\r\nb = 2\r\n")
+@pytest.mark.parametrize("eol", [b"\n", b"\r\n", b"\r"], ids=["lf", "crlf", "cr"])
+async def test_overwriting_file_keeps_existing_line_endings(target, eol):
+    _write(target, eol.join([b"a = 1", b"b = 2", b""]))
     res = await _write_file(target, "a = 1\nb = 3\nc = 4\n")
     assert res["exit_code"] == 0, res
-    assert _read(target) == b"a = 1\r\nb = 3\r\nc = 4\r\n"
+    assert _read(target) == eol.join([b"a = 1", b"b = 3", b"c = 4", b""])
     assert res["diff"]["added"] == 2 and res["diff"]["removed"] == 1
 
 
@@ -83,3 +84,11 @@ async def test_overwriting_file_without_line_endings_writes_as_sent(target):
     res = await _write_file(target, "a = 1\r\nb = 2\r\n")
     assert res["exit_code"] == 0, res
     assert _read(target) == b"a = 1\r\nb = 2\r\n"
+
+
+@pytest.mark.asyncio
+async def test_overwriting_mixed_line_endings_uses_majority(target):
+    _write(target, b"a = 1\r\nb = 2\r\nc = 3\nd = 4\r\n")
+    res = await _write_file(target, "a = 1\nb = 3\nc = 3\nd = 4\n")
+    assert res["exit_code"] == 0, res
+    assert _read(target) == b"a = 1\r\nb = 3\r\nc = 3\r\nd = 4\r\n"

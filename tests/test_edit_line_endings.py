@@ -5,8 +5,6 @@ rewrite every line ending in the file: LF -> CRLF on Windows, CRLF -> LF on
 Linux. These tests read and write bytes so the check holds on both platforms.
 """
 import json
-import os
-import uuid
 
 import pytest
 
@@ -24,11 +22,11 @@ def _read(path) -> bytes:
 
 
 @pytest.fixture
-def tmp_file():
-    path = os.path.join("/tmp", f"eol_probe_{uuid.uuid4().hex}.txt")
-    yield path
-    if os.path.exists(path):
-        os.unlink(path)
+def tmp_file(tmp_path, monkeypatch):
+    from src import tool_execution
+
+    monkeypatch.setattr(tool_execution, "get_active_workspace", lambda: str(tmp_path))
+    return str(tmp_path / "eol.txt")
 
 
 @pytest.mark.asyncio
