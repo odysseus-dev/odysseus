@@ -432,12 +432,15 @@ class _DegenerateStreamGuard:
     "Summer Summer ..."). This is not a useful response and can burn context,
     browser memory, and GPU time. Keep the guard conservative: only fire on long
     same-token runs or a very dominant repeated token in the recent window.
+    Repetition made only of numbers is data (a zero or identity matrix, a
+    padded buffer), so it only stops at a long all-numeric backstop.
     """
 
     def __init__(self, model: str):
         self.model = model or "model"
         self.last_token = ""
         self.same_run = 0
+        self.numeric_run = 0
         self.recent_tokens: List[str] = []
         self.periodic_tokens: List[str] = []
         self.total_chars = 0
@@ -458,6 +461,7 @@ class _DegenerateStreamGuard:
             else:
                 self.last_token = token
                 self.same_run = 1
+            self.numeric_run = self.numeric_run + 1 if token.isdigit() else 0
             self.recent_tokens.append(token)
             self.periodic_tokens.append(token)
         if len(self.recent_tokens) > 96:
@@ -466,14 +470,20 @@ class _DegenerateStreamGuard:
             self.periodic_tokens = self.periodic_tokens[-2048:]
 
         reason = None
-        if self.same_run >= 28 and self.total_chars >= 100:
+        if self.same_run >= 28 and self.total_chars >= 100 and not self.last_token.isdigit():
             reason = f"repeated '{self.last_token}' {self.same_run} times"
         elif len(self.recent_tokens) >= 72:
             top = max(set(self.recent_tokens), key=self.recent_tokens.count)
             count = self.recent_tokens.count(top)
-            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78:
+            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78 and not top.isdigit():
                 reason = f"repeated '{top}' {count}/{len(self.recent_tokens)} recent tokens"
-        if not reason and len(self.recent_tokens) >= 48:
+        if (
+            not reason
+            and len(self.recent_tokens) >= 48
+            # A window that is mostly numbers is matrix/table data; its
+            # periodicity is real. Mixed loops still hit the exact-block check.
+            and sum(t.isdigit() for t in self.recent_tokens) * 2 < len(self.recent_tokens)
+        ):
             # Detect a periodic suffix instead of counting repeated n-grams.
             # Reused property names are normal in CSS/SVG/JSON; a collapsed
             # generation repeats nearly every token at a short fixed period.
@@ -510,9 +520,12 @@ class _DegenerateStreamGuard:
                 period = current_anchor - previous
                 if period < 24 or len(history) < period * 2:
                     continue
-                if history[-2 * period:-period] == history[-period:]:
+                if history[-2 * period:-period] == history[-period:] and not all(t.isdigit() for t in history[-period:]):
                     reason = f"repeated an exact {period}-token block twice"
                     break
+
+        if not reason and self.numeric_run >= 2048:
+            reason = f"emitted {self.numeric_run} numbers in a row"
 
         if not reason:
             return None
