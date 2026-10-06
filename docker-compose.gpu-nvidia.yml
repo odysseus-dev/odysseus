@@ -51,6 +51,9 @@ services:
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
+      # Bundled Valkey cache. Defaults to the in-network service below; leave
+      # unset on native installs to disable caching (app falls back in-process).
+      - VALKEY_URL=${VALKEY_URL:-redis://valkey:6379}
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
@@ -108,6 +111,8 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+      valkey:
+        condition: service_healthy
     restart: unless-stopped
     # NVIDIA overlay (from docker/gpu.nvidia.yml).
     deploy:
@@ -192,6 +197,45 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    restart: unless-stopped
+
+  # Bundled cache for LLM/tool response caching (betterdb-agent-cache) and, once
+  # the Phase 2 code lands, semantic caching (betterdb-semantic-cache). Ships by
+  # default so the download-and-run flow "just works": the app reaches it over
+  # the compose network as redis://valkey:6379 and FAILS OPEN - remove this
+  # service or point VALKEY_URL elsewhere and Odysseus falls back to its
+  # in-process cache, no errors. The `-bundle` image includes the Search module
+  # (FT.*) needed for semantic similarity caching; for a smaller exact-match-only
+  # cache set VALKEY_IMAGE=valkey/valkey:9.1-alpine.
+  valkey:
+    image: ${VALKEY_IMAGE:-valkey/valkey-bundle:9.1-alpine}
+    # Use `command:` (NOT `entrypoint:`) so the bundle image's entrypoint still
+    # runs and auto-appends --loadmodule for the Search module; overriding the
+    # entrypoint would make FT.* unknown and silently disable semantic caching.
+    # Run as a bounded, disposable cache: cap memory, evict least-recently-used
+    # keys under pressure, keep no on-disk persistence (a cold cache after a
+    # restart just refills - correctness never depends on it).
+    command:
+      - valkey-server
+      - --maxmemory
+      - ${VALKEY_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    # Internal-only by default: nothing on the host needs it and an
+    # unauthenticated cache must not be exposed. Uncomment to inspect locally
+    # (valkey-cli / RedisInsight).
+    # ports:
+    #   - "${VALKEY_BIND:-127.0.0.1}:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
     restart: unless-stopped
 
 volumes:
