@@ -10,6 +10,7 @@ import threading
 import re
 import os
 import math
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
@@ -2625,6 +2626,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
+        h.setdefault("session_id", str(uuid.uuid4()))
+        h.setdefault("Accept", "text/event-stream")
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = _normalize_openai_chat_url(url)

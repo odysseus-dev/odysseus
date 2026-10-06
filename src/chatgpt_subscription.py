@@ -23,10 +23,12 @@ DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL = (
 )
 CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription"
 CHATGPT_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+OPENAI_CODEX_ORIGINATOR = "codex_cli_rs"
+OPENAI_CODEX_CLIENT_VERSION = "0.0.0-dev"
 CHATGPT_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_OAUTH_ISSUER = "https://auth.openai.com"
 CHATGPT_OAUTH_REDIRECT_URI = f"{CHATGPT_OAUTH_ISSUER}/deviceauth/callback"
-CHATGPT_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
+CHATGPT_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 5 * 60
 _AUTH_REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _AUTH_REFRESH_LOCKS_GUARD = threading.Lock()
 
@@ -75,15 +77,34 @@ def is_chatgpt_subscription_base(url: str) -> bool:
     )
 
 
+def _openai_auth_claims(access_token: str) -> Dict[str, Any]:
+    try:
+        claims = _decode_jwt_payload(access_token)
+    except Exception:
+        return {}
+    nested = claims.get("https://api.openai.com/auth")
+    return nested if isinstance(nested, dict) else {}
+
+
+def chatgpt_account_id(access_token: str) -> str:
+    value = _openai_auth_claims(access_token).get("chatgpt_account_id")
+    return value.strip() if isinstance(value, str) else ""
+
+
 def chatgpt_headers(access_token: Optional[str]) -> Dict[str, str]:
     headers = {
         "Accept": "application/json, text/event-stream",
-        "Origin": "https://chatgpt.com",
-        "Referer": "https://chatgpt.com/codex",
-        "User-Agent": "Odysseus ChatGPT Subscription",
+        "User-Agent": f"{OPENAI_CODEX_ORIGINATOR}/{OPENAI_CODEX_CLIENT_VERSION}",
+        "originator": OPENAI_CODEX_ORIGINATOR,
+        "version": OPENAI_CODEX_CLIENT_VERSION,
     }
     if access_token:
         headers["Authorization"] = f"Bearer {access_token}"
+        account_id = chatgpt_account_id(access_token)
+        if account_id:
+            headers["ChatGPT-Account-ID"] = account_id
+        if _openai_auth_claims(access_token).get("chatgpt_account_is_fedramp") is True:
+            headers["X-OpenAI-Fedramp"] = "true"
     return headers
 
 
@@ -92,7 +113,8 @@ def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str
         return []
     try:
         response = httpx.get(
-            "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0",
+            f"{DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL}/models",
+            params={"client_version": OPENAI_CODEX_CLIENT_VERSION},
             headers=chatgpt_headers(access_token),
             timeout=timeout,
         )
@@ -109,8 +131,7 @@ def fetch_available_models(access_token: str, timeout: float = 10.0) -> list[str
         slug = item.get("slug")
         if not isinstance(slug, str) or not slug.strip():
             continue
-        visibility = item.get("visibility", "")
-        if isinstance(visibility, str) and visibility.strip().lower() in {"hide", "hidden"}:
+        if item.get("visibility") != "list":
             continue
         priority = item.get("priority")
         rank = int(priority) if isinstance(priority, (int, float)) else 10_000
@@ -169,7 +190,7 @@ def request_device_code(timeout: float = 15.0) -> Dict[str, Any]:
     response = httpx.post(
         f"{CHATGPT_OAUTH_ISSUER}/api/accounts/deviceauth/usercode",
         json={"client_id": CHATGPT_OAUTH_CLIENT_ID},
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "originator": OPENAI_CODEX_ORIGINATOR},
         timeout=timeout,
     )
     data = _json_or_error(response, "device-code request")
@@ -185,7 +206,7 @@ def poll_device_auth(device_auth_id: str, user_code: str, timeout: float = 15.0)
     response = httpx.post(
         f"{CHATGPT_OAUTH_ISSUER}/api/accounts/deviceauth/token",
         json={"device_auth_id": device_auth_id, "user_code": user_code},
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "originator": OPENAI_CODEX_ORIGINATOR},
         timeout=timeout,
     )
     if response.status_code in (403, 404):
@@ -196,7 +217,7 @@ def poll_device_auth(device_auth_id: str, user_code: str, timeout: float = 15.0)
 def exchange_authorization_code(authorization_code: str, code_verifier: str, timeout: float = 15.0) -> Dict[str, Any]:
     response = httpx.post(
         CHATGPT_OAUTH_TOKEN_URL,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={"Content-Type": "application/x-www-form-urlencoded", "originator": OPENAI_CODEX_ORIGINATOR},
         data={
             "grant_type": "authorization_code",
             "code": authorization_code,
@@ -218,7 +239,7 @@ def refresh_oauth_tokens(access_token: str, refresh_token: str, timeout: float =
         raise ChatGPTSubscriptionReauthRequired("ChatGPT Subscription is missing a refresh token. Reconnect the provider.")
     response = httpx.post(
         CHATGPT_OAUTH_TOKEN_URL,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={"Content-Type": "application/x-www-form-urlencoded", "originator": OPENAI_CODEX_ORIGINATOR},
         data={
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
