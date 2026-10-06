@@ -30532,6 +30532,46 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # ── Unknown-tool-name supervisor ─────────────────────────
+            # The model called tool name(s) that aren't offered this turn (a
+            # hallucinated or un-namespaced name like `search_files` instead of
+            # `mcp__<id>__search_files`) and wrote no text, so the round has
+            # nothing to run and nothing to say. Left alone the turn ends as
+            # "The model returned an empty response" with no hint why. Give it
+            # one corrective round with the exact valid names. Shares the
+            # _MAX_INTENT_NUDGES cap so a model that keeps guessing can't loop.
+            _unknown_tool_names = sorted(
+                name for name in _malformed_native_tool_names
+                if not _native_tool_name_was_accepted(name, set(_tool_names_sent))
+            )
+            if (
+                _unknown_tool_names
+                and not _force_answer
+                and not _strip_think_blocks(cleaned_round).strip()
+                and _intent_nudge_count < _MAX_INTENT_NUDGES
+            ):
+                _intent_nudge_count += 1
+                logger.info(
+                    "[agent] unknown-tool nudge #%d on round %d: %s",
+                    _intent_nudge_count, round_num, _unknown_tool_names,
+                )
+                _valid_names = ", ".join(n for n in _tool_names_sent if n) or "(none available this turn)"
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"You called {', '.join(repr(n) for n in _unknown_tool_names)}, "
+                        "which is not an available tool name this turn, so nothing ran "
+                        "and the user saw an empty reply. The exact tool names available "
+                        f"right now are: {_valid_names}. Call one of those with its exact "
+                        "name (MCP tools keep their `mcp__<server>__<tool>` prefix), or if "
+                        "none fits, answer the user directly from what you already know."
+                    ),
+                    # Small-context routes trim every non-leading system
+                    # message first; without this the retry never sees why.
+                    "_protected": True,
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             # ── Intent-without-action supervisor ─────────────────────
             # Catch "Let me tail the output" / "I'll check the logs" /
             # "Let me investigate" patterns where the model announces an
