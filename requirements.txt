@@ -18,6 +18,13 @@ numpy
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
 fastembed
+# LLM/tool response cache backed by the bundled Valkey service (see
+# docker-compose.yml). `valkey` is the async client; `betterdb-agent-cache`
+# is the exact-match cache layer. Both are optional at runtime: when VALKEY_URL
+# is unset or the server is unreachable the app FAILS OPEN and uses its existing
+# in-process cache (src/llm_core.py), so native installs need nothing extra.
+valkey
+betterdb-agent-cache
 youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.

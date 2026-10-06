@@ -101,6 +101,15 @@ LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 
+# Shared L2 LLM response cache (Valkey via betterdb-agent-cache). All optional:
+# an empty VALKEY_URL disables the cache and the app falls back to its in-process
+# cache (see src/llm_cache.py). `or` (not getenv's default) so a present-but-empty
+# value - how docker-compose passes unset vars - still disables cleanly.
+VALKEY_URL = (os.getenv("VALKEY_URL") or "").strip()
+VALKEY_LLM_TTL = int(os.getenv("VALKEY_LLM_TTL", "86400"))  # seconds; <=0 = no expiry
+VALKEY_CONNECT_TIMEOUT = float(os.getenv("VALKEY_CONNECT_TIMEOUT", "2.0"))
+VALKEY_OP_TIMEOUT = float(os.getenv("VALKEY_OP_TIMEOUT", "0.75"))
+
 
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
