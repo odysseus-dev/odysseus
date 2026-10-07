@@ -101,7 +101,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
         _parse_dt_pair,
         parse_due_for_user,
         _resolve_base_uid,
-        _push_caldav_event_after_commit,
+        REMOTE_CALENDAR_SOURCES,
+        _push_remote_event_after_commit,
         _record_caldav_delete_tombstone,
         _delete_calendar_reminders_for_event,
         _calendar_reminder_for_event,
@@ -624,7 +625,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                 source_email_folder=str(args.get("source_email_folder") or "").strip() or None,
                 source_email_account_id=str(args.get("source_email_account_id") or "").strip() or None,
                 source_email_message_id=str(args.get("source_email_message_id") or "").strip() or None,
-                caldav_sync_pending="create" if cal.source == "caldav" else None,
+                caldav_sync_pending="create" if cal.source in REMOTE_CALENDAR_SOURCES else None,
             )
             db.add(ev)
             reminder_note_id = None
@@ -639,8 +640,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
-            if cal.source == "caldav":
-                await _push_caldav_event_after_commit(owner, uid, "create")
+            if cal.source in REMOTE_CALENDAR_SOURCES:
+                await _push_remote_event_after_commit(owner, uid, "create", cal.source)
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -757,7 +758,6 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                 ev.rrule = args.get("rrule") or ""
             elif str(args.get("repeat") or "").strip().lower() in {"none", "no", "off", "false", "single"}:
                 ev.rrule = ""
-
             reminder_text = ""
             reminder_note_id = None
             reminder_skipped_reason = None
@@ -781,12 +781,15 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     else:
                         reminder_text = f"; reminder not set ({reminder_skipped_reason or 'reminder time already passed'})"
 
-            is_caldav = ev.calendar and ev.calendar.source == "caldav"
-            if is_caldav:
+            remote_source = ev.calendar.source if (
+                ev.calendar and ev.calendar.source in REMOTE_CALENDAR_SOURCES
+            ) else ""
+            is_remote = bool(remote_source)
+            if is_remote:
                 ev.caldav_sync_pending = "update"
             db.commit()
-            if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "update")
+            if is_remote:
+                await _push_remote_event_after_commit(owner, base_uid, "update", remote_source)
             return {
                 "response": f"Updated event [{ev.summary or uid}](#event-{base_uid}){reminder_text}",
                 "uid": base_uid,
@@ -827,14 +830,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     break
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
-            is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href
+            remote_source = ev.calendar.source if (
+                ev.calendar and ev.calendar.source in REMOTE_CALENDAR_SOURCES
+            ) else ""
+            is_caldav = bool(remote_source and ev.remote_href)
             if is_caldav:
                 _record_caldav_delete_tombstone(db, ev, owner)
             _delete_calendar_reminders_for_event(db, owner, ev)
             db.delete(ev)
             db.commit()
             if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "delete")
+                await _push_remote_event_after_commit(owner, base_uid, "delete", remote_source)
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:

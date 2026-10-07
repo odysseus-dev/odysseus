@@ -9,11 +9,31 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
+import { loadOutgoingSignature, withSignature } from './emailLibrary/signature.js';
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => emailAccountQuery('&');
+
+// Drop the account's signature into a draft before it opens, so it is
+// visible and editable rather than something the user only discovers in
+// their Sent folder. Everything before the first `---` is the header block;
+// the signature belongs in the body below it.
+async function _withDraftSignature(content) {
+  try {
+    const signature = await loadOutgoingSignature();
+    if (!signature) return content;
+    const marker = '\n---\n';
+    const at = content.indexOf(marker);
+    if (at < 0) return content;
+    const head = content.slice(0, at + marker.length);
+    return head + withSignature(content.slice(at + marker.length), signature);
+  } catch (_) {
+    // A signature is a nicety; never let one stop a draft from opening.
+    return content;
+  }
+}
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
@@ -448,6 +468,8 @@ export async function loadEmails(append = false) {
   }
 }
 
+let _folderRetryDone = false;
+
 async function loadFolders() {
   try {
     const accountQS = _acct().replace(/^&/, '');
@@ -456,6 +478,14 @@ async function loadFolders() {
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
     _populateFolderSelect(select, data.folders);
+    // See _loadFolders in emailLibrary.js: a provisional list carries
+    // placeholder names that do not exist on this server. This call already
+    // asks for the live list, so a provisional answer means the fetch fell
+    // back; retry once rather than leaving invented names in the picker.
+    if (data.provisional && !_folderRetryDone) {
+      _folderRetryDone = true;
+      setTimeout(() => { loadFolders().catch(() => {}); }, 2000);
+    }
   } catch (e) {
     console.error('Failed to load folders:', e);
   }
@@ -1043,6 +1073,8 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       content += `${_replySeparator}\nOn ${niceDate}, ${data.from_name} <${data.from_address}> wrote:\n${quotedBody}`;
     }
 
+    content = await _withDraftSignature(content);
+
     let replyDraftOpened = false;
     if (_docModule) {
       // Agent-provided reply text should land in the email draft the user
@@ -1481,13 +1513,14 @@ async function _composeNew() {
       import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
       return;
     }
+    const composeContent = await _withDraftSignature('To: \nSubject: \n---\n');
     const createComposeDoc = (sessionId) => fetch(`${API_BASE}/api/document`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sessionId,
         title: 'New Email',
-        content: 'To: \nSubject: \n---\n',
+        content: composeContent,
         language: 'email',
       }),
     });

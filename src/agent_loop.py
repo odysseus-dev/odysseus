@@ -22451,7 +22451,7 @@ async def stream_agent_loop(
                 if _retrieval_query:
                     try:
                         _relevant_tools = await asyncio.wait_for(
-                            asyncio.to_thread(tool_idx.get_tools_for_query, _retrieval_query, 8),
+                            asyncio.to_thread(tool_idx.get_tools_for_query, _retrieval_query, 4),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
@@ -26868,6 +26868,53 @@ async def stream_agent_loop(
             bool(all_tool_schemas),
             agent_stream_timeout,
         )
+        try:
+            _bd = []
+            for _i, _m in enumerate(messages):
+                _c = _m.get("content")
+                if isinstance(_c, list):
+                    _c = " ".join(
+                        str(_p.get("text", ""))
+                        for _p in _c
+                        if isinstance(_p, dict)
+                    )
+                _c = _c or ""
+                _md = _m.get("metadata") or {}
+                _src = (
+                    _md.get("source")
+                    or _md.get("label")
+                    or _m.get("_agent_injected")
+                    or "-"
+                )
+                _bd.append("#%d %s src=%s %dtok [%s]" % (
+                    _i,
+                    _m.get("role", "?"),
+                    _src,
+                    estimate_tokens([_m]),
+                    _c[:70].replace("\n", " "),
+                ))
+            logger.info("[prompt-breakdown] %s", " || ".join(_bd))
+            if all_tool_schemas:
+                import json as _js
+
+                _tj = _js.dumps(all_tool_schemas)
+                _names = []
+                for _t in all_tool_schemas:
+                    _fn = (_t or {}).get("function") or {}
+                    _nm = _fn.get("name") or (_t or {}).get("name") or "?"
+                    _names.append("%s(%d)" % (
+                        _nm,
+                        int(len(_js.dumps(_t)) * 0.3),
+                    ))
+                logger.info(
+                    "[prompt-breakdown] tool_schemas n=%d chars=%d ~%dtok :: %s",
+                    len(all_tool_schemas),
+                    len(_tj),
+                    int(len(_tj) * 0.3),
+                    ", ".join(_names),
+                )
+        except Exception as _e:
+            logger.warning("[prompt-breakdown] falhou: %s", _e)
         if _model_request_capture_enabled():
             _snapshot_messages = _active_route_state.get("request_messages")
             if _snapshot_messages is None:

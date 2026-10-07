@@ -41,27 +41,43 @@ def test_caldav_pull_prune_skips_unsynced_or_pending_local_rows():
 
 
 def test_http_calendar_writes_mark_pending_and_push_after_commit():
+    """Every remote-backed write marks pending, then pushes after the commit.
+
+    The source is grepped rather than driven because the guarantee is about
+    ordering across the request handler: the pending flag has to be written in
+    the same transaction as the change, and the push has to come after the
+    commit so a dead server cannot roll the local write back.
+    """
     source = Path("routes/calendar_routes.py").read_text()
 
-    assert 'caldav_sync_pending="create" if cal.source == "caldav" else None' in source
+    assert 'caldav_sync_pending="create" if cal.source in REMOTE_CALENDAR_SOURCES else None' in source
     assert 'ev.caldav_sync_pending = "update"' in source
-    assert 'await _push_caldav_event_after_commit(owner, uid, "create")' in source
-    assert 'await _push_caldav_event_after_commit(owner, base_uid, "update")' in source
-    assert 'await _push_caldav_event_after_commit(owner, base_uid, "delete")' in source
+    assert 'await _push_remote_event_after_commit(owner, uid, "create", cal.source)' in source
+    assert 'await _push_remote_event_after_commit(owner, base_uid, "update", remote_source)' in source
+    assert 'await _push_remote_event_after_commit(owner, base_uid, "delete", remote_source)' in source
     assert "_record_caldav_delete_tombstone(db, ev, owner)" in source
     assert 'not result.get("ok")' in source
 
 
-def test_agent_calendar_writes_share_caldav_push_path():
+def test_agent_calendar_writes_share_the_remote_push_path():
+    """The agent's calendar tools must not bypass the write-back the HTTP
+    routes use, or an event the assistant creates never leaves the machine."""
     source = Path("src/tools/calendar.py").read_text()
 
-    assert "_push_caldav_event_after_commit" in source
-    assert 'caldav_sync_pending="create" if cal.source == "caldav" else None' in source
+    assert "_push_remote_event_after_commit" in source
+    assert 'caldav_sync_pending="create" if cal.source in REMOTE_CALENDAR_SOURCES else None' in source
     assert 'ev.caldav_sync_pending = "update"' in source
-    assert 'await _push_caldav_event_after_commit(owner, uid, "create")' in source
-    assert 'await _push_caldav_event_after_commit(owner, base_uid, "update")' in source
-    assert 'await _push_caldav_event_after_commit(owner, base_uid, "delete")' in source
+    assert 'await _push_remote_event_after_commit(owner, uid, "create", cal.source)' in source
+    assert 'await _push_remote_event_after_commit(owner, base_uid, "update", remote_source)' in source
+    assert 'await _push_remote_event_after_commit(owner, base_uid, "delete", remote_source)' in source
     assert "_record_caldav_delete_tombstone(db, ev, owner)" in source
+
+
+def test_remote_sources_cover_both_backends():
+    """Both remote backends go through the same pending/push machinery."""
+    from routes.calendar_routes import REMOTE_CALENDAR_SOURCES
+
+    assert set(REMOTE_CALENDAR_SOURCES) == {"caldav", "msgraph"}
 
 
 def test_database_declares_and_migrates_caldav_remote_metadata():

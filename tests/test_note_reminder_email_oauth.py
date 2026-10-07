@@ -55,8 +55,13 @@ def test_dispatch_reminder_sends_with_google_oauth_without_smtp_password():
 
 
 def test_reminder_settings_offer_oauth_smtp_accounts():
+    """An OAuth account stores no SMTP password, so the reminder-channel picker
+    must treat `oauth_provider` alone as send-capable — for any provider, not
+    just Google."""
     source = (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
     helper = source[source.index("const smtpAccountReady"):source.index("const smtpAccountReady") + 260]
 
-    assert "account.has_smtp_password || account.oauth_provider === 'google'" in helper
+    assert "account.has_smtp_password || !!account.oauth_provider" in helper
+    assert "=== 'google'" not in helper, \
+        "the check must not be pinned to a single OAuth provider"
     assert source.count(".filter(smtpAccountReady)") == 2

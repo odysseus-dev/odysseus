@@ -38,9 +38,20 @@ from email.mime.multipart import MIMEMultipart
 
 from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from src.constants import DATA_DIR
 from src.path_confinement import confine
+from src.email_signature import (
+    SignatureImageError as _SignatureImageError,
+    account_signature as _account_signature,
+    account_signature_image as _account_signature_image,
+    apply_signature as _apply_signature,
+    body_has_signature as _body_has_signature,
+    html_with_signature_image as _html_with_signature_image,
+    normalize_signature as _normalize_signature,
+    normalize_signature_image as _normalize_signature_image,
+    signature_image_part as _signature_image_part,
+)
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
@@ -52,10 +63,13 @@ from .email_helpers import (
     _load_settings, _save_settings, _get_email_config,
     _send_smtp_message, _smtp_security_mode,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
-    _get_valid_google_token, _xoauth2_bytes, _xoauth2_raw,
+    _get_valid_google_token, _get_valid_oauth_token, _xoauth2_bytes, _xoauth2_raw,
+    oauth_provider_label, microsoft_oauth_authorize_url, microsoft_oauth_token_url,
+    _MICROSOFT_OAUTH_SCOPES,
     make_oauth_state, verify_oauth_state,
     EmailNotConfiguredError,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
+    _ensure_sent_copy, _find_message_uid, _server_saves_sent_copy,
     _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
@@ -75,6 +89,8 @@ ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
 EMAIL_READ_ATTACHMENT_VERSION = 2
 _GOOGLE_OAUTH_IMAP_HOST = "imap.gmail.com"
 _GOOGLE_OAUTH_SMTP_HOST = "smtp.gmail.com"
+_MICROSOFT_OAUTH_IMAP_HOST = "outlook.office365.com"
+_MICROSOFT_OAUTH_SMTP_HOST = "smtp.office365.com"
 _SERVER_OWNED_OAUTH_FIELDS = {
     "oauth_provider",
     "oauth_access_token",
@@ -94,6 +110,195 @@ def _google_oauth_imap_transport_allowed(port: int, starttls: bool) -> bool:
 
 def _google_oauth_smtp_transport_allowed(port: int, security: str) -> bool:
     return (port == 465 and security == "ssl") or (port == 587 and security == "starttls")
+
+
+def _microsoft_oauth_imap_transport_allowed(port: int, starttls: bool) -> bool:
+    return (port == 993 and not starttls) or (port == 143 and starttls)
+
+
+def _microsoft_oauth_smtp_transport_allowed(port: int, security: str) -> bool:
+    # Microsoft 365 publishes STARTTLS on 587 only — there is no implicit-TLS
+    # SMTP endpoint on smtp.office365.com to allow here.
+    return port == 587 and security == "starttls"
+
+
+# An OAuth account's token only authorizes that provider's mail servers, so
+# each provider is pinned to its own hosts and TLS transports. Without this an
+# edited host could point a valid access token at an attacker-controlled
+# server, which would happily collect the bearer token from the XOAUTH2 frame.
+_OAUTH_MAIL_TRANSPORT = {
+    "google": {
+        "imap_host": _GOOGLE_OAUTH_IMAP_HOST,
+        "smtp_host": _GOOGLE_OAUTH_SMTP_HOST,
+        "imap_allowed": _google_oauth_imap_transport_allowed,
+        "smtp_allowed": _google_oauth_smtp_transport_allowed,
+        "imap_transport_hint": "TLS on port 993 or STARTTLS on port 143",
+        "smtp_transport_hint": "TLS on port 465 or STARTTLS on port 587",
+    },
+    "microsoft": {
+        "imap_host": _MICROSOFT_OAUTH_IMAP_HOST,
+        "smtp_host": _MICROSOFT_OAUTH_SMTP_HOST,
+        "imap_allowed": _microsoft_oauth_imap_transport_allowed,
+        "smtp_allowed": _microsoft_oauth_smtp_transport_allowed,
+        "imap_transport_hint": "TLS on port 993 or STARTTLS on port 143",
+        "smtp_transport_hint": "STARTTLS on port 587",
+    },
+}
+
+
+# An OAuth callback is an unauthenticated endpoint: anything in its query
+# string, and anything a token endpoint puts in an error body, is untrusted
+# free text. Only these two fixed shapes are ever allowed out of it — into a
+# log line or back into the browser's URL — so a crafted callback cannot inject
+# markup, forge a message, or smuggle newlines into the logs.
+_OAUTH_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+_AADSTS_CODE_RE = re.compile(r"AADSTS\d{4,7}")
+
+
+def _oauth_failure_hints(error, description) -> tuple[str, str]:
+    """Return (oauth_error_code, aadsts_code) — bounded tokens, or empty.
+
+    The OAuth2 code (`access_denied`, `consent_required`, …) says what the
+    provider refused; Microsoft's AADSTS number says exactly why, and is the
+    one thing that turns "it failed" into an actionable fix. Everything else
+    in the provider's message is dropped.
+    """
+    raw_error = str(error or "").strip()
+    code = raw_error if _OAUTH_ERROR_CODE_RE.match(raw_error) else ""
+    found = _AADSTS_CODE_RE.search(f"{description or ''} {raw_error}")
+    return code, (found.group(0) if found else "")
+
+
+def _oauth_result_redirect(reason: str, provider: str = "", code: str = "", aadsts: str = "") -> str:
+    """Build the settings redirect for an OAuth outcome.
+
+    `reason` is Odysseus's own error code; `code`/`aadsts` are the sanitized
+    provider hints, surfaced so the operator can act on the failure without
+    digging the callback URL out of browser history.
+    """
+    import urllib.parse
+    params = {"section": "integrations", "email_oauth_error": reason}
+    if provider:
+        params["email_oauth_provider"] = provider
+    if code:
+        params["email_oauth_code"] = code
+    if aadsts:
+        params["email_oauth_aadsts"] = aadsts
+    return "/?" + urllib.parse.urlencode(params)
+
+
+def _microsoft_identity_from_id_token(id_token: str) -> tuple[str, str]:
+    """Return (email, display_name) from an OIDC id_token's claims.
+
+    The token is read straight out of the token-endpoint response, over TLS,
+    from an issuer we dialed ourselves — so its claims are used only to
+    auto-fill the mailbox fields and to feed the identity check that follows.
+    They never stand in for an authorization decision, which is why the
+    signature is not re-validated here.
+    """
+    import base64 as _b64
+    try:
+        payload_b64 = id_token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(_b64.urlsafe_b64decode(payload_b64).decode())
+    except Exception:
+        return "", ""
+    if not isinstance(claims, dict):
+        return "", ""
+    email_addr = ""
+    # `email` is present when the mailbox is verified; work/school tenants that
+    # omit it still carry the sign-in name in `preferred_username` / `upn`.
+    for key in ("email", "preferred_username", "upn"):
+        value = claims.get(key)
+        if isinstance(value, str) and "@" in value:
+            email_addr = value.strip()
+            break
+    name = claims.get("name")
+    return email_addr, name.strip() if isinstance(name, str) else ""
+
+
+def _persist_oauth_account_tokens(
+    provider: str,
+    account_id: str,
+    owner: str,
+    access_token: str,
+    refresh_token: str,
+    expiry: str,
+    email_addr: str,
+    display_name: str,
+    defaults: dict,
+) -> str | None:
+    """Store verified OAuth credentials on an account row.
+
+    Shared by every provider callback so the ownership and mailbox-identity
+    guards can't drift apart between them. Returns an error code for the
+    redirect, or None once the tokens are committed.
+    """
+    from core.database import SessionLocal, EmailAccount
+    from src.secret_storage import encrypt as _enc
+    db = SessionLocal()
+    try:
+        row = db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
+        if not row:
+            return "account_not_found"
+        # SECURITY: verify the account belongs to the initiating user.
+        if owner and row.owner and row.owner != owner:
+            logger.warning("OAuth callback owner mismatch — rejecting token write")
+            return "ownership_error"
+
+        # A reconnect must prove that the token belongs to the mailbox already
+        # configured on this row. Otherwise authenticating a different account
+        # leaves the saved IMAP/SMTP usernames paired with credentials for
+        # another identity.
+        verified_email = (
+            email_addr.strip().casefold()
+            if isinstance(email_addr, str)
+            else ""
+        )
+        configured_logins = {
+            value.strip().casefold()
+            for value in (row.imap_user or "", row.smtp_user or "")
+            if value.strip()
+        }
+        if not verified_email or any(
+            login != verified_email for login in configured_logins
+        ):
+            logger.warning(
+                "%s OAuth mailbox identity verification failed for account %s",
+                oauth_provider_label(provider),
+                account_id,
+            )
+            return "identity_verification_failed"
+
+        row.oauth_provider = provider
+        row.oauth_access_token = _enc(access_token)
+        row.oauth_refresh_token = _enc(refresh_token)
+        row.oauth_token_expiry = expiry
+        # Auto-fill the provider's IMAP/SMTP settings if not already configured.
+        if not row.imap_host:
+            row.imap_host = defaults["imap_host"]
+            row.imap_port = defaults["imap_port"]
+            row.imap_starttls = defaults["imap_starttls"]
+        if not row.smtp_host:
+            row.smtp_host = defaults["smtp_host"]
+            row.smtp_port = defaults["smtp_port"]
+            row.smtp_security = defaults["smtp_security"]
+        if email_addr:
+            if not row.imap_user:
+                row.imap_user = email_addr
+            if not row.smtp_user:
+                row.smtp_user = email_addr
+            if not row.from_address:
+                row.from_address = email_addr
+            if not row.name or row.name == row.id:
+                row.name = email_addr
+        if display_name and not row.display_name:
+            row.display_name = display_name
+        db.commit()
+        return None
+    finally:
+        db.close()
+
 
 def _email_style_key(account_id: str | None) -> str:
     return str(account_id or "").strip()
@@ -4932,9 +5137,17 @@ def setup_email_routes():
                 sync_meta = dict(payload.get("sync") or {})
                 sync_meta["source"] = "folder_cache_stale"
                 payload["sync"] = sync_meta
+                payload["provisional"] = True
                 return payload
+            # Nothing cached yet. These names are a placeholder to render a
+            # folder picker with, NOT this mailbox's folders: Office 365 calls
+            # its sent folder "Sent Items" and Gmail "[Gmail]/Sent Mail", so
+            # selecting one of these would ask for a mailbox that does not
+            # exist. `provisional` tells the client to come back for the real
+            # list before trusting any name but INBOX.
             return {
                 "folders": ["INBOX", "Sent", "Archive"],
+                "provisional": True,
                 "sync": {"source": "folder_cached_only_fallback"},
             }
 
@@ -4970,9 +5183,11 @@ def setup_email_routes():
                 sync_meta["source"] = "folder_cache_stale"
                 sync_meta["warning"] = "Folder list timed out"
                 payload["sync"] = sync_meta
+                payload["provisional"] = True
                 return payload
             return {
                 "folders": ["INBOX", "Sent", "Archive"],
+                "provisional": True,
                 "error": "Folder list timed out",
                 "sync": {"source": "folder_timeout_fallback"},
             }
@@ -5525,7 +5740,17 @@ def setup_email_routes():
             logger.warning(f"No SMTP-capable account resolved: {e}")
             return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
 
-        # Use 'mixed' if we have attachments, 'alternative' otherwise
+        # The composer already signs its visible draft. Programmatic callers
+        # opt in; apply_signature is idempotent for bodies already signed.
+        _sig_text = _account_signature(cfg)
+        if req.append_signature:
+            req.body = _apply_signature(req.body, _sig_text)
+
+        # The inline image only accompanies a signature that survived editing.
+        _sig_image, _sig_image_mime = _account_signature_image(cfg)
+        if _sig_image and not _body_has_signature(req.body, _sig_text):
+            _sig_image = _sig_image_mime = None
+
         has_attachments = bool(req.attachments)
         logger.info(
             "Sending email account=%s from=%s via=%s to=%s: subject=%r, attachments=%s",
@@ -5536,12 +5761,14 @@ def setup_email_routes():
             req.subject,
             req.attachments,
         )
+        body_container = MIMEMultipart("alternative")
+        related = MIMEMultipart("related") if _sig_image else None
         if has_attachments:
             outer = MIMEMultipart("mixed")
-            body_container = MIMEMultipart("alternative")
+        elif related is not None:
+            outer = related
         else:
-            outer = MIMEMultipart("alternative")
-            body_container = outer
+            outer = body_container
 
         req.to = _normalize_addr_field(req.to or "")
         req.cc = _normalize_addr_field(req.cc or "")
@@ -5574,10 +5801,16 @@ def setup_email_routes():
         # so neither can introduce live script/handlers.
         _html_part = (_sanitize_email_html(req.body_html) if req.body_html else None) \
             or _md_to_email_html(req.body)
+        if _sig_image:
+            _html_part = _html_with_signature_image(_html_part)
         body_container.attach(MIMEText(_html_part, "html", "utf-8"))
 
+        if related is not None:
+            related.attach(body_container)
+            related.attach(_signature_image_part(_sig_image, _sig_image_mime))
+
         if has_attachments:
-            outer.attach(body_container)
+            outer.attach(related if related is not None else body_container)
             _attach_compose_uploads(outer, req.attachments)
 
         # Build recipient list (parse the address grammar so display names with
@@ -5647,24 +5880,18 @@ def setup_email_routes():
                 try:
                     with _imap(_account_id, owner=owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
-                        sent_uid = None
-                        sent_append_ok = False
-                        append_st, append_data = imap.append(sent_folder, "\\Seen", None, outer_bytes)
-                        sent_append_ok = append_st == "OK"
-                        if append_st == "OK" and append_data:
-                            m = re.search(rb"APPENDUID\s+\d+\s+(\d+)", append_data[0] or b"")
-                            if m:
-                                sent_uid = m.group(1).decode("ascii", errors="ignore")
-                        if not sent_uid:
-                            try:
-                                st_sel, _ = imap.select(_q(sent_folder), readonly=True)
-                                if st_sel == "OK":
-                                    mid = (_message_id or "").strip().lstrip("<").rstrip(">").replace('"', '\\"')
-                                    st_uid, uid_data = imap.uid("SEARCH", None, f'HEADER Message-ID "{mid}"')
-                                    if st_uid == "OK" and uid_data and uid_data[0]:
-                                        sent_uid = uid_data[0].split()[-1].decode("ascii", errors="ignore")
-                            except Exception:
-                                pass
+                        sent_uid, sent_appended = _ensure_sent_copy(
+                            imap,
+                            sent_folder,
+                            _message_id,
+                            outer_bytes,
+                            server_saves_copy=_server_saves_sent_copy({
+                                "smtp_host": _smtp_host,
+                                "oauth_provider": _oauth_provider,
+                            }),
+                        )
+                        sent_copy_ok = bool(sent_uid) or sent_appended
+                        _invalidate_list_cache(_account_id, sent_folder)
                         # Auto-mark the source email as Answered/done so it
                         # disappears from "undone" filters.
                         if _source_uid:
@@ -5708,7 +5935,7 @@ def setup_email_routes():
                                         continue
                             except Exception as e:
                                 logger.warning(f"Failed to auto-mark source as answered: {e}")
-                        if _draft_uid and _draft_folder and sent_append_ok:
+                        if _draft_uid and _draft_folder and sent_copy_ok:
                             try:
                                 st_draft, _ = imap.select(_q(_draft_folder), readonly=False)
                                 if st_draft == "OK" and _store_email_flag(imap, _draft_uid, "\\Deleted", add=True):
@@ -6765,6 +6992,16 @@ def setup_email_routes():
                     "has_smtp_password": bool(r.smtp_password),
                     "oauth_provider": r.oauth_provider or "",
                     "display_name": r.display_name or "",
+                    "signature": r.signature or "",
+                    "signature_enabled": bool(
+                        True if r.signature_enabled is None else r.signature_enabled
+                    ),
+                    # The bytes are not in this list. A few accounts with a
+                    # logo each would make the settings page download a
+                    # megabyte of base64 it only needs a thumbnail of; the
+                    # preview fetches one image from its own route.
+                    "has_signature_image": bool(getattr(r, "signature_image", None)),
+                    "signature_image_mime": getattr(r, "signature_image_mime", None) or "",
                 })
             return {"accounts": out}
         finally:
@@ -6785,6 +7022,12 @@ def setup_email_routes():
         smtp_port, port_err = _coerce_port(data.get("smtp_port"), 465)
         if port_err:
             return {"ok": False, "error": port_err}
+        try:
+            sig_image, sig_image_mime = _normalize_signature_image(
+                data.get("signature_image")
+            )
+        except _SignatureImageError as e:
+            return {"ok": False, "error": str(e)}
         db = SessionLocal()
         try:
             _lock_email_account_owner_mutation(db, owner)
@@ -6805,6 +7048,10 @@ def setup_email_routes():
                 smtp_password=_enc(data.get("smtp_password") or ""),
                 from_address=(data.get("from_address") or "").strip(),
                 display_name=(data.get("display_name") or "").strip(),
+                signature=_normalize_signature(data.get("signature")),
+                signature_enabled=bool(data.get("signature_enabled", True)),
+                signature_image=sig_image,
+                signature_image_mime=sig_image_mime,
                 # SECURITY: stamp the creator so all subsequent reads / mutations
                 # can filter by user. Without this every new account leaks to
                 # every other user.
@@ -6848,9 +7095,21 @@ def setup_email_routes():
                     setattr(row, key, port)
             if "smtp_security" in data:
                 row.smtp_security = _smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": data.get("smtp_port") or row.smtp_port})
-            for key in ("imap_starttls", "enabled"):
+            for key in ("imap_starttls", "enabled", "signature_enabled"):
                 if key in data:
                     setattr(row, key, bool(data[key]))
+            if "signature" in data:
+                row.signature = _normalize_signature(data["signature"])
+            # Absent means "leave it alone" — the settings form does not
+            # re-upload the image on every save. An explicit empty string is
+            # how the Remove button clears it.
+            if "signature_image" in data:
+                try:
+                    row.signature_image, row.signature_image_mime = (
+                        _normalize_signature_image(data["signature_image"])
+                    )
+                except _SignatureImageError as e:
+                    return {"ok": False, "error": str(e)}
             # Passwords — only overwrite when a non-empty value is
             # provided. Stored encrypted; see src/secret_storage.py.
             from src.secret_storage import encrypt as _enc
@@ -6860,6 +7119,48 @@ def setup_email_routes():
                 row.smtp_password = _enc(data["smtp_password"])
             db.commit()
             return {"ok": True, "id": row.id}
+        finally:
+            db.close()
+
+    @router.get("/accounts/{account_id}/signature-image")
+    async def get_signature_image(account_id: str, owner: str = Depends(require_user)):
+        """Serve the account's signature image for the settings preview.
+
+        Owner-scoped like every other account read: the image is not a
+        secret — it goes to every recipient — but which accounts exist and
+        what they are branded with is not something to hand out by id.
+        """
+        _assert_owns_account(account_id, owner)
+        from core.database import SessionLocal, EmailAccount
+        import base64 as _b64
+        db = SessionLocal()
+        try:
+            row = db.get(EmailAccount, account_id)
+            if not row or not getattr(row, "signature_image", None):
+                raise HTTPException(status_code=404, detail="No signature image")
+            data, mime = _account_signature_image({
+                "signature_image": row.signature_image,
+                "signature_image_mime": row.signature_image_mime,
+                # The preview shows what is stored, so the on/off switch
+                # must not hide it — that switch governs sending.
+                "signature_enabled": True,
+            })
+            if not data:
+                raise HTTPException(status_code=404, detail="No signature image")
+            try:
+                payload = _b64.b64decode(data, validate=True)
+            except Exception:
+                raise HTTPException(status_code=404, detail="No signature image")
+            return Response(
+                content=payload,
+                media_type=mime,
+                headers={
+                    "Content-Disposition": 'inline; filename="signature"',
+                    # It changes only when the user uploads a new one, and a
+                    # stale thumbnail in settings would be confusing.
+                    "Cache-Control": "no-store",
+                },
+            )
         finally:
             db.close()
 
@@ -6919,31 +7220,38 @@ def setup_email_routes():
         imap_starttls = bool(body.get("imap_starttls"))
         oauth_provider = body.get("oauth_provider") or ""
 
-        google_token = None
-        google_token_loaded = False
-        google_ssl_context = (
+        # Transport pinning for the provider this account is connected to;
+        # None for password accounts, which keep their free-form host/port.
+        oauth_rules = _OAUTH_MAIL_TRANSPORT.get(oauth_provider)
+        oauth_label = oauth_provider_label(oauth_provider)
+
+        oauth_token = None
+        oauth_token_loaded = False
+        oauth_ssl_context = (
             ssl.create_default_context()
-            if oauth_provider == "google"
+            if oauth_provider
             else None
         )
 
-        def _google_token():
-            nonlocal google_token, google_token_loaded
-            if not google_token_loaded:
-                google_token = _get_valid_google_token(body.get("account_id"), body)
-                google_token_loaded = True
-            if not google_token:
-                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
-            return google_token
+        def _oauth_token():
+            nonlocal oauth_token, oauth_token_loaded
+            if not oauth_token_loaded:
+                oauth_token = _get_valid_oauth_token(body.get("account_id"), body)
+                oauth_token_loaded = True
+            if not oauth_token:
+                raise RuntimeError(f"{oauth_label} OAuth token unavailable — reconnect the account")
+            return oauth_token
 
         if imap_port_err:
             imap_result = {"ok": False, "error": imap_port_err}
-        elif not (imap_host and imap_user and (imap_pass or oauth_provider == "google")):
+        elif oauth_provider and not oauth_rules:
+            imap_result = {"ok": False, "error": f"Unsupported OAuth provider {oauth_provider!r} — reconnect the account"}
+        elif not (imap_host and imap_user and (imap_pass or oauth_provider)):
             imap_result = {"ok": False, "error": "Need IMAP host, username, and password"}
-        elif oauth_provider == "google" and _normalized_mail_host(imap_host) != _GOOGLE_OAUTH_IMAP_HOST:
-            imap_result = {"ok": False, "error": "Google OAuth IMAP requires imap.gmail.com"}
-        elif oauth_provider == "google" and not _google_oauth_imap_transport_allowed(imap_port, imap_starttls):
-            imap_result = {"ok": False, "error": "Google OAuth IMAP requires TLS on port 993 or STARTTLS on port 143"}
+        elif oauth_rules and _normalized_mail_host(imap_host) != oauth_rules["imap_host"]:
+            imap_result = {"ok": False, "error": f"{oauth_label} OAuth IMAP requires {oauth_rules['imap_host']}"}
+        elif oauth_rules and not oauth_rules["imap_allowed"](imap_port, imap_starttls):
+            imap_result = {"ok": False, "error": f"{oauth_label} OAuth IMAP requires {oauth_rules['imap_transport_hint']}"}
         else:
             # Connection mode resolution:
             #   STARTTLS on  → plain IMAP4 + .starttls() (upgrade)
@@ -6958,16 +7266,16 @@ def setup_email_routes():
                     "timeout": _IMAP_TIMEOUT_SECONDS,
                     "owner": owner,
                 }
-                if google_ssl_context:
-                    imap_kwargs["ssl_context"] = google_ssl_context
+                if oauth_ssl_context:
+                    imap_kwargs["ssl_context"] = oauth_ssl_context
                 conn = _open_imap_connection(
                     imap_host,
                     imap_port,
                     **imap_kwargs,
                 )
                 try:
-                    if oauth_provider == "google":
-                        token = _google_token()
+                    if oauth_provider:
+                        token = _oauth_token()
                         conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(imap_user, token))
                     else:
                         conn.login(imap_user, imap_pass)
@@ -6982,17 +7290,15 @@ def setup_email_routes():
         smtp_port, smtp_port_err = _coerce_port(body.get("smtp_port"), 465)
         if smtp_host and smtp_port_err:
             smtp_result = {"ok": False, "error": smtp_port_err}
-        elif oauth_provider == "google" and smtp_host and _normalized_mail_host(smtp_host) != _GOOGLE_OAUTH_SMTP_HOST:
-            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires smtp.gmail.com"}
-        elif (
-            oauth_provider == "google"
-            and smtp_host
-            and not _google_oauth_smtp_transport_allowed(
-                smtp_port,
-                _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port}),
-            )
+        elif oauth_provider and not oauth_rules:
+            smtp_result = {"ok": False, "error": f"Unsupported OAuth provider {oauth_provider!r} — reconnect the account"}
+        elif oauth_rules and smtp_host and _normalized_mail_host(smtp_host) != oauth_rules["smtp_host"]:
+            smtp_result = {"ok": False, "error": f"{oauth_label} OAuth SMTP requires {oauth_rules['smtp_host']}"}
+        elif oauth_rules and smtp_host and not oauth_rules["smtp_allowed"](
+            smtp_port,
+            _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port}),
         ):
-            smtp_result = {"ok": False, "error": "Google OAuth SMTP requires TLS on port 465 or STARTTLS on port 587"}
+            smtp_result = {"ok": False, "error": f"{oauth_label} OAuth SMTP requires {oauth_rules['smtp_transport_hint']}"}
         elif smtp_host:
             smtp_security = _smtp_security_mode({"smtp_security": body.get("smtp_security"), "smtp_port": smtp_port})
             smtp_user = (body.get("smtp_user") or imap_user).strip()
@@ -7000,11 +7306,7 @@ def setup_email_routes():
             smtp = None
             try:
                 if smtp_security == "ssl":
-                    smtp_kwargs = (
-                        {"context": google_ssl_context}
-                        if google_ssl_context
-                        else {}
-                    )
+                    smtp_kwargs = {"context": oauth_ssl_context} if oauth_ssl_context else {}
                     smtp = _PolicySMTP_SSL(
                         smtp_host,
                         smtp_port,
@@ -7016,8 +7318,8 @@ def setup_email_routes():
                     smtp = _PolicySMTP(smtp_host, smtp_port, timeout=10, block_private=_mail_private_blocked(owner))
                     if smtp_security == "starttls":
                         try:
-                            if google_ssl_context:
-                                smtp.starttls(context=google_ssl_context)
+                            if oauth_ssl_context:
+                                smtp.starttls(context=oauth_ssl_context)
                             else:
                                 smtp.starttls()
                         except Exception:
@@ -7029,8 +7331,8 @@ def setup_email_routes():
                                 pass
                             smtp = None
                             raise
-                if oauth_provider == "google":
-                    token = _google_token()
+                if oauth_provider:
+                    token = _oauth_token()
                     smtp.ehlo()
                     smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(smtp_user, token), initial_response_ok=True)
                 else:
@@ -7176,12 +7478,16 @@ def setup_email_routes():
         import urllib.parse
         from fastapi.responses import RedirectResponse as _RR
         if error:
-            return _RR("/?section=integrations&email_oauth_error=google_error")
+            hint_code, _ = _oauth_failure_hints(error, None)
+            logger.warning(
+                "Google OAuth authorization was refused (code=%s)", hint_code or "unknown"
+            )
+            return _RR(_oauth_result_redirect("google_error", "google", hint_code))
         if not code or not state:
-            return _RR("/?section=integrations&email_oauth_error=missing_code")
+            return _RR(_oauth_result_redirect("missing_code", "google"))
         state_data = verify_oauth_state(state)
         if not state_data:
-            return _RR("/?section=integrations&email_oauth_error=invalid_state")
+            return _RR(_oauth_result_redirect("invalid_state", "google"))
         account_id = state_data.get("a", "")
         owner = state_data.get("o", "")
         client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
@@ -7203,12 +7509,12 @@ def setup_email_routes():
             data = resp.json()
         except Exception:
             logger.warning("Google token exchange failed")
-            return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
+            return _RR(_oauth_result_redirect("token_exchange_failed", "google"))
         access_token = data.get("access_token", "")
         refresh_token = data.get("refresh_token", "")
         if not access_token or not refresh_token:
             logger.warning("Google token exchange omitted required offline credentials")
-            return _RR("/?section=integrations&email_oauth_error=token_exchange_failed")
+            return _RR(_oauth_result_redirect("missing_refresh_token", "google"))
         expiry = str(int(time.time()) + data.get("expires_in", 3600))
         # Fetch the email address from userinfo so we can auto-fill imap_user.
         email_addr = ""
@@ -7222,67 +7528,151 @@ def setup_email_routes():
                 display_name = ui_data.get("name", "")
         except Exception:
             pass
-        from core.database import SessionLocal, EmailAccount
-        from src.secret_storage import encrypt as _enc
-        db = SessionLocal()
-        try:
-            row = db.query(EmailAccount).filter(EmailAccount.id == account_id).first()
-            if not row:
-                return _RR("/?section=integrations&email_oauth_error=account_not_found")
-            # SECURITY: verify the account belongs to the initiating user.
-            if owner and row.owner and row.owner != owner:
-                logger.warning("OAuth callback owner mismatch — rejecting token write")
-                return _RR("/?section=integrations&email_oauth_error=ownership_error")
+        error_code = _persist_oauth_account_tokens(
+            provider="google",
+            account_id=account_id,
+            owner=owner,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expiry=expiry,
+            email_addr=email_addr,
+            display_name=display_name,
+            defaults={
+                "imap_host": _GOOGLE_OAUTH_IMAP_HOST,
+                "imap_port": 993,
+                "imap_starttls": False,
+                "smtp_host": _GOOGLE_OAUTH_SMTP_HOST,
+                "smtp_port": 587,
+                "smtp_security": "starttls",
+            },
+        )
+        if error_code:
+            return _RR(_oauth_result_redirect(error_code, "google"))
+        return _RR("/?section=integrations&email_oauth_success=1&email_oauth_provider=google")
 
-            # A reconnect must prove that the token belongs to the mailbox
-            # already configured on this row. Otherwise authenticating a
-            # different Google account leaves the saved IMAP/SMTP usernames
-            # paired with credentials for another identity.
-            verified_email = (
-                email_addr.strip().casefold()
-                if isinstance(email_addr, str)
-                else ""
+    # ── Microsoft (Outlook / Office 365) OAuth2 routes ──
+
+    @router.get("/oauth/microsoft/authorize")
+    async def microsoft_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
+        import urllib.parse
+        _assert_owns_account(account_id, owner)
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
+        if not client_id:
+            raise HTTPException(400, "MICROSOFT_OAUTH_CLIENT_ID not set — add it to .env")
+        redirect_uri = (
+            os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI")
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/microsoft/callback"
+        )
+        state = make_oauth_state(account_id, owner)
+        params = urllib.parse.urlencode({
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": _MICROSOFT_OAUTH_SCOPES,
+            # Re-prompt so a reconnect can target a different mailbox than the
+            # one the browser is currently signed into.
+            "prompt": "select_account",
+            "state": state,
+        })
+        from fastapi.responses import RedirectResponse as _RR
+        return _RR(f"{microsoft_oauth_authorize_url()}?{params}")
+
+    @router.get("/oauth/microsoft/callback")
+    async def microsoft_oauth_callback(
+        code: str = Query(None),
+        state: str = Query(None),
+        error: str = Query(None),
+        error_description: str = Query(None),
+        request: Request = None,
+    ):
+        from fastapi.responses import RedirectResponse as _RR
+        if error:
+            # Microsoft refused before issuing a code. Its AADSTS number is the
+            # difference between "OAuth failed" and a fix, so log it and hand
+            # it to the UI rather than dropping it on the floor.
+            hint_code, aadsts = _oauth_failure_hints(error, error_description)
+            logger.warning(
+                "Microsoft OAuth authorization was refused (code=%s aadsts=%s)",
+                hint_code or "unknown", aadsts or "none",
             )
-            configured_logins = {
-                value.strip().casefold()
-                for value in (row.imap_user or "", row.smtp_user or "")
-                if value.strip()
-            }
-            if not verified_email or any(
-                login != verified_email for login in configured_logins
-            ):
-                logger.warning(
-                    "Google OAuth mailbox identity verification failed for account %s",
-                    account_id,
-                )
-                return _RR("/?section=integrations&email_oauth_error=identity_verification_failed")
-
-            row.oauth_provider = "google"
-            row.oauth_access_token = _enc(access_token)
-            row.oauth_refresh_token = _enc(refresh_token)
-            row.oauth_token_expiry = expiry
-            # Auto-fill Google IMAP/SMTP settings if not already configured.
-            if not row.imap_host:
-                row.imap_host = "imap.gmail.com"
-                row.imap_port = 993
-                row.imap_starttls = False
-            if not row.smtp_host:
-                row.smtp_host = "smtp.gmail.com"
-                row.smtp_port = 587
-            if email_addr:
-                if not row.imap_user:
-                    row.imap_user = email_addr
-                if not row.smtp_user:
-                    row.smtp_user = email_addr
-                if not row.from_address:
-                    row.from_address = email_addr
-                if not row.name or row.name == row.id:
-                    row.name = email_addr
-            if display_name and not row.display_name:
-                row.display_name = display_name
-            db.commit()
-        finally:
-            db.close()
-        return _RR("/?section=integrations&email_oauth_success=1")
+            return _RR(_oauth_result_redirect("microsoft_error", "microsoft", hint_code, aadsts))
+        if not code or not state:
+            return _RR(_oauth_result_redirect("missing_code", "microsoft"))
+        state_data = verify_oauth_state(state)
+        if not state_data:
+            return _RR(_oauth_result_redirect("invalid_state", "microsoft"))
+        account_id = state_data.get("a", "")
+        owner = state_data.get("o", "")
+        client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "")
+        client_secret = os.environ.get("MICROSOFT_OAUTH_CLIENT_SECRET", "")
+        redirect_uri = (
+            os.environ.get("MICROSOFT_OAUTH_REDIRECT_URI")
+            or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/microsoft/callback"
+        )
+        import httpx as _httpx
+        resp = None
+        try:
+            resp = _httpx.post(microsoft_oauth_token_url(), data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+                "scope": _MICROSOFT_OAUTH_SCOPES,
+            }, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            # A rejected exchange (expired secret, wrong redirect URI) answers
+            # with an AADSTS code in the body; raise_for_status hides it, so
+            # read it back off the response before reporting the failure.
+            body_error, body_description = "", ""
+            if resp is not None:
+                try:
+                    payload = resp.json()
+                    body_error = payload.get("error") or ""
+                    body_description = payload.get("error_description") or ""
+                except Exception:
+                    pass
+            hint_code, aadsts = _oauth_failure_hints(body_error, body_description)
+            logger.warning(
+                "Microsoft token exchange failed (code=%s aadsts=%s)",
+                hint_code or "unknown", aadsts or "none",
+            )
+            return _RR(_oauth_result_redirect("token_exchange_failed", "microsoft", hint_code, aadsts))
+        access_token = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+        if not access_token or not refresh_token:
+            # No refresh token means `offline_access` was not granted, so the
+            # mailbox would stop working an hour later. Refuse the connect
+            # rather than store credentials that expire.
+            logger.warning("Microsoft token exchange omitted required offline credentials")
+            return _RR(_oauth_result_redirect("missing_refresh_token", "microsoft"))
+        expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        # The mailbox address comes from the id_token's claims — Microsoft has
+        # no userinfo endpoint on the mail resource, and asking Graph for /me
+        # would need a second consent for a different resource.
+        email_addr, display_name = _microsoft_identity_from_id_token(data.get("id_token", "") or "")
+        error_code = _persist_oauth_account_tokens(
+            provider="microsoft",
+            account_id=account_id,
+            owner=owner,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expiry=expiry,
+            email_addr=email_addr,
+            display_name=display_name,
+            defaults={
+                "imap_host": _MICROSOFT_OAUTH_IMAP_HOST,
+                "imap_port": 993,
+                "imap_starttls": False,
+                "smtp_host": _MICROSOFT_OAUTH_SMTP_HOST,
+                "smtp_port": 587,
+                "smtp_security": "starttls",
+            },
+        )
+        if error_code:
+            return _RR(_oauth_result_redirect(error_code, "microsoft"))
+        return _RR("/?section=integrations&email_oauth_success=1&email_oauth_provider=microsoft")
 
     return router

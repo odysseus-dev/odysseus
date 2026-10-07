@@ -111,6 +111,7 @@ const PRECACHE = [
   '/static/js/emailLibrary/unsubscribe.js',
   '/static/js/emailLibrary/utils.js',
   '/static/js/emailLibrary/signatureFold.js',
+  '/static/js/emailLibrary/signature.js',
   '/static/js/emailLibrary/state.js',
   // emailInbox.js has always imported this one; it was never precached.
   '/static/js/emailLibrary/replyRecipients.js',

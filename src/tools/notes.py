@@ -16,6 +16,59 @@ from src.upload_handler import reserve_upload_references
 logger = logging.getLogger(__name__)
 
 
+async def _push_todo(owner: Optional[str], note_id: str, action: str) -> None:
+    """Write an agent's note change back to Microsoft To Do.
+
+    The HTTP routes push through BackgroundTasks; the agent has no response
+    to hang one off, so it awaits the same write-back directly. Skipping this
+    would make a task the agent added or ticked off exist only in Odysseus —
+    the exact split-brain the sync is meant to prevent.
+    """
+    try:
+        from src.msgraph_todo import push_task_create, push_task_delete, push_task_update
+
+        pusher = {"create": push_task_create, "update": push_task_update,
+                  "delete": push_task_delete}.get(action)
+        if pusher:
+            await pusher(owner or "", note_id)
+    except Exception as e:
+        logger.warning("Microsoft To Do %s push failed for note=%s: %s", action, note_id, e)
+
+
+def _mark_todo_dirty(note) -> bool:
+    """Flag an unpushed local edit, in the same transaction as the change.
+
+    Returns whether this note syncs at all.
+    """
+    try:
+        from src.msgraph_todo import note_should_sync
+    except Exception:
+        return False
+    if not note_should_sync(note):
+        return False
+    note.todo_sync_pending = "update" if note.remote_id else "create"
+    return True
+
+
+def _todo_tombstone(db, note) -> bool:
+    """Record what a delete needs before the note row goes away."""
+    remote_id = getattr(note, "remote_id", None)
+    remote_list_id = getattr(note, "remote_list_id", None)
+    if not (remote_id and remote_list_id):
+        return False
+    from core.database import MsTodoDeletedNote
+
+    db.merge(MsTodoDeletedNote(
+        id=note.id,
+        owner=note.owner,
+        remote_id=remote_id,
+        remote_list_id=remote_list_id,
+        account_id=getattr(note, "todo_account_id", None),
+        title=getattr(note, "title", None),
+    ))
+    return True
+
+
 def _search_tokens(value: str) -> list[str]:
     """Normalize lightweight singular/plural variants without fuzzy matching."""
     tokens = []
@@ -282,7 +335,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             if not title and note_type in {"checklist", "todo", "goal"}:
                 from src.user_time import now_user_local
                 title = f"To-do - {now_user_local().date().isoformat()}"
-            if note_type in {"checklist", "todo", "goal"} and not isinstance(items_raw, list):
+            if note_type in {"checklist", "goal"} and not isinstance(items_raw, list):
                 return {
                     "error": 'Nothing saved. Checklist creation requires checklist_items as an array of '
                              '{"text":"task including any stated time","done":false}. '
@@ -400,8 +453,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 source="agent",
                 session_id=args.get("session_id"),
             )
+            syncs = _mark_todo_dirty(note)
             db.add(note)
             db.commit()
+            if syncs:
+                await _push_todo(owner, note.id, "create")
             # Return note_id so the chat-side renderer can build a real
             # "View note" button that opens the notes modal at this id.
             # Previously the create response only included a prose
@@ -485,7 +541,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 note.pinned = args["pinned"]
             if "archived" in args:
                 note.archived = args["archived"]
+            syncs = _mark_todo_dirty(note)
+            note_pk = note.id
             db.commit()
+            if syncs:
+                await _push_todo(owner, note_pk, "update")
             return {"response": f"Note updated: \"{note.title or '(untitled)'}\"",
                     "note_id": note.id, "note_title": note.title or "",
                     "open_url": f"/#open=notes&note={note.id}", "exit_code": 0}
@@ -525,8 +585,12 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             fixture_scope = note_fixture_scope.get()
             if fixture_scope is not None and note.id not in fixture_scope:
                 return {"error": "Target is outside the disposable test fixtures; no change made.", "exit_code": 1}
+            note_pk = note.id
+            had_remote = _todo_tombstone(db, note)
             db.delete(note)
             db.commit()
+            if had_remote:
+                await _push_todo(owner, note_pk, "delete")
             return {"response": f"Deleted note: \"{title or '(untitled)'}\"", "exit_code": 0}
 
         elif action == "toggle_item":
@@ -549,7 +613,11 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             items[index]["done"] = args["done"] if "done" in args else not items[index].get("done", False)
             note.items = json.dumps(items)
             flag_modified(note, "items")
+            syncs = _mark_todo_dirty(note)
+            note_pk = note.id
             db.commit()
+            if syncs:
+                await _push_todo(owner, note_pk, "update")
             mark = "done" if items[index]["done"] else "undone"
             return {"response": f"Item '{items[index].get('text', '')}' marked {mark}", "exit_code": 0}
 

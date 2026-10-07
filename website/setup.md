@@ -497,10 +497,54 @@ uv pip sync requirements.lock                          # reproduce it exactly la
 `requirements.lock` is gitignored and platform-specific (compile it on the OS you deploy to). Regenerate it deliberately when you want to take upgrades. The plain `uv pip install -r requirements.txt` keeps following the unpinned requirements like pip does.
 
 ### Outlook / Office 365 email
-Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
-and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
-passwords will fail. See [the Outlook email guide](email-outlook.md) for the
-current limitation and the planned integration direction.
+Microsoft disabled basic authentication for Outlook and Microsoft 365, so normal
+mailbox passwords fail for IMAP and SMTP. Connect these accounts with OAuth
+instead: register a Microsoft app, set `MICROSOFT_OAUTH_CLIENT_ID` and
+`MICROSOFT_OAUTH_CLIENT_SECRET` in `.env`, then pick the **Outlook / Office 365**
+provider preset and use **Connect with Microsoft**. See
+[the Outlook email guide](email-outlook.md) for the full walkthrough.
+
+### Office 365 calendar
+The same app registration also drives two-way calendar sync over Microsoft
+Graph — Exchange Online does not speak CalDAV, so the CalDAV integration cannot
+reach a Microsoft mailbox. Add the delegated Graph permission
+`Calendars.ReadWrite` and a second redirect URI ending in
+`/api/calendar/oauth/microsoft/callback`, then connect from **Settings →
+Integrations → Microsoft 365 Calendar**. See
+[the Office 365 calendar guide](calendar-office365.md) for the full walkthrough.
+
+### Microsoft To Do
+The same app registration also drives two-way task sync. Tasks live in
+**Notes** — a note of type To-do matches a To Do task field for field, while
+the Tasks tool schedules automation and has no counterpart in To Do. Add the
+delegated Graph permission `Tasks.ReadWrite` and a third redirect URI ending in
+`/api/notes/oauth/microsoft/callback`, then connect from **Settings →
+Integrations → Microsoft To Do**. See
+[the Microsoft To Do guide](tasks-microsoft-todo.md) for the full walkthrough.
+
+### Email signature
+Each email account carries its own outgoing signature, set under **Settings →
+Integrations →** the account **→ Signature**. It is dropped into new messages,
+replies and forwards *before the draft opens*, so you can edit or delete it for
+a single message without touching the setting. In a reply it sits above the
+quoted original, and it is separated by the standard `-- ` line that mail
+clients use to fold a signature away. Markdown works — the same renderer that
+formats the message body formats the signature. Turn **Use signature** off to
+stop adding it without losing the text.
+
+A logo or scanned sign-off can go under the text. Pick one with **Choose
+image** in the same section — PNG, JPEG or GIF, up to 256 KB. It is embedded
+in the message rather than linked, so it shows without the recipient having
+to allow remote images, and no third-party host learns when your mail was
+opened.
+
+The image follows the text: delete the signature from a draft before sending
+and the logo does not go out either. It appears only in the HTML part, since
+a picture cannot exist in plain text — the text signature stays the part
+every reader gets.
+
+Mail the assistant sends carries the same signature, so a reply it writes for
+you is signed the way your own are.
 
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
@@ -633,14 +677,15 @@ SECURE_COOKIES=true
 OAUTH_REDIRECT_BASE_URL=https://odysseus.example.com
 ```
 
-Gmail OAuth needs nothing here when the proxy runs on the same host: the
+Email OAuth needs nothing here when the proxy runs on the same host: the
 redirect URI is built from the incoming request, and uvicorn rewrites the
 scheme from `X-Forwarded-Proto` for proxies it trusts — by default only
 `127.0.0.1`. A proxy in a separate container or on another machine is not
-trusted, so pin the URI there:
+trusted, so pin the URI for whichever providers you use:
 
 ```bash
 GOOGLE_OAUTH_REDIRECT_URI=https://odysseus.example.com/api/email/oauth/google/callback
+MICROSOFT_OAUTH_REDIRECT_URI=https://odysseus.example.com/api/email/oauth/microsoft/callback
 ```
 
 (uvicorn's own `FORWARDED_ALLOW_IPS` widens that trust, but it has to be in the
