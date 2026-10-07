@@ -25161,8 +25161,14 @@ async def stream_agent_loop(
                 )
             return _filter_route_tool_schemas(schemas)
 
-        wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)
-        schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []
+        if route_relevant_tools:
+            schemas = [
+                schema for schema in route_mcp_schemas
+                if schema.get("function", {}).get("name") in route_relevant_tools
+            ]
+        else:
+            wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)
+            schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []
         if _pure_web_turn:
             allowed = _web_only_route_tools(_last_user, disabled_tools)
             schemas = [
