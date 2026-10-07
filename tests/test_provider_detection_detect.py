@@ -20,6 +20,9 @@ class TestDetectProviderRealHosts:
     def test_openrouter(self):
         assert llm_core._detect_provider("https://openrouter.ai/api/v1") == "openrouter"
 
+    def test_orcarouter(self):
+        assert llm_core._detect_provider("https://api.orcarouter.ai/v1") == "orcarouter"
+
     def test_groq_openai_compat_path(self):
         # Groq's base carries an /openai/v1 path; detection must still see the host.
         assert llm_core._detect_provider("https://api.groq.com/openai/v1") == "groq"
