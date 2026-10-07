@@ -16,6 +16,8 @@ def _clear_hwfit_cache(monkeypatch):
 
 
 def _stub_common_probe(monkeypatch, machine):
+    # Exercise the generic probe even when pytest runs on a Windows host.
+    monkeypatch.setattr(hardware, "_detect_windows", lambda: None)
     monkeypatch.setattr(hardware.platform, "machine", lambda: machine)
     monkeypatch.setattr(hardware, "_get_ram_gb", lambda: 64.0)
     monkeypatch.setattr(hardware, "_get_available_ram_gb", lambda: 48.0)
