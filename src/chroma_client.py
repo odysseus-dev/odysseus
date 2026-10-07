@@ -52,8 +52,9 @@ def get_chroma_client():
     if not _port_open(host, port):
         raise RuntimeError(
             f"ChromaDB is not reachable at {host}:{port}. Start the ChromaDB "
-            f"service (e.g. `docker compose up chromadb`) or set CHROMADB_HOST / "
-            f"CHROMADB_PORT to point at a running instance."
+            f"service (Docker: `docker compose up chromadb`; native: "
+            f"`chroma run --host {host} --port {port} --path ./data/chroma`) or "
+            f"set CHROMADB_HOST / CHROMADB_PORT to point at a running instance."
         )
 
     client = chromadb.HttpClient(host=host, port=port)
