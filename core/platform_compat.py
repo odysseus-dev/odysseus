@@ -36,6 +36,19 @@ IS_APPLE_SILICON = (
 )
 
 
+# ── procfs ──────────────────────────────────────────────────────────────────
+# Linux exposes one directory per pid under /proc; macOS and Windows have no
+# procfs at all. Any code that walks it must skip the walk rather than raise.
+# Kept as a module attribute so both branches stay testable on either kind of
+# host.
+PROC_ROOT = Path("/proc")
+
+
+def has_procfs() -> bool:
+    """True when the host exposes a procfs pid tree that can be scanned."""
+    return PROC_ROOT.is_dir()
+
+
 # ── File permissions ────────────────────────────────────────────────────────
 def safe_chmod(path, mode: int) -> bool:
     """``os.chmod`` that is a harmless no-op on Windows.
@@ -52,6 +65,26 @@ def safe_chmod(path, mode: int) -> bool:
         return True
     except OSError:
         return False
+
+
+# ── Account home ────────────────────────────────────────────────────────────
+def service_home() -> Path:
+    """Return the account home even when a task overrides ``HOME``.
+
+    POSIX reads the passwd entry for the real uid, so a tool that rewrites
+    ``HOME`` for a sandboxed child still resolves the service account's own
+    home. Windows has no passwd database and no ``os.getuid``; ``Path.home()``
+    resolves through the user profile there and is already correct, so it is
+    both the Windows answer and the POSIX fallback.
+    """
+    if IS_WINDOWS:
+        return Path.home()
+    import pwd  # POSIX-only; imported lazily so this module loads on Windows
+
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, OSError):
+        return Path.home()
 
 
 # ── Process detach / liveness / teardown ────────────────────────────────────
@@ -81,7 +114,13 @@ def pid_alive(pid: Optional[int]) -> bool:
     the process it is checking. We instead open the process and read its exit
     code via the Win32 API.
     """
-    if not pid:
+    if pid is None:
+        return False
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
         return False
     if IS_WINDOWS:
         import ctypes
@@ -91,54 +130,37 @@ def pid_alive(pid: Optional[int]) -> bool:
         STILL_ACTIVE = 259
         kernel32 = ctypes.windll.kernel32
         handle = kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid_int
         )
         if not handle:
-            return False
+            return kernel32.GetLastError() != 87  # ERROR_INVALID_PARAMETER: PID absent
         try:
             code = wintypes.DWORD()
             if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
                 return code.value == STILL_ACTIVE
-            return False
+            return True  # A failed probe does not establish death.
         finally:
             kernel32.CloseHandle(handle)
     try:
-        os.kill(pid, 0)
+        os.kill(pid_int, 0)
         return True
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
         return False
+    except OSError:
+        return True  # EPERM and other inspection failures are not ESRCH.
 
 
-def kill_process_tree(pid: Optional[int]) -> None:
-    """Terminate ``pid`` and all of its descendants.
+def kill_process_tree(pid: Optional[int], *, start_token=None, pgid=None, require_identity=False):
+    """Use the runtime's shared escalating teardown and return verified death.
 
-    POSIX: signal the whole process group (``killpg``), falling back to a plain
-    ``kill`` if the pid isn't a group leader.
-    Windows: ``taskkill /T /F`` walks and kills the child tree (there is no
-    process-group signalling).
+    Callers retaining durable PIDs must pass their recorded ``start_token``
+    with ``require_identity=True``. Native grants retain identity at spawn and
+    use containment.release directly; this entry point owns no grant record.
     """
-    if not pid:
-        return
-    if IS_WINDOWS:
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception:
-            pass
-        return
-    import signal
-
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+    from src import process_lifecycle
+    return process_lifecycle.terminate_tree(
+        pid, pgid=pgid, start_token=start_token, require_identity=require_identity,
+    )
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────

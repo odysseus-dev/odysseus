@@ -2,10 +2,14 @@
 
 import asyncio
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+import src.tool_capabilities as tool_capabilities
 from core.models import ChatMessage, Session
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
@@ -14,6 +18,11 @@ from src.tool_approval_scopes import (
 )
 from src.tool_approvals import ExactToolApproval, ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
+
+
+@pytest.fixture(autouse=True)
+def _enable_approval_gate_for_legacy_gate_tests(monkeypatch):
+    monkeypatch.setattr(tool_capabilities, "TOOL_APPROVAL_GATE_ENABLED", True)
 
 
 def _pending(
@@ -347,9 +356,15 @@ def test_route_context_agent_frontend_and_cache_bust_wire_the_contract():
     assert "CHAT_SESSION_APPROVAL_CONTEXT_MARKER" in capabilities
     assert "CHAT_SESSION_APPROVAL_CONTEXT_MARKER" in models
 
-    version = "20260819approvalcontrol1"
-    assert f"chat.js?v={version}" in app
-    assert f"chat.js?v={version}" in index
-    assert f"chatRenderer.js?v={version}" in frontend
-    assert f"chatRenderer.js?v={version}" in app
-    assert f"chatRenderer.js?v={version}" in index
+    def version(source: str, module: str) -> str:
+        match = re.search(rf"(?:\./js/|\./|/static/js/){module}\.js\?v=([^'\"<]+)", source)
+        assert match, f"missing versioned {module}.js reference"
+        return match.group(1)
+
+    chat_version = version(app, "chat")
+    renderer_version = version(app, "chatRenderer")
+    stream_version = version(frontend, "chatStream")
+    assert version(index, "chat") == chat_version
+    assert version(frontend, "chatRenderer") == renderer_version
+    assert version(index, "chatRenderer") == renderer_version
+    assert version(index, "chatStream") == stream_version

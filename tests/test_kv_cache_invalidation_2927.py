@@ -69,7 +69,7 @@ def _build_context_harness(monkeypatch, chat_helpers, history):
             temperature=0.7, max_tokens=1024, system_prompt="You are Odysseus.", character_name=None,
         )
 
-    def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
+    def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False, **kwargs):
         sess.messages.append({"role": "user", "content": preprocessed.user_content})
 
     async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
@@ -326,7 +326,7 @@ async def test_run_post_response_tasks_does_not_fire_extraction_concurrently(mon
         sess, session_manager, "sess-Y", "hello", "hi there", None,
         {"auto_memory": True, "auto_skills": True}, memory_manager=MagicMock(), memory_vector=MagicMock(),
         webhook_manager=None,
-        agent_rounds=3, agent_tool_calls=3, skills_manager=MagicMock(), owner="tester",
+        agent_rounds=3, agent_tool_calls=4, skills_manager=MagicMock(), owner="tester",
         extract_skills=True,
     )
 

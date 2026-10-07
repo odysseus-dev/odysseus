@@ -4,6 +4,14 @@ import time
 from collections import namedtuple
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
 
 from src.tool_approvals import ToolApprovalStore, document_content_digest
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
@@ -24,6 +32,15 @@ def _pending(store, **overrides):
         "capabilities": capabilities_for_action("bash", "printf exact"),
     }
     values.update(overrides)
+    if "request_authority" not in values:
+        import tempfile
+        from src.agent_runtime.authority import RequestAuthority, OperationGrant
+        from src.agent_runtime.resources import ProcessLaunchScope, FilesystemRoot, NativeBackendResource
+        from src.containment import DEFAULT_REQUIRED
+        tool = values["tool_name"]
+        scopes = (ProcessLaunchScope(NativeBackendResource(tool), FilesystemRoot.seal(tempfile.mkdtemp(prefix="w3-approval-fixture-")), DEFAULT_REQUIRED),) if tool in {"bash", "python"} else ()
+        values["request_authority"] = RequestAuthority("standalone-test-request", str(values["owner"]).casefold(),
+            str(values["session_id"] or ""), str(values["workspace"] or ""), (OperationGrant(tool),), launch_scopes=scopes)
     return store.create(**values)
 
 
@@ -145,6 +162,15 @@ def test_public_payload_shows_complete_action_but_not_authority_fields():
     assert "origin_run_id" not in str(payload)
 
 
+def test_approval_preserves_originating_request_only_for_server_continuation():
+    store = ToolApprovalStore()
+    request = "delete the note titled ODY-EVAL-SEQUENCE"
+    pending = _pending(store, request_text=request)
+
+    assert pending.request_text == request
+    assert request not in str(pending.public_payload())
+
+
 @pytest.mark.asyncio
 async def test_dispatcher_claims_approval_immediately_before_execution(monkeypatch):
     import src.tool_execution as tool_execution
@@ -187,6 +213,16 @@ async def test_dispatcher_claims_approval_immediately_before_execution(monkeypat
 @pytest.mark.asyncio
 async def test_dispatcher_uses_sealed_document_target(monkeypatch):
     import src.tool_execution as tool_execution
+    from datetime import datetime
+    from types import SimpleNamespace
+    from src.agent_runtime import owned_resources
+    # This dispatcher fixture seals an observed owned row, as production does;
+    # model/document text alone cannot stand in for a resource identity.
+    row = SimpleNamespace(id="document-7", owner="alice", session_id="session-1",
+        version_count=4, current_content="original", created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 2))
+    monkeypatch.setattr(owned_resources, "_row", lambda namespace, identifier, owner: row
+                        if (namespace, identifier, owner) == ("documents", "document-7", "alice") else None)
 
     store = ToolApprovalStore()
     content = '{"content":"replacement"}'
@@ -316,6 +352,8 @@ def test_approved_document_version_guard_rejects_changed_target():
 
 @pytest.mark.asyncio
 async def test_missing_sealed_document_does_not_fall_back_to_another(monkeypatch):
+    import sys
+    from types import ModuleType
     import src.agent_tools.document_tools as document_tools
 
     class FakeDb:
@@ -325,7 +363,11 @@ async def test_missing_sealed_document_does_not_fall_back_to_another(monkeypatch
         def rollback(self):
             pass
 
-    monkeypatch.setattr("src.database.SessionLocal", lambda: FakeDb())
+    database = ModuleType("src.database")
+    database.SessionLocal = lambda: FakeDb()
+    database.Document = object
+    database.DocumentVersion = object
+    monkeypatch.setitem(sys.modules, "src.database", database)
     monkeypatch.setattr(
         document_tools,
         "_get_owned_document",

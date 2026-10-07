@@ -90,6 +90,29 @@ EXTRACT_SYSTEM_PROMPT = (
 # How many recent messages to include for extraction
 CONTEXT_WINDOW = 6
 
+PERSONA_MEMORY_SYSTEM_PROMPT = (
+    "You maintain concise continuity notes for one active chat persona. "
+    "Update the existing notes using only durable details established in the transcript. "
+    "Keep details that help the same persona stay consistent in future conversations: "
+    "relationship context, names, preferences, recurring story details, boundaries, and unresolved threads. "
+    "Do not store generic chat events, temporary wording, assistant reasoning, or one-off requests. "
+    "Never invent details. Return only the updated notes as short bullet points, max 12 bullets. "
+    "If there is nothing worth keeping, return the existing notes unchanged or an empty string."
+)
+
+HEALTH_PERSONA_MEMORY_SYSTEM_PROMPT = (
+    "You maintain a cautious health-record brief for a medical reasoning persona. "
+    "Update the existing brief using only medically durable information from the transcript. "
+    "Keep facts that may matter in future health conversations: confirmed diagnoses, chronic conditions, "
+    "surgeries/procedures, allergies, regular medications/supplements, important test results, clinicians/hospitals, "
+    "ongoing symptoms or care plans, and the user's preferences for medical explanations. "
+    "Use uncertainty labels when needed: 'reported', 'possible', 'asked about', 'unclear'. "
+    "Do not turn guesses into diagnoses. Do not store casual one-off symptoms unless they are recurring, severe, "
+    "or tied to an ongoing episode. Never invent facts. Return only the updated brief with these headings when useful: "
+    "Medical profile, Medications/allergies, Episodes/open questions, Preferences. Max 16 concise bullets total. "
+    "If nothing medically durable changed, return the existing brief unchanged or an empty string."
+)
+
 AUDIT_SYSTEM_PROMPT = (
     "You are a memory database curator. Be CONSERVATIVE: remove only TRUE "
     "duplicates and clearly useless entries. Every distinct fact must survive. "
@@ -112,6 +135,20 @@ AUDIT_SYSTEM_PROMPT = (
 )
 
 AUDIT_INTERVAL = 5  # audit every N new memories added
+AUTO_PINNED_IDENTITY_LIMIT = 5
+
+
+def _is_owner_memory(entry, owner):
+    if owner:
+        return entry.get("owner") == owner or entry.get("owner") is None
+    return True
+
+
+def _is_auto_pinned_identity(entry):
+    return (
+        bool(entry.get("pinned"))
+        and (entry.get("category") or "").lower() in {"identity", "contact"}
+    )
 _extractions_since_audit = 0
 
 
@@ -397,6 +434,10 @@ async def extract_and_store(
             logger.error("Skipping auto memory extraction, store unreadable: %s", e)
             return
         added = 0
+        auto_pinned_identity_count = sum(
+            1 for entry in existing
+            if _is_owner_memory(entry, _owner) and _is_auto_pinned_identity(entry)
+        )
 
         for fact in facts:
             if isinstance(fact, str):
@@ -404,7 +445,7 @@ async def extract_and_store(
                 category = "fact"
             elif isinstance(fact, dict):
                 fact_text = fact.get("text", "").strip()
-                category = fact.get("category", "fact")
+                category = str(fact.get("category", "fact") or "fact")
             else:
                 continue
 
@@ -446,9 +487,15 @@ async def extract_and_store(
                 continue
 
             entry = memory_manager.add_entry(fact_text, source="auto", category=category, owner=_owner)
-            # Auto-pin identity facts (name, job, location) — core context
-            if category == "identity":
+            # Auto-pin only the first few identity/contact facts. Extra identity
+            # memories are still saved, but they must be recalled by relevance
+            # instead of riding along in every prompt forever.
+            if (
+                category.lower() in {"identity", "contact"}
+                and auto_pinned_identity_count < AUTO_PINNED_IDENTITY_LIMIT
+            ):
                 entry["pinned"] = True
+                auto_pinned_identity_count += 1
             if hasattr(session, "session_id"):
                 entry["session_id"] = session.session_id
             elif hasattr(session, "name"):
@@ -490,6 +537,90 @@ async def extract_and_store(
 
     except Exception as e:
         logger.error(f"Memory extraction failed: {e}")
+
+
+async def update_persona_memory(
+    session,
+    preset_manager,
+    character_name: str,
+    endpoint_url: str,
+    model: str,
+    headers: Optional[dict] = None,
+    schema: str = "general",
+):
+    """Update the active persona's continuity notes from recent conversation.
+
+    Persona memory is stored with the persona/template data, not in the global
+    memory DB, so deleting a saved persona also deletes its notes.
+    """
+    character_name = (character_name or "").strip()
+    if not character_name or not endpoint_url or not model or preset_manager is None:
+        return
+
+    try:
+        from src.llm_core import llm_call_async
+        from src.text_helpers import strip_think
+
+        custom = {}
+        try:
+            custom = preset_manager.presets.get("custom", {}) if isinstance(preset_manager.presets, dict) else {}
+        except Exception:
+            custom = {}
+        existing_memory = ""
+        if isinstance(custom, dict) and custom.get("character_name") == character_name:
+            existing_memory = custom.get("persona_memory", "") or ""
+
+        messages = session.get_context_messages()
+        recent = messages[-CONTEXT_WINDOW:] if len(messages) > CONTEXT_WINDOW else messages
+        if len(recent) < 2:
+            return
+
+        lines = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            content = str(content or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        if not lines:
+            return
+
+        system_prompt = HEALTH_PERSONA_MEMORY_SYSTEM_PROMPT if schema == "health" else PERSONA_MEMORY_SYSTEM_PROMPT
+        raw = await llm_call_async(
+            endpoint_url,
+            model,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": (
+                    f"Persona name: {character_name}\n\n"
+                    f"Existing continuity notes:\n{existing_memory or '(none)'}\n\n"
+                    "Recent transcript:\n"
+                    + "\n\n".join(lines)
+                    + "\n\nReturn only the updated continuity notes."
+                )},
+            ],
+            temperature=0.1,
+            max_tokens=1200,
+            headers=headers,
+        )
+
+        updated = strip_think(str(raw or ""), prose=True, prompt_echo=True).strip()
+        # No leading `\s*` before the closing fence: .strip() drops that
+        # whitespace anyway, and scanning it from every offset was quadratic.
+        updated = re.sub(r"^```(?:text|markdown)?\s*|```$", "", updated, flags=re.I | re.S).strip()
+        if len(updated) > 6000:
+            updated = updated[:6000].rstrip()
+        if updated == existing_memory:
+            return
+        if preset_manager.update_persona_memory(character_name, updated):
+            logger.info("Updated persona memory for %s", character_name)
+    except Exception as e:
+        logger.warning("Persona memory update failed: %s", e)
 
 
 async def audit_memories(
@@ -565,8 +696,9 @@ async def audit_memories(
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,
         # markdown fences, leading prose, and trailing commas.
         import re as _re
+        from src.text_helpers import strip_closed_think_blocks
         text = (raw or "").strip()
-        text = _re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=_re.I).strip()
+        text = strip_closed_think_blocks(text).strip()
 
         def _loads_list(s):
             if not s:
@@ -582,7 +714,9 @@ async def audit_memories(
 
         cleaned = _loads_list(text)
         if cleaned is None:
-            _m = _re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', text)
+            # Possessive `\s*+`: handing fence whitespace back to the body on a
+            # missing closing fence only rescanned the same tail (ReDoS).
+            _m = _re.search(r'```(?:json)?\s*+\n?([\s\S]*?)```', text)
             if _m:
                 cleaned = _loads_list(_m.group(1).strip())
         if cleaned is None:

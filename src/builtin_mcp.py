@@ -181,6 +181,7 @@ async def register_builtin_servers(mcp_manager):
             )
             if ok:
                 logger.info(f"Built-in MCP server registered: {name}")
+                await mcp_manager.hold_owned_connection(server_id)
             else:
                 logger.warning(f"Built-in MCP server failed to connect: {name}")
         except asyncio.CancelledError:
@@ -244,6 +245,7 @@ async def register_builtin_servers(mcp_manager):
                 )
                 if ok:
                     logger.info(f"Built-in NPX server registered: {cfg['name']}")
+                    await mcp_manager.hold_owned_connection(server_id)
                 else:
                     logger.warning(f"Built-in NPX server failed to connect: {cfg['name']}")
             except asyncio.CancelledError:

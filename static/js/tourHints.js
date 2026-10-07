@@ -4,6 +4,8 @@
 // fullscreened by dragging the title bar. Shown once globally — once the
 // user has dismissed it (or it auto-hides), it never returns.
 
+import { bindTourHintDismiss } from './tourHintDismiss.js';
+
 const HINT_SEEN_KEY = 'odysseus-hint-drag-to-snap-seen';
 
 // Allow-list of modals where the snap/fullscreen hint makes sense.
@@ -114,14 +116,7 @@ function _show(modal) {
     pop.classList.add('tour-hint-in');
   });
 
-  const dismiss = () => {
-    pop.classList.add('tour-hint-out');
-    setTimeout(() => pop.remove(), 280);
-    _markSeen();
-  };
-  pop.querySelector('.tour-hint-dismiss').addEventListener('click', dismiss);
-  // Auto-dismiss after 14s so it doesn't linger forever.
-  setTimeout(() => { if (pop.isConnected) dismiss(); }, 14000);
+  bindTourHintDismiss(pop, { timeout: 14000, onDismiss: _markSeen });
 }
 
 function _watchModals() {

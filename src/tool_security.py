@@ -20,6 +20,7 @@ BUILTIN_EMAIL_TOOLS = frozenset({
     "read_email",
     "search_emails",
     "scan_email_unsubscribes",
+    "scan_spam",
     "unsubscribe_email",
     "send_email",
     "reply_to_email",
@@ -31,6 +32,8 @@ BUILTIN_EMAIL_TOOLS = frozenset({
     "mark_email_read",
     "bulk_email",
     "download_attachment",
+    "block_sender",
+    "manage_email_state",
 })
 
 
@@ -51,6 +54,7 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "glob",
     "ls",
     "get_workspace",
+    "host_shell",
     "search_chats",
     "manage_memory",
     "manage_skills",
@@ -148,7 +152,8 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
     "manage_calendar", "api_call", "app_api", "ui_control",
     "send_email", "reply_to_email", "bulk_email", "delete_email",
-    "archive_email", "mark_email_read", "unsubscribe_email",
+    "archive_email", "mark_email_read", "unsubscribe_email", "block_sender",
+    "manage_email_state",
     # The draft tools create documents and download_attachment writes to
     # disk — mutating. They have no native schemas (yet), so without these
     # static entries plan-mode safety for their bare fence tags would depend

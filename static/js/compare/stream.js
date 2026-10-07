@@ -1,11 +1,11 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
-import { addFinishBadge } from './vote.js';
-import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260819approvalcontrol1';
+import { addFinishBadge } from './vote.js?v=20260828resendcaldrag1';
+import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260914metricssummary1';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
-import uiModule from '../ui.js';
-import presetsModule from '../presets.js';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import presetsModule from '../presets.js?v=20260908personaname1';
 
 var escapeHtml = uiModule.esc;
 
@@ -53,6 +53,61 @@ function _setCompareBusy(active) {
 
 function _syncCompareBusyFromPanes() {
   _setCompareBusy((state._abortControllers || []).some(Boolean));
+}
+
+function _compareTimezoneHeaders() {
+  const headers = { 'X-Tz-Offset': String(-new Date().getTimezoneOffset()) };
+  try {
+    headers['X-Tz-Name'] = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch (_) {
+    headers['X-Tz-Name'] = '';
+  }
+  return headers;
+}
+
+function _compactNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  if (Math.abs(num) >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (Math.abs(num) >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(Math.round(num));
+}
+
+function _formatCost(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  if (num < 0.001) return '<$0.001';
+  return '$' + (num < 0.01 ? num.toFixed(4) : num.toFixed(3));
+}
+
+function _setPaneSummary(paneIdx, metrics, cost) {
+  const summary = document.getElementById('cmp-summary-' + paneIdx);
+  if (!summary) return;
+  if (!metrics) {
+    summary.textContent = '';
+    summary.title = '';
+    return;
+  }
+  const outputTokens = metrics.output_tokens;
+  const responseTime = metrics.response_time ?? metrics.total_time;
+  const ttft = metrics.client_ttft ?? metrics.time_to_first_token;
+  const explicitTps = metrics.tokens_per_second ?? metrics.gen_tps ?? metrics.tps;
+  const numericOutput = Number(outputTokens);
+  const numericTime = Number(responseTime);
+  const numericTps = Number(explicitTps);
+  const derivedTps = Number.isFinite(numericTps)
+    ? numericTps
+    : (Number.isFinite(numericOutput) && Number.isFinite(numericTime) && numericTime > 0)
+      ? numericOutput / numericTime
+      : null;
+  const bits = [];
+  if (Number.isFinite(Number(ttft)) && Number(ttft) > 0) bits.push('TTFT ' + Number(ttft).toFixed(3) + 's');
+  if (outputTokens != null && outputTokens !== 'undefined') bits.push(_compactNumber(outputTokens) + ' tok');
+  if (derivedTps != null) bits.push((derivedTps >= 100 ? String(Math.round(derivedTps)) : derivedTps.toFixed(1).replace(/\.0$/, '')) + '/s');
+  if (metrics.context_percent > 0) bits.push(metrics.context_percent + '% ctx');
+  if (cost !== null && cost !== undefined) bits.push(_formatCost(cost));
+  summary.textContent = bits.join(' · ');
+  summary.title = bits.length ? 'Response summary: ' + bits.join(', ') : '';
 }
 
 function _appendPaneMessage(hist, role, text) {
@@ -302,6 +357,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
   // Show stop button for this pane
   const _paneEl = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
   if (_paneEl) {
+    _paneEl.classList.remove('is-done', 'is-failed', 'is-awaiting-input');
+    _paneEl.classList.add('is-streaming');
+    _setPaneSummary(paneIdx, null, null);
     const _stopBtn = _paneEl.querySelector('.pane-stop-btn');
     if (_stopBtn) _stopBtn.style.display = '';
   }
@@ -407,7 +465,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     }
 
     const response = await fetch(`${state.API_BASE}/api/chat_stream`, {
-      method: 'POST', body: fd, signal: ac.signal
+      method: 'POST',
+      body: fd,
+      headers: _compareTimezoneHeaders(),
+      signal: ac.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -476,6 +537,8 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
           // ── Pane-local question / approval selector ──
           } else if (json.type === 'ask_user') {
             awaitingChoice = true;
+            const paneEl = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
+            if (paneEl) paneEl.classList.add('is-awaiting-input');
             _renderPaneAskUserCard(
               paneIdx,
               sessionId,
@@ -597,7 +660,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               }
               const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${escapeHtml(cmd)}</pre>` : '';
               currentToolBlock.className = 'agent-thread-node' + (ok ? '' : ' error');
-              currentToolBlock.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${escapeHtml(tLabel)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml}${outHtml}</div>`;
+              // The chevron is drawn by CSS; leaving a literal ▶ here created
+              // two arrows in the completed tool rows.
+              currentToolBlock.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${escapeHtml(tLabel)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron"></span></div><div class="agent-thread-content">${cmdHtml}${outHtml}</div>`;
               currentToolBlock.querySelector('.agent-thread-header').addEventListener('click', () => currentToolBlock.classList.toggle('open'));
               currentToolBlock = null;
               // Reset text element so next deltas create a fresh container
@@ -652,6 +717,12 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     }
     if (window.hljs) {
       finalTarget.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
+    }
+
+    // Preserve the client-side time-to-first-token measurement with the
+    // server metrics so it appears in the compare summary and footer.
+    if (metrics && _ttft > 0 && metrics.client_ttft == null) {
+      metrics.client_ttft = Number((_ttft / 1000).toFixed(3));
     }
 
     // ── Show play button if response contains HTML ──
@@ -735,6 +806,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       const outputTokens = metrics.output_tokens;
       const responseTime = metrics.response_time ?? metrics.total_time;
       const explicitTps = metrics.tokens_per_second ?? metrics.gen_tps ?? metrics.tps;
+      const ttft = metrics.client_ttft ?? metrics.time_to_first_token;
       const numericOutput = Number(outputTokens);
       const numericTime = Number(responseTime);
       const numericTps = Number(explicitTps);
@@ -747,6 +819,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         ? (derivedTps >= 100 ? String(Math.round(derivedTps)) : derivedTps.toFixed(2).replace(/\.?0+$/, ''))
         : null;
       const parts = [];
+      if (Number.isFinite(Number(ttft)) && Number(ttft) > 0) {
+        parts.push('TTFT ' + Number(ttft).toFixed(3) + 's');
+      }
       if (outputTokens != null && outputTokens !== 'undefined') {
         parts.push(outputTokens + ' tokens');
       }
@@ -759,6 +834,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       // Add per-request cost and cost per 1000
       const _model = metrics.model || (state._selectedModels[paneIdx] && state._selectedModels[paneIdx].model) || '';
       const _cost = getModelCost(_model, metrics.input_tokens || 0, metrics.output_tokens || 0);
+      _setPaneSummary(paneIdx, metrics, _cost);
       // Build the metrics span with optional cost and context
       span.textContent = parts.join(' | ');
       if (_cost !== null) {
@@ -778,6 +854,21 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
       footer.appendChild(span);
       aiMsgEl.appendChild(footer);
+    }
+    const footerMetrics = aiMsgEl?.querySelector('.msg-footer:last-child .response-metrics');
+    if (footerMetrics) {
+      const thinkingMode = state._paneGenerationSettings[paneIdx]?.thinking_mode;
+      if (thinkingMode === 'off') {
+        const thinkingState = document.createElement('span');
+        thinkingState.className = 'response-thinking-state';
+        thinkingState.textContent = (footerMetrics.textContent ? ' | ' : '') + 'Thinking off';
+        footerMetrics.appendChild(thinkingState);
+      }
+      footerMetrics.dataset.action = 'settings';
+      footerMetrics.dataset.pane = String(paneIdx);
+      footerMetrics.setAttribute('role', 'button');
+      footerMetrics.setAttribute('tabindex', '0');
+      footerMetrics.title = 'Response details and inference settings';
     }
     if (hist) hist.scrollTop = hist.scrollHeight;
 
@@ -827,6 +918,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     // Hide stop button, show response action buttons
     const _paneElFinal = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
     if (_paneElFinal) {
+      _paneElFinal.classList.remove('is-streaming');
+      _paneElFinal.classList.toggle('is-awaiting-input', awaitingChoice);
+      _paneElFinal.classList.toggle('is-done', streamOk && !awaitingChoice);
+      _paneElFinal.classList.toggle('is-failed', !streamOk && !awaitingChoice);
       const _stopBtnFinal = _paneElFinal.querySelector('.pane-stop-btn');
       if (_stopBtnFinal) _stopBtnFinal.style.display = 'none';
       if (!awaitingChoice && accumulated.trim()) {
@@ -870,7 +965,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     }
     // Show copy/reroll buttons now that response exists
     const paneEl = document.querySelector('.compare-pane:nth-child(' + (paneIdx + 1) + ')');
-    if (paneEl) paneEl.querySelectorAll('.pane-needs-response').forEach(b => b.style.display = '');
+    if (paneEl && !awaitingChoice && accumulated.trim()) {
+      paneEl.querySelectorAll('.pane-needs-response').forEach(b => b.style.display = '');
+    }
   }
 }
 
@@ -910,9 +1007,12 @@ function _stampGradeBadge(paneIdx, response, expected) {
   badge.className = 'pane-grade-badge ' + (pass ? 'pass' : 'fail');
   badge.title = pass ? 'Response contains the expected answer' : 'Expected answer not found in response';
   badge.textContent = pass ? '✓' : '✗';
-  // Insert just before the finish badge if present, else after the title
+  // The two-row pane header keeps result badges inside .pane-stats.
+  // Always insert relative to the finish badge's actual parent.
   const finBadge = header.querySelector('.pane-finish-badge');
-  if (finBadge) header.insertBefore(badge, finBadge);
+  const stats = header.querySelector('.pane-stats');
+  if (finBadge?.parentNode) finBadge.parentNode.insertBefore(badge, finBadge);
+  else if (stats) stats.appendChild(badge);
   else header.appendChild(badge);
 }
 

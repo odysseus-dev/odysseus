@@ -74,6 +74,17 @@ Missing-owner values remain state-dependent at legacy call sites, but new storag
 
 - Auth-enabled, configured auth with no `current_user` is unauthenticated and should fail closed at route dependencies.
 - `AUTH_ENABLED=false` is an explicit local single-user/no-login mode. Existing route dependencies can still return `""`, and admin gates allow the local operator. `effective_storage_owner()` and `storage_owner_for_request()` normalize an absent owner to `__odysseus_local__` only in this mode.
+  Native shell and local Cookbook administration additionally require a direct
+  loopback connection without proxy forwarding, cross-site indicators, or an
+  internal-tool header. Remote/proxied anonymous traffic remains denied at
+  these controls. Auth-enabled administration still requires a human admin.
+  This mode trusts local programs as well as the local operator: a headerless
+  loopback request cannot identify which local program sent it. Agent program
+  launches retain inherited networking; this is not protection against hostile
+  local code. Use authenticated mode when local programs are outside that trust.
+  Local Cookbook tools use a separate one-use capability for an admitted exact
+  request/operation/native backend and resolved launch body; that capability
+  cannot administer shell, PID, SSH-key, or arbitrary Cookbook state routes.
 - Chat/agent code that reads `get_current_user(request)` directly gets `None` when auth middleware is disabled, because no middleware stamps request state.
 - SQL `NULL`/JSON missing owners remain legacy/shared compatibility data, not the same thing as a logged-out authenticated caller.
 - `"api"` and `"internal-tool"` are request sentinels. They must not be persisted as normal storage owners unless a route explicitly defines that behavior.

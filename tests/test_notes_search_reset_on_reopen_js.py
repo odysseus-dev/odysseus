@@ -27,3 +27,37 @@ def test_open_panel_resets_search_query():
 
 def test_module_still_declares_search_query():
     assert "let _searchQuery = ''" in SRC
+
+
+def test_notes_label_chips_can_be_collapsed_like_calendar_tags():
+    assert "NOTES_LABELS_COLLAPSED_KEY = 'odysseus-notes-labels-collapsed'" in SRC
+    assert "_labelsCollapsed = !_labelsCollapsed" in SRC
+    assert "localStorage.setItem(NOTES_LABELS_COLLAPSED_KEY" in SRC
+    assert "toggle.textContent = _labelsCollapsed ? '+ Tags' : '− Tags';" in SRC
+    assert "bar.style.display = 'none';" in SRC
+
+
+def test_notes_tag_toggle_sits_in_search_toolbar_before_select():
+    assert "const toggleHost = pane?.querySelector('.notes-search-bar') || _body;" in SRC
+    assert "const selectButton = toggleHost.querySelector('#notes-select-btn');" in SRC
+    assert "toggleHost.insertBefore(toggle, selectButton || null);" in SRC
+
+
+def test_expanded_tags_strip_hides_when_no_useful_filters_exist():
+    assert "const hasUsefulFilters = sortedLabels.length > 0 || reminderCount > 0 || goalCount > 0;" in SRC
+    assert "if (!hasUsefulFilters && !hasActiveFilter)" in SRC
+    assert "bar.style.display = 'none';" in SRC
+
+
+def test_drawing_preview_opens_its_note_editor():
+    assert "note.note_type === 'draw' ? ' note-card-drawing' : ''" in SRC
+    assert "body.querySelectorAll('.note-card-drawing .note-card-image')" in SRC
+    assert "tapToEditOrSelect(el.closest('.note-card'))" in SRC
+
+
+def test_drawing_defaults_follow_theme_surface_and_highlight():
+    assert "const surfaceColor = resolveThemeColor('var(--panel, var(--bg))'" in SRC
+    assert "resolveThemeColor('var(--accent, var(--red))'" in SRC
+    assert "if (colorInput) colorInput.value = highlightColor;" in SRC
+    assert "ctx.strokeStyle = erasing ? surfaceColor" in SRC
+    assert "destination-out" not in SRC

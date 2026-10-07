@@ -28,6 +28,7 @@ import asyncio
 import pytest
 
 from src import agent_runs
+from routes import chat_routes
 
 
 # --------------------------------------------------------------------------- #
@@ -461,3 +462,61 @@ def test_compare_mode_branch_skips_agent_runs_in_source():
         "compare_mode must short-circuit to a direct (non-detached) "
         "StreamingResponse before normal streams are wrapped in agent_runs"
     )
+
+
+@pytest.mark.parametrize(
+    ("compare_mode", "runtime_context", "expected"),
+    [
+        (False, {}, True),
+        (False, {"surface": "odysseus-tui"}, True),
+        (True, {}, False),
+        (
+            False,
+            {"surface": "odysseus-native", "unattended_mode": True},
+            False,
+        ),
+    ],
+)
+def test_only_resumable_interactive_streams_are_detached(
+    compare_mode,
+    runtime_context,
+    expected,
+):
+    assert chat_routes._should_detach_chat_stream(
+        compare_mode=compare_mode,
+        client_runtime_context=runtime_context,
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    ("tools_blocked", "approval_continuation", "runtime_context", "expected"),
+    [
+        (False, False, {}, True),
+        (True, False, {}, False),
+        (False, True, {}, False),
+        (False, False, {"surface": "odysseus-native"}, True),
+        (
+            False,
+            False,
+            {"surface": "odysseus-native", "unattended_mode": True},
+            False,
+        ),
+        (
+            False,
+            False,
+            {"surface": "odysseus-tui", "unattended_mode": True},
+            False,
+        ),
+    ],
+)
+def test_unattended_streams_do_not_launch_post_response_llm_jobs(
+    tools_blocked,
+    approval_continuation,
+    runtime_context,
+    expected,
+):
+    assert chat_routes._post_response_extraction_allowed(
+        tools_blocked=tools_blocked,
+        tool_approval_continuation=approval_continuation,
+        client_runtime_context=runtime_context,
+    ) is expected

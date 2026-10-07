@@ -6,7 +6,6 @@
 <title>Odysseus — Login</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="static/manifest.json">
-<link rel="apple-touch-icon" href="static/icons/icon-192.png">
 <script nonce="{{CSP_NONCE}}">
 (function(){
   function computeAppBasePath() {
@@ -106,7 +105,7 @@
 <style>
   @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('static/fonts/FiraCode-Regular.woff2') format('woff2'); }
   @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
-  /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
+  /* Mirror the main app's :root defaults from the stylesheet cascade so an
      uncustomized theme — or a fresh browser with no `odysseus-theme` in
      localStorage — renders the login page in the same palette as the rest
      of the app instead of a different greys+offwhite scheme. */
@@ -115,7 +114,7 @@
     --red: #e06c75; --green: #50fa7b;
     --bg-effect-intensity: 1;
   }
-  /* Background patterns — mirrors static/style.css "Background Patterns"
+  /* Background patterns — mirrors the main app "Background Patterns" styles
      block so the theme's chosen bgPattern renders on login too. The
      canvas-based effects (rain, constellations, perlin-flow, petals,
      sparkles, embers) are spawned by the deferred theme.js import below;
@@ -157,7 +156,7 @@
     font-size: 2rem; font-weight: 600;
     letter-spacing: 0.04em;
     /* Same gradient as the main app's welcome-screen "Odysseus" title
-       (static/style.css #welcome-screen .welcome-name) so the brand
+       (the main cascade's #welcome-screen .welcome-name) so the brand
        wordmark is consistent across login + first-launch screens. */
     background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
     -webkit-background-clip: text;
@@ -175,7 +174,7 @@
   /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
      page when a field is focused (it auto-zooms any focused input under 16px).
      This page has its own inline styles, so it doesn't inherit the main app's
-     equivalent rule in static/style.css; mirror it here. !important also lifts
+     equivalent rule in the main stylesheet cascade; mirror it here. !important also lifts
      the dynamically-inserted 2FA input, which pins font-size:14px inline. */
   @media (hover: none) and (pointer: coarse) {
     input:not(.remember-check) { font-size: 16px !important; }
@@ -199,6 +198,22 @@
   button:hover { background: color-mix(in srgb, var(--red) 66%, black); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #e55; font-size: 0.85rem; margin-bottom: 0.75rem; display: none; }
+
+  /* On phones the error used to sit above the form, which puts it behind the
+     keyboard after a failed sign-in. Reorder only the mobile form so the
+     message stays directly below the password field. */
+  @media (max-width: 600px) {
+    .card { display: flex; flex-direction: column; }
+    #authForm { display: contents; }
+    #authForm > label[for="username"] { order: 1; }
+    #authForm > .login-username-wrap { order: 2; }
+    #authForm > label[for="password"] { order: 3; }
+    #authForm > .login-password-wrap { order: 4; }
+    #error { order: 5; margin-top: 0.15rem; margin-bottom: 0.75rem; scroll-margin-bottom: 1rem; }
+    #authForm > #confirmGroup { order: 6; }
+    #authForm > #submitBtn { order: 7; }
+    #toggleArea { order: 8; }
+  }
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
   .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
@@ -254,19 +269,6 @@
     font-family: 'Fira Code', monospace;
     pointer-events: none; user-select: none;
   }
-  /* Whirlpool-style spinner shown in the submit button while login /
-     account-creation work is in flight — replaces the previous "Loading…"
-     text. Two-color ring (muted base + accent arc) rotates continuously. */
-  .login-spinner {
-    display: inline-block;
-    width: 16px; height: 16px;
-    border: 2px solid color-mix(in srgb, var(--fg, #fff) 22%, transparent);
-    border-top-color: var(--accent, var(--red, #e8a830));
-    border-radius: 50%;
-    animation: login-spin 0.7s linear infinite;
-    vertical-align: -3px;
-  }
-  @keyframes login-spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -280,7 +282,7 @@
 
   <form id="authForm" autocomplete="on">
     <label for="username">Username</label>
-    <div class="pw-wrapper">
+    <div class="pw-wrapper login-username-wrap">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
       <label class="remember-toggle" id="rememberToggle" title="Remember me">
         <input type="checkbox" class="remember-check" id="remember" checked aria-label="Remember me">
@@ -289,7 +291,7 @@
     </div>
 
     <label for="password">Password</label>
-    <div class="pw-wrapper">
+    <div class="pw-wrapper login-password-wrap">
       <input id="password" name="password" type="password" required autocomplete="current-password">
       <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" aria-label="Show password">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
@@ -325,7 +327,7 @@
     const vr = await fetch(appUrl('/api/version'));
     if (vr.ok) {
       const vd = await vr.json();
-      document.getElementById('version-label').textContent = 'v' + vd.version;
+      document.getElementById('version-label').textContent = 'v' + (vd.build || vd.version);
     }
   } catch(e) {}
 
@@ -345,10 +347,53 @@
   const toggleArea = document.getElementById('toggleArea');
   const toggleLink = document.getElementById('toggleLink');
   const toggleText = document.getElementById('toggleText');
+  const spinnerModulePromise = import(appUrl('/static/js/spinner.js'));
+  let submitSpinner = null;
+  let submitSpinnerToken = 0;
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
   let policy = { password_min_length: 8, reserved_usernames: [] };
+
+  function submitLabel() {
+    if (form._totpMode) return 'Verify';
+    if (mode === 'setup') return 'Create Admin Account';
+    if (mode === 'signup') return 'Create Account';
+    return 'Sign In';
+  }
+
+  function restoreSubmit() {
+    submitSpinnerToken += 1;
+    submitSpinner?.destroy?.();
+    submitSpinner = null;
+    submitBtn.textContent = submitLabel();
+    submitBtn.disabled = false;
+  }
+
+  function showAuthError(message) {
+    errEl.textContent = message;
+    errEl.style.display = 'block';
+    // With the virtual keyboard open, keep the mobile-only message visible
+    // below the password field instead of leaving it behind the keyboard.
+    if (window.matchMedia('(max-width: 600px)').matches) {
+      requestAnimationFrame(() => errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+    }
+  }
+
+  function showSubmitWhirlpool() {
+    const token = ++submitSpinnerToken;
+    submitBtn.replaceChildren();
+    submitBtn.disabled = true;
+    spinnerModulePromise.then((spinnerModule) => {
+      if (token !== submitSpinnerToken) return;
+      submitSpinner = spinnerModule.createWhirlpool(16);
+      submitSpinner.element.style.cssText = 'display:inline-block;vertical-align:middle;width:16px;height:16px;margin:0;';
+      submitSpinner.element.setAttribute('aria-hidden', 'true');
+      submitBtn.appendChild(submitSpinner.element);
+    }).catch(() => {
+      if (token === submitSpinnerToken) submitBtn.textContent = '…';
+    });
+  }
 
   const rememberToggle = document.getElementById('rememberToggle');
 
@@ -424,6 +469,7 @@
       const code = totpInput ? totpInput.value.trim() : '';
       if (!code) { totpInput.focus(); submitBtn.disabled = false; return; }
       const remember = document.getElementById('remember').checked;
+      showSubmitWhirlpool();
       try {
         const res = await fetch(appUrl('/api/auth/login'), {
           method: 'POST',
@@ -437,9 +483,8 @@
         form._totpMode = false;
         finishLogin();
       } catch (err) {
-        errEl.textContent = err.message;
-        errEl.style.display = 'block';
-        submitBtn.disabled = false;
+        showAuthError(err.message);
+        restoreSubmit();
       }
       return;
     }
@@ -448,24 +493,23 @@
     if (mode === 'setup' || mode === 'signup') {
       const confirm = document.getElementById('confirmPassword').value;
       if (password !== confirm) {
-        errEl.textContent = 'Passwords do not match';
-        errEl.style.display = 'block';
+        showAuthError('Passwords do not match');
         submitBtn.disabled = false;
         return;
       }
       if (password.length < policy.password_min_length) {
-        errEl.textContent = `Password must be at least ${policy.password_min_length} characters`;
-        errEl.style.display = 'block';
+        showAuthError(`Password must be at least ${policy.password_min_length} characters`);
         submitBtn.disabled = false;
         return;
       }
       if (policy.reserved_usernames.includes(username.toLowerCase())) {
-        errEl.textContent = 'This username is reserved';
-        errEl.style.display = 'block';
+        showAuthError('This username is reserved');
         submitBtn.disabled = false;
         return;
       }
     }
+
+    showSubmitWhirlpool();
 
     // Setup or signup first
     if (mode === 'setup' || mode === 'signup') {
@@ -480,9 +524,8 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Account creation failed');
       } catch (err) {
-        errEl.textContent = err.message;
-        errEl.style.display = 'block';
-        submitBtn.disabled = false;
+        showAuthError(err.message);
+        restoreSubmit();
         return;
       }
     }
@@ -494,7 +537,6 @@
       if (_rem) localStorage.setItem('odysseus-last-user', username);
       else localStorage.removeItem('odysseus-last-user');
       sessionStorage.removeItem('ody-session-active');
-      submitBtn.innerHTML = '<span class="login-spinner" aria-hidden="true"></span>';
       submitBtn.disabled = true;
       Promise.all([
         fetch(appUrl('/api/sessions'), { credentials: 'same-origin' }).then(r => r.json()),
@@ -523,7 +565,7 @@
       let data = await doLogin();
       // 2FA required — show TOTP input
       if (data.requires_totp) {
-        submitBtn.disabled = false;
+        restoreSubmit();
         // Only add TOTP input once
         if (document.getElementById('totp-input')) return;
         form._totpMode = true;
@@ -539,9 +581,8 @@
       }
       finishLogin();
     } catch (err) {
-      errEl.textContent = err.message;
-      errEl.style.display = 'block';
-      submitBtn.disabled = false;
+      showAuthError(err.message);
+      restoreSubmit();
       return;
     }
   });

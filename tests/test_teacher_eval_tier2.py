@@ -3,7 +3,13 @@ import json
 from types import SimpleNamespace
 import pytest
 
+import src.tool_capabilities as tool_capabilities
 import src.teacher_escalation as teacher_escalation
+
+
+@pytest.fixture(autouse=True)
+def _enable_approval_gate_for_legacy_gate_tests(monkeypatch):
+    monkeypatch.setattr(tool_capabilities, "TOOL_APPROVAL_GATE_ENABLED", True)
 
 
 @pytest.mark.asyncio

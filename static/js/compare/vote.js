@@ -2,10 +2,10 @@
 import Storage from '../storage.js';
 import state from './state.js';
 import { _modelDisplayNames } from './models.js';
-import { getModelCost } from '../chatRenderer.js';
-import uiModule from '../ui.js';
-import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js';
-import { showScoreboard } from './scoreboard.js';
+import { getModelCost } from '../chatRenderer.js?v=20260914metricssummary1';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js?v=20260908compareprompts1';
+import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
 
 var escapeHtml = uiModule.esc;
 
@@ -74,7 +74,7 @@ function buildVoteBar(n) {
   // before a prompt) since viewing the scoreboard is always allowed.
   const scoreBtn = document.createElement('button');
   scoreBtn.className = 'compare-vote-btn compare-score-btn';
-  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Score';
+  scoreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span class="compare-score-label">Score</span>';
   scoreBtn.title = 'Scoreboard';
   scoreBtn.addEventListener('click', () => showScoreboard());
   bar.insertBefore(scoreBtn, tieBtn); // furthest left, before Tie

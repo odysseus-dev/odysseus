@@ -748,6 +748,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
                 "is_image_gen": True,
                 "capabilities": im.get("capabilities", []),
                 "description": im.get("description", ""),
+                "dependency_package": im.get("dependency_package", ""),
             })
         if use_case == "image_gen":
             sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
@@ -839,7 +840,6 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # native AWQ rows only on accelerator servers that can serve them.
         if (
             quant == "Q4_K_M"
-            and system.get("gpu_count", 1) >= 2
             and not (apple_silicon or consumer_amd or is_windows)
             and native_q == "AWQ-4bit"
         ):
