@@ -85,6 +85,7 @@ from src.tool_policy import (
     web_search_enabled_for_turn,
 )
 from src.tool_approvals import tool_approval_store
+from core.guard_deco import content_type, suspicious_frequency
 from src.tool_approval_scopes import stamp_chat_session_grant
 from src.tool_security import delegated_credential_blocked_tools
 from src.workspace_paths import backend_workspace_path
@@ -2187,6 +2188,8 @@ def setup_chat_routes(
     # POST /api/chat (non-streaming)
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, Any])
+    @suspicious_frequency(0.5, 60, "log")
+    @content_type(["application/json"])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, Any]:
         require_api_token_scope(request, "chat")
         _set_user_time_from_request(request)
@@ -2404,6 +2407,7 @@ def setup_chat_routes(
     # POST /api/chat_stream
     # ------------------------------------------------------------------ #
     @router.post("/api/chat_stream")
+    @suspicious_frequency(0.5, 60, "log")
     async def chat_stream(request: Request) -> StreamingResponse:
         require_api_token_scope(request, "chat")
         body = None
@@ -5021,6 +5025,8 @@ def setup_chat_routes(
     # POST /api/rewrite — lightweight rewrite of last AI message (no tools)
     # ------------------------------------------------------------------ #
     @router.post("/api/rewrite")
+    @suspicious_frequency(0.5, 60, "log")
+    @content_type(["application/json"])
     async def rewrite_message(request: Request) -> StreamingResponse:
         """Rewrite the last AI message with an instruction (shorter/simpler/etc).
 

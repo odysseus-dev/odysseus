@@ -27,6 +27,7 @@ from src.optional_deps import patch_realesrgan_torchvision_compat
 from routes.gallery.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
 )
+from core.guard_deco import content_type, no_waf, usage_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +366,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/gallery/upload ----
     @router.post("/api/gallery/upload")
+    @no_waf()
     async def gallery_upload(request: Request):
         """Upload an image file to the gallery with EXIF extraction and dedup."""
         import uuid
@@ -447,6 +449,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/gallery/{id}/replace ----
     @router.post("/api/gallery/{image_id}/replace")
+    @no_waf()
     async def gallery_replace(request: Request, image_id: str):
         """Replace an existing gallery image file with a new one."""
         user = get_current_user(request)
@@ -490,6 +493,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/gallery/{image_id}/rename ----
     @router.post("/api/gallery/{image_id}/rename")
+    @content_type(["application/json"])
     async def gallery_rename(request: Request, image_id: str):
         """Rename a gallery photo. Stores the new name in the `prompt`
         column (which serves as the user-facing label for uploaded
@@ -516,6 +520,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/gallery/{image_id}/rotate ----
     @router.post("/api/gallery/{image_id}/rotate")
+    @content_type(["application/json"])
     async def gallery_rotate(request: Request, image_id: str):
         """Rotate an image by ±90° or 180°. Updates the file on disk and the
         width/height in the DB. Body: {angle: 90 | -90 | 180}."""
@@ -573,6 +578,8 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/gallery/ai-upscale ----
     @router.post("/api/gallery/ai-upscale")
+    @no_waf()
+    @usage_monitor(20, 3600, "log")
     async def gallery_ai_upscale(request: Request):
         """AI upscale using img2img with the diffusion server."""
         import base64, httpx
@@ -617,6 +624,8 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/gallery/style-transfer ----
     @router.post("/api/gallery/style-transfer")
+    @no_waf()
+    @usage_monitor(20, 3600, "log")
     async def gallery_style_transfer(request: Request):
         """Style transfer using img2img with the diffusion server."""
         import base64, httpx
@@ -863,6 +872,7 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/gallery/albums")
+    @content_type(["application/json"])
     async def create_album(request: Request):
         import uuid
         user = get_current_user(request)
@@ -954,6 +964,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- PATCH /api/gallery/{image_id} ----
     @router.patch("/api/gallery/{image_id}")
+    @content_type(["application/json"])
     async def patch_gallery_image(request: Request, image_id: str, req: GalleryPatch) -> Dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
@@ -1006,6 +1017,7 @@ def setup_gallery_routes() -> APIRouter:
     # gallery's bulk "Download" when many photos are selected (one file instead
     # of a flood of individual downloads).
     @router.post("/api/gallery/download-zip")
+    @content_type(["application/json"])
     async def gallery_download_zip(request: Request):
         user = get_current_user(request)
         if not user:
@@ -1270,6 +1282,8 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/image/inpaint — proxy to diffusion server OR OpenAI ----
     @router.post("/api/image/inpaint")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def inpaint_proxy(request: Request):
         """Forward inpaint request. If the selected endpoint is OpenAI, re-shape
         the request for /v1/images/edits (multipart, inverted mask). Otherwise
@@ -1545,6 +1559,8 @@ def setup_gallery_routes() -> APIRouter:
     # the image alongside a `strength` (denoising strength) and the model
     # mixes that fraction of new noise into the existing pixels.
     @router.post("/api/image/harmonize")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def harmonize_image(request: Request):
         """Harmonize = img2img. The model preserves (1 - strength) of the
         original and regenerates `strength` fraction. With strength ~0.4
@@ -1745,6 +1761,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/image/sharpen ----
     @router.post("/api/image/sharpen")
+    @content_type(["application/json"])
     async def sharpen_image(request: Request):
         """Apply unsharp-mask sharpening to an image."""
         require_privilege(request, "can_generate_images")
@@ -1770,6 +1787,8 @@ def setup_gallery_routes() -> APIRouter:
     # outscale=1 + denoise_strength. Falls back to a "package missing"
     # error so the client can prompt the user to install via Cookbook.
     @router.post("/api/image/denoise")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def denoise_image(request: Request):
         require_privilege(request, "can_generate_images")
         body = await request.json()
@@ -1821,6 +1840,8 @@ def setup_gallery_routes() -> APIRouter:
     # Local Real-ESRGAN upscale (2× or 4×). Self-contained — no diffusion
     # server required. Used by the editor's AI Upscale button.
     @router.post("/api/image/upscale-local")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def upscale_image_local(request: Request):
         require_privilege(request, "can_generate_images")
         body = await request.json()
@@ -1993,6 +2014,8 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(500, f"SAM mask failed: {exc}") from exc
 
     @router.post("/api/image/remove-bg")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def remove_background(request: Request):
         """Remove background from an image. If the client passes a `hint_mask`
         (white-where-the-user-wants-the-subject PNG, same dims as the
@@ -2088,6 +2111,8 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- POST /api/image/enhance-face ----
     @router.post("/api/image/enhance-face")
+    @content_type(["application/json"])
+    @usage_monitor(20, 3600, "log")
     async def enhance_face(request: Request):
         """Face/portrait enhancement. Uses GFPGAN if available, falls back to PIL."""
         require_privilege(request, "can_generate_images")
@@ -2172,6 +2197,7 @@ def setup_gallery_routes() -> APIRouter:
         return img
 
     @router.put("/api/gallery/albums/{album_id}")
+    @content_type(["application/json"])
     async def update_album(request: Request, album_id: str):
         user = get_current_user(request)
         data = await request.json()
@@ -2209,6 +2235,7 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/gallery/albums/{album_id}/add")
+    @content_type(["application/json"])
     async def add_to_album(request: Request, album_id: str):
         user = get_current_user(request)
         data = await request.json()
@@ -2227,6 +2254,7 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/gallery/albums/{album_id}/remove")
+    @content_type(["application/json"])
     async def remove_from_album(request: Request, album_id: str):
         user = get_current_user(request)
         data = await request.json()
@@ -2262,6 +2290,7 @@ def setup_gallery_routes() -> APIRouter:
     # ---- AI auto-tag ----
 
     @router.post("/api/gallery/{image_id}/ai-tag")
+    @usage_monitor(30, 3600, "log")
     async def ai_tag_image(request: Request, image_id: str):
         """Send image to vision model for auto-tagging."""
         import base64, httpx
