@@ -735,6 +735,39 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_app_api_blocklist_checks_the_routed_path(monkeypatch):
+    # httpx resolves dot segments and the server percent-decodes the path, so
+    # the blocklist must match the path that is actually routed.
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block disguised paths before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    blocked_calls = (
+        ("POST", "/api/cookbook/./../shell/exec", "Path blocked for safety"),
+        ("POST", "/api/%73hell/exec", "Path blocked for safety"),
+        ("GET", "/api/x/../auth/users", "Path blocked for safety"),
+        ("POST", "/api/x/../admin/wipe", "Path blocked for safety"),
+        ("POST", "/api/x/../cookbook/state", "overwrites the whole cookbook state file"),
+        ("POST", "/api/x/../cookbook/kill-pid", "process signalling is host control"),
+        ("POST", "/api/x/%2e%2e/shell/exec", "must not contain '.' or '..' segments"),
+    )
+
+    for method, path, error_text in blocked_calls:
+        result = await do_app_api(
+            json.dumps({"action": "call", "method": method, "path": path, "body": {}}),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1, path
+        assert error_text in result["error"], path
+
+
+@pytest.mark.asyncio
 async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
     import httpx
     from src.tool_implementations import do_app_api
