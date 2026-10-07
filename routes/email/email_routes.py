@@ -41,6 +41,10 @@ from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPExc
 from fastapi.responses import FileResponse, StreamingResponse
 from src.constants import DATA_DIR
 from src.path_confinement import confine
+from src.imap_folders import (
+    list_folders as _discover_imap_folders,
+    resolve_folder as _resolve_imap_folder, folder_role_from_name,
+)
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
@@ -465,58 +469,18 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
         logger.debug("email_received event detection skipped", exc_info=True)
 
 
-def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not match:
-        return None
-    return match.group(1) or match.group(2)
-
-
 def _list_imap_folders(conn) -> tuple[list, list[str]]:
+    """Keep mutation callers on the shared selectable-mailbox discovery."""
     try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return [], []
-        names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
-        return folders, names
+        folders = _discover_imap_folders(conn)
+        return folders, [folder["name"] for folder in folders]
     except Exception:
         return [], []
 
 
 def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
-    """Resolve provider-specific names such as Gmail's [Gmail]/Bin/Spam."""
-    folders, names = _list_imap_folders(conn)
-    if preferred and preferred in names:
-        return preferred
-    role_flags = {
-        "trash": ("\\Trash",),
-        "archive": ("\\Archive", "\\All"),
-        "junk": ("\\Junk",),
-        "sent": ("\\Sent",),
-        "drafts": ("\\Drafts",),
-        "starred": ("\\Flagged",),
-    }.get(role, ())
-    for f in folders:
-        decoded = f.decode() if isinstance(f, bytes) else str(f)
-        if any(flag in decoded for flag in role_flags):
-            name = _folder_name_from_list_line(f)
-            if name:
-                return name
-    candidates = {
-        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "[Gmail]/Bin", "Deleted Messages", "Deleted Items"),
-        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail", "All Mail"),
-        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
-        "sent": ("Sent", "[Gmail]/Sent Mail", "[Google Mail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent"),
-        "drafts": ("Drafts", "[Gmail]/Drafts", "[Google Mail]/Drafts", "Draft", "INBOX.Drafts"),
-        "starred": ("Starred", "[Gmail]/Starred", "[Google Mail]/Starred", "Flagged"),
-    }.get(role, ())
-    lower_map = {n.lower(): n for n in names}
-    for candidate in candidates:
-        found = lower_map.get(candidate.lower())
-        if found:
-            return found
-    return preferred
+    """Resolve an alias against the account's selectable IMAP mailboxes."""
+    return _resolve_imap_folder(conn, preferred, role)
 
 
 def _mail_folder_role_hint(name: str) -> str:
@@ -537,14 +501,7 @@ def _mail_folder_role_hint(name: str) -> str:
 
 
 def _folder_role_from_name(name: str) -> str:
-    lower = (name or "").lower()
-    if "trash" in lower or "bin" in lower or "deleted" in lower:
-        return "trash"
-    if "spam" in lower or "junk" in lower:
-        return "junk"
-    if "archive" in lower or "all mail" in lower:
-        return "archive"
-    return ""
+    return folder_role_from_name(name)
 
 
 def _uid_bytes(uid: str | bytes) -> bytes:
@@ -1810,7 +1767,7 @@ def setup_email_routes():
         if not v:
             return None
         if v[0] < _time.monotonic():
-            _FOLDER_CACHE.pop(key, None)
+            # Keep the last real discovery for a cached-only read or timeout.
             return None
         return v[1]
 
@@ -2246,6 +2203,9 @@ def setup_email_routes():
         try:
             conn, _reused_conn = _pooled_connect(account_id, owner=owner)
             conn_ok = True
+            role = _folder_role_from_name(folder)
+            if role and role != "inbox":
+                folder = _resolve_mail_folder(conn, folder, role)
             select_status, _ = conn.select(_q(folder), readonly=True)
             if select_status != "OK":
                 resolved_folder = _resolve_mail_folder(conn, folder, role=_mail_folder_role_hint(folder))
@@ -2812,7 +2772,7 @@ def setup_email_routes():
         if not cache_bust and not manual_refresh:
             cached = _list_cache_get(ck)
             if cached is not None:
-                _schedule_recent_email_warm(cached.get("emails") or [], folder, account_id, owner)
+                _schedule_recent_email_warm(cached.get("emails") or [], cached.get("folder") or folder, account_id, owner)
                 cached = dict(cached)
                 sync_meta = dict(cached.get("sync") or {})
                 sync_meta["source"] = "memory_cache"
@@ -2829,9 +2789,10 @@ def setup_email_routes():
             bool(has_attachments), owner, manual_refresh, date_from or "", date_to or "",
         )
         if result and not result.get("error"):
+            resolved_folder = result.get("folder") or folder
             if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):
-                _record_email_received_events(owner, account_id, folder, result.get("emails") or [])
-                _schedule_recent_email_warm(result.get("emails") or [], folder, account_id, owner)
+                _record_email_received_events(owner, account_id, resolved_folder, result.get("emails") or [])
+                _schedule_recent_email_warm(result.get("emails") or [], resolved_folder, account_id, owner)
             _list_cache_put(ck, result)
         elapsed_ms = int((_time.monotonic() - started_at) * 1000)
         if elapsed_ms > 1500:
@@ -3416,21 +3377,14 @@ def setup_email_routes():
                 effective_folder = folder
                 if global_search and (folder or "").upper() == "INBOX":
                     try:
-                        status, folder_lines = conn.list()
-                        if status == "OK" and folder_lines:
-                            for raw in folder_lines:
-                                if isinstance(raw, bytes):
-                                    raw = raw.decode("utf-8", errors="replace")
-                                m = re.match(r"\((?P<flags>[^)]*)\)\s+\"[^\"]*\"\s+(?P<name>.+)", raw)
-                                if not m:
-                                    continue
-                                flags = (m.group("flags") or "").lower()
-                                name = m.group("name").strip().strip('"')
-                                if "\\all" in flags or "all mail" in name.lower():
-                                    effective_folder = name
-                                    break
+                        for mailbox in _discover_imap_folders(conn):
+                            if mailbox["role"] == "all":
+                                effective_folder = mailbox["name"]
+                                break
                     except Exception:
                         pass
+                elif _folder_role_from_name(folder):
+                    effective_folder = _resolve_mail_folder(conn, folder, _folder_role_from_name(folder))
                 select_status, _ = conn.select(_q(effective_folder), readonly=True)
                 if select_status != "OK":
                     resolved_folder = _resolve_mail_folder(conn, effective_folder, role=_mail_folder_role_hint(effective_folder))
@@ -4917,7 +4871,9 @@ def setup_email_routes():
     ):
         """List IMAP folders."""
         if _fixture_email_enabled():
-            return {"folders": ["INBOX", "Archive", "Sent"], "sync": {"source": "local"}}
+            return {"folders": ["INBOX", "Archive", "Sent"],
+                    "roles": {"INBOX": "inbox", "Archive": "archive", "Sent": "sent"},
+                    "display_names": {}, "sync": {"source": "local"}}
         cached = _folder_cache_get(account_id, owner)
         if cached is not None:
             payload = dict(cached)
@@ -4934,26 +4890,21 @@ def setup_email_routes():
                 payload["sync"] = sync_meta
                 return payload
             return {
-                "folders": ["INBOX", "Sent", "Archive"],
-                "sync": {"source": "folder_cached_only_fallback"},
+                "folders": [], "roles": {}, "display_names": {},
+                "sync": {"source": "folder_cache_miss", "pending": True},
             }
 
         def _list_folders_sync():
             with _imap(account_id, owner=owner) as conn:
-                status, folders = conn.list()
-            result = []
-            for f in folders or []:
-                decoded = f.decode() if isinstance(f, bytes) else f
-                match = re.search(r'"([^"]*)"$|(\S+)$', decoded)
-                if match:
-                    name = match.group(1) or match.group(2)
-                    result.append(name)
+                folders = _discover_imap_folders(conn)
             return {
-                "folders": result,
+                "folders": [folder["name"] for folder in folders],
+                "roles": {folder["name"]: folder["role"] for folder in folders if folder["role"]},
+                "display_names": {folder["name"]: folder["display_name"] for folder in folders},
                 "sync": {
                     "source": "imap",
                     "updated_at": datetime.utcnow().isoformat() + "Z",
-                    "status": status.decode() if isinstance(status, bytes) else status,
+                    "status": "OK",
                 },
             }
 
@@ -4972,13 +4923,19 @@ def setup_email_routes():
                 payload["sync"] = sync_meta
                 return payload
             return {
-                "folders": ["INBOX", "Sent", "Archive"],
+                "folders": [], "roles": {}, "display_names": {},
                 "error": "Folder list timed out",
                 "sync": {"source": "folder_timeout_fallback"},
             }
         except Exception as e:
             logger.error(f"list_folders failed: {e}")
-            return {"folders": [], "error": "Mail operation failed"}
+            stale = _folder_cache_get_stale(account_id, owner)
+            if stale:
+                payload = dict(stale)
+                payload["sync"] = {**(payload.get("sync") or {}),
+                                   "source": "folder_cache_stale", "warning": "Folder list unavailable"}
+                return payload
+            return {"folders": [], "roles": {}, "display_names": {}, "error": "Mail operation failed"}
 
     @router.post("/mark-answered/{uid}")
     async def mark_answered(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):

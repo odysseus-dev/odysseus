@@ -39,6 +39,7 @@ from typing import Optional, List
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
 from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
+from src.imap_folders import resolve_folder
 
 logger = logging.getLogger(__name__)
 
@@ -1477,63 +1478,18 @@ def _decode_header(raw):
 
 
 def _detect_sent_folder(conn):
-    """Find the server's Sent folder name. Returns 'Sent' if nothing matches.
-
-    Different IMAP servers expose the sent folder under different names:
-      Dovecot/typical: "Sent"
-      Gmail:          "[Gmail]/Sent Mail"
-      Outlook/EWS:    "Sent Items"
-      Some hosts:     "INBOX.Sent"
-    """
-    candidates = ("Sent", "[Gmail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent")
+    """Resolve Sent from LIST attributes, retaining the legacy append fallback."""
     try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return "Sent"
-        names = []
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-            if m:
-                names.append(m.group(1) or m.group(2))
-        # Prefer \Sent flag in LIST response if present.
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            if r"\Sent" in decoded:
-                m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-                if m:
-                    return m.group(1) or m.group(2)
-        for c in candidates:
-            if c in names:
-                return c
+        return resolve_folder(conn, "Sent", "sent")
     except Exception:
         pass
     return "Sent"
 
 
 def _detect_drafts_folder(conn):
-    """Find the server's Drafts folder name. Gmail usually exposes
-    "[Gmail]/Drafts"; other servers often use "Drafts"."""
-    candidates = ("Drafts", "[Gmail]/Drafts", "Draft", "INBOX.Drafts")
+    """Resolve Drafts from LIST attributes, retaining the append fallback."""
     try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return "Drafts"
-        names = []
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-            if m:
-                names.append(m.group(1) or m.group(2))
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            if r"\Drafts" in decoded or r"\Draft" in decoded:
-                m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-                if m:
-                    return m.group(1) or m.group(2)
-        for c in candidates:
-            if c in names:
-                return c
+        return resolve_folder(conn, "Drafts", "drafts")
     except Exception:
         pass
     return "Drafts"
@@ -1542,24 +1498,7 @@ def _detect_drafts_folder(conn):
 def _detect_spam_folder(conn):
     """Find the server's Junk/Spam folder name, if any."""
     try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return None
-        preferred = None
-        fallback = None
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-            if not m:
-                continue
-            name = m.group(1) or m.group(2)
-            if r"\Junk" in decoded:
-                preferred = name
-                break
-            low = name.lower()
-            if low in ("junk", "spam", "junk mail", "junk e-mail") or low.endswith("/junk") or low.endswith("/spam"):
-                fallback = fallback or name
-        return preferred or fallback
+        return resolve_folder(conn, "", "junk") or None
     except Exception:
         return None
 

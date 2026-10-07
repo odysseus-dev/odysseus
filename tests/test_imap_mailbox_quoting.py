@@ -17,6 +17,10 @@ class FakeListConn:
     def __init__(self):
         self.calls = []
 
+    def list(self):
+        self.calls.append(("list",))
+        return "OK", [b'(\\Sent) "/" "Sent Items"']
+
     def select(self, folder, readonly=False):
         self.calls.append(("select", folder, readonly))
         return "OK", []
@@ -67,7 +71,7 @@ def test_mcp_list_emails_quotes_spaced_folder_on_select(monkeypatch):
 
     assert es._list_emails(folder="Sent Items") == []
 
-    assert conn.calls[0] == ("select", '"Sent Items"', True)
+    assert ("select", '"Sent Items"', True) in conn.calls
 
 
 def test_mcp_quote_helper_handles_spaced_and_quoted_mailboxes():

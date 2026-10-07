@@ -30,6 +30,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from src.task_endpoint import resolve_task_candidates, task_llm_call_async
+from src.imap_folders import list_folders as _discover_imap_folders
 
 from .email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
@@ -545,7 +546,9 @@ def _latest_inbox_fallback_uids(conn, reconnect):
     same one on success, a fresh one (via ``reconnect()``) if we had to recover.
     """
     try:
-        conn.select("INBOX", readonly=True)
+        select_status, _ = conn.select("INBOX", readonly=True)
+        if select_status != "OK":
+            return [], conn
         status, data = conn.uid("SEARCH", None, "ALL")
         uids = []
         if status == "OK" and data and data[0]:
@@ -676,18 +679,19 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # the user clicked the same visible message in the UI.
         uid_list = []
         folders_to_scan = ["INBOX"]
+        sent_folders = set()
         if auto_cal:
-            for sent_name in ("Sent", "INBOX/Sent", "Sent Items", "[Gmail]/Sent Mail"):
-                try:
-                    st, _ = conn.select(_q(sent_name), readonly=True)
-                    if st == "OK":
-                        folders_to_scan.append(sent_name)
-                        break
-                except Exception:
-                    continue
+            try:
+                sent_folders = {folder["name"] for folder in _discover_imap_folders(conn)
+                                if folder["role"] == "sent"}
+                folders_to_scan.extend(sorted(sent_folders))
+            except Exception:
+                logger.warning("Sent folder discovery failed; scanning inbox only")
         for folder in folders_to_scan:
             try:
-                conn.select(_q(folder), readonly=True)
+                select_status, _ = conn.select(_q(folder), readonly=True)
+                if select_status != "OK":
+                    continue
                 status, data = conn.uid("SEARCH", None, f'(SINCE {since})')
                 if status == "OK" and data[0]:
                     for u in reversed(data[0].split()[-30:]):
@@ -798,7 +802,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         _away_replies_skipped = 0
         _away_replies_failed = 0
         _detail_lines = []
-        _current_folder = "INBOX"
+        _current_folder = None
         # Calendar extraction is sequential and each row can involve a model
         # call plus a calendar write. Keep the scheduled calendar-only pass
         # below the 5-minute action budget instead of timing out mid-run.
@@ -817,7 +821,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 _folder, uid = "INBOX", _entry
             try:
                 if _folder != _current_folder:
-                    conn.select(_q(_folder), readonly=True)
+                    select_status, _ = conn.select(_q(_folder), readonly=True)
+                    if select_status != "OK":
+                        continue
                     _current_folder = _folder
                 st, msg_data = conn.uid("FETCH", uid if isinstance(uid, bytes) else str(uid).encode(), "(RFC822)")
                 if st != "OK":
@@ -868,8 +874,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     and message_id not in _cal_existing
                 )
                 need_urgent = (auto_urgent and message_id not in _urgent_existing
-                               and not _folder.lower().startswith("sent")
-                               and "sent" not in _folder.lower()
+                               and _folder not in sent_folders
                                and not _is_alert_echo
                                and not _is_self_mail)
                 if not need_sum and not need_reply and not need_away_reply and not need_class and not need_cal and not need_urgent:
@@ -1066,7 +1071,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         # Owner-scoped so the LLM never sees other tenants' events.
                         _existing_summary = get_upcoming_events(_acct_owner, horizon_days=60, limit=40)
                         existing_json = json.dumps(_existing_summary)
-                        is_sent = _folder.lower().startswith("sent") or "sent" in _folder.lower()
+                        is_sent = _folder in sent_folders
                         cal_extract = await task_llm_call_async(
                             messages=[
                                 {"role": "system", "content": (

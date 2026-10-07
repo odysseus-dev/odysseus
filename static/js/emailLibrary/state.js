@@ -18,6 +18,9 @@ export const state = {
   _libOffset: 0,
   _libFolder: 'INBOX',
   _libFolders: [],
+  _libFolderRoles: {},
+  _libFolderDisplayNames: {},
+  _libFoldersAccountId: null,
   _libAccountId: null,           // null = backend default account
   _libAccounts: [],              // list of accounts for the chip strip
   _libAutoReplyActive: false,    // active account currently has an away reply

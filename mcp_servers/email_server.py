@@ -36,6 +36,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
 from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+from src.imap_folders import (
+    folder_role_from_name as _folder_role_from_name,
+    list_folders as _imap_list_folders,
+    resolve_folder as _resolve_folder,
+    resolve_from_folders as _resolve_from_folders,
+)
 try:
     from src.constants import SCHEDULED_EMAILS_DB
 except Exception:
@@ -444,90 +450,8 @@ def _imap_connect(account: str | None = None):
 
 
 def _detect_sent_folder(conn):
-    """Find the account's Sent folder name; fall back to 'Sent'."""
-    candidates = ("Sent", "[Gmail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent")
-    try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return "Sent"
-        names = []
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-            if m:
-                names.append(m.group(1) or m.group(2))
-        for f in folders:
-            decoded = f.decode() if isinstance(f, bytes) else str(f)
-            if r"\Sent" in decoded:
-                m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-                if m:
-                    return m.group(1) or m.group(2)
-        for c in candidates:
-            if c in names:
-                return c
-    except Exception:
-        pass
-    return "Sent"
-
-
-def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not m:
-        return None
-    return m.group(1) or m.group(2)
-
-
-def _list_folder_lines(conn) -> list:
-    try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return []
-        return folders
-    except Exception:
-        return []
-
-
-def _resolve_folder(conn, preferred: str, role: str) -> str:
-    """Resolve provider-specific folder names like Gmail's [Gmail]/Trash."""
-    folders = _list_folder_lines(conn)
-    names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
-    if preferred and preferred in names:
-        return preferred
-
-    role_flags = {
-        "trash": ("\\Trash",),
-        "archive": ("\\Archive", "\\All"),
-        "junk": ("\\Junk",),
-    }.get(role, ())
-    for f in folders:
-        decoded = f.decode() if isinstance(f, bytes) else str(f)
-        if any(flag in decoded for flag in role_flags):
-            name = _folder_name_from_list_line(f)
-            if name:
-                return name
-
-    candidates = {
-        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "Deleted Messages", "Deleted Items"),
-        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail"),
-        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
-    }.get(role, ())
-    lower_map = {n.lower(): n for n in names}
-    for candidate in candidates:
-        if candidate.lower() in lower_map:
-            return lower_map[candidate.lower()]
-    return preferred
-
-
-def _folder_role_from_name(name: str) -> str:
-    lower = (name or "").lower()
-    if "trash" in lower or "bin" in lower or "deleted" in lower:
-        return "trash"
-    if "junk" in lower or "spam" in lower:
-        return "junk"
-    if "archive" in lower or "all mail" in lower:
-        return "archive"
-    return ""
+    """Find the server's Sent mailbox, using its special-use flag first."""
+    return _resolve_folder(conn, "Sent", "sent")
 
 
 def _decode_header(raw):
@@ -1487,7 +1411,8 @@ def _fixture_list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     ]
     if unread_only:
         rows = [row for row in rows if not row.get("is_read")]
-    return rows[: int(max_results or 20)]
+    return [dict(row, _folder=row.get("folder") or folder or "INBOX")
+            for row in rows[: int(max_results or 20)]]
 
 
 def _fixture_search_emails(query, folders=None, max_results=20, account=None,
@@ -1608,6 +1533,7 @@ def _indexed_list_rows_by_uids(account, folder: str, uids: list[str]) -> dict[st
     return {
         str(uid): {
             "uid": str(uid),
+            "_folder": folder,
             "message_id": message_id or "",
             "subject": subject or "(no subject)",
             "from": from_name or from_address or "unknown",
@@ -1705,6 +1631,7 @@ def _indexed_latest_emails(
         subject = subject or "(no subject)"
         results.append({
             "uid": str(uid),
+            "_folder": folder,
             "message_id": message_id or "",
             "subject": subject,
             "from": from_name or from_address or "unknown",
@@ -1799,6 +1726,7 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     conn = None
     try:
         conn = _imap_connect(account)
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
         select_status, _ = conn.select(_q(folder), readonly=True)
         if select_status != "OK":
             raise ValueError(f"IMAP folder not found: {folder}")
@@ -1871,6 +1799,7 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
 
                 results.append({
                     "uid": uid_text,
+                    "_folder": folder,
                     "message_id": message_id,
                     "subject": subject,
                     "from": sender_display,
@@ -2269,13 +2198,34 @@ def _search_emails(query, folders=None, max_results=20, account=None,
         f'(OR HEADER Content-Disposition "{q}" HEADER Content-Type "{q}"))'
     )
     search_cmd += _imap_sent_date_criteria(start, end)
-    if folders is None:
-        folders = ["INBOX", "Sent", "Archive"]
     cache = _get_cached_summaries()
     out = []
     conn = _imap_connect(account)
-    touched = []
     try:
+        if folders is None:
+            available_folders = _imap_list_folders(conn)
+        else:
+            # Shared mailboxes can permit SELECT while denying LIST. Explicit
+            # targets retain their identity if discovery is unavailable.
+            try:
+                available_folders = _imap_list_folders(conn)
+            except Exception:
+                available_folders = []
+        if folders is None:
+            # Use the exact mailbox names from LIST, including localized
+            # special-use mailboxes. Do not try nonexistent static names.
+            folders = [
+                item["name"]
+                for role in ("inbox", "sent", "archive", "all")
+                for item in available_folders
+                if item.get("role") == role
+            ]
+        else:
+            folders = [
+                _resolve_from_folders(available_folders, folder, _folder_role_from_name(folder))
+                for folder in folders
+            ]
+        folders = list(dict.fromkeys(folders))
         for folder in folders:
             try:
                 status, _ = conn.select(_q(folder), readonly=True)
@@ -2407,7 +2357,10 @@ def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
     conn = None
     try:
         conn = _imap_connect(account)
-        conn.select(_q(folder), readonly=True)
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
+        select_status, _ = conn.select(_q(folder), readonly=True)
+        if select_status != "OK":
+            return {"error": f"IMAP folder not found: {folder}"}
 
         if message_id and not uid:
             status, data = conn.uid("SEARCH", None, f'(HEADER Message-ID "{message_id}")')
@@ -2441,6 +2394,7 @@ def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
 
         return {
             "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
+            "_folder": folder,
             "account": cfg.get("account_name") or cfg.get("imap_user") or "default",
             "account_email": cfg.get("imap_user") or cfg.get("from_address") or "",
             "account_id": cfg.get("account_id"),
@@ -2967,9 +2921,15 @@ def _draft_reply_to_email(uid, body, folder="INBOX", reply_all=False, account=No
         )
 
     conn = _imap_connect(account)
-    conn.select(_q(folder), readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    conn.logout()
+    try:
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
+        select_status, _ = conn.select(_q(folder), readonly=True)
+        if select_status != "OK":
+            return {"error": f"IMAP folder not found: {folder}"}
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+    finally:
+        try: conn.logout()
+        except Exception: pass
     if status != "OK" or not msg_data or not msg_data[0]:
         return {"error": f"Failed to fetch email UID {uid}"}
     raw = msg_data[0][1]
@@ -3021,6 +2981,7 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
     read_result = _read_email(uid=uid, folder=folder, account=account)
     if "error" in read_result:
         return read_result
+    folder = read_result.get("_folder") or folder
 
     to_addr = read_result.get("from_address") or email.utils.parseaddr(read_result.get("from") or "")[1]
     subject = read_result.get("subject") or ""
@@ -3134,7 +3095,10 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     conn = None
     try:
         conn = _imap_connect(account)
-        conn.select(_q(folder), readonly=True)
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
+        select_status, _ = conn.select(_q(folder), readonly=True)
+        if select_status != "OK":
+            return {"error": f"IMAP folder not found: {folder}"}
         status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     finally:
         if conn:
@@ -3549,7 +3513,10 @@ def _download_attachment(uid, index, folder="INBOX", account=None):
     conn = None
     try:
         conn = _imap_connect(account)
-        conn.select(_q(folder), readonly=True)
+        folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
+        select_status, _ = conn.select(_q(folder), readonly=True)
+        if select_status != "OK":
+            return {"error": f"IMAP folder not found: {folder}"}
         status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     finally:
         if conn:
@@ -3958,7 +3925,7 @@ async def list_tools() -> list[Tool]:
             name="search_emails",
             description=(
                 "Search emails by free-text query (sender, subject, or body). "
-                "Walks INBOX + Sent + Archive by default so older threads are findable, "
+                "Searches the server's inbox, sent, and archive mailboxes by default so older threads are findable, "
                 "not just recent unread. Use this whenever the user names a person or "
                 "topic that isn't in the most recent inbox slice — e.g. 'Sara Sotheby's', "
                 "'invoice from EY', 'last email about the property'. Returns matching "
@@ -3974,7 +3941,7 @@ async def list_tools() -> list[Tool]:
                     "folders": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Folders to search (default: INBOX, Sent, Archive)",
+                        "description": "Folders to search (default: server-discovered inbox, sent, and archive mailboxes)",
                     },
                     "max_results": {
                         "type": "integer",
@@ -4165,6 +4132,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             lines = header_lines + [f"Found {len(results)} email(s):\n"]
             for i, em in enumerate(results, 1):
                 line = f"{i}. **{em['subject']}**\n   From: {em['from']} ({em['from_address']})\n   Date: {em['date']}\n   UID: {em['uid']}"
+                if em.get("_folder"):
+                    line += f"\n   Folder: {em['_folder']}"
                 if em.get("_account"):
                     account_label = em.get("_account")
                     if em.get("_account_email"):
