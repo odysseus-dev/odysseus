@@ -1,0 +1,3184 @@
+/* 17-research - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+button.cal-btn { background:color-mix(in srgb, var(--fg) 8%, transparent); border:1px solid var(--border); color:var(--fg); border-radius:5px; padding:0 14px; height:28px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; transition:background 0.15s, border-color 0.15s; }
+button.cal-btn:hover { background:color-mix(in srgb, var(--fg) 14%, transparent); }
+button.cal-btn.cal-btn-primary { background:var(--accent, var(--red)); color:var(--bg); border-color:var(--accent, var(--red)); }
+button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var(--red)); }
+@media (max-width: 600px) {
+  .cal-modal-container { max-width:100vw; width:100vw; border-radius:0; max-height:100vh; height:100vh; }
+  .cal-day { min-height:58px; padding:3px; }
+  .cal-day-num { font-size:10px; }
+  .cal-event-preview { display:none; }
+  .cal-multiday { font-size:8.5px; padding:0 4px; }
+  .cal-event-row { min-height:16px; padding:2px 3px; gap:3px; }
+  .cal-event-row-name,
+  .cal-event-row-time { font-size:9.5px; }
+  /* Two-row toolbar on mobile:
+        Row 1 — Title (full width)
+        Row 2 — [← Today →] [view toggle] [settings/sync/filters/+New]
+     Title gets its own row so it isn't squeezed to nothing when the
+     right-side group is wide. The .cal-toolbar-nav (which now only
+     contains the title since JS moved the date-nav to the right) is
+     width:100% so it forces a wrap before .cal-toolbar-right. */
+  .cal-toolbar {
+    gap: 4px;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .cal-toolbar-nav {
+    flex-wrap: nowrap;
+    flex: 1 1 100%;
+    min-width: 0;
+    justify-content: flex-start;
+  }
+  .cal-toolbar-right {
+    margin-top: 6px;
+    margin-left: 0;
+    flex-wrap: nowrap;
+    flex-shrink: 1;
+    overflow-x: auto;
+    scrollbar-width: none;
+    width: 100%;
+  }
+  .cal-quickadd-row {
+    top: -2px;
+  }
+  .cal-toolbar-right::-webkit-scrollbar { display: none; }
+  .cal-title {
+    font-size: 13px;
+    padding: 0 4px;
+  }
+  #cal-side-prev,
+  #cal-side-next {
+    display: none !important;
+  }
+  .cal-nav { padding: 2px 5px; font-size: 10px; }
+  .cal-view-btn { padding: 2px 5px; font-size: 9px; }
+  .cal-filters {
+    gap: 3px;
+    margin: 0 0 6px;
+    padding: 0;
+  }
+  .cal-filter-toggle { top: -5px; }
+  .cal-filter-item { font-size: 9px; padding: 1px 5px; }
+  .cal-year { grid-template-columns:repeat(3, 1fr); gap:6px; }
+  .cal-year-cell { font-size:7px; }
+}
+
+/* ═══ Research Panel ═══ */
+/* .research-overlay inherits from .modal — no extra layout needed */
+.research-pane {
+  display:flex; flex-direction:column;
+  padding:10px; box-sizing:border-box;
+  font-size:12px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  /* Research hydration replaces picker options after mount. Do not inherit
+     the generic scale-in animation: scaling a changing-height frame reads as
+     a bounce, particularly next to the document split pane. */
+  animation: research-pane-enter 0.18s ease-out both;
+}
+/* Synapse signal traveling around the outer edge of the pane. The pane keeps a
+   flat background; only this thin border ring remains animated. */
+.research-pane::after {
+  content: '';
+  position: absolute; inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--research-orbit-angle, 0deg),
+    transparent 0deg,
+    transparent 300deg,
+    color-mix(in srgb, var(--accent, var(--red)) 70%, transparent) 335deg,
+    var(--accent, var(--red)) 350deg,
+    color-mix(in srgb, var(--accent, var(--red)) 70%, transparent) 358deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-pane::after { animation: none; opacity: 0.4; }
+}
+.research-pane-header {
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:6px; cursor:grab; user-select:none;
+}
+.research-pane-title-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.research-pane-title-icon svg { display: block; }
+.research-pane-header-actions {
+  display: flex; align-items: center; gap: 2px;
+  margin-left: auto;
+}
+.research-pane-body {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; gap: 10px;
+  /* Flat surface — matches Library's .modal-body (no inset sub-window).
+     The outer .research-pane already provides the 10px padding + border. */
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: 12px;
+  color: var(--fg);
+}
+/* Research uses the same flat tab navigation as Memory and Skills. Each view
+   owns its scrolling so switching tabs never leaves the form or result list
+   clipped by the modal body. */
+.research-tabs {
+  flex: 0 0 auto;
+  margin: -4px -4px 0;
+  padding: 0 4px;
+}
+.research-tabs .memory-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.research-tabs .memory-tab[hidden] { display: none !important; }
+.research-tabs .memory-tab svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  opacity: 0.75;
+}
+.research-tab-panel {
+  flex: 1 1 auto;
+}
+.research-tab-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 28px;
+  margin: 0 0 6px;
+}
+.research-tab-heading > .memory-count {
+  font-size: 10px;
+  opacity: 0.55;
+  font-weight: normal;
+}
+.research-tab-heading #research-history-clear { margin-left: auto; }
+/* Match the .admin-card surface used in Cookbook (Download / Serve sections):
+   var(--panel) bg with var(--border) and rounded corners. */
+.research-new-job {
+  flex-shrink: 0;
+}
+.research-query {
+  width:100%; resize:vertical; min-height:80px; max-height:240px;
+  /* Match the rest of the app's inputs (var(--bg) page tone) rather than
+     the darker panel tone — keeps the input readable on the dark sub-window. */
+  background: var(--bg); color: var(--fg);
+  border:1px solid var(--border); border-radius:6px;
+  padding:8px 10px; font-size:12px; font-family:inherit;
+  box-sizing:border-box;
+  margin-top: 6px;
+}
+.research-query:focus { outline:none; border-color:var(--accent-primary, var(--red)); }
+.research-settings-row {
+  display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.research-setting {
+  display:flex; flex-direction:column; flex:1; min-width:104px;
+}
+.research-setting:has(#research-rounds),
+.research-setting:has(#research-category) {
+  position: relative;
+  top: 0;
+}
+.research-setting:has(#research-search-provider),
+.research-setting:has(#research-endpoint) {
+  position: relative;
+  top: 5px;
+}
+.research-setting:has(#research-model) {
+  position: relative;
+  top: 1px;
+}
+.research-setting-label {
+  font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
+  color:var(--accent, var(--red)); opacity:1; margin-bottom:2px;
+}
+.research-native-select {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+.research-picker { position: relative; min-width: 0; }
+.research-picker-btn {
+  width: 100%; height: 28px; padding: 0 8px;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  font: inherit; font-size: 12px; cursor: pointer; text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.research-picker-btn:hover,
+.research-picker.open .research-picker-btn {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 62%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 5%, var(--bg));
+}
+.research-picker-current {
+  min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
+}
+.research-picker-icon {
+  width: 15px; height: 15px; flex: 0 0 15px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent, var(--red));
+}
+.research-picker-icon svg { width: 15px; height: 15px; display: block; }
+.research-picker-btn > svg {
+  width: 9px; height: 9px; flex-shrink: 0; opacity: 0.5;
+  transition: transform 0.14s ease;
+}
+.research-picker-menu {
+  position: absolute; z-index: 120;
+  top: calc(100% + 4px); left: 0;
+  width: max-content; min-width: 100%; max-width: min(280px, 82vw);
+  max-height: 230px; overflow-y: auto;
+  padding: 4px;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border); border-radius: 7px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+}
+.research-picker-option {
+  width: 100%; min-height: 31px; padding: 6px 7px;
+  display: flex; align-items: center; gap: 7px;
+  border: 0; border-radius: 5px;
+  background: transparent; color: var(--fg);
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+  white-space: nowrap;
+}
+.research-picker-option:hover,
+.research-picker-option:focus {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.research-picker-option.active {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.research-picker-check { margin-left: auto; opacity: 0; color: var(--accent, var(--red)); }
+.research-controls-row {
+  display:flex; align-items:center; gap:8px; margin-top:10px;
+}
+.research-start-btn {
+  margin-left:auto;
+  display:flex; align-items:center; gap:5px;
+  height:28px; padding:0 14px; border:none; border-radius:6px;
+  background:var(--accent-primary, var(--red)); color:var(--bg);
+  font-size:12px; font-weight:600; cursor:pointer;
+  transition:opacity 0.15s;
+}
+.research-start-btn:hover { opacity:0.85; color:var(--fg); }
+.research-start-btn:hover svg { color:inherit; }
+.research-start-btn:disabled, .research-start-btn.research-start-busy {
+  opacity:0.7; cursor:wait;
+}
+.research-start-spinner {
+  display:inline-block; width:11px; height:11px; vertical-align:-1px; margin-right:4px;
+  border:2px solid currentColor; border-right-color:transparent; border-radius:50%;
+  animation: spin 0.7s linear infinite;
+}
+.research-category-row {
+  display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;
+}
+/* Mobile: keep the category chips on ONE row (scroll horizontally) instead of
+   wrapping to two rows. */
+@media (max-width: 600px) {
+  .research-category-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .research-category-row::-webkit-scrollbar { display: none; }
+  .research-cat { flex-shrink: 0; white-space: nowrap;   position: relative; top: -8px;
+}
+}
+/* Match .doclib-chip exactly so categories feel like document filter tags. */
+.research-cat {
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  position: relative;
+  top: -4px;
+}
+.research-cat:hover { border-color: var(--red); }
+.research-cat.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+/* Match the Cookbook "Trending models" toggle (a left-aligned memory-toolbar-btn
+   with an arrow + label) instead of the old tiny-uppercase borderless text. */
+.research-settings-toggle {
+  display:flex; align-items:center; gap:6px;
+  width:100%; text-align:left;
+  height:24px; padding:0 8px; margin-top:10px;
+  background:none; border:1px solid var(--border); border-radius:4px;
+  color:color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size:11px; font-family:inherit; cursor:pointer;
+  transition:all 0.15s;
+}
+.research-settings-toggle:hover { color:var(--fg); border-color:var(--fg); }
+.research-settings-chevron { display:inline-flex; transition:transform 0.2s; margin-left:auto; }
+.research-settings-toggle.collapsed .research-settings-chevron { transform:rotate(-90deg); }
+/* When settings is EXPANDED, merge the toggle bar visually into the
+   settings body so it's clear the row below is the toggle's content
+   (no gap, no doubled border between them). */
+.research-settings-toggle:not(.collapsed) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.research-settings-toggle:not(.collapsed) + .research-settings-row {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top-color: color-mix(in srgb, var(--border) 50%, transparent);
+}
+.research-add-btn {
+  height:28px;
+  padding:0 10px;
+  color:var(--fg);
+  font-size:11px;
+}
+.research-add-btn:hover { background:color-mix(in srgb, var(--border) 30%, transparent); }
+
+/* Popover anchored to the Start-All button — pick parallel vs sequential
+   without the heavy "Run N jobs" modal. Drops down by default, flips to
+   drop-up when there's no room below (the .rrm-up modifier is added by
+   the JS that positions it). */
+.research-run-mode-popover {
+  position: fixed;
+  z-index: 12000;
+  min-width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 5px;
+  font-size: 13px;
+  animation: rrm-pop-in 0.12s ease-out both;
+  transform-origin: top right;
+}
+@keyframes rrm-pop-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-2px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.research-run-mode-popover .research-run-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  padding: 10px 13px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.research-run-mode-popover .research-run-mode-row svg { flex-shrink: 0; opacity: 0.8; }
+.research-run-mode-popover .rrm-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+}
+.research-jobs-list {
+  flex:1; min-height:0; overflow-y:auto; padding:6px 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.research-empty {
+  text-align:center; padding:30px 14px;
+  font-size:12px; opacity:0.4;
+}
+/* Cards match Library's .doclib-card: subtle fg 3% tint over var(--bg). */
+.research-job-card {
+  --cat-color: #db8576;
+  margin: 0;
+  padding: 9px 10px 9px 11px;
+  background: color-mix(in srgb, var(--cat-color) 4%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--cat-color) 25%, var(--border));
+  border-left: 3px solid var(--cat-color);
+  border-radius: 8px;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.research-job-card:hover {
+  background: color-mix(in srgb, var(--cat-color) 7%, var(--bg));
+  border-color: color-mix(in srgb, var(--cat-color) 40%, var(--border));
+}
+.research-job-card.running {
+  background: color-mix(in srgb, var(--cat-color) 8%, var(--bg));
+  box-shadow: inset 0 1px color-mix(in srgb, var(--cat-color) 14%, transparent);
+}
+.research-job-card.queued { --cat-color: var(--fg-dim, #888); }
+.background-tools-status.agent-thread { min-width: 0; width: calc(100% - 32px); max-width: 640px; }
+.chat-research-card .agent-thread-header { width: 100%; min-height: 44px; background: none; border: 0; border-radius: 0; text-align: left; font-family: inherit; }
+.chat-research-card .agent-thread-header:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.chat-research-card.agent-thread-node .agent-thread-dot { top: 23px; }
+.chat-research-card .agent-thread-status { min-width: 0; }
+.chat-research-background { display: inline-flex; align-items: center; gap: 5px; margin-left: 0; white-space: nowrap; flex-shrink: 0; }
+.chat-research-background .spinner-whirlpool { margin: 0 !important; }
+.chat-research-background canvas { transform: translateY(-2px); }
+.chat-research-card .research-job-query { white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
+.chat-research-detail { margin-top: 5px; font-size: 12px; color: var(--fg-dim, #888); }
+.chat-research-open { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; margin-top: 4px; color: var(--red); text-decoration: underline; }
+.chat-research-open:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; border-radius: 4px; }
+.research-job-card.error,
+.research-job-card.cancelled { --cat-color: #f44336; }
+/* Per-category theming — picks up a category accent, badge, and soft tint */
+.research-job-card[data-category] { --cat-color: var(--accent, var(--red)); }
+.research-job-card[data-category="product"]    { --cat-color: #5b8abf; }
+.research-job-card[data-category="comparison"] { --cat-color: #e5a33a; }
+.research-job-card[data-category="howto"]      { --cat-color: #82c882; }
+.research-job-card[data-category="landscape"]  { --cat-color: #a07ae0; }
+.research-job-card[data-category="factcheck"]  { --cat-color: var(--red); }
+/* Inline category label — sits beside the title in low-opacity colored
+   text instead of a separate pill. Picks up the per-card --cat-color. */
+/* Uncategorized (default-format) research = "standard", shown in the same
+   green as its left border so the green reads as a labelled category. */
+.research-cat-badge.research-cat-standard { color: var(--cat-color); }
+.research-cat-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 5px;
+  background: color-mix(in srgb, var(--cat-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cat-color) 22%, transparent);
+  border-radius: 4px;
+  color: var(--cat-color, var(--accent));
+  opacity: 0.9;
+  flex-shrink: 0;
+  margin-left: 0;
+}
+
+/* Category hero banner */
+.research-hero {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 18px; margin: 8px 0 14px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--cat-color, var(--accent)) 18%, transparent) 0%,
+    color-mix(in srgb, var(--cat-color, var(--accent)) 5%, transparent) 100%
+  );
+  border-left: 4px solid var(--cat-color, var(--accent));
+  position: relative; overflow: hidden;
+}
+.research-hero-icon {
+  flex-shrink: 0; width: 32px; height: 32px;
+  color: var(--cat-color, var(--accent));
+  display: flex; align-items: center; justify-content: center;
+  filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--cat-color, var(--accent)) 40%, transparent));
+}
+.research-hero-text { flex: 1; min-width: 0; }
+.research-hero-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  font-weight: 700; opacity: 0.7; margin-bottom: 3px;
+  color: var(--cat-color, var(--accent));
+}
+.research-hero-query {
+  font-size: 15px; font-weight: 600;
+  line-height: 1.3; color: var(--fg);
+}
+
+
+
+
+
+
+.research-job-header {
+  display:flex; align-items:center; gap:7px; min-height:24px;
+}
+.research-job-query {
+  flex:1; min-width:0; font-size:12px; font-weight:650;
+  letter-spacing: 0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color: var(--fg);
+  transform: translateY(-4px);
+}
+.research-job-time,
+.research-job-meta {
+  font-size:10px; opacity:0.5; white-space:nowrap; font-family:monospace;
+}
+.research-job-status {
+  font-size:10px; text-transform:uppercase; opacity:0.6;
+}
+.research-job-cancel,
+.research-job-remove,
+.research-job-report-link {
+  background:transparent; border:none; color:var(--fg);
+  opacity:0.4; cursor:pointer; padding:2px; display:flex;
+  transition:opacity 0.15s;
+}
+/* Minimize toggle for the per-job synapse "tree" visual. */
+.research-synapse-toggle {
+  background:transparent; border:none; color:var(--fg);
+  opacity:0.4; cursor:pointer; padding:2px; display:flex;
+  transition:opacity 0.15s;
+}
+.research-job-model {
+  font-size:9px; opacity:0.4; white-space:nowrap;
+  max-width:120px; overflow:hidden; text-overflow:ellipsis;
+}
+.research-job-actions {
+  display:flex; gap:5px; margin-top:7px;
+  align-items:center;
+}
+.research-job-thumb-frame {
+  position: relative;
+  width: 49px;
+  height: 29px;
+  border-radius: 4px;
+  flex: 0 0 49px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: var(--panel, var(--bg));
+}
+.research-job-summary {
+  align-items: flex-start;
+}
+.research-job-summary-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  transform: translateY(-20px);
+}
+.research-job-summary .research-job-meta {
+  position: relative;
+  top: 12px;
+  transform: none;
+}
+.research-job-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.research-job-thumb-empty {
+  display: inline-block;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--fg) 7%, transparent),
+      color-mix(in srgb, var(--fg) 3%, transparent));
+}
+/* Match .doclib-toolbar-btn — same font, padding, hover */
+.research-job-action {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.research-job-action:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.research-job-action-dim { opacity: 0.5; border-color: transparent; }
+.research-job-action-copied {
+  color: var(--color-success) !important;
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--border)) !important;
+  opacity: 1 !important;
+}
+.research-job-overflow { position: relative; margin-left: auto; }
+.research-job-more {
+  width: 30px; height: 30px; padding: 0;
+  justify-content: center; color: var(--fg-muted);
+}
+.research-job-menu {
+  position: absolute; z-index: 140;
+  right: 0; top: calc(100% + 5px);
+  min-width: 168px;
+  cursor: default;
+}
+.research-job-menu > .dropdown-item-compact svg { width: 13px; height: 13px; flex-shrink: 0; opacity: 0.72; }
+.research-job-menu > [data-menu-action="copy"] { position: relative; top: -2px; }
+.research-job-menu > [data-menu-action="dismiss"] { position: relative; top: 2px; }
+.research-job-phase {
+  font-size:10px; font-weight:600; color:var(--cat-color);
+  margin:7px 0 2px; padding:5px 7px;
+  background:color-mix(in srgb, var(--cat-color) 8%, transparent);
+  border-radius:4px;
+}
+.research-job-queued-meta {
+  font-size:10px; opacity:0.4; margin-top:2px;
+}
+.research-section-divider {
+  display:flex; align-items:center; gap:10px;
+  padding:6px 14px; font-size:10px; opacity:0.4;
+  text-transform:uppercase; letter-spacing:0.5px;
+}
+/* Foldable job sections (Active / Past research) */
+/* Collapsible section styled like the Cookbook download sub-blocks (.cookbook-card):
+   clean var(--bg) card, 8px radius, a real 13px/600 title. Chevron on the LEFT,
+   then title, count, and a status-color dot on the right (the dot stays visible
+   when folded so you get status at a glance). Keeps every modal consistent. */
+.research-section {
+  margin-top: 6px;
+  /* Same surface as the research "window" (.research-new-job -> var(--panel)). */
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, var(--border));
+  border-radius: 8px;
+  overflow: visible;
+}
+.research-section-body { display: flex; flex-direction: column; gap: 7px; padding: 9px; }
+.research-section-header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 11px; cursor: pointer; user-select: none;
+  transition: background 0.15s;
+  border-radius: 7px 7px 0 0;
+}
+.research-section-header:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.research-section-title { font-size: 13px; font-weight: 650; letter-spacing: 0; }
+.research-section-chevron { flex-shrink: 0; opacity: 0.55; transition: transform 0.2s ease; }
+.research-section-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; opacity: 0.9; }
+/* The top "Research" heading is a plain card-style title — no bar/chevron/dot. */
+.research-main-header {
+  cursor: default; background: none; border: none;
+  padding: 6px 2px; font-size: 13px; font-weight: 600;
+}
+.research-main-header:hover { background: none; }
+.research-section-count {
+  /* Match the panel header's "N research" chip — small, muted, no weight. */
+  font-size: 10px; opacity: 0.6; font-weight: normal;
+  font-variant-numeric: tabular-nums;
+}
+.research-job-error {
+  font-size:11px; color:#f44336; margin-top:4px; line-height:1.4;
+  word-break:break-word;
+}
+.research-job-title-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.research-progress-bar {
+  height:4px; background:color-mix(in srgb, var(--cat-color) 13%, var(--border)); border-radius:3px; margin-top:7px;
+  overflow:hidden;
+}
+.research-progress-fill {
+  height:100%; background:var(--cat-color, var(--accent-primary, var(--red)));
+  border-radius:2px; transition:width 0.4s ease;
+}
+/* Active research uses the same compact card language as History. The live
+   map, progress, and navigation feedback are one optional detail region so a
+   long-running job does not permanently take over the active list. */
+#research-pane #research-active-list {
+  gap: 4px;
+  padding: 2px 2px 4px 0;
+}
+#research-pane #research-active-list .research-job-card {
+  display: block;
+  box-sizing: border-box;
+  max-height: none;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: none;
+}
+#research-pane #research-active-list .research-job-card:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+  transform: none;
+}
+#research-pane #research-active-list .research-active-card-header {
+  min-width: 0;
+  min-height: 22px;
+  gap: 6px;
+  cursor: pointer;
+}
+#research-pane #research-active-list .research-job-query {
+  position: static;
+  transform: none;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+#research-pane #research-active-list .research-job-model {
+  max-width: 110px;
+}
+#research-pane #research-active-list .research-job-time {
+  font-family: inherit;
+  font-size: 10px;
+}
+#research-pane #research-active-list .research-active-card-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  color: var(--fg);
+  opacity: 0.52;
+}
+#research-pane #research-active-list .research-job-overflow {
+  align-self: flex-start;
+  margin-left: 0;
+}
+#research-pane #research-active-list .research-job-more {
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  border: 0;
+  background: transparent;
+}
+#research-pane #research-active-list .research-active-detail {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-top: 5px;
+  overflow: hidden;
+}
+#research-pane #research-active-list .research-active-detail[hidden] {
+  display: none !important;
+}
+#research-pane #research-active-list .research-job-phase {
+  margin: 0 0 4px;
+}
+#research-pane #research-active-list .research-progress-bar {
+  margin-top: 5px;
+}
+#research-pane #research-active-list .research-navigation-trace-live {
+  margin-top: 6px;
+}
+.research-job-result {
+  margin-top:10px; border-top:1px solid var(--border); padding-top:10px;
+}
+.research-job-sources {
+  display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;
+}
+.research-source-link {
+  font-size:10px; padding:2px 6px;
+  background:color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
+  border-radius:3px; color:var(--accent-primary, var(--red));
+  text-decoration:none; white-space:nowrap;
+  max-width:200px; overflow:hidden; text-overflow:ellipsis;
+}
+.research-source-badges {
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  margin-left:5px;
+  vertical-align:1px;
+}
+.research-source-badge {
+  font-size:8px;
+  line-height:1;
+  padding:1px 3px;
+  border-radius:3px;
+  background:color-mix(in srgb, currentColor 12%, transparent);
+  opacity:0.75;
+  text-transform:uppercase;
+}
+.research-source-state {
+  font-size:10px;
+  line-height:1.45;
+  white-space:pre-wrap;
+  color:var(--text-muted);
+  background:color-mix(in srgb, var(--accent-primary, var(--red)) 5%, transparent);
+  border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius:5px;
+  padding:6px 7px;
+  margin:0 0 8px;
+}
+.research-navigation-trace {
+  font-size:10px;
+  line-height:1.4;
+  color:var(--text-muted);
+  background:color-mix(in srgb, var(--panel-bg, var(--bg)) 80%, transparent);
+  border:1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius:5px;
+  padding:6px 7px;
+  margin:0 0 8px;
+}
+.research-nav-title {
+  font-weight:600;
+  color:var(--text-primary, var(--text));
+  margin-bottom:4px;
+}
+.research-nav-spacer {
+  height:6px;
+}
+.research-nav-row {
+  display:grid;
+  grid-template-columns:auto minmax(0, 1fr) auto;
+  gap:5px;
+  align-items:baseline;
+  min-width:0;
+}
+.research-nav-tool {
+  color:var(--accent-primary, var(--red));
+  font-weight:600;
+}
+.research-action-skipped .research-nav-tool {
+  color:var(--text-muted);
+}
+.research-source-more { font-size:10px; opacity:0.5; padding:2px 4px; }
+.research-job-report-body {
+  font-size:12px; line-height:1.55; max-height:400px; overflow-y:auto;
+}
+.research-job-loading { font-size:11px; opacity:0.5; padding:8px 0; }
+.research-library-section {
+  border-top:1px solid var(--border); flex-shrink:0;
+}
+.research-library-toggle {
+  width:100%; background:transparent; border:none; color:var(--fg);
+  padding:8px 14px; font-size:11px; text-align:left;
+  opacity:0.6; cursor:pointer; font-weight:500;
+}
+.research-library-item {
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  padding:8px 14px; font-size:11px;
+  border-bottom:1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.research-library-item:hover { background:color-mix(in srgb, var(--border) 20%, transparent); }
+.research-lib-query {
+  flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:120px;
+}
+.research-lib-actions {
+  display:flex; gap:4px; margin-left:auto;
+}
+.research-lib-meta {
+  font-size:9px; opacity:0.4; white-space:nowrap; font-family:monospace;
+}
+.research-lib-open,
+.research-lib-delete {
+  background:transparent; border:none; color:var(--fg);
+  opacity:0.3; cursor:pointer; padding:2px; display:flex;
+  transition:opacity 0.15s;
+}
+.research-lib-delete:hover { opacity:1; color:#f44336; }
+.research-badge {
+  background:var(--accent-primary, var(--red)); border-radius:50%;
+  width:6px; height:6px; margin-left:auto; display:inline-block; flex-shrink:0;
+  position: relative; left: -4px;
+  /* Breathe when research has finished — gentle scale + glow pulse to
+     draw the eye to the unread result without being a hard blink. */
+  animation: research-badge-breathe 2.4s ease-in-out infinite;
+}
+
+/* Sidebar Deep Research running indicator — text then dot, styled the same
+   as Cookbook's running status (no glow). */
+.research-sb-running {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.research-sb-status {
+  font-size: 8px;
+  opacity: 0.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  top: 0;
+  left: -12px;
+}
+.research-sb-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-success, #4caf50);
+  animation: cookbook-notif-pulse 2s ease-in-out infinite;
+  position: relative;
+  top: -1px;
+  left: -4px;
+}
+
+/* ── In-house color picker ── */
+/* A color-picker swatch input shows the chosen colour as its background; hide
+   the underlying hex text/caret so it doesn't read as "#a1b2c3" in the box.
+   (The themed/gallery variants set this too; this is the generic fallback for
+   swatches outside those scopes, e.g. the calendar-settings color dots.) */
+input.cp-swatch-input {
+  color: transparent;
+  font-size: 0;
+  text-shadow: none;
+  caret-color: transparent;
+  user-select: none;
+}
+input.cp-swatch-input::selection { background: transparent; }
+.cp-popover {
+  position: fixed; z-index: 10000;
+  display: none;
+  width: 240px;
+  background: var(--panel, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  font-family: inherit; color: var(--fg, #eee); font-size: 12px;
+  user-select: none;
+}
+@media (max-width: 768px) {
+  .cp-popover {
+    width: min(240px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+  .cp-sl {
+    height: min(150px, 34dvh);
+  }
+}
+.cp-sl {
+  position: relative;
+  width: 100%; height: 160px;
+  border-radius: 6px;
+  cursor: crosshair;
+  overflow: hidden;
+  touch-action: none;
+}
+.cp-sl-white {
+  position: absolute; inset: 0;
+  background: linear-gradient(to right, #fff, rgba(255,255,255,0));
+  pointer-events: none;
+}
+.cp-sl-black {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, #000, rgba(0,0,0,0));
+  pointer-events: none;
+}
+.cp-sl-handle {
+  position: absolute;
+  width: 12px; height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 1px 3px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+.cp-hue {
+  position: relative;
+  margin-top: 10px;
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  cursor: pointer;
+  touch-action: none;
+}
+.cp-hue-handle {
+  position: absolute; top: 50%;
+  width: 10px; height: 18px;
+  margin: -9px 0 0 -5px;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 1px 3px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+.cp-row {
+  display: flex; align-items: center; gap: 6px; margin-top: 10px;
+}
+.cp-preview {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #333);
+  flex-shrink: 0;
+}
+.cp-hex {
+  flex: 1; min-width: 0;
+  padding: 4px 6px;
+  background: var(--bg, #000); color: var(--fg, #eee);
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  font-family: ui-monospace, 'Fira Code', monospace;
+  font-size: 12px; text-transform: lowercase;
+}
+.cp-hex:focus { outline: none; border-color: var(--red, #e06c75); }
+.cp-copy {
+  width: 26px; height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  color: var(--fg, #eee);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 26px;
+  transition: background 0.1s, color 0.1s;
+}
+.cp-copy:hover { background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent); color: var(--accent, var(--red)); }
+.cp-eyedropper {
+  width: 26px; height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  color: var(--fg, #eee);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+.cp-eyedropper:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
+.cp-section-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  opacity: 0.5; margin-top: 10px; margin-bottom: 4px;
+}
+.cp-swatches {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.cp-swatch {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #333);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.08s;
+}
+.cp-swatch:hover { transform: scale(1.15); }
+.cp-recent-empty {
+  font-size: 11px; opacity: 0.4; padding: 2px 0;
+}
+
+/* PDF form export modal + signature modals — match the app theme via the
+   existing modal/confirm-btn classes. Only a few atom-level styles below. */
+.pdf-export-overlay .modal-content { padding: 12px 14px; }
+.pdf-export-overlay #pdf-export-body { padding-right: 4px; }
+.pdf-export-overlay .pdf-export-section {
+  margin-bottom: 14px;
+}
+.pdf-export-overlay .pdf-export-section-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--red);
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+.pdf-export-overlay .pdf-export-row {
+  display: grid;
+  grid-template-columns: 38% 62%;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+}
+.pdf-export-overlay .pdf-export-row label {
+  font-size: 0.78rem;
+  color: var(--fg);
+  opacity: 0.85;
+}
+.pdf-export-input,
+.pdf-export-overlay select.pdf-export-input,
+.pdf-export-overlay input.pdf-export-input {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-family: inherit;
+}
+.pdf-export-input:focus {
+  outline: none;
+  border-color: var(--fg);
+}
+.sig-modal-overlay .modal-content { padding: 12px 14px; }
+.sig-modal-overlay .sig-canvas {
+  display: block;
+  width: 100%;
+  height: 240px;
+  background: #fff;
+  cursor: crosshair;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  /* Drawing uses pointer events; without this, a touch-drag on the canvas pans
+     the page / sheet instead of drawing ("the whole window moves"). */
+  touch-action: none;
+}
+.sig-modal-overlay .sig-name,
+.sig-modal-overlay .sig-smoothness {
+  font-family: inherit;
+}
+.sig-modal-overlay .sig-smoothness {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+}
+.sig-modal-overlay .sig-name {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.sig-modal-overlay .sig-tile {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  background: var(--bg);
+}
+.sig-modal-overlay .sig-tile:hover { border-color: var(--fg); }
+.sig-modal-overlay .sig-tile img {
+  display: block;
+  width: 100%;
+  height: 80px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 3px;
+}
+.sig-modal-overlay .sig-tile-del {
+  position: absolute;
+  top: 1px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  /* Center the × glyph inside the round bg — without this the button's default
+     text metrics push it past the right edge of the circle. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0 0 1px;
+  box-sizing: border-box;
+  font-size: 0.85rem;
+  line-height: 1;
+  border: 1px solid var(--accent, var(--red));
+  background: #fff;
+  color: var(--accent, var(--red));
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 1;
+}
+.sig-modal-overlay .sig-tile-del:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, #fff);
+}
+.sig-modal-overlay .sig-new-tile {
+  border: 2px dashed var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 106px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.sig-modal-overlay .sig-new-tile:hover {
+  opacity: 1;
+  border-color: var(--fg);
+}
+
+/* Form checkboxes — render as a circular dot, theme-aware. Used in the
+   Export PDF modal and the inline PDF view overlay. */
+.pdf-export-overlay input[type="checkbox"],
+#doc-pdf-view input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  background: #fff;
+  position: relative;
+}
+.pdf-export-overlay input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+}
+.pdf-export-overlay input[type="checkbox"]:checked {
+  background: var(--fg);
+  border-color: var(--fg);
+}
+/* PDF view overlays on a white page render — keep colors theme-independent
+   so the dot is always visible against the rendered PDF. */
+#doc-pdf-view input[type="checkbox"] {
+  border: 1.5px solid #444;
+}
+#doc-pdf-view input[type="checkbox"]:checked {
+  background: #111;
+  border-color: #111;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Frosted glass theme — applied when the user enables the "Glass" toggle
+   in theme settings (writes `body.theme-frosted`). Layers a semi-translucent
+   tint over every panel/modal/sidebar/dropdown and blurs whatever is
+   behind it, so the UI reads like layered glass.
+   ───────────────────────────────────────────────────────────────────────── */
+body.theme-frosted #sidebar,
+body.theme-frosted .modal-content,
+body.theme-frosted .doclib-modal-content,
+body.theme-frosted .gallery-modal-content,
+body.theme-frosted .notes-pane,
+body.theme-frosted .research-pane,
+body.theme-frosted .calendar-pane,
+body.theme-frosted .cookbook-pane,
+body.theme-frosted .doc-pane,
+body.theme-frosted .doc-pane-floating,
+body.theme-frosted .cp-popover,
+body.theme-frosted .dropdown,
+body.theme-frosted .overflow-menu,
+body.theme-frosted .doc-tab-dropdown,
+body.theme-frosted .email-reader,
+body.theme-frosted .admin-card,
+body.theme-frosted .gallery-detail-menu,
+body.theme-frosted #theme-popup .modal-content {
+  /* Tinted base color (set separately so the shorthand can't swallow it);
+     much more transparent than before so what's behind actually shows
+     through. The blur catches whatever pixels are below. */
+  background-color: color-mix(in srgb, var(--panel, var(--bg)) 32%, transparent) !important;
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--fg, #fff) 14%, transparent) 0%,
+    color-mix(in srgb, var(--fg, #fff)  4%, transparent) 26%,
+    transparent 55%) !important;
+  backdrop-filter: blur(24px) saturate(170%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(170%) !important;
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent) !important;
+}
+/* The sidebar header + user bar paint their own opaque --sidebar-bg/--panel.
+   Under the frosted theme the sidebar is translucent glass, so those solid
+   bands stood out as a dark (near-black) strip over the title/avatar area.
+   Make them transparent so they blend into the frosted sidebar. */
+body.theme-frosted .sidebar-header,
+body.theme-frosted .sidebar-user-bar {
+  background: transparent !important;
+}
+/* Same problem on tool modals: the sticky .modal-header paints a solid
+   var(--panel) bar (so scrolled content doesn't bleed through). Over a
+   frosted-glass modal body that solid bar reads as a dark band across the
+   title area (Calendar, Tasks, Cookbook, Memory, Email…). Give the header
+   its own matching frosted glass — translucent tint + blur — so it stays
+   readable while scrolling but blends into the panel instead of a black band. */
+body.theme-frosted .modal-header {
+  /* Transparent — NOT another panel tint. The header sits on top of the
+     already-frosted modal body, so any added tint stacks and the band
+     reads darker than its surroundings. Keep just the blur (which doesn't
+     darken) so scrolled content stays legible under the sticky header. */
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Deep Research's header isn't sticky (content doesn't scroll under it) and
+   its pane carries extra frosting — saturate + a top gradient highlight +
+   the synapse glow. The generic header blur above adds its OWN glass layer,
+   which renders a different shade than the pane behind it. Drop the header's
+   blur so the pane's frosted background shows through the header uniformly. */
+body.theme-frosted .research-pane-header {
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.theme-frosted .notes-mobile-grabber {
+  background-color: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Inner admin-cards inside frosted modals stack their transparency on top
+   of the modal's, which kills the see-through. Make the inner card nearly
+   fully transparent so the outer modal's blur dominates. */
+body.theme-frosted .modal-content .admin-card,
+body.theme-frosted .doclib-modal-content .admin-card,
+body.theme-frosted .gallery-modal-content .admin-card,
+body.theme-frosted #theme-popup .admin-card {
+  background-color: color-mix(in srgb, var(--panel, var(--bg)) 10%, transparent) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Subtle inner light highlight + softer shadow on the heavier surfaces */
+body.theme-frosted .modal-content,
+body.theme-frosted .doclib-modal-content,
+body.theme-frosted .gallery-modal-content,
+body.theme-frosted .notes-pane,
+body.theme-frosted .research-pane,
+body.theme-frosted .calendar-pane,
+body.theme-frosted .cookbook-pane,
+body.theme-frosted .doc-pane,
+body.theme-frosted .doc-pane-floating {
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 14%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 14%, transparent) !important;
+}
+/* Backdrops should be MUCH less opaque so the blur effect reads through to
+   the actual page content behind the modal. */
+body.theme-frosted .modal {
+  background: color-mix(in srgb, #000 12%, transparent) !important;
+}
+
+/* Mobile only: lift the Dependencies "Server" dropdown's selected text up ~2px. */
+@media (max-width: 768px) {
+  #hwfit-deps-server { padding-bottom: 4px; line-height: 1; }
+}
+
+/* Emoji rendered as monochrome line icons (OpenMoji-black via /api/emoji proxy)
+   instead of colorful system glyphs — project rule: never colorful emoji. The
+   SVG is used as a mask filled with the current text color, so it tints to the
+   theme. Sized to sit on the text baseline. */
+.emoji {
+  height: 1.15em;
+  width: 1.15em;
+  vertical-align: -0.18em;
+  margin: 0 0.05em;
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask: var(--em) center / contain no-repeat;
+          mask: var(--em) center / contain no-repeat;
+}
+
+.assistant-message a[href^="#event-"] .emoji,
+.ai-message a[href^="#event-"] .emoji,
+.message.assistant a[href^="#event-"] .emoji {
+  position: relative;
+  top: 2px;
+}
+
+.emoji[aria-label="🔔"] {
+  position: relative;
+  top: 3px;
+}
+
+
+/* RESEARCH SCROLL FORCE — guarantee the jobs list scrolls inside the bounded
+   pane (the pane is height-capped: 85vh desktop, 100dvh mobile). Each ancestor
+   needs min-height:0 for a nested flex scroll to engage. */
+#research-pane { min-height: 0; }
+/* The BODY is the single scroller — the list flows into it and the whole body
+   scrolls. (A nested list-scroller kept clipping instead of scrolling.) */
+#research-pane .research-pane-body {
+  flex: 1 1 auto !important; min-height: 0 !important;
+  display: flex !important; flex-direction: column !important;
+  overflow-y: auto !important; -webkit-overflow-scrolling: touch;
+}
+#research-pane .research-jobs-list {
+  flex: 0 0 auto !important; min-height: 0 !important;
+  overflow: visible !important; max-height: none !important;
+}
+/* The tabbed research panel replaces the old single body scroller above:
+   each result tab now owns its list viewport. */
+#research-pane .research-tab-panel {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+#research-pane .research-tab-panel:not([data-research-panel="research"]) .research-jobs-list {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+}
+#research-pane .research-tab-panel[data-research-panel="research"] .research-new-job {
+  margin-bottom: 0;
+}
+
+/* RESEARCH FULLSCREEN MOBILE — the pane wasn't opening to full height on mobile,
+   so its content overflowed with nowhere to scroll. Pin it to the full viewport
+   (id selector + !important beats the inherited modal-content sizing). */
+@media (max-width: 768px) {
+  /* Bottom-sheet: 90dvh tall (a touch smaller than full-screen) anchored to the
+     bottom, so there's a small gap at the top and it reads as a sheet. The body
+     still scrolls within the bounded height. */
+  #research-overlay { align-items: flex-end !important; justify-content: stretch !important; }
+  #research-pane {
+    height: 90dvh !important;
+    max-height: 90dvh !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    border-radius: 14px 14px 0 0 !important;
+  }
+  /* Bottom breathing room so the expanded Settings + Start button clear the
+     browser's bottom toolbar / safe area and can always be scrolled into view
+     (otherwise the form fits the viewport and there's no room to reach them). */
+  #research-pane .research-pane-body {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px) !important;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+  }
+}
+
+/* Keep the primary action transition consistent with the shared toolbar. */
+.research-start-btn { transition: opacity 0.16s ease; }
+
+/* Right-side group of the section header: clear button (past), status dot, chevron. */
+.research-section-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+/* "Clear all" in the Past header — styled like the cookbook-running clear btn. */
+.research-section-clear {
+  font-size: 10px; padding: 0 8px; height: 22px;
+  border-radius: 6px; border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+  font-family: inherit; white-space: nowrap; transition: all 0.15s;
+  position: relative; top: -2px;
+}
+.research-section-clear:hover { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+
+/* Visual Report button tinted with the research type colour (--cat-color),
+   falling back to the accent for "standard" (uncategorized) research. */
+.research-job-action.research-job-action-report {
+  color: var(--cat-color, var(--accent, var(--red)));
+  border-color: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 45%, var(--border));
+}
+
+.research-start-btn svg,
+.research-add-plus { display: inline-block; }
+
+/* Compare's selector uses the shared Start button markup, but its accent
+   background needs a readable dark foreground and a lighter hover weight. */
+#compare-model-overlay .research-start-btn {
+  color: #000;
+}
+#compare-model-overlay .research-start-btn:hover {
+  color: var(--fg);
+  font-weight: 400;
+  opacity: 1;
+}
+
+/* Footer hint under Past research linking to the Library's Research tab. */
+.research-library-hint {
+  width: 100%; flex-basis: 100%; margin: -2px 0 0; line-height: 1.2;
+  font-size: calc(1em - 2px); opacity: 0.55;
+}
+.research-library-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--accent, var(--red)); text-decoration: underline;
+}
+
+
+@media (max-width: 768px) {
+  /* Mobile: the "Delete" label is too wide in Deep Research job rows; keep the
+     familiar trash action but make it icon-only. */
+  .research-job-action[data-action="delete"] {
+    width: 28px;
+    min-width: 28px;
+    padding-left: 0;
+    padding-right: 0;
+    gap: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+  .research-job-action[data-action="delete"] svg {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    flex-shrink: 0;
+  }
+}
+
+/* Standard research gets a stable visual variant instead of inheriting the
+   global warm accent. Keep typography unchanged; vary only the card tint,
+   border, badge, progress bar, and report hero accent. */
+.research-job-card.research-standard {
+  --cat-color: var(--research-accent);
+  background: color-mix(in srgb, var(--research-accent) 4%, var(--bg));
+  border-color: color-mix(in srgb, var(--research-accent) 28%, var(--border));
+  border-left-color: var(--research-accent);
+}
+.research-job-card.research-standard .research-cat-badge.research-cat-standard {
+  color: var(--research-accent);
+}
+
+/* Failed research (0 sources) — red flag + actionable note. */
+.research-job-card.research-job-failed { border-color: color-mix(in srgb, #f44336 40%, var(--border)); }
+.research-cat-badge.research-cat-failed { color: #f44336; display: inline-flex; align-items: center; gap: 3px; }
+.research-cat-badge.research-cat-failed svg { width: 10px; height: 10px; }
+.research-job-failnote { position: relative; top: 2px; font-size: 10px; color: #f44336; opacity: 0.9; margin: 2px 0 6px; line-height: 1.35; }
+
+/* Shared popup-menu row feedback. Many small menus use their own item class;
+   keep the hover light and consistent instead of giving one action a special
+   glow. */
+:is(
+  .overflow-menu-item,
+  .dropdown-item,
+  .dropdown-item-compact,
+  .export-dropdown-item,
+  .sort-dropdown-item,
+  .note-reminder-menu-item,
+  .research-run-mode-popover .research-run-mode-row,
+  .ge-fx-menu-item
+) {
+  transition:
+    background-color 0.14s ease,
+    color 0.14s ease,
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+:is(
+  .overflow-menu-item,
+  .dropdown-item,
+  .dropdown-item-compact,
+  .export-dropdown-item,
+  .sort-dropdown-item,
+  .note-reminder-menu-item,
+  .research-run-mode-popover .research-run-mode-row,
+  .ge-fx-menu-item
+):hover:not(:disabled) {
+  opacity: 1;
+  color: var(--fg);
+  background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  transform: translateX(1px);
+}
+
+/* Slash command autocomplete popup, anchored to the message composer */
+.slash-autocomplete-popup {
+  position: fixed;
+  z-index: 9000;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  font-size: 13px;
+  color: var(--fg, #e6e6e6);
+  overflow-y: auto;
+  padding: 4px 0;
+  display: none;
+}
+.slash-ac-cat {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted, #888);
+  padding: 6px 10px 2px;
+  opacity: 0.7;
+}
+.slash-ac-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.slash-ac-row:hover { background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+.slash-ac-row-sel  { background-color: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+.slash-ac-token {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.slash-ac-help {
+  color: var(--fg);
+  opacity: 0.85;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slash-ac-usage {
+  color: var(--fg-muted, #888);
+  font-family: 'Fira Code', ui-monospace, monospace;
+  font-size: 11px;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+.slash-ac-empty {
+  padding: 10px;
+  color: var(--fg-muted, #888);
+  font-style: italic;
+}
+.slash-ac-empty code {
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--accent, var(--red));
+}
+
+/* ══ iOS focus-zoom fix — Safari touch devices only; desktop sizes untouched ══
+   16px is the threshold below which iOS Safari auto-zooms on focus.
+   Selects and date/time inputs are excluded on purpose — they open native
+   pickers and never zoom. */
+@supports (-webkit-touch-callout: none) {
+@media (hover: none) and (pointer: coarse) {
+
+  /* 1 ── Catch-all: every text-entry control NOT pinned with its own
+     !important. !important here beats any non-important rule regardless of
+     specificity, so this clears the long tail (settings, admin, memory,
+     notes, calendar, email, gallery, tasks, model picker, etc.). */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* 2 ── Fields that pin their own !important at specificity our catch-all
+     can't beat. Each is matched at equal-or-higher specificity and, being
+     later in the file, wins the tie. */
+  #message { font-size: 16px !important; }                                  /* chat composer (was 13px !important) */
+  .cookbook-dl-repo,
+  .hwfit-search { font-size: 16px !important; }                             /* cookbook repo path + hardware search */
+  .ge-topbar input { font-size: 16px !important; }                          /* image-editor topbar input */
+  .ge-transform-field > input.ge-transform-popup-input {                    /* image-editor transform values */
+    font-size: 16px !important;
+  }
+}
+}
+
+@supports (-webkit-touch-callout: none) {
+@media (hover: none) and (pointer: coarse) {
+  /* Only the sub-16px tiers need bumping; large lands ABOVE 16 so it
+     stays zoom-safe AND visibly larger than medium (otherwise L collapses
+     onto M on touch). All three editor layers move together so the
+     highlight/line-number overlay stays metrically aligned with the textarea. */
+  .doc-font-m .doc-editor-textarea, .doc-font-m .doc-editor-highlight, .doc-font-m .doc-line-numbers {
+    font-size: 16px !important;   /* was 13px */
+  }
+  .doc-font-l .doc-editor-textarea, .doc-font-l .doc-editor-highlight, .doc-font-l .doc-line-numbers {
+    font-size: 18px !important;   /* was 15px — keep L > M */
+  }
+  /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
+     is already ≥16px and never zoomed — leave it so we don't shrink it. */
+  .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+}
+
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ChatGPT Subscription per-account usage card (Settings → Added Models) */
+.adm-chatgpt-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 2px auto;
+}
+.adm-chatgpt-usage-chevron {
+  font-size: 10px;
+  line-height: 1;
+  display: inline-block;
+  margin-left: 2px;
+}
+.adm-chatgpt-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+.adm-chatgpt-usage-plan { display: flex; gap: 6px; align-items: center; }
+.adm-chatgpt-usage-limit { display: flex; flex-direction: column; gap: 6px; }
+.adm-chatgpt-usage-limit-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.adm-chatgpt-usage-model {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.8;
+}
+.adm-chatgpt-usage-row { display: flex; flex-direction: column; gap: 3px; }
+.adm-chatgpt-usage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.adm-chatgpt-usage-name {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-chatgpt-usage-remaining { font-weight: 600; }
+.adm-chatgpt-usage-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.adm-chatgpt-usage-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+.adm-chatgpt-usage-warn .adm-chatgpt-usage-fill { background: #d99a2b; }
+.adm-chatgpt-usage-critical .adm-chatgpt-usage-fill { background: #d9534f; }
+.adm-chatgpt-usage-unknown .adm-chatgpt-usage-fill { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.adm-chatgpt-usage-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+.adm-chatgpt-usage-status {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.adm-chatgpt-usage-blocked { color: #d9534f; }
+.adm-chatgpt-usage-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.adm-chatgpt-reconnect-status { font-size: 11px; }
+/* Cookbook serve panel: Launch + ^ split button pair */
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Mobile: drop the inline icons on Launch + Cancel in the serve panel so
+   the buttons are text-only and don't wrap on narrow screens. Icons stay
+   on desktop where horizontal space isn't tight. */
+@media (max-width: 600px) {
+  .hwfit-serve-launch > svg,
+  .hwfit-serve-cancel > svg {
+    display: none !important;
+  }
+}
+
+/* Schedule form — mounted inside the cookbook serve panel. Uses the
+   theme tokens (--bg, --panel, --border, --accent, --red) so it
+   matches the rest of the cookbook chrome instead of inline whites. */
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.hwfit-schedule-actions-inline {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+  align-self: flex-end;
+  padding-bottom: 1px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+
+/* Days row hosts the day-chip strip on the left and the Cancel / Save
+   action buttons on the right. The spacer between them pushes the
+   actions to the right edge. */
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+/* Cancel + Save sit on the right side of the days row with matching
+   icon-plus-label chrome. */
+.hwfit-sched-cancel,
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+@media (max-width: 600px) {
+  .hwfit-schedule-row { gap: 8px; }
+  .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
+}
+
+/* ── ask_user: multiple-choice question card ─────────────────────────────
+   The agent posed a question and ended its turn. The user clicks an option
+   or types a free-text "Other" answer. */
+.ask-user-card {
+  /* Left-align like an assistant message (.msg-ai), not centered. */
+  align-self: flex-start;
+  margin: 10px auto 10px 8px;
+  width: 85%;
+  max-width: 85%;
+  box-sizing: border-box;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--bubble-border, var(--border));
+  border-radius: 18px 18px 18px 0;
+  background: var(--ai-bubble-bg, var(--panel));
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+}
+.ask-user-card-attached {
+  margin-top: 0;
+  margin-left: 8px;
+  width: 85%;
+  max-width: 85%;
+}
+.ask-user-card-attached::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: -18px;
+  width: 2px;
+  height: 18px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  pointer-events: none;
+  z-index: -1;
+}
+/* Focused only programmatically (tabIndex -1) to move SR/keyboard position; no
+   visible outline on the whole card box. */
+.ask-user-card:focus { outline: none; }
+.ask-user-head {
+  display: none;
+}
+.ask-user-close {
+  display: none !important;
+}
+.ask-user-question {
+  margin: 0 0 10px;
+  font-size: 11px !important;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--fg);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask-user-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  row-gap: 2px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  height: auto !important;
+  /* Match the height of the free-text input below (.styled-prompt-input). */
+  min-height: 39px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11px !important;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ask-user-option:hover:not(:disabled) {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--bg));
+}
+.ask-user-option:disabled { cursor: default; }
+.ask-user-card.ask-user-answered {
+  opacity: 0.92;
+}
+.ask-user-card.ask-user-answered .ask-user-question {
+  margin-bottom: 8px;
+}
+.ask-user-option-label,
+.ask-user-option-desc {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.ask-user-option-label {
+  font-size: 11px !important;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--accent, var(--red));
+}
+.ask-user-option-desc {
+  flex-basis: 100%;
+  width: 100%;
+  opacity: 0.65;
+  font-size: 10px !important;
+  line-height: 1.35;
+}
+/* Free-text "Other" row: input + send, on one line. */
+.ask-user-other {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  min-width: 0;
+}
+/* Reuses .styled-prompt-input; override its full-width + top margin so it
+   sits inline in the flex row next to the send button. */
+.ask-user-other-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  margin-top: 0;
+  font-size: 11px !important;
+  line-height: 1.35;
+}
+/* Reuses .confirm-btn .confirm-btn-primary; flex-row deltas + height match to
+   the input beside it (.confirm-btn won't stretch on its own). */
+.ask-user-other-send {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  width: 32px;
+  min-width: 32px;
+  height: 32px !important;
+  min-height: 32px;
+  font-size: 11px !important;
+  line-height: 1.35;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--send-btn-bg, var(--red));
+  color: #fff;
+}
+.ask-user-other-send svg { display: block; flex-shrink: 0; }
+.ask-user-other-send:hover:not(:disabled) {
+  background: var(--send-btn-hover, color-mix(in srgb, var(--red) 80%, white));
+}
+.ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+.ask-user-answer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 24%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, var(--bg));
+  color: var(--fg);
+  font-size: 11px !important;
+  line-height: 1.35;
+}
+.ask-user-answer-label {
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.ask-user-answer-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .ask-user-card {
+    width: calc(100% - 16px);
+    max-width: calc(100% - 16px);
+    margin-left: 8px;
+    margin-right: 8px;
+    padding: 10px 11px 12px;
+    border-radius: 10px;
+  }
+  .ask-user-card-attached {
+    margin-left: 0;
+    margin-right: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  .ask-user-question {
+    font-size: 11px !important;
+    line-height: 1.45;
+  }
+  .ask-user-option {
+    padding: 7px 8px;
+    font-size: 11px !important;
+    gap: 6px;
+  }
+  .ask-user-option-label {
+    font-size: 11px !important;
+  }
+  .ask-user-option-desc {
+    font-size: 10px !important;
+  }
+  .ask-user-other {
+    flex-wrap: wrap;
+  }
+  .ask-user-other-send {
+    width: 32px;
+    min-width: 32px;
+    height: 32px !important;
+    min-height: 32px;
+    padding: 0;
+  }
+}
+
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+.workspace-footer > .confirm-btn { position: relative; top: 4px; }
+.workspace-footer > .confirm-btn-primary { color: var(--bg); }
+.workspace-footer > #workspace-use { top: 3px; font-size: calc(0.85rem + 2px); font-weight: 700; }
+.workspace-footer > #workspace-use:hover { color: var(--fg); }
+.workspace-footer > .confirm-btn > svg { position: relative; left: -2px; top: 2px; }
+.workspace-footer > #workspace-use > svg { top: 3px; color: inherit; }
+.workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+
+.settings-system-logs-tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-system-logs-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 6px 8px 7px;
+  opacity: 0.62;
+}
+.settings-system-logs-tab.active {
+  border-bottom-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.settings-system-logs-col {
+  gap: 10px;
+}
+.settings-system-notification-logs-col {
+  gap: 10px;
+}
+#system-log-terminal-panel[hidden],
+#system-log-notifications-panel[hidden] {
+  display: none !important;
+}
+.settings-system-logs-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.settings-system-logs-search {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  flex: 1;
+  min-width: 140px;
+}
+.settings-system-logs-select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 90px;
+}
+#log-refresh-btn {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+.settings-system-logs-autopoll-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  user-select: none;
+  margin-left: auto;
+}
+#log-console-container {
+  background: #13151a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: Consolas, 'Fira Code', Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  height: 280px;
+  max-height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #d1d4e0;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+}
+.settings-system-logs-placeholder {
+  color: var(--color-text-dim, #7f8c8d);
+  font-style: italic;
+  font-family: inherit;
+}
+.log-line {
+  margin-bottom: 3px;
+  line-height: 1.4;
+  font-size: 11px;
+  font-family: inherit;
+}
+.log-line-info {
+  color: var(--green, #50fa7b);
+}
+.log-line-warning {
+  color: var(--warn, #f0ad4e);
+}
+.log-line-error {
+  color: var(--red, #e06c75);
+}
+.log-line-debug {
+  color: var(--color-muted, #888);
+}
+.log-line-default {
+  color: var(--fg, #9cdef2);
+}
+#notification-log-container {
+  height: 280px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 72%, #13151a 28%);
+}
+.notification-log-entry {
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+.notification-log-entry:last-child { border-bottom: 0; }
+.notification-log-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.notification-log-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.notification-log-status {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+.notification-log-success .notification-log-status { color: var(--green, #50fa7b); }
+.notification-log-error .notification-log-status { color: var(--red, #e06c75); }
+.notification-log-meta {
+  margin-top: 3px;
+  color: var(--color-text-dim, #7f8c8d);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.notification-log-body {
+  position: relative;
+  margin-top: 6px;
+  padding: 7px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 28%, transparent);
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-family: Consolas, 'Fira Code', Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.notification-log-body-text { display: block; padding-right: 24px; }
+.notification-log-copy {
+  position: absolute; top: 5px; right: 5px; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 4px; background: transparent; color: currentColor;
+  opacity: .45; cursor: pointer; padding: 0;
+}
+.notification-log-copy:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.notification-log-copy.copied { opacity: 1; color: var(--green, #50fa7b); }
+.notification-log-error .notification-log-body {
+  border-left-color: var(--red, #e06c75);
+  color: color-mix(in srgb, var(--red, #e06c75) 88%, var(--fg));
+}
+
+/* Compare uses one full-width response card on phones. Every pane remains
+   mounted so hidden models can keep streaming while the tab strip scales to
+   larger comparisons without stacking multiple chats down the page. */
+@media (max-width: 768px) {
+  .compare-add-flap { display: none !important; }
+  .compare-mobile-tabs {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: stretch;
+    gap: 5px;
+    min-width: 0;
+    padding: 0 8px 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .compare-mobile-tabs::-webkit-scrollbar { display: none; }
+  .compare-mobile-tab {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 clamp(108px, 38vw, 156px);
+    min-width: 0;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+    color: color-mix(in srgb, var(--fg) 62%, transparent);
+    font-size: 10px;
+    line-height: 1;
+    font-family: inherit;
+    text-align: left;
+    scroll-snap-align: start;
+    transition: border-color .15s ease, background .15s ease, color .15s ease;
+  }
+  .compare-mobile-add {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 34px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+    color: color-mix(in srgb, var(--fg) 70%, transparent);
+    font-size: 10px;
+    line-height: 1;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .compare-mobile-add > span:first-child {
+    color: var(--accent, var(--red));
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1;
+  }
+  .compare-mobile-add:disabled { opacity: .35; cursor: default; }
+  .compare-mobile-add:not(:disabled):active {
+    background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--bg));
+  }
+  .compare-mobile-tab.active {
+    border-color: color-mix(in srgb, var(--accent, var(--red)) 70%, var(--border));
+    background: color-mix(in srgb, var(--accent, var(--red)) 11%, var(--bg));
+    color: var(--fg);
+  }
+  .compare-mobile-tab-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
+    color: color-mix(in srgb, var(--fg) 68%, transparent);
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .compare-mobile-tab.active .compare-mobile-tab-slot {
+    background: var(--accent, var(--red));
+    color: var(--bg);
+  }
+  .compare-mobile-tab-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .compare-mobile-tab-state {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--fg) 22%, transparent);
+  }
+  .compare-mobile-tab.is-streaming .compare-mobile-tab-state {
+    background: var(--red, #e06c75);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--red, #e06c75) 65%, transparent);
+    animation: compare-mobile-tab-pulse 1s ease-in-out infinite !important;
+    will-change: opacity, transform, box-shadow;
+  }
+  .compare-mobile-tab.is-awaiting-input .compare-mobile-tab-state { background: var(--accent, var(--red)); }
+  .compare-mobile-tab.is-done .compare-mobile-tab-state {
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    background: none;
+    color: var(--color-success, #4caf50);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .compare-mobile-tab.is-done .compare-mobile-tab-state::before { content: '✓'; }
+  .compare-mobile-tab.is-failed .compare-mobile-tab-state { background: var(--color-error, #e55); }
+  @keyframes compare-mobile-tab-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--red, #e06c75) 65%, transparent); }
+    50% { opacity: .45; transform: scale(.72); box-shadow: 0 0 0 5px color-mix(in srgb, var(--red, #e06c75) 0%, transparent); }
+  }
+  .compare-grid[data-cols],
+  .compare-grid.sequential-layout {
+    display: block !important;
+    grid-template-columns: none !important;
+    flex: 1 1 0;
+    min-height: 0;
+    padding: 0 8px 6px;
+    overflow: hidden;
+  }
+  .compare-grid > .compare-pane,
+  .compare-grid.sequential-layout > .compare-pane {
+    display: none;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    margin-left: 0 !important;
+    box-sizing: border-box;
+  }
+  .compare-grid > .compare-pane.compare-pane-mobile-active,
+  .compare-grid.sequential-layout > .compare-pane.compare-pane-mobile-active {
+    display: flex;
+    animation: compare-mobile-card-in .16s ease-out;
+  }
+  .compare-grid.sequential-layout .compare-pane .pane-header {
+    clip-path: none;
+    padding-left: 10px;
+  }
+  @keyframes compare-mobile-card-in {
+    from { opacity: .55; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .compare-probe-card { width: min(460px, calc(100% - 16px)); padding: 12px; }
+  .compare-probe-list { grid-template-columns: minmax(0, 1fr); }
+  .compare-probe-row:not(.fail) .compare-probe-spinner:not(.ok):not(.fail) { transform: translateX(-2px); }
+  .compare-probe-detail { flex-wrap: wrap; }
+  .compare-probe-detail-message { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compare-mobile-tab.is-streaming .compare-mobile-tab-state,
+  .compare-grid > .compare-pane.compare-pane-mobile-active { animation: none; }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* Mobile tool drawers: leave a visible strip of the workspace above tall
+   sheets so they read as draggable drawers rather than full-screen routes.
+   Content-sized windows remain shorter; only tall content is capped at 95dvh.
+   Keep the theme popup's intentionally shorter 65vh treatment unchanged. */
+@media (max-width: 768px) {
+  .modal:not(#theme-modal):not(#styled-confirm-overlay) > .modal-content,
+  .modal:not(#theme-modal):not(#styled-confirm-overlay) > .memory-modal-content,
+  .modal:not(#theme-modal):not(#styled-confirm-overlay) > .settings-modal-content {
+    height: auto !important;
+    max-height: 95dvh !important;
+    align-self: flex-end;
+    margin-bottom: calc(-1 * env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Tabbed tools need a definite flex height when their active panel changes;
+     otherwise the content-sized drawer can collapse and hide the tab strip. */
+  #cookbook-modal .modal-content,
+  #tasks-modal .tasks-modal-content,
+  #memory-modal .memory-modal-content,
+  #settings-modal .settings-modal-content,
+  #email-lib-modal .modal-content,
+  .email-window-modal .modal-content,
+  #doclib-modal .doclib-modal-content,
+  #library-modal .doclib-modal-content,
+  #gallery-modal .gallery-modal-content,
+  #research-overlay .research-pane,
+  #compare-model-overlay .modal-content,
+  #custom-preset-modal .preset-modal-content {
+    height: 95dvh !important;
+    min-height: 95dvh !important;
+    max-height: 95dvh !important;
+  }
+
+  /* Explicit fullscreen states still behave as bottom drawers on phones. */
+  #email-lib-modal.email-lib-fullscreen .modal-content,
+  #doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+    top: auto !important;
+    bottom: 0 !important;
+    height: 95dvh !important;
+    max-height: 95dvh !important;
+    border-radius: 14px 14px 0 0 !important;
+  }
+
+  .cal-modal-container {
+    height: auto !important;
+    max-height: 95dvh !important;
+  }
+
+  body.doc-view .doc-editor-pane,
+  body.notes-view .notes-pane {
+    inset: auto 0 0 !important;
+    height: 95dvh !important;
+    max-height: 95dvh !important;
+  }
+}
+
+
+
+/* Shared bulk-selection trigger. Keep every Select/Cancel control on the same
+   circle-dot and X language even when a feature rewrites the button label. */
+:is(
+  #memory-select-btn,
+  #skills-select-btn,
+  #notes-select-btn,
+  #tasks-select-btn,
+  #doclib-chats-select-btn,
+  #doclib-arc-select-btn,
+  #doclib-research-select-btn,
+  #doclib-select-btn,
+  #gallery-select-btn,
+  #gallery-albums-select-btn,
+  #gallery-editor-drafts-select,
+  #email-lib-select-btn,
+  #archive-select-btn,
+  #lib-select-btn,
+  #hwfit-cache-select
+) {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+:is(
+  #memory-select-btn,
+  #skills-select-btn,
+  #notes-select-btn,
+  #tasks-select-btn,
+  #doclib-chats-select-btn,
+  #doclib-arc-select-btn,
+  #doclib-research-select-btn,
+  #doclib-select-btn,
+  #gallery-select-btn,
+  #gallery-albums-select-btn,
+  #gallery-editor-drafts-select,
+  #email-lib-select-btn,
+  #archive-select-btn,
+  #lib-select-btn,
+  #hwfit-cache-select
+)::before {
+  content: "";
+  width: 11px;
+  height: 11px;
+  margin-right: 3px;
+  flex: 0 0 11px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='none' stroke='black' stroke-width='2'/%3E%3Ccircle cx='12' cy='11' r='3' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='none' stroke='black' stroke-width='2'/%3E%3Ccircle cx='12' cy='11' r='3' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+:is(
+  #memory-select-btn,
+  #skills-select-btn,
+  #notes-select-btn,
+  #tasks-select-btn,
+  #doclib-chats-select-btn,
+  #doclib-arc-select-btn,
+  #doclib-research-select-btn,
+  #doclib-select-btn,
+  #gallery-select-btn,
+  #gallery-albums-select-btn,
+  #gallery-editor-drafts-select,
+  #email-lib-select-btn,
+  #archive-select-btn,
+  #lib-select-btn,
+  #hwfit-cache-select
+).active::before {
+  background-color: var(--accent, var(--red));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18 6 6 18M6 6l12 12' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18 6 6 18M6 6l12 12' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+:is(#memory-select-btn, #skills-select-btn, #email-lib-select-btn) > .memory-select-btn-icon {
+  display: none;
+}
+
+/* The Skills toolbar sits a pixel higher than its peers. */
+#skills-select-btn::before {
+  transform: translateY(1px);
+}
+
+
+/* Deep Research History uses the same library surface as Memory, Skills, and
+   Tasks: one framed block, compact toolbar, filter chips, bulk selection, and
+   cards that expand in place. */
+#research-pane .research-history-card {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  padding: 12px;
+}
+#research-pane .research-history-title-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+#research-pane .research-history-clear-btn svg {
+  position: relative;
+  top: 2px;
+}
+#research-pane .research-history-title-row h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  top: -4px;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  border: 0;
+  letter-spacing: 0;
+}
+#research-pane .research-history-title-row h2 > svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent, var(--red));
+  flex: 0 0 14px;
+}
+#research-pane .research-history-head-count {
+  position: relative;
+  top: 4px;
+  font-size: 0.6em;
+  opacity: 0.6;
+  font-weight: normal;
+}
+#research-pane .research-history-toolbar {
+  flex: 0 0 auto;
+  max-height: none;
+  overflow: visible;
+}
+#research-pane .research-history-toolbar-row {
+  align-items: center;
+  min-height: 24px;
+}
+#research-pane .research-history-toolbar-row .memory-sort-select {
+  top: -3px;
+  width: 92px;
+}
+#research-pane #research-history-select-btn {
+  position: relative;
+  top: -5px;
+}
+#research-pane #research-history-select-btn svg {
+  flex: 0 0 auto;
+  margin-right: 3px;
+  vertical-align: -2px;
+}
+#research-pane .research-history-search-wrap > svg {
+  position: absolute;
+  left: 9px;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  color: var(--accent, var(--red));
+  pointer-events: none;
+}
+#research-pane .research-history-search-wrap .memory-search-input {
+  height: 30px;
+  margin: 0;
+  padding-left: 28px;
+}
+#research-pane #research-history-filters {
+  flex: 0 0 auto;
+  margin: -2px 0 0;
+}
+#research-pane #research-history-bulk {
+  flex: 0 0 auto;
+  position: relative;
+  top: -4px;
+  margin: 2px 0 5px;
+}
+#research-pane #research-history-bulk-delete {
+  position: relative;
+  top: -4px;
+  right: 0;
+  margin-left: auto;
+}
+#research-pane #research-history-bulk-delete svg {
+  width: 11px;
+  height: 11px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+#research-pane .research-history-select-cb {
+  position: relative;
+  top: -4px;
+}
+#research-pane #research-history-bulk-cancel {
+  position: relative;
+  top: -2px;
+  right: 0;
+  margin-left: 4px;
+}
+#research-pane #research-past-list {
+  position: relative;
+  top: -4px;
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  padding: 2px 2px 4px 0;
+  gap: 4px;
+}
+#research-pane #research-past-list .research-job-card {
+  display: block;
+  height: 67px;
+  min-height: 67px;
+  box-sizing: border-box;
+  max-height: none;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: none;
+}
+#research-pane #research-past-list .research-job-card:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+  transform: none;
+}
+#research-pane #research-past-list .research-job-card.doclib-card-expanded {
+  display: flex !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: 100%;
+  max-height: none;
+  overflow: hidden;
+}
+#research-pane #research-past-list .research-job-card.research-job-failed:not(.doclib-card-expanded) {
+  height: 67px;
+  min-height: 67px;
+}
+#research-pane #research-past-list .research-job-header {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 18px;
+  gap: 6px;
+  overflow: visible;
+}
+#research-pane #research-past-list .research-job-query {
+  position: static;
+  top: auto;
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  word-break: normal;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-query {
+  order: 1;
+}
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-retry-badge,
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-edit-badge,
+#research-pane #research-past-list .research-job-header:has(.research-job-title-error) .research-job-overflow {
+  order: 2;
+}
+#research-pane #research-past-list .research-job-title-error {
+  order: 3;
+  flex: 0 0 100%;
+  max-width: none;
+  margin-top: 0;
+  text-align: left;
+}
+#research-pane #research-past-list .research-job-report-badge,
+#research-pane #research-past-list .research-job-discuss-badge,
+#research-pane #research-past-list .research-job-overflow {
+  flex: 0 0 auto;
+}
+  #research-pane #research-past-list .research-job-meta {
+  position: relative;
+  top: 4px;
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0.4;
+    transform: none;
+  }
+  #research-pane #research-past-list .research-job-summary-copy {
+    transform: translateY(-22px);
+  }
+#research-pane #research-past-list .research-job-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 35px;
+  margin-top: 4px;
+}
+  #research-pane #research-past-list .research-job-thumb-frame {
+    width: 48px;
+    height: 33px;
+    flex-basis: 48px;
+    border-radius: 3px;
+    transform: translateY(-14px);
+  }
+#research-pane #research-past-list .research-job-overflow {
+  margin-left: 0;
+  align-self: flex-start;
+}
+#research-pane #research-past-list .research-job-more {
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  border: 0;
+  background: transparent;
+}
+#research-pane #research-past-list .research-job-more > svg {
+  transform: translateY(6px);
+}
+#research-pane #research-past-list .task-status-badge {
+  height: 20px;
+  min-height: 20px;
+  padding: 0 8px;
+  gap: 4px;
+}
+#research-pane #research-past-list .research-job-actions .task-status-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 20px;
+  min-height: 20px;
+  padding: 0 8px;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  cursor: pointer;
+}
+#research-pane #research-past-list .research-job-actions .task-status-badge:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+}
+#research-pane #research-past-list .research-job-actions .task-status-badge > svg {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+}
+#research-pane #research-past-list .task-status-badge > svg {
+  width: 10px;
+  height: 10px;
+}
+#research-pane #research-past-list .research-job-report-badge {
+  color: var(--cat-color, var(--accent, var(--red)));
+  background: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 16%, transparent);
+  border-color: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 38%, transparent);
+}
+#research-pane #research-past-list .research-job-report-badge:hover {
+  background: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 25%, transparent);
+  border-color: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 58%, transparent);
+}
+#research-pane #research-past-list .research-job-retry-badge,
+#research-pane #research-past-list .research-job-edit-badge {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+#research-pane #research-past-list .research-job-retry-badge:hover,
+#research-pane #research-past-list .research-job-edit-badge:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 32%, transparent);
+}
+#research-pane #research-past-list .research-job-discuss-badge {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+#research-pane #research-past-list .research-job-discuss-badge:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 32%, transparent);
+}
+#research-pane .research-history-card-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+}
+#research-pane .research-history-card-select .memory-select-cb {
+  margin: 0 1px 0 0;
+}
+#research-pane #research-past-list .research-history-selectable {
+  cursor: pointer;
+}
+#research-pane #research-past-list .research-job-result {
+  max-height: none;
+  overflow: visible;
+}
+#research-pane .research-history-card:has(.doclib-card-expanded) #research-past-list {
+  overflow: hidden !important;
+}
+#research-pane #research-past-list:has(.doclib-card-expanded) > .research-job-card:not(.doclib-card-expanded) {
+  display: none !important;
+}
+#research-pane #research-past-list .research-job-card.doclib-card-expanded .research-job-result {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 600px) {
+  #research-pane .research-history-card {
+    padding: 10px;
+  }
+  #research-pane .research-history-toolbar-row {
+    flex-wrap: nowrap;
+  }
+  #research-pane .research-history-toolbar-row .memory-sort-select {
+    width: 84px;
+  }
+  #research-pane #research-history-clear {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+  #research-pane #research-past-list .research-job-card {
+    min-height: 77px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  #research-pane #research-past-list .research-job-card.research-job-failed:not(.doclib-card-expanded) {
+    height: 77px;
+    min-height: 77px;
+  }
+  #research-pane #research-past-list .research-job-header {
+    gap: 4px;
+  }
+  #research-pane #research-past-list .research-job-report-badge,
+  #research-pane #research-past-list .research-job-discuss-badge {
+    width: auto;
+    min-width: 0;
+    height: 28px;
+    min-height: 28px;
+    padding-left: 7px;
+    padding-right: 7px;
+    justify-content: center;
+    gap: 4px;
+  }
+  #research-pane #research-past-list .research-job-report-badge > svg,
+  #research-pane #research-past-list .research-job-discuss-badge > svg {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 13px;
+  }
+  #research-pane #research-past-list .research-job-report-badge .task-state-label,
+  #research-pane #research-past-list .research-job-discuss-badge .task-state-label {
+    display: inline;
+    font-size: 9px;
+    line-height: 1;
+  }
+  #research-pane #research-past-list .research-job-more {
+    width: 24px;
+    min-width: 24px;
+  }
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 add_hwfit_models.py — bulk-add Hugging Face models to the hwfit catalog
-(services/hwfit/data/hf_models.json).
+(DATA_DIR/hwfit/hf_models.json, mutable user data).
 
 Adds:
   * every model from one or more HF authors (e.g. cyankiwi's AWQ quants)
@@ -28,10 +28,48 @@ from datetime import datetime
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, RepositoryNotFoundError
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "services", "hwfit", "data", "hf_models.json")
-DATA_PATH = os.path.abspath(DATA_PATH)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.hwfit.models import model_catalog_path
 
-AUTHORS = ["cyankiwi"]
+DATA_PATH = model_catalog_path()
+
+# Official / major model-provider orgs to refresh into the Cookbook catalog.
+# Keep this broad enough that new first-party releases appear after running the
+# updater, while avoiding a global HF scan that would pull in every community fork.
+AUTHORS = [
+    # Community quant provider we already use for AWQ/FP8 serving recipes.
+    "cyankiwi",
+    # Major first-party model providers.
+    "Qwen",
+    "deepseek-ai",
+    "zai-org",
+    "MiniMaxAI",
+    "moonshotai",
+    "mistralai",
+    "meta-llama",
+    "google",
+    "google-deepmind",
+    "microsoft",
+    "nvidia",
+    "CohereLabs",
+    "ai21labs",
+    "Tencent-Hunyuan",
+    "ibm-granite",
+    "tiiuae",
+    "01-ai",
+    "allenai",
+    "HuggingFaceTB",
+    "openai",
+]
+BROAD_AUTHORS_SKIP_FALLBACK_PROBES = {
+    # These orgs have hundreds/thousands of mixed-purpose repos. For them,
+    # catalog only entries that can be sized from cheap list metadata / repo
+    # names; do not block refreshes on per-repo config/safetensors downloads.
+    "google",
+    "microsoft",
+    "nvidia",
+    "allenai",
+}
 # Specific repos to add (in addition to the authors above). Optional explicit
 # overrides {repo: {field: value}} for things the name/metadata can't convey.
 EXTRA_REPOS = {
@@ -49,6 +87,21 @@ _GENERIC_TAGS = {
     "8-bit", "awq", "gptq", "fp8", "fp4", "nvfp4", "mxfp4", "nf4",
     "quantized", "chat",
 }
+
+_GEN_MODEL_PIPELINES = {
+    "text-generation",
+    "text2text-generation",
+    "image-text-to-text",
+    "text-generation-inference",
+    "conversational",
+}
+
+_GEN_MODEL_KEYWORDS = (
+    "llama", "gemma", "qwen", "deepseek", "glm", "chatglm", "minimax",
+    "kimi", "moonshot", "mistral", "mixtral", "codestral", "ministral",
+    "phi", "mai", "nemotron", "granite", "command", "aya", "jamba",
+    "hunyuan", "yi-", "yi_", "falcon", "olmo", "openai",
+)
 
 api = HfApi()
 
@@ -207,6 +260,8 @@ def _quant_from_name(name):
     n = name.lower()
     if "nvfp4" in n:
         return "NVFP4"
+    if re.search(r"(^|[-_/])bf16($|[-_/])", n):
+        return "BF16"
     if "mxfp4" in n:
         return "MXFP4"
     if re.search(r"(^|[-_/])nf4($|[-_/])", n):
@@ -248,7 +303,7 @@ def _arch_from_tags(tags):
     return ""
 
 
-def _entry_from_modelinfo(mi, overrides):
+def _entry_from_modelinfo(mi, overrides, *, probe_config=True, probe_safetensors=True):
     name = mi.id
     provider = name.split("/")[0]
     total, active = _parse_params(name)
@@ -272,7 +327,7 @@ def _entry_from_modelinfo(mi, overrides):
     # before safetensors so non-standard names still resolve without a
     # per-repo manual override in EXTRA_REPOS. Source repo first (works for
     # unquantized models) then the quantized parent via base_model:.
-    if total is None:
+    if total is None and probe_config:
         config_targets = [name]
         bm = _base_model_tag(getattr(mi, "tags", None))
         if bm and bm != name:
@@ -293,7 +348,7 @@ def _entry_from_modelinfo(mi, overrides):
     # therefore undercounts real parameter count by the same factor, which
     # then feeds a wrong `min_vram_gb` downstream. Sum per-dtype and unpack
     # the packed I32 tensors so the catalog stores the true param count.
-    if total is None:
+    if total is None and probe_safetensors:
         try:
             full = api.model_info(name, files_metadata=False)
             st = getattr(full, "safetensors", None)
@@ -322,7 +377,8 @@ def _entry_from_modelinfo(mi, overrides):
     created = getattr(mi, "created_at", None)
     rel = created.strftime("%Y-%m-%d") if created else datetime.utcnow().strftime("%Y-%m-%d")
     # Rough RAM/VRAM hints (fit.py recomputes the real requirement from params+quant).
-    _BPP = {"AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
+    _BPP = {"F16": 2.0, "BF16": 2.0,
+            "AWQ-4bit": 0.58, "GPTQ-Int4": 0.58, "mlx-4bit": 0.55, "mlx-6bit": 0.85,
             "AWQ-8bit": 1.1, "GPTQ-Int8": 1.1, "mlx-8bit": 1.1, "FP8": 1.1,
             "FP4": 0.58, "NVFP4": 0.58, "MXFP4": 0.58, "NF4": 0.58,
             "INT4": 0.58, "INT8": 1.1, "W4A16": 0.58, "W8A8": 1.1, "W8A16": 1.1,
@@ -360,9 +416,35 @@ def _entry_from_modelinfo(mi, overrides):
     return entry
 
 
+def _is_likely_catalog_model(mi):
+    """Cheap prefilter before config/safetensors probes.
+
+    Major HF orgs include thousands of encoder, CV, audio, adapter, and demo
+    repos. Cookbook's serve catalog is for generative models, so only do the
+    expensive config/model_info fallback for repos that already look relevant
+    from list_models(full=True) metadata.
+    """
+    name = str(getattr(mi, "id", "") or "")
+    if not name:
+        return False
+    # Size-bearing model names are usually exactly what we want (7B, 70B, A3B).
+    if _parse_params(name)[0]:
+        return True
+    pipeline = str(getattr(mi, "pipeline_tag", "") or "").lower()
+    if pipeline in _GEN_MODEL_PIPELINES:
+        return True
+    tags = " ".join(str(t).lower() for t in (getattr(mi, "tags", None) or []))
+    haystack = f"{name.lower()} {pipeline} {tags}"
+    return any(k in haystack for k in _GEN_MODEL_KEYWORDS)
+
+
 def main():
-    with open(DATA_PATH, encoding="utf-8") as f:
-        catalog = json.load(f)
+    os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
+    if os.path.exists(DATA_PATH):
+        with open(DATA_PATH, encoding="utf-8") as f:
+            catalog = json.load(f)
+    else:
+        catalog = []
     by_name = {m["name"]: m for m in catalog}
     existing = set(by_name)
 
@@ -377,8 +459,16 @@ def main():
         for mi in models:
             if mi.id in existing and not overwrite:
                 continue
+            if not _is_likely_catalog_model(mi):
+                continue
             ov = EXTRA_REPOS.get(mi.id)
-            entry = _entry_from_modelinfo(mi, ov)
+            skip_fallbacks = author in BROAD_AUTHORS_SKIP_FALLBACK_PROBES
+            entry = _entry_from_modelinfo(
+                mi,
+                ov,
+                probe_config=not skip_fallbacks,
+                probe_safetensors=not skip_fallbacks,
+            )
             if entry:
                 to_add[mi.id] = entry
 

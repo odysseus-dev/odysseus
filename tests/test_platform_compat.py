@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import sys
+import types
 from pathlib import Path
 
 
@@ -320,3 +321,44 @@ def test_run_ssh_command_uses_built_argv(monkeypatch):
     assert captured["kwargs"]["timeout"] == 7
     assert captured["kwargs"]["capture_output"] is True
     assert captured["kwargs"]["text"] is False
+
+
+class _PwdBlocker:
+    """Meta-path finder that makes ``import pwd`` fail, as it does on Windows."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "pwd":
+            raise ImportError("No module named 'pwd'")
+        return None
+
+
+def test_service_home_on_windows_never_imports_pwd(monkeypatch):
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+    monkeypatch.delitem(sys.modules, "pwd", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [_PwdBlocker(), *sys.meta_path])
+
+    assert platform_compat.service_home() == Path.home()
+
+
+def test_service_home_reads_the_passwd_entry_on_posix(monkeypatch, tmp_path):
+    account_home = tmp_path / "service-account"
+    fake_pwd = types.SimpleNamespace(
+        getpwuid=lambda uid: types.SimpleNamespace(pw_dir=str(account_home))
+    )
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+    monkeypatch.setattr(platform_compat.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "task-override"))
+
+    assert platform_compat.service_home() == account_home
+
+
+def test_service_home_falls_back_when_the_uid_has_no_passwd_entry(monkeypatch):
+    def missing(uid):
+        raise KeyError(uid)
+
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+    monkeypatch.setitem(sys.modules, "pwd", types.SimpleNamespace(getpwuid=missing))
+    monkeypatch.setattr(platform_compat.os, "getuid", lambda: 4242, raising=False)
+
+    assert platform_compat.service_home() == Path.home()

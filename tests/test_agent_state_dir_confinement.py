@@ -78,6 +78,44 @@ def test_blocks_app_state_file(name):
         _resolve_tool_path(os.path.join(DATA_DIR, name))
 
 
+@pytest.mark.parametrize("tool", ["read_file", "write_file", "grep"])
+def test_valid_resource_authority_cannot_open_unknown_state(tmp_path, monkeypatch, tool):
+    import json
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    from src.tool_types import ToolBlock
+    execution = importlib.import_module("src.tool_execution")
+    data = tmp_path / "data"
+    data.mkdir()
+    _configure_test_data_tree(monkeypatch, data)
+    secret = data / "new-unrecognized-state.dat"
+    secret.write_text("UNKNOWN_STATE_SECRET")
+    monkeypatch.setattr(execution, "_owner_is_admin", lambda owner: True)
+    content = json.dumps({"path": str(secret), **({"content": "replace"} if tool == "write_file" else {"pattern": "SECRET"} if tool == "grep" else {})})
+    _, result = asyncio.run(server_authorized_executor(execution.execute_tool_block)(
+        ToolBlock(tool, content), workspace=str(tmp_path), owner="admin",
+        security_context=execution.NO_TOOL_SECURITY_CONTEXT,
+    ))
+    assert result["failure_kind"] == "resource_identity_denied"
+    assert secret.read_text() == "UNKNOWN_STATE_SECRET"
+
+
+def test_public_upload_carveout_never_reopens_publication_manifest(tmp_path, monkeypatch):
+    from src.agent_runtime.resources import FilesystemResource, FilesystemRoot
+    data = tmp_path / "data"
+    data.mkdir()
+    readable = _configure_test_data_tree(monkeypatch, data)
+    uploads = readable["UPLOAD_DIR"]
+    uploads.mkdir()
+    content = uploads / "user.txt"
+    content.write_text("user content")
+    manifest = uploads / "uploads.json"
+    manifest.write_text("private manifest")
+    root = FilesystemRoot.seal(tmp_path)
+    assert FilesystemResource.resolve(root, str(content)).path == str(content)
+    with pytest.raises(ValueError, match="sensitive"):
+        FilesystemResource.resolve(root, str(manifest))
+
+
 def test_blocks_listing_the_data_directory_itself():
     """`ls data` enumerated the state files, which is how an attacker who
     does not know the install path finds them."""

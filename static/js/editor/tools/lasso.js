@@ -13,11 +13,18 @@
  * }} deps
  */
 import { state } from '../state.js';
+import { selectionModeForEvent } from '../selection-modifiers.js';
 import { canvasCoords } from '../canvas-coords.js';
+import { buildLassoMask } from './lasso-mask.js';
 
-export function createLassoTool({ composite, drawLassoOverlay, syncToolClearIndicators }) {
+export function createLassoTool({
+  activeLayer, saveState, commitSelectionMask,
+  composite, drawLassoOverlay, syncToolClearIndicators,
+}) {
+  let pendingMode = 'replace';
   return {
     begin(e) {
+      pendingMode = selectionModeForEvent(e, state.wandMode || 'replace');
       state.lassoPoints = [];
       state.lassoActive = true;
       const coords = canvasCoords(e, state.mainCanvas);
@@ -56,10 +63,33 @@ export function createLassoTool({ composite, drawLassoOverlay, syncToolClearIndi
         syncToolClearIndicators();
         return;
       }
-      // Keep the selection drawn — the panel's action buttons use it.
+      const layer = activeLayer?.();
+      if (!layer) return;
+      saveState?.('Lasso selection');
+      const mask = buildLassoMask(
+        state.lassoPoints,
+        state.imgWidth,
+        state.imgHeight,
+        0,
+        0,
+        0,
+        0,
+      );
+      commitSelectionMask?.(mask, layer, pendingMode, 'lasso', { x: 0, y: 0 });
+      state.wandMaskVisible = true;
+      state.wandLastSeed = null;
+      state.lassoPoints = [];
       composite();
-      drawLassoOverlay();
       syncToolClearIndicators();
+    },
+
+    cancel() {
+      if (!state.lassoActive && !state.lassoPoints.length) return false;
+      state.lassoActive = false;
+      state.lassoPoints = [];
+      composite();
+      syncToolClearIndicators();
+      return true;
     },
   };
 }

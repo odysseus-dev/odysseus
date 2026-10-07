@@ -81,7 +81,7 @@ class ChatHandler:
     # ------------------------------------------------------------------
 
     def validate_and_extract_preset(self, preset_id: Optional[str]) -> tuple:
-        """Returns (temperature, max_tokens, preset_system_prompt, character_name)."""
+        """Returns (temperature, max_tokens, preset_system_prompt, character_name, persona_memory, persona_memory_schema)."""
         if preset_id and preset_id not in self.preset_manager.presets:
             raise HTTPException(400, f"Invalid preset_id: {preset_id}")
 
@@ -89,15 +89,20 @@ class ChatHandler:
         max_tokens = DEFAULT_MAX_TOKENS
         preset_system_prompt = None
         character_name = ""
+        persona_memory = ""
+        persona_memory_schema = "general"
 
         if preset_id and preset_id in self.preset_manager.presets:
             preset = self.preset_manager.presets[preset_id]
             if preset.get("enabled") is False:
                 logger.info(f"Preset {preset_id} is disabled, using defaults")
-                return temperature, max_tokens, preset_system_prompt, character_name
+                return temperature, max_tokens, preset_system_prompt, character_name, persona_memory, persona_memory_schema
             if preset.get("system_prompt"):
                 preset_system_prompt = preset["system_prompt"]
             character_name = preset.get("character_name", "")
+            persona_memory = preset.get("persona_memory", "") or ""
+            _schema = preset.get("persona_memory_schema", "general")
+            persona_memory_schema = _schema if _schema in {"general", "health"} else "general"
             if character_name:
                 name_line = f"Your name is {character_name}."
                 if preset_system_prompt:
@@ -110,7 +115,7 @@ class ChatHandler:
                 max_tokens = preset["max_tokens"]
 
         logger.info(f"Preset {preset_id}: temp={temperature}, max_tokens={max_tokens}")
-        return temperature, max_tokens, preset_system_prompt, character_name
+        return temperature, max_tokens, preset_system_prompt, character_name, persona_memory, persona_memory_schema
 
     def enhance_message_if_needed(self, message: str) -> str:
         """CoT enhancement disabled — modern models reason natively."""

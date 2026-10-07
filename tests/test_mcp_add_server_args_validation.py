@@ -8,6 +8,7 @@ subprocess at all, with no error surfaced anywhere.
 """
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -145,3 +146,29 @@ def test_add_server_still_defaults_empty_args_to_empty_list(monkeypatch):
 
     assert result["connected"] is True
     assert manager.connect_server.call_args.kwargs["args"] == []
+
+
+# ---------------------------------------------------------------------------
+# The two forms that post to this endpoint
+# ---------------------------------------------------------------------------
+#
+# The route now answers 400 with a message naming the expected shape. That is
+# only worth anything if the form the user is looking at prints it, and the two
+# forms did not agree: admin.js reads `data.detail`, settings.js printed the
+# bare status code. Read as source, because the artifact under test is the
+# string in the file and neither form is reachable without a browser.
+
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def test_admin_form_reports_the_reason_the_route_gave():
+    source = (_REPO / "static" / "js" / "admin.js").read_text(encoding="utf-8")
+    assert "msg.textContent = data.detail || `Failed (${res.status})`;" in source
+
+
+def test_unified_integrations_form_reports_the_reason_the_route_gave():
+    source = (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
+    assert (
+        "el('uf-mcp-msg').textContent = data.detail || `Failed (${r.status})`;"
+        in source
+    ), "settings.js drops the route's message and prints only the status code"
