@@ -108,6 +108,17 @@ def test_cache_scopes_by_endpoint_and_reprobe_replaces_records():
     assert model_capability_cache.reasoning_effort_levels("gpt-oss-20b", BASE) == ()
 
 
+def test_cache_scopes_by_route_prefix_on_same_host():
+    swap_base = "https://gateway.example/swap/v1"
+    plain_base = "https://gateway.example/plain/v1"
+    model_capability_cache.record_models_payload(swap_base, PAYLOAD)
+    model_capability_cache.record_models_payload(plain_base, {"data": [{"id": "gpt-oss-20b"}]})
+
+    assert model_capability_cache.reasoning_effort_levels("gpt-oss-20b", swap_base) == ("low", "medium", "high")
+    assert model_capability_cache.reasoning_effort_levels("gpt-oss-20b", plain_base) == ()
+    assert model_capability_cache.reasoning_effort_levels("gpt-oss-20b", f"{swap_base}/chat/completions") == ("low", "medium", "high")
+
+
 def test_reader_failure_leaves_the_endpoint_unknown(monkeypatch):
     model_capability_cache.record_models_payload(BASE, PAYLOAD)
 

@@ -26,7 +26,15 @@ _records: Dict[str, Dict[str, ModelCapabilityRecord]] = {}
 
 
 def _authority(url: Any) -> str:
-    return (urlparse(str(url or "")).netloc or "").lower()
+    parsed = urlparse(str(url or "").strip())
+    netloc = (parsed.netloc or "").lower()
+    if not netloc:
+        return ""
+    path = (parsed.path or "").rstrip("/")
+    for suffix in ("/chat/completions", "/completions", "/models", "/v1"):
+        if path.endswith(suffix):
+            path = path[:-len(suffix)].rstrip("/")
+    return f"{netloc}{path.lower()}"
 
 
 def record_models_payload(base_url: str, payload: Any, *, endpoint_kind: str = "") -> None:
@@ -51,7 +59,16 @@ def record_for(model: str, base_url: Optional[str] = None) -> Optional[ModelCapa
     """
     with _lock:
         if base_url:
-            return _records.get(_authority(base_url), {}).get(model)
+            key = _authority(base_url)
+            rec = _records.get(key, {}).get(model)
+            if rec is not None:
+                return rec
+            netloc = (urlparse(str(base_url)).netloc or "").lower()
+            if netloc and netloc != key:
+                rec = _records.get(netloc, {}).get(model)
+                if rec is not None:
+                    return rec
+            return None
         for models in _records.values():
             if model in models:
                 return models[model]
