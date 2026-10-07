@@ -5094,10 +5094,15 @@ def setup_email_routes():
             return {"filename": base, "content": (doc.current_content or "").encode("utf-8")}
 
         if kind == "gallery":
-            img = db.query(_GI).filter(_GI.id == item_id, _GI.is_active == True).first()
+            # Use the gallery's own visibility rule: an exact owner match, and
+            # owner-less rows only in auth-disabled mode. Skipping the check for
+            # owner-less rows let any user attach another tenant's image.
+            from routes.gallery.gallery_helpers import _owner_filter
+            img = _owner_filter(
+                db.query(_GI).filter(_GI.id == item_id, _GI.is_active == True),
+                owner or None,
+            ).first()
             if not img:
-                raise HTTPException(status_code=404, detail="Image not found")
-            if owner and img.owner and img.owner != owner:
                 raise HTTPException(status_code=404, detail="Image not found")
             from routes.gallery.gallery_routes import _gallery_image_path
             src = _gallery_image_path(img.filename)
