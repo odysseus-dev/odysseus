@@ -746,7 +746,8 @@ app.include_router(setup_embedding_routes())
 
 # Models
 from routes.model_routes import setup_model_routes
-app.include_router(setup_model_routes(model_discovery))
+_model_router = setup_model_routes(model_discovery)
+app.include_router(_model_router)
 
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
@@ -1191,6 +1192,14 @@ async def _startup_event():
     # of UI use on slow or busy machines and are not required for local startup.
     _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
     if _startup_warmups_enabled:
+        # Also probe the model lists once in the background so capability
+        # records (e.g. llama-swap effort levels) exist before the first
+        # picker load; without the opt-in they fill on the first refresh.
+        try:
+            _model_router.warm_model_caches()
+        except Exception as e:
+            logger.debug(f"Model cache warm-up skipped: {e}")
+
         async def _warmup_endpoints():
             try:
                 import httpx

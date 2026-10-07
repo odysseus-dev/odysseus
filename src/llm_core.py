@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
 from src.model_profiles import is_odysseus_merged_tools_model
+from src import model_capability_cache
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -1226,6 +1227,27 @@ def _apply_local_qwen_thinking_mode(
         kwargs = {}
         payload["chat_template_kwargs"] = kwargs
     kwargs["enable_thinking"] = mode == "on"
+
+
+def _apply_capability_reasoning_effort(
+    payload: Dict,
+    url: str,
+    model: str,
+    reasoning_effort: Optional[str],
+) -> None:
+    """Send a picked effort as the top-level ``reasoning_effort`` field.
+
+    Only when the endpoint's canonical capability record claims a
+    ``reasoning_effort`` control accepting that level (today: llama-swap's
+    ``meta.llamaswap.reasoning_efforts``); models without that evidence are
+    left untouched. llama-server maps the field into the chat template, and
+    other OpenAI-compatible backends accept it.
+    """
+
+    effort = str(reasoning_effort or "").strip().lower()
+    if not effort or effort not in model_capability_cache.reasoning_effort_levels(model, url):
+        return
+    payload["reasoning_effort"] = effort
 
 
 def _apply_hosted_thinking_mode(
@@ -2736,6 +2758,7 @@ async def llm_call_async(
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
+        _apply_capability_reasoning_effort(payload, target_url, model, reasoning_effort)
         _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
         _apply_deepseek_v4_reasoning_defaults(
             payload, target_url, model, thinking_mode
@@ -3012,6 +3035,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
+        _apply_capability_reasoning_effort(payload, target_url, model, reasoning_effort)
         _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
         _apply_deepseek_v4_reasoning_defaults(
             payload, target_url, model, thinking_mode
