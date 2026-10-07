@@ -996,6 +996,10 @@ export function updateModelPicker() {
 // ── Reasoning effort control for models supporting reasoning levels ──
 let _reasoningEffortBound = false;
 let _pendingReasoningEffort = null;
+export function clearPendingReasoningEffort() {
+  _pendingReasoningEffort = null;
+}
+try { window.__odysseusClearPendingReasoningEffort = clearPendingReasoningEffort; } catch (_) {}
 
 export function getSelectedReasoningEffort() {
   if (!_deps) return _pendingReasoningEffort;
@@ -1005,7 +1009,32 @@ export function getSelectedReasoningEffort() {
   const s = sessions.find(x => x.id === currentSessionId);
   const mode = s?.thinking_mode || '';
   if (mode.startsWith('effort:')) {
-    return mode.slice('effort:'.length).trim().toLowerCase();
+    const val = mode.slice('effort:'.length).trim().toLowerCase();
+    if (val && getSelectedReasoningEffort._transferred) {
+      getSelectedReasoningEffort._transferred.set(currentSessionId, val);
+    }
+    return val;
+  }
+  const transferred = (getSelectedReasoningEffort._transferred = getSelectedReasoningEffort._transferred || new Map());
+  // A new chat's session is materialized right before its first message is
+  // sent, so the pick made beforehand is still pending here. Hand it to the
+  // session now (the server stores it from that message) instead of
+  // dropping it because the fresh session has no effort recorded yet.
+  // (The list may not know the new session yet; an existing chat with
+  // messages never inherits a pick made for a different, unsent chat.)
+  if (_pendingReasoningEffort && !(s?.message_count > 0)) {
+    const effort = _pendingReasoningEffort;
+    _pendingReasoningEffort = null;
+    transferred.set(currentSessionId, effort);
+    if (s) s.thinking_mode = `effort:${effort}`;
+    return effort;
+  }
+  if (mode === 'off') {
+    transferred.delete(currentSessionId);
+    return null;
+  }
+  if (transferred.has(currentSessionId)) {
+    return transferred.get(currentSessionId);
   }
   return null;
 }
@@ -1052,6 +1081,21 @@ function _findModelMetadata(modelId, selectedEndpoint) {
   return null;
 }
 
+let _effortCatalogLoad = null;
+let _effortCatalogRetriedFor = null;
+function _renderEffortOnceCatalogLoads(modelId) {
+  const mm = window.modelsModule;
+  if (_effortCatalogLoad || !mm || typeof mm.refreshModels !== 'function') return;
+  if (modelId && _effortCatalogRetriedFor === modelId) return;
+  if (modelId) _effortCatalogRetriedFor = modelId;
+  _effortCatalogLoad = mm.refreshModels(true)
+    .catch(() => {})
+    .finally(() => {
+      _effortCatalogLoad = null;
+      updateModelPicker();
+    });
+}
+
 async function _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpoint) {
   _initReasoningEffort();
   const wrap = document.getElementById('reasoning-effort-wrap');
@@ -1069,6 +1113,10 @@ async function _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpo
   const levels = metadata?.supported_reasoning_levels;
   if (!Array.isArray(levels) || levels.length === 0) {
     wrap.style.display = 'none';
+    // The model catalog is fetched lazily, so on a cold page load the levels
+    // are simply not here yet. Load it and render again; until then the
+    // control stays hidden and nothing stored for the chat is touched.
+    _renderEffortOnceCatalogLoads(modelId);
     return;
   }
 
@@ -1076,18 +1124,26 @@ async function _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpo
 
   const supportedEffortNames = levels.map(l => (typeof l === 'string' ? l : l.effort).toLowerCase());
   let activeLevel = 'default';
-  const sessionMode = s?.thinking_mode || '';
 
-  if (s && s.id) {
+  // Dynamically resolve session state so we don't rely on a stale closure object
+  const currentSessionId = _deps?.getCurrentSessionId ? _deps.getCurrentSessionId() : null;
+  const sessions = _deps?.getSessions ? _deps.getSessions() : [];
+  const liveSession = sessions.find(x => x.id === currentSessionId) || (s && s.id === currentSessionId ? s : null);
+  const sessionMode = liveSession?.thinking_mode || '';
+
+  if (liveSession && liveSession.id) {
     if (sessionMode.startsWith('effort:')) {
       const parsed = sessionMode.slice('effort:'.length).trim().toLowerCase();
       if (supportedEffortNames.includes(parsed)) {
         activeLevel = parsed;
       } else {
         activeLevel = 'default';
-        s.thinking_mode = 'off';
+        liveSession.thinking_mode = 'off';
+        if (getSelectedReasoningEffort._transferred) {
+          getSelectedReasoningEffort._transferred.delete(liveSession.id);
+        }
         try {
-          fetch(`${API_BASE}/api/session/${encodeURIComponent(s.id)}/generation-settings`, {
+          fetch(`${API_BASE}/api/session/${encodeURIComponent(liveSession.id)}/generation-settings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -1143,10 +1199,19 @@ async function _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpo
       const thinkingModeVal = newEffort === 'default' ? 'off' : `effort:${newEffort}`;
       const effortVal = newEffort === 'default' ? null : newEffort;
 
-      if (s && s.id) {
-        s.thinking_mode = thinkingModeVal;
+      const curSessionId = _deps?.getCurrentSessionId ? _deps.getCurrentSessionId() : null;
+      const curSessions = _deps?.getSessions ? _deps.getSessions() : [];
+      const curS = curSessions.find(x => x.id === curSessionId) || (s && s.id === curSessionId ? s : null);
+
+      if (curSessionId) {
+        if (curS) curS.thinking_mode = thinkingModeVal;
+        if (getSelectedReasoningEffort._transferred) {
+          if (effortVal) getSelectedReasoningEffort._transferred.set(curSessionId, effortVal);
+          else getSelectedReasoningEffort._transferred.delete(curSessionId);
+        }
+        _pendingReasoningEffort = null;
         try {
-          await fetch(`${API_BASE}/api/session/${encodeURIComponent(s.id)}/generation-settings`, {
+          await fetch(`${API_BASE}/api/session/${encodeURIComponent(curSessionId)}/generation-settings`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -1156,7 +1221,7 @@ async function _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpo
       } else {
         _pendingReasoningEffort = effortVal;
       }
-      _updateReasoningEffortUI(modelId, s, latestPending, selectedEndpoint);
+      _updateReasoningEffortUI(modelId, curS, latestPending, selectedEndpoint);
     });
 
     menu.appendChild(optBtn);

@@ -2002,6 +2002,7 @@ export async function loadSessions() {
       const s = sessions.find(x => x.id === targetId);
       const metaEl = document.getElementById('current-meta');
       if (metaEl && s) metaEl.textContent = s.name;
+      updateModelPicker();
     }
 
     // No session selected — still enable input so slash commands (e.g. /setup) work
@@ -2057,6 +2058,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       _pendingChat = null;
       _pendingMaterializePromise = null;
     }
+    try { window.__odysseusClearPendingReasoningEffort?.(); } catch (_) {}
     _clearHistoryPager();
     // Re-archive peeked session when navigating away
     _checkPeekCleanup(id);

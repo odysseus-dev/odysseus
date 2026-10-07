@@ -2167,6 +2167,34 @@ def _resolve_prompt_thinking_mode(explicit_mode, preset_id, preset_manager):
     return None
 
 
+def _persist_chat_reasoning_effort(sess, effort):
+    """Remember the effort a chat last sent so it survives reloads.
+
+    A new chat has no session when the effort is picked, so the picker only
+    holds it client-side and the first message carries it. Store the validated
+    value as the session's `thinking_mode` (the same "effort:<level>" the
+    generation-settings route writes) when it differs from what is stored.
+    """
+    if not effort:
+        return
+    mode = f"effort:{effort}"
+    if str(getattr(sess, "thinking_mode", "") or "").lower() == mode:
+        return
+    from core.database import Session as DbSession
+    db = SessionLocal()
+    try:
+        row = db.query(DbSession).filter(DbSession.id == sess.id).first()
+        if row:
+            row.thinking_mode = mode
+            db.commit()
+        sess.thinking_mode = mode
+    except Exception:
+        db.rollback()
+        logger.warning("Failed to persist reasoning effort for session %s", getattr(sess, "id", "?"), exc_info=True)
+    finally:
+        db.close()
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -2718,6 +2746,7 @@ def setup_chat_routes(
                 reasoning_effort = session_mode[7:].strip()
             from src.chatgpt_subscription import validate_reasoning_effort
             reasoning_effort = validate_reasoning_effort(sess.model, reasoning_effort)
+            _persist_chat_reasoning_effort(sess, reasoning_effort)
             if getattr(sess, "temperature_override", None) is not None:
                 temperature_override = float(sess.temperature_override)
             # A resumed session may omit workspace/cwd from the new request.

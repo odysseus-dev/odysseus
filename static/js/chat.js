@@ -757,9 +757,9 @@ import { invalidateSettings } from './appConfig.js';
   async function _saveChatGenerationSettings(change) {
     const sid = await _resolveCurrentSessionId({ adopt: true });
     if (!sid) return false;
-    const next = { thinking_mode: _contextHeaderData?.thinking_mode || '', temperature_override: _contextHeaderData?.temperature_override ?? null, max_tokens_override: _contextHeaderData?.max_tokens_override ?? null, ...change };
     try {
-      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/generation-settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(next) });
+      // Save only the edited fields: the header snapshot can hide or lag a picked effort.
+      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/generation-settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(change) });
       if (!res.ok) throw new Error(await res.text());
       _contextHeaderData = { ..._contextHeaderData, ...await res.json() };
       const session = _liveSessionModule()?.getSessions?.().find(item => item.id === sid);
