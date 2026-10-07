@@ -30,10 +30,12 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 
-# Install legacy build requirements before wheel generation.
+# Install build requirements before wheel generation.
+# Deliberately unpinned: the builder stage runs Python 3.14, and the old
+# setuptools<70 / cython<3.0 lines predate 3.14 support.
 # numpy/cython are needed here because we build with --no-build-isolation,
 # so nothing else will supply the packages left in setup_requires.
-pip install --no-cache-dir "setuptools<70" wheel "cython<3.0" numpy
+pip install --no-cache-dir --upgrade setuptools wheel cython numpy
 
 # Pinned to the versions Real-ESRGAN 0.3.0 resolves to.
 SPECS="basicsr==1.4.2 gfpgan==1.3.8 facexlib==0.3.0"
