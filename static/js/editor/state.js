@@ -19,11 +19,14 @@ export const state = {
   // Drag-resize / rotate session state. While `transformActive` is
   // false every field below should be considered stale.
   transformActive: false,
+  transformTarget: null,
   transformLayer: null,
   transformOrigW: 0,
   transformOrigH: 0,
+  transformSessionStartW: 0,
+  transformSessionStartH: 0,
   // Which corner/edge handle the user is currently dragging. One of
-  // 'tl' | 'tr' | 'bl' | 'br' | 'rot' | null.
+  // 'tl' | 't' | 'tr' | 'r' | 'br' | 'b' | 'bl' | 'l' | 'rot' | null.
   transformHandle: null,
   // Which handle is currently under the cursor (no drag). Drives the
   // hover cursor lookup; lives next to `transformHandle` because both
@@ -32,7 +35,15 @@ export const state = {
   // Snapshot of the layer canvas + offset at transform start so Cancel
   // can restore exactly without re-fetching from the layer.
   transformOrigCanvas: null,
+  transformOrigMasks: [],
   transformOrigOffset: null,
+  transformSelectionCanvas: null,
+  transformLayers: [],
+  transformItems: [],
+  transformSelectionBounds: null,
+  transformBounds: null,
+  transformCenter: null,
+  transformStartCenter: null,
   // In-progress dimensions / rotation / flips committed on Apply.
   transformPendingW: 0,
   transformPendingH: 0,
@@ -40,10 +51,16 @@ export const state = {
   transformPendingFlipH: false,
   transformPendingFlipV: false,
   transformAspectLock: true,
+  // Keep raster transforms source-backed unless the user explicitly opts out
+  // in the Transform popup.
+  transformPreserveSource: true,
   // Floating Transform popup element + drag-start offsets.
   transformPopup: null,
   transformStartX: 0,
   transformStartY: 0,
+  transformStartRotation: 0,
+  transformStartFlipH: false,
+  transformStartFlipV: false,
   transformStartOffX: 0,
   transformStartOffY: 0,
   // Transform overlay canvas — separate canvas positioned over the
@@ -60,6 +77,8 @@ export const state = {
   // tolerance retunes can re-run the flood-fill without re-prompting.
   wandMask: null,
   wandLayerId: null,
+  wandMaskSpace: 'layer',
+  selectionSource: null,
   wandTolerance: 24,
   wandMaskVisible: true,
   wandMode: 'replace',
@@ -81,12 +100,33 @@ export const state = {
   brushOpacity: 100,
   brushFlow: 100,
   brushSoftness: 100,
+  smudgeStrength: 65,
   eraserOpacity: 100,
   eraserFlow: 100,
   eraserSoftness: 100,
   cloneOpacity: 100,
   cloneFlow: 100,
   cloneSoftness: 100,
+  brushSpacing: 15,
+  brushSmoothing: 25,
+  brushBlendMode: 'source-over',
+  gradientStart: '#e06c75',
+  gradientMid: '#808080',
+  gradientMidPosition: 50,
+  gradientMidEnabled: false,
+  gradientEnd: '#ffffff',
+  gradientEndAlpha: 100,
+  gradientOpacity: 100,
+  gradientType: 'linear-gradient',
+  gradientStops: [],
+  gradientActive: false,
+  // Flattened visual baseline for the non-destructive BEFORE compare view.
+  compareBaselineCanvas: null,
+  compareActive: false,
+  pressureSize: true,
+  pressureOpacity: false,
+  pressureFlow: true,
+  eyedropperSample: 'composite',
   // Clone-stamp source point (set via Alt-click or double-tap). Null
   // means no source picked yet — clicking with the clone tool no-ops
   // until a source is set.
@@ -101,6 +141,12 @@ export const state = {
   // original, not the in-progress stamp ring.
   cloneSourceSnapshot: null,
   cloneSourceLayerId: null,
+  // Where Clone / Healing reads pixels from. Keep the existing active-layer
+  // behavior as the default; composite sampling is useful for retouching a
+  // visible result while painting on a separate layer.
+  cloneSampleMode: 'active-layer',
+  cloneSourceOffsetX: 0,
+  cloneSourceOffsetY: 0,
   // Mobile: double-tap detection for "set source" since Alt-click
   // isn't an option without a keyboard.
   cloneLastTapTime: 0,
@@ -114,6 +160,8 @@ export const state = {
   maskCanvas: null,
   maskCtx: null,
   maskVisible: true,
+  // Show the active mask as a standalone black/white document preview.
+  maskInspectMode: false,
   // Reused canvas for the union-of-masks tint pass (saves repeated
   // allocation on every composite).
   compositeMaskUnion: null,
@@ -157,6 +205,15 @@ export const state = {
   // (mouse - startMouse) + startOffset rather than accumulating delta.
   moveLayerOffsetX: 0,
   moveLayerOffsetY: 0,
+  moveLayerOffsets: new Map(),
+  movePlacedSources: new Map(),
+  moveMaskTarget: null,
+  moveMaskOffsetX: 0,
+  moveMaskOffsetY: 0,
+  moveUnlinkedMaskOffsets: new Map(),
+  // Becomes true after the first real position change in a drag. A plain
+  // click must not create an empty undo step or clear the redo stack.
+  moveHistorySaved: false,
   // Snap guides drawn during a move-tool drag (Ctrl held). Each entry
   // is a vertical / horizontal line in canvas space.
   activeSnapGuides: null,
@@ -178,6 +235,26 @@ export const state = {
   lassoPoints: [],
   lassoActive: false,
 
+  // ── Marquee selection ──
+  marqueeShape: 'rectangle',
+  marqueeConstraint: 'free',
+  marqueeRatioWidth: 1,
+  marqueeRatioHeight: 1,
+  marqueeFixedWidth: 100,
+  marqueeFixedHeight: 100,
+  marqueeActive: false,
+  marqueeStart: null,
+  marqueeRect: null,
+  selectionMoving: false,
+  selectionMoveStart: null,
+  selectionMoveOrigin: null,
+  quickMaskActive: false,
+  selectionOverlay: null,
+  selectionOverlayCtx: null,
+  savedSelections: [],
+  lastSelection: null,
+  nextSavedSelectionId: 1,
+
   // In-editor copy/paste — separate from the OS clipboard so we can
   // round-trip layer alpha and metadata losslessly.
   internalClipboard: null,
@@ -189,10 +266,24 @@ export const state = {
   // so the editor can reopen with fresh dimensions.
   mainCanvas: null,
   mainCtx: null,
+  // Transparent document composite. The checkerboard is drawn separately on
+  // mainCanvas so blend modes match flattened export instead of blending with UI.
+  documentCompositeCanvas: null,
+  // True only when documentCompositeCanvas matches the latest render
+  // generation. Autosave thumbnails may reuse it; async renders clear it
+  // before starting and set it again only after committing the frame.
+  documentRenderReady: false,
+  groupCompositeCanvas: null,
+  groupCompositeCanvases: new Map(),
+  clippingCompositeCanvas: null,
 
   // ── Document + layers ──
   layers: [],
   activeLayerId: null,
+  selectedLayerIds: [],
+  selectionAnchorId: null,
+  layerGroups: [],
+  activeGroupId: null,
   // Active tool ID — one of move/crop/transform/brush/eraser/clone/
   // lasso/wand/inpaint/rembg/harmonize/sharpen/upscale/style.
   tool: 'move',
@@ -201,6 +292,14 @@ export const state = {
   zoom: 1,
   panX: 0,
   panY: 0,
+  spacePanActive: false,
+  navigationPanning: false,
+  rulersVisible: true,
+  gridVisible: false,
+  gridSize: 16,
+  snapEnabled: false,
+  snapToGrid: false,
+  guides: { vertical: [], horizontal: [] },
   // Document dimensions in canvas pixels.
   imgWidth: 0,
   imgHeight: 0,
@@ -215,6 +314,8 @@ export const state = {
   // that fire after the user closes the editor (don't draw onto a
   // dead canvas, don't re-mount the spinner).
   editorOpen: false,
+  // Changes whenever a new editor document owns the shared persistence lane.
+  editorSessionToken: 0,
   // Document-level click-away handlers registered for the current
   // session. Tracked so closeEditor can detach them all cleanly.
   // Mutated in place (push / length = 0); the reference never changes.
@@ -237,6 +338,9 @@ export const state = {
   adjPopupEl: null,
   // rAF-throttled live preview while sliders are dragged in adj popups.
   adjRafPending: false,
+  // Layer whose staged adjustment owns the queued preview frame. Clearing
+  // this invalidates a frame when the popup closes or changes layers.
+  adjPreviewLayer: null,
   historyPanelEl: null,
   // Custom brush-cursor overlay element (circle following the mouse).
   cursorEl: null,
@@ -254,4 +358,6 @@ export const state = {
   // True when an edit happened during an in-flight save — triggers a
   // follow-up persist after the current one finishes.
   persistDirty: false,
+  // Last surfaced autosave failure; avoids repeating the same toast per edit.
+  persistErrorMessage: null,
 };

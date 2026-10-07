@@ -4,6 +4,8 @@ import os
 import sys
 import asyncio
 import time
+import shutil
+import socket
 
 # On Windows, asyncio.create_subprocess_exec/shell require the ProactorEventLoop.
 # When started via `python -m uvicorn` from a terminal, uvicorn sets this
@@ -160,7 +162,8 @@ app.add_middleware(
 # model-probe — all served with media_type="text/event-stream") are never
 # compressed or buffered; only complete bodies over minimum_size are. The
 # security-header middleware composes cleanly on top.
-app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+if os.getenv("RESPONSE_COMPRESSION_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}:
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # ========= SECURITY HEADERS MIDDLEWARE =========
 app.add_middleware(SecurityHeadersMiddleware)
@@ -685,6 +688,7 @@ app.include_router(setup_session_routes(
     session_config,
     webhook_manager=webhook_manager,
     upload_handler=upload_handler,
+    skills_manager=skills_manager,
 ))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
@@ -950,8 +954,12 @@ async def serve_login(request: Request):
 
 @app.get("/api/version")
 async def get_version():
-    from core.constants import APP_VERSION
-    return {"version": APP_VERSION}
+    from core.constants import APP_BUILD_VERSION, APP_SOURCE_COMMIT, APP_VERSION
+    return {
+        "version": APP_VERSION,
+        "build": APP_BUILD_VERSION,
+        "source_commit": APP_SOURCE_COMMIT,
+    }
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
@@ -1011,10 +1019,75 @@ async def runtime_info() -> Dict[str, object]:
         or os.getenv("OLLAMA_URL")
         or ("http://host.docker.internal:11434/v1" if in_docker else "http://127.0.0.1:11434/v1")
     )
+    network_mode = os.getenv("ODYSSEUS_CONTAINER_NETWORK_MODE", "").strip()
+    host_gateway_reachable = False
+    host_gateway_address = ""
+    if in_docker and network_mode != "host":
+        try:
+            resolved = socket.getaddrinfo("host.docker.internal", None)
+            for item in resolved:
+                sockaddr = item[4] if len(item) >= 5 else ()
+                candidate = sockaddr[0] if sockaddr else ""
+                if candidate:
+                    host_gateway_address = str(candidate)
+                    break
+            host_gateway_reachable = True
+        except OSError:
+            host_gateway_reachable = False
+        if not host_gateway_address:
+            host_gateway_address = _docker_default_gateway_ip()
+    container: Dict[str, object] = {
+        "engine": "docker" if in_docker else "",
+        "networkMode": network_mode,
+        "hostAccess": bool(in_docker and network_mode == "host"),
+        "hostGatewayReachable": host_gateway_reachable,
+    }
+    if host_gateway_address:
+        container["hostGatewayAddress"] = host_gateway_address
+    command_names = (
+        "ip",
+        "ss",
+        "arp",
+        "nmap",
+        "ping",
+        "dig",
+        "ssh",
+        "git",
+        "docker",
+    )
+    commands = {name: bool(shutil.which(name)) for name in command_names}
+    capabilities = {
+        "networkInspection": bool(commands["ip"] and (commands["ss"] or commands["arp"])),
+        "lanScan": bool(commands["nmap"]),
+        "dnsLookup": bool(commands["dig"]),
+        "sshClient": bool(commands["ssh"]),
+        "git": bool(commands["git"]),
+        "dockerClient": bool(commands["docker"]),
+    }
     return {
         "in_docker": in_docker,
         "ollama_base_url": ollama_url,
+        "container": container,
+        "commands": commands,
+        "capabilities": capabilities,
     }
+
+
+def _docker_default_gateway_ip() -> str:
+    try:
+        with open("/proc/net/route", "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh.readlines()[1:]:
+                parts = line.split()
+                if len(parts) < 3 or parts[1] != "00000000":
+                    continue
+                raw = parts[2]
+                if len(raw) != 8:
+                    continue
+                octets = [str(int(raw[i:i + 2], 16)) for i in range(6, -1, -2)]
+                return ".".join(octets)
+    except Exception:
+        return ""
+    return ""
 
 # ========= LIFECYCLE =========
 
@@ -1055,6 +1128,15 @@ async def _startup_event():
     # GC tasks created with `asyncio.create_task(...)` before they finish.
     _startup_tasks: list[asyncio.Task] = getattr(app.state, "_startup_tasks", [])
     app.state._startup_tasks = _startup_tasks
+    from src.background_tool_jobs import BackgroundToolJobs
+    from routes.chat_routes import _active_streams
+    from src import agent_runs
+    app.state.background_tool_jobs = BackgroundToolJobs(
+        is_busy=lambda sid: sid in _active_streams or agent_runs.is_active(sid),
+        session_manager=session_manager, research_handler=research_handler,
+    )
+    app.state.background_tool_delivery_task = asyncio.create_task(app.state.background_tool_jobs.run())
+    _startup_tasks.append(app.state.background_tool_delivery_task)
     if upload_cleanup_func:
         upload_cleanup_task = asyncio.create_task(upload_cleanup_func())
     # Always-on monitor that auto-continues the agent when a background bash
@@ -1081,23 +1163,34 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
-    # Startup warmups are opt-in. They make later requests a little warmer, but
-    # they also compete with the first seconds of real UI use on slow or busy
-    # machines. Default to clear/idle startup and let requests warm what they use.
-    _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
-    if _startup_warmups_enabled:
+    # Semantic tool selection is part of the agent serving contract. Initialize
+    # it in a background thread by default so startup remains nonblocking while
+    # harness deployments can wait for the explicit readiness state.
+    from src.tool_index import prewarm_tool_index, tool_index_prewarm_enabled
+    if tool_index_prewarm_enabled():
         async def _warmup_tool_index():
-            try:
-                from src.tool_index import get_tool_index
-                idx = await asyncio.to_thread(get_tool_index)
-                if idx:
-                    await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
-                    logger.info("[startup] Tool index pre-warmed")
-            except Exception as e:
-                logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
+            status = await asyncio.to_thread(prewarm_tool_index)
+            if status.get("ready"):
+                logger.info(
+                    "[startup] Tool index pre-warmed lanes=%s tools=%s duration_ms=%s",
+                    [lane.get("name") for lane in status.get("lanes", [])],
+                    status.get("builtin_tools"),
+                    status.get("duration_ms"),
+                )
+            else:
+                logger.warning(
+                    "Tool index warmup degraded (non-critical): %s",
+                    status.get("error_type") or status.get("state"),
+                )
 
         _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+    else:
+        logger.info("Tool index prewarm disabled (ODYSSEUS_TOOL_INDEX_PREWARM=0)")
 
+    # Model endpoint pings remain opt-in. They can compete with the first seconds
+    # of UI use on slow or busy machines and are not required for local startup.
+    _startup_warmups_enabled = str(os.getenv("ODYSSEUS_STARTUP_WARMUPS", "")).lower() in {"1", "true", "yes", "on"}
+    if _startup_warmups_enabled:
         async def _warmup_endpoints():
             try:
                 import httpx
@@ -1117,7 +1210,7 @@ async def _startup_event():
 
         _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
     else:
-        logger.info("Startup warmups disabled (set ODYSSEUS_STARTUP_WARMUPS=1 to enable)")
+        logger.info("Model endpoint warmups disabled (set ODYSSEUS_STARTUP_WARMUPS=1 to enable)")
 
     # Keep-alive is opt-in. The ping path performs model discovery, and when
     # stale LAN endpoints are configured it can add periodic backend pressure
@@ -1186,6 +1279,14 @@ async def _startup_event():
     # ownerless or deleted/test-owner SKILL.md files so strict owner filtering
     # does not make an existing library look empty after auth/account changes.
     try:
+        from services.memory.builtin_skills import install_builtin_skills
+        installed = install_builtin_skills(skills_manager, ())
+        if installed:
+            logger.info("Installed %s built-in skill file(s)", installed)
+    except Exception as e:
+        logger.debug(f"Built-in skill installation skipped: {e}")
+
+    try:
         import json as _json
         auth_path = AUTH_FILE
         with open(auth_path, encoding="utf-8") as f:
@@ -1230,35 +1331,10 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_null_owner_sweep_loop()))
 
-    # Nightly skill audit — at ~02:00 local, test + judge a batch of the
-    # least-recently-checked skills, auto-fixing/escalating weak ones (never
-    # deletes). Rotates through the library so each night covers different
-    # skills. Gated by the `skill_audit_nightly` setting (default on); hour via
-    # `skill_audit_hour` (default 2), batch size via `skill_audit_batch` (8).
-    async def _skill_audit_nightly_loop():
-        from datetime import timedelta
-        while True:
-            try:
-                from src.settings import get_setting
-                hour = int(get_setting("skill_audit_hour", 2) or 2)
-            except Exception:
-                hour = 2
-            now = datetime.now()
-            nxt = now.replace(hour=hour % 24, minute=0, second=0, microsecond=0)
-            if nxt <= now:
-                nxt += timedelta(days=1)
-            await asyncio.sleep(max(60, (nxt - now).total_seconds()))
-            try:
-                from src.settings import get_setting
-                if not get_setting("skill_audit_nightly", True):
-                    continue
-                batch = int(get_setting("skill_audit_batch", 8) or 8)
-                from routes.skills_routes import run_scheduled_skill_audit
-                await run_scheduled_skill_audit(skills_manager, owner=None, max_skills=batch)
-            except Exception as e:
-                logger.warning(f"Nightly skill audit failed: {e}")
-
-    _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
+    # Skills Audit is scheduled per owner by TaskScheduler. Do not also start
+    # an ownerless audit here: its sidecar results cannot be read back through
+    # an authenticated owner's skill namespace, and its model activity can
+    # defer the real per-owner task at the same time of night.
 
     # Cookbook serve lifecycle — kills scheduler-launched serves whose
     # window-end has passed. Paired with the cookbook_serve builtin
@@ -1269,10 +1345,30 @@ async def _startup_event():
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
+    # Reconcile the processes a previous run left behind: tear down orphaned
+    # containment grants, and stop trusting background-job records whose pid the
+    # kernel has since reassigned. Runs once, and deliberately runs *here* —
+    # every record it sees predates this run, which is what makes "I cannot
+    # identify this process" a safe thing to act on. See src/process_reaper.py.
+    from src.process_reaper import reap_orphans_at_startup
+    _startup_tasks.append(asyncio.create_task(reap_orphans_at_startup()))
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    background_delivery = getattr(app.state, 'background_tool_delivery_task', None)
+    if background_delivery:
+        background_delivery.cancel()
+        try:
+            await background_delivery
+        except asyncio.CancelledError:
+            pass
+    try:
+        from src.agent_tools.web_tools import shutdown_private_browser_sessions
+        await shutdown_private_browser_sessions()
+    except Exception as e:
+        logger.warning(f"Private browser shutdown error: {e}")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:
@@ -1301,6 +1397,6 @@ if __name__ == "__main__":
     import uvicorn
 
     bind_host = os.getenv("APP_BIND", "127.0.0.1")
-    bind_port = int(os.getenv("APP_PORT", "7000"))
+    bind_port = int(os.getenv("APP_PORT", "7011"))
 
     uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")

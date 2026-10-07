@@ -4,7 +4,7 @@ import logging
 import json
 import re
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -13,7 +13,7 @@ from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from dateutil.rrule import rrulestr
 
-from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent
+from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent, Note
 from src.auth_helpers import effective_user, require_user
 from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 from src.upload_handler import reserve_upload_references
@@ -207,6 +207,7 @@ class EventCreate(BaseModel):
     calendar_href: Optional[str] = None  # calendar id
     rrule: Optional[str] = None
     color: Optional[str] = None  # per-event color override
+    reminder_minutes: Optional[int] = None
 
 
 class EventUpdate(BaseModel):
@@ -218,6 +219,7 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     rrule: Optional[str] = None
     color: Optional[str] = None
+    reminder_minutes: Optional[int] = None
 
 
 # ── Helpers ──
@@ -407,7 +409,7 @@ def parse_due_for_user(s: str) -> str:
     lower = s.lower().strip()
 
     def _parse_time(t):
-        t = _re.sub(r'\b([ap])\s*\.?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
+        t = _re.sub(r'\b([ap])(?:\s*\.)?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
         m = _re.match(r'^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$', t, _re.IGNORECASE)
         if not m: return None
         h = int(m.group(1)); mn = int(m.group(2) or 0); ampm = (m.group(3) or "").lower()
@@ -431,7 +433,7 @@ def parse_due_for_user(s: str) -> str:
             return base.replace(hour=t[0], minute=t[1]).isoformat()
 
     # Time-first: "3pm today", "11pm today", "9am tomorrow"
-    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    m = _re.match(r'^(.*\S)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
     if m:
         time_part, word = m.group(1).strip(), m.group(2)
         base = today
@@ -528,7 +530,7 @@ def _parse_dt(s: str) -> datetime:
 
     def _parse_time(t: str):
         """Return (hour, minute) from '1pm', '1:30 PM', '13:00', etc., or None."""
-        t = _re.sub(r'\b([ap])\s*\.?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
+        t = _re.sub(r'\b([ap])(?:\s*\.)?\s*m\.?\b', r'\1m', t.strip(), flags=_re.IGNORECASE)
         m = _re.match(r'^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$', t, _re.IGNORECASE)
         if not m:
             return None
@@ -560,7 +562,7 @@ def _parse_dt(s: str) -> datetime:
 
     # time-first: "3pm today", "9am tomorrow", "11pm tonight"
     # (parity with parse_due_for_user, which handles these via the same form)
-    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    m = _re.match(r'^(.*\S)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
     if m:
         time_part, word = m.group(1).strip(), m.group(2)
         base = today
@@ -621,7 +623,133 @@ def _parse_dt(s: str) -> datetime:
         raise ValueError(f"could not parse datetime: {s!r}")
 
 
-def _event_to_dict(ev: CalendarEvent) -> dict:
+def _note_due_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        due = datetime.fromisoformat(text)
+        if due.tzinfo is not None:
+            return due.astimezone(timezone.utc).replace(tzinfo=None)
+        return due
+    except Exception:
+        return None
+
+
+def _calendar_reminder_for_event(db, owner: str, ev: CalendarEvent) -> dict | None:
+    """Return the closest Notes reminder that belongs to this calendar event.
+
+    Calendar alarms are currently stored as Notes rows. Older rows do not carry
+    an event UID, so match conservatively by the generated title plus due_date
+    before the event start. This keeps existing reminder notes visible on the
+    calendar without a schema migration.
+    """
+    if not db or not owner or not ev or not ev.dtstart:
+        return None
+    summary = (ev.summary or "").strip()
+    if not summary:
+        return None
+
+    titles = [f"Calendar reminder: {summary}", f"Reminder: {summary}"]
+    notes = (
+        db.query(Note)
+        .filter(
+            Note.owner == owner,
+            Note.archived == False,  # noqa: E712
+            Note.label == "calendar",
+            Note.source == "calendar",
+            Note.title.in_(titles),
+            Note.due_date.isnot(None),
+        )
+        .all()
+    )
+    if not notes:
+        return None
+
+    start = ev.dtstart
+    if getattr(start, "tzinfo", None) is not None:
+        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    best = None
+    best_minutes = None
+    for note in notes:
+        due = _note_due_datetime(note.due_date)
+        if due is None:
+            continue
+        minutes = round((start - due).total_seconds() / 60)
+        if minutes < 0 or minutes > 7 * 24 * 60:
+            continue
+        if best is None or minutes < best_minutes:
+            best = note
+            best_minutes = minutes
+    if best is None:
+        return None
+    return {
+        "note_id": best.id,
+        "due_date": best.due_date,
+        "minutes": best_minutes,
+    }
+
+
+def _delete_calendar_reminders_for_event(db, owner: str, ev: CalendarEvent) -> int:
+    if not db or not owner or not ev:
+        return 0
+    summary = (ev.summary or "").strip()
+    if not summary:
+        return 0
+    titles = [f"Calendar reminder: {summary}", f"Reminder: {summary}"]
+    notes = (
+        db.query(Note)
+        .filter(
+            Note.owner == owner,
+            Note.archived == False,  # noqa: E712
+            Note.label == "calendar",
+            Note.source == "calendar",
+            Note.title.in_(titles),
+            Note.due_date.isnot(None),
+        )
+        .all()
+    )
+    for note in notes:
+        db.delete(note)
+    return len(notes)
+
+
+def _create_calendar_reminder_for_event(db, owner: str, ev: CalendarEvent, minutes_before: int) -> dict:
+    if not owner or not ev or not ev.dtstart:
+        return {"note_id": None, "skipped_reason": "missing event"}
+    minutes_before = max(0, int(minutes_before))
+    start = ev.dtstart
+    if getattr(start, "tzinfo", None) is not None:
+        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    remind_at = start - timedelta(minutes=minutes_before)
+    now = datetime.utcnow() if getattr(ev, "is_utc", False) else datetime.now()
+    if start <= now:
+        return {"note_id": None, "skipped_reason": "event already passed"}
+    if remind_at <= now:
+        remind_at = now
+
+    summary = (ev.summary or "(no title)").strip() or "(no title)"
+    location = (ev.location or "").strip()
+    start_fmt = start.strftime("%a %b %d") if ev.all_day else start.strftime("%a %b %d %H:%M")
+    loc = f" @ {location}" if location else ""
+    due_date = remind_at.isoformat() + ("Z" if getattr(ev, "is_utc", False) and not ev.all_day else "")
+    note = Note(
+        id=str(uuid.uuid4()),
+        owner=owner,
+        title=f"Calendar reminder: {summary}",
+        items=json.dumps([{"text": f"{summary}{loc} — {start_fmt}", "done": False, "checked": False}]),
+        note_type="todo",
+        label="calendar",
+        due_date=due_date,
+        source="calendar",
+    )
+    db.add(note)
+    return {"note_id": note.id, "due_date": due_date, "minutes": minutes_before, "skipped_reason": None}
+
+
+def _event_to_dict(ev: CalendarEvent, db=None, owner: str | None = None) -> dict:
     """Convert a CalendarEvent model to the API dict format.
 
     Timed events whose stored datetimes represent UTC (is_utc=True) are
@@ -637,6 +765,7 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
         suffix = "Z" if getattr(ev, "is_utc", False) else ""
         start_str = ev.dtstart.isoformat() + suffix
         end_str = ev.dtend.isoformat() + suffix
+    reminder = _calendar_reminder_for_event(db, owner, ev) if db and owner else None
     return {
         "uid": ev.uid,
         "summary": ev.summary or "",
@@ -653,6 +782,14 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
         "color": ev.color or (ev.calendar.color if ev.calendar else ""),
         "event_type": getattr(ev, "event_type", None),
         "importance": getattr(ev, "importance", None) or "normal",
+        "has_reminder": bool(reminder),
+        "reminder_note_id": reminder["note_id"] if reminder else None,
+        "reminder_due_date": reminder["due_date"] if reminder else None,
+        "reminder_minutes": reminder["minutes"] if reminder else None,
+        "source_email_uid": getattr(ev, "source_email_uid", None),
+        "source_email_folder": getattr(ev, "source_email_folder", None),
+        "source_email_account_id": getattr(ev, "source_email_account_id", None),
+        "source_email_message_id": getattr(ev, "source_email_message_id", None),
     }
 
 
@@ -684,7 +821,7 @@ def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
 
 
 def _expand_rrule(
-    ev: CalendarEvent, start: datetime, end: datetime
+    ev: CalendarEvent, start: datetime, end: datetime, db=None, owner: str | None = None
 ) -> List[dict]:
     """Expand a single recurring CalendarEvent into occurrence dicts.
 
@@ -702,7 +839,7 @@ def _expand_rrule(
         # Non-recurring — return the base event as-is. list_events
         # already filters non-recurring rows with the overlap check
         # in SQL, so we don't re-check here.
-        d = _event_to_dict(ev)
+        d = _event_to_dict(ev, db=db, owner=owner)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
         d["truncated"] = False
@@ -728,7 +865,7 @@ def _expand_rrule(
         logger.warning(
             "Failed to parse rrule=%r for event %s: %s", ev.rrule, ev.uid, ex
         )
-        d = _event_to_dict(ev)
+        d = _event_to_dict(ev, db=db, owner=owner)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
         d["truncated"] = False
@@ -746,7 +883,7 @@ def _expand_rrule(
     expand_start = start - duration
     results = []
     truncated = False
-    base = _event_to_dict(ev)
+    base = _event_to_dict(ev, db=db, owner=owner)
     exdates = set(_recurrence_exdates(ev))
 
     for occ_start in rule.xafter(expand_start, inc=True):
@@ -1185,7 +1322,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             # Expand recurring events into individual occurrences.
             expanded = []
             for e in events:
-                expanded.extend(_expand_rrule(e, start_dt, end_dt))
+                expanded.extend(_expand_rrule(e, start_dt, end_dt, db=db, owner=owner))
 
             # Sort by occurrence start time for consistent frontend ordering.
             truncated = any(e.get("truncated") for e in expanded)
@@ -1251,16 +1388,36 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
+            reminder = None
+            if data.reminder_minutes is not None:
+                reminder = _create_calendar_reminder_for_event(db, owner, ev, data.reminder_minutes)
             db.commit()
+            db.refresh(ev)
             if cal.source == "caldav":
                 await _push_caldav_event_after_commit(owner, uid, "create")
-            return {"ok": True, "uid": uid}
+            return {
+                "ok": True,
+                "uid": uid,
+                "event": _event_to_dict(ev, db=db, owner=owner),
+                "reminder": reminder,
+            }
         except HTTPException:
             raise
         except Exception as e:
             db.rollback()
             logger.error("Failed to create event: %s", e)
             raise HTTPException(500, "Failed to create event")
+        finally:
+            db.close()
+
+    @router.get("/events/{uid}")
+    async def get_event(request: Request, uid: str):
+        owner = _require_user(request)
+        db = SessionLocal()
+        try:
+            base_uid = _resolve_base_uid(uid)
+            ev = _get_or_404_event(db, base_uid, owner)
+            return {"event": _event_to_dict(ev, db=db, owner=owner)}
         finally:
             db.close()
 
@@ -1300,13 +1457,24 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 ev.rrule = data.rrule
             if data.color is not None:
                 ev.color = data.color if data.color else None
+            reminder = None
+            reminder_fields = getattr(data, "model_fields_set", getattr(data, "__fields_set__", set()))
+            if "reminder_minutes" in reminder_fields:
+                _delete_calendar_reminders_for_event(db, owner, ev)
+                if data.reminder_minutes is not None:
+                    reminder = _create_calendar_reminder_for_event(db, owner, ev, data.reminder_minutes)
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
             if is_caldav:
                 ev.caldav_sync_pending = "update"
             db.commit()
+            db.refresh(ev)
             if is_caldav:
                 await _push_caldav_event_after_commit(owner, base_uid, "update")
-            return {"ok": True}
+            return {
+                "ok": True,
+                "event": _event_to_dict(ev, db=db, owner=owner),
+                "reminder": reminder,
+            }
         except HTTPException:
             raise
         except Exception as e:
@@ -1328,6 +1496,8 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             ev = _get_or_404_event(db, base_uid, owner)
             is_occurrence_delete = scope in {"occurrence", "instance"} and "::" in uid and bool(ev.rrule)
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if scope in {"occurrence", "instance"} and not is_occurrence_delete:
+                raise HTTPException(400, "Occurrence delete requires a recurring occurrence uid")
             if is_occurrence_delete:
                 key = _occurrence_exdate_key(uid, ev)
                 if not key:
@@ -1344,6 +1514,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 return {"ok": True, "scope": "occurrence", "exdate": key}
             if is_caldav:
                 _record_caldav_delete_tombstone(db, ev, owner)
+            _delete_calendar_reminders_for_event(db, owner, ev)
             db.delete(ev)
             db.commit()
             if is_caldav:
@@ -1423,7 +1594,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 raise HTTPException(400, f"Invalid ICS file: {e}")
 
             # Sanitize display name — length cap + strip control chars
-            raw_name = calendar_name.strip() or (file.filename or "").replace(".ics", "").replace("_", " ").strip() or "Imported"
+            raw_name = calendar_name.strip() or re.sub(r"\.(?:calendar|ics|ical)$", "", file.filename or "", flags=re.IGNORECASE).replace("_", " ").strip() or "Imported"
             cal_display = "".join(c for c in raw_name if c.isprintable())[:120] or "Imported"
 
             target_cal = db.query(CalendarCal).filter(
@@ -1443,6 +1614,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 db.refresh(target_cal)
 
             imported = skipped = repaired = 0
+            event_uids = []
             for comp in cal_data.walk():
                 if comp.name != "VEVENT":
                     continue
@@ -1490,6 +1662,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                         if fixed_end != existing.dtend:
                             existing.dtend = fixed_end
                             repaired += 1
+                        event_uids.append(existing.uid)
                         skipped += 1
                         continue
 
@@ -1538,6 +1711,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     rrule=(comp.get("rrule").to_ical().decode() if comp.get("rrule") else ""),
                 )
                 db.add(ev)
+                event_uids.append(uid_val)
                 imported += 1
 
             db.commit()
@@ -1548,6 +1722,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 "repaired": repaired,
                 "calendar": cal_display,
                 "calendar_id": target_cal.id,
+                "event_uids": event_uids,
             }
         except HTTPException:
             raise

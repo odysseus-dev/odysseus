@@ -1,11 +1,17 @@
 // static/js/admin.js — Admin panel module (ES6)
 // Admin-only: users, endpoints, MCP, RAG, embeddings, tokens, webhooks, features
 
-import uiModule from './ui.js';
-import settingsModule from './settings.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
+import settingsModule from './settings.js?v=20260912writingstyle3';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import {
+  accountTitle as chatgptAccountTitle,
+  buildUsageViewModel as buildChatgptUsageViewModel,
+  isChatgptSubscriptionEndpoint,
+  renderUsageCardHtml as renderChatgptUsageCardHtml,
+} from './chatgptSubscriptionUsage.js';
 import { getSettings, getTools, invalidateSettings, invalidateTools } from './appConfig.js';
 
 let initialized = false;
@@ -15,9 +21,36 @@ let modalEl = null;
 // animation fires.
 let _recentlyAddedEpId = null;
 let _authPolicy = { password_min_length: 8, reserved_usernames: [] };
+let _endpointSelectMode = false;
+const _selectedEndpointIds = new Set();
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+
+// Clipboard API is unavailable on the HTTP LAN URL; keep copy actions usable
+// there with the browser's synchronous fallback.
+async function copyNotificationText(value) {
+  const text = String(value ?? '');
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {}
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try { textarea.setSelectionRange(0, text.length); } catch (_) {}
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch (_) {}
+  textarea.remove();
+  return copied;
+}
 
 /* ═══════════════════════════════════════════
    USERS TAB
@@ -46,7 +79,7 @@ async function loadUsers() {
 
       // Header: name + badges + delete
       const header = document.createElement('div');
-      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:4px 0;';
+      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;cursor:pointer;padding:4px 0;';
       const initial = u.username.charAt(0).toUpperCase();
       header.innerHTML = `
         <div class="admin-user-info">
@@ -56,9 +89,10 @@ async function loadUsers() {
             ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">ADMIN</span>' : '<span style="font-size:10px;opacity:0.4;display:block;">Click to manage privileges</span>'}
           </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
           <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
+          ${u.is_admin ? '' : '<button class="admin-btn-sm" data-adm-reset-password style="font-size:11px;">Change password</button>'}
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
         </div>
@@ -116,7 +150,7 @@ async function loadUsers() {
         // Toggle panel visibility + rotate chevron + load models
         let _modelsLoaded = false;
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin]')) return;
+          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin], [data-adm-reset-password]')) return;
           privPanel.classList.toggle('hidden');
           const chevron = header.querySelector('.admin-user-chevron');
           if (chevron) {
@@ -152,6 +186,29 @@ async function loadUsers() {
           else input.addEventListener('change', handler);
         });
       }
+
+      const passwordBtn = row.querySelector('[data-adm-reset-password]');
+      passwordBtn?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const options = { title: 'Change password', inputType: 'password', maxLength: 72 };
+        const password = await uiModule.styledPrompt(`New password for "${u.username}". Their existing sessions will be signed out.`, options);
+        if (password === null) return;
+        const confirmation = await uiModule.styledPrompt('Confirm the new password', options);
+        if (confirmation === null) return;
+        if (password !== confirmation) { uiModule.showError('Passwords do not match'); return; }
+        passwordBtn.disabled = true;
+        try {
+          const res = await fetch(`/api/auth/users/${encodeURIComponent(u.username)}/password`, {
+            method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_password: password }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { uiModule.showError(data.detail || 'Failed to change password'); return; }
+          uiModule.showToast('Password changed. Existing sessions signed out.');
+        } catch { uiModule.showError('Failed to change password'); }
+        finally { passwordBtn.disabled = false; }
+      });
 
       // Rename button
       const renameBtn = row.querySelector('[data-adm-rename-user]');
@@ -466,9 +523,486 @@ async function _selectAddedModelInChat(endpoint) {
   } catch (_) {}
 }
 
+function _updateEndpointBulkControls() {
+  const selectBtn = el('adm-epSelectBtn');
+  const probeBtn = el('adm-epProbeAllBtn');
+  const bulk = el('adm-epBulkActions');
+  const count = el('adm-epSelectedCount');
+  if (selectBtn) {
+    selectBtn.classList.toggle('active', _endpointSelectMode);
+    selectBtn.setAttribute('aria-pressed', _endpointSelectMode ? 'true' : 'false');
+    selectBtn.style.display = _endpointSelectMode ? 'none' : 'inline-flex';
+  }
+  if (probeBtn) probeBtn.style.display = _endpointSelectMode ? 'none' : 'inline-flex';
+  if (bulk) bulk.style.display = _endpointSelectMode ? 'inline-flex' : 'none';
+  if (count) count.textContent = `${_selectedEndpointIds.size} selected`;
+  const deleteBtn = el('adm-epDeleteSelectedBtn');
+  if (deleteBtn) deleteBtn.disabled = _selectedEndpointIds.size === 0;
+}
+
+function _ensureEndpointBulkControls() {
+  const probeBtn = el('adm-epProbeAllBtn');
+  if (!probeBtn || el('adm-epSelectBtn')) {
+    _updateEndpointBulkControls();
+    return;
+  }
+  const selectBtn = document.createElement('button');
+  selectBtn.type = 'button';
+  selectBtn.id = 'adm-epSelectBtn';
+  selectBtn.className = 'admin-btn-sm';
+  selectBtn.title = 'Select endpoints to delete';
+  selectBtn.setAttribute('aria-pressed', 'false');
+  selectBtn.style.cssText = 'font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;';
+  selectBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select';
+
+  const bulk = document.createElement('span');
+  bulk.id = 'adm-epBulkActions';
+  bulk.style.cssText = 'display:none;align-items:center;gap:5px;';
+  bulk.innerHTML = `
+    <span id="adm-epSelectedCount" style="font-size:11px;font-weight:normal;opacity:.65;white-space:nowrap;">0 selected</span>
+    <button type="button" class="admin-btn-sm" id="adm-epSelectAllBtn" style="font-size:11px;font-weight:normal;">All</button>
+    <button type="button" class="admin-btn-delete" id="adm-epDeleteSelectedBtn" disabled style="font-size:11px;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>Delete</button>
+    <button type="button" class="admin-btn-sm" id="adm-epCancelSelectBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>`;
+  probeBtn.before(selectBtn, bulk);
+
+  selectBtn.addEventListener('click', () => {
+    _endpointSelectMode = true;
+    _selectedEndpointIds.clear();
+    loadEndpoints();
+  });
+  el('adm-epCancelSelectBtn')?.addEventListener('click', () => {
+    _endpointSelectMode = false;
+    _selectedEndpointIds.clear();
+    loadEndpoints();
+  });
+  el('adm-epSelectAllBtn')?.addEventListener('click', () => {
+    document.querySelectorAll('[data-adm-ep-select]').forEach(cb => {
+      cb.checked = true;
+      _selectedEndpointIds.add(cb.dataset.admEpSelect);
+    });
+    _updateEndpointBulkControls();
+  });
+  el('adm-epDeleteSelectedBtn')?.addEventListener('click', async () => {
+    const ids = Array.from(_selectedEndpointIds);
+    if (!ids.length) return;
+    const ok = await uiModule.styledConfirm(
+      `Delete ${ids.length} selected endpoint${ids.length === 1 ? '' : 's'}?`,
+      { confirmText: 'Delete', danger: true }
+    );
+    if (!ok) return;
+    const deleteBtn = el('adm-epDeleteSelectedBtn');
+    if (deleteBtn) deleteBtn.disabled = true;
+    document.querySelectorAll('[data-adm-ep-id]').forEach(row => {
+      if (_selectedEndpointIds.has(row.dataset.admEpId)) row.remove();
+    });
+    const results = await Promise.all(ids.map(async id => {
+      try {
+        const res = await fetch(`/api/model-endpoints/${encodeURIComponent(id)}`, {
+          method: 'DELETE', credentials: 'same-origin'
+        });
+        return res.ok;
+      } catch (_) {
+        return false;
+      }
+    }));
+    const deletedCount = results.filter(Boolean).length;
+    _endpointSelectMode = false;
+    _selectedEndpointIds.clear();
+    await _refreshAfterEndpointChange(ids.length === 1 ? ids[0] : null);
+    await loadEndpoints();
+    if (uiModule?.showToast) {
+      const failedCount = ids.length - deletedCount;
+      uiModule.showToast(
+        failedCount
+          ? `Deleted ${deletedCount}/${ids.length} endpoints; ${failedCount} failed`
+          : `Deleted ${deletedCount} endpoint${deletedCount === 1 ? '' : 's'}`,
+        failedCount ? 4200 : 1800
+      );
+    }
+  });
+  _updateEndpointBulkControls();
+}
+
+function shouldDisplayEndpointBaseUrl(ep) {
+  if (!ep || !ep.base_url) return false;
+  if (isChatgptSubscriptionEndpoint(ep)) return false;
+  if (isFeatherlessEndpoint(ep)) return false;
+  return true;
+}
+
+function isFeatherlessEndpoint(ep) {
+  if (!ep) return false;
+  if (ep.provider === 'featherless') return true;
+  const url = String(ep.base_url || '').toLowerCase();
+  try {
+    const host = new URL(url).hostname;
+    return host === 'api.featherless.ai' || host.endsWith('.featherless.ai');
+  } catch (_) {
+    return url.includes('api.featherless.ai');
+  }
+}
+
+function endpointDetailHtml(ep, category) {
+  const showUrl = shouldDisplayEndpointBaseUrl(ep);
+  const copyBtn = (showUrl && category === 'local')
+    ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`
+    : '';
+  const keyLabel = ep.has_key
+    ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
+    : '';
+  const parts = [];
+  if (showUrl) {
+    parts.push(esc(ep.base_url) + copyBtn);
+    if (keyLabel) parts.push(keyLabel);
+  } else if (keyLabel) {
+    parts.push(keyLabel.trim());
+  }
+  if (!parts.length) return '';
+  return `<div class="admin-ep-detail">${parts.join('')}</div>`;
+}
+
+function renderFeatherlessPanel(panel, ep, row) {
+  const epId = ep.id;
+  const initialPinned = Array.isArray(ep.pinned_models)
+    ? ep.pinned_models
+    : (typeof ep.pinned_models === 'string' ? JSON.parse(ep.pinned_models || '[]') : []);
+  const enabledSet = new Set(initialPinned);
+  const toolModes = typeof ep.model_tool_modes === 'object' && ep.model_tool_modes !== null
+    ? { ...ep.model_tool_modes }
+    : {};
+  panel.dataset.pickerMode = 'pinned';
+
+  panel.innerHTML = `<div class="mcp-tools-header">
+    <span>Featherless Catalog</span>
+  </div>
+  <div class="featherless-panel" style="display:flex;flex-direction:column;gap:12px;padding:6px 0;">
+    <div class="featherless-search-bar" style="position:relative;display:flex;align-items:center;">
+      <input type="search" class="mcp-tools-search featherless-search-input" placeholder="Search Featherless models (min 2 chars)..." style="width:100%;box-sizing:border-box;" data-featherless-search="${esc(epId)}">
+      <span class="featherless-spinner-host" style="display:none;position:absolute;right:8px;font-size:10px;opacity:0.55;">Searching...</span>
+    </div>
+    <div class="featherless-enabled-section">
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">
+        Enabled models (<span class="featherless-enabled-count">${enabledSet.size}</span>)
+      </div>
+      <div class="featherless-enabled-list mcp-tools-list" style="max-height:160px;overflow-y:auto;"></div>
+    </div>
+    <div class="featherless-results-section">
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">
+        Search results
+      </div>
+      <div class="featherless-results-list mcp-tools-list" style="max-height:280px;overflow-y:auto;">
+        <span class="featherless-search-hint" style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">Type at least 2 characters to search over 20,000+ models.</span>
+      </div>
+      <div class="featherless-pagination" style="display:none;margin-top:6px;text-align:center;">
+        <button type="button" class="admin-btn-sm featherless-load-more" style="width:100%;">Load more</button>
+      </div>
+    </div>
+  </div>`;
+
+  const searchInput = panel.querySelector('.featherless-search-input');
+  const spinnerHost = panel.querySelector('.featherless-spinner-host');
+  const enabledListEl = panel.querySelector('.featherless-enabled-list');
+  const enabledCountSpan = panel.querySelector('.featherless-enabled-count');
+  const resultsList = panel.querySelector('.featherless-results-list');
+  const paginationHost = panel.querySelector('.featherless-pagination');
+  const loadMoreBtn = panel.querySelector('.featherless-load-more');
+
+  const showSpinner = () => { if (spinnerHost) spinnerHost.style.display = 'inline-flex'; };
+  const hideSpinner = () => { if (spinnerHost) spinnerHost.style.display = 'none'; };
+
+  const formatTokens = (tokens) => {
+    if (!tokens || typeof tokens !== 'number') return '';
+    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(tokens % 1000000 === 0 ? 0 : 1)}M`;
+    if (tokens >= 1000) return `${Math.round(tokens / 1024)}k`;
+    return String(tokens);
+  };
+
+  const updateHeaderCount = () => {
+    const countBadge = row ? row.querySelector(`[data-adm-ep-models-count="${epId}"]`) : null;
+    if (countBadge) {
+      countBadge.textContent = `${enabledSet.size} models enabled`;
+    }
+    if (enabledCountSpan) {
+      enabledCountSpan.textContent = String(enabledSet.size);
+    }
+    ep.pinned_models = Array.from(enabledSet);
+  };
+
+  const saveState = async () => {
+    try {
+      await fetch(`/api/model-endpoints/${epId}/models`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          pinned_models: Array.from(enabledSet),
+          model_tool_modes: toolModes,
+        }),
+      });
+      if (typeof _refreshAfterEndpointChange === 'function') {
+        _refreshAfterEndpointChange();
+      }
+    } catch (err) {
+      console.error('Failed to save Featherless model state', err);
+    }
+  };
+
+  const syncSearchCheckboxes = () => {
+    resultsList.querySelectorAll('input[data-featherless-search-id]').forEach(cb => {
+      const id = cb.dataset.featherlessSearchId;
+      cb.checked = enabledSet.has(id);
+    });
+  };
+
+  const renderEnabledList = () => {
+    if (!enabledListEl) return;
+    if (enabledSet.size === 0) {
+      enabledListEl.innerHTML = '<span style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">No models enabled. Search below to add models.</span>';
+      return;
+    }
+    const sortedIds = Array.from(enabledSet).sort((a, b) => a.localeCompare(b));
+    enabledListEl.innerHTML = sortedIds.map(id => {
+      const displayName = id.split('/').pop() || id;
+      const mode = ['none', 'compact', 'full'].includes(String(toolModes[id] || '').toLowerCase())
+        ? String(toolModes[id]).toLowerCase()
+        : '';
+      return `<div title="${esc(id)}" data-ep-model-row data-model-id="${esc(id)}" class="adm-model-row">
+        <label class="adm-model-label">
+          <input type="checkbox" class="adm-cb-hidden" data-featherless-enabled-id="${esc(id)}" checked>
+          <span class="adm-check-dot" aria-hidden="true"></span>
+          <span class="adm-model-name">${esc(displayName)}</span>
+        </label>
+        <div class="adm-model-tools-col">
+          <span class="adm-model-tools-label" title="Select the tool schema profile for this model">Tools</span>
+          <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(id)}" data-original-tool-mode="${esc(toolModes[id] || '')}">
+            <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
+            <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
+            <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+            <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
+          </select>
+        </div>
+      </div>`;
+    }).join('');
+
+    enabledListEl.querySelectorAll('input[data-featherless-enabled-id]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.featherlessEnabledId;
+        if (!cb.checked) {
+          enabledSet.delete(id);
+          updateHeaderCount();
+          renderEnabledList();
+          syncSearchCheckboxes();
+          saveState();
+        }
+      });
+    });
+
+    enabledListEl.querySelectorAll('.adm-model-tool-mode').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const id = sel.dataset.epModelId;
+        const val = String(sel.value || '').toLowerCase();
+        if (val) toolModes[id] = val;
+        else delete toolModes[id];
+        saveState();
+      });
+    });
+  };
+
+  renderEnabledList();
+
+  let currentQuery = '';
+  let currentPage = 1;
+  let searchAbortController = null;
+  let searchTimeout = null;
+  let isSearching = false;
+
+  const renderSearchResults = (items, append = false, hasMore = false) => {
+    if (!append) {
+      resultsList.innerHTML = '';
+    }
+    if (!items || items.length === 0) {
+      if (!append) {
+        resultsList.innerHTML = '<span style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">No models found matching your search.</span>';
+      }
+      if (paginationHost) paginationHost.style.display = 'none';
+      return;
+    }
+
+    const itemsHtml = items.map(item => {
+      const isChecked = enabledSet.has(item.id);
+      const displayName = item.name || item.id;
+      const ctx = item.context_length ? `${formatTokens(item.context_length)} ctx` : '';
+      return `<div title="${esc(item.id)}" data-ep-model-row data-model-id="${esc(item.id)}" class="adm-model-row">
+        <label class="adm-model-label" style="width:100%;">
+          <input type="checkbox" class="adm-cb-hidden" data-featherless-search-id="${esc(item.id)}" ${isChecked ? 'checked' : ''}>
+          <span class="adm-check-dot" aria-hidden="true"></span>
+          <span class="adm-model-name" style="flex:1;">${esc(displayName)}</span>
+          ${ctx ? `<span class="admin-badge" style="margin-left:auto;font-size:9px;opacity:0.6;">${esc(ctx)}</span>` : ''}
+        </label>
+      </div>`;
+    }).join('');
+
+    if (append) {
+      resultsList.insertAdjacentHTML('beforeend', itemsHtml);
+    } else {
+      resultsList.innerHTML = itemsHtml;
+    }
+
+    resultsList.querySelectorAll('input[data-featherless-search-id]').forEach(cb => {
+      if (cb.dataset.listenerAttached) return;
+      cb.dataset.listenerAttached = '1';
+      cb.addEventListener('change', () => {
+        const id = cb.dataset.featherlessSearchId;
+        if (cb.checked) {
+          enabledSet.add(id);
+        } else {
+          enabledSet.delete(id);
+        }
+        updateHeaderCount();
+        renderEnabledList();
+        syncSearchCheckboxes();
+        saveState();
+      });
+    });
+
+    if (paginationHost) {
+      paginationHost.style.display = hasMore ? '' : 'none';
+    }
+  };
+
+  if (searchInput) {
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+
+    searchInput.addEventListener('input', () => {
+      if (searchTimeout) clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(async () => {
+        const q = searchInput.value.trim();
+        if (q.length < 2) {
+          if (searchAbortController) searchAbortController.abort();
+          hideSpinner();
+          resultsList.innerHTML = '<span class="featherless-search-hint" style="opacity:0.5;font-size:11px;padding:4px 0;display:block;">Type at least 2 characters to search over 20,000+ models.</span>';
+          if (paginationHost) paginationHost.style.display = 'none';
+          return;
+        }
+
+        if (searchAbortController) {
+          searchAbortController.abort();
+        }
+        searchAbortController = new AbortController();
+        currentQuery = q;
+        currentPage = 1;
+        showSpinner();
+
+        try {
+          const res = await fetch(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(q)}&page=1&per_page=50`, {
+            credentials: 'same-origin',
+            signal: searchAbortController.signal,
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          renderSearchResults(data.items, false, data.has_more);
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          resultsList.innerHTML = `<span class="admin-error" style="font-size:11px;padding:4px 0;display:block;">Search failed: ${esc(err.message)}</span>`;
+          if (paginationHost) paginationHost.style.display = 'none';
+        } finally {
+          hideSpinner();
+        }
+      }, 250);
+    });
+  }
+
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!currentQuery || isSearching) return;
+      isSearching = true;
+      loadMoreBtn.disabled = true;
+      loadMoreBtn.textContent = 'Loading...';
+      currentPage += 1;
+
+      try {
+        const res = await fetch(`/api/model-endpoints/${epId}/catalog-search?q=${encodeURIComponent(currentQuery)}&page=${currentPage}&per_page=50`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        renderSearchResults(data.items, true, data.has_more);
+      } catch (err) {
+        if (typeof uiModule !== 'undefined' && uiModule?.showToast) {
+          uiModule.showToast(`Failed to load more models: ${err.message}`, 4000);
+        }
+      } finally {
+        isSearching = false;
+        loadMoreBtn.disabled = false;
+        loadMoreBtn.textContent = 'Load more';
+      }
+    });
+  }
+}
+
+// ChatGPT per-endpoint usage panel expanded state persistence.
+// Preserves only endpoint/auth identifiers, never tokens, secrets, or labels.
+// providerAuthSessionId is ProviderAuthSession.id, independently UUID-generated
+// by routes/chatgpt_subscription_routes.py, not an OAuth token or account ID.
+const CHATGPT_USAGE_EXPANDED_KEY = 'odysseus-chatgpt-usage-expanded';
+
+function _loadExpandedUsageEndpoints() {
+  try {
+    const raw = localStorage.getItem(CHATGPT_USAGE_EXPANDED_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter(x => typeof x === 'string' && x.length > 0));
+    }
+  } catch (_) {}
+  return new Set();
+}
+
+function _saveExpandedUsageEndpoints(set) {
+  try {
+    const arr = Array.from(set).filter(x => typeof x === 'string' && x.length > 0);
+    localStorage.setItem(CHATGPT_USAGE_EXPANDED_KEY, JSON.stringify(arr));
+  } catch (_) {}
+}
+
+function _isChatgptUsageExpanded(endpointId, providerAuthSessionId) {
+  const set = _loadExpandedUsageEndpoints();
+  if (endpointId != null && set.has(String(endpointId))) return true;
+  if (providerAuthSessionId != null && set.has(String(providerAuthSessionId))) return true;
+  return false;
+}
+
+function _setChatgptUsageExpanded(endpointId, providerAuthSessionId, expanded) {
+  const set = _loadExpandedUsageEndpoints();
+  const epKey = endpointId != null ? String(endpointId) : null;
+  const providerAuthSessionRowId = providerAuthSessionId != null ? String(providerAuthSessionId) : null;
+  if (expanded) {
+    if (epKey) set.add(epKey);
+    if (providerAuthSessionRowId) set.add(providerAuthSessionRowId);
+  } else {
+    if (epKey) set.delete(epKey);
+    if (providerAuthSessionRowId) set.delete(providerAuthSessionRowId);
+  }
+  _saveExpandedUsageEndpoints(set);
+}
+
 async function loadEndpoints() {
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
+  _ensureEndpointBulkControls();
   // Render endpoint rows first. Do not make Added Models wait on /api/models or
   // endpoint probes; explicit Refresh/Probe actions do that work.
   const refreshDependentModelUi = (force = false) => {
@@ -512,24 +1046,34 @@ async function loadEndpoints() {
       // `ep.models` is the *visible* set — when every model is hidden it's
       // empty, but we still need to render the expand panel so the user can
       // un-hide them. Gate on the total instead.
-      const hasModels = ep.online && totalCount > 0;
+      const isChatgptAccount = isChatgptSubscriptionEndpoint(ep);
+      const isFeatherless = isFeatherlessEndpoint(ep);
+      const hasModels = ep.online && (totalCount > 0 || isFeatherless);
+      const countText = (isChatgptAccount || isFeatherless)
+        ? `${visibleCount} models enabled`
+        : `${visibleCount}/${totalCount} models enabled`;
       const statusBadge = ep.status === 'empty'
         ? '<span class="admin-badge">no models</span>'
         : ep.online
-          ? `<span class="admin-badge">${visibleCount}/${totalCount} models enabled</span>`
+          ? `<span class="admin-badge" data-adm-ep-models-count="${ep.id}">${countText}</span>`
           : '<span class="admin-badge admin-badge-off">offline</span>';
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
       const kindLabel = ep.endpoint_kind && ep.endpoint_kind !== 'auto' ? ep.endpoint_kind.toUpperCase() : '';
-      const keyLabel = ep.has_key
-        ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
-        : '';
+      const isUsageExpanded = isChatgptAccount && _isChatgptUsageExpanded(ep.id, ep.provider_auth_id);
+      const epTitle = isChatgptAccount
+        ? chatgptAccountTitle(ep)
+        : (isFeatherless && (!ep.name || ep.name === 'api.featherless.ai') ? 'Featherless.ai' : ep.name);
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;">
+              ${_endpointSelectMode ? `<label class="adm-model-row adm-endpoint-select-label" title="Select ${esc(ep.name)}">
+                <input type="checkbox" class="adm-cb-hidden" data-adm-ep-select="${ep.id}" aria-label="Select ${esc(ep.name)}" ${_selectedEndpointIds.has(String(ep.id)) ? 'checked' : ''}>
+                <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
+              </label>` : ''}
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(ep.name)}</span>
+              <span class="admin-user-name">${esc(epTitle)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -537,12 +1081,21 @@ async function loadEndpoints() {
               ${hasModels ? `<span style="font-size:10px;opacity:0.4;${category === 'api' ? 'flex-basis:100%;' : ''}">Click to manage models</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
-              <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
-              <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
-              ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
+              ${_endpointSelectMode ? '' : `
+                <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
+                <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
+                ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}`}
             </div>
           </div>
-          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          ${isChatgptAccount ? `
+          <div class="adm-chatgpt-controls">
+            <button type="button" class="admin-btn-sm adm-chatgpt-usage-toggle" data-adm-chatgpt-usage-toggle="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}" aria-expanded="${isUsageExpanded ? 'true' : 'false'}" aria-controls="adm-chatgpt-usage-${esc(ep.id)}">
+              Usage <span class="adm-chatgpt-usage-chevron" aria-hidden="true">${isUsageExpanded ? '▴' : '▾'}</span>
+            </button>
+            <button type="button" class="admin-btn-sm" data-adm-chatgpt-reconnect="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}">Reconnect</button>
+          </div>
+          <div id="adm-chatgpt-usage-${esc(ep.id)}" class="adm-chatgpt-usage-host${isUsageExpanded ? '' : ' hidden'}" data-adm-chatgpt-usage-host="${esc(ep.provider_auth_id)}" data-chatgpt-endpoint-id="${esc(ep.id)}"${isUsageExpanded ? '' : ' style="display:none;"'}><div class="adm-chatgpt-usage adm-chatgpt-usage-loading"><div class="adm-chatgpt-usage-status">Loading usage...</div></div></div>` : ''}
+          ${endpointDetailHtml(ep, category)}
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -569,6 +1122,11 @@ async function loadEndpoints() {
     apiIdx.sort(_sortByEnabled);
     _renderInto(listLocal, localIdx);
     _renderInto(listApi, apiIdx);
+    const availableIds = new Set(data.map(ep => String(ep.id)));
+    Array.from(_selectedEndpointIds).forEach(id => {
+      if (!availableIds.has(String(id))) _selectedEndpointIds.delete(id);
+    });
+    _updateEndpointBulkControls();
     // Iterate matching nodes across both containers.
     const queryAll = (sel) => {
       const out = [];
@@ -577,6 +1135,66 @@ async function loadEndpoints() {
       });
       return out;
     };
+    // One usage card per ChatGPT account: each fetch targets that card's own
+    // auth id, so account A's refresh can never repaint account B.
+    queryAll('[data-adm-chatgpt-usage-host]').forEach(host => {
+      host.addEventListener('click', (e) => e.stopPropagation());
+      const epId = host.dataset.chatgptEndpointId;
+      const authId = host.dataset.admChatgptUsageHost;
+      if (_isChatgptUsageExpanded(epId, authId)) {
+        _loadChatgptUsage(host, host.dataset.admChatgptUsageHost, host.dataset.chatgptEndpointId);
+      }
+    });
+    queryAll('[data-adm-chatgpt-usage-toggle]').forEach(toggleBtn => {
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const epId = toggleBtn.dataset.chatgptEndpointId;
+        const authId = toggleBtn.dataset.admChatgptUsageToggle;
+        const row = toggleBtn.closest('.admin-user-row');
+        const host = row ? row.querySelector('[data-adm-chatgpt-usage-host]') : null;
+        if (!host) return;
+        const isHidden = host.classList.contains('hidden') || host.style.display === 'none';
+        if (isHidden) {
+          host.classList.remove('hidden');
+          host.style.display = '';
+          toggleBtn.setAttribute('aria-expanded', 'true');
+          const chevron = toggleBtn.querySelector('.adm-chatgpt-usage-chevron');
+          if (chevron) chevron.textContent = '▴';
+          _setChatgptUsageExpanded(epId, authId, true);
+          if (!host.dataset.usageLoaded) {
+            _loadChatgptUsage(host, authId, epId);
+          }
+        } else {
+          host.classList.add('hidden');
+          host.style.display = 'none';
+          toggleBtn.setAttribute('aria-expanded', 'false');
+          const chevron = toggleBtn.querySelector('.adm-chatgpt-usage-chevron');
+          if (chevron) chevron.textContent = '▾';
+          _setChatgptUsageExpanded(epId, authId, false);
+        }
+      });
+    });
+    queryAll('.adm-chatgpt-controls [data-adm-chatgpt-reconnect]').forEach(reconnectBtn => {
+      reconnectBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = reconnectBtn.dataset.chatgptEndpointId;
+        const authId = reconnectBtn.dataset.admChatgptReconnect;
+        const row = reconnectBtn.closest('.admin-user-row');
+        const host = row ? row.querySelector('[data-adm-chatgpt-usage-host]') : null;
+        if (host) {
+          host.classList.remove('hidden');
+          host.style.display = '';
+          const toggleBtn = row ? row.querySelector('[data-adm-chatgpt-usage-toggle]') : null;
+          if (toggleBtn) {
+            toggleBtn.setAttribute('aria-expanded', 'true');
+            const chevron = toggleBtn.querySelector('.adm-chatgpt-usage-chevron');
+            if (chevron) chevron.textContent = '▴';
+          }
+          _setChatgptUsageExpanded(epId, authId, true);
+          await _reconnectChatgptAccount(host, authId, epId);
+        }
+      });
+    });
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -630,6 +1248,15 @@ async function loadEndpoints() {
           .catch(() => loadEndpoints());
       });
     });
+    queryAll('[data-adm-ep-select]').forEach(cb => {
+      cb.addEventListener('click', e => e.stopPropagation());
+      cb.addEventListener('change', () => {
+        const id = String(cb.dataset.admEpSelect || '');
+        if (cb.checked) _selectedEndpointIds.add(id);
+        else _selectedEndpointIds.delete(id);
+        _updateEndpointBulkControls();
+      });
+    });
     // Clear the just-added marker now that the row has been rendered
     // with the animation class — keeps the glow from re-firing on every
     // subsequent loadEndpoints() call (e.g. when toggling a model).
@@ -641,10 +1268,18 @@ async function loadEndpoints() {
       let _modelsLoaded = false;
       row.style.cursor = 'pointer';
       row.addEventListener('click', async (e) => {
+        if (_endpointSelectMode && !e.target.closest('button, input, select, a, label')) {
+          const cb = row.querySelector('[data-adm-ep-select]');
+          if (cb) {
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
+          }
+          return;
+        }
         // Don't let interactions inside the expanded panel re-fire the
         // expand/collapse handler — the search box was getting closed
         // because clicking it bubbled up to here.
-        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, label')) return;
+        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, select, label, button, .featherless-panel, .featherless-search-bar, [data-ep-model-row]')) return;
         const epId = header.dataset.admEpHeader;
         const panel = row.querySelector(`[data-adm-ep-models-panel="${epId}"]`);
         if (!panel) return;
@@ -657,6 +1292,11 @@ async function loadEndpoints() {
         }
         if (!_modelsLoaded && isOpen) {
           _modelsLoaded = true;
+          const ep = data.find(x => String(x.id) === String(epId));
+          if (ep && isFeatherlessEndpoint(ep)) {
+            renderFeatherlessPanel(panel, ep, row);
+            return;
+          }
           // Our shared whirlpool spinner (consistent with the rest of the app).
           panel.innerHTML = '';
           let _modelsSpin = null;
@@ -715,12 +1355,27 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
-              `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
-                <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${(usesPinnedPicker ? m.is_pinned : !m.is_hidden) ? 'checked' : ''}>
-                <span class="adm-check-dot" aria-hidden="true"></span>
-                <span>${esc(m.display)}</span>
-              </label>`
+            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m => {
+              const mode = ['none', 'compact', 'full'].includes(String(m.tool_mode || '').toLowerCase())
+                ? String(m.tool_mode).toLowerCase()
+                : '';
+              return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
+                <label class="adm-model-label">
+                  <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${(usesPinnedPicker ? m.is_pinned : !m.is_hidden) ? 'checked' : ''}>
+                  <span class="adm-check-dot" aria-hidden="true"></span>
+                  <span class="adm-model-name">${esc(m.display)}</span>
+                </label>
+                <div class="adm-model-tools-col">
+                  <span class="adm-model-tools-label" title="Select the tool schema profile for this model">Tools</span>
+                  <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Auto uses Odysseus compact for Odysseus/Ajax names and Regular tools for every other model">
+                    <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
+                    <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
+                    <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+                    <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
+                  </select>
+                </div>
+              </div>`;
+            }
             ).join('') + '</div>';
             const filterRows = (q) => {
               const needle = q.trim().toLowerCase();
@@ -747,6 +1402,12 @@ async function loadEndpoints() {
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveEpModelState(epId, panel));
             });
+            panel.querySelectorAll('.adm-model-tool-mode').forEach(sel => {
+              sel.addEventListener('change', () => {
+                sel.dataset.toolModeTouched = '1';
+                _saveEpModelState(epId, panel);
+              });
+            });
           };
           try {
             const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
@@ -768,19 +1429,30 @@ async function loadEndpoints() {
 async function _saveEpModelState(epId, panel) {
   const hidden = [];
   const pinned = [];
+  const modelToolModes = {};
   const usesPinnedPicker = panel && panel.dataset && panel.dataset.pickerMode === 'pinned';
-  panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
+  panel.querySelectorAll('input.adm-cb-hidden[type=checkbox]').forEach(cb => {
     if (cb.checked) pinned.push(cb.dataset.epModelId);
     else hidden.push(cb.dataset.epModelId);
   });
-  const total = panel.querySelectorAll('input[type=checkbox]').length;
+  panel.querySelectorAll('.adm-model-tool-mode').forEach(sel => {
+    const modelId = sel.dataset.epModelId || '';
+    const value = String(sel.value || '').toLowerCase();
+    const original = String(sel.dataset.originalToolMode || '').toLowerCase();
+    if (modelId && (sel.dataset.toolModeTouched === '1' || original)) {
+      modelToolModes[modelId] = ['none', 'compact', 'full'].includes(value) ? value : '';
+    }
+  });
+  const total = panel.querySelectorAll('input.adm-cb-hidden[type=checkbox]').length;
   const enabled = usesPinnedPicker ? pinned.length : total - hidden.length;
+  const body = usesPinnedPicker ? { pinned_models: pinned } : { hidden };
+  if (Object.keys(modelToolModes).length) body.model_tool_modes = modelToolModes;
   try {
     await fetch(`/api/model-endpoints/${epId}/models`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify(usesPinnedPicker ? { pinned_models: pinned } : { hidden }),
+      body: JSON.stringify(body),
     });
     const row = panel.closest('[data-adm-ep-id]');
     if (row) {
@@ -798,6 +1470,135 @@ async function _saveEpModelState(epId, panel) {
   } catch (e) { /* silent */ }
 }
 
+// Render the shared "waiting for authorization" panel (code + manual link).
+// Built for both the Add Models flow and per-account Reconnect. Never opens a
+// tab automatically; the user clicks the Authorize link.
+function _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl) {
+  if (!status) return;
+  status.className = '';
+  const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
+  const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
+  status.innerHTML =
+    '<div class="adm-copilot-panel">' +
+      '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+        '<span>' + esc(waitLabel) + '</span></div>' +
+      '<div class="adm-copilot-coderow">' +
+        '<span class="adm-copilot-code-label">Code</span>' +
+        '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
+        '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
+      '</div>' +
+      '<a class="admin-btn-add adm-copilot-auth" href="' + esc(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
+    '</div>';
+  const copyBtn = status.querySelector('.adm-device-auth-copy');
+  if (copyBtn) copyBtn.addEventListener('click', async () => {
+    const code = start.user_code || '';
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code);
+        ok = true;
+      }
+    } catch (e) {}
+    if (!ok) {
+      // navigator.clipboard is unavailable in non-secure contexts (HTTP
+      // self-host over a LAN IP), so fall back to execCommand('copy').
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { ta.setSelectionRange(0, code.length); } catch (e) {}
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove();
+    }
+    copyBtn.textContent = ok ? 'Copied' : 'Failed';
+    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+// ── ChatGPT Subscription per-account usage + reconnect ─────────────────────
+// Each ChatGPT account (ProviderAuthSession) is addressed by its stable
+// auth id; the endpoint id pins which row the action came from. Usage is
+// read-only telemetry: a failed read never disables the endpoint.
+const _chatgptReconnectInflight = new Set();
+
+async function _loadChatgptUsage(container, authId, epId, { refresh = false } = {}) {
+  if (!container || !authId) return;
+  const url = '/api/chatgpt-subscription/accounts/' + encodeURIComponent(authId) + '/usage' + (refresh ? '?refresh=1' : '');
+  let payload = null;
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (res.ok) {
+      try { payload = await res.json(); } catch (_) { payload = null; }
+    } else {
+      let reason = 'upstream';
+      if (res.status === 404) reason = 'upstream';
+      payload = { available: false, reason, account: { auth_id: authId } };
+    }
+  } catch (_) {
+    payload = { available: false, reason: 'network', account: { auth_id: authId } };
+  }
+  if (!payload || typeof payload !== 'object') payload = { available: false, reason: 'malformed', account: { auth_id: authId } };
+  const vm = buildChatgptUsageViewModel(payload);
+  vm.authId = authId;
+  if (!container.dataset) container.dataset = {};
+  container.dataset.usageLoaded = '1';
+  container.innerHTML = renderChatgptUsageCardHtml(vm, { esc, endpointId: epId, includeReconnect: false });
+  const refreshBtn = container.querySelector('[data-adm-chatgpt-usage-refresh]');
+  if (refreshBtn) refreshBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing...';
+    await _loadChatgptUsage(container, refreshBtn.dataset.admChatgptUsageRefresh, refreshBtn.dataset.chatgptEndpointId, { refresh: true });
+  });
+  const reconnectBtn = container.querySelector('[data-adm-chatgpt-reconnect]');
+  if (reconnectBtn) reconnectBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await _reconnectChatgptAccount(container, reconnectBtn.dataset.admChatgptReconnect, reconnectBtn.dataset.chatgptEndpointId);
+  });
+}
+
+async function _reconnectChatgptAccount(container, authId, epId) {
+  if (!container || !authId) return;
+  if (_chatgptReconnectInflight.has(authId)) return;
+  _chatgptReconnectInflight.add(authId);
+  const status = document.createElement('div');
+  status.className = 'adm-chatgpt-reconnect-status';
+  const actions = container.querySelector('.adm-chatgpt-usage-actions');
+  if (actions) actions.replaceWith(status); else container.appendChild(status);
+  status.textContent = 'Starting ChatGPT sign-in...';
+  try {
+    // Reconnect targets exactly this auth session + endpoint. The backend
+    // re-checks ownership on start and on every poll.
+    const formData = new FormData();
+    formData.append('reconnect_auth_id', authId);
+    if (epId) formData.append('reconnect_endpoint_id', epId);
+    const result = await runProviderDeviceFlow('chatgpt-subscription', {
+      openWindow: () => {},
+      formData,
+      onStart: ({ start, authUrl }) => _renderDeviceAuthWaitPanel(status, 'chatgpt-subscription', start, authUrl),
+    });
+    if (result.status === 'authorized') {
+      status.className = 'admin-success';
+      status.textContent = 'Reconnected.';
+      await loadEndpoints();
+      return;
+    }
+    status.className = 'admin-error';
+    status.textContent = result.status === 'expired'
+      ? 'Authorization expired.'
+      : 'Authorization failed (' + (result.error || 'denied') + ').';
+  } catch (e) {
+    status.className = 'admin-error';
+    status.textContent = formatDeviceFlowError(e);
+  } finally {
+    _chatgptReconnectInflight.delete(authId);
+    // Re-render the card so Refresh/Reconnect buttons come back.
+    setTimeout(() => { _loadChatgptUsage(container, authId, epId); }, 1200);
+  }
+}
+
 function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
@@ -812,6 +1613,8 @@ function initEndpointForm() {
   const pickerCurrent = picker ? picker.querySelector('.adm-provider-current') : null;
   const DEVICE_AUTH_PROVIDER_VALUES = new Set(Object.keys(PROVIDER_DEVICE_FLOWS));
   let deviceAuthPolling = false;
+  // True while the URL box is repurposed as the ChatGPT account-label input.
+  let _chatgptLabelMode = false;
   function _selectedProviderOption() {
     return provider && provider.selectedOptions ? provider.selectedOptions[0] : null;
   }
@@ -833,11 +1636,22 @@ function initEndpointForm() {
     const status = el('adm-deviceAuthStatus');
     const msg = _endpointMsg('api');
     if (deviceAuthConfig) {
-      urlInput.value = '';
-      urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
-      urlInput.readOnly = true;
+      if (deviceAuthProvider === 'chatgpt-subscription') {
+        // The URL box doubles as the optional account label so several
+        // ChatGPT subscriptions stay distinguishable ("ChatGPT · codex00").
+        if (!_chatgptLabelMode) urlInput.value = '';
+        urlInput.placeholder = 'Account label, e.g. codex00 (optional)';
+        urlInput.readOnly = false;
+        urlInput.maxLength = 40;
+        urlInput.setAttribute('aria-label', 'ChatGPT account label (optional)');
+        _chatgptLabelMode = true;
+      } else {
+        _chatgptLabelMode = false;
+        urlInput.value = '';
+        urlInput.placeholder = 'GitHub Copilot uses GitHub account sign-in';
+        urlInput.readOnly = true;
+        urlInput.removeAttribute('maxlength');
+      }
       if (apiKey) {
         apiKey.value = '';
         apiKey.placeholder = 'No API key needed';
@@ -860,8 +1674,12 @@ function initEndpointForm() {
         msg.className = '';
       }
     } else {
+      if (_chatgptLabelMode) urlInput.value = '';
+      _chatgptLabelMode = false;
       urlInput.placeholder = 'Base URL or pick provider';
       urlInput.readOnly = false;
+      urlInput.removeAttribute('maxlength');
+      urlInput.setAttribute('aria-label', 'Model endpoint URL');
       if (apiKey) {
         apiKey.placeholder = 'API key';
         apiKey.disabled = false;
@@ -945,6 +1763,8 @@ function initEndpointForm() {
     _setApiFormForProvider();
   });
   urlInput.addEventListener('input', () => {
+    // Typing an account label must not flip the picker back to "Custom URL".
+    if (_isDeviceAuthSelected()) return;
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
       if (kindSel) kindSel.value = 'api';
@@ -1012,6 +1832,12 @@ function initEndpointForm() {
   }
 
   function _renderEndpointTestResult(msg, res, d) {
+    const isFeatherless = d && d.base_url && /featherless\.ai/i.test(d.base_url);
+    if (res.ok && isFeatherless && d.online) {
+      msg.textContent = 'Online — Featherless.ai catalog ready (search to enable models)';
+      msg.className = 'admin-success';
+      return;
+    }
     if (res.ok && d.status === 'empty') {
       msg.textContent = 'Online — no models found';
       msg.className = 'admin-success';
@@ -1133,9 +1959,13 @@ function initEndpointForm() {
         await loadEndpoints();
         await _selectAddedModelInChat(d);
         const goLink = ' <a href="#" data-go-added-models style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Added Models →</a>';
+        const isFeatherless = d && d.base_url && /featherless\.ai/i.test(d.base_url);
         if (!d.online) {
           msg.innerHTML = 'Added (endpoint offline — will retry on next load)' + goLink;
           msg.className = 'admin-error';
+        } else if (isFeatherless) {
+          msg.innerHTML = 'Added Featherless.ai — search catalog to enable models' + goLink;
+          msg.className = 'admin-success';
         } else if (d.status === 'empty') {
           msg.innerHTML = 'Added — endpoint reachable, no models found' + goLink;
           msg.className = 'admin-success';
@@ -1187,58 +2017,30 @@ function initEndpointForm() {
     status.textContent = `Starting ${config.label} sign-in...`;
 
     try {
+      // New ChatGPT connections carry the optional account label. Only the
+      // label travels: the backend creates fresh auth/endpoint rows and never
+      // reuses another account's credentials.
+      const formData = new FormData();
+      if (providerKey === 'chatgpt-subscription' && _chatgptLabelMode) {
+        const label = (urlInput.value || '').trim();
+        if (label) formData.append('label', label);
+      }
       const result = await runProviderDeviceFlow(providerKey, {
         openWindow: () => {},
+        formData,
         onStart: ({ start, authUrl }) => {
           if (triggerEl) triggerEl.textContent = 'Waiting...';
-          status.className = '';
-          const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
-          const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
-          status.innerHTML =
-            '<div class="adm-copilot-panel">' +
-              '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
-                '<span>' + esc(waitLabel) + '</span></div>' +
-              '<div class="adm-copilot-coderow">' +
-                '<span class="adm-copilot-code-label">Code</span>' +
-                '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
-                '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
-              '</div>' +
-              '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
-            '</div>';
-          const copyBtn = status.querySelector('.adm-device-auth-copy');
-          if (copyBtn) copyBtn.addEventListener('click', async () => {
-            const code = start.user_code || '';
-            let ok = false;
-            try {
-              if (navigator.clipboard && window.isSecureContext) {
-                await navigator.clipboard.writeText(code);
-                ok = true;
-              }
-            } catch (e) {}
-            if (!ok) {
-              // navigator.clipboard is unavailable in non-secure contexts (HTTP
-              // self-host over a LAN IP), so fall back to execCommand('copy').
-              const ta = document.createElement('textarea');
-              ta.value = code;
-              ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-              document.body.appendChild(ta);
-              ta.focus();
-              ta.select();
-              try { ta.setSelectionRange(0, code.length); } catch (e) {}
-              try { ok = document.execCommand('copy'); } catch (e) {}
-              ta.remove();
-            }
-            copyBtn.textContent = ok ? 'Copied' : 'Failed';
-            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
-          });
+          _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl);
         },
       });
       if (result.status === 'authorized') {
         const endpoint = result.endpoint || {};
         const n = ((endpoint && endpoint.models) || []).length;
         status.className = 'admin-success';
-        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        const connectedName = endpoint && endpoint.name ? endpoint.name : config.label;
+        status.textContent = 'Connected ' + connectedName + ' - ' + n + ' model' + (n !== 1 ? 's' : '') + ' available.';
         if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+        if (_chatgptLabelMode) urlInput.value = '';
         await loadEndpoints();
         await _selectAddedModelInChat(endpoint || {});
         reset();
@@ -2966,6 +3768,8 @@ let logsPollInterval = null;
 let isLogsPolling = false;
 let cachedLogs = [];
 let logsAbortController = null;
+let cachedNotificationLogs = [];
+let notificationLogsAbortController = null;
 
 function renderLogs(isAutoPoll = false) {
   const consoleContainer = el('log-console-container');
@@ -3092,6 +3896,144 @@ async function loadLogs(isAutoPoll = false) {
   }
 }
 
+function renderNotificationLogs() {
+  const container = el('notification-log-container');
+  const statusSelect = el('notification-log-status-select');
+  const searchInput = el('notification-log-search-input');
+  if (!container) return;
+
+  const statusFilter = statusSelect ? statusSelect.value : 'ALL';
+  const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : '';
+  let logs = cachedNotificationLogs;
+  if (statusFilter !== 'ALL') {
+    logs = logs.filter(note => String(note.status || '').toLowerCase() === statusFilter);
+  }
+  if (searchQuery) {
+    logs = logs.filter(note => [note.task_name, note.status, note.body, note.task_id]
+      .some(value => String(value || '').toLowerCase().includes(searchQuery)));
+  }
+
+  container.replaceChildren();
+  if (!logs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'settings-system-logs-placeholder';
+    empty.textContent = cachedNotificationLogs.length
+      ? 'No notification logs match the current filters.'
+      : 'No task notifications recorded yet.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  logs.forEach(note => {
+    const status = String(note.status || 'success').toLowerCase();
+    const entry = document.createElement('article');
+    entry.className = `notification-log-entry notification-log-${status === 'error' ? 'error' : 'success'}`;
+
+    const heading = document.createElement('div');
+    heading.className = 'notification-log-heading';
+    const task = document.createElement('strong');
+    task.className = 'notification-log-task';
+    task.textContent = note.task_name || 'Untitled task';
+    const badge = document.createElement('span');
+    badge.className = 'notification-log-status';
+    badge.textContent = status === 'error' ? 'Error' : 'Success';
+    heading.append(task, badge);
+
+    const meta = document.createElement('div');
+    meta.className = 'notification-log-meta';
+    const date = note.timestamp ? new Date(note.timestamp) : null;
+    meta.textContent = date && !Number.isNaN(date.getTime())
+      ? date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+      : '';
+    if (note.task_id) meta.textContent += meta.textContent ? ` · ${note.task_id}` : note.task_id;
+
+    entry.append(heading, meta);
+    if (note.body) {
+      const body = document.createElement('div');
+      body.className = 'notification-log-body';
+      const bodyText = document.createElement('span');
+      bodyText.className = 'notification-log-body-text';
+      bodyText.textContent = note.body;
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'notification-log-copy';
+      copyBtn.title = 'Copy notification';
+      copyBtn.setAttribute('aria-label', 'Copy notification');
+      const copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      copyBtn.innerHTML = copyIcon;
+      copyBtn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        try {
+          if (!await copyNotificationText(note.body)) throw new Error('copy failed');
+          copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+          copyBtn.classList.add('copied');
+          setTimeout(() => { copyBtn.innerHTML = copyIcon; copyBtn.classList.remove('copied'); }, 1400);
+        } catch (_) {
+          uiModule.showToast('Could not copy notification');
+        }
+      });
+      body.append(bodyText, copyBtn);
+      entry.appendChild(body);
+    }
+    fragment.appendChild(entry);
+  });
+  container.appendChild(fragment);
+}
+
+async function loadNotificationLogs() {
+  const container = el('notification-log-container');
+  if (!container) return;
+  if (notificationLogsAbortController) notificationLogsAbortController.abort();
+  notificationLogsAbortController = new AbortController();
+  const { signal } = notificationLogsAbortController;
+  try {
+    const res = await fetch('/api/tasks/notification-logs?limit=500', {
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    cachedNotificationLogs = Array.isArray(data.notifications) ? data.notifications : [];
+    renderNotificationLogs();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    container.replaceChildren();
+    const error = document.createElement('div');
+    error.className = 'admin-error';
+    error.textContent = `Failed to load notification logs: ${err.message}`;
+    container.appendChild(error);
+  } finally {
+    if (notificationLogsAbortController?.signal === signal) {
+      notificationLogsAbortController = null;
+    }
+  }
+}
+
+function setSystemLogTab(tab) {
+  const showNotifications = tab === 'notifications';
+  document.querySelectorAll('[data-system-log-tab]').forEach(button => {
+    const active = button.dataset.systemLogTab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const terminalPanel = el('system-log-terminal-panel');
+  const notificationPanel = el('system-log-notifications-panel');
+  if (terminalPanel) {
+    terminalPanel.hidden = showNotifications;
+    terminalPanel.classList.toggle('hidden', showNotifications);
+    terminalPanel.style.display = showNotifications ? 'none' : 'flex';
+    terminalPanel.setAttribute('aria-hidden', showNotifications ? 'true' : 'false');
+  }
+  if (notificationPanel) {
+    notificationPanel.hidden = !showNotifications;
+    notificationPanel.classList.toggle('hidden', !showNotifications);
+    notificationPanel.style.display = showNotifications ? 'flex' : 'none';
+    notificationPanel.setAttribute('aria-hidden', showNotifications ? 'false' : 'true');
+  }
+  if (showNotifications) loadNotificationLogs();
+}
+
 function startLogsPolling() {
   if (isLogsPolling) return;
   isLogsPolling = true;
@@ -3129,11 +4071,21 @@ function initLogsView() {
   const limitSelect = el('log-limit-select');
   const searchInput = el('log-search-input');
   const autoRefreshToggle = el('log-auto-refresh-toggle');
+  const notificationRefreshBtn = el('notification-log-refresh-btn');
+  const notificationStatusSelect = el('notification-log-status-select');
+  const notificationSearchInput = el('notification-log-search-input');
+
+  document.querySelectorAll('[data-system-log-tab]').forEach(button => {
+    button.addEventListener('click', () => setSystemLogTab(button.dataset.systemLogTab || 'terminal'));
+  });
 
   if (refreshBtn) refreshBtn.addEventListener('click', () => loadLogs(false));
   if (levelSelect) levelSelect.addEventListener('change', () => renderLogs(false));
   if (limitSelect) limitSelect.addEventListener('change', () => loadLogs(false));
   if (searchInput) searchInput.addEventListener('input', () => renderLogs(false));
+  if (notificationRefreshBtn) notificationRefreshBtn.addEventListener('click', loadNotificationLogs);
+  if (notificationStatusSelect) notificationStatusSelect.addEventListener('change', renderNotificationLogs);
+  if (notificationSearchInput) notificationSearchInput.addEventListener('input', renderNotificationLogs);
 
   if (autoRefreshToggle) {
     autoRefreshToggle.addEventListener('change', (e) => {
@@ -3146,6 +4098,7 @@ function initLogsView() {
   }
 
   // Initial fetch on view loading
+  setSystemLogTab('terminal');
   loadLogs(false);
 }
 
@@ -3173,6 +4126,7 @@ function refreshAll() {
   loadMcpServers();
   loadTokens();
   loadLogs(false);
+  loadNotificationLogs();
 }
 
 /* ═══════════════════════════════════════════
@@ -3192,6 +4146,8 @@ export function close() {
   stopLogsPolling();
   settingsModule.close();
 }
+
+export { shouldDisplayEndpointBaseUrl, isFeatherlessEndpoint, endpointDetailHtml, renderFeatherlessPanel };
 
 const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
 export default adminModule;

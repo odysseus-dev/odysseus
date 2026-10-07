@@ -1,0 +1,4751 @@
+/* 14-email - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+#group-model-picker input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+}
+#group-model-picker input[type="radio"] {
+  accent-color: var(--accent, var(--red));
+}
+#group-model-picker .btn-primary {
+  background: var(--accent, var(--red));
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+#group-model-picker .btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+#group-model-picker .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* ── Email document type ── */
+.doc-email-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.email-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.email-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.5;
+  min-width: 50px;
+  text-align: right;
+}
+.email-field input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--fg);
+  outline: none;
+}
+.email-field input:focus {
+  border-color: var(--accent, #4a9eff);
+}
+.email-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.email-draft-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.email-draft-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.05)); }
+.email-draft-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Email inbox list ── */
+.email-body { border-top: 1px solid var(--border); }
+.email-folder-bar { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.email-folder-select {
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--fg); font-size: 11px; padding: 2px 6px; cursor: pointer; width: 100%; height: 26px;
+}
+.email-item {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px;
+  cursor: pointer; border-bottom: 1px solid var(--border); position: relative; transition: background 0.1s;
+}
+.email-item:hover { background: var(--hover-bg, rgba(255,255,255,0.03)); }
+.email-item-spam:hover { opacity: 0.75; }
+.email-tag-spam {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  color: var(--accent, var(--red));
+  border-radius: 10px; padding: 1px 6px; font-size: 9px; font-weight: 600;
+  text-transform: lowercase; letter-spacing: 0.3px;
+}
+.email-spam-unflag {
+  background: none; border: none; color: inherit; cursor: pointer;
+  padding: 0 2px; font-size: 10px; line-height: 1; opacity: 0.6;
+}
+.email-spam-unflag:hover { opacity: 1; color: var(--fg); }
+/* Unread state is now a subtle icon, not full styling */
+.email-done-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; background: transparent;
+  border: 1.5px solid var(--border); color: transparent;
+  flex-shrink: 0; cursor: pointer; transition: all 0.15s;
+  margin-right: 4px;
+}
+.email-done-check:hover { border-color: var(--accent, #4a9eff); }
+.email-done-check.active { background: var(--accent, #4a9eff); border-color: var(--accent, #4a9eff); color: #fff; }
+.email-done-check.active svg { display: block; }
+.email-done-check svg { display: none; }
+
+
+
+
+.email-delete-busy > :not(.email-delete-overlay) {
+  opacity: 0.42;
+  transition: opacity 0.12s ease;
+}
+
+.email-delete-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 82%, transparent);
+  pointer-events: none;
+}
+
+.email-delete-overlay .spinner-whirlpool,
+.email-delete-overlay .ai-spinner-whirlpool {
+  margin: 0 !important;
+}
+
+.doclib-card.email-card-removing {
+  pointer-events: none !important;
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  border-color: transparent !important;
+  opacity: 0;
+  transform: translateX(-10px) scale(0.985);
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease,
+    max-height 0.23s ease,
+    padding 0.23s ease,
+    margin 0.23s ease,
+    border-color 0.18s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doclib-card.email-card-removing {
+    transition: opacity 0.08s ease;
+    transform: none;
+  }
+}
+
+/* Library card done check — always visible, subtle icon next to title */
+.email-card-done {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+  opacity: 0.15; color: var(--fg);
+}
+.email-card-titlerow .memory-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.email-card-titlerow { position: relative; min-width: 0; }
+.email-card-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-width: max-content;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.email-card-status > * {
+  flex: 0 0 auto;
+}
+.email-card-status + .email-card-nav-arrows {
+  margin-left: 6px;
+}
+.email-card-status .email-card-nav-arrows {
+  margin-left: 2px;
+}
+.email-card-attachment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 18px;
+}
+/* Hover preview: bright accent when unchecked so the user sees a check coming.
+   Once active, keep the exact same color on hover so the done state does not
+   visually flip while the pointer is still over it. */
+.email-card-done:not(.active):hover {
+  opacity: 0.75 !important;
+  color: var(--accent-primary, var(--red));
+}
+.email-card-done.active { opacity: 0.95; color: var(--accent-primary, var(--red)); }
+.email-card-done.active:hover {
+  opacity: 0.95 !important;
+  color: var(--accent-primary, var(--red)) !important;
+}
+.email-card-favorite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+  opacity: 0.18;
+  transition: opacity 0.15s, color 0.15s, transform 0.15s;
+}
+.email-card-favorite:hover,
+.email-card-favorite:focus-visible {
+  opacity: 0.8;
+  color: var(--accent-primary, var(--red));
+}
+.email-card-favorite.active {
+  opacity: 0.9;
+  color: var(--accent-primary, var(--red));
+}
+@keyframes check-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.7) rotate(-10deg); }
+  70% { transform: scale(1.1) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes check-unpop {
+  0%   { transform: scale(1); opacity: 0.95; }
+  35%  { transform: scale(0.45) rotate(8deg); opacity: 0.05; }
+  65%  { transform: scale(0.9); opacity: 0.2; }
+  100% { transform: scale(1); }
+}
+
+/* Expanded email preview in library — override .memory-item row layout */
+.doclib-card.email-card-expanded.memory-item {
+  cursor: default !important;
+  background: var(--bg) !important;
+  border: 1px solid var(--border) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  /* Fill the available grid height instead of the old hardcoded 70vh —
+     the modal already caps height (90dvh on mobile, auto on desktop), so
+     the card just needs to flex into whatever remains. */
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  gap: 0 !important;
+}
+.doclib-card.email-card-expanded.memory-item > div:first-child {
+  /* The summary content (subject, date) - acts as the title bar. Left padding
+     trimmed 14→6px to shift the title 8px left total. */
+  padding: 2px 4px 10px !important;  /* top trimmed to lift the header text up */
+  margin-top: -14px !important;      /* pull the whole bar up into the freed space */
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto !important;
+  width: 100%;
+}
+/* Keep the per-card '...' actions menu visible while the email card is
+   expanded — we used to hide it and surface a duplicate menu button in
+   the expanded header, but that was redundant. The bottom menu now
+   carries the actions in both states. */
+/* When expanded inline, show the subject a touch larger than the 12px card
+   title (close to the new-tab window header) without being oversized. */
+.doclib-card.email-card-expanded .memory-item-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+/* The sender name is redundant once expanded (the From: row shows it just
+   below), so drop it and keep only the date — which then sits left-aligned
+   directly under the subject. Nudge the date 1px right to line up exactly with
+   the subject text, and up closer to it. */
+.doclib-card.email-card-expanded .email-meta-sender,
+.doclib-card.email-card-expanded .email-meta-sep {
+  display: none;
+}
+.doclib-card.email-card-expanded .memory-item-meta {
+  margin-top: -9px !important;
+}
+.doclib-card.email-card-expanded .email-meta-date {
+  margin-left: 3px;
+}
+.email-card-reader {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  font-size: 12px;
+}
+.email-card-reader-loading {
+  background: color-mix(in srgb, var(--bg) 86%, #000 14%);
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  min-height: 240px;
+}
+.email-card-reader-error {
+  background: color-mix(in srgb, var(--bg) 86%, #000 14%);
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.email-reader-load-error {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--fg);
+}
+.email-reader-load-error-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.email-reader-load-error-msg {
+  max-width: min(460px, 92%);
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.email-skeleton-line,
+.email-skeleton-dot {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 12%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 22%, transparent) 45%,
+    color-mix(in srgb, var(--fg) 12%, transparent) 90%
+  );
+  background-size: 220% 100%;
+  animation: email-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+.email-skeleton-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+}
+.email-list-skeleton {
+  position: absolute;
+  inset: 0;
+  padding: 10px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.email-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+.email-skeleton-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.email-reader-skeleton {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  flex: 1;
+}
+.email-reader-skeleton-header {
+  min-height: 60px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+}
+.email-reader-skeleton-header .chip { width: 132px; height: 18px; }
+.email-reader-skeleton-header .chip.short { width: 78px; }
+.email-reader-skeleton-header .action {
+  width: 38px;
+  height: 28px;
+  margin-left: auto;
+  border-radius: 6px;
+}
+.email-reader-skeleton-header .action + .action { margin-left: 0; }
+.email-reader-skeleton-atts {
+  display: flex;
+  gap: 7px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.email-reader-skeleton-atts .attachment { width: 126px; height: 20px; border-radius: 6px; }
+.email-reader-skeleton-atts .attachment.short { width: 88px; }
+.email-reader-skeleton-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 16px 14px;
+  min-height: 340px;
+  flex: 1;
+}
+.email-reader-skeleton-body .body { width: 88%; height: 9px; border-radius: 6px; }
+.email-reader-skeleton-body .body.wide { width: 100%; }
+.email-reader-skeleton-body .body.medium { width: 94%; }
+.email-reader-skeleton-body .body.short { width: 62%; }
+.email-reader-skeleton-body .body.gap {
+  margin-top: 12px;
+  width: 78%;
+}
+.email-search-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 11px;
+  opacity: 0.65;
+}
+.email-search-progress-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary, var(--red));
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary, var(--red)) 35%, transparent);
+  animation: email-search-progress-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .email-skeleton-line,
+  .email-skeleton-dot,
+  .email-inline-image-skeleton,
+  .email-inline-image-placeholder.is-loading .email-inline-image-icon,
+  .email-inline-image-frame.is-loading,
+  .email-search-progress-dot {
+    animation: none;
+  }
+}
+/* Per-email unread dot in the expanded reader's title row. Background color
+   stays inline (per-sender hue from _senderColor), but the dot gets a soft
+   breathing glow + a 4px vertical nudge so it reads as centered against
+   the row instead of riding the baseline. */
+.email-card-unread-dot {
+  position: relative;
+  top: 0;
+  animation: email-card-unread-breathe 2.2s ease-in-out infinite;
+}
+.email-reader-header {
+  display: flex;
+  flex-direction: row;
+  /* Top-align so when the user expands To/Cc, the action cluster
+     stays on the From line above instead of drifting to the middle. */
+  align-items: flex-start;
+  gap: 12px;
+  /* Taller header so the 44px-tall absolute-positioned action
+     cluster inside the From row has vertical breathing room. */
+  padding: 8px 14px;
+  min-height: 60px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  /* Containing block for the absolute action cluster. */
+  position: relative;
+  /* Container so the action-cluster wrap breakpoints below react to
+     the reader's own width instead of the page viewport. */
+  container-type: inline-size;
+  container-name: emailreader;
+}
+.email-reader-header > .email-reader-actions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* Meta block stacks the From / To / Cc rows; each row keeps label
+   tight to its chip(s) on the same line. The recipient-chips inside
+   scroll horizontally so long lists slide under the floating action
+   cluster on the right. */
+.email-reader-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  /* Positioning context for the absolute action cluster. */
+  position: relative;
+}
+.email-reader-meta .recipient-chips {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 4px;
+  max-width: 100%;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.email-reader-meta .recipient-chips::-webkit-scrollbar { display: none; }
+.email-reader-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.email-reader-meta-row.email-reader-meta-from {
+  position: relative;
+  /* Never wrap "From:" off the chip onto its own line — the chip
+     span has overflow-x scroll built in, so it shrinks/scrolls
+     instead of jumping to a new row. */
+  flex-wrap: nowrap;
+  min-width: 0;
+  /* Reserve space on the right for the 1-row cluster in wide mode. */
+  padding-right: 320px;
+}
+.email-reader-meta > .email-reader-meta-details {
+  min-width: 0;
+  padding-right: 320px;
+}
+.email-reader-meta > .email-reader-actions-inline {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 4px;
+  z-index: 2;
+  /* Sit visually above the From baseline like the lifted overlay. */
+  margin-top: -9px;
+}
+/* Recipient chip span keeps at least ~4 characters visible (60px)
+   before the overflow-scroll kicks in, so the sender / first
+   recipient name is always partly readable. */
+.email-reader-meta .recipient-chips {
+  min-width: 60px;
+}
+/* Medium reader widths: cap the cluster at 3 icons per row so it
+   never wraps past 2 rows. min-width forces the cluster to reserve
+   enough room for 3 icons in a row — without it, grid col 2 could
+   shrink below the cap and the cluster fanned out into 4+ short
+   rows. */
+@container emailreader (max-width: 450px) {
+  .email-reader-meta > .email-reader-actions-inline {
+    /* 3 icons (48px each) + 2 gaps (4px each) = 152px exact. Adding
+       6px slack so subpixel rounding can't tip a row from 3 to 2
+       icons and fan the cluster into a 3rd row. */
+    min-width: 158px;
+    max-width: 158px;
+    /* Solid background so the email body content behind the cluster
+       doesn't peek through the gaps between icons or the slack on
+       the right edge when the cluster's wrapped to 2 rows. */
+    background: var(--bg);
+  }
+  .email-reader-meta > .email-reader-actions-inline .memory-toolbar-btn.reader-icon-btn {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+    height: 40px;
+    padding-left: 0;
+    padding-right: 0;
+    gap: 2px;
+  }
+  .email-reader-meta > .email-reader-actions-inline .reader-btn-label {
+    display: block;
+    max-width: 44px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 8px;
+    line-height: 1;
+  }
+  /* Tighten the right-side padding now that the cluster is 158px
+     wide (instead of the ~308 wide 1-row layout). */
+  .email-reader-meta-row.email-reader-meta-from,
+  .email-reader-meta > .email-reader-meta-details {
+    padding-right: 170px;
+  }
+  /* Cluster wrapped to 2 rows (44px + 4 gap + 44px = 92px) sits
+     absolute above the From baseline. Set min-height on the meta
+     (a descendant of the container, more reliable than targeting
+     the container itself) so the header grows enough to contain
+     the cluster + 4px of breathing room between the cluster's
+     bottom and the header bottom. */
+  .email-reader-meta {
+    min-height: 96px;
+  }
+}
+/* Very narrow reader: once the chip span has shrunk to its ~4
+   character min, the cluster snaps to absolute overlay with a soft
+   shadow so it visually floats above the truncated chip. */
+@container emailreader (max-width: 380px) {
+  /* Pane too narrow even for 158px of right-side reservation — kill
+     the padding so chips use the full width, and let the cluster
+     overlay via z-index + shadow. */
+  .email-reader-meta-row.email-reader-meta-from,
+  .email-reader-meta > .email-reader-meta-details {
+    padding-right: 0;
+  }
+  .email-reader-meta > .email-reader-actions-inline {
+    /* Keep the same -7px lift as the medium-width state so the
+       cluster doesn't slide ~4px DOWN when it transitions into
+       overlay mode. */
+    /* margin-top stays inherited at -7px from the base rule. */
+    /* 158px content + 22px padding-left so the inner row still fits
+       3 icons cleanly. */
+    min-width: 180px;
+    max-width: 180px;
+    background: linear-gradient(to right, transparent 0, var(--bg) 18px);
+    padding-left: 22px;
+    /* Soft shadow on the left edge so the overlap reads as the
+       cluster "floating over" the chip. */
+    box-shadow: -6px 0 12px -6px rgba(0, 0, 0, 0.25);
+  }
+}
+/* Mobile: drop the box-shadow AND the left-edge gradient fade —
+   either can read as a shadow under the icons on phone screens.
+   Also lift the cluster 1px more.  !important needed because the
+   @container query overlay rule has the same selector specificity. */
+@media (max-width: 768px) {
+  .memory-toolbar-btn[data-mode="ai-reply-fast"] {
+    height: 30px !important;
+    min-height: 30px !important;
+  }
+  .email-reader-meta > .email-reader-actions-inline {
+    box-shadow: none !important;
+    background: none !important;
+    padding-left: 0 !important;
+    margin-top: -10px;
+  }
+}
+/* Docked panes used to flow the cluster under the meta; now they
+   share the same absolute-top-right + wrap behaviour as undocked.
+   No docked-specific overrides — the container queries below pick
+   the right cluster size and overlay state from the reader width. */
+/* Gmail-style chevron — collapsed view shows only From; the chevron
+   reveals the To/Cc details inline below. */
+.email-reader-meta-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -3px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.email-reader-meta-toggle:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+.email-reader-meta-toggle svg { transition: transform 0.15s ease; }
+.email-reader-meta-toggle.open svg { transform: rotate(180deg); }
+.email-reader-meta-toggle.email-reader-cc-toggle {
+  width: auto;
+  min-width: 18px;
+  gap: 3px;
+  margin-left: 1px;
+  padding: 0 5px;
+  color: var(--accent, var(--red));
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+}
+.email-reader-meta-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* When expanded, To/Cc details live in the header flow. A floating popover
+   can overlap the folded attachment strip directly beneath the header. */
+.email-reader-meta > .email-reader-meta-details:not([hidden]) {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  margin-top: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  z-index: 1;
+}
+/* Reserve a fixed label width so From: / To: / Cc: all align and
+   their chips start at the same x. */
+.email-reader-meta-row strong { opacity: 0.5; font-weight: 600; flex-shrink: 0; min-width: 36px; }
+.email-reader-meta-row > span {
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Recipient chips */
+.recipient-chips {
+  display: inline-flex !important; flex-wrap: wrap; gap: 4px;
+  white-space: normal !important; overflow: visible !important;
+  text-overflow: clip !important;
+}
+.recipient-chip {
+  display: inline-flex; align-items: center;
+  gap: 5px;
+  padding: 1px 8px; font-size: 10px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--fg);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, max-width 0.2s;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recipient-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recipient-chip-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  top: -2px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.recipient-chip-copy:hover,
+.recipient-chip-copy.copied {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+}
+.recipient-chip-copy[hidden] {
+  display: none !important;
+}
+.recipient-chip:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 40%, transparent);
+}
+.recipient-chip.expanded {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 15%, transparent);
+  border-color: var(--accent-primary, var(--red));
+  max-width: 500px;
+}
+.recipient-chip.popover-open {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 15%, transparent);
+  border-color: var(--accent-primary, var(--red));
+}
+.recipient-chip-popover {
+  position: fixed;
+  z-index: 12050;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 20px));
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 96%, var(--fg) 4%);
+  color: var(--fg);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+.recipient-chip-popover-main {
+  min-width: 0;
+}
+.recipient-chip-popover-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recipient-chip-popover-detail {
+  overflow-wrap: anywhere;
+  opacity: 0.86;
+}
+.recipient-chip-popover-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.recipient-chip-popover-copy:hover,
+.recipient-chip-popover-copy.copied {
+  color: var(--accent-primary, var(--red));
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, transparent);
+}
+@container docpane (max-width: 460px) {
+  .email-reader-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .email-reader-header > .email-reader-actions {
+    /* On narrow widths fall back to in-flow so it doesn't overlap
+       the meta entirely. */
+    position: static;
+    align-self: flex-end;
+    background: none;
+    padding-left: 0;
+  }
+  .email-reader-meta-row:not(.email-reader-meta-from) {
+    padding-right: 0;
+  }
+  .email-reader-meta-row strong {
+    min-width: 0;
+  }
+  .recipient-chip {
+    max-width: 100%;
+  }
+}
+/* Mobile: long recipient lists (To/Cc with many addresses) shouldn't wrap to
+   N rows and push the body down. Keep them on one row, horizontally scrollable,
+   no scrollbar chrome. */
+@media (max-width: 768px) {
+  .recipient-chips {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .recipient-chips::-webkit-scrollbar { display: none; }
+  .recipient-chip { flex-shrink: 0; }
+}
+.email-reader-actions {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+  flex-shrink: 0;
+  margin-top: -4px;
+}
+/* Two stacked rows: Reply/Reply-all/Forward on the From line, with
+   Summary/AI-reply/More on a row below. */
+.email-reader-actions-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.email-reader-atts {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.email-reader-body {
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  min-height: 0;
+  background: var(--panel);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--border) 65%, transparent);
+  /* Use the OS colored emoji font for incoming mail content */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla";
+  font-variant-emoji: emoji;
+}
+.email-reader-body.html-body img { max-width: 100%; height: auto; }
+.email-reader-body.html-body [style*="max-width:600px"],
+.email-reader-body.html-body [style*="max-width: 600px"],
+.email-reader-body.html-body [style*="width:600px"],
+.email-reader-body.html-body [style*="width: 600px"],
+.email-reader-body.html-body table[width="600"] {
+  max-width: none !important;
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+.email-reader-body.html-body [align="center"] {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+}
+.email-reader-body .email-inline-image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(100%, 360px);
+  min-height: 58px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  color: var(--fg);
+  vertical-align: middle;
+}
+.email-inline-image-skeleton {
+  width: 58px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 7%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 13%, transparent) 45%,
+    color-mix(in srgb, var(--fg) 7%, transparent) 90%
+  );
+  background-size: 220% 100%;
+  animation: email-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+.email-inline-image-icon {
+  opacity: 0.52;
+  display: inline-flex;
+}
+.email-inline-image-placeholder.is-loading .email-inline-image-icon svg {
+  display: none;
+}
+.email-inline-image-info {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.email-inline-image-title {
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-inline-image-sub {
+  font-size: 10px;
+  opacity: 0.58;
+}
+.email-inline-image-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.email-inline-image-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-2px);
+  height: 24px;
+  line-height: 1;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.email-inline-image-btn:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+  color: var(--accent-primary, var(--red));
+}
+.email-inline-image-download-btn {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+.email-inline-image-loaded {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.email-inline-image-frame {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: min(360px, 100%);
+  min-height: 90px;
+  margin: 6px 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg) 7%, transparent) 0%,
+    color-mix(in srgb, var(--fg) 13%, transparent) 45%,
+    color-mix(in srgb, var(--fg) 7%, transparent) 90%
+  );
+  background-size: 220% 100%;
+}
+.email-inline-image-frame .email-inline-image-loaded {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.email-inline-image-load-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  margin: -4px 0 6px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  font-size: 11px;
+}
+.email-inline-image-load-all span {
+  opacity: 0.68;
+  margin-right: auto;
+}
+.email-inline-image-load-all button {
+  transform: translateY(-4px);
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.email-inline-image-load-all button:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+  color: var(--accent-primary, var(--red));
+}
+@media (max-width: 520px) {
+  .email-reader-body .email-inline-image-placeholder {
+    display: flex;
+    width: 100%;
+  }
+  .email-inline-image-skeleton {
+    width: 48px;
+  }
+  .email-inline-image-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+.email-reader-body.html-body table { max-width: 100%; border-collapse: collapse; }
+/* Gmail Drive chips arrive with inline width/height/border/padding from
+   Gmail's composer (border:1px solid #ddd, white-ish bg assumed). On a
+   dark theme that reads as a near-invisible white box. Override with a
+   theme-aware chip surface so the filename + icon stay visible. */
+.email-reader-body .gmail_chip,
+.email-reader-body .gmail_drive_chip {
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px;
+  padding: 6px 10px !important;
+  margin: 6px 0 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.email-reader-body .gmail_chip:hover,
+.email-reader-body .gmail_drive_chip:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent, var(--red)) 6%, transparent);
+}
+.email-reader-body .gmail_chip a,
+.email-reader-body .gmail_drive_chip a {
+  color: var(--accent, var(--red)) !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  max-width: 100% !important;
+}
+.email-reader-body .gmail_chip a > span,
+.email-reader-body .gmail_drive_chip a > span {
+  color: var(--fg) !important;
+  font-size: 12px;
+}
+.email-reader-body .gmail_chip img,
+.email-reader-body .gmail_drive_chip img {
+  width: 16px !important;
+  height: 16px !important;
+  padding-right: 0 !important;
+  filter: none;
+}
+
+/* Force any phone/sms/date/address auto-link to inherit the body color so
+   numbers don't render as bright-blue browser-default text inside email
+   content. format-detection in <head> turns off detection on iOS, but some
+   mail clients ship pre-wrapped tel: links — those still need taming. */
+.email-reader-body a[href^="tel:"],
+.email-reader-body a[href^="sms:"],
+.email-reader-body a[x-apple-data-detectors],
+.email-bubble-body a[href^="tel:"],
+.email-bubble-body a[href^="sms:"],
+.email-bubble-body a[x-apple-data-detectors],
+.email-thread-turn-body a[href^="tel:"],
+.email-thread-turn-body a[href^="sms:"],
+.email-thread-turn-body a[x-apple-data-detectors] {
+  color: inherit !important;
+  text-decoration: none !important;
+  pointer-events: auto;
+}
+.email-reader-body a,
+.email-bubble-body a,
+.email-thread-turn-body a {
+  color: var(--accent-primary, var(--red));
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  cursor: pointer;
+}
+.email-reader-body a:hover,
+.email-bubble-body a:hover,
+.email-thread-turn-body a:hover { opacity: 0.8; }
+/* Summary block — same band chrome as Attachments / Signature / Earlier-
+   thread (no accent tint, no rounded corners, no leading star icon). The
+   only difference is the label, so all collapsible sections in the email
+   reader look uniform. */
+.email-summary-panel {
+  margin: 0 0 12px 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 30%, transparent);
+  border-radius: 6px;
+}
+.email-summary-header {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: var(--accent-primary, var(--red)); opacity: 0.85;
+  margin-bottom: 6px; letter-spacing: 0.4px;
+}
+.email-summary-content {
+  font-size: 12px; line-height: 1.5; color: var(--fg); white-space: pre-wrap;
+}
+/* Click-to-fold: tap the summary header to collapse/expand. The chevron
+   flips when collapsed, the content hides + the panel's bottom margin
+   tightens so a folded summary doesn't take up vertical space. */
+.email-summary-toggle { cursor: pointer; user-select: none; }
+.email-summary-panel.collapsed { padding-bottom: 6px; margin-bottom: 6px; }
+.email-translation-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+}
+.email-translation-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.email-translation-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+.email-translation-loading-text {
+  opacity: 0.68;
+  font-size: 12px;
+}
+.email-translation-panel .email-translation-icon {
+  color: var(--accent-primary, var(--red));
+}
+
+/* Foldable attachments — same fold-on-click UX as the summary panel. */
+.email-reader-atts-wrap {
+  display: flex; flex-direction: column;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.email-reader-atts-header {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: var(--fg); opacity: 0.7;
+  cursor: pointer; user-select: none;
+  letter-spacing: 0.4px;
+}
+.email-attachments-download-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
+  color: var(--accent-primary, var(--red));
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.email-attachments-download-all:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, transparent);
+}
+.email-attachments-download-all .spinner-whirlpool,
+.email-attachments-download-all .ai-spinner-whirlpool {
+  width: 12px !important;
+  height: 12px !important;
+  margin: 0 !important;
+}
+.email-reader-atts-wrap > .email-reader-atts {
+  border-bottom: none !important;
+}
+.email-reader-atts-hidden-note {
+  padding: 0 14px 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  opacity: 0.65;
+}
+
+/* Quote fold = neutral full-width band (matches attachments header). */
+.email-quote-fold {
+  margin: 0 -14px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0;
+  outline: 0 !important;
+  box-shadow: none !important;
+  /* Neutralise any rich-mail HTML that injects a yellow / colored bg
+     or border onto blockquote ancestors. */
+  background: transparent !important;
+}
+/* Same neutralisation for any element nested inside the fold (the inner
+   blockquote, paragraphs, divs from the original message). Yellow outlines
+   in Outlook-style mails almost always come from inline border-color or
+   box-shadow on these. */
+.email-quote-fold *,
+.email-quote-fold *::before,
+.email-quote-fold *::after {
+  outline-color: transparent !important;
+  box-shadow: none !important;
+}
+.email-quote-fold blockquote,
+.email-quote-fold blockquote[type="cite"],
+.email-quote-fold table,
+.email-quote-fold div {
+  border-color: var(--border) !important;
+  /* Override the .msg blockquote rule that sets a colored left border via
+     var(--hl-function) — that's where the "yellow" outline was coming from. */
+  border-left-color: var(--border) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+/* JS marks the last .email-quote-fold in each email body with this class,
+   so it's the only one that gets rounded bottom corners. Avoids :has()
+   browser-support quirks. */
+.email-quote-fold.last-fold {
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+}
+/* ── Threaded reply turns (recursive parser) ── */
+.email-thread-turn-body {
+  padding: 8px 14px 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+/* Nested turns indent slightly + get their own card outline so the
+   reply hierarchy is obvious at a glance. */
+.email-thread-turn-body .email-thread-turn {
+  margin: 8px 0 4px;
+  margin-left: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+/* The original blockquote's left stripe is redundant when each turn is
+   already a card — drop it inside thread bodies. */
+.email-thread-turn-body blockquote {
+  border-left: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+/* Flatten the inner blockquote: no rounded corners, no yellow tint
+   inherited from rich-mail HTML. Subtle left border + neutral bg. */
+.email-quote-fold blockquote {
+  margin: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-left: 2px solid var(--border);
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: inherit;
+}
+/* "From … · Date …" chip appended to the summary line */
+.email-fold-summary-meta {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Sender name is the primary affordance — slightly larger and not all-caps so
+   "From: Sam" feels like a click target on the person, not a section label. */
+.email-fold-summary-name {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.1px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.email-quote-fold .email-fold-summary {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 14px;
+  cursor: pointer; list-style: none;
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.4px;
+  /* Force neutral page colors regardless of any rich-mail HTML wrapping us */
+  color: var(--fg) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  text-shadow: none !important;
+  font-style: normal !important;
+  opacity: 0.7;
+  user-select: none;
+  border-radius: 0;
+}
+.email-quote-fold .email-fold-summary > * {
+  /* Prevent inline-color attrs on summary children (icon SVGs, meta span)
+     from picking up a forced color from ancestor email HTML. */
+  color: inherit !important;
+  background: transparent !important;
+}
+.email-quote-fold .email-fold-summary { list-style: none; list-style-type: none; }
+.email-quote-fold[open] > *:not(summary) {
+  padding: 8px 14px 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* Signature fold = clean full-width band like the attachments header. No
+   accent overlay, no rounded corners — neutral chrome so it doesn't look
+   like the AI Summary panel. */
+.email-sig-fold {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--fg) 18%, transparent);
+  background: transparent;
+  border-radius: 0;
+}
+.email-sig-fold .email-fold-summary {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none; list-style-type: none;
+  font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg); opacity: 0.55;
+  user-select: none;
+}
+.email-sig-fold[open] > *:not(summary) {
+  padding: 6px 0 0;
+  border-top: 0;
+  font-size: 11px; line-height: 1.45;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  white-space: pre-wrap;
+}
+
+/* ── Chat-bubble layout for email threads ──
+   Each parsed turn becomes a bubble. The active account's outgoing
+   replies align right (mine); everyone else aligns left (theirs).
+   Bubbles read top→bottom oldest→newest, like a chat. */
+.email-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 8px;
+  margin: 0 -2px;
+}
+.email-bubble-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.email-bubble {
+  flex: 0 1 auto;
+  max-width: 90%;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12.5px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+}
+.email-bubble-mine .email-bubble {
+  background: color-mix(in srgb, var(--bubble-accent, var(--fg)) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--bubble-accent, var(--border)) 35%, var(--border));
+  border-radius: 14px 14px 4px 14px;
+}
+.email-bubble-theirs .email-bubble {
+  background: color-mix(in srgb, var(--bubble-accent, var(--fg)) 5%, var(--panel));
+  border-color: color-mix(in srgb, var(--bubble-accent, var(--border)) 25%, var(--border));
+  border-radius: 14px 14px 14px 4px;
+}
+.email-bubble-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10.5px;
+  margin-bottom: 4px;
+  opacity: 0.7;
+  min-width: 0;
+}
+.email-bubble-author {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50ch;
+}
+.email-bubble-date {
+  opacity: 0.7;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.email-bubble-body {
+  white-space: normal;
+  /* Reader-controlled typography — override sender's inline styles AND
+     attribute-based sizing (<font size>, <big>, <small>, h1..h6). Weight
+     and italics still pass through for emphasis. */
+  font-family: inherit;
+  font-size: var(--email-body-size, 13.5px);
+  line-height: 1.5;
+}
+/* Heading tags carry browser-default font-size multipliers that bypass
+   `font-size: inherit` when an inline style was set; pin them too. */
+.email-bubble-body h1,
+.email-bubble-body h2,
+.email-bubble-body h3,
+.email-bubble-body h4,
+.email-bubble-body h5,
+.email-bubble-body h6,
+.email-bubble-body big,
+.email-bubble-body small,
+.email-bubble-body font {
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+/* Sender HTML often wraps content in a fixed-width <div style="width:600px">
+   or <table width="600">. Override so content fills the reader's available
+   width — otherwise resizing the email window doesn't reflow anything. */
+.email-bubble-body,
+.email-bubble-body * {
+  max-width: 100% !important;
+}
+.email-bubble-body div[style*="width"],
+.email-bubble-body table[width],
+.email-bubble-body table {
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+.email-bubble-body blockquote {
+  border-left: 2px solid var(--border) !important;
+  margin: 4px 0 !important;
+  padding: 4px 10px !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: inherit;
+}
+.email-bubble-avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  /* Per-sender color set inline (`style="background:hsl(...)"`); this
+     fallback only kicks in when JS hasn't assigned one. */
+  background: color-mix(in srgb, var(--fg) 14%, transparent);
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+/* Sig folds inside a bubble: tone down — no full-bleed band, since the
+   bubble already provides the chrome. */
+.email-bubble-body .email-sig-fold {
+  margin: 8px 0 0;
+  border-top: 1px dashed var(--border);
+}
+.email-bubble-body .email-sig-fold[open] > *:not(summary),
+.email-bubble-body .email-quote-fold[open] > *:not(summary) {
+  padding: 6px 0 0;
+  border-top: 0;
+}
+@media (max-width: 600px) {
+  .email-bubble { max-width: 96%; }
+  .email-bubble-avatar { display: none; }
+}
+
+/* ── Schedule Send modal ── */
+.schedule-send-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px 12px;
+}
+.schedule-send-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--fg);
+  opacity: 0.55;
+  margin-top: 6px;
+}
+.schedule-send-label:first-child { margin-top: 0; }
+.schedule-send-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.schedule-send-presets .memory-toolbar-btn {
+  padding: 5px 10px 11px;
+  font-size: 12px;
+  justify-content: center;
+  line-height: 1;
+}
+.schedule-send-confirm svg {
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  margin-right: 6px;
+}
+.schedule-send-datetime {
+  font-size: 13px;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.schedule-send-datetime:focus {
+  border-color: var(--hl-function);
+}
+.schedule-send-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.schedule-send-confirm {
+  background: var(--accent-primary, var(--red)) !important;
+  color: #fff !important;
+  border-color: var(--accent-primary, var(--red)) !important;
+}
+.schedule-send-confirm:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 85%, white) !important;
+}
+
+/* Senders embed inline colors in their HTML that clash with the app's
+   theme (black text in dark mode, white backgrounds, yellow highlights,
+   etc.). Force theme colors on every descendant of the rendered body so
+   emails inherit the user's chosen palette regardless of what the
+   sender's mail client emits. */
+.email-reader-body *,
+.email-bubble-body * {
+  color: var(--fg) !important;
+  -webkit-text-fill-color: currentColor !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+.email-reader-body a,
+.email-bubble-body a,
+.email-thread-turn-body a {
+  color: var(--hl-function) !important;
+}
+.email-reader-body a[href^="tel:"],
+.email-reader-body a[href^="sms:"],
+.email-reader-body a[href^="x-apple-data-detectors:"],
+.email-reader-body a[x-apple-data-detectors],
+.email-bubble-body a[href^="tel:"],
+.email-bubble-body a[href^="sms:"],
+.email-bubble-body a[href^="x-apple-data-detectors:"],
+.email-bubble-body a[x-apple-data-detectors],
+.email-thread-turn-body a[href^="tel:"],
+.email-thread-turn-body a[href^="sms:"],
+.email-thread-turn-body a[href^="x-apple-data-detectors:"],
+.email-thread-turn-body a[x-apple-data-detectors] {
+  color: inherit !important;
+  -webkit-text-fill-color: currentColor !important;
+  text-decoration: none !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+}
+
+/* Prefer local/system emoji fonts; avoid remote font providers. */
+.doc-editor-textarea, .doc-editor-highlight, #doc-editor-code,
+.doc-md-preview, .doc-csv-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', monospace;
+  font-variant-emoji: text;
+}
+/* Preview panes claim the editor's space so the action footer stays pinned
+   at the bottom of the pane even when the rendered content is short
+   (shorter table, single-paragraph markdown, etc). */
+.doc-csv-preview,
+.doc-md-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Email documents override: use colored system emoji in compose. */
+.doc-editor-textarea.email-mode,
+#doc-editor-code.email-mode,
+#doc-editor-code.email-mode .doc-editor-highlight,
+#doc-editor-code.email-mode .doc-editor-textarea {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla" !important;
+  font-variant-emoji: emoji;
+}
+
+/* Single-layer rendering for ALL documents (not just email): the highlight
+   overlay (<pre> with hljs spans) and the transparent textarea use two
+   different rendering paths internally — the textarea uses the browser's
+   native form line-breaker, the overlay uses CSS line-breaking — and they
+   can never be guaranteed to wrap byte-identical no matter how many CSS
+   properties are pinned. Pick one source of truth: make the textarea its
+   own visible text, hide the overlay. Trade-off: no syntax highlighting in
+   the live editor (rendered markdown preview / chat output still has it).
+   The caret is now glued to the typed text by definition since both are
+   rendered by the same element. */
+.doc-editor-highlight,
+#doc-editor-code.email-mode .doc-editor-highlight {
+  display: none !important;
+}
+/* Find bar is open: float the highlight overlay ON TOP of the
+   textarea with transparent background + transparent text, so only
+   the solid <mark.doc-find-mark> spans are visible. pointer-events
+   off so clicks still go through to the textarea below. */
+body.doc-find-active .doc-editor-highlight,
+body.doc-find-active #doc-editor-code.email-mode .doc-editor-highlight {
+  display: block !important;
+  z-index: 5 !important;
+  background: transparent !important;
+  pointer-events: none;
+}
+body.doc-find-active .doc-editor-highlight,
+body.doc-find-active .doc-editor-highlight * {
+  color: transparent !important;
+  background: transparent !important;
+}
+.doc-editor-textarea,
+#doc-editor-code.email-mode .doc-editor-textarea {
+  color: var(--fg) !important;
+  caret-color: var(--fg) !important;
+  z-index: 1;
+}
+
+/* Code uses non-wrapping, identical lines in both layers. Prose keeps the
+   single-layer caret fix above. Colors come from the current theme's --hl-*.
+   Find mode retains its own overlay and visible textarea text. */
+.doc-code-syntax .doc-editor-textarea,
+.doc-code-syntax .doc-editor-highlight,
+.doc-code-syntax .doc-editor-highlight code {
+  white-space: pre !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+.doc-code-syntax .doc-editor-highlight code {
+  width: max-content;
+  min-width: 100%;
+}
+body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-highlight {
+  display: block !important;
+}
+body:not(.doc-find-active) .doc-code-syntax:not(.diff-mode) .doc-editor-textarea {
+  color: transparent !important;
+  background: transparent !important;
+}
+
+/* Emoji picker (monochrome icon picker) */
+.emoji-picker-btn {
+  background: none; border: none; color: var(--fg); opacity: 0.35;
+  padding: 4px 7px; cursor: pointer; min-height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity 0.1s;
+}
+.emoji-picker-btn:hover { opacity: 1; }
+.emoji-picker {
+  width: min(300px, 92vw); max-height: min(300px, 55vh);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.emoji-picker-search {
+  padding: 8px 12px; background: var(--panel); border: none;
+  border-bottom: 1px solid var(--border); color: var(--fg);
+  font-size: 12px; font-family: inherit; outline: none;
+}
+.emoji-picker-groups { overflow-y: auto; padding: 4px 0; flex: 1; }
+.emoji-picker-group { padding: 0 6px 4px 6px; }
+.emoji-picker-group-name {
+  font-size: 10px; font-weight: 600; opacity: 0.5;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 4px 4px 2px 4px;
+}
+.emoji-picker-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; }
+.emoji-picker-item {
+  background: none; border: none; cursor: pointer;
+  padding: 4px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg); transition: background 0.1s;
+}
+.emoji-picker-item:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.emoji-picker-item svg { width: 16px; height: 16px; }
+
+.email-avatar {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--accent, #4a9eff);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; flex-shrink: 0; margin-top: 1px;
+}
+.email-item-content { flex: 1; min-width: 0; overflow: hidden; }
+.email-item-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.email-sender { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.email-filter-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 4px 8px 6px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+  color: var(--fg);
+}
+.email-filter-chip-clear {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+.email-date { font-size: 10px; opacity: 0.5; white-space: nowrap; flex-shrink: 0; }
+.email-subject { font-size: 11px; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.email-sent-chip,
+.email-folder-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding: 0 5px;
+  margin-right: 5px;
+  border-radius: 999px;
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
+  vertical-align: 1px;
+}
+.email-folder-chip {
+  position: relative;
+  top: 4px;
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  background: rgba(127, 127, 127, 0.13);
+  border-color: rgba(127, 127, 127, 0.24);
+}
+.email-meta-date-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.email-meta-date-group .email-folder-chip {
+  margin-right: 0;
+}
+.email-card-expanded .email-sent-chip,
+.email-card-reader .email-sent-chip {
+  position: relative;
+  top: 4px;
+}
+.email-tags { display: inline-flex; align-items: center; flex-wrap: nowrap; gap: 3px; margin-left: 6px; vertical-align: middle; position: relative; top: -2px; }
+.email-card-tags {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 48%;
+  position: relative;
+  top: -4px;
+}
+.email-card-expanded .email-tags,
+.email-card-reader .email-tags { top: -4px; }
+.doclib-card-expanded .email-card-tags { top: -4px; }
+.email-card-expanded .email-card-titlerow .email-tag,
+.email-card-expanded .email-card-titlerow .email-tags-more {
+  transform: translateY(-2px);
+}
+@media (max-width: 768px) {
+  .email-card-expanded .email-card-titlerow .email-tag,
+  .email-card-expanded .email-card-titlerow .email-tags-more {
+    transform: translateY(2px);
+  }
+}
+.email-card-tags.email-tags-expanded {
+  position: absolute;
+  z-index: 4;
+  right: calc(var(--email-status-width, 44px) + 6px);
+  top: -5px;
+  max-width: min(58%, 260px);
+  padding: 4px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel, var(--bg));
+  box-shadow: 0 5px 14px color-mix(in srgb, #000 20%, transparent);
+}
+.email-tags-more {
+  appearance: none;
+  border: 0;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.16);
+  color: var(--fg);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  height: 13px !important;
+  min-height: 0 !important;
+  min-width: 23px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: 9px;
+  line-height: 1;
+  margin: 0;
+  opacity: 0.68;
+  position: relative;
+  top: 0;
+  vertical-align: middle;
+}
+.email-tags-more svg { display: block; flex: 0 0 auto; }
+.email-tags-expanded .email-tags-more svg { transform: rotate(180deg); }
+.email-tags-toggle-inline {
+  position: absolute;
+  right: 94px;
+  top: 50%;
+  transform: translateY(calc(-50% - 5px));
+  height: 20px !important;
+  min-width: 34px;
+  padding: 2px 6px !important;
+  font-size: 10px !important;
+  line-height: 1 !important;
+  opacity: 0.62;
+  border-radius: 999px !important;
+}
+.email-tags-toggle-inline.active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 36%, transparent);
+}
+.email-tags-toggle-inline.email-tags-empty {
+  color: var(--warning, #d6b35a);
+  background: color-mix(in srgb, var(--warning, #d6b35a) 12%, transparent);
+  border-color: color-mix(in srgb, var(--warning, #d6b35a) 34%, transparent);
+}
+.email-tag {
+  display: inline-block;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 8px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  background: rgba(127, 127, 127, 0.18);
+  color: var(--fg);
+}
+.email-tag-clickable {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 500;
+  height: 13px !important;
+  min-height: 0 !important;
+  line-height: 1;
+  margin: 0;
+  padding: 2px 5px !important;
+  text-transform: uppercase;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+.email-tag-work { background: rgba(96, 165, 250, 0.22); color: #60a5fa; }
+.email-tag-personal { background: rgba(74, 222, 128, 0.22); color: #4ade80; }
+.email-tag-finance { background: rgba(250, 204, 21, 0.22); color: #facc15; }
+.email-tag-bills { background: rgba(251, 146, 60, 0.22); color: #fb923c; }
+.email-tag-receipt { background: rgba(251, 146, 60, 0.22); color: #fb923c; }
+.email-tag-travel { background: rgba(167, 139, 250, 0.22); color: #a78bfa; }
+.email-tag-newsletter { background: rgba(148, 163, 184, 0.22); color: #94a3b8; }
+.email-tag-promo,
+.email-tag-marketing { background: rgba(244, 114, 182, 0.22); color: #f472b6; }
+.email-tag-notification { background: rgba(148, 163, 184, 0.22); color: #94a3b8; }
+.email-tag-security { background: rgba(248, 113, 113, 0.22); color: #f87171; }
+.email-tag-urgent { background: color-mix(in srgb, var(--color-error, #e06c75) 25%, transparent); color: var(--color-error, #e06c75); font-weight: 600; }
+.email-tag-reply-soon { background: rgba(240, 173, 78, 0.22); color: #f0ad4e; }
+.email-tag-social { background: rgba(56, 189, 248, 0.22); color: #38bdf8; }
+.email-tag-shopping { background: rgba(236, 72, 153, 0.22); color: #ec4899; }
+.email-tag-calendar { background: rgba(167, 139, 250, 0.22); color: #a78bfa; }
+.email-menu-wrap { position: relative; flex-shrink: 0; }
+.email-menu-btn {
+  background: none; border: none; color: var(--fg); opacity: 0; cursor: pointer;
+  padding: 4px; transition: opacity 0.15s;
+  position: relative; top: 0px;
+}
+.email-dropdown {
+  position: absolute; right: 0; top: 100%; z-index: 9999;
+  min-width: 120px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); padding: 4px 0;
+}
+.email-loading { padding: 16px; text-align: center; font-size: 12px; opacity: 0.5; }
+.email-load-more { padding: 8px; text-align: center; }
+.email-load-more-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--fg); padding: 4px 12px; font-size: 11px; cursor: pointer;
+}
+.email-load-more-btn:hover { background: var(--hover-bg, rgba(255,255,255,0.05)); }
+.email-spinner {
+  display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff; border-radius: 50%; animation: email-spin 0.6s linear infinite;
+  vertical-align: middle; margin-right: 4px;
+}
+
+/* Email section doesn't collapse — hide the auto-injected chevron */
+#email-section .section-collapse-btn { display: none !important; }
+
+#email-section:hover #email-compose-btn {
+  opacity: 0.7 !important;
+}
+#email-compose-btn:hover {
+  opacity: 1 !important;
+  background: none !important;
+}
+#email-compose-btn svg {
+  width: 11px;
+  height: 11px;
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+#email-compose-btn .list-item-plus-label {
+  top: calc(50% - 0.5px);
+  color: var(--fg);
+  font-size: 10px;
+}
+#email-compose-btn:hover svg {
+  transform: rotate(180deg) scale(1.15);
+}
+
+/* Library row "+" — identical to the email compose "+": hidden until the row
+   is hovered, no accent box, and the same rotate-in animation. */
+#library-new-doc-btn,
+#notes-new-note-btn {
+  opacity: 0.4 !important;
+  transition: opacity 0.15s ease;
+}
+#tool-library-btn:hover #library-new-doc-btn,
+#tool-notes-btn:hover #notes-new-note-btn {
+  opacity: 0.7 !important;
+}
+#library-new-doc-btn:hover,
+#notes-new-note-btn:hover {
+  opacity: 1 !important;
+  background: none !important;
+}
+#library-new-doc-btn svg,
+#notes-new-note-btn svg {
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+#library-new-doc-btn .list-item-plus-label,
+#notes-new-note-btn .list-item-plus-label {
+  top: calc(50% + 1px);
+}
+#library-new-doc-btn:hover svg,
+#notes-new-note-btn:hover svg {
+  transform: rotate(180deg) scale(1.15);
+}
+
+
+/* MD toolbar attach button — matches other toolbar buttons */
+.md-toolbar-attach-btn {
+  background: none; border: none; color: var(--fg); opacity: 0.35;
+  padding: 4px 7px; cursor: pointer; min-height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity 0.1s;
+}
+.md-toolbar-attach-btn:hover { opacity: 1; }
+
+/* Email reader icon buttons — vertical icon + label stack. */
+.memory-toolbar-btn.reader-icon-btn {
+  width: auto;
+  height: 44px;
+  /* padding: 4px 2px; */
+  position: relative;
+  top: 1px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.memory-toolbar-btn.reader-icon-btn svg { width: 18px; height: 18px; }
+.memory-toolbar-btn.reader-icon-btn[data-act="reply"] svg {
+  color: inherit;
+  stroke: currentColor;
+}
+.memory-toolbar-btn.reader-icon-btn.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+  color: var(--accent, var(--red));
+}
+.memory-toolbar-btn.reader-icon-btn[data-act="more"] {
+  color: inherit;
+}
+.memory-toolbar-btn.reader-icon-btn[data-act="more"] svg { fill: currentColor; }
+.memory-toolbar-btn.reader-icon-btn.reader-more-active {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 24%, transparent);
+  color: inherit;
+}
+/* Cookbook Serve dropdown triggers (the cached-model kebab + the saved-config
+   arrow) — accent-colored to signal they open a menu, with a filled tint when
+   their dropdown is open. Matches the email reader More button pattern. */
+.hwfit-cached-menu-btn,
+.cookbook-saved-arrow {
+  color: var(--accent, var(--red));
+  /* Base .memory-item-btn is flex with align-items but no justify-content,
+     so the kebab SVG sat left-aligned inside the button instead of being
+     horizontally centered. Pin it center. */
+  justify-content: center;
+}
+.hwfit-cached-menu-btn.cookbook-menu-active,
+.cookbook-saved-arrow.cookbook-menu-active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  color: var(--accent, var(--red));
+}
+
+/* Card action menus share one hit target and baseline. Keep this late in the
+   cascade because modal buttons and Cookbook Serve add their own offsets. */
+.memory-item-actions > .memory-item-btn,
+.memory-item-actions .hwfit-cached-menu-btn {
+  box-sizing: border-box;
+  width: 28px;
+  min-width: 28px;
+  height: 22px;
+  min-height: 22px;
+  margin: 0 !important;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  position: relative;
+  top: 0 !important;
+  transform: none !important;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.memory-item-actions .hwfit-cached-menu-btn:hover {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 24%, transparent);
+  color: var(--fg);
+}
+.memory-item-actions .hwfit-cached-menu-btn {
+  transform: translateY(2px) !important;
+}
+
+@media (min-width: 769px) {
+  .task-card .memory-item-actions {
+    top: 6px;
+  }
+  .task-card .memory-item-actions > .memory-item-btn {
+    transform: none !important;
+  }
+}
+
+/* All kebab menus use the same muted tone as the expand/collapse chevron. */
+:is(
+  .memory-menu-btn,
+  .memory-item-actions .memory-item-btn:not(.save):not(.pin):not(.delete):not(.doclib-card-action-btn),
+  .hwfit-cached-menu-btn,
+  .cookbook-task-menu-btn,
+  .skill-kebab-btn,
+  .archive-menu-btn,
+  .doc-tab-menu-btn,
+  .email-menu-btn
+) {
+  color: var(--color-muted, var(--fg)) !important;
+}
+:is(
+  .memory-menu-btn,
+  .memory-item-actions .memory-item-btn:not(.save):not(.pin):not(.delete):not(.doclib-card-action-btn),
+  .hwfit-cached-menu-btn,
+  .cookbook-task-menu-btn,
+  .skill-kebab-btn,
+  .archive-menu-btn,
+  .doc-tab-menu-btn,
+  .email-menu-btn
+) svg {
+  color: inherit;
+  fill: currentColor;
+}
+/* Card kebabs are lightweight menu affordances, not bordered buttons. The
+   old base hover rule gave only some library cards a boxed outline while
+   chats, tasks, and cookbook stayed borderless. */
+:is(
+  .memory-menu-btn,
+  .memory-item-actions .memory-item-btn:not(.save):not(.pin):not(.delete):not(.doclib-card-action-btn),
+  .hwfit-cached-menu-btn,
+  .cookbook-task-menu-btn,
+  .skill-kebab-btn,
+  .archive-menu-btn,
+  .doc-tab-menu-btn,
+  .email-menu-btn
+):hover {
+  background: none !important;
+  border-color: transparent !important;
+  color: var(--fg) !important;
+  opacity: 1;
+}
+/* Skills used a separate, larger kebab with a different hover treatment.
+   Match every other card action trigger. */
+.skill-kebab-btn {
+  box-sizing: border-box;
+  width: 28px;
+  min-width: 28px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-muted) !important;
+  opacity: 0.55;
+  top: -2px;
+}
+@media (max-width: 768px) {
+  .memory-item-actions > .memory-item-btn,
+  .memory-item-actions .hwfit-cached-menu-btn {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+  }
+  /* Card menus all need the same comfortable tap target. These components
+     previously escaped the shared action-button sizing through more-specific
+     desktop selectors. */
+  .memory-menu-btn,
+  .skill-kebab-btn,
+  .task-card .memory-item-actions .memory-item-btn {
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+  .memory-menu-btn { opacity: 0.7; }
+  /* Document cards seat their actions on a slightly higher title baseline
+     than chats/research cards. Bring only that kebab down 4px. */
+  #doclib-modal .doclib-card[data-doc-id] > .doclib-document-header .memory-item-actions .memory-item-btn {
+    transform: translateY(-2px) !important;
+  }
+}
+/* Mobile: center the kebab/menu dropdowns in the viewport so they don't
+   slide left/right as the window width changes (they were positioned via
+   inline `right: ...px` relative to the kebab button). Stable position is
+   easier to land on by touch. The inline `top:` set by the menu code is
+   preserved; we only override the horizontal axis. */
+@media (max-width: 768px) {
+  .email-card-dropdown,
+  .cookbook-saved-menu,
+  .cookbook-dep-menu {
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%);
+  }
+}
+/* Mobile-only Cancel item appended to dropdowns (kebab/More menus). On
+   desktop outside-click closes them cleanly; on touch that's fiddly, so
+   give an explicit Cancel row. Visually separated from the action items
+   above by a top divider + slight muted color. */
+.dropdown-cancel-mobile { display: none; }
+@media (max-width: 768px) {
+  .dropdown-cancel-mobile {
+    display: flex;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+    padding-top: 8px;
+    opacity: 0.85;
+  }
+}
+/* Launch-command Copy button morphs into Cancel once Launch has been clicked. */
+.hwfit-serve-copy.hwfit-serve-cancel {
+  border-color: var(--color-danger, #e06c75) !important;
+  color: var(--color-danger, #e06c75) !important;
+}
+.hwfit-serve-copy.hwfit-serve-cancel:hover {
+  background: color-mix(in srgb, var(--color-danger, #e06c75) 14%, transparent);
+}
+
+/* One visual contract for card kebab menus. These menus are built by several
+   modules, and native button defaults previously made identical rows render
+   with different fonts, heights, and hover movement. */
+:is(
+  .session-dropdown-menu,
+  .email-card-dropdown,
+  .memory-item-dropdown,
+  .task-dropdown,
+  .skill-kebab-menu,
+  .doclib-card-dropdown,
+  .gallery-detail-menu
+) {
+  box-sizing: border-box;
+  padding: 4px !important;
+  color: var(--fg);
+  background: var(--panel, var(--bg)) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+  font-family: inherit !important;
+  font-size: 11px !important;
+  line-height: 1.2;
+}
+:is(
+  .session-dropdown-menu,
+  .email-card-dropdown,
+  .memory-item-dropdown,
+  .task-dropdown,
+  .skill-kebab-menu,
+  .doclib-card-dropdown,
+  .gallery-detail-menu
+) > .dropdown-item-compact {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 28px;
+  padding: 6px 8px;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg);
+  background: transparent;
+  font: inherit !important;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+}
+:is(
+  .session-dropdown-menu,
+  .email-card-dropdown,
+  .memory-item-dropdown,
+  .task-dropdown,
+  .skill-kebab-menu,
+  .doclib-card-dropdown,
+  .gallery-detail-menu
+) > .dropdown-item-compact:hover:not(:disabled) {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  transform: none;
+}
+@media (max-width: 768px) {
+  :is(
+    .session-dropdown-menu,
+    .email-card-dropdown,
+    .memory-item-dropdown,
+    .task-dropdown,
+    .skill-kebab-menu,
+    .doclib-card-dropdown,
+    .gallery-detail-menu
+  ) > .dropdown-item-compact {
+    min-height: 44px;
+    padding: 12px !important;
+    gap: 10px !important;
+    font-size: 14px !important;
+  }
+}
+/* Email modal title unread badge — small accent pill next to "Email". */
+.email-lib-unread-badge {
+  display: inline-block;
+  font-size: 0.55em;
+  font-weight: 700;
+  background: var(--accent-primary, var(--red));
+  color: var(--bg, #1a1a1a);
+  border-radius: 9px;
+  padding: 1px 7px;
+  margin-left: 8px;
+  vertical-align: 2px;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.email-lib-unread-badge.email-lib-away-badge {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  color: var(--accent, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 42%, transparent);
+  padding: 0 7px;
+}
+.email-lib-auto-reply-badge {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  color: var(--accent, var(--red));
+  font-size: 0.55em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  vertical-align: 2px;
+  cursor: pointer;
+}
+.email-lib-auto-reply-status-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent),
+              0 0 8px color-mix(in srgb, var(--accent, var(--red)) 72%, transparent);
+  vertical-align: 2px;
+}
+.modal-header h4 > .email-lib-auto-reply-badge {
+  font-size: 0.65em;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+#email-lib-modal.email-lib-unread-active .doclib-modal-content {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 22%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent),
+    var(--shadow-lg, 0 18px 50px rgba(0, 0, 0, 0.35));
+}
+#email-lib-modal .email-lib-header-actions .minimize-btn {
+  position: relative;
+  left: 6px;
+}
+/* Per-card prev/next nav — only visible on the currently expanded card,
+   sits at the right of the title row next to the done check. */
+.email-card-nav-arrows {
+  display: none;
+  margin-left: auto;
+  gap: 2px;
+  flex-shrink: 0;
+  align-items: center;
+  position: relative;
+  top: -3px;
+  left: 19px;
+}
+.doclib-card.email-card-expanded .email-card-nav-arrows {
+  display: inline-flex;
+}
+.email-card-header-menu {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  opacity: 0.65;
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+  transition: opacity 0.12s, background 0.12s;
+}
+.doclib-card.email-card-expanded .email-card-header-menu {
+  display: inline-flex;
+}
+.email-card-header-menu:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.email-card-nav-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.65;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.12s, background 0.12s;
+}
+.email-card-nav-btn:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* ── Email document editor ── */
+.doc-email-header {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0;
+}
+.doc-email-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.doc-email-collapse-btn {
+  width: 100%;
+  min-height: 24px;
+  display: none;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 3px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.72;
+  text-align: left;
+}
+.doc-email-collapse-btn:hover { opacity: 1; color: var(--accent, var(--red)); }
+.doc-email-collapse-btn svg {
+  flex-shrink: 0;
+  opacity: 0.65;
+  transition: transform 0.14s ease;
+}
+.doc-email-collapse-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.74;
+}
+.doc-email-header.doc-email-header-collapsed .doc-email-collapse-btn svg {
+  transform: rotate(180deg);
+}
+.email-field { display: flex; align-items: center; gap: 8px; position: relative; }
+.email-field label { font-size: 11px; font-weight: 600; color: var(--fg); opacity: 0.5; min-width: 50px; text-align: right; flex-shrink: 0; }
+.email-field input {
+  flex: 1; width: 100%; background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  padding: 5px 8px; font-size: 13px; font-family: inherit; color: var(--fg); outline: none;
+  min-width: 0;
+}
+.email-field input:focus { border-color: var(--accent, #4a9eff); }
+@container docpane (max-width: 460px) {
+  .doc-email-header .email-field {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3px;
+    align-items: stretch;
+  }
+  .doc-email-header .email-field label {
+    min-width: 0;
+    text-align: left;
+  }
+  .doc-email-header .email-field input {
+    width: 100%;
+  }
+}
+/* Cc toggle and attach button are absolute so they don't steal width
+   from the To input. Anchored to the input's vertical center + 4px
+   nudge so the label sits where the user expects it. */
+.email-field .email-cc-toggle {
+  position: absolute; right: 6px; top: calc(50% + 1px); transform: translateY(-50%);
+  z-index: 2;
+}
+/* Accent-tinted prefix label (To / Cc / Bcc / Subject) sitting at
+   the left edge of each input. Replaces both the old <label> tag
+   and the all-placeholder accent. */
+.email-field .email-field-prefix {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-primary, var(--red));
+  pointer-events: none;
+  z-index: 1;
+  line-height: 1;
+}
+.email-field input { padding-left: 44px; }
+.email-field #doc-email-subject { padding-left: 64px; }
+/* X close button inside Cc / Bcc fields. */
+.email-field .email-cc-close {
+  position: absolute; right: 6px; top: calc(50% + 1px); transform: translateY(-50%);
+  background: none; border: none; color: var(--fg);
+  opacity: 0.4; cursor: pointer;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 4px;
+  padding: 0;
+  z-index: 2;
+}
+.email-field .email-cc-close:hover {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.email-field input { padding-right: 60px; }
+.email-field #doc-email-cc, .email-field #doc-email-bcc { padding-right: 32px; }
+.email-field #doc-email-subject { padding-right: 8px; }
+
+.doc-email-actions {
+  display: flex; gap: 8px; justify-content: flex-end; padding: 10px 14px;
+  border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0;
+  align-items: center;
+  position: relative;
+  z-index: 30;
+  pointer-events: auto;
+}
+#doc-actions-footer .email-send-split {
+  margin-left: auto;
+}
+.doc-save-state-icon { display: none; flex: 0 0 auto; }
+.doc-save-button[data-save-state="dirty"] { color: var(--accent, var(--red)); }
+.doc-save-button[data-save-state="saving"] { color: var(--fg-muted, var(--fg)); }
+.doc-save-button[data-save-state="saved"] { color: var(--fg); }
+.doc-save-button[data-save-state="error"] { color: var(--color-danger, #e06c75); }
+.doc-stats-wrap {
+  position: relative;
+  margin-left: 0;
+  flex: 0 0 auto;
+}
+.doc-stats-btn {
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0 7px;
+  background: transparent;
+  color: var(--fg-muted, var(--fg));
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.doc-stats-btn:hover,
+.doc-stats-btn[aria-expanded="true"] {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.doc-stats-btn.doc-stats-selected {
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.doc-stats-popover {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  width: 190px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel, var(--bg));
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+  color: var(--fg);
+  font-size: 11px;
+}
+.doc-stats-scope {
+  padding-bottom: 6px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted, var(--fg));
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.doc-stats-row {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+/* WYSIWYG email body — what the recipient sees, edited in place. */
+.doc-email-richbody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  outline: none;
+  white-space: pre-wrap;
+  text-align: left;
+  word-wrap: break-word;
+}
+.doc-email-richbody.richtext-mode {
+  background: var(--bg);
+}
+.doc-rich-empty-import {
+  position: absolute;
+  top: 90px;
+  right: 18px;
+  bottom: auto;
+  left: auto;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+.doc-rich-empty-import .doc-rich-empty-import-btn {
+  position: static;
+  float: none;
+  margin: 0;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+.doc-email-richbody.richtext-mode ul.rich-checklist {
+  list-style: none;
+  padding-left: 1.8em;
+}
+.doc-email-richbody.richtext-mode ul.rich-checklist > li {
+  position: relative;
+  min-height: 1.6em;
+}
+.doc-email-richbody.richtext-mode ul.rich-checklist > li::before {
+  content: "";
+  position: absolute;
+  left: -1.55em;
+  top: 0.3em;
+  width: 0.95em;
+  height: 0.95em;
+  box-sizing: border-box;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 48%, transparent);
+  border-radius: 3px;
+  background: var(--sidebar-bg, var(--panel));
+  cursor: pointer;
+}
+.doc-email-richbody.richtext-mode ul.rich-checklist > li[data-checked="true"]::before {
+  border-color: var(--accent, var(--red));
+  background: var(--accent, var(--red));
+}
+.doc-email-richbody.richtext-mode ul.rich-checklist > li[data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: -1.27em;
+  top: 0.44em;
+  width: 0.28em;
+  height: 0.5em;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.doc-email-richbody.richtext-mode ul.rich-checklist > li[data-checked="true"] {
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  text-decoration: line-through;
+}
+.doc-email-richbody.richtext-mode hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.25em 0;
+}
+.doc-email-richbody.richtext-mode hr.richtext-page-break {
+  height: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--fg) 42%, transparent);
+  border-bottom: 1px dashed color-mix(in srgb, var(--fg) 42%, transparent);
+  margin: 1.6em 0;
+  opacity: 0.8;
+}
+.doc-email-richbody.richtext-mode table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.doc-email-richbody.richtext-mode th,
+.doc-email-richbody.richtext-mode td {
+  min-width: 48px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.doc-email-richbody.richtext-mode th {
+  background: color-mix(in srgb, var(--sidebar-bg, var(--panel)) 85%, var(--fg) 15%);
+  font-weight: 600;
+}
+.doc-email-richbody.richtext-mode code,
+.doc-email-richbody.richtext-mode span[style*="OdysseusInlineCode"] {
+  padding: 0.12em 0.35em;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  white-space: break-spaces;
+}
+.doc-email-richbody.richtext-mode pre {
+  margin: 1em 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sidebar-bg, var(--panel)) 82%, #000 18%) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  tab-size: 2;
+}
+
+::highlight(doc-find-results) {
+  color: inherit;
+  background-color: color-mix(in srgb, #facc15 48%, transparent);
+}
+
+::highlight(doc-find-current) {
+  color: inherit;
+  background-color: color-mix(in srgb, var(--accent, #ef4444) 68%, #facc15);
+}
+
+::highlight(doc-ai-selections) {
+  color: inherit;
+  background-color: color-mix(in srgb, var(--accent, #ef4444) 30%, transparent);
+}
+.doc-email-richbody img.richtext-image {
+  display: block;
+  margin: 12px 0;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.doc-email-richbody figure.richtext-image {
+  margin: 12px 0;
+  max-width: 100%;
+}
+.doc-email-richbody figure.richtext-image:not(:has(img)) { display: none; }
+.doc-email-richbody figure.richtext-image img.richtext-image {
+  display: block;
+  margin-top: 0;
+  margin-bottom: 0;
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.doc-email-richbody figure.richtext-image:has(img.richtext-image-size-60) .richtext-image-caption { width: 60%; }
+.doc-email-richbody figure.richtext-image:has(img.richtext-image-size-35) .richtext-image-caption { width: 35%; }
+.doc-email-richbody figure.richtext-image:has(img.richtext-image-align-left) .richtext-image-caption { margin-left: 0; margin-right: auto; }
+.doc-email-richbody figure.richtext-image:has(img.richtext-image-align-center) .richtext-image-caption { margin-left: auto; margin-right: auto; }
+.doc-email-richbody figure.richtext-image:has(img.richtext-image-align-right) .richtext-image-caption { margin-left: auto; margin-right: 0; }
+.doc-email-richbody img.richtext-image-size-100 { width: 100%; }
+.doc-email-richbody img.richtext-image-size-60 { width: 60%; }
+.doc-email-richbody img.richtext-image-size-35 { width: 35%; }
+.doc-email-richbody img.richtext-image-align-left { margin-left: 0; margin-right: auto; }
+.doc-email-richbody img.richtext-image-align-center { margin-left: auto; margin-right: auto; }
+.doc-email-richbody img.richtext-image-align-right { margin-left: auto; margin-right: 0; }
+.doc-email-richbody img.richtext-image[data-editor-image-selected] {
+  outline: 2px solid var(--accent, var(--red));
+  outline-offset: 3px;
+}
+.doc-rich-image-toolbar {
+  position: fixed;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--fg) 18%, transparent);
+  z-index: 10032;
+}
+.doc-rich-image-toolbar button {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.doc-rich-image-toolbar button:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+}
+.doc-rich-image-toolbar .doc-rich-image-remove:hover {
+  color: var(--accent, var(--red));
+}
+.doc-rich-image-source-menu {
+  position: fixed;
+  width: 260px;
+  min-width: 260px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--fg) 20%, transparent);
+  z-index: 10033;
+  font-size: 11px;
+}
+.doc-rich-image-source-title {
+  padding: 5px 7px 4px;
+  color: var(--fg);
+  font-weight: 700;
+  opacity: .75;
+}
+.doc-rich-image-source-menu > button,
+.doc-rich-gallery-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.doc-rich-image-source-menu > button[data-image-source="computer"] {
+  padding-left: 9px;
+}
+.doc-rich-image-source-menu > button:hover,
+.doc-rich-gallery-item:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+}
+.doc-rich-gallery-list {
+  display: grid;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.doc-rich-gallery-item {
+  min-height: 44px;
+  min-width: 0;
+}
+.doc-rich-gallery-item > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-rich-gallery-thumb {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.rich-color-letter {
+  border-bottom: 2px solid var(--accent, var(--red));
+  font-weight: 700;
+  line-height: 14px;
+}
+.rich-color-swatch {
+  width: 13px !important;
+  height: 13px !important;
+  border: 1px solid color-mix(in srgb, var(--fg) 35%, transparent);
+  border-radius: 50%;
+}
+.rich-highlight-swatch { border-radius: 50%; }
+.rich-color-swatch.is-transparent {
+  background:
+    linear-gradient(135deg, transparent 43%, var(--red) 44%, var(--red) 56%, transparent 57%),
+    var(--bg);
+}
+.rich-color-palette-menu {
+  min-width: min(292px, calc(100vw - 16px));
+}
+.rich-color-palette-menu .rich-color-reset {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  margin-bottom: 3px;
+  padding-bottom: 7px;
+}
+.rich-color-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(126px, 1fr));
+  gap: 0 4px;
+  padding: 0 4px;
+}
+.rich-color-palette-group {
+  min-width: 0;
+}
+.rich-color-palette-label {
+  padding: 4px 8px 3px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.rich-color-palette-group .doc-overflow-item {
+  min-width: 0;
+  padding-inline: 8px;
+}
+.rich-toolbar-color-custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 3px;
+  padding: 7px 9px 4px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--fg);
+  font-size: 11px;
+}
+.rich-toolbar-color-input.cp-swatch-input {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--fg) 28%, var(--border));
+  border-radius: 50%;
+  cursor: pointer;
+}
+.rich-toolbar-color-input.cp-swatch-input:focus-visible {
+  outline: 2px solid var(--accent, var(--red));
+  outline-offset: 2px;
+}
+
+.rich-toolbar-slider-row {
+  display: grid;
+  grid-template-columns: auto minmax(104px, 1fr) 42px;
+  align-items: center;
+  gap: 9px;
+  min-width: 220px;
+  padding: 10px;
+  color: var(--fg);
+  font-size: 11px;
+}
+.rich-toolbar-range {
+  width: 100%;
+  min-width: 0;
+  height: 8px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  accent-color: var(--red);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.rich-toolbar-range::-webkit-slider-thumb {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--red);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.rich-toolbar-range:hover::-webkit-slider-thumb,
+.rich-toolbar-range:focus::-webkit-slider-thumb,
+.rich-toolbar-range:active::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+}
+.rich-toolbar-range::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--red);
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.rich-toolbar-range:hover::-moz-range-thumb,
+.rich-toolbar-range:focus::-moz-range-thumb,
+.rich-toolbar-range:active::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+}
+.rich-toolbar-range:focus-visible {
+  outline: 2px solid var(--accent, var(--red));
+  outline-offset: 4px;
+}
+.rich-toolbar-slider-value {
+  width: 42px;
+  box-sizing: border-box;
+  padding: 2px 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  text-align: right;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  font-variant-numeric: tabular-nums;
+  -webkit-appearance: textfield;
+  appearance: textfield;
+}
+.rich-toolbar-slider-value::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.rich-toolbar-slider-value:focus {
+  border-color: var(--accent, var(--red));
+  outline: none;
+  color: var(--fg);
+}
+
+.rich-script-icon,
+.rich-font-icon,
+.rich-font-size-icon {
+  display: inline-block;
+  line-height: 1;
+  font-size: 11px;
+}
+.rich-highlight-icon {
+  display: block;
+  flex-shrink: 0;
+  color: var(--accent-primary, var(--red));
+}
+
+.rich-script-icon sup,
+.rich-script-icon sub {
+  font-size: 7px;
+  line-height: 0;
+}
+
+.rich-font-icon {
+  font-family: Georgia, serif;
+  font-size: 12px;
+}
+
+.rich-font-size-icon {
+  min-width: 16px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.rich-align-center { text-align: center; }
+.rich-align-right { text-align: right; }
+.doc-email-richbody .email-quoted-history {
+  margin-top: 14px;
+  padding: 10px 0 10px 12px;
+  border-left: 3px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  font-size: 0.92em;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  user-select: text;
+  pointer-events: none;
+}
+.doc-email-richbody h1, .doc-email-richbody h2, .doc-email-richbody h3,
+.doc-email-richbody h4, .doc-email-richbody h5, .doc-email-richbody h6 { margin: 0.4em 0; }
+.email-more-menu {
+  position: absolute; bottom: 100%; right: 0; margin-bottom: 6px;
+  min-width: 160px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 -4px 12px rgba(0,0,0,0.2); padding: 4px;
+  z-index: 100;
+}
+.email-send-btn {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 20%, transparent);
+  color: var(--accent-primary, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 50%, transparent);
+  border-radius: 6px;
+  padding: 0 14px; height: 28px; font-size: 11px; font-weight: 600; cursor: pointer;
+  font-family: inherit; transition: all 0.15s; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+/* Split send button: [ Send │ ▾ ] — the caret drops the send-options menu UP. */
+.email-send-split { position: relative; display: inline-flex; }
+.email-send-split .email-send-main {
+  border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none;
+}
+.email-send-split .email-send-caret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  padding: 0 8px; gap: 0;
+  /* its left border is the single divider between the two halves */
+  border-left: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 50%, transparent);
+}
+.email-send-split .email-send-caret svg { transition: transform 0.15s ease; }
+.email-send-split .email-send-caret[aria-expanded="true"] svg { transform: none; }
+.email-send-btn svg { flex-shrink: 0; }
+.email-send-btn:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 30%, transparent);
+  border-color: var(--accent-primary, var(--red));
+}
+.email-draft-btn {
+  background: none; border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border-radius: 6px;
+  padding: 0 12px; height: 28px; font-size: 11px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s; white-space: nowrap;
+}
+.email-draft-btn:hover { border-color: var(--fg); color: var(--fg); }
+.email-discard-btn {
+  background: transparent;
+  /* Dim the label text via color-mix instead of `opacity:0.6` on the whole
+     button — opacity multiplies through to the SVG and washes out the accent
+     X glyph. Per-element color dimming keeps the X at full accent strength. */
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+/* The ✕ glyph itself reads in accent. */
+.email-discard-btn svg { color: var(--accent-primary, var(--red)); opacity: 1; }
+.email-discard-btn:hover { opacity: 1; color: var(--red, #e55); border-color: var(--red, #e55); }
+
+/* Compose email "more" menu button — icon only, matches draft btn height */
+#doc-email-more-btn {
+  background: none; border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border-radius: 6px;
+  width: 28px; height: 28px; padding: 0;
+  cursor: pointer; font-family: inherit; transition: all 0.15s;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+#doc-email-more-btn:hover {
+  border-color: var(--fg); color: var(--fg);
+}
+.email-more-wrap { display: inline-flex; }
+.email-attachments {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 0 58px;
+}
+.email-attachment-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; font-size: 11px; background: var(--hover-bg, rgba(255,255,255,0.05));
+  border: 1px solid var(--border); border-radius: 12px; color: var(--fg);
+  text-decoration: none; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+  max-width: 200px; min-width: 0;
+}
+.email-attachment-chip:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: var(--accent);
+}
+.email-attachment-chip.is-expanded {
+  max-width: 90vw;
+}
+.email-attachment-chip > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download):not(.email-attachment-calendar-open) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1 1 auto; min-width: 0;
+}
+.email-attachment-chip.is-expanded > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download):not(.email-attachment-calendar-open) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-attachment-chip-related {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+/* "Open in editor" launch icon — same prominent style on desktop AND mobile
+   (was 24px / dim / no border on desktop, easy to miss). Accent-tinted
+   background + border makes it read as a real action. */
+.email-attachment-open,
+.email-attachment-download,
+.email-attachment-calendar-open,
+.cal-event-email-source {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 9px; border-radius: 999px;
+  margin-left: 6px; flex: 0 0 auto;
+  min-width: 52px; justify-content: center;
+  font-size: 10px; font-weight: 500; letter-spacing: 0.02em;
+  color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 40%, transparent);
+  cursor: pointer; transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.email-attachment-open {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.email-attachment-open svg,
+.email-attachment-open > svg,
+.email-attachment-download svg,
+.email-attachment-download > svg,
+.email-attachment-calendar-open svg,
+.email-attachment-calendar-open > svg,
+.cal-event-email-source svg,
+.cal-event-email-source > svg {
+  width: 12px; height: 12px;
+  opacity: 0.9;
+}
+.email-attachment-open:hover,
+.email-attachment-download:hover,
+.email-attachment-calendar-open:hover,
+.cal-event-email-source:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 70%, transparent);
+}
+.email-attachment-download {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.email-attachment-calendar-open {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.cal-event-email-source {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.email-attachment-open-label { line-height: 1; }
+.email-attachment-chip.is-expanded .email-attachment-open,
+.email-attachment-chip.is-expanded .email-attachment-download,
+.email-attachment-chip.is-expanded .email-attachment-calendar-open {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  margin-left: 4px;
+}
+.email-attachment-chip.is-expanded .email-attachment-open-label {
+  display: none;
+}
+@media (max-width: 768px) {
+  .doc-email-collapse-btn {
+    background: inherit;
+  }
+  /* Mobile: keep the pill but ensure a comfortable touch target. */
+  .email-attachment-open {
+    height: 26px; padding: 0 10px;
+    min-height: 26px !important;
+    min-width: 58px;
+  }
+  .email-attachments,
+  .email-compose-atts {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-left: 0;
+    padding-bottom: 2px;
+  }
+  .email-attachments::-webkit-scrollbar,
+  .email-compose-atts::-webkit-scrollbar {
+    display: none;
+  }
+  /* Attachment chip body — modest minimum height so the open icon sits
+     neatly without dominating. */
+  .email-attachment-chip,
+  .email-compose-chip {
+    flex: 0 0 auto;
+    padding: 6px 8px !important;
+    min-height: 36px !important;
+  }
+  .email-attachment-chip.is-expanded {
+    flex-wrap: nowrap;
+    align-items: center;
+    max-width: min(92vw, 360px);
+  }
+  .email-attachment-chip.is-expanded > span:not(.att-size):not(.email-attachment-open):not(.email-attachment-download):not(.email-attachment-calendar-open) {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.25;
+    min-width: 0;
+  }
+  .email-attachment-chip.is-expanded .att-size {
+    margin-left: 0;
+  }
+  .email-attachment-chip.is-expanded .email-attachment-open,
+  .email-attachment-chip.is-expanded .email-attachment-download,
+  .email-attachment-chip.is-expanded .email-attachment-calendar-open {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+    margin-left: 4px;
+  }
+  .email-compose-chip .compose-chip-name {
+    max-width: 190px;
+  }
+}
+
+/* Compose attachment chips (when sending new email) */
+.email-compose-atts {
+  display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px 0 0 0;
+}
+.email-compose-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(240px, 100%);
+  height: 24px; min-height: 24px; box-sizing: border-box;
+  padding: 2px 3px 2px 7px; font-size: 11px;
+  background: var(--hover-bg, rgba(255,255,255,0.05));
+  border: 1px solid var(--border); border-radius: 12px; color: var(--fg);
+}
+.email-compose-chip .compose-chip-name { max-width: 180px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-compose-chip .compose-chip-remove {
+  background: none; border: none; color: var(--fg); opacity: 0.5;
+  height: 18px; font-size: 14px; line-height: 18px; padding: 0 3px; cursor: pointer;
+  flex-shrink: 0;
+}
+.email-compose-chip .compose-chip-remove:hover { opacity: 1; color: var(--red, #e55); }
+
+.pdf-annotation-line-value {
+  width: 48px;
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+  background: var(--bg-elev, var(--panel));
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: right;
+}
+.pdf-annotation-line-value:hover { border-color: color-mix(in srgb, var(--fg) 38%, var(--border)); }
+.pdf-annotation-line-value:focus { border-color: var(--accent, var(--red)); }
+
+.email-odysseus-attach-menu {
+  position: fixed;
+  z-index: 10050;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100vh - 16px));
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.28);
+  overflow: hidden;
+}
+.email-odysseus-attach-local {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 35%, var(--border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.email-odysseus-attach-local:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+}
+.email-odysseus-attach-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin: 7px 0;
+}
+.email-odysseus-attach-tabs button {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.72;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.email-odysseus-attach-tabs button.active {
+  opacity: 1;
+  color: var(--accent-primary, var(--red));
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 8%, transparent);
+}
+.email-odysseus-attach-tabs button svg {
+  flex-shrink: 0;
+}
+.email-odysseus-attach-search-wrap {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -1px 0 7px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+}
+.email-odysseus-attach-search-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 6%, transparent);
+}
+.email-odysseus-attach-search {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+}
+.email-odysseus-attach-search::placeholder {
+  color: color-mix(in srgb, var(--fg) 38%, transparent);
+}
+.email-odysseus-attach-list {
+  max-height: 320px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.email-odysseus-attach-row {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.email-odysseus-attach-row:hover {
+  background: var(--hover-bg, rgba(255,255,255,0.06));
+  border-color: var(--border);
+}
+.email-odysseus-attach-row.is-selected {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+}
+.email-odysseus-attach-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.email-odysseus-attach-row.is-selected .email-odysseus-attach-dot {
+  border-color: var(--accent-primary, var(--red));
+  background: var(--accent-primary, var(--red));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary, var(--red)) 18%, transparent);
+}
+.email-odysseus-attach-icon,
+.email-odysseus-attach-thumb {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  overflow: hidden;
+}
+.email-odysseus-attach-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.email-odysseus-attach-title,
+.email-odysseus-attach-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-odysseus-attach-title {
+  font-size: 11px;
+  line-height: 1.2;
+}
+.email-odysseus-attach-meta {
+  font-size: 10px;
+  line-height: 1.15;
+  opacity: 0.52;
+}
+.email-odysseus-attach-empty {
+  padding: 14px 8px;
+  color: var(--muted, #888);
+  font-size: 11px;
+  text-align: center;
+}
+.email-odysseus-attach-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 5px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  background: var(--bg);
+  position: sticky;
+  bottom: 0;
+}
+.email-odysseus-attach-count {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted, #888);
+  font-size: 11px;
+}
+.email-odysseus-attach-selected {
+  height: 28px;
+  min-width: 72px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, var(--border));
+  background: var(--accent-primary, var(--red));
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.email-odysseus-attach-selected svg {
+  flex-shrink: 0;
+}
+
+.email-cc-toggle {
+  background: none; border: none; color: var(--fg);
+  opacity: 0.4; font-size: 11px; cursor: pointer;
+  padding: 4px 8px; font-family: inherit;
+}
+.email-cc-toggle:hover {
+  opacity: 1;
+  color: var(--accent, #4a9eff);
+  background: none !important;
+}
+
+@media (max-width: 768px) {
+  .doc-email-collapse-btn {
+    display: flex;
+  }
+}
+
+.email-autocomplete {
+  position: absolute; top: 100%; left: 58px; right: 0; z-index: 1000;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2); max-height: 240px; overflow-y: auto;
+  margin-top: 2px;
+}
+.contact-suggestion {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; font-size: 12px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.contact-suggestion:last-child { border-bottom: none; }
+.contact-suggestion:hover,
+.contact-suggestion.active,
+.contact-suggestion[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent-primary, var(--accent, var(--red))) 15%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent-primary, var(--accent, var(--red))) 40%, transparent);
+  outline-offset: -1px;
+}
+.contact-suggestion .contact-name { font-weight: 600; color: var(--fg); }
+.contact-suggestion .contact-email { opacity: 0.6; font-size: 11px; }
+.contact-suggestion-status {
+  padding: 7px 10px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 11px;
+  cursor: default;
+}
+.contact-suggestion-status.is-loading { opacity: 0.72; }
+.contact-suggestion-status.is-unavailable {
+  color: color-mix(in srgb, var(--red) 82%, var(--fg));
+}
+.email-ai-reply-btn {
+  background: none;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 12px; height: 28px; font-size: 11px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+  display: inline-flex; align-items: center; white-space: nowrap;
+}
+.email-ai-reply-btn:hover {
+  border-color: var(--accent, #4a9eff);
+  color: var(--accent, #4a9eff);
+}
+/* Align select/new buttons in popup library toolbar */
+#email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn, #email-lib-compose-btn { position: relative; top: -4px; }
+/* Select + Refresh sit slightly lower than Compose on desktop. */
+#email-lib-select-btn, #email-lib-refresh-btn, #email-lib-settings-btn { top: -2px; }
+
+#email-lib-modal.email-settings-mode .email-accounts-row,
+#email-lib-modal.email-settings-mode .admin-card > .memory-toolbar,
+#email-lib-modal.email-settings-mode #email-lib-bulk,
+#email-lib-modal.email-settings-mode #email-lib-grid,
+#email-lib-modal.email-settings-mode #email-lib-sync-status,
+#email-lib-modal.email-settings-mode #email-lib-fab {
+  display: none !important;
+}
+#email-lib-settings-page[hidden] {
+  display: none !important;
+}
+#email-lib-modal.email-settings-mode #email-lib-settings-page {
+  display: flex;
+}
+.email-settings-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  padding: 2px 0 8px;
+  width: 100%;
+  box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
+}
+.settings-email-preferences-card {
+  display: contents;
+}
+.settings-email-preferences-card .email-settings-section {
+  margin: 0 0 10px;
+  padding: 14px 12px 12px;
+  background: var(--panel);
+}
+.settings-email-preferences-card .email-settings-section:last-child {
+  margin-bottom: 0;
+}
+.settings-email-preferences-card .email-settings-style-section {
+  margin-bottom: 4px;
+}
+.settings-email-default-card #settings-email-default-host {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-left: auto;
+}
+.settings-email-default-card .settings-email-default-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.settings-email-default-card .settings-email-default-title > span {
+  min-width: 0;
+}
+.settings-email-default-card .settings-email-default-title > span > svg {
+  color: var(--accent, var(--red));
+}
+.settings-email-default-card .email-settings-account-picker {
+  margin-left: 0 !important;
+}
+.settings-email-default-card .email-settings-support-copy {
+  position: relative;
+  top: 6px;
+}
+.settings-email-default-spacer {
+  height: 12px;
+}
+.settings-email-default-card .cookbook-srv-default-label {
+  position: relative;
+  top: 2px;
+}
+.settings-email-default-card .cookbook-srv-default-icon > svg {
+  position: relative;
+  top: 7px;
+}
+.settings-email-settings-legacy {
+  display: none;
+}
+
+/* Keep the standalone Email Settings cards aligned with the expandable
+   preference cards below them. */
+[data-settings-panel="email"] > .admin-card {
+  padding-top: 14px;
+}
+.email-settings-page-host {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 0;
+  overflow: visible;
+}
+.settings-email-preferences-card > .email-settings-page-host { width: 100%; }
+.email-settings-page-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.email-settings-account-picker {
+  min-width: 0;
+  max-width: 100%;
+}
+.email-settings-account-picker select {
+  min-width: 0;
+  max-width: 100%;
+}
+.email-settings-back {
+  position: relative;
+  top: -2px;
+}
+.email-settings-header-back {
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  border: 1px solid transparent;
+  width: auto;
+  height: 24px;
+  padding: 0 8px 0 6px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  border-radius: 999px;
+  flex-shrink: 0;
+  position: relative;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+.email-settings-header-back:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+}
+.email-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.email-settings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+.email-settings-title svg {
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.email-settings-close {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.email-settings-close:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+}
+.email-settings-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 6px;
+  padding-top: 4px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+.email-settings-loading,
+.email-settings-error {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  padding: 8px 2px;
+}
+.email-settings-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.email-settings-loading-css-whirlpool {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 1.5px solid color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
+  border-top-color: var(--accent, var(--red));
+  border-right-color: color-mix(in srgb, var(--accent, var(--red)) 72%, transparent);
+  border-radius: 50%;
+  animation: whirlpool-spin 0.72s linear infinite;
+  flex: 0 0 auto;
+}
+.email-settings-loading-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--accent, var(--red));
+}
+.email-settings-section {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 7px;
+  margin: 0;
+  padding: 14px 8px 8px;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.email-settings-section.is-disabled {
+  opacity: 0.58;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.email-settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.email-settings-section-head > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.email-settings-section-head > .email-settings-enabled-control,
+.email-settings-section-head > button {
+  margin-left: auto;
+}
+.email-settings-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.email-settings-section-toggle:hover,
+.email-settings-section-toggle:active {
+  background: transparent;
+}
+.email-settings-section-toggle-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.email-settings-section-toggle > .email-settings-enabled-control {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.email-settings-section-chevron {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  transition: transform .14s ease, color .14s ease;
+}
+.email-settings-section-toggle:hover .email-settings-section-chevron,
+.email-settings-section-toggle:focus-visible .email-settings-section-chevron {
+  color: var(--accent, var(--red));
+}
+.email-settings-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin: 0;
+  padding: 0;
+}
+.email-settings-section-title svg {
+  color: var(--accent, var(--red));
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.email-settings-account-scope {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.email-settings-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  width: 100%;
+}
+.email-settings-section[open] > .email-settings-section-body {
+  min-height: 0;
+  flex: 0 0 auto;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: contain;
+  padding: 0 4px 4px 0;
+  scrollbar-width: thin;
+}
+.email-settings-section[open] {
+  min-height: 0;
+  flex: 0 0 auto;
+}
+.email-settings-auto-reply-section[open],
+.email-settings-cleanup-section[open]:has(.email-unsub-card) {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+}
+.email-settings-auto-reply-section[open] > .email-settings-section-body,
+.email-settings-cleanup-section[open]:has(.email-unsub-card) > .email-settings-section-body {
+  flex: 0 0 auto;
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+}
+.email-settings-section[open] > .email-settings-section-body > * {
+  flex: 0 0 auto;
+}
+.email-settings-section-body-head {
+  display: flex;
+  justify-content: flex-end;
+}
+.email-settings-display-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.email-settings-display-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.email-settings-display-title > svg {
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+}
+.email-settings-display-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  position: relative;
+  top: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.email-settings-display-title-row .email-settings-section-title {
+  flex: 1 1 auto;
+  width: auto;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.email-settings-style-section .email-settings-section-title {
+  display: flex;
+  width: 100%;
+  position: relative;
+  top: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.email-settings-style-section .email-settings-section-head,
+.email-settings-style-section .email-settings-section-body {
+  position: static;
+}
+.email-settings-style-section .email-settings-section-head { margin-top: 8px; }
+.email-settings-style-section .email-settings-section-body { margin-top: 12px; }
+.email-settings-style-section .email-settings-section-desc {
+  margin-top: 16px;
+  top: 0;
+}
+.email-settings-auto-reply-section .email-settings-section-title,
+.email-settings-cleanup-section .email-settings-section-title {
+  display: flex;
+  width: 100%;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.email-settings-cleanup-section .email-settings-section-title {
+  position: relative;
+  top: 10px;
+}
+.email-settings-auto-reply-section .email-settings-section-desc,
+.email-settings-cleanup-section .email-settings-section-desc {
+  margin-top: 10px;
+}
+.email-settings-display-section .email-settings-section-desc,
+.email-settings-cleanup-section .email-settings-section-desc,
+.email-settings-inline-images-section .email-settings-section-desc {
+  margin-top: 12px;
+  top: 12px;
+}
+.email-settings-auto-reply-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  position: relative;
+  top: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.email-settings-auto-reply-section .email-settings-section-head {
+  margin-top: 8px;
+}
+.email-settings-auto-reply-section .email-settings-section-body {
+  margin-top: 8px;
+}
+.email-settings-auto-reply-section .email-settings-section-desc {
+  margin-top: 12px;
+  top: 0;
+}
+.email-settings-display-section .email-settings-section-desc {
+  margin-top: 10px;
+  top: 10px;
+}
+.email-settings-auto-reply-section .email-settings-section-body {
+  margin-top: 14px;
+}
+.email-settings-auto-reply-title-row .email-settings-section-title {
+  flex: 1 1 auto;
+  width: auto;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.email-settings-support-copy {
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.email-settings-clean-btn > svg {
+  color: var(--accent, var(--red));
+}
+.email-settings-clean-btn {
+  height: 32px;
+}
+.email-unsub-rescan-btn {
+  height: 32px;
+}
+.email-settings-clean-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+  margin-left: auto;
+}
+.email-settings-clean-status {
+  display: none;
+  font-size: 10.5px !important;
+  flex: 0 1 auto;
+  width: auto !important;
+  max-width: min(52vw, 360px);
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  position: relative;
+  top: 2px;
+}
+.email-settings-clean-status.is-busy {
+  order: 0;
+  align-self: center;
+  width: auto !important;
+  max-width: 100%;
+  margin-right: auto;
+  text-align: left;
+}
+.email-settings-clean-btn {
+  flex: 0 0 auto;
+}
+.email-settings-default .cookbook-srv-default-icon > svg {
+  position: relative;
+  top: 3px;
+}
+.email-unsub-auto-safe-btn > svg {
+  position: relative;
+  top: 2px;
+}
+.email-unsub-auto-safe-btn {
+  height: 29px;
+}
+.email-unsub-status,
+.email-unsub-panel-status {
+  position: relative;
+  top: 2px;
+}
+.email-unsub-panel-status {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-unsub-panel-status.is-error {
+  color: var(--red, #e57373);
+}
+.email-unsub-card .email-tag {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.email-unsub-duplicate-badge {
+  position: relative;
+  top: 2px;
+}
+.email-unsub-accent-icon {
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.email-unsub-card {
+  position: relative;
+  transition: opacity .16s ease;
+}
+.email-unsub-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.email-unsub-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  cursor: pointer;
+}
+.email-unsub-card-toggle:hover,
+.email-unsub-card-toggle:focus-visible {
+  color: var(--accent, var(--red));
+}
+.email-unsub-card-toggle > svg {
+  transition: transform .14s ease;
+}
+.email-unsub-done-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.email-unsub-done-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  position: relative;
+  top: -6px;
+}
+.email-unsub-card-details .email-unsub-done-btn {
+  top: 0;
+}
+.email-unsub-done-btn > svg {
+  color: var(--accent, var(--red));
+}
+.email-unsub-ignore-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+}
+.email-unsub-card-details .email-unsub-ignore-btn {
+  position: static;
+}
+.email-unsub-ignore-btn:hover {
+  color: var(--accent, var(--red));
+}
+.email-unsub-remaining-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.email-unsub-remaining-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  top: -2px;
+}
+.email-unsub-remaining-actions svg {
+  flex: 0 0 auto;
+}
+.email-unsub-link-btn {
+  position: relative;
+  top: 2px;
+}
+.email-unsub-status.is-error {
+  color: var(--accent, var(--red)) !important;
+}
+.email-settings-section-desc {
+  position: relative;
+  top: 8px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.email-settings-inline-images-section .email-settings-section-desc {
+  margin-bottom: 4px;
+}
+.email-settings-inline-images-spacer {
+  height: 12px;
+}
+.email-settings-display-spacer {
+  height: 10px;
+}
+.email-settings-display-section .email-settings-section-desc {
+  margin-top: 10px;
+  top: 10px;
+}
+.email-settings-display-section,
+.email-settings-inline-images-section {
+  padding-bottom: 18px;
+}
+.email-settings-cleanup-section .email-settings-section-desc {
+  margin-top: 14px;
+  top: 14px;
+}
+.email-settings-auto-reply-section .email-settings-section-desc {
+  margin-top: 12px;
+  top: 10px;
+}
+.email-settings-toggle,
+.email-settings-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+.email-settings-toggle {
+  flex-shrink: 0;
+}
+.email-settings-enabled-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+.email-settings-enabled-state {
+  font-size: 10px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+.email-settings-section.is-enabled .email-settings-enabled-state {
+  color: var(--accent, var(--red));
+}
+.email-settings-section.is-disabled .email-settings-enabled-state {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+}
+.email-settings-display-section.is-enabled .email-settings-enabled-state {
+  color: var(--accent, var(--red));
+}
+.email-settings-check {
+  min-height: 24px;
+  padding: 3px 0;
+}
+.email-settings-check > span:first-child {
+  min-width: 0;
+  margin-right: auto;
+}
+.email-settings-check-spacer {
+  flex: 1;
+}
+.email-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  min-width: 0;
+}
+.email-settings-grid label,
+.email-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.email-settings-grid span,
+.email-settings-field > span {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--fg) 56%, transparent);
+}
+.email-settings-page input[type="date"],
+.email-settings-page input[type="datetime-local"],
+.email-settings-page select,
+.email-settings-page textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.email-settings-page input[type="date"],
+.email-settings-page input[type="datetime-local"],
+.email-settings-page select {
+  height: 28px;
+  padding: 0 7px;
+}
+.email-settings-page textarea {
+  resize: vertical;
+  min-height: 72px;
+  padding: 7px;
+  line-height: 1.35;
+}
+.email-settings-static-value {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel, var(--bg)) 74%, transparent);
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-size: 12px;
+}
+.email-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Email Settings actions use the same quiet outlined treatment everywhere:
+   the Settings links, the modal settings page, and unsubscribe actions. */
+[data-settings-panel="email"] #set-email-open-integrations,
+[data-settings-panel="email"] #set-email-open-tasks,
+[data-settings-panel="email"] .email-settings-section button.memory-toolbar-btn,
+#email-lib-settings-page .email-settings-section button.memory-toolbar-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: inherit;
+  font-weight: 400;
+}
+[data-settings-panel="email"] #set-email-open-integrations:hover,
+[data-settings-panel="email"] #set-email-open-tasks:hover,
+[data-settings-panel="email"] .email-settings-section button.memory-toolbar-btn:hover,
+#email-lib-settings-page .email-settings-section button.memory-toolbar-btn:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--fg);
+  color: var(--fg);
+}
+[data-settings-panel="email"] #set-email-open-integrations > svg,
+[data-settings-panel="email"] #set-email-open-tasks > svg {
+  color: var(--accent, var(--red));
+  opacity: 1 !important;
+}
+[data-settings-panel="email"] .email-style-settings-extract,
+[data-settings-panel="email"] .email-style-settings-save,
+#email-lib-settings-page .email-style-settings-extract,
+#email-lib-settings-page .email-style-settings-save {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-weight: 400;
+}
+[data-settings-panel="email"] .email-style-settings-extract:hover,
+[data-settings-panel="email"] .email-style-settings-save:hover,
+#email-lib-settings-page .email-style-settings-extract:hover,
+#email-lib-settings-page .email-style-settings-save:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.email-settings-status,
+.email-style-settings-status {
+  margin-right: auto;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+.email-settings-status.is-success,
+.email-style-settings-status.is-success {
+  color: var(--color-success, #4caf50);
+  position: relative;
+  top: 2px;
+}
+.email-settings-status.is-error,
+.email-style-settings-status.is-error {
+  color: var(--accent, var(--red));
+  position: relative;
+  top: 2px;
+}
+.email-settings-save,
+.email-style-settings-save {
+  height: 28px;
+  min-width: 64px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.email-settings-save {
+  height: 32px;
+}
+.email-style-settings-extract {
+  height: 32px;
+}
+.email-style-settings-save {
+  height: 32px;
+}
+.email-settings-save svg,
+.email-style-settings-save svg {
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.email-style-settings-extract svg {
+  color: var(--accent, var(--red));
+  position: relative;
+  top: 2px;
+}
+.email-settings-task-setting {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+.email-settings-inline-link {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent, var(--red));
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.email-style-extract-help {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+.email-style-extract-help:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+@media (max-width: 420px) {
+  .email-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* ── Notes ── */
+/* Notes panel — body-level flex sibling of chat-container */
+body.notes-view .chat-container { flex: 1; min-width: 0; }
+
+/* Mobile: notes panel takes over full screen */
+@media (max-width: 768px) {
+  body.notes-view .notes-pane {
+    position: fixed;
+    inset: 0;
+    max-width: 100%;
+    width: 100% !important;
+    /* Desktop sets height: min(80vh, 820px) which wins over inset:0's bottom:0
+       and leaves a gap at the bottom of the viewport. Force full height here. */
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    z-index: 170;
+    /* Bottom-sheet treatment like the document editor: stroked, rounded top,
+       slides up from the bottom. */
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 14px 14px 0 0;
+    /* Pane itself never scrolls — its inner .notes-pane-body is the scroller.
+       Two nested scrollers caused the body's flex:1 to lose its height bound
+       on Firefox mobile and the last row got clipped off-screen. */
+    overflow: hidden;
+    animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: bottom center;
+  }
+  /* Required for the flex:1 body to actually constrain to remaining pane
+     height instead of expanding to its content (default min-height:auto on
+     flex items). Without this both grid and list views overflow the viewport
+     bottom on phones. */
+  body.notes-view .notes-pane-body {
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  body.notes-view #notes-divider {
+    display: none;
+  }
+  body.notes-view .notes-mobile-grabber {
+    display: block;
+    flex-shrink: 0;
+    height: 18px;
+    position: relative;
+    background: var(--bg);
+    touch-action: none;
+    cursor: grab;
+  }
+  body.notes-view .notes-mobile-grabber::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: var(--fg);
+    opacity: 0.25;
+    border-radius: 2px;
+  }
+  body.notes-view .chat-container {
+    display: none;
+  }
+  body.notes-view .mobile-new-chat-btn,
+  body.notes-view .hamburger-btn {
+    display: none !important;
+  }
+}
+/* ── Mobile notes UX ────────────────────────────────────
+   Tiles become read-only previews on touch ≤768px wide.
+   Tap opens a fullscreen overlay where editing happens; long-press
+   toggles drag-to-reorder. Wired up in static/js/notes.js. */
+body.notes-mobile-mode .note-card-corner,
+body.notes-mobile-mode .note-card-corner-edit,
+body.notes-mobile-mode .note-card-corner-archive,
+body.notes-mobile-mode .note-card-corner-copy,
+body.notes-mobile-mode .note-card-corner-trash,
+body.notes-mobile-mode .note-card-corner-unarchive,
+body.notes-mobile-mode .note-card-corner-done,
+body.notes-mobile-mode .note-card-edit-corner,
+body.notes-mobile-mode .note-card-done,
+body.notes-mobile-mode .note-card-actions,
+body.notes-mobile-mode .note-cl-quickadd,
+body.notes-mobile-mode .note-card .note-checkbox-rm,
+/* Panel-fullscreen toggle is redundant on mobile — the panel always
+   fills the viewport already. */
+body.notes-mobile-mode #notes-fullscreen-toggle {
+  display: none !important;
+}
+
+/* Header toggle icons (archive view, list/grid switch) — defaults are
+   tuned for the dense desktop header; on mobile bump them slightly so
+   they read as tap targets without dominating the header. */
+body.notes-mobile-mode #notes-archive-toggle,
+body.notes-mobile-mode #notes-view-toggle {
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+}
+body.notes-mobile-mode #notes-archive-toggle svg,
+body.notes-mobile-mode #notes-view-toggle svg {
+  width: 17px;
+  height: 17px;
+}
+/* The whole card is the tap target on mobile — bigger feedback */
+body.notes-mobile-mode .note-card {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Drag-to-reorder mode — desaturate the grid and sweep a subtle
+   shimmer across every tile so it's obvious you're in rearrange mode
+   (the Google Keep "active edit" cue). Also disable scroll inside the
+   panel so the drag works smoothly. */
+body.notes-drag-mode .notes-pane-body {
+  overflow: hidden;
+  touch-action: none;
+}

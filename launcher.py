@@ -137,7 +137,7 @@ if __name__ == "__main__":
     from app import app
 
     bind_host = os.getenv("APP_BIND", "127.0.0.1")
-    bind_port = int(os.getenv("APP_PORT", "7000"))
+    bind_port = int(os.getenv("APP_PORT", "7011"))
     url = f"http://{bind_host}:{bind_port}"
 
     if getattr(sys, 'frozen', False):

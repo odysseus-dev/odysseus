@@ -59,7 +59,7 @@ export const PROMPT_TEMPLATES = [
     temperature: 1.0,
     isPreset: true,
     isCharacter: true,
-    prompt: "You are Spark, a playful, quick-witted assistant with bright energy and practical instincts. Keep responses concise, vivid, and helpful. Be warm without being cloying, imaginative without losing the thread, and always center the user's actual goal.\n\nUse a light, lively voice with occasional clever turns of phrase. Do not become formal unless the task calls for it. When the user needs precision, prioritize clarity over performance."
+    prompt: "You are Spark: calm, capable, direct, and human. Explain clearly, avoid fluff, and be warm without being performative. Use light dry humor when it fits, challenge weak assumptions respectfully, and adapt your tone to the task. Be concise for simple questions and thorough when the problem deserves it. Never pretend certainty when unsure."
   },
   {
     id: 'odysseus',
@@ -209,12 +209,17 @@ function initNameDropdown() {
       const tempValue = document.getElementById('temp-value');
       const tokensInput = document.getElementById('custom-max-tokens');
       const tokensValue = document.getElementById('tokens-value');
+      const thinkingInput = document.getElementById('custom-thinking-mode');
       if (nameInput) nameInput.value = '';
       if (promptInput) promptInput.value = '';
+      if (presets.custom) {
+        presets.custom = { ...presets.custom, persona_memory: '', persona_memory_schema: 'general' };
+      }
       const nameRow = document.getElementById('char-name-row');
       if (nameRow) nameRow.style.display = '';
       if (tempInput) { tempInput.value = 1.0; if (tempValue) tempValue.textContent = '1.0'; tempInput.dispatchEvent(new Event('input')); }
       if (tokensInput) { tokensInput.value = 8448; if (tokensValue) tokensValue.textContent = 'No limit'; tokensInput.dispatchEvent(new Event('input')); }
+      if (thinkingInput) thinkingInput.value = '';
       if (delBtn) delBtn.style.display = 'none';
       return;
     }
@@ -253,7 +258,7 @@ function initNameDropdown() {
         // Deactivate if this was the active character
         if (presets.custom && presets.custom.character_name === charName) {
           selectedPreset = null;
-          presets.custom = { ...presets.custom, character_name: '', system_prompt: '', enabled: false };
+          presets.custom = { ...presets.custom, character_name: '', system_prompt: '', enabled: false, persona_memory: '', persona_memory_schema: 'general' };
           const charIndicator = document.getElementById('character-indicator-btn');
           if (charIndicator) { charIndicator.style.display = 'none'; charIndicator.classList.remove('active'); }
           const miniBtn = document.getElementById('overflow-preset-btn');
@@ -285,6 +290,12 @@ function _tryLoadTemplate(name) {
         if (tempValue) tempValue.textContent = parseFloat(builtin.temperature).toFixed(1);
         tempInput.dispatchEvent(new Event('input'));
       }
+      presets.custom = {
+        ...(presets.custom || {}),
+        character_name: builtin.isCharacter && !builtin.noName ? name : '',
+        persona_memory: builtin.persona_memory || '',
+        persona_memory_schema: builtin.persona_memory_schema || 'general',
+      };
       return;
     }
     return;
@@ -306,6 +317,12 @@ function _tryLoadTemplate(name) {
     if (tokensValue) tokensValue.textContent = (v === 0 || v > 8192) ? 'No limit' : v.toLocaleString();
     tokensInput.dispatchEvent(new Event('input'));
   }
+  presets.custom = {
+    ...(presets.custom || {}),
+    character_name: tmpl.name || name,
+    persona_memory: tmpl.persona_memory || '',
+    persona_memory_schema: tmpl.persona_memory_schema || 'general',
+  };
   const delBtn = document.getElementById('char-delete-template-btn');
   if (delBtn) delBtn.style.display = '';
 }
@@ -468,6 +485,8 @@ function initSaveAsTemplate() {
       system_prompt: promptInput ? promptInput.value : '',
       temperature: tempInput ? parseFloat(tempInput.value) : 1.0,
       max_tokens: _rawTk > 8192 ? 0 : _rawTk,
+      persona_memory: presets.custom?.persona_memory || '',
+      persona_memory_schema: presets.custom?.persona_memory_schema || 'general',
     };
 
     try {
@@ -504,6 +523,7 @@ export async function loadPresets(showError) {
     presets = await res.json();
 
     const custom = presets.custom;
+    if (custom) custom.thinking_mode = ['on', 'off'].includes(custom.thinking_mode) ? custom.thinking_mode : '';
     if (custom && custom.enabled === undefined) {
       const legacyPrompt = "You are a helpful, balanced assistant. Match your response style to the user's needs.";
       if (
@@ -521,7 +541,11 @@ export async function loadPresets(showError) {
     }
 
     // Auto-activate custom preset if enabled and has content
-    if (custom && custom.enabled !== false && (custom.character_name || custom.system_prompt)) {
+    const hasCustomSettings = custom && (
+      custom.character_name || custom.system_prompt || custom.inject_prefix || custom.inject_suffix
+      || custom.thinking_mode || custom.temperature !== 1.0 || !!custom.max_tokens
+    );
+    if (custom && custom.enabled !== false && hasCustomSettings) {
       selectedPreset = 'custom';
       const miniBtn = document.getElementById('overflow-preset-btn');
       if (miniBtn) miniBtn.classList.add('active');
@@ -557,7 +581,7 @@ export function setActivePreset(presetId) {
 /**
  * Open custom preset modal
  */
-export function openCustomPresetModal() {
+export function openCustomPresetModal(openTab = '') {
   const modal = document.getElementById('custom-preset-modal');
   if (!modal) return;
 
@@ -565,13 +589,16 @@ export function openCustomPresetModal() {
     character_name: "",
     temperature: 1.0,
     max_tokens: 0,
-    system_prompt: ""
+    system_prompt: "",
+    thinking_mode: ""
   };
 
   const nameInput = document.getElementById('custom-character-name');
   const tempInput = document.getElementById('custom-temperature');
   const tokensInput = document.getElementById('custom-max-tokens');
   const promptInput = document.getElementById('custom-system-prompt');
+  const thinkingInput = document.getElementById('custom-thinking-mode');
+  const showNameInput = document.getElementById('custom-show-persona-name');
 
   if (nameInput) nameInput.value = savedConfig.character_name || '';
   // Sync select dropdown to current character
@@ -598,6 +625,8 @@ export function openCustomPresetModal() {
     if (tkv) tkv.textContent = (saved === 0 || saved > 8192) ? 'No limit' : parseInt(saved).toLocaleString();
   }
   if (promptInput) promptInput.value = savedConfig.system_prompt || '';
+  if (thinkingInput) thinkingInput.value = ['on', 'off'].includes(savedConfig.thinking_mode) ? savedConfig.thinking_mode : '';
+  if (showNameInput) showNameInput.checked = savedConfig.show_persona_name !== false;
 
   // Load inject fields
   const prefixInput = document.getElementById('inject-prefix');
@@ -611,6 +640,8 @@ export function openCustomPresetModal() {
     prompt: promptInput ? promptInput.value : '',
     temp: tempInput ? tempInput.value : '1',
     tokens: tokensInput ? tokensInput.value : '8448',
+    thinking: thinkingInput ? thinkingInput.value : '',
+    showName: showNameInput ? showNameInput.checked : true,
   };
   function _updateStartBtn() {
     const btn = document.getElementById('save-custom-preset');
@@ -619,7 +650,10 @@ export function openCustomPresetModal() {
     const changed = (nameInput && nameInput.value !== _snapshot.name)
       || (promptInput && promptInput.value !== _snapshot.prompt)
       || (tempInput && tempInput.value !== _snapshot.temp)
-      || (tokensInput && tokensInput.value !== _snapshot.tokens);
+      || (tokensInput && tokensInput.value !== _snapshot.tokens)
+      || (thinkingInput && thinkingInput.value !== _snapshot.thinking);
+    const nameVisibilityChanged = showNameInput && showNameInput.checked !== _snapshot.showName;
+    const changedWithVisibility = changed || nameVisibilityChanged;
     // The footer button starts whichever of the three things the active tab
     // represents — a character chat, a group, or a plain tuned chat. Label
     // it so the action is obvious instead of a generic "Start".
@@ -634,7 +668,7 @@ export function openCustomPresetModal() {
     } else {
       // Character/persona tab. "Save & " prefix when the user edited a template,
       // so it's clear the edit is being saved on start.
-      label = changed ? 'Save & Start Persona' : 'Start Persona';
+      label = changedWithVisibility ? 'Save & Start Persona' : 'Start Persona';
     }
     btn.textContent = label;
     // Show a "Cancel" button next to Start when the active tab's feature is
@@ -648,9 +682,9 @@ export function openCustomPresetModal() {
       cancelBtn.textContent = activeTab === 'group' ? 'Cancel group' : 'Cancel';
     }
     // Reset only makes sense on the character tab (it resets the persona).
-    if (resetBtn) resetBtn.style.display = (changed && activeTab === 'character') ? '' : 'none';
+    if (resetBtn) resetBtn.style.display = (changedWithVisibility && activeTab === 'character') ? '' : 'none';
   }
-  [nameInput, promptInput, tempInput, tokensInput].forEach(el => {
+  [nameInput, promptInput, tempInput, tokensInput, thinkingInput, showNameInput].forEach(el => {
     if (el) el.addEventListener('input', _updateStartBtn);
   });
   // Re-label the Start button when the user switches tabs. Rebind the fresh
@@ -689,6 +723,8 @@ export function openCustomPresetModal() {
     _snapshot.prompt = promptInput ? promptInput.value : '';
     _snapshot.temp = tempInput ? tempInput.value : '1';
     _snapshot.tokens = tokensInput ? tokensInput.value : '8448';
+    _snapshot.thinking = thinkingInput ? thinkingInput.value : '';
+    _snapshot.showName = showNameInput ? showNameInput.checked : true;
     _updateStartBtn();
   }, 50));
   _updateStartBtn();
@@ -738,6 +774,10 @@ export function openCustomPresetModal() {
   }
 
   modal.classList.remove('hidden');
+  if (openTab) {
+    const tab = document.querySelector(`.preset-tab[data-chartab="${openTab}"]`);
+    if (tab) tab.click();
+  }
 }
 
 /**
@@ -748,6 +788,8 @@ export async function saveCustomPreset(showToast, showError) {
   const tempInput = document.getElementById('custom-temperature');
   const tokensInput = document.getElementById('custom-max-tokens');
   const promptInput = document.getElementById('custom-system-prompt');
+  const thinkingInput = document.getElementById('custom-thinking-mode');
+  const showNameInput = document.getElementById('custom-show-persona-name');
 
   if (!tempInput || !tokensInput || !promptInput) return;
 
@@ -788,6 +830,10 @@ export async function saveCustomPreset(showToast, showError) {
     system_prompt: system_prompt,
     inject_prefix: _prefixInput ? _prefixInput.value : '',
     inject_suffix: _suffixInput ? _suffixInput.value : '',
+    thinking_mode: ['on', 'off'].includes(thinkingInput?.value) ? thinkingInput.value : '',
+    show_persona_name: showNameInput ? showNameInput.checked : true,
+    persona_memory: presets.custom?.character_name === name ? (presets.custom?.persona_memory || '') : '',
+    persona_memory_schema: presets.custom?.character_name === name ? (presets.custom?.persona_memory_schema || 'general') : 'general',
   };
 
   try {
@@ -807,7 +853,7 @@ export async function saveCustomPreset(showToast, showError) {
       // user has dialed in non-default tuning (temperature / max tokens) — the
       // "Inject" tab's plain-chat case. Without the tuning check, "just set
       // temp + max tokens" would silently do nothing.
-      const _hasTuning = (config.temperature !== 1.0) || (config.max_tokens !== 0);
+      const _hasTuning = (config.temperature !== 1.0) || (config.max_tokens !== 0) || !!config.thinking_mode;
       const _hasInject = !!(config.inject_prefix || config.inject_suffix);
       const _hasContent = !!(system_prompt || name || _hasTuning || _hasInject);
       if (enabled && _hasContent) {
@@ -842,6 +888,8 @@ export async function saveCustomPreset(showToast, showError) {
           system_prompt: system_prompt ?? '',
           temperature: config.temperature,
           max_tokens: config.max_tokens,
+          persona_memory: config.persona_memory || '',
+          persona_memory_schema: config.persona_memory_schema || 'general',
         }
         const ENDPOINT = `${API_BASE}/api/presets/templates`;
 
@@ -933,6 +981,13 @@ export function getCharacterName() {
   return custom.character_name || '';
 }
 
+/** Whether the active persona should be named in the chat UI. */
+export function getShowPersonaName() {
+  if (!selectedPreset) return true;
+  const custom = presets.custom;
+  return custom?.show_persona_name !== false;
+}
+
 /**
  * Get inject prefix/suffix (if set and preset active)
  */
@@ -948,6 +1003,13 @@ export function getInject() {
     prefix: custom.inject_prefix || '',
     suffix: custom.inject_suffix || '',
   };
+}
+
+export function getThinkingMode() {
+  if (!selectedPreset) return '';
+  const custom = presets.custom;
+  if (!custom || custom.enabled === false) return '';
+  return ['on', 'off'].includes(custom.thinking_mode) ? custom.thinking_mode : '';
 }
 
 /**
@@ -1008,7 +1070,7 @@ function _syncCharIndicator() {
   // "Inject mode": custom preset is active for plain tuning / inject only —
   // no persona. Detected from the custom config so it survives a reload.
   const _t = parseFloat(custom?.temperature);
-  const _hasTuning = (!isNaN(_t) && _t !== 1.0) || (!!custom?.max_tokens && custom.max_tokens !== 0);
+  const _hasTuning = (!isNaN(_t) && _t !== 1.0) || (!!custom?.max_tokens && custom.max_tokens !== 0) || !!custom?.thinking_mode;
   const _hasInject = !!(custom?.inject_prefix || custom?.inject_suffix);
   const injectActive = enabled && !custom?.character_name && (_hasTuning || _hasInject);
   // Icon path sets for the indicator chip.
@@ -1019,13 +1081,20 @@ function _syncCharIndicator() {
     btn.classList.add('active');
     if (hasChar) {
       if (iconEl) iconEl.innerHTML = _AVATAR;
-      if (nameSpan) nameSpan.textContent = custom.character_name;
+      const showName = custom.show_persona_name !== false;
+      if (nameSpan) {
+        nameSpan.textContent = showName ? custom.character_name : '';
+        nameSpan.style.display = showName ? '' : 'none';
+      }
       btn.title = `Persona: ${custom.character_name} — click to configure`;
     } else {
       // Inject/tuning chat — syringe tag labeled "Prompt" to match the
       // window identity, no persona name.
       if (iconEl) iconEl.innerHTML = _SYRINGE;
-      if (nameSpan) nameSpan.textContent = 'Prompt';
+      if (nameSpan) {
+        nameSpan.textContent = 'Prompt';
+        nameSpan.style.display = '';
+      }
       btn.title = 'Custom settings active — click to configure';
     }
     // Hide X in persistent chats
@@ -1051,7 +1120,7 @@ function _syncCharIndicator() {
           }).catch(() => {});
           return;
         }
-        if (typeof openCustomPresetModal === 'function') openCustomPresetModal();
+        if (typeof openCustomPresetModal === 'function') openCustomPresetModal(hasChar ? 'character' : 'inject');
       });
     }
   } else {
@@ -1094,6 +1163,8 @@ export function onSessionSwitch(sessionId) {
         system_prompt: tmpl.system_prompt || tmpl.prompt || '',
         temperature: tmpl.temperature ?? 1.0,
         max_tokens: tmpl.max_tokens || 0,
+        persona_memory: tmpl.persona_memory || '',
+        persona_memory_schema: tmpl.persona_memory_schema || 'general',
         enabled: true,
       };
       selectedPreset = 'custom';
@@ -1141,11 +1212,13 @@ const presetsModule = {
   getAllPresets,
   getUserTemplates,
   getCharacterName,
+  getShowPersonaName,
   onSessionSwitch,
   isPersistentChat,
   removePersistentChat,
   deactivateCharacter,
-  getInject
+  getInject,
+  getThinkingMode
 };
 
 export default presetsModule;

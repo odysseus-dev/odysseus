@@ -9,6 +9,7 @@ import ipaddress
 import socket
 import time as _time
 import logging
+import threading
 import httpx
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -17,7 +18,23 @@ from fastapi import APIRouter, HTTPException, Form, Query, Body, Request, Respon
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
-from core.log_safety import redact_url as _redact_url_for_log
+
+_featherless_search_cache: Dict[tuple, tuple[float, Dict[str, Any]]] = {}
+_featherless_search_cache_lock = threading.Lock()
+try:
+    from core.log_safety import redact_url as _redact_url_for_log
+except ModuleNotFoundError:
+    def _redact_url_for_log(url: str) -> str:
+        try:
+            parsed = urlparse(url or "")
+            host = parsed.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            return urlunparse((parsed.scheme, host, parsed.path, "", "", ""))
+        except Exception:
+            return "<endpoint>"
 from core.middleware import require_admin
 from src.constants import COOKBOOK_STATE_FILE
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
@@ -455,11 +472,41 @@ def _truthy(value: str | None) -> bool:
 
 _ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
 _REFRESH_MODES = {"auto", "manual", "disabled"}
+_MODEL_TOOL_MODES = {"none", "compact", "full"}
+_MODEL_TOOL_MODE_ALIASES = {
+    "regular": "full",
+    "odysseus_compact": "compact",
+}
 
 
 def _normalize_endpoint_kind(value: Any) -> str:
     kind = str(value or "auto").strip().lower()
     return kind if kind in _ENDPOINT_KINDS else "auto"
+
+
+def _normalize_model_tool_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    mode = _MODEL_TOOL_MODE_ALIASES.get(mode, mode)
+    return mode if mode in _MODEL_TOOL_MODES else ""
+
+
+def _model_tool_modes(ep: Any) -> Dict[str, str]:
+    raw = getattr(ep, "model_tool_modes", None)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    modes: Dict[str, str] = {}
+    for key, value in data.items():
+        model_id = str(key or "").strip()
+        mode = _normalize_model_tool_mode(value)
+        if model_id and mode:
+            modes[model_id] = mode
+    return modes
 
 
 def _normalize_refresh_mode(value: Any, endpoint_kind: str = "auto") -> str:
@@ -652,6 +699,11 @@ def _delete_orphaned_provider_auth(db, auth_id: Optional[str], exclude_ep_id: Op
     if auth_row is None:
         return False
     db.delete(auth_row)
+    try:
+        from src.chatgpt_subscription import USAGE_CACHE
+        USAGE_CACHE.invalidate(auth_id)
+    except Exception:
+        pass
     return True
 
 
@@ -695,7 +747,7 @@ def _resolve_probe_key(ep) -> Optional[str]:
         _base, key = resolve_endpoint_runtime(ep, owner=getattr(ep, "owner", None))
         return key
     except Exception as exc:
-        logger.warning("Probe key resolution failed for %s: %s", getattr(ep, "id", "?"), exc)
+        logger.warning("Probe key resolution failed for %s: %s", getattr(ep, "id", "?"), type(exc).__name__)
         return None
 
 
@@ -806,6 +858,8 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
     kind = _endpoint_kind(ep)
     if kind != "auto":
         return kind
+    if _host_match(base_url, "featherless.ai"):
+        return "api"
     if getattr(ep, "api_key", None) and not _is_ollama_base(base_url):
         try:
             path = (urlparse(base_url).path or "").rstrip("/")
@@ -967,6 +1021,8 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
         return []
+    if provider == "featherless" or _host_match(base, "featherless.ai"):
+        return []
     if _is_google_api_base(base):
         try:
             models = _probe_google_models(base, api_key, timeout=timeout)
@@ -1116,6 +1172,31 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
     last_error: Optional[str] = None
+
+    if _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless":
+        plan_base = base if base.endswith("/v1") else f"{base}/v1"
+        plan_url = f"{plan_base}/plan"
+        try:
+            r = httpx.get(plan_url, headers=headers, timeout=timeout, verify=llm_verify())
+            result = _result_from_response(r)
+            if result["reachable"]:
+                return result
+            if r.status_code in (401, 403):
+                return {"reachable": False, "status_code": r.status_code, "error": "Featherless API key invalid or unauthorized"}
+        except Exception as e:
+            last_error = str(e)[:120]
+
+        try:
+            models_url = f"{plan_base}/models?available_on_current_plan=true&status=active&conversational=true&page=1&per_page=1"
+            r = httpx.get(models_url, headers=headers, timeout=timeout, verify=llm_verify())
+            result = _result_from_response(r)
+            if result["reachable"]:
+                return result
+            if r.status_code in (401, 403):
+                return {"reachable": False, "status_code": r.status_code, "error": "Featherless API key invalid or unauthorized"}
+            return result
+        except Exception as e:
+            return {"reachable": False, "status_code": None, "error": str(e)[:120]}
 
     try:
         if looks_like_ollama:
@@ -1367,6 +1448,35 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
     ), pinned
 
 
+def _chatgpt_endpoint_visible(ep: Any, request: Request) -> bool:
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if not is_chatgpt_subscription_base(getattr(ep, "base_url", "") or ""):
+        return True
+    try:
+        user = effective_user(request)
+    except AttributeError:
+        user = getattr(getattr(request, "state", None), "current_user", None)
+    return (getattr(ep, "owner", None) or None) == (user or None)
+
+
+def _provider_account_metadata(ep: Any) -> Dict[str, Any]:
+    """Non-secret account metadata for session-backed provider endpoints."""
+    auth_id = getattr(ep, "provider_auth_id", None)
+    if not auth_id:
+        return {"provider_auth_id": None, "provider": None, "account_label": None}
+    base = getattr(ep, "base_url", "") or ""
+    provider = None
+    account_label = None
+    try:
+        from src.chatgpt_subscription import account_label_from_name, is_chatgpt_subscription_base
+        if is_chatgpt_subscription_base(base):
+            provider = "chatgpt-subscription"
+            account_label = account_label_from_name(getattr(ep, "name", None)) or None
+    except Exception:
+        provider = None
+    return {"provider_auth_id": auth_id, "provider": provider, "account_label": account_label}
+
+
 def _api_key_fingerprint(api_key: Optional[str]) -> str:
     """Stable, non-secret label for distinguishing same-URL credentials."""
     key = (api_key or "").strip()
@@ -1397,12 +1507,14 @@ def setup_model_routes(model_discovery):
     # opens from starting duplicate /models probes, and gives slow/offline
     # providers a cooldown after failures.
     _refresh_state: Dict[str, Dict[str, Any]] = {}
-    _refresh_inflight = {"v": False}  # coarse single-flight guard
+    _refresh_inflight = {"v": False, "done": None}  # coarse single-flight guard
     _REFRESH_FAILURE_BASE = 300.0
     _REFRESH_FAILURE_MAX = 3600.0
 
-    def _refresh_key(base: str, api_key: Optional[str]) -> str:
-        return f"{base.rstrip('/')}\x00{api_key or ''}"
+    def _refresh_key(base: str, api_key: Optional[str], provider_auth_id: Optional[str] = None) -> str:
+        # Session-backed endpoints carry no static key; include their auth id
+        # so two accounts on one provider URL never share refresh state.
+        return f"{base.rstrip('/')}\x00{api_key or ''}\x00{provider_auth_id or ''}"
 
     def _ts(value: Any) -> float:
         try:
@@ -1423,7 +1535,7 @@ def setup_model_routes(model_discovery):
         category = _classify_endpoint(base, kind)
         mode = _endpoint_refresh_mode(ep, kind)
         cached = _cached_model_ids(ep)
-        key = _refresh_key(base, getattr(ep, "api_key", None))
+        key = _refresh_key(base, getattr(ep, "api_key", None), getattr(ep, "provider_auth_id", None))
         state = _refresh_state.get(key, {})
 
         info = {
@@ -1437,6 +1549,8 @@ def setup_model_routes(model_discovery):
             "timeout": _endpoint_refresh_timeout(ep, category),
         }
         if not base:
+            return False, info
+        if _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless":
             return False, info
         if state.get("inflight"):
             return False, info
@@ -1467,7 +1581,9 @@ def setup_model_routes(model_discovery):
         endpoints are skipped unless explicitly forced."""
         import threading
         if _refresh_inflight["v"]:
-            return  # already running
+            return _refresh_inflight["done"]  # already running
+        done = threading.Event()
+        _refresh_inflight["done"] = done
         _refresh_inflight["v"] = True
 
         def _do():
@@ -1485,9 +1601,10 @@ def setup_model_routes(model_discovery):
                         ok, info = _should_refresh_endpoint(ep, now, force=force)
                         if not ok:
                             continue
+                        credential = _resolve_probe_key(ep)
                         groups.setdefault(info["key"], {
                             "base": info["base"],
-                            "api_key": info["api_key"],
+                            "api_key": credential,
                             "timeout": info["timeout"],
                             "endpoint_ids": [],
                         })["endpoint_ids"].append(info["id"])
@@ -1534,7 +1651,9 @@ def setup_model_routes(model_discovery):
                 for st in _refresh_state.values():
                     st["inflight"] = False
                 _refresh_inflight["v"] = False
+                done.set()
         threading.Thread(target=_do, daemon=True).start()
+        return done
 
     def _fetch_models(owner: str = "", is_admin: bool = False):
         """Return model list from cached data (instant). Background refresh keeps caches fresh.
@@ -1563,6 +1682,9 @@ def setup_model_routes(model_discovery):
             db.close()
 
         for ep in endpoints:
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            if is_chatgpt_subscription_base(ep.base_url or "") and (ep.owner or None) != (owner or None):
+                continue
             base = _normalize_base(ep.base_url)
             provider = _safe_detect_provider(base)
             ep_model_type = getattr(ep, "model_type", None) or "llm"
@@ -1580,7 +1702,12 @@ def setup_model_routes(model_discovery):
                 for m in pinned:
                     if m not in curated:
                         curated.append(m)
-                extra = [m for m in extra if m not in pinned]
+                models_metadata = {}
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                for mid in list(curated) + list(extra):
+                    meta = get_chatgpt_model_metadata(mid)
+                    if meta:
+                        models_metadata[mid] = meta
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -1594,6 +1721,7 @@ def setup_model_routes(model_discovery):
                     "category": category,
                     "endpoint_kind": kind,
                     "model_type": ep_model_type,
+                    "models_metadata": models_metadata,
                 })
             else:
                 # Endpoint unreachable but still show it greyed out
@@ -1616,7 +1744,8 @@ def setup_model_routes(model_discovery):
         return {"hosts": [], "items": items}
 
     @router.get("/models")
-    def api_models(request: Request, refresh: bool = False, background: bool = False):
+    def api_models(request: Request, refresh: bool = False, background: bool = False,
+                   wait_refresh: bool = False):
         """Get available models — per-user (caller sees only their endpoints +
         legacy/shared null-owner rows). Cached per-user for 30s."""
         # Require auth; "" is the unconfigured single-user mode, treated as
@@ -1662,7 +1791,15 @@ def setup_model_routes(model_discovery):
         # Page boot can opt out with background=false so opening Odysseus does
         # not start endpoint probes against slow/offline model servers.
         if background or refresh:
-            _refresh_caches_bg(force=refresh)
+            done = _refresh_caches_bg(force=refresh)
+            if refresh and wait_refresh and done is not None:
+                done.wait(timeout=15)
+                refreshed = _models_cache.get(_cache_key)
+                if refreshed is not None:
+                    result = refreshed["data"]
+                else:
+                    result = _fetch_models(owner=owner, is_admin=_is_admin)
+                    _models_cache[_cache_key] = {"data": result, "time": _time.time()}
         return result
 
     # Brief cache for local-probe results so picker-open doesn't hammer
@@ -1815,8 +1952,8 @@ def setup_model_routes(model_discovery):
                 # Cache endpoint lookups
                 if ep_id and ep_id not in endpoints_cache:
                     ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-                    if ep:
-                        endpoints_cache[ep_id] = {"base_url": ep.base_url, "api_key": ep.api_key}
+                    if ep and _chatgpt_endpoint_visible(ep, request):
+                        endpoints_cache[ep_id] = {"base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
                 ep_data = endpoints_cache.get(ep_id)
                 if not ep_data:
                     # Try to find by base_url from the model's endpoint field
@@ -1851,11 +1988,13 @@ def setup_model_routes(model_discovery):
             # Detach from session
             ep_data = []
             for ep in endpoints:
+                if not _chatgpt_endpoint_visible(ep, request):
+                    continue
                 ep_data.append({
                     "id": ep.id,
                     "name": ep.name,
                     "base_url": ep.base_url,
-                    "api_key": ep.api_key,
+                    "api_key": _resolve_probe_key(ep),
                 })
         finally:
             db.close()
@@ -1940,6 +2079,8 @@ def setup_model_routes(model_discovery):
             results = []
             upgraded_legacy_pins = False
             for r in rows:
+                if not _chatgpt_endpoint_visible(r, request):
+                    continue
                 all_models = _cached_model_ids(r)
                 hidden = _hidden_model_ids(r)
                 pinned = _normalize_model_ids(getattr(r, "pinned_models", None))
@@ -1953,9 +2094,10 @@ def setup_model_routes(model_discovery):
                 if _picker_requires_pinning(base, kind) and pinned and not _has_explicit_pinned_models(r):
                     r.pinned_models = json.dumps(pinned)
                     upgraded_legacy_pins = True
-                model_inventory_count = len(_merge_model_ids(all_models, pinned))
+                is_featherless = _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless"
+                model_inventory_count = len(pinned) if is_featherless else len(_merge_model_ids(all_models, pinned))
                 picker_requires_pinning = _picker_requires_pinning(base, kind)
-                status = "online" if (all_models or visible or pinned) else ("empty" if r.is_enabled else "offline")
+                status = "online" if (all_models or visible or pinned or (is_featherless and r.is_enabled)) else ("empty" if r.is_enabled else "offline")
                 results.append({
                     "id": r.id,
                     "name": r.name,
@@ -1973,11 +2115,13 @@ def setup_model_routes(model_discovery):
                     "ping_error": (ping or {}).get("error") if ping else None,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "model_tool_modes": _model_tool_modes(r),
                     "endpoint_kind": kind,
                     "category": _classify_endpoint(base, kind),
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
                     "model_refresh_interval": getattr(r, "model_refresh_interval", None),
                     "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                    **_provider_account_metadata(r),
                 })
             if upgraded_legacy_pins:
                 db.commit()
@@ -2019,11 +2163,19 @@ def setup_model_routes(model_discovery):
         # keep those container-local when the frontend marks them as such.
         base_url = _rewrite_loopback_for_docker(base_url, container_local=_truthy(container_local))
 
+        is_featherless = _host_match(base_url, "featherless.ai") or _safe_detect_provider(base_url) == "featherless"
         # Auto-generate name from URL if not provided
         if not name.strip():
-            name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
+            if is_featherless:
+                name = "Featherless.ai"
+            else:
+                name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
 
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        if is_featherless and requested_kind == "auto":
+            requested_kind = "api"
+        if is_featherless and not pinned_models.strip():
+            pinned_models = "[]"
         refresh_mode = _normalize_endpoint_refresh_mode(model_refresh_mode, requested_kind, base_url)
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
@@ -2052,6 +2204,8 @@ def setup_model_routes(model_discovery):
             existing = None
             _empty_key_existing = None
             for _candidate in _same_url_rows:
+                if getattr(_candidate, "provider_auth_id", None):
+                    continue  # OAuth account mutations require its explicit identity.
                 _candidate_key = (getattr(_candidate, "api_key", None) or "").strip()
                 if _candidate_key == _incoming_api_key:
                     existing = _candidate
@@ -2115,6 +2269,8 @@ def setup_model_routes(model_discovery):
                 existing_models = _cached_model_ids(existing)
                 _existing_pinned = _normalize_model_ids(getattr(existing, "pinned_models", None))
                 existing_kind = _effective_endpoint_kind(existing, existing.base_url)
+                is_existing_featherless = _host_match(existing.base_url, "featherless.ai") or _safe_detect_provider(existing.base_url) == "featherless"
+                existing_status = "online" if (existing.is_enabled and is_existing_featherless) else ("online" if (existing_models or _existing_pinned) else ("empty" if existing.is_enabled else "offline"))
                 return {
                     "id": existing.id,
                     "name": existing.name,
@@ -2127,8 +2283,8 @@ def setup_model_routes(model_discovery):
                         existing.pinned_models,
                     ),
                     "pinned_models": _existing_pinned,
-                    "online": True,
-                    "status": "online",
+                    "online": existing_status != "offline",
+                    "status": existing_status,
                     "existing": True,
                     "endpoint_kind": existing_kind,
                     "category": _classify_endpoint(existing.base_url, existing_kind),
@@ -2140,7 +2296,7 @@ def setup_model_routes(model_discovery):
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 10.0))
-        if require_model_list and not model_ids:
+        if require_model_list and not model_ids and not is_featherless:
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
         ep_id = str(uuid.uuid4())[:8]
@@ -2148,6 +2304,9 @@ def setup_model_routes(model_discovery):
         try:
             _st_raw = (supports_tools or "").strip().lower()
             _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            if is_chatgpt_subscription_base(base_url):
+                _st = False
             _pinned = _normalize_model_ids(pinned_models)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
@@ -2167,8 +2326,8 @@ def setup_model_routes(model_discovery):
                 model_refresh_mode=refresh_mode,
                 model_refresh_interval=refresh_interval,
                 model_refresh_timeout=refresh_timeout,
-                cached_models=json.dumps(model_ids) if model_ids else None,
-                pinned_models=json.dumps(_pinned) if _pinned else None,
+                cached_models=None if is_featherless else (json.dumps(model_ids) if model_ids else None),
+                pinned_models=json.dumps(_pinned) if (is_featherless or _pinned) else None,
                 supports_tools=_st,
                 owner=_owner_val,
             )
@@ -2208,6 +2367,8 @@ def setup_model_routes(model_discovery):
             db.close()
 
         # Return immediately — probing happens via the separate /probe SSE endpoint
+        is_online = bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")) or (is_featherless and ping.get("reachable"))
+        is_status = "online" if (model_ids or _pinned or (is_featherless and ping.get("reachable"))) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline"))
         return {
             "id": ep_id,
             "name": name.strip(),
@@ -2216,8 +2377,8 @@ def setup_model_routes(model_discovery):
             "api_key_fingerprint": _api_key_fingerprint(api_key),
             "models": _merge_model_ids(model_ids, _pinned),
             "pinned_models": _pinned,
-            "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
-            "status": "online" if (model_ids or _pinned) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline")),
+            "online": is_online,
+            "status": is_status,
             "ping_error": ping.get("error") if ping else None,
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
@@ -2239,14 +2400,19 @@ def setup_model_routes(model_discovery):
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        is_featherless = _host_match(base_url, "featherless.ai") or _safe_detect_provider(base_url) == "featherless"
+        if is_featherless and requested_kind == "auto":
+            requested_kind = "api"
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 10.0))
+        is_online = bool(models) or bool(ping.get("reachable")) or (is_featherless and ping.get("reachable"))
+        is_status = "online" if (models or (is_featherless and ping.get("reachable"))) else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline"))
         return {
             "base_url": base_url,
-            "online": bool(models) or bool(ping.get("reachable")),
-            "status": "online" if models else ("loading" if ping.get("loading") else ("empty" if ping.get("reachable") else "offline")),
+            "online": is_online,
+            "status": is_status,
             "ping_error": ping.get("error") if ping else None,
             "models": models,
             "count": len(models),
@@ -2261,9 +2427,9 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
         finally:
             db.close()
 
@@ -2317,7 +2483,7 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             hidden = _hidden_model_ids(ep)
             all_models = _cached_model_ids(ep)
@@ -2328,7 +2494,7 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probed = _probe_endpoint(base, _resolve_probe_key(ep), timeout=timeout)
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
@@ -2344,6 +2510,7 @@ def setup_model_routes(model_discovery):
                     response.headers["X-Model-Refresh-Warning"] = "Model refresh failed or returned no models; kept cached models."
             _, pinned = _picker_models_for_endpoint(ep, base, kind)
             pinned_set = set(pinned)
+            tool_modes = _model_tool_modes(ep)
             return [
                 {
                     "id": m,
@@ -2351,6 +2518,7 @@ def setup_model_routes(model_discovery):
                     "is_hidden": m in hidden,
                     "is_pinned": m in pinned_set,
                     "picker_requires_pinning": picker_requires_pinning,
+                    "tool_mode": tool_modes.get(m, ""),
                 }
                 for m in _merge_model_ids(all_models, pinned)
             ]
@@ -2370,7 +2538,7 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             body = await request.json()
             if not isinstance(body, dict):
@@ -2401,13 +2569,176 @@ def setup_model_routes(model_discovery):
                     ep.hidden_models = None
                 else:
                     ep.pinned_models = json.dumps(pinned) if pinned else None
+            if "model_tool_modes" in body:
+                raw_modes = body.get("model_tool_modes")
+                if not isinstance(raw_modes, dict):
+                    raise HTTPException(400, "model_tool_modes must be an object")
+                modes = _model_tool_modes(ep)
+                for model_id, mode in raw_modes.items():
+                    model_id = str(model_id or "").strip()
+                    if not model_id:
+                        continue
+                    normalized = _normalize_model_tool_mode(mode)
+                    if normalized:
+                        modes[model_id] = normalized
+                    else:
+                        modes.pop(model_id, None)
+                ep.model_tool_modes = json.dumps(modes) if modes else None
             db.commit()
             _invalidate_models_cache()
             hidden_count = len(json.loads(ep.hidden_models)) if ep.hidden_models else 0
             pinned_count = len(json.loads(ep.pinned_models)) if ep.pinned_models else 0
-            return {"id": ep_id, "hidden_count": hidden_count, "pinned_count": pinned_count}
+            return {
+                "id": ep_id,
+                "hidden_count": hidden_count,
+                "pinned_count": pinned_count,
+                "model_tool_modes": _model_tool_modes(ep),
+            }
         finally:
             db.close()
+
+    @router.get("/model-endpoints/{ep_id}/catalog-search")
+    async def search_endpoint_catalog(
+        ep_id: str,
+        request: Request,
+        q: str = Query(..., min_length=2, max_length=100),
+        page: int = Query(1, ge=1),
+        per_page: int = Query(50, ge=1, le=100),
+    ):
+        """Search catalog for large-inventory providers like Featherless."""
+        require_admin(request)
+        q_clean = q.strip()
+        if len(q_clean) < 2:
+            raise HTTPException(400, "Search query must be at least 2 characters")
+
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
+                raise HTTPException(404, "Endpoint not found")
+            base = _normalize_base(ep.base_url)
+            is_featherless = _host_match(base, "featherless.ai") or _safe_detect_provider(base) == "featherless"
+            if not is_featherless:
+                raise HTTPException(400, "Catalog search is only supported for Featherless endpoints")
+            api_key = _resolve_probe_key(ep) or (ep.api_key.strip() if getattr(ep, "api_key", None) else None)
+            if not api_key:
+                raise HTTPException(400, "Featherless endpoint has no API key configured")
+        finally:
+            db.close()
+
+        try:
+            page = max(int(page or 1), 1)
+        except Exception:
+            page = 1
+        try:
+            per_page = min(max(int(per_page or 50), 1), 100)
+        except Exception:
+            per_page = 50
+
+        # In-memory cache check
+        cache_key = (ep_id, q_clean.lower(), page, per_page)
+        now = _time.time()
+        with _featherless_search_cache_lock:
+            cached_entry = _featherless_search_cache.get(cache_key)
+            if cached_entry:
+                ts, cached_data = cached_entry
+                if now - ts < 45.0:
+                    return cached_data
+                else:
+                    _featherless_search_cache.pop(cache_key, None)
+
+        # Build upstream URL and params
+        models_url = f"{base}/models" if base.endswith("/v1") else f"{base.rstrip('/')}/v1/models"
+        params = {
+            "q": q_clean,
+            "available_on_current_plan": "true",
+            "status": "active",
+            "conversational": "true",
+            "page": page,
+            "per_page": per_page,
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=llm_verify()) as client:
+                r = await client.get(models_url, params=params, headers=headers)
+                if r.status_code in (401, 403):
+                    raise HTTPException(r.status_code, "Featherless API key invalid or unauthorized")
+                if r.status_code == 429:
+                    raise HTTPException(429, "Featherless rate limit exceeded; please try again shortly")
+                if r.status_code >= 500:
+                    raise HTTPException(502, f"Featherless upstream error: HTTP {r.status_code}")
+                if r.status_code >= 400:
+                    raise HTTPException(r.status_code, f"Featherless API error: HTTP {r.status_code}")
+                data = r.json()
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code if exc.response is not None else 502
+            if code in (401, 403):
+                raise HTTPException(code, "Featherless API key invalid or unauthorized")
+            if code == 429:
+                raise HTTPException(429, "Featherless rate limit exceeded; please try again shortly")
+            raise HTTPException(502 if code >= 500 else code, f"Featherless API error: HTTP {code}")
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Featherless search request timed out")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Featherless catalog search failed: %s", exc)
+            raise HTTPException(502, f"Failed to connect to Featherless: {str(exc)[:120]}")
+
+        raw_items = data.get("data") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        normalized_items = []
+        for m in (raw_items or []):
+            if not isinstance(m, dict):
+                continue
+            m_id = m.get("id")
+            if not m_id or not isinstance(m_id, str):
+                continue
+            normalized_items.append({
+                "id": m_id,
+                "name": m.get("name") or m_id,
+                "context_length": m.get("context_length"),
+                "max_completion_tokens": m.get("max_completion_tokens"),
+                "is_gated": bool(m.get("is_gated", False)),
+                "available_on_current_plan": bool(m.get("available_on_current_plan", True)),
+            })
+
+        total_val = None
+        if isinstance(data, dict):
+            for k in ("total", "count", "total_count"):
+                v = data.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                    total_val = int(v)
+                    break
+
+        if total_val is not None:
+            has_more = (page * per_page) < total_val and len(normalized_items) > 0
+        else:
+            has_more = len(normalized_items) == per_page
+
+        result = {
+            "items": normalized_items,
+            "page": page,
+            "per_page": per_page,
+            "has_more": has_more,
+        }
+        if total_val is not None:
+            result["total"] = total_val
+
+        with _featherless_search_cache_lock:
+            if len(_featherless_search_cache) >= 200:
+                expired_keys = [k for k, (t, _) in _featherless_search_cache.items() if now - t >= 45.0]
+                for k in expired_keys:
+                    _featherless_search_cache.pop(k, None)
+                if len(_featherless_search_cache) >= 200:
+                    oldest_key = min(_featherless_search_cache.keys(), key=lambda k: _featherless_search_cache[k][0])
+                    _featherless_search_cache.pop(oldest_key, None)
+            _featherless_search_cache[cache_key] = (now, result)
+
+        return result
 
     @router.get("/default-chat")
     def get_default_chat(request: Request):
@@ -2507,7 +2838,7 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             if body:
                 if "supports_tools" in body:
@@ -2561,6 +2892,9 @@ def setup_model_routes(model_discovery):
                         ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            if is_chatgpt_subscription_base(ep.base_url or ""):
+                ep.supports_tools = False
             db.commit()
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
@@ -2572,6 +2906,7 @@ def setup_model_routes(model_discovery):
                 "model_type": ep.model_type,
                 "base_url": ep.base_url,
                 "pinned_models": _normalize_model_ids(getattr(ep, "pinned_models", None)),
+                "model_tool_modes": _model_tool_modes(ep),
                 "endpoint_kind": getattr(ep, "endpoint_kind", None) or "auto",
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",
                 "model_refresh_interval": getattr(ep, "model_refresh_interval", None),
@@ -2617,7 +2952,7 @@ def setup_model_routes(model_discovery):
         }
         return sess in variants or sess.startswith(base + "/")
 
-    def _clear_sessions_for_endpoint(db, base_url: str) -> int:
+    def _clear_sessions_for_endpoint(db, base_url: str, endpoint_id: str, owner) -> int:
         """Drop stored auth for sessions using an endpoint being deleted.
 
         Keep the session's endpoint URL and model intact. If the admin is
@@ -2627,15 +2962,17 @@ def setup_model_routes(model_discovery):
         matching enabled endpoint exists.
         """
         cleared = 0
-        rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None)).all()
+        rows = db.query(DbSession).filter(DbSession.endpoint_url.isnot(None), DbSession.owner == owner).all()
         for row in rows:
+            if getattr(row, "endpoint_id", None) not in (None, endpoint_id):
+                continue
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
                 row.headers = {}
                 row.updated_at = datetime.utcnow()
                 cleared += 1
         return cleared
 
-    def _clear_loaded_sessions_for_endpoint(base_url: str) -> int:
+    def _clear_loaded_sessions_for_endpoint(base_url: str, endpoint_id: str, owner) -> int:
         try:
             from src.ai_interaction import get_session_manager
             manager = get_session_manager()
@@ -2646,6 +2983,8 @@ def setup_model_routes(model_discovery):
         cleared = 0
         try:
             for sess in list(getattr(manager, "sessions", {}).values()):
+                if getattr(sess, "owner", None) != owner or getattr(sess, "endpoint_id", None) not in (None, endpoint_id):
+                    continue
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
                     sess.headers = {}
                     cleared += 1
@@ -2665,13 +3004,13 @@ def setup_model_routes(model_discovery):
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-            if not ep:
+            if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
             # Clean up any settings that reference this endpoint
             cleared = _clear_settings_for_endpoint(ep_id)
             cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
-            cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url)
-            cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url)
+            cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url, ep.id, ep.owner)
+            cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url, ep.id, ep.owner)
             auth_id = getattr(ep, "provider_auth_id", None)
             db.delete(ep)
             cleared_provider_auth = _delete_orphaned_provider_auth(db, auth_id, exclude_ep_id=ep_id)
@@ -2714,4 +3053,6 @@ def setup_model_routes(model_discovery):
         _save_settings(settings)
         return {"ok": True, "disabled": body.disabled}
 
+    router._should_refresh_endpoint = _should_refresh_endpoint
+    router._search_endpoint_catalog = search_endpoint_catalog
     return router

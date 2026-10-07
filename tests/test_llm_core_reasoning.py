@@ -41,7 +41,7 @@ class _FakeClient:
         return _FakeStreamCtx(self._lines)
 
 
-def _run_stream(model, lines, monkeypatch):
+def _run_stream(model, lines, monkeypatch, *, thinking_mode=None):
     """Drive stream_llm against a faked upstream and return parsed SSE payloads."""
     monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines))
 
@@ -51,6 +51,7 @@ def _run_stream(model, lines, monkeypatch):
             "http://nim-nano:8000/v1/chat/completions",
             model,
             [{"role": "user", "content": "hi"}],
+            thinking_mode=thinking_mode,
         ):
             out.append(chunk)
         return out
@@ -67,6 +68,34 @@ def _run_stream(model, lines, monkeypatch):
                     except json.JSONDecodeError:
                         pass
     return [p for p in parsed if "delta" in p]
+
+
+def test_thinking_off_drops_reasoning_but_keeps_answer(monkeypatch):
+    deltas = _run_stream(
+        "moonshotai/kimi-k3",
+        [
+            'data: {"choices":[{"delta":{"reasoning":"private chain"}}]}',
+            'data: {"choices":[{"delta":{"content":"Visible answer"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+        thinking_mode="off",
+    )
+    assert deltas == [{"delta": "Visible answer"}]
+
+
+def test_thinking_off_drops_literal_think_block_but_keeps_answer(monkeypatch):
+    deltas = _run_stream(
+        "moonshotai/kimi-k3",
+        [
+            'data: {"choices":[{"delta":{"content":"<think>private chain"}}]}',
+            'data: {"choices":[{"delta":{"content":"</think>Visible answer"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+        thinking_mode="off",
+    )
+    assert deltas == [{"delta": "Visible answer"}]
 
 
 def test_reasoning_field_emits_thinking_chunk(monkeypatch):

@@ -7,6 +7,27 @@ from fastapi import Request, HTTPException
 from src.owner_identity import auth_disabled, effective_storage_owner
 
 
+def is_direct_loopback_request(request: Request) -> bool:
+    """Local operator transport, excluding reverse proxies and cross-site calls.
+
+    Locality supplies no model/tool authority. Native administration uses this
+    only in the operator's explicit auth-disabled single-user mode.
+    """
+    client = getattr(request, "client", None)
+    if not client or client.host not in {"127.0.0.1", "::1"}:
+        return False
+    forwarding = ("cf-connecting-ip", "cf-ray", "cf-visitor", "x-forwarded-for",
+                  "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "forwarded")
+    if any(request.headers.get(name) for name in forwarding):
+        return False
+    if request.headers.get("sec-fetch-site") in {"cross-site", "same-site"}:
+        return False
+    origin = request.headers.get("origin")
+    if origin and origin != str(request.base_url).rstrip("/"):
+        return False
+    return True
+
+
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
     return getattr(request.state, 'current_user', None)

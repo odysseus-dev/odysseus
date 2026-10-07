@@ -281,7 +281,7 @@ def test_open_imap_connection_shuts_down_on_starttls_failure(monkeypatch):
     ))
     conn.starttls = MagicMock(side_effect=RuntimeError("STARTTLS rejected"))
 
-    monkeypatch.setattr(helpers.imaplib, "IMAP4", lambda *a, **kw: conn)
+    monkeypatch.setattr(helpers, "_PolicyIMAP4", lambda *a, **kw: conn)
 
     raised = False
     try:

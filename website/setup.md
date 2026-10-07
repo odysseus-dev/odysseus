@@ -736,6 +736,12 @@ Key settings:
 
 All upload-limit vars are validated (must be a positive integer) and optional; an invalid value fails fast at startup.
 
+The table above is the short list. The source tree reads a lot more `ODYSSEUS_*`
+variables than this - browser automation, model routing, workspace mounts, media
+limits, a few security switches - and the complete list, generated from the code
+with the default each one falls back to, is in the
+[configuration reference](configuration-reference.md).
+
 ### Built-in MCP servers (optional setup)
 
 Odysseus auto-registers a few built-in MCP servers at startup. The npx-based ones (currently the browser server, `@playwright/mcp`) only start when their npm package is already in the local npx cache. If a package isn't cached, that server is skipped with a startup log message explaining what to do, so a fresh install does not block on a multi-minute npm download or hang if Playwright system deps are missing.
@@ -756,7 +762,7 @@ src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints
 services/  docs, memory, search, hwfit (Cookbook) …
 static/    index.html + app.js + style.css + js/ (modular front-end)
-website/   landing page (index.html) + preview clips
+website/   text-only landing page (index.html)
 ```
 
 ## Data

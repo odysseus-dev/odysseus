@@ -1,6 +1,6 @@
 // static/js/codeRunner.js
 
-import * as uiModule from './ui.js';
+import * as uiModule from './ui.js?v=20260916largetoolscroll1';
 
 /**
  * In-browser code runner for Python (Pyodide), JavaScript, and HTML
@@ -33,6 +33,11 @@ function showLoading(panel, msg) {
   panel.innerHTML = `<div class="code-runner-loading">${msg}</div>`;
 }
 
+function showEmpty(panel) {
+  panel.innerHTML = '<div class="code-runner-empty">Nothing to run. Add some code first.</div>';
+  panel.style.display = 'block';
+}
+
 /**
  * Show output text in the panel
  */
@@ -48,7 +53,9 @@ function showOutput(panel, text, isError) {
     const cbtn = document.createElement('button');
     cbtn.type = 'button';
     cbtn.className = 'code-runner-copy-inline';
-    cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy';
+    cbtn.title = 'Copy output';
+    cbtn.setAttribute('aria-label', 'Copy output');
+    cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
     cbtn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -67,14 +74,18 @@ function showOutput(panel, text, isError) {
       if (!ok && navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(() => {
           if (uiModule.showToast) uiModule.showToast('Copied');
-          cbtn.textContent = 'Copied!';
-          setTimeout(() => { cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy'; }, 1500);
+          cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+          setTimeout(() => { cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; }, 1500);
         }).catch(() => { if (uiModule.showToast) uiModule.showToast('Copy failed'); });
         return;
       }
       if (uiModule.showToast) uiModule.showToast(ok ? 'Copied' : 'Copy failed');
       const orig = cbtn.innerHTML;
-      cbtn.textContent = ok ? 'Copied!' : 'Copy failed';
+      if (ok) {
+        cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+      } else {
+        cbtn.textContent = 'Copy failed';
+      }
       setTimeout(() => { cbtn.innerHTML = orig; }, 1500);
     });
     // Button lives directly in the panel — no wrapping bar. The panel is
@@ -381,12 +392,15 @@ export function runHTML(code, panel) {
 export function run(btn) {
   const code = btn.getAttribute('data-code');
   const lang = (btn.getAttribute('data-lang') || '').toLowerCase();
-  if (!code) return;
 
   const pre = btn.closest('pre');
   if (!pre) return;
 
   const panel = getOrCreatePanel(pre);
+  if (!code || !code.trim()) {
+    showEmpty(panel);
+    return;
+  }
 
   if (lang === 'bash' || lang === 'sh' || lang === 'shell' || lang === 'zsh') {
     runServer(code, panel, 'bash');

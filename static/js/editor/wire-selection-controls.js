@@ -51,7 +51,66 @@ export function wireSelectionControls({
   wandClear, wandDeleteSelection, wandCopyToNewLayer, wandToMask,
   buildSelectionHintMask, applyImageTool,
   uiModule,
+  toggleQuickMask,
 }) {
+  document.querySelectorAll('.ge-quick-mask-toggle').forEach(button => {
+    button.addEventListener('click', toggleQuickMask);
+  });
+  // ── Rectangle / ellipse marquee ──
+  document.querySelectorAll('.ge-marquee-shape-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.marqueeShape = btn.dataset.marqueeShape === 'ellipse' ? 'ellipse' : 'rectangle';
+      document.querySelectorAll('.ge-marquee-shape-btn').forEach(candidate => {
+        const active = candidate.dataset.marqueeShape === state.marqueeShape;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    });
+  });
+  const constraint = document.getElementById('ge-marquee-constraint');
+  const dimensions = document.querySelector('.ge-marquee-dimensions');
+  const widthInput = document.getElementById('ge-marquee-width');
+  const heightInput = document.getElementById('ge-marquee-height');
+  const syncMarqueeConstraint = () => {
+    state.marqueeConstraint = ['ratio', 'size'].includes(constraint?.value) ? constraint.value : 'free';
+    if (dimensions) dimensions.hidden = state.marqueeConstraint === 'free';
+    if (widthInput) widthInput.step = state.marqueeConstraint === 'size' ? '1' : '0.01';
+    if (heightInput) heightInput.step = state.marqueeConstraint === 'size' ? '1' : '0.01';
+    if (widthInput) widthInput.value = String(state.marqueeConstraint === 'size' ? state.marqueeFixedWidth : state.marqueeRatioWidth);
+    if (heightInput) heightInput.value = String(state.marqueeConstraint === 'size' ? state.marqueeFixedHeight : state.marqueeRatioHeight);
+  };
+  const commitMarqueeDimensions = () => {
+    const w = Math.max(1, Number(widthInput?.value) || 1);
+    const h = Math.max(1, Number(heightInput?.value) || 1);
+    if (state.marqueeConstraint === 'size') {
+      state.marqueeFixedWidth = Math.round(w);
+      state.marqueeFixedHeight = Math.round(h);
+    } else {
+      state.marqueeRatioWidth = w;
+      state.marqueeRatioHeight = h;
+    }
+    if (widthInput) widthInput.value = String(state.marqueeConstraint === 'size' ? state.marqueeFixedWidth : state.marqueeRatioWidth);
+    if (heightInput) heightInput.value = String(state.marqueeConstraint === 'size' ? state.marqueeFixedHeight : state.marqueeRatioHeight);
+  };
+  constraint?.addEventListener('change', syncMarqueeConstraint);
+  widthInput?.addEventListener('change', commitMarqueeDimensions);
+  heightInput?.addEventListener('change', commitMarqueeDimensions);
+  document.getElementById('ge-marquee-swap')?.addEventListener('click', () => {
+    const oldWidth = widthInput?.value;
+    if (widthInput && heightInput) {
+      widthInput.value = heightInput.value;
+      heightInput.value = oldWidth;
+      commitMarqueeDimensions();
+    }
+  });
+  if (constraint) constraint.value = state.marqueeConstraint || 'free';
+  syncMarqueeConstraint();
+  document.getElementById('ge-marquee-clear')?.addEventListener('click', wandClear);
+  document.getElementById('ge-marquee-invert')?.addEventListener('click', invertSelection);
+  document.getElementById('ge-marquee-delete')?.addEventListener('click', wandDeleteSelection);
+  document.getElementById('ge-marquee-copy')?.addEventListener('click', wandCopyToNewLayer);
+  document.getElementById('ge-marquee-mask')?.addEventListener('click', wandToMask);
+
   // ── Lasso section ──
   const lassoFPrev = document.getElementById('ge-lasso-feather-preview');
   function syncLassoFeather(v) {
@@ -137,16 +196,19 @@ export function wireSelectionControls({
   });
 
   // Toggle the translucent red overlay for the wand selection.
-  document.getElementById('ge-wand-vis')?.addEventListener('click', () => {
+  const toggleSelectionOverlay = () => {
     state.wandMaskVisible = !state.wandMaskVisible;
-    const btn = document.getElementById('ge-wand-vis');
-    if (btn) {
+    ['ge-wand-vis', 'ge-marquee-vis', 'ge-sam-vis'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
       btn.innerHTML = state.wandMaskVisible ? EYE_OPEN : EYE_OFF;
       btn.title = state.wandMaskVisible ? 'Hide selection overlay' : 'Show selection overlay';
       btn.classList.toggle('visible', state.wandMaskVisible);
-    }
+    });
     composite();
-  });
+  };
+  document.getElementById('ge-wand-vis')?.addEventListener('click', toggleSelectionOverlay);
+  document.getElementById('ge-marquee-vis')?.addEventListener('click', toggleSelectionOverlay);
 
   document.getElementById('ge-wand-clear')?.addEventListener('click', wandClear);
   document.getElementById('ge-wand-invert')?.addEventListener('click', invertSelection);
