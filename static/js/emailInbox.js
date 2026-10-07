@@ -5,7 +5,7 @@
 
 import spinnerModule from './spinner.js';
 import sessionModule from './sessions.js';
-import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary, prewarmUnreadEmails } from './emailLibrary.js?v=20260815approvalsave1';
+import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibOpen, prewarmEmailLibrary, prewarmUnreadEmails } from './emailLibrary.js?v=20260915trashmove2';
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
@@ -39,6 +39,7 @@ const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size
 
 // SVG icons matching sessions.js dropdown style
 const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
+const _spamIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 const _archiveIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
 const _deleteIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 const _unreadIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
@@ -69,7 +70,7 @@ function _withoutMyAddresses(raw, myAddresses) {
 function _openCalendarEventFromEmail(uid) {
   const target = String(uid || '').trim();
   if (!target) return;
-  import('./calendar.js').then(mod => {
+  import('./calendar.js?v=20260914emailsource11').then(mod => {
     const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
     if (open) open(target);
   }).catch(() => {});
@@ -103,6 +104,7 @@ function _emailTagGroupHtml(tags, em) {
     .filter(Boolean);
   if (!visible.length) return '';
   if (visible.length === 1) return `<span class="email-tags">${visible[0]}</span>`;
+  if (visible.length === 2) return `<span class="email-tags">${visible.join('')}</span>`;
   const extra = visible.slice(1).map(html => `<span class="email-tag-extra">${html}</span>`).join('');
   return `<span class="email-tags email-tags-collapsed">${visible[0]}${extra}<button type="button" class="email-tags-more" data-email-tags-more aria-expanded="false" title="Show all tags">+${visible.length - 1}<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button></span>`;
 }
@@ -208,8 +210,9 @@ export function init(documentModule) {
       } catch (_) {}
       if (opts.compose) { _composeNew(); return; }
       if (opts.email) {
-        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '', '', opts.mailboxContext || null);
+        return await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '', '', opts.mailboxContext || null);
       }
+      return false;
     },
   });
   prewarmEmailLibrary({ delay: 1800 });
@@ -242,6 +245,16 @@ function _bringEmailReplyDraftToFrontOnMobile() {
   });
   const docPane = document.getElementById('doc-editor-pane');
   if (docPane) docPane.style.setProperty('z-index', '10010', 'important');
+}
+
+function _focusMobileReplyBody() {
+  if (window.innerWidth > 768 || !_docModule?.focusEmailReplyBody) return;
+  // injectFreshDoc switches tabs on the next frame; wait for that render
+  // before focusing so the rich body exists and the caret lands in the reply,
+  // not in the previous document.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    _docModule.focusEmailReplyBody();
+  }));
 }
 
 // When the document editor pane opens (body.doc-view turns on), make sure the
@@ -495,8 +508,11 @@ export function sortedFolders(folders) {
   const others = [];
   for (const f of folders) {
     const role = roleOf(f);
-    if (role && !found.has(role)) found.set(role, f);
-    else others.push(f);
+    if (role) {
+      if (!found.has(role)) found.set(role, f);
+    } else {
+      others.push(f);
+    }
   }
   return { priority: roleOrder.map(role => found.get(role)).filter(Boolean), others };
 }
@@ -511,6 +527,7 @@ export function folderDisplayName(folder) {
   if (f.includes('junk')) return 'Junk';
   if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return 'Trash';
   if (f.includes('sent')) return 'Sent';
+  if (f.includes('starred') || f.includes('flagged')) return 'Starred';
   if (f.includes('draft')) return 'Drafts';
   return raw;
 }
@@ -831,6 +848,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     if (!isCurrentOpen()) return;
     if (data.error) {
       console.error('Failed to read email:', data.error);
+      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not load email: ' + data.error)).catch(() => {});
       return;
     }
     // The list row is already populated from the durable email index. Some
@@ -853,15 +871,27 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       date: _fallback(data.date, em.date),
       message_id: _fallback(data.message_id, em.message_id),
     };
+    // A Drafts mailbox item is already a composed message. Opening it should
+    // load that message into the composer, never create a reply to the draft.
+    if (/draft/i.test(String(folderAtStart || '')) && _docModule?.openEmailDraft) {
+      await _docModule.openEmailDraft(data);
+      return;
+    }
+    if (wantsAiReply && _docModule?.generateEmailReply) {
+      const opened = await _openEmail(em, itemEl, data, 'reply-all', '', '', mailboxContext);
+      if (!opened) return false;
+      return await _docModule.generateEmailReply({ mode: 'ai-reply-fast', noteHint, originalBody: data.body }) === true;
+    }
     if (wantsAiReply) {
       const activeReplyAccount = data.account_id || em.account_id || accountAtStart;
       if (data.cached_ai_reply && !noteHint && !activeReplyAccount) {
         aiSuggestedBody = _cleanAiReplyText(data.cached_ai_reply);
       } else {
-        let draftToastTimer = null;
-        draftToastTimer = setTimeout(() => {
-          import('./ui.js').then(m => m.showToast && m.showToast('Drafting AI reply', { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
-        }, 450);
+      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showToast && m.showToast('Writing AI reply', {
+        duration: 8000,
+        leadingIcon: 'spinner',
+        aiReplyProgress: true,
+      })).catch(() => {});
         try {
           let currentModel = '';
           let currentSessionId = '';
@@ -882,12 +912,18 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
               uid: String(em.uid || ''),
               folder: folderAtStart,
               account_id: activeReplyAccount,
-              fast: true,
+              // The regular AI Reply action should use the full reply path.
+              // Keep the explicit fast variant available for callers that
+              // still request it, but do not silently downgrade normal
+              // replies to the short-context generation budget.
+              fast: aiReplyMode === 'fast',
               user_hint: (noteHint || '').trim() || undefined,
             }),
           });
-          const result = await res.json();
-          if (draftToastTimer) clearTimeout(draftToastTimer);
+          const result = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(result.error || `AI reply service returned HTTP ${res.status}`);
+          }
           if (!isCurrentOpen()) return;
           if (result.success && result.reply) {
             aiSuggestedBody = _cleanAiReplyText(result.reply);
@@ -897,14 +933,13 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
               ? 'AI returned empty response.'
               : _rawMsg;
             console.error('AI reply generation failed:', _msg);
-            import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
+            import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
             return;
           }
         } catch (e) {
-          if (draftToastTimer) clearTimeout(draftToastTimer);
           if (!isCurrentOpen()) return;
           console.error('AI reply generation failed:', e);
-          import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
+          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
           return;
         }
       }
@@ -964,10 +999,20 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     if (mode !== 'forward' && data.message_id) content += `\nReferences: ${data.references ? data.references + ' ' + data.message_id : data.message_id}`;
     content += `\nX-Source-UID: ${em.uid}`;
     content += `\nX-Source-Folder: ${folderAtStart}`;
-    if (data.attachments && data.attachments.length > 0) {
-      const attStr = data.attachments.map(a => `${a.index}:${a.filename}:${a.size}`).join('|');
+    const forwardedAttachments = mode === 'forward'
+      ? (data.attachments || []).filter(a => {
+          const name = String(a?.filename || '').toLowerCase();
+          const size = Number(a?.size) || 0;
+          if (!/\.(png|jpe?g|gif|bmp|svg|webp)$/i.test(name)) return true;
+          if (/^image\d{3,}\.(png|jpe?g|gif)$/i.test(name)) return false;
+          if (/^(signature|logo|sig|footer|banner)[-_\d]*\.(png|jpe?g|gif|svg)$/i.test(name)) return false;
+          return !(size > 0 && size < 30 * 1024);
+        })
+      : [];
+    if (forwardedAttachments.length > 0) {
+      const attStr = forwardedAttachments.map(a => `${a.index}:${a.filename}:${a.size}`).join('|');
       content += `\nX-Attachments: ${attStr}`;
-      if (mode === 'forward') content += `\nX-Forward-Attachments: 1`;
+      content += `\nX-Forward-Attachments: 1`;
     }
     content += '\n---\n';
 
@@ -1020,13 +1065,17 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
       if (aiSuggestedBody) {
         content += `${aiSuggestedBody}\n\n`;
       } else {
-        content += '\n\n';
+        // Two real editable rows make the empty reply target easy to tap on
+        // mobile. Plain leading newlines are trimmed by the rich-email
+        // renderer, whereas empty paragraphs survive as editable blocks.
+        content += '<p><br></p><p><br></p>\n';
       }
       content += `${_replySeparator}\nOn ${niceDate}, ${data.from_name} <${data.from_address}> wrote:\n${quotedBody}`;
     }
 
     content = await _withDraftSignature(content);
 
+    let replyDraftOpened = false;
     if (_docModule) {
       // Agent-provided reply text should land in the email draft the user
       // already has open. Plain Reply clicks must create a fresh draft: reusing
@@ -1051,13 +1100,23 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           if (!isCurrentOpen()) return;
         }
         _bringEmailReplyDraftToFrontOnMobile();
+        if (mode !== 'forward') _focusMobileReplyBody();
+        replyDraftOpened = true;
       } else {
         if (!isCurrentOpen()) return;
-        let activeSid = await _createEmailChat(data, { forceNew: true });
+        // A reply is another document in the chat the user is currently in.
+        // Creating an email-scoped session here made Reply unexpectedly switch
+        // chats and hid the rest of the conversation from the active context.
+        // The document module will add the new draft as the active tab, so the
+        // agent sees the reply draft when the user writes in it.
+        let activeSid = sessionModule?.getCurrentSessionId?.() || '';
+        if (!activeSid) {
+          activeSid = await _createEmailChat(data);
+        }
         if (!isCurrentOpen()) return;
         if (!activeSid) {
           console.error('reply: could not obtain a session_id');
-          import('./ui.js').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
+          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not start a reply chat.')).catch(() => {});
           return;
         }
 
@@ -1091,7 +1150,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           // import pattern the rest of this file uses. (Previously this
           // referenced a bare `uiModule`, throwing a ReferenceError that
           // the outer catch swallowed → reply silently did nothing.)
-          import('./ui.js').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
+          import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
           return;
         }
         const doc = await docRes.json();
@@ -1106,15 +1165,19 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           // connection (or when caching is interfering). loadDocument's
           // GET path can still be used as a fallback.
           if (_docModule.injectFreshDoc) {
-            _docModule.injectFreshDoc(doc);
+            await _docModule.injectFreshDoc(doc);
+            if (!isCurrentOpen()) return;
           } else {
             await _docModule.loadDocument(doc.id);
             if (!isCurrentOpen()) return;
           }
           _bringEmailReplyDraftToFrontOnMobile();
+          if (mode !== 'forward') _focusMobileReplyBody();
+          replyDraftOpened = true;
         }
       }
     }
+    return replyDraftOpened;
   } catch (e) {
     if (!isCurrentOpen()) return;
     console.error('Failed to open email:', e);
@@ -1122,7 +1185,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     // look like "nothing happened". Dynamic import — uiModule isn't a
     // static import in this file.
     const msg = e && e.message ? e.message : String(e);
-    import('./ui.js').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(() => {});
+    import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(() => {});
   } finally {
     if (spinner) { spinner.destroy(); spinner.element.remove(); }
     if (itemEl) {
@@ -1141,6 +1204,7 @@ function _showEmailMenu(em, anchor, itemEl) {
   const actions = [
     { label: 'Open', icon: _replyIcon, action: () => _openEmail(em, itemEl) },
     { label: 'Remind to reply', icon: _bellIcon, submenu: 'remind' },
+    { label: 'Spam', icon: _spamIcon, action: () => _spamEmail(em) },
     { label: 'Archive', icon: _archiveIcon, action: () => _archiveEmail(em) },
     { label: 'Delete', icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) },
   ];
@@ -1268,7 +1332,7 @@ async function _createReplyReminder(em, dueDate) {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed');
-    const { showToast } = await import('./ui.js');
+    const { showToast } = await import('./ui.js?v=20260916largetoolscroll1');
     const fmt = dueDate.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     showToast(`Reminder set for ${fmt}`);
     // Request notification permission if needed
@@ -1276,7 +1340,7 @@ async function _createReplyReminder(em, dueDate) {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
-    const { showError } = await import('./ui.js');
+    const { showError } = await import('./ui.js?v=20260916largetoolscroll1');
     showError('Failed to create reminder');
   }
 }
@@ -1291,9 +1355,25 @@ async function _archiveEmail(em) {
   }
 }
 
+async function _spamEmail(em) {
+  try {
+    const res = await fetch(`${API_BASE}/api/email/move/${em.uid}?folder=${encodeURIComponent(_currentFolder)}&dest=${encodeURIComponent('Junk')}${_acct()}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) throw new Error(data.error || `HTTP ${res.status}`);
+    _emails = _emails.filter(e => e.uid !== em.uid);
+    _renderList();
+    const { showToast } = await import('./ui.js?v=20260916largetoolscroll1');
+    showToast('Moved to Spam');
+  } catch (e) {
+    console.error('Failed to mark as spam:', e);
+    const { showError } = await import('./ui.js?v=20260916largetoolscroll1');
+    showError('Failed to move email to Spam');
+  }
+}
+
 async function _deleteEmail(em) {
   const subject = em.subject || '(no subject)';
-  const { styledConfirm } = await import('./ui.js');
+  const { styledConfirm } = await import('./ui.js?v=20260916largetoolscroll1');
   const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
   if (!ok) return;
   const row = document.querySelector(`.email-item[data-uid="${CSS.escape(String(em.uid))}"]`);
@@ -1430,7 +1510,7 @@ async function _composeNew() {
     let sid = await _createEmailChat({ subject: 'New Email' });
     if (!sid) {
       console.error('compose: could not obtain a session_id');
-      import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
+      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
       return;
     }
     const composeContent = await _withDraftSignature('To: \nSubject: \n---\n');
@@ -1452,7 +1532,7 @@ async function _composeNew() {
     }
     if (!res.ok) {
       console.error('compose POST failed', res.status, await res.text().catch(() => ''));
-      import('./ui.js').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
+      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
       return;
     }
     const doc = await res.json();

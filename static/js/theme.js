@@ -2,36 +2,40 @@
 // ES6 module
 
 import Storage from './storage.js';
-import uiModule from './ui.js';
-import { initColorPickers, attachColorPicker } from './colorPicker.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
+import { initColorPickers, attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 import { hexToRgb } from './color/hex.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { snapModalToZone } from './tileManager.js';
+import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 
 export const THEMES = {
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
-  light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
+  light:      { bg:'#f3f5f7', fg:'#26313a', panel:'#ffffff', border:'#cbd3da', red:'#b34d5c' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
-  paper:      { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a' },
   // Spicy / fun themes
-  cyberpunk:  { bg:'#0a0a0f', fg:'#0ff0fc', panel:'#12101a', border:'#9b30ff', red:'#e040fb' },
+  cyberpunk:  { bg:'#10121a', fg:'#9bdde0', panel:'#171a26', border:'#514b78', red:'#d45aa8' },
   retrowave:  { bg:'#1a1a2e', fg:'#e94560', panel:'#16213e', border:'#533483', red:'#e94560' },
   forest:     { bg:'#1b2a1b', fg:'#a8d5a2', panel:'#142414', border:'#3d6b3d', red:'#7cb871' },
   ocean:      { bg:'#0b1a2c', fg:'#64d2ff', panel:'#091422', border:'#1e5074', red:'#4facfe' },
-  ume:        { bg:'#2b1b2e', fg:'#f5c2e7', panel:'#1e1420', border:'#6c4675', red:'#f5a0c0' },
-  copper:     { bg:'#1c1410', fg:'#e8c39e', panel:'#140f0a', border:'#7a5533', red:'#d4764e' },
-  terminal:   { bg:'#000000', fg:'#00ff41', panel:'#0a0a0a', border:'#003b00', red:'#00ff41' },
+  ume:        { bg:'#271d2b', fg:'#f1d8e9', panel:'#1d1721', border:'#66475f', red:'#d98bb7' },
+  terminal:   { bg:'#0b1110', fg:'#b8e6c1', panel:'#080d0c', border:'#28553a', red:'#6bd38b' },
   organs:     { bg:'#0a0406', fg:'#efe1c8', panel:'#15080a', border:'#3a1519', red:'#c83240' },
-  lavender:   { bg:'#f3eef8', fg:'#3d3551', panel:'#faf7ff', border:'#cec3de', red:'#9b6dcc' },
   gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494',
                 advanced: { sendBtnBg: '#949494', sendBtnHover: '#7f7f7f',
                             userBubbleBg: '#2f2f2f', aiBubbleBg: '#171717',
                             inputBg: '#2f2f2f', brandColor: '#ffffff', brandMixTo: '#ffffff' } },
-  claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
-  cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  claude:     { bg:'#1f1e1b', fg:'#f5f1e8', panel:'#2b2926', border:'#514b43', red:'#d97757' },
+  cute:       { bg:'#fff4f7', fg:'#63394d', panel:'#fffafd', border:'#edc7d5', red:'#d65f88' },
+  eclipse:    { bg:'#17191c', fg:'#e8e4dc', panel:'#0f1113', border:'#3c4248', red:'#46c2b3' },
+  porcelain:  { bg:'#edf0f2', fg:'#252a30', panel:'#ffffff', border:'#c7cdd2', red:'#3478c9' },
+  arcade:     { bg:'#15131d', fg:'#f4e85c', panel:'#0b1720', border:'#305f68', red:'#ff4f91' },
+  blueprint:  { bg:'#10263b', fg:'#e8f1f5', panel:'#091a29', border:'#48758d', red:'#e6b84a' },
+  monolith:   { bg:'#202020', fg:'#d8d8d2', panel:'#121212', border:'#50504b', red:'#b6e05c' },
+  yoyo:       { bg:'#211f23', fg:'#dfdbd7', panel:'#141415', border:'#3e5146', red:'#e09d6c' },
 };
 
 const DEFAULT_THEME = 'dark';
+const THEME_DISPLAY_NAMES = { ocean: 'starfield' };
 const LS_KEY = 'odysseus-theme';
 const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
 
@@ -42,6 +46,11 @@ const FONT_MAP = {
   opendyslexic: "'OpenDyslexic', sans-serif",
 };
 const DEFAULT_FONT = 'mono';
+
+// Compatibility for persisted themes that selected the omitted custom face.
+function normalizeFont(font) {
+  return !font || font === 'gohu' || font === 'GohuFont' ? DEFAULT_FONT : font;
+}
 const DEFAULT_DENSITY = 'comfortable';
 const MAX_CUSTOM_THEMES = 8;
 
@@ -50,40 +59,64 @@ const THEME_DEFAULT_PATTERN = {
   dark:       'none',
   light:      'dots',
   midnight:   'rain',
-  paper:      'dots',
   cyberpunk:  'synapse',
   retrowave:  'embers',
   forest:     'petals',
-  ocean:      'constellations',
-  terminal:   'perlin-flow',
+  ocean:      'starfield-depth',
+  terminal:   'ascii-fireflies',
   organs:     'rain',
   ume:        'petals',
   cute:       'sparkles',
+  eclipse:    'starfield-depth',
+  porcelain:  'dots',
+  arcade:     'synapse',
+  blueprint:  'dots',
+  monolith:   'perlin-flow',
+  yoyo:       'ascii-fireflies',
 };
 
 // Default effect colors for specific themes (overrides --fg)
 const THEME_DEFAULT_EFFECT_COLOR = {
   midnight:   '#ffffff',
+  cyberpunk:  '#62c4c7',
   organs:     '#451616',
   cute:       '#ff8cb8',
   ume:        '#f5a0c0',
+  eclipse:    '#46c2b3',
+  arcade:     '#ff4f91',
+  blueprint:  '#e6b84a',
+  monolith:   '#b6e05c',
+  yoyo:       '#b8e6c1',
 };
 
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
 const THEME_DEFAULT_INTENSITY = {
   midnight:   0.5,
+  cyberpunk:  0.55,
   terminal:   0.8,
-  organs:     0.65,
+  yoyo:       0.8,
+  organs:     0.75,
+};
+
+const THEME_DEFAULT_SIZE = {
+  organs:     0.75,
+};
+
+const THEME_DEFAULT_SPEED = {
+  organs:     0.05,
 };
 
 // Default frosted-glass state per theme. Themes not listed default to false.
 const THEME_DEFAULT_FROSTED = {
-  lavender:   true,
 };
 
 // ── Custom theme persistence ──
 function _loadCustomThemes() {
-  return Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  const themes = Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  for (const theme of Object.values(themes)) {
+    if (theme && theme.font) theme.font = normalizeFont(theme.font);
+  }
+  return themes;
 }
 function _saveCustomThemes(obj) {
   Storage.setJSON(CUSTOM_THEMES_KEY, obj);
@@ -96,12 +129,13 @@ export function saveCustomTheme(name, colors, opts) {
   }
   const entry = { ...colors };
   if (opts) {
-    if (opts.font) entry.font = opts.font;
+    if (opts.font) entry.font = normalizeFont(opts.font);
     if (opts.density) entry.density = opts.density;
     if (opts.bgPattern) entry.bgPattern = opts.bgPattern;
     if (opts.bgEffectColor) entry.bgEffectColor = opts.bgEffectColor;
     if (opts.bgEffectIntensity !== undefined) entry.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined) entry.bgEffectSize = opts.bgEffectSize;
+    if (opts.bgEffectSpeed !== undefined) entry.bgEffectSpeed = opts.bgEffectSpeed;
     if (opts.frosted !== undefined) entry.frosted = !!opts.frosted;
   }
   ct[name] = entry;
@@ -374,7 +408,7 @@ function _injectFontFace(familyName, variants) {
 }
 
 export function applyFontDensity(font, density) {
-  const f = font || DEFAULT_FONT;
+  const f = normalizeFont(font);
   const d = density || DEFAULT_DENSITY;
   let family = FONT_MAP[f];
   if (!family && _customFonts[f]) {
@@ -388,27 +422,15 @@ export function applyFontDensity(font, density) {
   if (d !== 'comfortable') document.documentElement.classList.add('density-' + d);
 }
 
-// UI text-size scale (accessibility). Global and independent of the active
-// theme, so the chosen size persists across theme switches. Stored as a plain
-// percentage string ('100' | '110' | '125' | '150').
-const UI_SCALE_KEY = 'odysseus-ui-scale';
-const DEFAULT_UI_SCALE = '100';
-
-export function applyUiScale(scale) {
-  const s = scale || DEFAULT_UI_SCALE;
-  // Only one non-default scale ('125'). Remove any legacy classes too so an
-  // older stored value can't leave a stale zoom applied.
-  document.documentElement.classList.remove('ui-scale-110', 'ui-scale-125', 'ui-scale-140');
-  if (s === '125') document.documentElement.classList.add('ui-scale-125');
-}
-
 const _BG_CLASSES = ['bg-pattern-dots',
   'bg-pattern-synapse', 'bg-pattern-rain', 'bg-pattern-constellations',
   'bg-pattern-perlin-flow',
-  'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers'];
+  'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers',
+  'bg-pattern-starfield-depth', 'bg-pattern-ascii-fireflies'];
 const _CANVAS_PATTERNS = { synapse: _initSynapse, rain: _initRain, constellations: _initConstellations,
   'perlin-flow': _initPerlinFlow,
-  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers };
+  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers,
+  'starfield-depth': _initStarfieldDepth, 'ascii-fireflies': _initAsciiFireflies };
 
 export function applyBgEffectColor(color) {
   document.documentElement.style.setProperty('--bg-effect-color', color || '');
@@ -426,6 +448,12 @@ export function applyBgEffectSize(v) {
   document.documentElement.style.setProperty('--bg-effect-size', String(n));
 }
 
+export function applyBgEffectSpeed(v) {
+  // v is a multiplier 0.05..2.5. Canvas effects read this every frame.
+  const n = (v === undefined || v === null || isNaN(v)) ? 1 : Math.max(0.05, Math.min(2.5, Number(v)));
+  document.documentElement.style.setProperty('--bg-effect-speed', String(n));
+}
+
 /** Toggle the global "frosted glass" look — applies a translucent + blurred
  *  treatment to every panel, sidebar, modal, dropdown, and popover via CSS
  *  rules scoped to `body.theme-frosted`. */
@@ -439,6 +467,11 @@ function _getEffectSize() {
   return isNaN(v) ? 1 : v;
 }
 
+function _getEffectSpeed() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-speed'));
+  return isNaN(v) ? 1 : v;
+}
+
 // Patterns where the intensity/size sliders have no visible effect.
 const _STATIC_PATTERNS = new Set(['none', 'dots']);
 
@@ -446,16 +479,28 @@ export function applyBgPattern(pattern) {
   const p = pattern || 'none';
   document.body.classList.remove(..._BG_CLASSES);
   // Clean up any canvas backgrounds
-  document.querySelectorAll('#synapse-canvas, #rain-canvas, #constellations-canvas, #perlin-flow-canvas, #petals-canvas, #sparkles-canvas, #embers-canvas').forEach(c => c.remove());
+  document.querySelectorAll('#synapse-canvas, #rain-canvas, #constellations-canvas, #perlin-flow-canvas, #petals-canvas, #sparkles-canvas, #embers-canvas, #starfield-depth-canvas, #ascii-fireflies-background').forEach(c => c.remove());
   if (p !== 'none') document.body.classList.add('bg-pattern-' + p);
   if (_CANVAS_PATTERNS[p]) _CANVAS_PATTERNS[p]();
   // Hide sliders that do nothing on static patterns.
   const hide = _STATIC_PATTERNS.has(p);
   const ig = document.getElementById('theme-bg-intensity-group');
   const sg = document.getElementById('theme-bg-size-group');
+  const spg = document.getElementById('theme-bg-speed-group');
   if (ig) ig.style.display = hide ? 'none' : '';
   if (sg) sg.style.display = hide ? 'none' : '';
+  if (spg) spg.style.display = hide ? 'none' : '';
 }
+
+// Memory's header toggle also controls the Synapse decoration. Pause its
+// animation while memory is disabled, and rebuild it when memory is enabled.
+window.addEventListener('memory-visual-state', (event) => {
+  const enabled = event && event.detail && event.detail.enabled !== false;
+  document.body.classList.toggle('memory-disabled', !enabled);
+  if (!enabled) return;
+  const synapseActive = document.body.classList.contains('bg-pattern-synapse');
+  if (synapseActive && !document.getElementById('synapse-canvas')) applyBgPattern('synapse');
+});
 
 export function getSaved() {
   const obj = Storage.getJSON(LS_KEY, null);
@@ -463,18 +508,26 @@ export function getSaved() {
   if (obj && obj.name === 'chatgpt') obj.name = 'gpt';
   // Migration: 'sakura' preset was renamed to 'ume'
   if (obj && obj.name === 'sakura') obj.name = 'ume';
+  // Migrate retired built-ins to their replacement themes, including colors.
+  const replacement = { paper: 'monolith', copper: 'arcade', lavender: 'porcelain' };
+  if (obj && replacement[obj.name] && THEMES[replacement[obj.name]]) {
+    obj.name = replacement[obj.name];
+    obj.colors = { ...THEMES[obj.name] };
+  }
+  if (obj && obj.font) obj.font = normalizeFont(obj.font);
   return obj;
 }
 
 export function save(name, colors, opts) {
   const obj = { name, colors };
   if (opts) {
-    if (opts.font && opts.font !== DEFAULT_FONT) obj.font = opts.font;
+    if (normalizeFont(opts.font) !== DEFAULT_FONT) obj.font = normalizeFont(opts.font);
     if (opts.density && opts.density !== DEFAULT_DENSITY) obj.density = opts.density;
     if (opts.bgPattern && opts.bgPattern !== 'none') obj.bgPattern = opts.bgPattern;
     if (opts.bgEffectColor) obj.bgEffectColor = opts.bgEffectColor;
     if (opts.bgEffectIntensity !== undefined && opts.bgEffectIntensity !== 1) obj.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
+    if (opts.bgEffectSpeed !== undefined && opts.bgEffectSpeed !== 1) obj.bgEffectSpeed = opts.bgEffectSpeed;
     if (opts.frosted) obj.frosted = true;
   }
   Storage.setJSON(LS_KEY, obj);
@@ -554,7 +607,7 @@ export function initThemeUI() {
       tab.classList.add('active');
       document.querySelectorAll('.theme-tab-panel').forEach(p => p.style.display = 'none');
       const panel = document.getElementById(targetId);
-      if (panel) panel.style.display = '';
+      if (panel) panel.style.display = targetId === 'theme-tab-customize' ? 'flex' : '';
       // Show the opacity slider only on the Customize tab.
       const opWrap = document.getElementById('theme-opacity-wrap');
       if (opWrap) opWrap.classList.toggle('hidden', targetId !== 'theme-tab-customize');
@@ -647,14 +700,16 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : (THEME_DISPLAY_NAMES[name] || name))}
     </div>
   `).join('');
 
   // Render custom theme swatches into separate card
   const userGrid = document.getElementById('themeUserGrid');
   const userCard = document.getElementById('themeUserCard');
-  const customEntries = Object.entries(customThemes);
+  // Hide legacy custom copies after a theme graduates into the preset list.
+  const customEntries = Object.entries(customThemes)
+    .filter(([name]) => !THEMES[name]);
   if (customEntries.length > 0 && userGrid && userCard) {
     userCard.style.display = '';
     userGrid.innerHTML = customEntries.map(([name, c]) => `
@@ -682,12 +737,14 @@ export function initThemeUI() {
     const ec = document.getElementById('theme-bg-effect-color');
     const es = document.getElementById('theme-bg-intensity');
     const sz = document.getElementById('theme-bg-size');
+    const sp = document.getElementById('theme-bg-speed');
     if (fs) opts.font = fs.value;
     if (ds) opts.density = ds.value;
     if (ps) opts.bgPattern = ps.value;
     if (ec) opts.bgEffectColor = ec.value;
     if (es) opts.bgEffectIntensity = parseFloat(es.value) / 100;
     if (sz) opts.bgEffectSize = parseFloat(sz.value) / 100;
+    if (sp) opts.bgEffectSpeed = parseFloat(sp.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
     return opts;
@@ -709,12 +766,13 @@ export function initThemeUI() {
         sw.classList.add('active');
         syncPickers(colors);
         const ct = sw.dataset.custom ? customThemes[name] : null;
-        const f = ct && ct.font ? ct.font : DEFAULT_FONT;
+        const f = normalizeFont(ct && ct.font);
         const d = ct && ct.density ? ct.density : DEFAULT_DENSITY;
         const p = ct && ct.bgPattern ? ct.bgPattern : (THEME_DEFAULT_PATTERN[name] || 'none');
         const ec = ct && ct.bgEffectColor ? ct.bgEffectColor : (THEME_DEFAULT_EFFECT_COLOR[name] || '');
         const ei = (ct && ct.bgEffectIntensity !== undefined) ? ct.bgEffectIntensity : (THEME_DEFAULT_INTENSITY[name] !== undefined ? THEME_DEFAULT_INTENSITY[name] : 1);
-        const sz = (ct && ct.bgEffectSize !== undefined) ? ct.bgEffectSize : 1;
+        const sz = (ct && ct.bgEffectSize !== undefined) ? ct.bgEffectSize : (THEME_DEFAULT_SIZE[name] !== undefined ? THEME_DEFAULT_SIZE[name] : 1);
+        const sp = (ct && ct.bgEffectSpeed !== undefined) ? ct.bgEffectSpeed : (THEME_DEFAULT_SPEED[name] !== undefined ? THEME_DEFAULT_SPEED[name] : 1);
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
@@ -722,6 +780,7 @@ export function initThemeUI() {
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
+        applyBgEffectSpeed(sp);
         applyFrostedGlass(fr);
         applyBgPattern(p);
         const fs = document.getElementById('theme-font-select');
@@ -730,6 +789,7 @@ export function initThemeUI() {
         const ecs = document.getElementById('theme-bg-effect-color');
         const eis = document.getElementById('theme-bg-intensity');
         const szs = document.getElementById('theme-bg-size');
+        const sps = document.getElementById('theme-bg-speed');
         const frs = document.getElementById('theme-frosted-toggle');
         if (fs) fs.value = f;
         if (ds) ds.value = d;
@@ -737,8 +797,9 @@ export function initThemeUI() {
         if (ecs) ecs.value = ec || colors.fg || '#9cdef2';
         if (eis) eis.value = String(Math.round(ei * 100));
         if (szs) szs.value = String(Math.round(sz * 100));
+        if (sps) sps.value = String(Math.round(sp * 100));
         if (frs) frs.checked = fr;
-        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, frosted: fr });
+        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, bgEffectSpeed: sp, frosted: fr });
       });
     });
     g.querySelectorAll('.theme-delete-btn').forEach(btn => {
@@ -871,6 +932,7 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          bgEffectSpeed: _activeSaved.bgEffectSpeed,
         });
         _saveFull(_activeName, colors);
       } else {
@@ -1019,6 +1081,7 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          bgEffectSpeed: _activeSaved.bgEffectSpeed,
         });
         _saveFull(_activeName, base);
       } else {
@@ -1092,14 +1155,15 @@ export function initThemeUI() {
   syncResetButtons();
 
   // Font, density, background pattern controls
-  const _initFont = (saved && saved.font) || DEFAULT_FONT;
+  const _initFont = normalizeFont(saved && saved.font);
   const _initDensity = (saved && saved.density) || DEFAULT_DENSITY;
   const _initPattern = (saved && saved.bgPattern) || (saved && THEME_DEFAULT_PATTERN[saved.name]) || 'none';
   const _initEffectColor = (saved && saved.bgEffectColor) || (saved && THEME_DEFAULT_EFFECT_COLOR[saved.name]) || '';
   const _initEffectIntensity = (saved && saved.bgEffectIntensity !== undefined)
     ? saved.bgEffectIntensity
     : (saved && THEME_DEFAULT_INTENSITY[saved.name] !== undefined ? THEME_DEFAULT_INTENSITY[saved.name] : 1);
-  const _initEffectSize = (saved && saved.bgEffectSize !== undefined) ? saved.bgEffectSize : 1;
+  const _initEffectSize = (saved && saved.bgEffectSize !== undefined) ? saved.bgEffectSize : (saved && THEME_DEFAULT_SIZE[saved.name] !== undefined ? THEME_DEFAULT_SIZE[saved.name] : 1);
+  const _initEffectSpeed = (saved && saved.bgEffectSpeed !== undefined) ? saved.bgEffectSpeed : (saved && THEME_DEFAULT_SPEED[saved.name] !== undefined ? THEME_DEFAULT_SPEED[saved.name] : 1);
   const _initFrosted = (saved && saved.frosted !== undefined)
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
@@ -1107,6 +1171,7 @@ export function initThemeUI() {
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
+  applyBgEffectSpeed(_initEffectSpeed);
   applyFrostedGlass(_initFrosted);
   applyBgPattern(_initPattern);
 
@@ -1148,18 +1213,6 @@ export function initThemeUI() {
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
   }
-  const textSizeSelect = document.getElementById('theme-text-size-select');
-  if (textSizeSelect) {
-    const nts = textSizeSelect.cloneNode(true); textSizeSelect.parentNode.replaceChild(nts, textSizeSelect);
-    let initScale = DEFAULT_UI_SCALE;
-    try { initScale = localStorage.getItem(UI_SCALE_KEY) || DEFAULT_UI_SCALE; } catch (e) {}
-    nts.value = initScale;
-    applyUiScale(initScale);
-    nts.addEventListener('change', () => {
-      applyUiScale(nts.value);
-      try { localStorage.setItem(UI_SCALE_KEY, nts.value); } catch (e) {}
-    });
-  }
   if (patternSelect) {
     const np = patternSelect.cloneNode(true); patternSelect.parentNode.replaceChild(np, patternSelect);
     np.value = _initPattern;
@@ -1192,6 +1245,15 @@ export function initThemeUI() {
     sizeSlider.value = String(Math.round(_initEffectSize * 100));
     sizeSlider.addEventListener('input', () => {
       applyBgEffectSize(parseFloat(sizeSlider.value) / 100);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
+  const speedSlider = document.getElementById('theme-bg-speed');
+  if (speedSlider) {
+    speedSlider.value = String(Math.round(_initEffectSpeed * 100));
+    speedSlider.addEventListener('input', () => {
+      applyBgEffectSpeed(parseFloat(speedSlider.value) / 100);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
   }
@@ -1249,6 +1311,16 @@ export function initThemeUI() {
     delete newAcc.dataset.cpAttached;
     newAcc.type = 'color'; // clone may have been type=text from prior attach
     try { attachColorPicker(newAcc); } catch (_) {}
+    if (_harmonyHex && _harmonyHex.dataset.pickerTriggerBound !== '1') {
+      _harmonyHex.dataset.pickerTriggerBound = '1';
+      _harmonyHex.style.cursor = 'pointer';
+      _harmonyHex.title = 'Open color picker';
+      _harmonyHex.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        newAcc.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      });
+    }
     newAcc.addEventListener('input', () => {
       const type = document.getElementById('harmony-type').value;
       const mode = document.getElementById('harmony-mode').value;
@@ -1282,6 +1354,9 @@ export function initThemeUI() {
       if (cur && cur.density) obj.density = cur.density;
       if (cur && cur.bgPattern) obj.bgPattern = cur.bgPattern;
       if (cur && cur.bgEffectColor) obj.bgEffectColor = cur.bgEffectColor;
+      if (cur && cur.bgEffectIntensity !== undefined) obj.bgEffectIntensity = cur.bgEffectIntensity;
+      if (cur && cur.bgEffectSize !== undefined) obj.bgEffectSize = cur.bgEffectSize;
+      if (cur && cur.bgEffectSpeed !== undefined) obj.bgEffectSpeed = cur.bgEffectSpeed;
       const json = JSON.stringify(obj, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1331,12 +1406,18 @@ export function initThemeUI() {
       if (parsed.density) opts.density = parsed.density;
       if (parsed.bgPattern) opts.bgPattern = parsed.bgPattern;
       if (parsed.bgEffectColor) opts.bgEffectColor = parsed.bgEffectColor;
+      if (parsed.bgEffectIntensity !== undefined) opts.bgEffectIntensity = parsed.bgEffectIntensity;
+      if (parsed.bgEffectSize !== undefined) opts.bgEffectSize = parsed.bgEffectSize;
+      if (parsed.bgEffectSpeed !== undefined) opts.bgEffectSpeed = parsed.bgEffectSpeed;
       const result = saveCustomTheme(slug, colorData, opts);
       if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
       save(slug, colorData, opts);
       applyColors(colorData);
       applyFontDensity(opts.font || DEFAULT_FONT, opts.density || DEFAULT_DENSITY);
       applyBgEffectColor(opts.bgEffectColor || '');
+      applyBgEffectIntensity(opts.bgEffectIntensity);
+      applyBgEffectSize(opts.bgEffectSize);
+      applyBgEffectSpeed(opts.bgEffectSpeed);
       applyBgPattern(opts.bgPattern || 'none');
       importAreaEl.classList.add('hidden');
       importActionsEl.classList.add('hidden');
@@ -1568,7 +1649,7 @@ function _initSynapse() {
   }
 
   function draw() {
-    if (!document.body.classList.contains('bg-pattern-synapse')) {
+    if (!document.body.classList.contains('bg-pattern-synapse') || document.body.classList.contains('memory-disabled')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
       return;
@@ -1583,7 +1664,8 @@ function _initSynapse() {
     // Draw pulses as small bright dots with a short trail
     for (let i = pulses.length - 1; i >= 0; i--) {
       const p = pulses[i];
-      p.x += p.dx; p.y += p.dy;
+      const speedMult = _getEffectSpeed();
+      p.x += p.dx * speedMult; p.y += p.dy * speedMult;
 
       // Off screen — remove
       if (p.x > W + TRAIL_LEN || p.y > H + TRAIL_LEN) { pulses.splice(i, 1); continue; }
@@ -1663,7 +1745,7 @@ function _initRain() {
     // Intensity also controls rain speed + spawn rate (feels slower/lighter when dim)
     const intenCss = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity'));
     const inten = isNaN(intenCss) ? 1 : intenCss;
-    const speedMult = 0.35 + inten * 0.65;
+    const speedMult = (0.35 + inten * 0.65) * _getEffectSpeed();
     const sizeMult = _getEffectSize();
 
     if (drops.length < MAX_DROPS * inten && Math.random() < 0.6 * inten) spawn();
@@ -1744,13 +1826,14 @@ function _initConstellations() {
       return;
     }
     requestAnimationFrame(draw);
-    t += 0.01;
+    const speedMult = _getEffectSpeed();
+    t += 0.01 * speedMult;
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
 
     // Move stars gently
     for (const s of stars) {
-      s.x += s.vx; s.y += s.vy;
+      s.x += s.vx * speedMult; s.y += s.vy * speedMult;
       if (s.x < 0) s.x = W; if (s.x > W) s.x = 0;
       if (s.y < 0) s.y = H; if (s.y > H) s.y = 0;
     }
@@ -1814,43 +1897,164 @@ function _initPerlinFlow() {
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = W * dpr; canvas.height = H * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (particles.length === 0) for (let i = 0; i < 200; i++) particles.push({ x: Math.random() * W, y: Math.random() * H, life: Math.random() });
+    if (particles.length === 0) for (let i = 0; i < 350; i++) particles.push({ x: Math.random() * W, y: Math.random() * H, life: Math.random() });
   }
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
   function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
-  function getBg() { return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#282c34'; }
-  let _cachedBg = '', _fadeStyle = '';
-  function getFade() {
-    const bg = getBg();
-    if (bg !== _cachedBg) {
-      _cachedBg = bg;
-      // Parse hex to rgb for rgba fade
-      const { r, g, b } = hexToRgb(bg) || { r: 0, g: 0, b: 0 };
-      _fadeStyle = `rgba(${r},${g},${b},0.02)`;
-    }
-    return _fadeStyle;
-  }
-  function draw() {
-    if (!document.body.classList.contains('bg-pattern-perlin-flow')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
+  // Leave a small wake behind each particle, but clear it before the field
+  // can build into a smoky layer.
+  const trailLifetime = 400;
+  let trails = [], previousTime = performance.now();
+  function draw(now = performance.now()) {
+    if (!canvas.isConnected || !document.body.classList.contains('bg-pattern-perlin-flow')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
     requestAnimationFrame(draw);
-    ctx.fillStyle = getFade();
-    ctx.fillRect(0, 0, W, H);
+    const step = Math.min(3, Math.max(0, now - previousTime) / (1000 / 60)) * _getEffectSpeed();
+    previousTime = now;
+    // Redraw only living marks: alpha blending old pixels leaves permanent
+    // low-level residue on an 8-bit canvas, even after repeated fade passes.
+    ctx.clearRect(0, 0, W, H);
+    trails = trails.filter(mark => now - mark.time < trailLifetime);
     const c = getColor();
     particles.forEach(p => {
       const n = _bgSmoothNoise(p.x * 0.004 + t * 0.0008, p.y * 0.004 + 100);
       const angle = n * Math.PI * 6;
       const speed = 1 + _bgSmoothNoise(p.x * 0.003, p.y * 0.003 + 50) * 1.5;
-      p.x += Math.cos(angle) * speed; p.y += Math.sin(angle) * speed; p.life -= 0.001;
+      p.x += Math.cos(angle) * speed * step; p.y += Math.sin(angle) * speed * step; p.life -= 0.001 * step;
       if (p.life <= 0 || p.x < 0 || p.x > W || p.y < 0 || p.y > H) { p.x = Math.random() * W; p.y = Math.random() * H; p.life = 1; }
-      ctx.beginPath(); ctx.arc(p.x, p.y, 1, 0, Math.PI * 2);
-      ctx.fillStyle = c; ctx.globalAlpha = p.life * 0.15; ctx.fill();
+      trails.push({ x: p.x, y: p.y, alpha: p.life * 0.15 * Math.min(step, 1), time: now });
     });
+    ctx.fillStyle = c;
+    for (const mark of trails) {
+      const remaining = 1 - (now - mark.time) / trailLifetime;
+      ctx.globalAlpha = mark.alpha * remaining * remaining;
+      ctx.beginPath(); ctx.arc(mark.x, mark.y, 1, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.globalAlpha = 1;
-    t++;
+    t += step;
   }
   draw();
+}
+
+// ── Starfield Depth — falling particles with a short visible wake ──
+function _initStarfieldDepth() {
+  if (document.getElementById('starfield-depth-canvas')) return;
+  const canvas = document.createElement('canvas');
+  canvas.id = 'starfield-depth-canvas';
+  canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  canvas.setAttribute('aria-hidden', 'true');
+  document.body.prepend(canvas);
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W = 0, H = 0, stars = [];
+  const resize = () => {
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!stars.length) stars = Array.from({ length: 180 }, () => ({
+      x: Math.random() * W, y: Math.random() * H, z: 0.15 + Math.random() * 0.9,
+    }));
+  };
+  resize();
+  window.addEventListener('resize', resize);
+  const getBgFade = () => {
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    const { r, g, b } = hexToRgb(bg) || { r: 0, g: 0, b: 0 };
+    return `rgba(${r},${g},${b},0.72)`;
+  };
+  const draw = () => {
+    if (!canvas.isConnected || !document.body.classList.contains('bg-pattern-starfield-depth')) {
+      window.removeEventListener('resize', resize); canvas.remove(); return;
+    }
+    requestAnimationFrame(draw);
+    ctx.fillStyle = getBgFade();
+    ctx.fillRect(0, 0, W, H);
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-color').trim()
+      || getComputedStyle(document.documentElement).getPropertyValue('--fg').trim();
+    const size = _getEffectSize();
+    for (const star of stars) {
+      star.y += (0.12 + star.z * 0.8) * size * _getEffectSpeed();
+      if (star.y > H + 4) { star.y = -4; star.x = Math.random() * W; }
+      ctx.fillStyle = color;
+      ctx.globalAlpha = (0.1 + star.z * 0.4) * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity')) || 1);
+      ctx.beginPath(); ctx.arc(star.x, star.y, (0.35 + star.z * 1.3) * size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  };
+  draw();
+}
+
+// ── ASCII Fireflies — an animated scene sampled to a monochrome glyph grid ──
+function _initAsciiFireflies() {
+  if (document.getElementById('ascii-fireflies-background')) return;
+  const output = document.createElement('pre');
+  output.id = 'ascii-fireflies-background';
+  output.setAttribute('aria-hidden', 'true');
+  document.body.prepend(output);
+  const source = document.createElement('canvas');
+  const ctx = source.getContext('2d', { willReadFrequently: true });
+  const ramp = ' .,:;irsXA253hMHGS#9B&@';
+  let columns = 0, rows = 0, flies = [], tick = 0, lastRender = 0;
+  const resize = () => {
+    const metrics = document.createElement('span');
+    metrics.style.cssText = 'position:fixed;visibility:hidden;font:12px ui-monospace';
+    metrics.textContent = 'M'; document.body.append(metrics);
+    const charWidth = metrics.getBoundingClientRect().width || 7;
+    metrics.remove();
+    columns = Math.max(40, Math.floor((window.innerWidth - 32) / charWidth));
+    rows = Math.max(18, Math.floor((window.innerHeight - 28) / 12));
+    source.width = columns * 2; source.height = rows * 2;
+    flies = Array.from({ length: Math.min(135, Math.floor(columns * rows * 0.08)) }, (_, index) => {
+      const depth = index < Math.min(90, Math.floor(columns * rows * 0.055)) ? Math.random() * 0.32 : 0.32 + Math.random() * 0.68;
+      return { x: Math.random() * source.width, y: Math.random() * source.height, phase: Math.random() * 7, depth, drift: 0.02 + depth * 0.42, size: 0.4 + depth * 1.7 };
+    });
+  };
+  resize();
+  window.addEventListener('resize', resize);
+  const draw = now => {
+    if (!output.isConnected || !document.body.classList.contains('bg-pattern-ascii-fireflies')) {
+      window.removeEventListener('resize', resize); output.remove(); return;
+    }
+    requestAnimationFrame(draw);
+    if (now - lastRender < 66) return;
+    lastRender = now; tick += _getEffectSpeed();
+    const W = source.width, H = source.height;
+    ctx.fillStyle = 'rgb(2,8,4)'; ctx.fillRect(0, 0, W, H);
+    const vortices = [
+      { x: W * (0.3 + Math.sin(tick * 0.002) * 0.08), y: H * (0.42 + Math.cos(tick * 0.0017) * 0.08), dir: 1 },
+      { x: W * (0.72 + Math.cos(tick * 0.0015) * 0.06), y: H * (0.62 + Math.sin(tick * 0.0022) * 0.07), dir: -1 },
+    ];
+    for (const fly of flies) {
+      const speed = 0.004 + fly.depth * 0.028;
+      fly.x += Math.sin(tick * speed + fly.phase) * fly.drift;
+      fly.y += Math.cos(tick * speed * 0.72 + fly.phase) * fly.drift * 0.55;
+      for (const vortex of vortices) {
+        const dx = fly.x - vortex.x, dy = fly.y - vortex.y, distance = Math.hypot(dx, dy) || 1;
+        const turn = Math.max(0, 1 - distance / (W * 0.25)) * (0.006 + fly.depth * 0.052) * vortex.dir;
+        fly.x += -dy / distance * turn; fly.y += dx / distance * turn;
+      }
+      if (fly.x < 0 || fly.x >= W || fly.y < 0 || fly.y >= H) { fly.x = Math.random() * W; fly.y = Math.random() * H; }
+      const pulse = (Math.sin(tick * (0.018 + fly.depth * 0.045) + fly.phase) + 1) / 2;
+      const brightness = 45 + Math.round((75 + fly.depth * 135) * pulse);
+      ctx.fillStyle = `rgb(${brightness},${brightness},${brightness})`;
+      ctx.beginPath(); ctx.arc(fly.x, fly.y, fly.size * (0.7 + pulse * 0.8), 0, Math.PI * 2); ctx.fill();
+    }
+    const pixels = ctx.getImageData(0, 0, W, H).data;
+    const lines = [];
+    for (let y = 0; y < rows; y++) {
+      let line = '';
+      for (let x = 0; x < columns; x++) {
+        let luminosity = 0;
+        for (let sampleY = 0; sampleY < 2; sampleY++) for (let sampleX = 0; sampleX < 2; sampleX++) luminosity += pixels[((y * 2 + sampleY) * W + x * 2 + sampleX) * 4];
+        luminosity /= 4;
+        line += ramp[Math.min(ramp.length - 1, Math.floor(luminosity / 256 * ramp.length))];
+      }
+      lines.push(line);
+    }
+    output.textContent = lines.join('\n');
+  };
+  requestAnimationFrame(draw);
 }
 
 // ── Petals — gentle falling flower petals ──
@@ -1893,8 +2097,9 @@ function _initPetals() {
     const c = getColor();
     const sz = _getEffectSize();
     petals.forEach(p => {
-      p.y += p.vy; p.rot += p.vr; p.drift += p.driftSpeed;
-      p.x += Math.sin(p.drift) * p.wobble;
+      const speedMult = _getEffectSpeed();
+      p.y += p.vy * speedMult; p.rot += p.vr * speedMult; p.drift += p.driftSpeed * speedMult;
+      p.x += Math.sin(p.drift) * p.wobble * speedMult;
       if (p.y > H + 15) Object.assign(p, makePetal());
       ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
       ctx.globalAlpha = 0.2;
@@ -1955,7 +2160,7 @@ function _initSparkles() {
     const c = getColor();
     const sizeMult = _getEffectSize();
     sparkles.forEach(s => {
-      s.phase += s.speed;
+      s.phase += s.speed * _getEffectSpeed();
       const twinkle = Math.sin(s.phase);
       const alpha = Math.max(0, twinkle) * 0.25 * s.life;
       const scale = 0.5 + Math.max(0, twinkle) * 0.5;
@@ -2029,10 +2234,11 @@ function _initEmbers() {
     const color = getColor();
     for (let i = embers.length - 1; i >= 0; i--) {
       const e = embers[i];
-      e.wobble += 0.03;
-      e.x += e.vx + Math.sin(e.wobble) * 0.5;
-      e.y += e.vy;
-      e.life++;
+      const speedMult = _getEffectSpeed();
+      e.wobble += 0.03 * speedMult;
+      e.x += (e.vx + Math.sin(e.wobble) * 0.5) * speedMult;
+      e.y += e.vy * speedMult;
+      e.life += speedMult;
       if (e.life > e.maxLife || e.y < -20) {
         embers.splice(i, 1);
         if (embers.length < 70) embers.push(makeEmber());
@@ -2073,7 +2279,7 @@ function _initEmbers() {
 
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
-                       applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
+                       applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize, applyBgEffectSpeed,
                        applyFrostedGlass,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
@@ -2087,6 +2293,11 @@ async function _initWithSync() {
     const serverTheme = await _loadFromServer();
     if (serverTheme && serverTheme.colors) {
       if (serverTheme.name === 'sakura') serverTheme.name = 'ume';
+      const replacement = { paper: 'monolith', copper: 'arcade', lavender: 'porcelain' };
+      if (replacement[serverTheme.name] && THEMES[replacement[serverTheme.name]]) {
+        serverTheme.name = replacement[serverTheme.name];
+        serverTheme.colors = { ...THEMES[serverTheme.name] };
+      }
       Storage.setJSON(LS_KEY, serverTheme);
       applyColors(serverTheme.colors);
     }

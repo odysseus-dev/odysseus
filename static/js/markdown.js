@@ -4,7 +4,7 @@
  * Markdown rendering and content processing utilities
  */
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { splitTableRow } from './markdown/tableRow.js';
 import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
 
@@ -134,7 +134,7 @@ function _scheduleMathFlush() {
 function safeLinkUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (url.startsWith('#')) {
-    return /^#[A-Za-z0-9_-]*$/.test(url) ? url : '';
+    return /^#[A-Za-z0-9_.~%:@-]*$/.test(url) ? url : '';
   }
   try {
     const parsed = new URL(url, window.location.origin);
@@ -155,6 +155,143 @@ function linkHtml(text, url) {
     return `<a href="${safeUrl}" class="chat-link">${safeText}</a>`;
   }
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
+}
+
+function linkifyPlainEmailUidLines(src) {
+  return String(src || '').split('\n').map((line) => {
+    if (!/\bUID:?\s*\d+\b/i.test(line)) return line;
+    if (line.includes('#email-') || /\]\s*\(/.test(line) || line.includes('|')) return line;
+    const match = line.match(/^(\s*(?:[-*]\s+|\d+[.)]\s+)?)(.{3,220}?)(\s+(?:--|—|-)\s+(?=(?:[Ff]rom\b|[A-Z][a-z]{2}\s+\d|20\d{2}|\b[Uu][Ii][Dd]\b|[A-Z][A-Za-z]+ [A-Z][A-Za-z]+[, ])).{0,320}?\b[Uu][Ii][Dd]:?\s*(\d+)\b.*)$/);
+    if (!match) return line;
+    const [, prefix, rawLabel, rest, uid] = match;
+    const label = rawLabel.trim().replace(/^\*\*([\s\S]+)\*\*$/, '$1');
+    if (!label || /\bUID:?\s*\d+\b/i.test(label)) return line;
+    return `${prefix}[${label}](#email-${uid})${rest}`;
+  }).join('\n');
+}
+
+function linkifyRawEmailToolBlocks(src) {
+  const lines = String(src || '').split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^(\s*\d+\.\s+)\*\*([^\n*]+?)\*\*\s*$/);
+    if (!match || lines[i].includes('#email-') || /\]\s*\(/.test(lines[i])) continue;
+    let uid = '';
+    for (let j = i + 1; j < Math.min(lines.length, i + 10); j += 1) {
+      if (/^\s*\d+\.\s+\*\*/.test(lines[j])) break;
+      const uidMatch = lines[j].match(/^\s*UID:\s*(\d+)\b/i);
+      if (uidMatch) {
+        uid = uidMatch[1];
+        break;
+      }
+    }
+    if (!uid) continue;
+    const label = match[2].trim();
+    if (!label) continue;
+    lines[i] = `${match[1]}[${label}](#email-${uid})`;
+  }
+  return lines.join('\n');
+}
+
+// Read-email responses are often rendered as an unnumbered `Email: ...`
+// heading followed by UID metadata. Make that heading open the same inbox
+// message as list-email rows, including while the response is still live.
+function linkifyRawEmailReadBlocks(src) {
+  const lines = String(src || '').split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^(\s*Email:\s+)(?!\[)([^\n]+?)\s*$/i);
+    if (!match) continue;
+    let uid = '';
+    for (let j = i + 1; j < Math.min(lines.length, i + 14); j += 1) {
+      const uidMatch = lines[j].match(/^\s*(?:\*\*)?UID:?(?:\*\*)?\s*(\d+)\b/i);
+      if (uidMatch) {
+        uid = uidMatch[1];
+        break;
+      }
+    }
+    if (uid) lines[i] = `${match[1]}[${match[2]}](#email-${uid})`;
+  }
+  return lines.join('\n');
+}
+
+function linkifyRawCookbookLists(src) {
+  return String(src || '').split('\n').map(line => {
+    if (/\]\(#cookbook-/.test(line)) return line;
+    const session = line.match(/^(\s*[-*]\s+)([^:\n]{2,160})(:\s+.*?\bsession:\s*)([A-Za-z0-9_.-]+)(\).*)$/i);
+    if (session) {
+      const [, prefix, label, middle, sessionId, suffix] = session;
+      return `${prefix}[${label}](#cookbook-session-${sessionId})${middle}${sessionId}${suffix}`;
+    }
+    const model = line.match(/^(\s*[-*]\s+)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(\s+(?:—|-).*)$/);
+    if (model) {
+      const repo = model[2].replace('/', '~');
+      return `${model[1]}[${model[2]}](#cookbook-model-${repo})${model[3]}`;
+    }
+    return line;
+  }).join('\n');
+}
+
+// Older Ajax skill inventories were saved with plain slugs. Make those
+// existing chat rows open the same Skills panel as current linked results.
+function linkifyPlainSkillLists(src) {
+  let inSkills = false;
+  return String(src || '').split('\n').map(line => {
+    if (/^Skills \(\d+\):\s*$|^Skill matches \(\d+\):\s*$/.test(line)) {
+      inSkills = true;
+      return line;
+    }
+    if (!inSkills) return line;
+    if (/^\*\*(?:Published|Drafts)\*\*\s*$/.test(line) || !line.trim()) return line;
+    if (/^#{1,6}\s|^[A-Za-z][^\n]*:\s*$/.test(line)) {
+      inSkills = false;
+      return line;
+    }
+    if (/\]\(#skill-/.test(line)) return line;
+    const row = line.match(/^(\s*-\s+)(?:\*\*)?([A-Za-z0-9][A-Za-z0-9._-]*)(?:\*\*)?(?=\s|$)(.*)$/);
+    if (!row || row[2] === '...and') return line;
+    return `${row[1]}[${row[2]}](#skill-${encodeURIComponent(row[2])})${row[3]}`;
+  }).join('\n');
+}
+
+function flattenLegacyNoteMoreDetails(src) {
+  return String(src || '').replace(
+    /<details>\s*<summary>\s*(\.\.\.and\s+\d+\s+more\s+notes?)\s*<\/summary>[\s\S]*?<\/details>/gi,
+    (_match, label) => String(label || '').trim(),
+  );
+}
+
+const _moreListPayloads = new Map();
+
+function extractMoreListPayloads(src) {
+  let lastByKind = {};
+  return String(src || '').replace(
+    /<!--\s*ody-more-(notes|skills|memories|events|sessions):([A-Za-z0-9_-]{6,40})\s*\n([\s\S]*?)\n\s*-->/g,
+    (_match, kind, id, payload) => {
+      _moreListPayloads.set(`${kind}:${id}`, String(payload || '').trim());
+      lastByKind[kind] = id;
+      return '';
+    },
+  ).replace(
+    /(^|\n)(\.\.\.and\s+\d+\s+more\s+notes?)\b/g,
+    (match, prefix, label) => lastByKind.notes ? `${prefix}[${label}](#notes-more-${lastByKind.notes})` : match,
+  ).replace(
+    /(^|\n)(\.\.\.and\s+\d+\s+more\s+skills?)\b/g,
+    (match, prefix, label) => lastByKind.skills ? `${prefix}[${label}](#skills-more-${lastByKind.skills})` : match,
+  ).replace(
+    /(^|\n)(\.\.\.and\s+\d+\s+more\s+saved\s+memories?)\.?\b/g,
+    (match, prefix, label) => lastByKind.memories ? `${prefix}[${label}](#memories-more-${lastByKind.memories})` : match,
+  ).replace(
+    /(^|\n)(\.\.\.and\s+\d+\s+more\s+events?)\b/g,
+    (match, prefix, label) => lastByKind.events ? `${prefix}[${label}](#events-more-${lastByKind.events})` : match,
+  ).replace(
+    /(^|\n)(\.\.\.and\s+\d+\s+more\s+(?:chats?|sessions?))\b/g,
+    (match, prefix, label) => lastByKind.sessions ? `${prefix}[${label}](#sessions-more-${lastByKind.sessions})` : match,
+  );
+}
+
+function moreListPayloadFromHref(href) {
+  const match = String(href || '').match(/^#(notes|skills|memories|events|sessions)-more-([A-Za-z0-9_-]{6,40})$/);
+  if (!match) return '';
+  return _moreListPayloads.get(`${match[1]}:${match[2]}`) || '';
 }
 
 function imageHtml(alt, url, title) {
@@ -565,16 +702,18 @@ export function svgifyEmoji(html, opts) {
  * the "View <label>" / "Hide <label>" text via data-label. Used e.g. for the
  * vision-model image description on a user's photo message.
  */
-export function createCollapsible(contentMarkdown, label = 'details') {
+export function createCollapsible(contentMarkdown, label = 'details', expanded = false) {
   const id = `collapse-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   const safeLabel = escapeHtml(label);
+  const stateClass = expanded ? ' expanded' : '';
+  const stateLabel = expanded ? `Hide ${safeLabel}` : `View ${safeLabel}`;
   return `
     <div class="thinking-section">
       <div class="thinking-header" data-thinking-id="${id}">
-        <div class="thinking-header-left"><span data-label="${safeLabel}">View ${safeLabel}</span></div>
-        <div style="display:flex;align-items:center;gap:6px;"><span class="thinking-toggle" id="${id}-toggle"></span></div>
+        <div class="thinking-header-left"><span data-label="${safeLabel}">${stateLabel}</span></div>
+        <div style="display:flex;align-items:center;gap:6px;"><span class="thinking-toggle${stateClass}" id="${id}-toggle"></span></div>
       </div>
-      <div class="thinking-content" id="${id}"><div class="thinking-content-inner">${mdToHtml(contentMarkdown)}</div></div>
+      <div class="thinking-content${stateClass}" id="${id}"><div class="thinking-content-inner">${mdToHtml(contentMarkdown)}</div></div>
     </div>`;
 }
 
@@ -606,12 +745,146 @@ export function processWithThinking(text) {
 /**
  * Convert markdown to HTML
  */
+function svgThemeCss() {
+  const defaults = {
+    '--bg': '#282c34',
+    '--panel': '#111111',
+    '--fg': '#9cdef2',
+    '--border': '#355a66',
+    '--accent': '#e06c75',
+    '--muted': '#888888',
+    '--success': '#4caf50',
+    '--warning': '#f0ad4e',
+  };
+  const sources = {
+    '--bg': ['--bg'],
+    '--panel': ['--panel'],
+    '--fg': ['--fg'],
+    '--border': ['--border'],
+    '--accent': ['--accent', '--red'],
+    '--muted': ['--color-muted', '--color-muted-alt'],
+    '--success': ['--color-success', '--green'],
+    '--warning': ['--color-warning', '--warn'],
+  };
+  let computed = null;
+  if (typeof document !== 'undefined' && document.documentElement && typeof getComputedStyle === 'function') {
+    computed = getComputedStyle(document.documentElement);
+  }
+  const safeColor = (value, fallback) => {
+    const candidate = String(value || '').trim();
+    if (!candidate || candidate.length > 120 || /[<>{};"']/.test(candidate)) return fallback;
+    if (typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('color', candidate)) return fallback;
+    return candidate;
+  };
+  return Object.entries(sources).map(([target, names]) => {
+    const resolved = computed
+      ? names.map(name => computed.getPropertyValue(name)).find(value => String(value || '').trim())
+      : '';
+    return `${target}:${safeColor(resolved, defaults[target])}`;
+  }).join(';');
+}
+
+function renderSvgSandbox(source) {
+  const cleaned = String(source || '').trim();
+  const viewBox = cleaned.match(/\bviewBox\s*=\s*["']\s*[-+\d.]+\s+[-+\d.]+\s+([-+\d.]+)\s+([-+\d.]+)\s*["']/i);
+  const width = viewBox ? Number(viewBox[1]) : 16;
+  const height = viewBox ? Number(viewBox[2]) : 9;
+  const ratio = Number.isFinite(width / height) && width > 0 && height > 0
+    ? Math.max(0.5, Math.min(3, width / height)) : (16 / 9);
+  // Extract only a strict text-only SVG title. Do not reparse model output as DOM.
+  // Nested or malformed title markup falls back to the generic accessible label.
+  const decodeSvgTitleEntities = value => String(value || '').replace(
+    /&(?:#([0-9]+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi,
+    (entity, decimal, hex, named) => {
+      if (named) {
+        return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[named.toLowerCase()];
+      }
+      const codePoint = Number.parseInt(decimal || hex, decimal ? 10 : 16);
+      if (
+        !Number.isInteger(codePoint)
+        || codePoint < 0
+        || codePoint > 0x10ffff
+        || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ) {
+        return '\uFFFD';
+      }
+      return String.fromCodePoint(codePoint);
+    },
+  );
+
+  const titleMatch = /<title(?:\s[^<>]*)?>([^<>]*)<\/title\s*>/i.exec(cleaned);
+  const extractedTitle = titleMatch
+    ? decodeSvgTitleEntities(titleMatch[1]).trim()
+    : '';
+  const title = extractedTitle || 'Visual explanation';
+  const csp = "default-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; style-src 'unsafe-inline'";
+  const srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>:root{${svgThemeCss()}}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);overflow:hidden}body{display:grid;place-items:center}svg{display:block;width:100%;height:100%;max-width:100%;background:var(--bg);color:var(--fg)}</style></head><body>${cleaned}</body></html>`;
+  return `<figure class="chat-svg-visual"><iframe class="chat-svg-preview" sandbox="" referrerpolicy="no-referrer" loading="lazy" title="${escapeHtml(title)}" style="aspect-ratio:${ratio}" srcdoc="${escapeHtml(srcdoc)}"></iframe></figure>`;
+}
+
+function replaceRawSvgBlocks(source, makePlaceholder) {
+  const input = String(source || '');
+  const lower = input.toLowerCase();
+  let cursor = 0;
+  let output = '';
+
+  const isTagBoundary = index => index >= lower.length || /[\s/>]/.test(lower[index]);
+  while (cursor < input.length) {
+    let start = lower.indexOf('<svg', cursor);
+    while (start !== -1 && !isTagBoundary(start + 4)) {
+      start = lower.indexOf('<svg', start + 4);
+    }
+    if (start === -1) {
+      output += input.slice(cursor);
+      break;
+    }
+
+    let depth = 1;
+    let scan = start + 4;
+    let end = -1;
+    while (depth > 0) {
+      let nextOpen = lower.indexOf('<svg', scan);
+      while (nextOpen !== -1 && !isTagBoundary(nextOpen + 4)) {
+        nextOpen = lower.indexOf('<svg', nextOpen + 4);
+      }
+      const nextClose = lower.indexOf('</svg', scan);
+      if (nextClose === -1) break;
+      if (nextOpen !== -1 && nextOpen < nextClose) {
+        depth += 1;
+        scan = nextOpen + 4;
+        continue;
+      }
+      const closeBoundary = nextClose + 5;
+      if (!isTagBoundary(closeBoundary)) {
+        scan = closeBoundary;
+        continue;
+      }
+      const closeEnd = lower.indexOf('>', closeBoundary);
+      if (closeEnd === -1) break;
+      depth -= 1;
+      scan = closeEnd + 1;
+      if (depth === 0) end = scan;
+    }
+
+    if (end === -1) {
+      output += input.slice(cursor, start + 4);
+      cursor = start + 4;
+      continue;
+    }
+    output += input.slice(cursor, start);
+    output += makePlaceholder(input.slice(start, end));
+    cursor = end;
+  }
+  return output;
+}
+
 export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
   const inlineCodeBlocks = [];
   const mermaidBlocks = [];
-  let s = (src ?? '');
+  const svgBlocks = [];
+  let s = extractMoreListPayloads(flattenLegacyNoteMoreDetails(src ?? ''));
 
   // Extract fenced code blocks before any markdown/HTML preservation passes.
   // Otherwise placeholders from the allowed-HTML sanitizer (e.g.
@@ -624,6 +897,16 @@ export function mdToHtml(src, opts) {
       .replace(/[ \t]+$/gm, '')
       .replace(/^\s*\n+/, '')
       .replace(/\n+\s*$/g, '');
+
+    // Visual-explainer skills emit a normal fenced SVG block. Render it
+    // immediately in a unique-origin sandbox. The iframe CSP blocks scripts
+    // and every network fetch;
+    // malformed SVG remains confined to the frame instead of entering chat DOM.
+    if (lang && lang.toLowerCase() === 'svg') {
+      const placeholder = `___SVG_BLOCK_${svgBlocks.length}___`;
+      svgBlocks.push(renderSvgSandbox(cleaned));
+      return placeholder;
+    }
 
     // Mermaid diagrams: render as diagram instead of code block
     if (lang && lang.toLowerCase() === 'mermaid') {
@@ -655,9 +938,18 @@ export function mdToHtml(src, opts) {
   // ___ALLOWED_HTML_ placeholder — corrupting the command. The old inline-code
   // pass ran after those passes, too late to protect it.
   s = s.replace(/`([^`]+?)`/g, (match, code) => {
-    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_')) return match;
+    if (code.startsWith('___CODE_BLOCK_') || code.startsWith('___MERMAID_BLOCK_') || code.startsWith('___SVG_BLOCK_')) return match;
     const placeholder = `___INLINE_CODE_${inlineCodeBlocks.length}___`;
     inlineCodeBlocks.push(`<code>${escapeHtml(code)}</code>`);
+    return placeholder;
+  });
+
+  // Some models occasionally omit the requested ```svg fence. Treat a
+  // complete raw SVG element as the same visual artifact, while fenced and
+  // inline-code examples remain protected by the extraction passes above.
+  s = replaceRawSvgBlocks(s, rawSvg => {
+    const placeholder = `___SVG_BLOCK_${svgBlocks.length}___`;
+    svgBlocks.push(renderSvgSandbox(rawSvg));
     return placeholder;
   });
 
@@ -666,7 +958,7 @@ export function mdToHtml(src, opts) {
   // right but slip into other formats when listing many in a table.
   // These regexes upgrade the broken forms to proper markdown links so
   // the standard `[text](url)` handler below picks them up.
-  const ANCHOR_KIND = '(?:session|document|note|image|email|event|task|skill|research)';
+  const ANCHOR_KIND = '(?:session|document|note|image|email|event|task|skill|research|cookbook)';
   // Case A: `[Name] [#kind-id]` — agent put the URL in brackets, often
   // in a table cell next to the label. Pair them.
   s = s.replace(
@@ -692,6 +984,20 @@ export function mdToHtml(src, opts) {
     /(^|[^\[(])#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi,
     '$1[#session-$2](#session-$2)',
   );
+  // Final assistant summaries sometimes arrive as plain text rows with a UID
+  // instead of the preferred `[title](#email-uid)` shape. Repair those before
+  // normal markdown links are rendered so live and refreshed chat match.
+  s = linkifyRawEmailToolBlocks(s);
+  s = linkifyRawEmailReadBlocks(s);
+  s = linkifyPlainEmailUidLines(s);
+  s = linkifyRawCookbookLists(s);
+  s = linkifyPlainSkillLists(s);
+  // Older saved memory summaries used a plain-text instruction. Keep those
+  // actionable too, using the existing Memory panel anchor handler.
+  s = s.replace(
+    /(^|\n)(\.\.\.and \d+ more saved memories\. )Open Memory to browse all\./g,
+    '$1$2[Open Memory to browse all](#memory).',
+  );
 
   // Convert markdown images before links so ![alt](url) does not become
   // literal "!" plus a normal link.
@@ -701,8 +1007,9 @@ export function mdToHtml(src, opts) {
 
   // Convert markdown links [text](url) to clickable links
   // Internal #hash links navigate in-page; external links open in new tab
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
-    return linkHtml(text, url);
+  s = s.replace(/\[((?:\\.|[^\]\\\n])+)\]\(([^)]+)\)/g, (match, text, url) => {
+    const label = text.replace(/\\([\[\]])/g, '$1');
+    return linkHtml(label, url);
   });
 
   // Autolink bare URLs (http/https). Skips URLs already inside <a> tags
@@ -729,11 +1036,10 @@ export function mdToHtml(src, opts) {
     }
   );
 
-  // Extract <details>...</details> blocks and replace with placeholders
-  // Default to open so agent output is visible
+  // Extract <details>...</details> blocks and replace with placeholders.
   s = s.replace(/<details>([\s\S]*?)<\/details>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
-    allowedHtmlBlocks.push(sanitizeAllowedHtml(match.replace(/<details>/i, '<details open>')));
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
     return placeholder;
   });
 
@@ -863,11 +1169,11 @@ export function mdToHtml(src, opts) {
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_|___SVG_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {
-    if (content.includes('___CODE_BLOCK_') || content.includes('___ALLOWED_HTML_') || content.includes('___MATH_BLOCK_') || content.includes('___MERMAID_BLOCK_')) return match;
+    if (content.includes('___CODE_BLOCK_') || content.includes('___ALLOWED_HTML_') || content.includes('___MATH_BLOCK_') || content.includes('___MERMAID_BLOCK_') || content.includes('___SVG_BLOCK_')) return match;
     const withLineBreaks = content.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
     return `<p>${withLineBreaks}</p>`;
   });
@@ -896,6 +1202,11 @@ export function mdToHtml(src, opts) {
   // Restore mermaid diagram blocks
   mermaidBlocks.forEach((block, index) => {
     s = s.replace(`___MERMAID_BLOCK_${index}___`, () => block);
+  });
+
+  // Restore isolated inline SVG previews before ordinary code blocks.
+  svgBlocks.forEach((block, index) => {
+    s = s.replace(`___SVG_BLOCK_${index}___`, () => block);
   });
 
   // CRITICAL: Restore code blocks at the end
@@ -1047,6 +1358,55 @@ function _setThinkingExpanded(content, toggle, header, expanded) {
 
 // Delegated click handler for thinking toggle (CSP-safe, no inline onclick)
 document.addEventListener('click', function(e) {
+  const listMore = e.target.closest?.('a.chat-link[href^="#notes-more-"], a.chat-link[href^="#skills-more-"], a.chat-link[href^="#memories-more-"], a.chat-link[href^="#events-more-"], a.chat-link[href^="#sessions-more-"]');
+  if (listMore) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const payload = moreListPayloadFromHref(listMore.getAttribute('href') || '');
+    if (!payload.trim()) return;
+    const paragraph = listMore.closest('p');
+    const insertionPoint = paragraph || listMore;
+    if (!insertionPoint.parentElement) return;
+
+    let expanded = insertionPoint.previousElementSibling;
+    const isOpen = expanded?.classList.contains('more-list-expanded');
+    if (expanded?.classList.contains('more-list-expanded')) {
+      if (isOpen) {
+        expanded.style.maxHeight = `${expanded.scrollHeight}px`;
+        requestAnimationFrame(() => {
+          expanded.classList.remove('is-open');
+          expanded.style.maxHeight = '0px';
+        });
+        listMore.setAttribute('aria-expanded', 'false');
+        listMore.textContent = listMore.dataset.expandLabel || listMore.textContent;
+      } else {
+        const content = expanded.querySelector('.more-list-expanded-content');
+        listMore.textContent = 'Show less';
+        listMore.setAttribute('aria-expanded', 'true');
+        expanded.classList.add('is-open');
+        expanded.style.maxHeight = `${content?.scrollHeight || expanded.scrollHeight}px`;
+      }
+      return;
+    }
+
+    expanded = document.createElement('div');
+    expanded.className = 'more-list-expanded';
+    const content = document.createElement('div');
+    content.className = 'more-list-expanded-content';
+    content.innerHTML = mdToHtml(payload);
+    expanded.appendChild(content);
+    insertionPoint.insertAdjacentElement('beforebegin', expanded);
+
+    listMore.dataset.expandLabel = listMore.textContent;
+    listMore.textContent = 'Show less';
+    listMore.setAttribute('aria-expanded', 'true');
+    requestAnimationFrame(() => {
+      expanded.classList.add('is-open');
+      expanded.style.maxHeight = `${content.scrollHeight}px`;
+    });
+    return;
+  }
+
   const header = e.target.closest('.thinking-header[data-thinking-id]');
   if (!header) return;
   const id = header.dataset.thinkingId;

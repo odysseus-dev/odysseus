@@ -72,6 +72,7 @@ export function buildMergedMaskCanvas(layers, imgW, imgH) {
   for (const ly of layers) {
     if (!ly.masks || !ly.masks.length) continue;
     for (const mk of ly.masks) {
+      if (mk.mode === 'layer') continue;
       if (!mk.visible) continue;
       if (!mk.canvas || !mk.canvas.width || !mk.canvas.height) continue;
       ctx.drawImage(mk.canvas, 0, 0);
@@ -80,4 +81,36 @@ export function buildMergedMaskCanvas(layers, imgW, imgH) {
   }
   ctx.globalCompositeOperation = 'source-over';
   return anyMask ? out : null;
+}
+
+
+/** Apply visible true layer masks to an already-adjusted layer canvas. */
+export function renderWithLayerMasks(source, layer, layerOffset = { x: 0, y: 0 }) {
+  const masks = (layer?.masks || []).filter(mask => mask.mode === 'layer' && mask.visible !== false);
+  if (!source || masks.length === 0) return source;
+  const out = document.createElement('canvas');
+  out.width = source.width;
+  out.height = source.height;
+  const ctx = out.getContext('2d');
+  ctx.drawImage(source, 0, 0);
+  ctx.globalCompositeOperation = 'destination-in';
+  for (const mask of masks) {
+    ctx.globalAlpha = Number.isFinite(Number(mask.density))
+      ? Math.max(0, Math.min(1, Number(mask.density)))
+      : 1;
+    const feather = Number.isFinite(Number(mask.feather))
+      ? Math.max(0, Math.min(200, Number(mask.feather)))
+      : 0;
+    ctx.filter = feather > 0 ? `blur(${feather}px)` : 'none';
+    if (mask.space === 'document') {
+      ctx.drawImage(mask.canvas, -(layerOffset.x || 0), -(layerOffset.y || 0));
+    } else {
+      const offset = mask.offset && typeof mask.offset === 'object' ? mask.offset : { x: 0, y: 0 };
+      ctx.drawImage(mask.canvas, Number(offset.x) || 0, Number(offset.y) || 0);
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+  return out;
 }

@@ -5,10 +5,25 @@
 // content), publish/draft toggle, delete, and "run as slash" via the
 // /<skill-name> path.
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import * as spinnerModule from './spinner.js';
-import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import {
+  bindMenuDismiss,
+  dismissOrRemove,
+  bindExpandedCardDismiss,
+  unbindExpandedCardDismiss,
+} from './escMenuStack.js';
+import { SELECT_MENU_ICON } from './actionMenuOrder.js';
 import { topPortalZ } from './toolWindowZOrder.js';
+import {
+  auditNumber,
+  filterSkillsByQuickFilter,
+  necessityKind,
+  skillIsApproved,
+  skillNeedsReview,
+  skillSavedTurnsValue,
+  skillsSummaryMetrics,
+} from './skillsMetrics.js?v=20260908autonomousskills1';
 
 const API = window.location.origin;
 let skills = [];
@@ -37,8 +52,8 @@ const _mdCache = new Map();
 async function _fetchSkillMarkdown(name) {
   if (_mdCache.has(name)) return _mdCache.get(name);
   const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}/markdown`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
   const md = data.markdown || '';
   _mdCache.set(name, md);
   return md;
@@ -96,6 +111,8 @@ export async function loadSkills(cascade = false) {
     // a write-then-read race), and rendering both made the duplicate
     // detector mark BOTH entries as the "recommended" keeper.
     const _seen = new Set();
+    // Keep tracked built-ins in the client state. They render in their own
+    // read-only section below the user's editable skills.
     skills = (data.skills || []).filter(sk => {
       const k = String(sk?.name || sk?.id || '').toLowerCase();
       if (!k) return true;
@@ -103,7 +120,7 @@ export async function loadSkills(cascade = false) {
       _seen.add(k);
       return true;
     });
-    _loadSkillApprovalThreshold();
+    await _loadSkillApprovalThreshold();
     // Built-in capabilities are no longer surfaced in the Skills menu.
     loaded = true;
     renderSkillsList();
@@ -127,52 +144,123 @@ export async function loadSkills(cascade = false) {
   return _loadPromise;
 }
 
-function _focusSkillRow(name) {
-  setTimeout(() => {
-    const card = document.querySelector(`.skill-card[data-skill-name="${CSS.escape(name)}"]`);
-    if (!card) return;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+function _resetSkillDeepLinkFilters() {
+  const search = document.getElementById('skills-search');
+  if (search && search.value) search.value = '';
+  _showDraftsOnly = false;
+  _showPublishedOnly = false;
+  _showBinnedOnly = false;
+  _confMax = null;
+  // Keep the inventory visible when opening the launcher or following a
+  // deep link; status chips remain available for narrowing to Approved.
+  _skillsQuickFilter = 'all';
+  _skillTagFilter = null;
+  const sort = document.getElementById('skills-sort');
+  if (sort && String(sort.value || '').startsWith('filter:')) {
+    sort.value = `sort:${_skillsSort || 'confidence'}`;
+  }
+}
+
+function _decodeSkillAnchorName(name) {
+  try { return decodeURIComponent(String(name || '').replace(/\+/g, ' ')).trim(); }
+  catch (_) { return String(name || '').trim(); }
+}
+
+function _focusSkillRow(name, attempt = 0) {
+  const targetName = _decodeSkillAnchorName(name);
+  if (!targetName) return;
+  const focus = async () => {
+    const card = document.querySelector(`.skill-card[data-skill-name="${CSS.escape(targetName)}"]`);
+    if (!card) {
+      if (attempt < 12) setTimeout(() => _focusSkillRow(targetName, attempt + 1), 120);
+      return;
+    }
+    card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
     card.classList.add('skill-row-flash');
     setTimeout(() => card.classList.remove('skill-row-flash'), 2000);
     // Expand it so the linked skill opens to its SKILL.md directly.
-    _expandSkillCard(card, name);
-  }, 200);
+    if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, targetName);
+  };
+  if (attempt === 0) requestAnimationFrame(focus);
+  else focus();
 }
 
-// Open the Memory modal → Skills tab → focus a specific skill row.
+// Open the Skills launcher → focus a specific skill row.
 // Used by the chat anchor-link delegate ([name](#skill-<name>)).
 export function openSkill(name) {
-  _pendingFocusSkill = name || null;
-  // Open the memory modal if not already open.
-  const memBtn = document.getElementById('tool-memory-btn');
-  if (memBtn) memBtn.click();
-  // Switch to the skills tab (triggers lazy loadSkills()).
+  const targetName = _decodeSkillAnchorName(name);
+  _pendingFocusSkill = targetName || null;
+  _resetSkillDeepLinkFilters();
+  const skillsBtn = document.getElementById('tool-skills-btn');
+  if (skillsBtn) skillsBtn.click();
   setTimeout(() => {
     const tab = document.querySelector('.memory-tab[data-memory-tab="skills"]');
     if (tab) tab.click();
     else loadSkills();  // fallback if tab structure differs
+    Promise.resolve(loadSkills())
+      .catch(() => {})
+      .finally(() => _focusSkillRow(targetName || _pendingFocusSkill));
   }, 120);
 }
 
 let _skillsSort = 'confidence';
 let _showDraftsOnly = false;
 let _showPublishedOnly = false;
+let _showBinnedOnly = false;
 let _confMax = null;   // confidence ceiling filter (%, e.g. 90 = show ≤90%); null = off
+let _skillsQuickFilter = 'all';
+let _skillTagFilter = null;
 let _selectMode = false;
 const _selectedNames = new Set();
 let _skillApprovalThreshold = 0.85;
 
 function updateCount() {
+  const userSkills = skills.filter(sk => sk?.source !== 'builtin');
   const el = document.getElementById('skills-count');
-  if (el) el.textContent = skills.length || '0';
+  if (el) el.textContent = userSkills.length || '0';
   const elH = document.getElementById('skills-count-h2');
-  if (elH) elH.textContent = skills.length + ' skill' + (skills.length === 1 ? '' : 's');
+  if (elH) elH.textContent = String(userSkills.length || 0);
+  _renderSkillsSummary();
+}
+
+function _summaryChip(key, label, value, title) {
+  const active = (_skillsQuickFilter === key || (key === 'all' && !_skillsQuickFilter)) ? ' active' : '';
+  const count = value === null || value === undefined ? '' : `<strong>${esc(String(value))}</strong>`;
+  return `<button type="button" class="skills-summary-chip${active}" data-skill-quick="${esc(key)}" title="${esc(title)}"><span>${esc(label)}</span>${count}</button>`;
+}
+
+function _renderSkillsSummary() {
+  const el = document.getElementById('skills-summary');
+  if (!el) return;
+  const userSkills = skills.filter(sk => sk?.source !== 'builtin');
+  if (!skills.length) {
+    el.innerHTML = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  const m = skillsSummaryMetrics(userSkills, _skillApprovalThreshold);
+  const chips = [
+    _summaryChip('all', 'All', skills.length, 'Show all skills'),
+    _summaryChip('builtin', 'Built-in', skills.length - userSkills.length, 'Shipped procedures'),
+    _summaryChip('approved', 'Approved', m.approved, 'Skills approved for use'),
+    _summaryChip('draft', 'Draft', userSkills.length - m.approved, 'Unapproved and archived skills; automatic review handles eligible drafts'),
+  ];
+  el.innerHTML = chips.join('');
 }
 
 function _sortSkills(list) {
   const arr = list.slice();
   if (_skillsSort === 'confidence') {
     arr.sort((a, b) => (b.confidence || 0) - (a.confidence || 0) || (a.name || '').localeCompare(b.name || ''));
+  } else if (_skillsSort === 'saved-turns') {
+    arr.sort((a, b) => {
+      const bt = auditNumber(b, 'saved_turns');
+      const at = auditNumber(a, 'saved_turns');
+      return (bt ?? -Infinity) - (at ?? -Infinity)
+        || (b.confidence || 0) - (a.confidence || 0)
+        || (a.name || '').localeCompare(b.name || '');
+    });
   } else if (_skillsSort === 'uses') {
     arr.sort((a, b) => (b.uses || 0) - (a.uses || 0) || (a.name || '').localeCompare(b.name || ''));
   } else if (_skillsSort === 'recent') {
@@ -181,6 +269,36 @@ function _sortSkills(list) {
     arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }
   return arr;
+}
+
+// Keep detected duplicate groups together so the recommended keeper is easy
+// to compare with the alternatives, regardless of the selected sort order.
+function _groupDuplicateSkills(list) {
+  const meta = _duplicateMeta(list);
+  if (!meta.size) return list;
+  const groups = new Map();
+  const firstIndex = new Map();
+  const ungrouped = [];
+  list.forEach((sk, index) => {
+    const name = sk.name || sk.id;
+    const dm = meta.get(name);
+    if (!dm) {
+      ungrouped.push({ sk, index });
+      return;
+    }
+    if (!groups.has(dm.group)) groups.set(dm.group, []);
+    groups.get(dm.group).push({ sk, index, keep: dm.keep });
+    if (!firstIndex.has(dm.group)) firstIndex.set(dm.group, index);
+  });
+  const blocks = [
+    ...ungrouped.map(item => ({ index: item.index, items: [item.sk] })),
+    ...[...groups.entries()].map(([group, items]) => ({
+      index: firstIndex.get(group),
+      items: items.sort((a, b) => Number(b.keep) - Number(a.keep) || a.index - b.index).map(item => item.sk),
+    })),
+  ];
+  blocks.sort((a, b) => a.index - b.index);
+  return blocks.flatMap(block => block.items);
 }
 
 function _matches(sk, query) {
@@ -194,18 +312,30 @@ function _matches(sk, query) {
   );
 }
 
+function _skillTagPills(sk) {
+  return [...new Set((sk?.tags || []).map(t => String(t || '').trim()).filter(Boolean))]
+    .map(tag => `<span class="memory-cat-badge skill-tag-pill" title="Skill tag">${esc(tag)}</span>`)
+    .join('');
+}
+
+function _renderSkillTagChips() {
+  _skillTagFilter = null;
+}
+
 function _statusPill(sk) {
   const s = sk.status || (sk._legacy ? 'legacy' : 'draft');
-  if (s === 'published') return '<span class="memory-cat-badge skill-status-pill" data-status="published" style="background:color-mix(in srgb, var(--accent, #4ade80) 30%, transparent)">published</span>';
+  if (s === 'published') return '<span class="memory-cat-badge skill-status-pill skill-status-published" data-status="published" title="Published" aria-label="Published"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span>';
   if (s === 'draft')     return '<span class="memory-cat-badge skill-status-pill" data-status="draft" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">draft</span>';
+  if (s === 'binned')   return '<span class="memory-cat-badge skill-status-pill skill-status-bin" data-status="binned" title="Moved to bin after audit">bin</span>';
   return `<span class="memory-cat-badge skill-status-pill" data-status="${esc(s)}" style="opacity:0.6">${esc(s)}</span>`;
 }
 
-// Show a "teacher" badge for skills written by the auto-escalation
-// teacher loop. Lets the user tell at-a-glance which procedures were
-// hand-authored vs auto-generated so they can audit (and demote /
-// edit / publish) before trusting them.
+// Surface skill provenance on the card. Shipped reusable skills use the same
+// badge as built-in tasks; teacher-generated skills retain their audit hint.
 function _sourcePill(sk) {
+  if (sk.source === 'builtin') {
+    return '<span class="task-builtin-badge" title="Built-in skill">built-in</span>';
+  }
   if (sk.source !== 'teacher-escalation') return '';
   const teacher = sk.teacher_model || 'teacher';
   return `<span class="memory-cat-badge" title="Created by teacher escalation: ${esc(teacher)}" style="background:color-mix(in srgb, var(--color-warning, #f0ad4e) 22%, transparent);">teacher-created</span>`;
@@ -297,39 +427,28 @@ function _duplicateMeta(list) {
 }
 
 function _auditModelPills(sk) {
+  if (sk.source === 'builtin') return '';
   const worker = sk.audit_worker_model || '';
   const teacher = sk.audit_teacher_model || '';
-  let html = '';
-  if (worker) {
-    html += `<span class="memory-cat-badge skill-model-pill skill-model-student" title="Last audited by default audit model: ${esc(worker)}">audit</span>`;
+  const verdict = String(sk.audit_verdict || '').toLowerCase();
+  if (!verdict) return '<span class="memory-cat-badge skill-model-pill skill-model-student skill-audit-pending" title="Queued for automatic skill check">queued</span>';
+  if (skillNeedsReview(sk, _skillApprovalThreshold)) {
+    const model = worker ? ` Last check: ${worker}.` : '';
+    const reason = sk.audit_summary ? ` ${sk.audit_summary}` : '';
+    return `<span class="memory-cat-badge skill-model-pill skill-model-student skill-audit-${esc(verdict)}" title="Draft: the previous check did not approve it. Eligible drafts are reviewed automatically.${esc(model + reason)}">draft</span>`;
   }
-  if (sk.audit_by_teacher || teacher) {
-    const title = teacher
-      ? `Teacher rewrote this skill; audit model passed after the rewrite. Teacher: ${teacher}`
-      : 'Teacher rewrote this skill; audit model passed after the rewrite.';
-    html += `<span class="memory-cat-badge skill-model-pill skill-model-teacher" title="${esc(title)}">teacher-fixed</span>`;
-  }
-  return html;
-}
-
-function _necessityKind(sk) {
-  const nec = sk && sk.necessity;
-  if (sk && sk._duplicateGroup) return 'duplicate';
-  if (!nec || nec.necessary !== false) return null;
-  const reason = String(nec.reason || '').toLowerCase();
-  const redundant = (nec.redundant_with || []).filter(Boolean);
-  if (redundant.length || /duplicat|redundan|overlap|same skill|same procedure/.test(reason)) return 'duplicate';
-  if (/trivial|generic|capable assistant|without a saved|not need|unnecessary/.test(reason)) return 'trivial';
-  return 'irrelevant';
+  return teacher
+    ? `<span class="memory-cat-badge skill-model-pill skill-model-teacher" title="Improved automatically by ${esc(teacher)}">improved</span>`
+    : '';
 }
 
 function _necessityPill(sk) {
-  const kind = _necessityKind(sk);
+  const kind = necessityKind(sk);
   if (!kind) return '';
   const nec = sk.necessity || {};
   const dup = (nec.redundant_with || []).filter(Boolean);
   const label = kind === 'duplicate' ? (sk._duplicateGroup ? `duplicate #${sk._duplicateGroup}` : 'duplicate')
-    : kind === 'trivial' ? 'generic'
+    : kind === 'trivial' ? 'broad'
     : 'possibly-irrelevant';
   const group = sk._duplicateNames || [];
   const why = sk._duplicateGroup
@@ -340,20 +459,18 @@ function _necessityPill(sk) {
 
 function _duplicatePriorityPill(sk) {
   if (!sk._duplicateGroup) return '';
+  const group = String(sk._duplicateGroup).padStart(3, '0');
+  const hash = `<span class="memory-cat-badge skill-duplicate-group" title="Duplicate group #${group}">#${group}</span>`;
   if (sk._duplicateKeep) {
-    return `<span class="memory-cat-badge skill-duplicate-keep" title="Best duplicate candidate by published status, uses, confidence, and specificity">recommended</span>`;
+    return `${hash}<span class="memory-cat-badge skill-duplicate-keep" title="Best duplicate candidate by published status, uses, confidence, and specificity">recommended</span>`;
   }
-  return `<span class="memory-cat-badge skill-duplicate-lower" title="Lower-priority duplicate. Suggested keeper: ${esc(sk._duplicateKeepName || '')}">lower-priority</span>`;
+  return `${hash}<span class="memory-cat-badge skill-duplicate-lower" title="Lower-priority duplicate. Suggested keeper: ${esc(sk._duplicateKeepName || '')}">lower-priority</span>`;
 }
 
-// Verified-by-test indicators shown next to the confidence %. A check when a
-// test/audit run passed; a graduation-cap when the teacher model had to
-// rewrite the skill to make it pass. SVG (no Unicode emoji).
+// Keep only the teacher provenance marker here. A passing audit is represented
+// by the published/approved checkmark, so it must not get a second check.
 function _auditMarks(sk) {
   let html = '';
-  if (sk.audit_verdict === 'pass') {
-    html += `<span class="skill-verified" title="Passed an automated test"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>`;
-  }
   if (sk.audit_by_teacher) {
     const teacher = sk.audit_teacher_model ? `: ${sk.audit_teacher_model}` : '';
     html += `<span class="skill-teachermark" title="Teacher rewrote this skill; audit model passed after the rewrite${esc(teacher)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 3 2 6 2s6-1 6-2v-5"/></svg></span>`;
@@ -368,11 +485,35 @@ function _auditDot(sk) { return ''; }
 
 function _isDraftsFilter() { return !!_showDraftsOnly; }
 
-// Confidence → colour. 90%+ is solidly green, scaling down through
-// yellow/orange to red at 50% and below (hue 120→0 over 90→50).
-function _confColor(conf) {
-  const hue = Math.max(0, Math.min(120, ((conf - 50) / 40) * 120));
-  return `hsl(${Math.round(hue)}, 70%, 42%)`;
+function _turnSavingsHtml(sk) {
+  const turns = auditNumber(sk, 'saved_turns');
+  const calls = auditNumber(sk, 'saved_tool_calls');
+  const audited = !!(sk && (sk.audit_verdict || sk.audited_at));
+  if (turns === null && !audited) return '';
+  if (turns === null) {
+    return ` · <span class="skill-turns-saved skill-turns-unknown" title="No no-skill baseline turn estimate recorded yet">saves ?t</span>`;
+  }
+  const cls = turns > 0 ? 'positive' : turns < 0 ? 'negative' : 'zero';
+  const label = turns > 0 ? `saves ${turns}t` : turns < 0 ? `${Math.abs(turns)}t slower` : 'saves 0t';
+  const callLabel = calls === null
+    ? ''
+    : calls > 0
+      ? `; saves ${calls} tool call${calls === 1 ? '' : 's'}`
+      : calls < 0
+        ? `; uses ${Math.abs(calls)} extra tool call${calls === -1 ? '' : 's'}`
+        : '; saves 0 tool calls';
+  const title = `Audit estimate versus no-skill baseline: ${label.replace('t', ' turn')}${callLabel}`;
+  return `<span class="memory-cat-badge skill-tag-pill skill-turns-saved skill-turns-${cls}" title="${esc(title)}">${esc(label)}</span>`;
+}
+
+function _skillStatsHtml(sk) {
+  const approved = skillIsApproved(sk, _skillApprovalThreshold) ? _statusPill(sk) : '';
+  return `${_auditMarks(sk)}${approved}`;
+}
+
+function _skillUsageHtml(sk) {
+  const uses = (sk && sk.uses) || 0;
+  return `<span class="memory-cat-badge skill-tag-pill skill-usage-pill" title="Times this skill has been used">${esc(String(uses))}u</span>`;
 }
 
 // Shared action icons (collapsed kebab menu + expanded footer use the same).
@@ -391,23 +532,29 @@ function _svg(paths, { fill = 'none', size = 13 } = {}) {
 // Kebab dropdown for a collapsed skill card — same actions + icons as the
 // expanded footer (Publish/Unpublish · Edit · Delete).
 function _openSkillMenu(btn, card, sk, name, isPublished) {
+  const openForButton = [...document.querySelectorAll('.skill-kebab-menu')]
+    .find(menu => menu._anchor === btn);
+  if (openForButton) {
+    if (typeof openForButton._dismiss === 'function') openForButton._dismiss();
+    else openForButton.remove();
+    return;
+  }
   document.querySelectorAll('.skill-kebab-menu').forEach(dismissOrRemove);
   const menu = document.createElement('div');
-  menu.className = 'skill-kebab-menu';
+  menu.className = 'dropdown session-dropdown-menu skill-kebab-menu';
+  menu._anchor = btn;
   const mk = (paths, label, opts, onClick) => {
     const item = document.createElement('button');
-    item.className = 'skill-kebab-item' + (opts && opts.danger ? ' danger' : '');
-    item.innerHTML = _svg(paths, opts) + `<span>${label}</span>`;
+    item.className = 'skill-kebab-item dropdown-item-compact' + (opts && opts.danger ? ' danger dropdown-item-danger' : '');
+    item.innerHTML = `<span class="dropdown-icon">${_svg(paths, opts)}</span><span>${label}</span>`;
     item.addEventListener('click', (e) => { e.stopPropagation(); close(); onClick(); });
     menu.appendChild(item);
   };
-  if (isPublished) mk(_ICON.unpublish, 'Unpublish', {}, () => _setSkillStatus(name, 'draft'));
-  else mk(_ICON.approve, 'Publish', {}, () => _setSkillStatus(name, 'published'));
-  // Select — moved up to 2nd so it sits next to Publish/Unpublish
-  // (bulk actions cluster at the top of the menu).
+  // Select is created here and inserted after the skill-specific commands so
+  // item menus share the same primary-actions-then-selection ordering.
   const selItem = document.createElement('button');
-  selItem.className = 'skill-kebab-item';
-  selItem.innerHTML = '<svg class="memory-select-btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg><span>Select</span>';
+  selItem.className = 'skill-kebab-item dropdown-item-compact';
+  selItem.innerHTML = `<span class="dropdown-icon">${SELECT_MENU_ICON}</span><span>Select</span>`;
   selItem.addEventListener('click', (e) => {
     e.stopPropagation();
     close();
@@ -415,23 +562,23 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
     _selectedNames.add(name);
     renderSkillsList();
   });
-  menu.appendChild(selItem);
-
   mk(_ICON.edit, 'Edit', {}, async () => {
     if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
     _toggleSkillEdit(card, name);
   });
-  mk(_ICON.test, 'Test', {}, () => _testSkill(card, name));
+  menu.appendChild(selItem);
   // Audit kicks off the bulk audit-all loop (test → judge → fix → retry → demote).
-  mk(_ICON.test, 'Audit', {}, () => _auditAllSkills());
+  const actionDivider = document.createElement('div');
+  actionDivider.className = 'dropdown-divider';
+  menu.appendChild(actionDivider);
   mk(_ICON.del, 'Delete', { danger: true }, () => _deleteSkill(name, card));
 
   // Mobile-only Cancel — mirrors the email/documents/brain popup pattern.
   // CSS hides `.dropdown-cancel-mobile` on desktop where outside-click
   // already dismisses cleanly.
   const cancelItem = document.createElement('button');
-  cancelItem.className = 'skill-kebab-item dropdown-cancel-mobile';
-  cancelItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Cancel</span>';
+  cancelItem.className = 'skill-kebab-item dropdown-item-compact dropdown-cancel-mobile';
+  cancelItem.innerHTML = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Cancel</span>';
   cancelItem.addEventListener('click', (e) => { e.stopPropagation(); close(); });
   menu.appendChild(cancelItem);
 
@@ -458,6 +605,7 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
     menu.style.overflowY = 'auto';
   }
   const close = bindMenuDismiss(menu, () => { menu.remove(); }, (ev) => !menu.contains(ev.target));
+  menu._dismiss = close;
 }
 
 // Cards for the agent's built-in tool capabilities (from
@@ -473,7 +621,6 @@ function _buildBuiltinCards() {
     const header = document.createElement('div');
     header.className = 'doclib-card-header skill-card-header';
     header.innerHTML = `
-      <span class="skill-conf-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, var(--red));flex-shrink:0;margin-right:6px;opacity:0.55;"></span>
       <div style="flex:1;min-width:0;overflow:hidden;">
         <div class="doclib-card-title" style="display:flex;align-items:center;gap:6px;min-width:0;">
           <code style="font-weight:600;font-size:0.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0;">${esc(b.name)}</code>
@@ -538,11 +685,19 @@ function _buildBuiltinCards() {
 async function _expandBuiltinCard(card, name) {
   const grid = card.closest('.doclib-grid');
   if (card.classList.contains('doclib-card-expanded')) {
+    unbindExpandedCardDismiss(card);
     card.classList.remove('doclib-card-expanded');
     return;
   }
-  if (grid) grid.querySelectorAll('.doclib-card-expanded').forEach(c => c.classList.remove('doclib-card-expanded'));
+  if (grid) grid.querySelectorAll('.doclib-card-expanded').forEach(c => {
+    unbindExpandedCardDismiss(c);
+    c.classList.remove('doclib-card-expanded');
+  });
   card.classList.add('doclib-card-expanded');
+  bindExpandedCardDismiss(card, () => {
+    unbindExpandedCardDismiss(card);
+    card.classList.remove('doclib-card-expanded');
+  });
   if (grid) grid.scrollTop = 0;
   const pre = card.querySelector('.skill-md-pre');
   if (pre && !card._loaded) {
@@ -556,7 +711,7 @@ async function _expandBuiltinCard(card, name) {
       card._text = data.text || '';
       card._default = data.default || '';
     } catch (e) {
-      pre.textContent = 'Failed to load.';
+      pre.textContent = `Failed to load: ${e.message || 'Unknown error'}`;
     }
   }
 }
@@ -607,9 +762,17 @@ async function _revertBuiltin(name) {
 
 function _getFilteredSkills() {
   const query = (document.getElementById('skills-search')?.value || '').toLowerCase();
-  let filtered = query ? skills.filter(sk => _matches(sk, query)) : skills;
+  const userSkills = skills.filter(sk => sk?.source !== 'builtin');
+  let filtered = query ? userSkills.filter(sk => _matches(sk, query)) : userSkills;
+  if (_skillsQuickFilter === 'draft' || _skillsQuickFilter === 'all' || !_skillsQuickFilter) {
+    // All and Draft retain archived candidates for inspection and recovery.
+  } else if (_showBinnedOnly || _skillsQuickFilter === 'binned') {
+    filtered = filtered.filter(sk => (sk.status || 'draft') === 'binned');
+  } else {
+    filtered = filtered.filter(sk => (sk.status || 'draft') !== 'binned');
+  }
   if (_showDraftsOnly) {
-    filtered = filtered.filter(sk => (sk.status || 'draft') !== 'published');
+    filtered = filtered.filter(sk => (sk.status || 'draft') === 'draft');
   }
   if (_showPublishedOnly) {
     filtered = filtered.filter(sk => (sk.status || 'draft') === 'published');
@@ -618,22 +781,75 @@ function _getFilteredSkills() {
     // "≤ X%" — surface the lower-confidence skills that may need review.
     filtered = filtered.filter(sk => Math.round((sk.confidence || 0) * 100) <= _confMax);
   }
+  if (_skillTagFilter) {
+    filtered = filtered.filter(sk => (sk.tags || []).some(t => String(t || '').trim().toLowerCase() === _skillTagFilter));
+  }
+  filtered = filterSkillsByQuickFilter(filtered, _skillsQuickFilter, _skillApprovalThreshold);
+  return _groupDuplicateSkills(_sortSkills(filtered));
+}
+
+function _getFilteredBuiltinSkills() {
+  const query = (document.getElementById('skills-search')?.value || '').toLowerCase();
+  let filtered = skills.filter(sk => sk?.source === 'builtin');
+  if (query) filtered = filtered.filter(sk => _matches(sk, query));
+  if (_skillTagFilter) {
+    filtered = filtered.filter(sk => (sk.tags || []).some(t => String(t || '').trim().toLowerCase() === _skillTagFilter));
+  }
+  // Built-ins are shipped as published, trusted instructions. Do not surface
+  // them in user audit, draft, or bin filters.
+  if (_showDraftsOnly || _showBinnedOnly || ![null, 'all', 'builtin'].includes(_skillsQuickFilter)) return [];
   return _sortSkills(filtered);
+}
+
+function _buildTrackedBuiltinSkillCards(items) {
+  return items.map(sk => {
+    const name = sk.name || sk.id;
+    const card = document.createElement('div');
+    card.className = 'doclib-card skill-card skill-builtin-card';
+    card.dataset.skillName = name;
+    card.dataset.skillStatus = 'published';
+
+    const header = document.createElement('div');
+    header.className = 'doclib-card-header skill-card-header';
+    header.innerHTML = `
+      <div class="skill-card-textcol">
+        <div class="skill-card-title-row"><code class="skill-card-name">${esc(name)}</code>${_sourcePill(sk)}</div>
+        ${sk.description ? `<div class="skill-card-desc">${esc(sk.description)}</div>` : ''}
+        ${(sk.tags && sk.tags.length) ? `<div class="skill-card-tags">${_skillTagPills(sk)}</div>` : ''}
+      </div>
+      <div class="skill-card-right">
+        <span class="skill-chevron-up" title="Collapse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
+      </div>
+    `;
+    card.appendChild(header);
+
+    const preview = document.createElement('div');
+    preview.className = 'doclib-card-preview skill-card-preview';
+    const pre = document.createElement('pre');
+    pre.className = 'skill-md-pre';
+    preview.appendChild(pre);
+    card.appendChild(preview);
+
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, textarea')) return;
+      _expandSkillCard(card, name);
+    });
+    return card;
+  });
 }
 
 function renderSkillsList() {
   const container = document.getElementById('skills-list');
   if (!container) return;
+  _renderSkillsSummary();
+  _renderSkillTagChips();
   // Re-render rebuilds the cards (none expanded), so clear the expand flag
   // on the admin-card or it would keep the toolbar hidden with nothing open.
   container.closest('.admin-card')?.classList.remove('skills-has-expanded');
 
   const sorted = _getFilteredSkills();
-  // Built-in capabilities show as their own read-only section (skipped when
-  // the user is filtering to drafts, since built-ins aren't drafts).
-  // Skills menu shows the user's own skills only (built-in capabilities
-  // are intentionally not surfaced here).
-  const showBuiltin = false;
+  const builtinCards = _buildTrackedBuiltinSkillCards(_getFilteredBuiltinSkills());
+  const showBuiltin = builtinCards.length > 0;
 
   if (!sorted.length && !showBuiltin) {
     const selectBtn = document.getElementById('skills-select-btn');
@@ -674,13 +890,11 @@ function renderSkillsList() {
       delete sk._duplicateKeepName;
       delete sk._duplicateNames;
     }
-    const conf = Math.round((sk.confidence || 0) * 100);
-    const uses = sk.uses || 0;
     const isPublished = (sk.status === 'published');
-    const confColor = _confColor(conf);
 
     const card = document.createElement('div');
-    card.className = 'doclib-card skill-card';
+    const auditNeedsReview = skillNeedsReview(sk, _skillApprovalThreshold);
+    card.className = 'doclib-card skill-card' + (auditNeedsReview ? ' skill-audit-draft' : '');
     card.dataset.skillName = name;
     card.dataset.skillStatus = sk.status || 'draft';
 
@@ -696,18 +910,22 @@ function renderSkillsList() {
       ${cbHtml}
       ${_auditDot(sk)}
       <div class="skill-card-textcol">
-        <code class="skill-card-name">${esc(name)}</code>
+        <div class="skill-card-title-row">
+          <span class="skill-card-name memory-item-title">${esc(name)}</span>
+          ${sk.source === 'builtin' ? _sourcePill(sk) : ''}
+        </div>
         ${sk.description ? `<div class="skill-card-desc">${esc(sk.description)}</div>` : ''}
+        ${(sk.tags && sk.tags.length) || sk.uses !== undefined ? `<div class="skill-card-tags">${_skillTagPills(sk)}${_skillUsageHtml(sk)}</div>` : ''}
       </div>
       <div class="skill-card-right">
-        ${_statusPill(sk)}
-        ${_sourcePill(sk)}
-        ${_auditModelPills(sk)}
+        ${sk.source === 'builtin' ? '' : _sourcePill(sk)}
         ${_necessityPill(sk)}
         ${_duplicatePriorityPill(sk)}
-        <span class="skill-stats">${_auditMarks(sk)}<span class="skill-conf" style="color:${confColor};">${conf}%</span> · ${uses}u</span>
+        ${_auditModelPills(sk)}
+        <span class="skill-stats">${_skillStatsHtml(sk)}</span>
+        ${sk.status === 'binned' ? _statusPill(sk) : ''}
         <span class="skill-chevron-up" title="Collapse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
-        <button class="skill-kebab-btn" title="Actions" aria-label="Actions"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></button>
+        <button class="skill-kebab-btn" title="Actions" aria-label="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
       </div>
     `;
     card.appendChild(header);
@@ -722,9 +940,32 @@ function renderSkillsList() {
     // Preview (hidden until expanded) — SKILL.md goes here + footer.
     const preview = document.createElement('div');
     preview.className = 'doclib-card-preview skill-card-preview';
+    const copyPreviewBtn = document.createElement('button');
+    copyPreviewBtn.type = 'button';
+    copyPreviewBtn.className = 'skill-preview-copy';
+    copyPreviewBtn.title = 'Copy skill';
+    copyPreviewBtn.setAttribute('aria-label', 'Copy skill');
+    const copyPreviewIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const copiedPreviewIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+    copyPreviewBtn.innerHTML = copyPreviewIcon;
     const pre = document.createElement('pre');
     pre.className = 'skill-md-pre';
     pre.textContent = '';  // filled on expand
+    copyPreviewBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      uiModule.copyToClipboard(pre.textContent || '');
+      copyPreviewBtn.classList.add('copied');
+      copyPreviewBtn.innerHTML = copiedPreviewIcon;
+      setTimeout(() => {
+        copyPreviewBtn.classList.remove('copied');
+        copyPreviewBtn.innerHTML = copyPreviewIcon;
+      }, 1200);
+    });
+    preview.appendChild(copyPreviewBtn);
+    const savingsTag = document.createElement('div');
+    savingsTag.className = 'skill-expanded-savings';
+    savingsTag.innerHTML = _turnSavingsHtml(sk);
+    if (savingsTag.innerHTML) preview.appendChild(savingsTag);
     preview.appendChild(pre);
 
     // Footer: Approve/Unpublish on the left, destructive delete on the right.
@@ -874,10 +1115,10 @@ function renderSkillsList() {
     cards.forEach(c => { c.dataset.skillSection = 'user'; container.appendChild(c); });
   }
 
-  // Built-in capabilities — read-only cards (the agent's native tools).
+  // Tracked built-in skills — visible and inspectable, but deliberately
+  // separate from the user-owned audit/edit lifecycle.
   if (showBuiltin) {
-    const builtinCards = _buildBuiltinCards();
-    container.appendChild(_mkSectionHeader('builtin', 'Built-in capabilities', builtinCards.length));
+    container.appendChild(_mkSectionHeader('builtin', 'Built-in skills', builtinCards.length));
     builtinCards.forEach(c => { c.dataset.skillSection = 'builtin'; container.appendChild(c); });
   }
 
@@ -887,7 +1128,7 @@ function renderSkillsList() {
   // staggered entrance the document/chat library uses (.doclib-just-opened
   // → section-domino-in on each .doclib-card child). Only consumes the flag
   // set on tab-open, so search/sort/edit re-renders stay instant.
-  if (_cascadeNext && cards.length) {
+  if (_cascadeNext && (cards.length || builtinCards.length)) {
     _cascadeNext = false;
     _playSkillsCascade(container);
   }
@@ -921,6 +1162,7 @@ function renderSkillsList() {
 // heights skills.js pinned on the card/preview/<pre> (otherwise a collapsed
 // card keeps its full expanded height) and detach its resize listener.
 function _collapseSkillCardEl(c) {
+  unbindExpandedCardDismiss(c);
   c.classList.remove('doclib-card-expanded', 'skill-expand-instant');
   c.style.removeProperty('height');
   const pv = c.querySelector('.doclib-card-preview');
@@ -946,6 +1188,7 @@ async function _expandSkillCard(card, name) {
   // Collapse any other expanded sibling (full cleanup, not just the class).
   if (grid) grid.querySelectorAll('.doclib-card-expanded').forEach(_collapseSkillCardEl);
   card.classList.add('doclib-card-expanded');
+  bindExpandedCardDismiss(card, () => _collapseSkillCardEl(card));
   if (switching) card.classList.add('skill-expand-instant');
   // Explicit class on the admin-card so CSS doesn't depend on :has()
   // (Firefox mobile builds without :has left the expand at ~50%).
@@ -1023,7 +1266,7 @@ async function _expandSkillCard(card, name) {
         card._mdLoaded = true;
         card._md = md;
       } catch (e) {
-        pre.textContent = 'Failed to load SKILL.md';
+        pre.textContent = `Failed to load SKILL.md: ${e.message || 'Unknown error'}`;
       }
     }
   }
@@ -1418,7 +1661,7 @@ let _auditPoll = null;
 let _auditSeenResults = 0;
 
 function _confirmAuditSkills(label) {
-  return new Promise(resolve => {
+  return new Promise(async resolve => {
     let overlay = document.getElementById('skills-audit-confirm-overlay');
     if (!overlay) {
       overlay = document.createElement('div');
@@ -1429,6 +1672,10 @@ function _confirmAuditSkills(label) {
           '<div class="modal-header"><h4>Audit Skills</h4></div>' +
           '<div class="modal-body">' +
             '<p id="skills-audit-confirm-msg"></p>' +
+            '<label class="skills-audit-model-field">' +
+              '<span>Test with</span>' +
+              '<select id="skills-audit-model"><option value="">Configured audit model</option></select>' +
+            '</label>' +
             '<label class="memory-bulk-check-all" style="margin-top:10px;display:inline-flex;align-items:center;gap:7px;">' +
               '<input type="checkbox" id="skills-audit-skip-audited" checked />' +
               '<span>Skip already audited</span>' +
@@ -1443,11 +1690,34 @@ function _confirmAuditSkills(label) {
     }
 
     const msg = overlay.querySelector('#skills-audit-confirm-msg');
+    const modelSelect = overlay.querySelector('#skills-audit-model');
     const skip = overlay.querySelector('#skills-audit-skip-audited');
     const okBtn = overlay.querySelector('#skills-audit-confirm-ok');
     const cancelBtn = overlay.querySelector('#skills-audit-confirm-cancel');
     msg.textContent = `Audit ${label}? Each is tested from top to bottom, then published or moved to draft using your auto-approve confidence threshold.`;
     skip.checked = true;
+    if (modelSelect) {
+      modelSelect.innerHTML = '<option value="">Configured audit model</option>';
+      try {
+        const response = await fetch(`${API}/api/models`, { credentials: 'same-origin' });
+        const data = response.ok ? await response.json() : {};
+        for (const endpoint of (data.items || [])) {
+          if ((endpoint.model_type || 'llm') !== 'llm') continue;
+          const models = [...(endpoint.models || []), ...(endpoint.models_extra || [])];
+          if (!models.length) continue;
+          const group = document.createElement('optgroup');
+          group.label = endpoint.endpoint_name || endpoint.host || 'Endpoint';
+          for (const model of models) {
+            const option = document.createElement('option');
+            const endpointName = endpoint.endpoint_name || '';
+            option.value = endpointName ? `${model}@${endpointName}` : model;
+            option.textContent = model;
+            group.appendChild(option);
+          }
+          modelSelect.appendChild(group);
+        }
+      } catch (_) {}
+    }
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
@@ -1460,7 +1730,7 @@ function _confirmAuditSkills(label) {
       document.removeEventListener('keydown', onKey);
       resolve(result);
     }
-    function onOk() { cleanup({ ok: true, skipAudited: !!skip.checked }); }
+    function onOk() { cleanup({ ok: true, skipAudited: !!skip.checked, model: modelSelect?.value || '' }); }
     function onCancel() { cleanup({ ok: false, skipAudited: false }); }
     function onBackdrop(e) { if (e.target === overlay) onCancel(); }
     function onKey(e) {
@@ -1486,13 +1756,14 @@ async function _auditAllSkills(opts = {}) {
   let st = await _fetchAuditStatus();
   if (st.status !== 'running') {
     const explicitNames = Array.isArray(opts.names) ? opts.names.filter(Boolean) : null;
-    const visibleNames = _getFilteredSkills()
+    const allNames = skills
+      .filter(sk => sk.source !== 'builtin' && sk.status !== 'binned')
       .map(sk => sk.name || sk.id)
       .filter(Boolean);
-    const names = explicitNames || visibleNames;
+    const names = explicitNames || allNames;
     const label = explicitNames
       ? `${names.length} selected ${names.length === 1 ? 'skill' : 'skills'}`
-      : `${names.length} visible ${names.length === 1 ? 'skill' : 'skills'}`;
+      : 'all non-binned skills';
     if (!names.length) {
       uiModule.showToast(explicitNames ? 'No selected skills to audit' : 'No visible skills to audit');
       return;
@@ -1502,7 +1773,7 @@ async function _auditAllSkills(opts = {}) {
     try {
       const r = await fetch(`${API}/api/skills/audit-all`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: explicitNames ? 'selected' : 'all', names, skip_audited: confirmed.skipAudited }),
+        body: JSON.stringify({ scope: explicitNames ? 'selected' : 'all', names, skip_audited: confirmed.skipAudited, model: confirmed.model || '' }),
       });
       if (!r.ok) { uiModule.showError('Audit failed to start (HTTP ' + r.status + ')'); return; }
       st = await _fetchAuditStatus();
@@ -1546,10 +1817,13 @@ function _applySkillStateToHeader(card, state, fallbackVerdict) {
   if (!card) return;
   const verdict = state?.audit_verdict || fallbackVerdict;
   if (verdict) _applyVerdictToHeader(card, verdict);
-  if (state && typeof state.confidence === 'number') {
-    const conf = Math.round(state.confidence * 100);
-    const confEl = card.querySelector('.skill-conf');
-    if (confEl) { confEl.textContent = conf + '%'; confEl.style.color = _confColor(conf); }
+  const name = card.dataset && card.dataset.skillName;
+  const current = skills.find(s => (s.name || s.id) === name) || {};
+  const merged = { ...current, ...(state || {}) };
+  if (verdict && !merged.audit_verdict) merged.audit_verdict = verdict;
+  const statsEl = card.querySelector('.skill-stats');
+  if (statsEl && (state || verdict)) {
+    statsEl.innerHTML = _skillStatsHtml(merged);
   }
   if (state?.status) {
     card.dataset.skillStatus = state.status;
@@ -1566,7 +1840,7 @@ function _applySkillStateToHeader(card, state, fallbackVerdict) {
     right.querySelectorAll('.skill-model-pill, .skill-necessity-pill').forEach(n => n.remove());
     const stats = right.querySelector('.skill-stats');
     const wrap = document.createElement('span');
-    wrap.innerHTML = _auditModelPills(state) + _necessityPill(state);
+    wrap.innerHTML = _necessityPill(merged) + _auditModelPills(merged);
     [...wrap.children].forEach(p => {
       if (stats) right.insertBefore(p, stats);
       else right.appendChild(p);
@@ -1667,8 +1941,8 @@ function _renderAuditPanel(panel, st) {
 
 // ---- Select mode / bulk actions ----
 
-const _SKILLS_SELECT_BTN_DOT_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>';
-const _SKILLS_SELECT_BTN_X_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const _SKILLS_SELECT_BTN_DOT_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:0;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="14" r="3" fill="currentColor" stroke="none"/></svg>';
+const _SKILLS_SELECT_BTN_X_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:0;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 function _enterSelectMode() {
   _selectMode = true;
@@ -1731,29 +2005,33 @@ async function _bulkDelete() {
   if (!_selectedNames.size) return;
   const n = _selectedNames.size;
   const ok = await uiModule.styledConfirm(
-    `Delete ${n} ${n === 1 ? 'skill' : 'skills'}? This removes their SKILL.md files.`,
-    { confirmText: 'Delete', danger: true }
+    `Move ${n} ${n === 1 ? 'skill' : 'skills'} to the bin? They can be reviewed from the Bin filter.`,
+    { confirmText: 'Move to bin', danger: true }
   );
   if (!ok) return;
-  let deleted = 0;
-  const deletedNames = [];
+  let binned = 0;
+  const binnedNames = [];
   for (const name of _selectedNames) {
     try {
-      const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'binned' }),
+      });
       if (res.ok) {
-        deleted++;
-        deletedNames.push(name);
+        binned++;
+        binnedNames.push(name);
       }
     } catch {}
   }
-  for (const name of deletedNames) {
+  for (const name of binnedNames) {
     const card = document.querySelector(`.skill-card[data-skill-name="${CSS.escape(name)}"]`);
     if (card) card.classList.add('doclib-card-deleting');
   }
-  if (deletedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
+  if (binnedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Deleted ${deleted}`);
+  uiModule.showToast(`Moved ${binned} to bin`);
 }
 
 async function _loadSkillApprovalThreshold() {
@@ -1773,7 +2051,7 @@ function _selectedNonPassingSkills() {
     const name = sk.name || sk.id;
     if (!selected.has(name)) return false;
     const conf = Number(sk.confidence || 0);
-    const necessity = _necessityKind(sk);
+    const necessity = necessityKind(sk);
     if (necessity === 'duplicate' || necessity === 'trivial' || necessity === 'irrelevant') return true;
     if ((sk.audit_verdict || '') !== 'pass') return true;
     return conf < _skillApprovalThreshold;
@@ -1789,30 +2067,33 @@ async function _bulkDeleteNonPassing() {
   const thresholdPct = Math.round(_skillApprovalThreshold * 100);
   const names = targets.map(sk => sk.name || sk.id).filter(Boolean);
   const ok = await uiModule.styledConfirm(
-    `Delete ${names.length} selected non-passing ${names.length === 1 ? 'skill' : 'skills'}? This removes duplicates, generic/irrelevant skills, failed audits, and anything below ${thresholdPct}%.`,
-    { confirmText: 'Delete non passing', danger: true }
+    `Move ${names.length} selected non-passing ${names.length === 1 ? 'skill' : 'skills'} to the bin? This includes duplicates, failed audits, and anything below ${thresholdPct}%.`,
+    { confirmText: 'Move to bin', danger: true }
   );
   if (!ok) return;
-  let deleted = 0;
-  const deletedNames = [];
+  let binned = 0;
+  const binnedNames = [];
   for (const name of names) {
     try {
-      const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'binned' }),
+      });
       if (res.ok) {
-        deleted++;
-        deletedNames.push(name);
-        _mdCache.delete(name);
+        binned++;
+        binnedNames.push(name);
       }
     } catch {}
   }
-  for (const name of deletedNames) {
+  for (const name of binnedNames) {
     const card = document.querySelector(`.skill-card[data-skill-name="${CSS.escape(name)}"]`);
     if (card) card.classList.add('doclib-card-deleting');
   }
-  if (deletedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
+  if (binnedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Deleted ${deleted} non-passing`);
+  uiModule.showToast(`Moved ${binned} to bin`);
 }
 
 async function _bulkApprove() {
@@ -1985,6 +2266,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('add-skill-btn')?.addEventListener('click', addSkill);
   document.getElementById('skills-search')?.addEventListener('input', renderSkillsList);
+  document.getElementById('skills-summary')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-skill-quick]');
+    if (!chip) return;
+    const key = chip.dataset.skillQuick || '';
+    _skillsQuickFilter = _skillsQuickFilter === key ? 'all' : key;
+    _showDraftsOnly = false;
+    _showPublishedOnly = false;
+    _showBinnedOnly = false;
+    if (_skillsQuickFilter === 'builtin') _collapsedSections.delete('builtin');
+    if (_skillsQuickFilter === 'saved') {
+      _skillsSort = 'saved-turns';
+      const sort = document.getElementById('skills-sort');
+      if (sort) sort.value = 'sort:saved-turns';
+    }
+    renderSkillsList();
+  });
   document.getElementById('skills-sort')?.addEventListener('change', (e) => {
     // Dropdown holds two optgroups: Sort (sort:<key>) and Filter (filter:<key>).
     // Picking a sort option leaves the filter alone, and vice-versa.
@@ -1993,10 +2290,12 @@ document.addEventListener('DOMContentLoaded', () => {
       _skillsSort = v.slice(5);
     } else if (v.startsWith('filter:')) {
       const f = v.slice(7);
-      if (f === 'all') { _showDraftsOnly = false; _showPublishedOnly = false; _confMax = null; }
-      else if (f === 'drafts') { _showDraftsOnly = true; _showPublishedOnly = false; _confMax = null; }
-      else if (f === 'published') { _showPublishedOnly = true; _showDraftsOnly = false; _confMax = null; }
-      else if (f.startsWith('conf')) { _showDraftsOnly = false; _showPublishedOnly = false; _confMax = parseInt(f.slice(4), 10) || null; }
+      _skillsQuickFilter = null;
+      if (f === 'all') { _showDraftsOnly = false; _showPublishedOnly = false; _showBinnedOnly = false; _confMax = null; }
+      else if (f === 'drafts') { _showDraftsOnly = true; _showPublishedOnly = false; _showBinnedOnly = false; _confMax = null; }
+      else if (f === 'published') { _showPublishedOnly = true; _showDraftsOnly = false; _showBinnedOnly = false; _confMax = null; }
+      else if (f === 'binned') { _showDraftsOnly = false; _showPublishedOnly = false; _showBinnedOnly = true; _confMax = null; }
+      else if (f.startsWith('conf')) { _showDraftsOnly = false; _showPublishedOnly = false; _showBinnedOnly = false; _confMax = parseInt(f.slice(4), 10) || null; }
     }
     renderSkillsList();
   });

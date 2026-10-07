@@ -101,9 +101,19 @@ jobs:
           done
 
   python-tests:
-    name: Python tests (pytest)
-    runs-on: ubuntu-latest
+    name: Python tests (pytest ${{ matrix.shard }})
+    # Keep the namespace/AppArmor setup tied to the audited Ubuntu release.
+    runs-on: ubuntu-24.04
     # Make Python test validation authoritative for the configured scope.
+    strategy:
+      # Report every failing section in one run instead of cancelling the rest
+      # the moment one shard goes red.
+      fail-fast: false
+      matrix:
+        # Shards partition the suite by test file, so the four together run
+        # every test exactly once. tests/_shards.py owns the partition and
+        # tests/test_shards.py pins this list to its DEFAULT_SHARD_COUNT.
+        shard: ["1/4", "2/4", "3/4", "4/4"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -137,10 +147,95 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
+      # uv resolves the same versions as pip but installs ~5x faster, and its
+      # cache keeps each shard from re-downloading the whole requirement set.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        if: steps.docs-check.outputs.docs_only != 'true'
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+          prune-cache: false
+      - run: uv pip install --system -r requirements.txt
+        if: steps.docs-check.outputs.docs_only != 'true'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        if: steps.docs-check.outputs.docs_only != 'true'
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+        if: steps.docs-check.outputs.docs_only != 'true'
+      # Browser binaries are keyed on the lockfile's Playwright version. On a
+      # hit, --with-deps still installs the system libraries but skips the
+      # browser downloads.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: steps.docs-check.outputs.docs_only != 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
         if: steps.docs-check.outputs.docs_only != 'true'
       - run: mkdir -p data  # sqlite DB lives at ./data/app.db
         if: steps.docs-check.outputs.docs_only != 'true'
-      - run: python -m pytest -q
+      # One apt pass for FFmpeg (media integration tests) and bubblewrap
+      # (containment, verified in the next step).
+      - name: Install FFmpeg and bubblewrap
         if: steps.docs-check.outputs.docs_only != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap
+          command -v ffmpeg
+          ffmpeg -version | head -n 1
+
+      - name: Establish functional bubblewrap containment
+        if: steps.docs-check.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bwrap --version
+          sysctl kernel.unprivileged_userns_clone user.max_user_namespaces \
+            kernel.apparmor_restrict_unprivileged_userns
+          if [ "$(sysctl -n kernel.unprivileged_userns_clone)" != 1 ] || \
+             [ "$(sysctl -n user.max_user_namespaces)" -eq 0 ]; then
+            echo '::error::The pytest runner must allow unprivileged user namespaces; kernel namespace support is disabled.'
+            exit 1
+          fi
+
+          # Match containment._bwrap_available(): PID and mount namespaces,
+          # including fresh proc/dev mounts, as the unprivileged runner user.
+          bwrap_probe() {
+            timeout 3s bwrap --die-with-parent --unshare-pid --ro-bind / / \
+              --proc /proc --dev /dev /bin/true
+          }
+
+          if ! bwrap_probe && [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1 ]; then
+            # Ubuntu 24.04 restricts userns for unconfined applications. Allow
+            # only the distro bwrap entry point on this ephemeral pytest VM;
+            # retain the global restriction and all unrelated AppArmor policy.
+            sudo tee /etc/apparmor.d/odysseus-ci-bwrap > /dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile odysseus-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+            sudo apparmor_parser -r /etc/apparmor.d/odysseus-ci-bwrap
+          fi
+
+          if ! bwrap_probe; then
+            echo '::error::Functional bubblewrap PID/mount namespaces are required for pytest; containment setup failed.'
+            exit 1
+          fi
+          # Also gate on the runtime probe so a future requirements change
+          # cannot silently leave this job without real containment coverage.
+          python - <<'PY'
+          from src import containment
+          if not containment._bwrap_available():
+              raise SystemExit("::error::Runtime bubblewrap functionality probe failed; pytest must not start.")
+          print("Runtime bubblewrap PID/mount namespace probe passed.")
+          PY
+
+      - name: pytest (shard ${{ matrix.shard }})
+        if: steps.docs-check.outputs.docs_only != 'true'
+        env:
+          PYTEST_SHARD: ${{ matrix.shard }}
+        run: python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD"

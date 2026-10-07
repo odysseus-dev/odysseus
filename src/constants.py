@@ -1,10 +1,54 @@
 # src/constants.py
 """Application-wide constants and configuration values."""
 import os
+import subprocess
 
 from src.runtime_paths import get_app_root, get_default_data_dir
 
 APP_VERSION = "1.0.3"
+BUILTIN_SKILLS_DIR = os.path.join(get_app_root(), "resources", "skills")
+# Identifies the private maintainer-preview build without changing the public
+# application semver used by release and readiness checks. Keep the API/UI
+# value tied to HARNESS_VERSION so a version bump cannot leave the running
+# service claiming an older harness build.
+def _load_build_version() -> str:
+    override = os.getenv("ODYSSEUS_BUILD_VERSION", "").strip()
+    if override:
+        return override
+    try:
+        with open(os.path.join(get_app_root(), "HARNESS_VERSION"), encoding="utf-8") as fh:
+            value = fh.read().strip()
+            if value:
+                return value
+    except OSError:
+        pass
+    return "unknown"
+
+
+APP_BUILD_VERSION = _load_build_version()
+
+
+def _load_source_commit() -> str:
+    """Identify the source tree loaded by this process for runtime provenance."""
+    override = os.getenv("ODYSSEUS_SOURCE_COMMIT", "").strip()
+    if override:
+        return override
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=get_app_root(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    commit = result.stdout.strip()
+    return commit if result.returncode == 0 and commit else "unknown"
+
+
+APP_SOURCE_COMMIT = _load_source_commit()
 
 # Base paths
 BASE_DIR = os.path.join(get_app_root(), "")
@@ -31,6 +75,7 @@ APP_KEY_FILE = os.path.join(DATA_DIR, ".app_key")
 EMBEDDING_ENDPOINT_FILE = os.path.join(DATA_DIR, "embedding_endpoint.json")
 COOKBOOK_STATE_FILE = os.path.join(DATA_DIR, "cookbook_state.json")
 BG_JOBS_FILE = os.path.join(DATA_DIR, "bg_jobs.json")
+CONTAINMENT_STATE_FILE = os.path.join(DATA_DIR, "containment_grants.json")
 VAULT_FILE = os.path.join(DATA_DIR, "vault.json")
 TIDY_CALENDAR_STATE_FILE = os.path.join(DATA_DIR, "tidy_calendar_state.json")
 SKILLS_FILE = os.path.join(DATA_DIR, "skills.json")
@@ -44,6 +89,8 @@ EMOJI_CACHE_DIR = os.path.join(DATA_DIR, "emoji_cache")
 RAG_DIR = os.path.join(DATA_DIR, "rag")
 CHROMA_DIR = os.path.join(DATA_DIR, "chroma")
 BG_JOBS_DIR = os.path.join(DATA_DIR, "bg_jobs")
+PROCESS_RESOURCES_DIR = os.path.join(DATA_DIR, "process_resources")
+BROWSER_RESOURCES_DIR = os.path.join(DATA_DIR, "browser_resources")
 DEEP_RESEARCH_DIR = os.path.join(DATA_DIR, "deep_research")
 MCP_OAUTH_DIR = os.path.join(DATA_DIR, "mcp_oauth")
 GENERATED_IMAGES_DIR = os.path.join(DATA_DIR, "generated_images")
@@ -101,17 +148,37 @@ LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 
+# Scholarly title resolution. These are the only third-party metadata APIs the
+# search path calls directly, so they get named constants rather than literals
+# repeated at each call site. The budget bounds the whole SearXNG -> OpenAlex ->
+# arXiv chain: each hop used to get its own full timeout, so one scholarly query
+# could stall a user-facing search for the sum of all three.
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
+OPENALEX_API_URL = "https://api.openalex.org/works"
+SCHOLARLY_LOOKUP_TIMEOUT = 12.0
+SCHOLARLY_LOOKUP_TOTAL_BUDGET = 20.0
 
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
+
+# Agent workspace
+# The stable virtual root the tool contract promises an agent, independent of
+# where the workspace physically lives. Both the mount namespace and the
+# path resolvers map it to the active workspace, so it is the one absolute path
+# a contained command may assume.
+WORKSPACE_MOUNT = "/workspace"
+# Scratch directory inside the workspace that agent shell commands get in place
+# of the host /tmp. A dirname rather than a path: the workspace is dynamic, so
+# the full path is only knowable per turn.
+AGENT_ISOLATED_TMP_DIRNAME = ".tmp"
 
 # Auth policy
 PASSWORD_MIN_LENGTH = 8
 
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
-DEFAULT_MAX_TOKENS = 0
+DEFAULT_MAX_TOKENS = 32768
 
 
 def internal_api_base() -> str:
@@ -121,7 +188,7 @@ def internal_api_base() -> str:
     running server over HTTP. Resolution order:
       1. ODYSSEUS_INTERNAL_BASE  - explicit override (e.g. behind a TLS proxy).
       2. APP_PORT                - http://127.0.0.1:$APP_PORT (docker-compose).
-      3. Fallback http://127.0.0.1:7000 - legacy default.
+      3. Fallback http://127.0.0.1:7011 - matches app.py's bind default.
 
     127.0.0.1 (not "localhost") avoids IPv6/DNS ambiguity for a strictly-local
     call. Without this, loopback tools fail with "All connection attempts
@@ -130,4 +197,4 @@ def internal_api_base() -> str:
     override = os.environ.get("ODYSSEUS_INTERNAL_BASE")
     if override:
         return override.rstrip("/")
-    return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}"
+    return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7011')}"

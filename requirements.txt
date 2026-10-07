@@ -8,6 +8,10 @@ pydantic>=2.13.4
 pydantic-settings>=2.14.1
 SQLAlchemy
 pypdf
+pypdfium2
+Pillow
+faster-whisper
+pdfplumber
 beautifulsoup4
 charset-normalizer
 numpy
@@ -19,6 +23,7 @@ numpy
 chromadb-client
 fastembed
 youtube-transcript-api
+yt-dlp
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
 markdown

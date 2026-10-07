@@ -8,6 +8,8 @@ scheduler without needing an LLM call.
 import logging
 import os
 import json
+import re
+import time
 from datetime import datetime
 from typing import Tuple
 
@@ -18,6 +20,128 @@ from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE,
 from src.interactive_gate import wait_for_interactive_quiet
 
 logger = logging.getLogger(__name__)
+
+
+EMAIL_URGENCY_CATEGORY_TAGS = {
+    "bills", "receipt", "travel", "calendar", "action-needed",
+}
+
+
+def _heuristic_email_urgency_verdict(
+    item: dict,
+    *,
+    triage_version: int,
+    category_tags=None,
+) -> dict:
+    """Conservative non-LLM email triage.
+
+    This runs in the scheduled email-tag task and must not turn ordinary
+    transactional/company receipts into urgent mail. Receipts, invoices, and
+    payments are category signals first; they become response/urgency signals
+    only when paired with real action language or consequence/deadline language.
+    """
+    category_tags = set(category_tags or EMAIL_URGENCY_CATEGORY_TAGS)
+    blob = (
+        f"{item.get('headers','')}\n{item.get('from','')}\n"
+        f"{item.get('subject','')}\n{item.get('body','')}"
+    ).lower()
+    response_tags = []
+    type_candidates = []
+
+    def add_response(tag: str):
+        if tag in category_tags and tag not in response_tags:
+            response_tags.append(tag)
+
+    def add_type(tag: str):
+        if tag in category_tags and tag not in type_candidates:
+            type_candidates.append(tag)
+
+    bulkish = bool(re.search(
+        r"\b(list-unsubscribe|list-id|mailchimp|mailchimpapp|view this email in your browser|unsubscribe|newsletter|digest|precedence:\s*bulk)\b",
+        blob,
+    ))
+    marketingish = bool(re.search(
+        r"\b(advertisement|sponsored|promo|promotion|sale|discount|offer|limited time|deal|coupon|shop now|buy now|membership|rewards?)\b",
+        blob,
+    ))
+    receiptish = bool(re.search(
+        r"\b(receipt|order|注文|payment confirmation|delivery|shipment|tracking|お届け|購入)\b",
+        blob,
+    ))
+    billish = bool(re.search(
+        r"\b(bill|billing|amount due|overdue|pay by|payment due|subscription could not be renewed)\b",
+        blob,
+    ))
+    legalish = bool(re.search(
+        r"\b(court|charge|legal|lawyer|solicitor|claim|judgment|registration fee|debt)\b",
+        blob,
+    ))
+
+    if bulkish or marketingish:
+        add_type("newsletter")
+    if receiptish:
+        add_type("receipt")
+    if billish:
+        add_type("bills")
+    if legalish:
+        add_type("legal")
+    if re.search(r"\b(flight|hotel|booking|reservation|itinerary|train|ticket|trip|旅|予約)\b", blob):
+        add_type("travel")
+    if re.search(r"\b(ticket|case|support|helpdesk|request)\b", blob):
+        add_type("support")
+    if re.search(r"\b(meeting|appointment|calendar|invite|event|schedule|予定|保育園|連絡帳)\b", blob):
+        add_response("calendar")
+
+    explicit_action = bool(re.search(
+        r"\b(action required|required action|please reply|please respond|deadline|by \d{1,2} |"
+        r"submit|sign|confirm|approval|waiting outside|locked out|can't get in|cannot get in)\b",
+        blob,
+    ))
+    consequence_action = bool(re.search(
+        r"\b(pay within|pay by|payment due|amount due|overdue|final notice|past due|"
+        r"subscription could not be renewed|debt|court|legal|lawyer|solicitor|claim|judgment)\b",
+        blob,
+    ))
+    if explicit_action or consequence_action:
+        add_response("action-needed")
+
+    type_priority = ("bills", "receipt", "travel")
+    tags = [*response_tags]
+    for type_tag in type_priority:
+        if type_tag in type_candidates and type_tag not in tags:
+            tags.append(type_tag)
+        if len(tags) >= len(response_tags) + 2:
+            break
+
+    score = 0
+    reason = "categorized by email metadata"
+    if "action-needed" in response_tags:
+        score = 2
+        reason = "action likely needed"
+    if re.search(r"\b(urgent|immediately|final notice|locked out|waiting outside|can't get in|cannot get in)\b", blob):
+        score = 3
+        reason = "urgent wording"
+    if (bulkish or marketingish) and score < 2:
+        score = 0
+        reason = "bulk marketing/newsletter"
+
+    _from_raw = item.get("from", "") or ""
+    if "<" in _from_raw:
+        _from_short = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
+    else:
+        _from_short = _from_raw
+    return {
+        "score": max(0, min(3, score)),
+        "tags": tags[:4],
+        "spam": False,
+        "reason": reason,
+        "subject": (item.get("subject") or "")[:200],
+        "from": _from_short[:120],
+        "triage_version": triage_version,
+        "message_id": (item.get("message_id") or "").strip(),
+        "unread": bool(item.get("unread")),
+        "ts": time.time(),
+    }
 
 
 def _read_email_urgency_state(state_path):
@@ -566,7 +690,11 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                 return False
 
             from src.task_endpoint import resolve_task_candidates
-            candidates = resolve_task_candidates(owner=group_owner or None)
+            candidates = resolve_task_candidates(
+                owner=group_owner or None,
+                override_url=kwargs.get("endpoint_url"),
+                override_model=kwargs.get("model"),
+            )
             if not candidates:
                 return False
 
@@ -750,22 +878,28 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
 
 
 async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, label: str = "Command") -> Tuple[str, bool]:
-    """Shared subprocess runner. Wraps the blocking subprocess.run in
-    asyncio.to_thread so the event loop stays responsive."""
-    import asyncio
-    import subprocess
+    """Scheduled local work consumes the request's sealed launch ceiling."""
+    from src.agent_runtime.authority import active_request_authority, ExactOperation
+    from src.agent_runtime.process_resources import resolve_process_operation, bind_process_operation
+    from src.agent_runtime.resources import NativeBackendResource
+    from src.agent_tools.subprocess_tools import _run_owned_command
+    authority = active_request_authority()
+    if authority is None:
+        return "Scheduled process launch has no server authority.", False
+    if isinstance(argv, list) and argv and argv[0] == "ssh":
+        return "Remote scheduled workload requires an exact external backend binding.", False
+    command = argv[-1] if isinstance(argv, list) else argv
+    operation = ExactOperation.normalize("bash", command)
+    if not authority.permits(operation):
+        return "Scheduled launch differs from the sealed operation.", False
     try:
-        result = await asyncio.to_thread(
-            subprocess.run, argv, shell=shell, capture_output=True, text=True, timeout=timeout,
-        )
-        output = (result.stdout or "").strip()
-        if result.returncode != 0 and result.stderr:
-            output += "\nSTDERR: " + result.stderr.strip()
-        return output or "(no output)", result.returncode == 0
-    except subprocess.TimeoutExpired:
-        return f"{label} timed out ({timeout}s)", False
-    except Exception as e:
-        return str(e), False
+        bound = resolve_process_operation(authority, operation, NativeBackendResource("bash"))
+        with bind_process_operation(bound):
+            result = await _run_owned_command(command, {"owner": authority.owner,
+                "session_id": authority.session_id}, tool="bash", timeout=timeout)
+        return result.get("output") or result.get("error") or "(no output)", result.get("exit_code") == 0
+    except (ValueError, OSError, RuntimeError) as error:
+        return str(error), False
 
 
 async def action_ssh_command(owner: str, command: str = "", host: str = "localhost", **kwargs) -> Tuple[str, bool]:
@@ -964,6 +1098,14 @@ def _result_has_work(result: str | None) -> bool:
     if not isinstance(result, str) or not result:
         return False
     low = result.lower()
+    # Multi-account email passes concatenate one account's result after
+    # another. A mailbox with no work must not hide successful work from a
+    # different mailbox.
+    if re.search(
+        r"\b(?:processed|summarized|drafted|sent|created|tagged|moved|translated)\s+[1-9]\d*\b",
+        low,
+    ):
+        return True
     if "processed 0" in low or "no new" in low or "nothing to" in low:
         return False
     # "Tagged 0 / Moved 0" or similar zero-count summaries
@@ -1011,6 +1153,8 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
             do_summary=True,
             do_reply=False,
             account_id=_email_task_account_id(kwargs),
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
         )
         if _result_is_config_error(result):
             return result, False
@@ -1032,6 +1176,8 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
             account_id=_email_task_account_id(kwargs),
             days_back=7,
             progress_cb=kwargs.get("progress_cb"),
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
         )
         if _result_is_config_error(result):
             return result, False
@@ -1165,20 +1311,37 @@ async def action_email_auto_translate(owner: str, **kwargs) -> Tuple[str, bool]:
                     },
                 ],
                 owner=owner,
+                override_url=kwargs.get("endpoint_url"),
+                override_model=kwargs.get("model"),
                 temperature=0.2,
                 max_tokens=8192,
                 timeout=180,
             )
             content = (content or "").strip()
-            content = _extract_reply(content)
             if "<<<SAME_LANGUAGE>>>" in content:
                 return "", True
-            marker = _re.search(r"<<<TRANSLATION>>>\s*(.*?)\s*<<<END>>>", content, _re.S | _re.I)
-            if marker:
-                content = marker.group(1).strip()
+            # Translation markers are distinct from the reply/summary markers
+            # handled by _extract_reply. Some reasoning-capable models repeat
+            # the opening marker or omit END, so anchor on the first opening
+            # marker and tolerate either response shape.
+            marker_open = _re.search(r"<<<\s*TRANSLATION\s*>>>", content, _re.I)
+            if marker_open:
+                translated_body = content[marker_open.end():]
+                marker_close = _re.search(r"<<<\s*END\s*>>>", translated_body, _re.I)
+                content = translated_body[:marker_close.start()] if marker_close else translated_body
             else:
-                content = _re.sub(r"^\s*<<<TRANSLATION>>>\s*", "", content, flags=_re.I).strip()
-                content = _re.sub(r"\s*<<<END>>>\s*$", "", content, flags=_re.I).strip()
+                content = _extract_reply(content)
+            content = _re.sub(r"<<<\s*(?:TRANSLATION|END)\s*>>>", "", content, flags=_re.I).strip()
+            # Avoid caching duplicated output when a model emits the same
+            # translation twice while repairing its requested format.
+            paragraphs = [p.strip() for p in _re.split(r"\n\s*\n", content) if p.strip()]
+            if len(paragraphs) >= 2 and paragraphs[-1] == paragraphs[-2]:
+                paragraphs.pop()
+                content = "\n\n".join(paragraphs)
+            elif len(content) > 1 and len(content) % 2 == 0:
+                midpoint = len(content) // 2
+                if content[:midpoint].strip() == content[midpoint:].strip():
+                    content = content[:midpoint].strip()
             return content, False
 
         since = (_dt.utcnow() - _td(days=days_back)).strftime("%d-%b-%Y")
@@ -1375,7 +1538,11 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 return "No upcoming events to classify", True
 
             from src.task_endpoint import resolve_task_candidates
-            llm_candidates = resolve_task_candidates(owner=owner)
+            llm_candidates = resolve_task_candidates(
+                owner=owner,
+                override_url=kwargs.get("endpoint_url"),
+                override_model=kwargs.get("model"),
+            )
             llm_available = bool(llm_candidates)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -1462,12 +1629,18 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                     from src.text_helpers import strip_think as _st
                     raw = _st(raw or "", prose=False, prompt_echo=False)
                     raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
-                    m = _re.search(r"\[.*\]", raw, _re.DOTALL)
-                    if not m:
+                    # Native Qwen/Heretic responses can append a short
+                    # explanation after an otherwise valid JSON array. Decode
+                    # the first complete array instead of using a greedy regex
+                    # that turns the suffix into `json.loads` Extra data.
+                    start = raw.find("[")
+                    if start < 0:
                         logger.warning(f"[classify-llm] no JSON array in response: {raw[:300]!r}")
                         failed += len(batch)
                         continue
-                    arr = _json.loads(m.group())
+                    arr, _end = _json.JSONDecoder().raw_decode(raw[start:])
+                    if not isinstance(arr, list):
+                        raise ValueError("calendar classifier returned a non-array JSON value")
                     by_idx = {x.get("i"): x for x in arr if isinstance(x, dict)}
                     for idx, ev in enumerate(batch):
                         x = by_idx.get(idx)
@@ -1539,6 +1712,8 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
                         days_back=days_back,
                         account_id=account_id,
                         max_process=max_process,
+                        override_url=kwargs.get("endpoint_url"),
+                        override_model=kwargs.get("model"),
                     ),
                     timeout=timeout,
                 )
@@ -1670,7 +1845,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             return "All sender sigs already cached (or no eligible senders)", True
 
         from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
+        candidates = resolve_task_candidates(
+            owner=owner,
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
+        )
         if not candidates:
             return "No LLM endpoint available", False
         model = candidates[0][1]
@@ -1931,7 +2110,11 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             raise TaskNoop("no skills to test")
 
         from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
+        candidates = resolve_task_candidates(
+            owner=owner,
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
+        )
         if not candidates:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -2055,14 +2238,24 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
 
         sm = SkillsManager(DATA_DIR)
         skills = sm.load(owner=owner)
+        from services.memory.skill_lifecycle import automatic_audit_candidates
         names = [
-            s.get("name") for s in skills
-            if s.get("name") and not s.get("audit_verdict")
+            s["name"] for s in automatic_audit_candidates(skills)
         ]
         if not names:
             raise TaskNoop("no unaudited skills")
 
-        url, model, headers, teacher = _resolve_audit_models()
+        try:
+            url, model, headers, teacher = _resolve_audit_models(
+                owner=owner,
+                model_spec=kwargs.get("model"),
+                endpoint_url=kwargs.get("endpoint_url"),
+            )
+        except ValueError as e:
+            # A missing Utility/Default model is a temporary configuration
+            # problem, not a completed audit. Let the scheduler retry without
+            # consuming the daily run or advancing the normal schedule.
+            raise TaskDeferred(str(e), delay_seconds=20 * 60) from e
         try:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
@@ -2085,15 +2278,17 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             ],
             "started": _time.time(), "cancel": False,
         }
-        await _run_audit_all_job(key, sm, names, url, model, headers, teacher, owner)
+        await _run_audit_all_job(key, sm, names, url, model, headers, teacher, owner, workload="background")
         job = _skill_audit_jobs.get(key, {})
+        if job.get("unavailable"):
+            raise TaskDeferred("Skill audit model unavailable; retrying later", delay_seconds=20 * 60)
         counts = {}
         for r in job.get("results", []):
             k = r.get("result") or "unknown"
             counts[k] = counts.get(k, 0) + 1
         summary = " · ".join(f"{v} {k}" for k, v in sorted(counts.items())) or "0 results"
-        return f"Audited {job.get('done', 0)}/{len(names)} unaudited skill(s): {summary}", True
-    except TaskNoop:
+        return f"Audited {job.get('done', 0)}/{len(names)} queued skill(s): {summary}", True
+    except (TaskNoop, TaskDeferred):
         raise
     except Exception as e:
         logger.error(f"audit_skills action failed: {e}")
@@ -2102,10 +2297,10 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
 
 async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
     """Background note-due scanner. Fires a reminder for any note whose
-    `due_date` falls in the current ±5-minute window and hasn't been pinged
-    within the last 25 minutes. Mirrors `action_ping_events` for calendar.
+    `due_date` falls in the current ±90-second window and hasn't been delivered
+    through its configured channel in the last 25 minutes.
 
-    State (`data/note_pings.json`): {note_id: iso_ts_of_last_ping}. Pruned
+    Per-owner state: {note_id: {at, channel}}, with legacy timestamp support. Pruned
     on each run by dropping entries for notes that are gone/archived/replied.
     """
     try:
@@ -2114,6 +2309,11 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, Note as _N
+        from src.settings import load_settings
+
+        channel = load_settings().get("reminder_channel", "browser")
+        external_channel = channel in ("email", "ntfy", "webhook")
+        delivery_key = f"{channel}_sent" if external_channel else "browser_sent"
 
         # Per-owner state file so cache-pruning doesn't cross-delete other
         # users' entries (review C4). Legacy path kept as fallback so a
@@ -2178,20 +2378,27 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 due = _parse_due(n.due_date)
                 if not due:
                     continue
-                # Inside the ±5min window?
+                # Inside the due window?
                 if abs((due - now).total_seconds()) > window.total_seconds():
                     continue
                 # Recently pinged? Skip.
                 last = cache.get(n.id)
+                browser_recent = False
                 if last:
                     try:
+                        last_channel = None
                         if isinstance(last, dict):
+                            last_channel = last.get("channel")
                             last = last.get("at")
                         last_dt = _dt.fromisoformat(str(last))
                         if last_dt.tzinfo is None:
                             last_dt = last_dt.replace(tzinfo=_tz.utc)
                         if last_dt >= reping_cutoff:
-                            continue
+                            if not external_channel or last_channel == channel:
+                                continue
+                            # Browser-only receipts do not prove external
+                            # delivery, but the fallback must not be queued twice.
+                            browser_recent = last_channel in (None, "browser")
                     except Exception:
                         pass
                 # Compose + dispatch.
@@ -2215,15 +2422,26 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 body = "\n\n".join(p for p in body_parts if p) or title
                 try:
                     from routes.note_routes import dispatch_reminder
-                    await dispatch_reminder(
+                    result = await dispatch_reminder(
                         title=title, note_body=body, note_id=n.id,
                         owner=n.owner or owner or "",
+                        queue_browser=not browser_recent,
                     )
-                    cache[n.id] = now.isoformat()
-                    sent.append(title)
+                    if result.get("skipped"):
+                        continue
+                    if result.get(delivery_key):
+                        sent.append(title)
+                    else:
+                        logger.warning("ping_notes: %s delivery failed for %s", channel, n.id)
                 except Exception as e:
                     logger.warning(f"ping_notes: dispatch failed for {n.id}: {e}")
 
+            # Dispatch owns delivery receipts. Reload before pruning so this
+            # scanner cannot replace a fresh channel receipt with a timestamp.
+            try:
+                cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
+            except Exception:
+                pass
             # Prune cache entries for notes that no longer exist.
             for stale in [k for k in cache if k not in seen_ids]:
                 cache.pop(stale, None)
@@ -2234,7 +2452,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 logger.warning(f"ping_notes: cache write failed: {e}")
 
             if not sent:
-                raise TaskNoop(f"scanned {len(notes)} note(s), none due in ±{WINDOW_SEC}s")
+                raise TaskNoop(f"scanned {len(notes)} note(s), no reminders delivered")
             preview = "; ".join(sent[:3])
             extra = f" (+{len(sent) - 3} more)" if len(sent) > 3 else ""
             return f"Pinged {len(sent)} note(s): {preview}{extra}", True
@@ -2286,10 +2504,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         AGE_CUTOFF = _dt.utcnow() - _td(days=7)
-        TRIAGE_VERSION = 10
-        CATEGORY_TAGS = {
-            "bills", "receipt", "travel", "calendar", "action-needed",
-        }
+        TRIAGE_VERSION = 11
+        CATEGORY_TAGS = set(EMAIL_URGENCY_CATEGORY_TAGS)
         VISIBLE_EMAIL_TAGS = CATEGORY_TAGS | {"urgent", "reply-soon"}
         MANAGED_TAGS = VISIBLE_EMAIL_TAGS | {
             "newsletter", "marketing", "notification", "finance", "security",
@@ -2300,7 +2516,11 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # gate until after authoritative account cleanup. State retirement must
         # still run when no model is configured.
         from src.task_endpoint import resolve_task_candidates
-        candidates = resolve_task_candidates(owner=owner)
+        candidates = resolve_task_candidates(
+            owner=owner,
+            override_url=kwargs.get("endpoint_url"),
+            override_model=kwargs.get("model"),
+        )
         target_account_id = _email_task_account_id(kwargs)
 
         # ── 1. Enumerate enabled accounts. Match this task's owner AND fall
@@ -2443,88 +2663,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         tag_write_details = []
         scanned = 0
         fully_scanned_account_ids = set()
-
-        def _heuristic_email_verdict(item: dict) -> dict:
-            blob = (
-                f"{item.get('headers','')}\n{item.get('from','')}\n"
-                f"{item.get('subject','')}\n{item.get('body','')}"
-            ).lower()
-            response_tags = []
-            type_candidates = []
-
-            def add_response(tag: str):
-                if tag in CATEGORY_TAGS and tag not in response_tags:
-                    response_tags.append(tag)
-
-            def add_type(tag: str):
-                if tag in CATEGORY_TAGS and tag not in type_candidates:
-                    type_candidates.append(tag)
-
-            bulkish = bool(_re.search(
-                r"\b(list-unsubscribe|list-id|mailchimp|mailchimpapp|view this email in your browser|unsubscribe|newsletter|digest|precedence:\s*bulk)\b",
-                blob,
-            ))
-            marketingish = bool(_re.search(
-                r"\b(advertisement|sponsored|promo|promotion|sale|discount|offer|limited time|deal|coupon|shop now|buy now|membership|rewards?)\b",
-                blob,
-            ))
-            if bulkish or marketingish:
-                add_type("newsletter")
-            if _re.search(r"\b(receipt|order|注文|payment confirmation|delivery|shipment|tracking|お届け|購入)\b", blob):
-                add_type("receipt")
-            if _re.search(r"\b(bill|billing|amount due|overdue|pay by|payment due|subscription could not be renewed)\b", blob):
-                add_type("bills")
-            if _re.search(r"\b(court|charge|legal|lawyer|solicitor|claim|judgment|registration fee|debt)\b", blob):
-                add_type("legal")
-            if _re.search(r"\b(flight|hotel|booking|reservation|itinerary|train|ticket|trip|旅|予約)\b", blob):
-                add_type("travel")
-            if _re.search(r"\b(ticket|case|support|helpdesk|request)\b", blob):
-                add_type("support")
-            if _re.search(r"\b(meeting|appointment|calendar|invite|event|schedule|予定|保育園|連絡帳)\b", blob):
-                add_response("calendar")
-            if _re.search(
-                r"\b(action required|required action|please reply|please respond|deadline|by \d{1,2} |pay within|submit|sign|confirm|approval|waiting outside|locked out|can't get in|cannot get in|invoice|bill|billing|payment|balance|debt|subscription|renewal|overdue|amount due|court|charge|legal|lawyer|solicitor|claim|judgment)\b",
-                blob,
-            ):
-                add_response("action-needed")
-
-            type_priority = ("bills", "receipt", "travel")
-            tags = [*response_tags]
-            for type_tag in type_priority:
-                if type_tag in type_candidates and type_tag not in tags:
-                    tags.append(type_tag)
-                if len(tags) >= len(response_tags) + 2:
-                    break
-
-            score = 0
-            reason = "categorized by email metadata"
-            if "action-needed" in response_tags:
-                score = 2
-                reason = "action likely needed"
-            if _re.search(r"\b(urgent|immediately|final notice|locked out|waiting outside|can't get in|cannot get in)\b", blob):
-                score = 3
-                reason = "urgent wording"
-            if (bulkish or marketingish) and score < 2:
-                score = 0
-                reason = "bulk marketing/newsletter"
-
-            _from_raw = item.get("from", "") or ""
-            if "<" in _from_raw:
-                _from_short = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
-            else:
-                _from_short = _from_raw
-            return {
-                "score": max(0, min(3, score)),
-                "tags": tags[:4],
-                "spam": False,
-                "reason": reason,
-                "subject": (item.get("subject") or "")[:200],
-                "from": _from_short[:120],
-                "triage_version": TRIAGE_VERSION,
-                "message_id": (item.get("message_id") or "").strip(),
-                "unread": bool(item.get("unread")),
-                "ts": _time.time(),
-            }
 
         # ── 3. Per-account scan: pull headers + lightweight body for new UIDs
         # since 7 days ago, score via LLM, cache the verdict.
@@ -2700,11 +2838,20 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 # Skip uids we couldn't fetch (no subject/from/body).
                 if not item.get("subject") and not item.get("from"):
                     continue
-                verdict = _heuristic_email_verdict(item)
-                cache.setdefault("uids", {})[item["uid"]] = verdict
-                per_uid_scores[key] = verdict
-                saved_classifications += 1
-                continue
+                verdict = _heuristic_email_urgency_verdict(
+                    item,
+                    triage_version=TRIAGE_VERSION,
+                    category_tags=CATEGORY_TAGS,
+                )
+                # Keep deterministic handling for clearly categorized mail,
+                # but let ambiguous messages reach the configured task model.
+                # The unconditional continue here previously made the LLM
+                # classifier below unreachable for every email.
+                if verdict.get("tags") or verdict.get("reason") != "categorized by email metadata":
+                    cache.setdefault("uids", {})[item["uid"]] = verdict
+                    per_uid_scores[key] = verdict
+                    saved_classifications += 1
+                    continue
                 # ── LLM-classify. JSON-only response; bullet-proof parse.
                 llm_attempts += 1
                 prompt = (
@@ -3263,10 +3410,12 @@ async def action_cookbook_serve(
     if srv.get("platform"): body["platform"] = srv["platform"]
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(f"{internal_api_base()}/api/model/serve",
-                                  json=body, headers=headers)
-            data = r.json() if r.content else {}
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_model", command, owner, body, scheduled=True) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(f"{internal_api_base()}/api/model/serve",
+                                      json=body, headers=launch_headers)
+                data = r.json() if r.content else {}
     except Exception as e:
         return f"Launch HTTP failed: {e}", False
     if not data.get("ok"):

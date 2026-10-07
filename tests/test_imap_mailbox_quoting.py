@@ -34,6 +34,7 @@ class FakeListConn:
 class FakeMoveConn:
     def __init__(self):
         self.calls = []
+        self.present_uids = {"123"}
 
     def list(self):
         self.calls.append(("list",))
@@ -46,9 +47,11 @@ class FakeMoveConn:
     def uid(self, command, *args):
         self.calls.append(("uid", command, *args))
         if command == "FETCH":
-            return "OK", [b"1 (UID 123)"]
+            return "OK", [b"1 (UID 123)"] if "123" in self.present_uids else []
         if command == "MOVE":
             return "NO", []
+        if command == "STORE" and args and args[0] == b"123":
+            self.present_uids.discard("123")
         return "OK", []
 
     def expunge(self):
@@ -83,7 +86,7 @@ def test_known_imap_mailbox_call_sites_are_quoted():
     assert 'conn.uid("MOVE", _b(uid), dest_folder)' not in mcp
     assert 'conn.uid("COPY", _b(uid), dest_folder)' not in mcp
 
-    pollers = Path("routes/email_pollers.py").read_text()
+    pollers = Path("routes/email/email_pollers.py").read_text()
     assert "conn.select(sent_name" not in pollers
     assert "imap.append(sent_folder" not in pollers
 
@@ -109,3 +112,29 @@ def test_mcp_bulk_move_quotes_destination_for_move_and_fallback_copy(monkeypatch
 
     assert ("uid", "MOVE", b"123", '"[Gmail]/All Mail"') in conn.calls
     assert ("uid", "COPY", b"123", '"[Gmail]/All Mail"') in conn.calls
+
+
+class FakeNoOpBulkMoveConn(FakeMoveConn):
+    def uid(self, command, *args):
+        self.calls.append(("uid", command, *args))
+        if command == "FETCH":
+            rows = [f"{i} (UID {uid})".encode() for i, uid in enumerate(sorted(self.present_uids), 1)]
+            return "OK", rows
+        if command == "MOVE":
+            return "OK", []  # Server lies: reports success but moves nothing.
+        if command == "COPY":
+            return "OK", []
+        if command == "STORE":
+            self.present_uids.discard(args[0].decode())
+            return "OK", []
+        return "OK", []
+
+
+def test_mcp_bulk_move_verifies_ok_noop_and_uses_copy_delete(monkeypatch):
+    conn = FakeNoOpBulkMoveConn()
+    monkeypatch.setattr(es, "_imap_connect", lambda account=None: conn)
+
+    assert es._bulk_move(["123"], "INBOX", "Trash", role="trash") == 1
+    assert ("uid", "MOVE", b"123", '"Trash"') in conn.calls
+    assert ("uid", "COPY", b"123", '"Trash"') in conn.calls
+    assert ("uid", "STORE", b"123", "+FLAGS", "\\Deleted") in conn.calls

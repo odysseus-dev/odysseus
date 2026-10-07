@@ -13,12 +13,14 @@
  *   saveState:   (label?: string) => void,
  *   strokeTo:    (x: number, y: number) => void,
  *   showToast:   (msg: string) => void,
+ *   onSourceChanged?: () => void,
  * }} deps
  */
 import { state } from '../state.js';
+import { isLayerPixelLocked } from '../layer-groups.js';
 import { canvasCoords } from '../canvas-coords.js';
 
-export function createCloneTool({ activeLayer, saveState, strokeTo, showToast }) {
+export function createCloneTool({ activeLayer, saveState, beginStroke, showToast, onSourceChanged, getSampleCanvas }) {
   return {
     begin(e) {
       const layer = activeLayer();
@@ -49,8 +51,34 @@ export function createCloneTool({ activeLayer, saveState, strokeTo, showToast })
         state.cloneSourceX = coords.x;
         state.cloneSourceY = coords.y;
         state.cloneSourceLayerId = (layer && layer.id) || state.activeLayerId;
+        const sampledCanvas = getSampleCanvas?.({ layer, mode: state.cloneSampleMode });
+        const sourceLayer = layer && (
+          state.cloneSampleMode === 'active-layer' || !sampledCanvas
+        ) ? layer : null;
+        const sourceOffset = sourceLayer ? (state.layerOffsets.get(sourceLayer.id) || { x: 0, y: 0 }) : { x: 0, y: 0 };
+        state.cloneSourceOffsetX = sourceOffset.x;
+        state.cloneSourceOffsetY = sourceOffset.y;
         state.cloneSourceSnapshot = null; // captured at first stroke
+        onSourceChanged?.();
         showToast('Clone source set');
+        return;
+      }
+      // Healing defaults to source-free spot correction. Once a source is
+      // chosen, the same tool switches to sampled healing in the pipeline.
+      if (state.tool === 'heal' && (state.cloneSourceX === null || state.cloneSourceY === null)) {
+        if (!layer || isLayerPixelLocked(state, layer)) {
+          showToast('Unlock image pixels before healing');
+          return;
+        }
+        if (layer.kind === 'placed') {
+          showToast('Rasterize the placed layer before healing its pixels');
+          return;
+        }
+        saveState('Healing stroke');
+        state.drawing = true;
+        state.lastX = coords.x;
+        state.lastY = coords.y;
+        beginStroke({ x: coords.x, y: coords.y, pressure: Number(e.pressure) > 0 ? e.pressure : 1 }, state.tool);
         return;
       }
       if (state.cloneSourceX === null || state.cloneSourceY === null) {
@@ -59,23 +87,32 @@ export function createCloneTool({ activeLayer, saveState, strokeTo, showToast })
           : 'Alt-click first to set a clone source');
         return;
       }
-      if (!layer || layer.locked) return;
-      saveState('Clone stroke');
+      if (!layer || isLayerPixelLocked(state, layer)) {
+        showToast('Unlock image pixels before cloning');
+        return;
+      }
+      if (layer.kind === 'placed') {
+        showToast('Rasterize the placed layer before cloning into it');
+        return;
+      }
+      const toolName = state.tool === 'heal' ? 'Healing stroke' : 'Clone stroke';
+      saveState(toolName);
       // Snapshot the source layer's pixels at stroke-start so the
       // brush samples clean source pixels even after it has painted
       // over them. Otherwise we'd cascade-clone the same ring.
       const srcLayer = state.layers.find(l => l.id === state.cloneSourceLayerId) || layer;
+      const sourceCanvas = getSampleCanvas?.({ layer: srcLayer, mode: state.cloneSampleMode }) || srcLayer.canvas;
       const snap = document.createElement('canvas');
-      snap.width = srcLayer.canvas.width;
-      snap.height = srcLayer.canvas.height;
-      snap.getContext('2d').drawImage(srcLayer.canvas, 0, 0);
+      snap.width = sourceCanvas.width;
+      snap.height = sourceCanvas.height;
+      snap.getContext('2d').drawImage(sourceCanvas, 0, 0);
       state.cloneSourceSnapshot = snap;
       state.cloneStrokeStartX = coords.x;
       state.cloneStrokeStartY = coords.y;
       state.drawing = true;
       state.lastX = coords.x;
       state.lastY = coords.y;
-      strokeTo(coords.x, coords.y);
+      beginStroke({ x: coords.x, y: coords.y, pressure: Number(e.pressure) > 0 ? e.pressure : 1 }, state.tool);
     },
   };
 }

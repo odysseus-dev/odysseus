@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
-from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, inspect, text
+from sqlalchemy import DDL, event, create_engine, Column, String, Text, Boolean, DateTime, Integer, Float, ForeignKey, JSON, Index, func, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -75,7 +75,7 @@ DATABASE_URL = _normalize_sqlite_url(os.getenv("DATABASE_URL", _default_database
 # Create engine
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    connect_args={"check_same_thread": False, "timeout": 30} if "sqlite" in DATABASE_URL else {}
 )
 
 
@@ -144,6 +144,8 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     if isinstance(dbapi_connection, sqlite3.Connection):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA journal_mode=WAL")
         cursor.close()
 
 
@@ -191,9 +193,22 @@ class Session(TimestampMixin, Base):
     # Configuration flags
     rag = Column(Boolean, default=False)
     archived = Column(Boolean, default=False)
+    memory_extraction_enabled = Column(Boolean, default=True)
+    memory_injection_enabled = Column(Boolean, default=True)
+    skill_injection_enabled = Column(Boolean, default=True)
+    thinking_mode = Column(String, nullable=True, default="off")
+    temperature_override = Column(Float, nullable=True, default=None)
+    max_tokens_override = Column(Integer, nullable=True, default=None)
 
     # Organization
     folder = Column(String, nullable=True, default=None)
+    cwd = Column(String, nullable=True, default=None)
+    # Registered ModelEndpoint this session is bound to. endpoint_url alone
+    # cannot distinguish two endpoints that share a provider URL but use
+    # different credentials (e.g. two ChatGPT Subscription accounts), so the
+    # exact endpoint id is remembered here. NULL = legacy session; the first
+    # deterministic, owner-scoped resolution persists a binding.
+    endpoint_id = Column(String, nullable=True, index=True)
     
     # Headers stored as JSON
     headers = Column(JSON, default=dict)
@@ -219,6 +234,7 @@ class Session(TimestampMixin, Base):
     message_count = Column(Integer, default=0)
     total_input_tokens = Column(Integer, default=0)
     total_output_tokens = Column(Integer, default=0)
+    total_cost_usd = Column(Float, default=0.0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
 
@@ -239,6 +255,12 @@ class Session(TimestampMixin, Base):
             'endpoint_url': self.endpoint_url,
             'rag': self.rag,
             'archived': self.archived,
+            'memory_extraction_enabled': self.memory_extraction_enabled is not False,
+            'memory_injection_enabled': self.memory_injection_enabled is not False,
+            'skill_injection_enabled': self.skill_injection_enabled is not False,
+            'thinking_mode': self.thinking_mode or '',
+            'temperature_override': self.temperature_override,
+            'max_tokens_override': self.max_tokens_override,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None,
@@ -248,6 +270,7 @@ class Session(TimestampMixin, Base):
             'folder': self.folder,
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
+            'total_cost_usd': self.total_cost_usd or 0.0,
             'crew_member_id': self.crew_member_id,
         }
 
@@ -279,6 +302,22 @@ class ChatMessage(Base):
     __table_args__ = (
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
     )
+
+class BackgroundToolJob(Base):
+    """Durable origin and once-only chat delivery for background tool work."""
+    __tablename__ = "background_tool_jobs"
+    id = Column(String, primary_key=True)
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner = Column(String, nullable=False, index=True)
+    tool = Column(String, nullable=False)
+    query = Column(Text, nullable=False)
+    rounds = Column(Integer, nullable=True)
+    status = Column(String, nullable=False, default="running", index=True)
+    payload = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    message_id = Column(String, nullable=True)
+    created_at = Column(DateTime, default=utcnow_naive)
+
 
 class Document(TimestampMixin, Base):
     """Living document that the AI can create and edit in-place."""
@@ -575,6 +614,9 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # JSON object: model id -> native tool schema surface preference.
+    # Values: none, compact, full. Missing key = legacy automatic behavior.
+    model_tool_modes = Column(Text, nullable=True)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
@@ -766,6 +808,7 @@ class ScheduledTask(TimestampMixin, Base):
     owner          = Column(String, nullable=True, index=True)
     name           = Column(String, nullable=False, default="Untitled Task")
     prompt         = Column(Text, nullable=True)              # LLM prompt (for task_type="llm")
+    request_authority_json = Column(Text, nullable=True)       # server-only admitted request snapshot
     task_type      = Column(String, default="llm")            # "llm" | "action"
     action         = Column(String, nullable=True)            # builtin action name (for task_type="action")
     schedule       = Column(String, nullable=True)            # "once", "daily", "weekly", "monthly"
@@ -861,6 +904,23 @@ class TaskRun(Base):
     )
 
 
+class NotificationLog(Base):
+    """Persisted task notifications, including completion and error text."""
+    __tablename__ = "notification_logs"
+
+    id         = Column(String, primary_key=True, index=True)
+    owner      = Column(String, nullable=True, index=True)
+    task_name  = Column(String, nullable=False)
+    task_id    = Column(String, nullable=True, index=True)
+    status     = Column(String, nullable=False, default="success")
+    body       = Column(Text, nullable=True)
+    timestamp  = Column(DateTime, nullable=False, default=utcnow_naive, index=True)
+
+    __table_args__ = (
+        Index('ix_notification_logs_owner_time', 'owner', 'timestamp'),
+    )
+
+
 class Memory(Base):
     """
     SQLAlchemy model for Memory table.
@@ -940,6 +1000,96 @@ def _migrate_add_last_message_at_column():
             conn.close()
         except Exception:
             pass
+
+def _migrate_add_memory_extraction_enabled_column():
+    """Add per-session auto memory extraction toggle."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+        if "memory_extraction_enabled" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN memory_extraction_enabled BOOLEAN DEFAULT 1")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added memory_extraction_enabled to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"memory_extraction_enabled migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_skill_injection_enabled_column():
+    """Add per-session skill injection toggle."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+        if "skill_injection_enabled" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN skill_injection_enabled BOOLEAN DEFAULT 1")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added skill_injection_enabled to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"skill_injection_enabled migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_memory_injection_enabled_column():
+    """Add per-session memory context injection toggle."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+        if "memory_injection_enabled" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN memory_injection_enabled BOOLEAN DEFAULT 1")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added memory_injection_enabled to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"memory_injection_enabled migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_session_generation_settings_columns():
+    """Add per-chat model generation controls."""
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        additions = {
+            "thinking_mode": "VARCHAR DEFAULT 'off'",
+            "temperature_override": "FLOAT",
+            "max_tokens_override": "INTEGER",
+        }
+        for name, sql_type in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {name} {sql_type}")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"session generation settings migration failed: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 def _migrate_add_document_archived_column():
     """Add `archived` to documents (soft-archive flag). Guarded + idempotent."""
@@ -1190,6 +1340,30 @@ def _migrate_add_supports_tools_column():
             pass
 
 
+def _migrate_add_model_tool_modes_column():
+    """Add per-model tool-surface preferences to model_endpoints if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "model_tool_modes" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_tool_modes TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'model_tool_modes' column to model_endpoints")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model_tool_modes migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_cached_models_column():
     """Add cached_models column to model_endpoints if it doesn't exist."""
     import sqlite3
@@ -1405,6 +1579,42 @@ def _migrate_add_folder_column():
         except Exception:
             pass
 
+def _migrate_add_session_cwd_column():
+    """Add cwd column to sessions table if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "cwd" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'cwd' column to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for cwd failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_session_endpoint_id_column():
+    """Add the nullable binding and index without rewriting existing sessions."""
+    with engine.begin() as connection:
+        schema = inspect(connection)
+        if not schema.has_table("sessions"):
+            return
+        columns = {column["name"] for column in schema.get_columns("sessions")}
+        if "endpoint_id" not in columns:
+            connection.execute(text("ALTER TABLE sessions ADD COLUMN endpoint_id VARCHAR"))
+        index = next(index for index in Session.__table__.indexes if index.name == "ix_sessions_endpoint_id")
+        index.create(bind=connection, checkfirst=True)
+
+
 def _migrate_add_token_columns():
     """Add cumulative token tracking columns to sessions table."""
     import sqlite3
@@ -1423,6 +1633,29 @@ def _migrate_add_token_columns():
             logging.getLogger(__name__).info("Migrated: added token tracking columns to sessions")
     except Exception as e:
         logging.getLogger(__name__).warning(f"Migration check for token columns failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+def _migrate_add_total_cost_usd():
+    """Add cumulative USD cost column to sessions table."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "total_cost_usd" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN total_cost_usd REAL DEFAULT 0.0")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added total_cost_usd column to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for total_cost_usd failed: {e}")
     finally:
         try:
             conn.close()
@@ -1704,6 +1937,29 @@ def _migrate_add_doc_source_email_cols():
     except Exception as e:
         logging.getLogger(__name__).warning(f"doc source-email migration: {e}")
 
+
+def _migrate_add_calendar_source_email_cols():
+    """Add provenance fields so email-created events can link back to the email."""
+    cols_to_add = {
+        "source_email_uid": "VARCHAR",
+        "source_email_folder": "VARCHAR",
+        "source_email_account_id": "VARCHAR",
+        "source_email_message_id": "VARCHAR",
+    }
+    try:
+        with engine.connect() as conn:
+            existing = {r[1] for r in conn.execute(text("PRAGMA table_info(calendar_events)"))}
+            for col, spec in cols_to_add.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE calendar_events ADD COLUMN {col} {spec}"))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_calendar_events_source_email_message_id "
+                "ON calendar_events (source_email_message_id)"
+            ))
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar source-email migration: {e}")
+
 def _migrate_add_task_automation_columns():
     """Add automation columns to scheduled_tasks table if missing."""
     new_cols = {
@@ -1947,6 +2203,7 @@ class Note(TimestampMixin, Base):
     session_id = Column(String, nullable=True)
     sort_order = Column(Integer, default=0)
     image_url  = Column(String, nullable=True)      # uploaded image URL (relative path)
+    gallery_id = Column(String, nullable=True, index=True)  # stable Gallery image for drawings
     repeat     = Column(String, default="none")     # none, daily, weekly, monthly, yearly
     # Auto-AI fields — populated by /api/notes/{id}/classify. The classification
     # JSON shape is { kind, solvable, confidence, task_prompt, tools, items?: [...] }.
@@ -2019,8 +2276,29 @@ class CalendarEvent(TimestampMixin, Base):
     remote_href = Column(String, nullable=True)        # CalDAV object URL for updates/deletes
     remote_etag = Column(String, nullable=True)        # Last seen CalDAV ETag, when available
     caldav_sync_pending = Column(String, nullable=True) # create | update | delete retry marker
+    # Provenance for events extracted from email. UID/folder form the frontend
+    # deep link: #email=<folder>:<imap uid>.
+    source_email_uid = Column(String, nullable=True, index=True)
+    source_email_folder = Column(String, nullable=True)
+    source_email_account_id = Column(String, nullable=True, index=True)
+    source_email_message_id = Column(String, nullable=True, index=True)
 
     calendar = relationship("CalendarCal", back_populates="events")
+
+
+class EmailCalendarInvitation(TimestampMixin, Base):
+    """Revision/tombstone state for one owner's email invitation source."""
+    __tablename__ = "email_calendar_invitations"
+
+    id = Column(String, primary_key=True)
+    owner = Column(String, nullable=False, index=True)
+    sender = Column(String, nullable=False)
+    source_uid = Column(String, nullable=False)
+    recurrence_id = Column(String, nullable=False, default="")
+    event_uid = Column(String, nullable=True)
+    sequence = Column(Integer, nullable=False, default=0)
+    stamp = Column(String, nullable=False, default="")
+    cancelled = Column(Boolean, nullable=False, default=False)
 
 
 class CalendarDeletedEvent(TimestampMixin, Base):
@@ -2209,6 +2487,15 @@ def _migrate_seed_email_account():
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
 # temporarily disabled around the migration workflow.
+def _migrate_add_task_authority_column():
+    """Retain snapshots after legacy task-table rebuilds; support all DBs."""
+    from sqlalchemy import inspect
+    with engine.begin() as conn:
+        columns = {column["name"] for column in inspect(conn).get_columns("scheduled_tasks")}
+        if "request_authority_json" not in columns:
+            conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN request_authority_json TEXT"))
+
+
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -2262,12 +2549,20 @@ def init_db():
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
     _migrate_add_supports_tools_column()
+    _migrate_add_model_tool_modes_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
     _migrate_add_last_message_at_column()
+    _migrate_add_memory_extraction_enabled_column()
+    _migrate_add_memory_injection_enabled_column()
+    _migrate_add_skill_injection_enabled_column()
+    _migrate_add_session_generation_settings_columns()
     _migrate_add_folder_column()
+    _migrate_add_session_cwd_column()
+    _migrate_add_session_endpoint_id_column()
     _migrate_add_token_columns()
+    _migrate_add_total_cost_usd()
     _migrate_add_mode_column()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_gallery_caption_column()
@@ -2276,9 +2571,11 @@ def init_db():
     _migrate_assign_legacy_owner()
     _migrate_add_tidy_verdict()
     _migrate_add_doc_source_email_cols()
+    _migrate_add_calendar_source_email_cols()
     _migrate_add_oauth_config()
     _migrate_add_email_oauth_columns()
     _migrate_add_task_automation_columns()
+    _migrate_add_task_authority_column()
     _migrate_add_disabled_tools()
     _migrate_add_mcp_oauth_tokens_column()
     _migrate_add_task_v2_columns()
@@ -2295,6 +2592,7 @@ def init_db():
     _migrate_add_calendar_account_id()
     _migrate_add_caldav_sync_columns()
     _migrate_add_calendar_recurrence_exdates()
+    _migrate_add_note_gallery_id()
     _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
@@ -2392,17 +2690,33 @@ def _migrate_chat_messages_fts():
             END;
             """
         )
-        conn.execute(
-            f"""
-            INSERT INTO chat_messages_fts(content, message_id, session_id, role)
-            SELECT {fts_content_expr_cm}, cm.id, cm.session_id, cm.role
-            FROM chat_messages cm
-            WHERE NOT EXISTS (
-                SELECT 1 FROM chat_messages_fts fts
-                WHERE fts.message_id = cm.id
+        # message_id is deliberately UNINDEXED in the FTS table.  A correlated
+        # NOT EXISTS against it therefore becomes quadratic once the transcript
+        # grows large, even when there is nothing left to backfill.  Build a
+        # temporary indexed set only when the row counts show that reconciliation
+        # is needed.  Normal inserts/updates/deletes stay synchronized by the
+        # triggers above.
+        chat_count = conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0]
+        fts_count = conn.execute("SELECT COUNT(*) FROM chat_messages_fts").fetchone()[0]
+        if chat_count != fts_count:
+            conn.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS _odysseus_fts_message_ids "
+                "(message_id TEXT PRIMARY KEY) WITHOUT ROWID"
             )
-            """
-        )
+            conn.execute("DELETE FROM temp._odysseus_fts_message_ids")
+            conn.execute(
+                "INSERT OR IGNORE INTO temp._odysseus_fts_message_ids(message_id) "
+                "SELECT message_id FROM chat_messages_fts"
+            )
+            conn.execute(
+                f"""
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                SELECT {fts_content_expr_cm}, cm.id, cm.session_id, cm.role
+                FROM chat_messages cm
+                LEFT JOIN temp._odysseus_fts_message_ids known ON known.message_id = cm.id
+                WHERE known.message_id IS NULL
+                """
+            )
         _scrub_legacy_chat_message_fts_media(conn)
         conn.commit()
     except Exception as e:
@@ -2717,6 +3031,27 @@ def _migrate_add_calendar_recurrence_exdates():
             conn.close()
         except Exception:
             pass
+
+def _migrate_add_note_gallery_id():
+    """Keep a drawn note linked to one Gallery image across edits."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(notes)").fetchall()]
+        if columns and "gallery_id" not in columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN gallery_id VARCHAR")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_notes_gallery_id ON notes(gallery_id)")
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"notes gallery_id migration failed: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
 
 def get_db():
     """

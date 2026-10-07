@@ -20,12 +20,16 @@ _REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def routes_source():
-    return (_REPO / "routes" / "email_routes.py").read_text(encoding="utf-8")
+    return (
+        _REPO / "routes" / "email" / "email_routes.py"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
 def library_source():
-    return (_REPO / "static" / "js" / "emailLibrary.js").read_text(encoding="utf-8")
+    return (
+        _REPO / "static" / "js" / "emailLibrary" / "index.js"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")

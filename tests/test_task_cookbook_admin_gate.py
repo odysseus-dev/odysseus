@@ -88,7 +88,7 @@ def builtin_action_info(monkeypatch):
 
 
 def _req(user):
-    return SimpleNamespace(state=SimpleNamespace(current_user=user))
+    return SimpleNamespace(state=SimpleNamespace(current_user=user), headers={})
 
 
 def _endpoint(method, path):

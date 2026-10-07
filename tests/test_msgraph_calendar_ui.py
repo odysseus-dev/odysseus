@@ -18,6 +18,13 @@ def source():
     return (_REPO / "static" / "js" / "settings.js").read_text(encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def oauth_return_source():
+    return (
+        _REPO / "static" / "js" / "settings" / "oauthReturn.js"
+    ).read_text(encoding="utf-8")
+
+
 # ── Integration card ──────────────────────────────────────────────
 
 def test_microsoft_calendar_is_an_integration_type(source):
@@ -78,25 +85,29 @@ def test_the_notice_is_escaped_before_it_reaches_the_markup(source):
 
 # ── OAuth result banner ───────────────────────────────────────────
 
-def test_the_result_banner_handles_both_oauth_flows(source):
+def test_the_result_banner_handles_both_oauth_flows(oauth_return_source):
     """Mail and calendar report back the same way under their own prefix."""
-    assert "{ prefix: 'email_oauth', subject: 'email' }" in source
-    assert "{ prefix: 'calendar_oauth', subject: 'calendar sync' }" in source
+    assert "{ prefix: 'email_oauth', subject: 'email' }" in oauth_return_source
+    assert "{ prefix: 'calendar_oauth', subject: 'calendar sync' }" in oauth_return_source
 
 
-def test_the_banner_reads_params_by_flow_prefix_not_a_hardcoded_one(source):
+def test_the_banner_reads_params_by_flow_prefix_not_a_hardcoded_one(oauth_return_source):
     for suffix in ("success", "error", "provider", "code", "aadsts"):
-        assert f"${{flow.prefix}}_{suffix}" in source
+        assert f"${{flow.prefix}}_{suffix}" in oauth_return_source
 
 
-def test_calendar_only_failures_carry_guidance(source):
-    assert "no_refresh_token:" in source
-    assert "microsoft_error:" in source
+def test_calendar_only_failures_carry_guidance(oauth_return_source):
+    assert "no_refresh_token:" in oauth_return_source
+    assert "microsoft_error:" in oauth_return_source
 
 
-def test_the_scope_guidance_covers_the_calendar_permission(source):
+def test_the_scope_guidance_covers_the_calendar_permission(oauth_return_source):
     """A missing Graph permission and a missing Exchange one both land on
     invalid_scope, so the text has to name each."""
-    line = next(l for l in source.splitlines() if l.strip().startswith("invalid_scope:"))
+    line = next(
+        line
+        for line in oauth_return_source.splitlines()
+        if line.strip().startswith("invalid_scope:")
+    )
     assert "Calendars.ReadWrite" in line
     assert "IMAP.AccessAsUser.All" in line

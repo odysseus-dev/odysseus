@@ -15,7 +15,7 @@ _REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def source():
-    return (_REPO / "routes" / "email_routes.py").read_text(encoding="utf-8")
+    return (_REPO / "routes" / "email" / "email_routes.py").read_text(encoding="utf-8")
 
 
 def _deliver_block(source: str) -> str:
@@ -37,3 +37,10 @@ def test_the_invalidation_runs_where_the_sent_folder_is_known(source):
     append_at = block.index("_ensure_sent_copy(")
     invalidate_at = block.index("_invalidate_list_cache(_account_id, sent_folder)")
     assert append_at < invalidate_at
+
+
+def test_a_server_created_sent_copy_allows_the_old_draft_to_be_removed(source):
+    """A provider copy is success even though Odysseus did not APPEND it."""
+    block = _deliver_block(source)
+    assert "sent_copy_ok = bool(sent_uid) or sent_appended" in block
+    assert "if _draft_uid and _draft_folder and sent_copy_ok:" in block

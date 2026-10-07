@@ -880,7 +880,7 @@ def test_smtp_send_uses_xoauth2_for_microsoft_accounts():
     smtp.__enter__ = mock.MagicMock(return_value=smtp)
     smtp.__exit__ = mock.MagicMock(return_value=False)
 
-    with mock.patch.object(email_helpers.smtplib, "SMTP", return_value=smtp), \
+    with mock.patch.object(email_helpers, "_PolicySMTP", return_value=smtp), \
          mock.patch.object(email_helpers, "_get_valid_oauth_token", return_value="ms-token"):
         email_helpers._send_smtp_message(
             cfg, "alice@contoso.com", ["bob@example.com"], "Subject: hi\r\n\r\nbody"

@@ -1,8 +1,17 @@
 services:
   odysseus:
+    # Official multi-arch GHCR image (linux/amd64 + linux/arm64), published by
+    # the "ci / docker publish" workflow on every push to main and dev.
+    # Docker pulls this image when it is reachable, and only falls back to the
+    # local build below when the pull fails (e.g. no network on the host), so
+    # hosts without a build toolchain (Portainer stacks, etc.) get the
+    # registry build. For production, pin an immutable tag via ODYSSEUS_IMAGE
+    # — e.g. ghcr.io/odysseus-dev/odysseus:1.0.2-7c8070f (X.Y.Z-<sha>) — since
+    # :latest and bare :X.Y.Z tags move on every main push.
+    image: ${ODYSSEUS_IMAGE:-ghcr.io/odysseus-dev/odysseus:latest}
     build: .
     ports:
-      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7011}:7000"
     volumes:
       - ${APP_DATA_DIR:-./data}:/app/data:z
       - ${APP_LOGS_DIR:-./logs}:/app/logs:z
@@ -47,6 +56,10 @@ services:
       - CLEANUP_INTERVAL_HOURS=${CLEANUP_INTERVAL_HOURS:-24}
       - ODYSSEUS_INPROCESS_POLLERS=${ODYSSEUS_INPROCESS_POLLERS:-1}
       - ODYSSEUS_INPROCESS_TASKS=${ODYSSEUS_INPROCESS_TASKS:-1}
+      - ODYSSEUS_QWEN_NATIVE_COMPACT_BUILTINS=${ODYSSEUS_QWEN_NATIVE_COMPACT_BUILTINS:-1}
+      - ODYSSEUS_QWEN_SUPPRESS_LOCAL_CONTEXT=${ODYSSEUS_QWEN_SUPPRESS_LOCAL_CONTEXT:-0}
+      - ODYSSEUS_CAPTURE_MODEL_REQUESTS=${ODYSSEUS_CAPTURE_MODEL_REQUESTS:-0}
+      - ODYSSEUS_MCP_EMAIL_OWNER=${ODYSSEUS_MCP_EMAIL_OWNER:-}
       - ODYSSEUS_SCRIPT_HOST=${ODYSSEUS_SCRIPT_HOST:-localhost}
       - ODYSSEUS_CHAT_UPLOAD_MAX_BYTES=${ODYSSEUS_CHAT_UPLOAD_MAX_BYTES:-10485760}
       - ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES=${ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES:-104857600}
@@ -54,9 +67,16 @@ services:
       - ODYSSEUS_MEMORY_IMPORT_MAX_BYTES=${ODYSSEUS_MEMORY_IMPORT_MAX_BYTES:-10485760}
       - ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES=${ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES:-26214400}
       - ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES=${ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES:-26214400}
+      - ODYSSEUS_EDITOR_DRAFT_MAX_BYTES=${ODYSSEUS_EDITOR_DRAFT_MAX_BYTES:-268435456}
       - ODYSSEUS_STT_MAX_AUDIO_BYTES=${ODYSSEUS_STT_MAX_AUDIO_BYTES:-26214400}
       - ODYSSEUS_ICS_MAX_BYTES=${ODYSSEUS_ICS_MAX_BYTES:-10485760}
       - ODYSSEUS_TTS_CACHE_MAX_BYTES=${ODYSSEUS_TTS_CACHE_MAX_BYTES}
+      # Host workspace translation is opt-in. Keep the public compose file
+      # user-neutral; configure these in a local .env or use the host-workspace
+      # overlay with ODYSSEUS_HOST_WORKSPACE_DIR.
+      - ODYSSEUS_WORKSPACE_HOST_ROOT=${ODYSSEUS_WORKSPACE_HOST_ROOT:-}
+      - ODYSSEUS_WORKSPACE_CONTAINER_ROOT=${ODYSSEUS_WORKSPACE_CONTAINER_ROOT:-/workspace}
+      - ODYSSEUS_WORKSPACE_DEFAULT=${ODYSSEUS_WORKSPACE_DEFAULT:-}
       - DATA_BRAVE_API_KEY=${DATA_BRAVE_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - GOOGLE_PSE_CX=${GOOGLE_PSE_CX:-}
@@ -109,7 +129,7 @@ services:
     # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
     # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
     # Bump this deliberately after verifying a newer tag boots clean.
-    image: docker.io/searxng/searxng:2026.5.31-7159b8aed
+    image: docker.io/searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6
     entrypoint:
       - /bin/sh
       - -c

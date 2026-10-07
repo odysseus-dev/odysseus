@@ -18,6 +18,13 @@ def settings():
 
 
 @pytest.fixture(scope="module")
+def oauth_return_source():
+    return (
+        _REPO / "static" / "js" / "settings" / "oauthReturn.js"
+    ).read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
 def notes():
     return (_REPO / "static" / "js" / "notes.js").read_text(encoding="utf-8")
 
@@ -66,8 +73,8 @@ def test_the_connect_button_is_disabled_without_an_app_registration(settings):
     assert "if (!configured) return;" in block
 
 
-def test_the_oauth_result_banner_covers_the_task_flow(settings):
-    assert "{ prefix: 'tasks_oauth', subject: 'task sync' }" in settings
+def test_the_oauth_result_banner_covers_the_task_flow(oauth_return_source):
+    assert "{ prefix: 'tasks_oauth', subject: 'task sync' }" in oauth_return_source
 
 
 # ── Sync button ───────────────────────────────────────────────────
