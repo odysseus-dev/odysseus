@@ -144,6 +144,45 @@ def _detail_for(category: str) -> str:
     return _ERROR_DETAIL.get(category, _ERROR_DETAIL["error"])
 
 
+# Concrete, copy-paste-able next steps for each controlled failure category
+# (ROADMAP: "clear next steps instead of just 'crashed'"). Never includes
+# credentials, raw hostnames with secrets, or server-supplied detail.
+_NEXT_STEP = {
+    "timeout": "The service did not respond in time — check that it is running and the host/port in Settings.",
+    "connection_refused": "Connection refused — check the service is running and the host/port in Settings.",
+    "dns_error": "Host could not be resolved — check the configured hostname in Settings.",
+    "tls_error": "TLS handshake failed — check the service's certificate / CA configuration.",
+    "network_error": "Network error — check that this machine can reach the service (firewall, VPN).",
+    "http_error": "The service returned an error status — check its own logs.",
+    "auth_or_protocol_error": "Authentication or protocol failed — check the account credentials and protocol in Settings.",
+    "no_models": "The endpoint is reachable but returned no models — check its base URL / model path.",
+    "no_host": "No host is configured — set it in Settings.",
+    "error": "See /api/diagnostics/logs for the app log, then check the service's own logs.",
+}
+_DEFAULT_NEXT_STEP = (
+    "Check the service state in Settings and its logs; see /api/diagnostics/logs."
+)
+
+
+def _next_step_for(service: str = "", category: Optional[str] = None) -> str:
+    """Return an actionable hint for a failure category (secret-free)."""
+    return _NEXT_STEP.get(category or "error", _DEFAULT_NEXT_STEP)
+
+
+def _enrich_next_step(service: Dict[str, Any]) -> Dict[str, Any]:
+    """Add ``meta.next_step`` to degraded/down service entries (idempotent)."""
+    if service.get("status") not in (DEGRADED, DOWN):
+        return service
+    meta = service.setdefault("meta", {})
+    if "next_step" in meta:
+        return service
+    meta["next_step"] = _next_step_for(
+        service.get("name", ""),
+        meta.get("error") if isinstance(meta.get("error"), str) else None,
+    )
+    return service
+
+
 def _http_get(url: str, timeout: float = _PROBE_TIMEOUT):
     """Single network entry point for the HTTP probes (monkeypatched in tests)."""
     import httpx
@@ -322,7 +361,8 @@ def email_health(accounts: List[Dict[str, Any]],
     def _check(_i: int, acc: Dict[str, Any]) -> Dict[str, Any]:
         name = _label(acc)
         if not (acc.get("imap_host") or ""):
-            return {"name": name, "ok": False, "error": "no_host"}
+            return {"name": name, "ok": False, "error": "no_host",
+                    "next_step": _next_step_for("email", "no_host")}
         try:
             conn = connect(acc.get("account_id"))
             try:
@@ -331,12 +371,15 @@ def email_health(accounts: List[Dict[str, Any]],
                 pass
             return {"name": name, "ok": True, "error": None}
         except Exception as e:
-            return {"name": name, "ok": False, "error": _classify_error(e)}
+            category = _classify_error(e)
+            return {"name": name, "ok": False, "error": category,
+                    "next_step": _next_step_for("email", category)}
 
     raw = _bounded_map(accounts, _check, budget=_FANOUT_BUDGET,
                        concurrency=_PROBE_CONCURRENCY)
     per_account = [r if r is not None
-                   else {"name": _label(accounts[i]), "ok": False, "error": "timeout"}
+                   else {"name": _label(accounts[i]), "ok": False, "error": "timeout",
+                         "next_step": _next_step_for("email", "timeout")}
                    for i, r in enumerate(raw)]
     return _rollup_items("email", "mailbox(es)", per_account)
 
@@ -367,17 +410,21 @@ def providers_health(endpoints: List[Dict[str, Any]],
             models = probe(ep.get("base_url"), ep.get("api_key"),
                            timeout=_PROBE_TIMEOUT) or []
         except Exception as e:
+            category = _classify_error(e)
             return {"name": name, "ok": False, "model_count": 0,
-                    "error": _classify_error(e)}
+                    "error": category, "next_step": _next_step_for("providers", category)}
         count = len(models)
+        error = None if count else "no_models"
         return {"name": name, "ok": bool(count), "model_count": count,
-                "error": None if count else "no_models"}
+                "error": error,
+                "next_step": None if count else _next_step_for("providers", error)}
 
     raw = _bounded_map(endpoints, _check, budget=_FANOUT_BUDGET,
                        concurrency=_PROBE_CONCURRENCY)
     per_endpoint = [r if r is not None
                     else {"name": _label(endpoints[i]), "ok": False,
-                          "model_count": 0, "error": "timeout"}
+                          "model_count": 0, "error": "timeout",
+                          "next_step": _next_step_for("providers", "timeout")}
                     for i, r in enumerate(raw)]
     return _rollup_items("providers", "endpoint(s)", per_endpoint, key="endpoints")
 
@@ -497,6 +544,8 @@ async def collect_service_health(rag_manager: Any = None,
                    for n in names]
 
     services = [chroma, *results]
+    # Attach actionable next-step hints to degraded/down entries (idempotent).
+    services = [_enrich_next_step(s) for s in services]
     return {
         "overall": _rollup(services),
         "services": services,
