@@ -866,14 +866,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             _reserve_document_uploads(user, incoming_content)
             _assert_pdf_marker_upload_owned(request, incoming_content, user, upload_handler)
 
-            # Check if we can coalesce with the latest version
+            # Only editor autosaves are mutable. Initial, explicitly saved,
+            # restored and legacy versions remain protected checkpoints.
             latest_ver = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id,
             ).order_by(DocumentVersion.version_number.desc()).first()
 
             now = datetime.now(timezone.utc)
             coalesced = False
-            if latest_ver and latest_ver.source == "user" and not req.force_version:
+            if latest_ver and latest_ver.is_autosave and not req.force_version:
                 ver_time = latest_ver.created_at
                 if ver_time.tzinfo is None:
                     ver_time = ver_time.replace(tzinfo=timezone.utc)
@@ -895,6 +896,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     content=incoming_content,
                     summary=req.summary or "Manual edit",
                     source="user",
+                    is_autosave=not req.force_version,
                 )
                 doc.version_count = new_ver
                 db.add(ver)
