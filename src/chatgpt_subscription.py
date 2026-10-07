@@ -232,9 +232,13 @@ def validate_reasoning_effort(model: str, effort: Optional[str]) -> Optional[str
     if effort_clean in {"", "default"}:
         return None
     meta = get_chatgpt_model_metadata(model)
-    if not meta:
+    if meta:
+        supported = [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]
+    else:
+        from src.model_capability_cache import reasoning_effort_levels
+        supported = list(reasoning_effort_levels(model))
+    if not supported:
         return None
-    supported = [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]
     if effort_clean in supported:
         return effort_clean
     return None
