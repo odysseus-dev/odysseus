@@ -3009,6 +3009,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             and not _is_odysseus_qwen_tool_router_model(model)
         ):
             payload["think"] = False
+            if tools:
+                payload["reasoning_effort"] = "none"
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
