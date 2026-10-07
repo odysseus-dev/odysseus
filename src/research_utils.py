@@ -49,6 +49,13 @@ LOW_QUALITY_MARKERS = [
     "copyright notice",
     "copyright footer",
     "all rights reserved",
+    # Common small-model extraction leakage: these are process narration, not
+    # evidence from the fetched page.
+    "the user wants me to extract",
+    "provided source data",
+    "i need to create",
+    "i will create",
+    "generic request",
 ]
 
 
@@ -58,6 +65,8 @@ def is_low_quality(summary: str) -> bool:
         if not isinstance(summary, str) or not summary:
             return True
         low = summary.lower()
+        if low.strip() in {"(no content)", "no content", "(no relevant content)"}:
+            return True
         return any(marker in low for marker in LOW_QUALITY_MARKERS)
     except Exception:
         return False  # fail open

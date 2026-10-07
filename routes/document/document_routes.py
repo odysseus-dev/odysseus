@@ -2,10 +2,14 @@
 
 import uuid
 import logging
+import os
+import re
+import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
+from fastapi.responses import HTMLResponse
 
 from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
@@ -322,6 +326,190 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+    # ---- POST /api/documents/import-docx ----
+    @router.post("/api/documents/import-docx")
+    async def import_docx(
+        request: Request,
+        file: UploadFile = File(...),
+        session_id: Optional[str] = Form(None),
+    ) -> Dict[str, Any]:
+        """Import a Word document while preserving its original DOCX upload.
+
+        The extracted Markdown remains available to the agent/editor, while
+        the source marker lets the document viewer render a faithful white
+        paper preview through Mammoth.
+        """
+        from src.auth_helpers import require_privilege
+        from src.markitdown_runtime import convert_to_markdown
+        from src.office_doc import create_office_document
+
+        user = require_privilege(request, "can_use_documents")
+        if session_id:
+            db = SessionLocal()
+            try:
+                _get_session_or_404(db, session_id, user)
+            finally:
+                db.close()
+        if upload_handler is None:
+            raise HTTPException(500, "Upload handler not configured")
+
+        client_ip = request.client.host if request.client else "unknown"
+        try:
+            meta = upload_handler.save_upload(file, client_ip, owner=user)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("DOCX import save_upload failed: %s", exc)
+            raise HTTPException(500, f"Upload failed: {exc}") from exc
+
+        upload_id = meta["id"]
+        path = _locate_current_user_upload(request, upload_id, user)
+        if not path:
+            raise HTTPException(500, "Saved DOCX could not be located")
+        try:
+            extracted = await asyncio.to_thread(convert_to_markdown, path) or ""
+        except Exception as exc:
+            logger.warning("DOCX text extraction failed for %s: %s", path, exc)
+            extracted = ""
+        if not extracted.strip():
+            raise HTTPException(422, "Could not extract readable text from this DOCX")
+
+        title = os.path.splitext(meta.get("original_name") or meta.get("name") or upload_id)[0]
+        content = f'<!-- docx_source upload_id="{upload_id}" -->\n{extracted}'
+        doc_id = create_office_document(
+            session_id=session_id,
+            upload_id=upload_id,
+            title=title,
+            body_text=content,
+            language="docx",
+            owner=user,
+        )
+        if not doc_id:
+            raise HTTPException(500, "Failed to create DOCX document")
+
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(500, "Created DOCX document not found")
+            if not doc.owner and user:
+                doc.owner = user
+                db.commit()
+                db.refresh(doc)
+            return _doc_to_dict(doc)
+        finally:
+            db.close()
+
+    @router.get("/api/document/{doc_id}/render-docx")
+    async def render_docx(doc_id: str, request: Request) -> Dict[str, Any]:
+        """Return a sanitized-by-client DOCX-to-HTML preview fragment."""
+        from src.auth_helpers import require_privilege
+
+        user = require_privilege(request, "can_use_documents")
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            match = re.search(r'<!--\s*docx_source\s+upload_id="([^"]+)"\s*-->', doc.current_content or "")
+            if not match:
+                raise HTTPException(400, "Document has no DOCX source")
+            path = _locate_current_user_upload(request, match.group(1), user)
+            if not path:
+                raise HTTPException(404, "Original DOCX upload is no longer available")
+            try:
+                import mammoth
+                result = await asyncio.to_thread(mammoth.convert_to_html, str(path))
+            except ImportError as exc:
+                raise HTTPException(503, "DOCX preview needs the Mammoth document dependency") from exc
+            except Exception as exc:
+                logger.warning("DOCX preview failed for %s: %s", doc_id, exc)
+                raise HTTPException(422, "Could not render this DOCX preview") from exc
+            return {"html": result.value or "", "messages": [str(m) for m in (result.messages or [])]}
+        finally:
+            db.close()
+
+    @router.get("/api/document/{doc_id}/convert-original/{target}")
+    async def convert_original_document(doc_id: str, target: str, request: Request):
+        """Convert the preserved DOCX/PDF upload directly with LibreOffice.
+
+        The extracted Markdown is for search and AI context only. It must not
+        be used as an intermediate for format conversion because that loses
+        the original document's layout, tables, and page breaks.
+        """
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from fastapi.responses import Response
+        from src.auth_helpers import require_privilege
+        from src.pdf_form_doc import find_source_upload_id
+
+        if target not in {"pdf", "docx"}:
+            raise HTTPException(400, "Unsupported conversion target")
+
+        user = require_privilege(request, "can_use_documents")
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            content = doc.current_content or ""
+            match = re.search(
+                r'<!--\s*(?:docx|pdf(?:_form)?)_source\s+upload_id="([^"\s]+)"\s*-->',
+                content,
+                re.IGNORECASE,
+            )
+            upload_id = find_source_upload_id(content) or (match.group(1) if match else None)
+            if not upload_id:
+                raise HTTPException(400, "This document has no preserved original file")
+        finally:
+            db.close()
+
+        source = _locate_current_user_upload(request, upload_id, user)
+        if not source:
+            raise HTTPException(404, "Original upload not found")
+        source = Path(source)
+        source_ext = source.suffix.lower()
+        if target == "pdf" and source_ext != ".docx":
+            raise HTTPException(400, "Only DOCX documents can be converted to PDF")
+        if target == "docx" and source_ext != ".pdf":
+            raise HTTPException(400, "Only PDF documents can be converted to DOCX")
+
+        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        if not soffice:
+            raise HTTPException(503, "Direct conversion requires LibreOffice/soffice on the Odysseus host")
+
+        def convert():
+            # Keep cleanup in the worker too: request cancellation must not
+            # delete files while LibreOffice is still writing them.
+            with tempfile.TemporaryDirectory(prefix="odysseus-document-convert-") as temp:
+                tmp_dir = Path(temp)
+                try:
+                    proc = subprocess.run(
+                        [soffice, f"-env:UserInstallation={(tmp_dir / 'profile').as_uri()}",
+                         "--headless", "--convert-to", target, "--outdir", str(tmp_dir), str(source)],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, timeout=120, check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise HTTPException(504, "Document conversion timed out") from exc
+                output = tmp_dir / f"{source.stem}.{target}"
+                if proc.returncode != 0 or not output.exists() or output.stat().st_size == 0:
+                    raise HTTPException(502, "LibreOffice could not convert the original file")
+                return output.read_bytes()
+
+        payload = await asyncio.to_thread(convert)
+
+        media = "application/pdf" if target == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return Response(
+            content=payload,
+            media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{source.stem}.{target}"'},
+        )
+
     # ---- GET /api/documents/library ----
     @router.get("/api/documents/library")
     async def documents_library(
@@ -482,6 +670,32 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+    # ---- GET /api/document/{doc_id}/visual-report ----
+    @router.get("/api/document/{doc_id}/visual-report", response_class=HTMLResponse)
+    async def document_visual_report(request: Request, doc_id: str) -> HTMLResponse:
+        """Render a Markdown document with the same standalone report UI used by Deep Research."""
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
+            if (doc.language or "").lower() != "markdown":
+                raise HTTPException(400, "Visual reports are available for Markdown documents")
+
+            from src.visual_report import generate_visual_report
+
+            html_content = generate_visual_report(
+                question=doc.title or "Document",
+                report_markdown=doc.current_content or "",
+                sources=[],
+                stats={},
+            )
+            return HTMLResponse(content=html_content)
+        finally:
+            db.close()
+
     # ---- POST /api/document/{doc_id}/archive — soft-archive / restore ----
     @router.post("/api/document/{doc_id}/archive")
     async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> Dict[str, Any]:
@@ -579,7 +793,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             "markdown": ".md", "json": ".json", "yaml": ".yml", "bash": ".sh",
             "sql": ".sql", "rust": ".rs", "go": ".go", "java": ".java", "c": ".c",
             "cpp": ".cpp", "typescript": ".ts", "ruby": ".rb", "php": ".php",
-            "text": ".txt", "xml": ".xml", "toml": ".toml", "ini": ".ini",
+            "text": ".txt", "email": ".eml", "xml": ".xml", "toml": ".toml", "ini": ".ini",
         }
         db = SessionLocal()
         try:
@@ -606,7 +820,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         name = f"{base}-{i}" + ("" if "." in base else ext)
                         i += 1
                     used.add(name)
-                    zf.writestr(name, doc.current_content or "")
+                    content = doc.current_content or ""
+                    if (doc.language or "").lower() == "email":
+                        content = re.sub(r"\r?\n---\r?\n", "\r\n\r\n", content, count=1)
+                    zf.writestr(name, content)
                     wrote += 1
             if not wrote:
                 raise HTTPException(404, "No documents found")

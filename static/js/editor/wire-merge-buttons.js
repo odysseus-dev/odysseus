@@ -16,10 +16,15 @@
  *   renderLayerPanel: () => void,
  *   composite:        () => void,
  *   renderLayer?:     (layer) => HTMLCanvasElement,
+ *   flatten?:         () => HTMLCanvasElement,
  *   uiModule:         object,
  * }} deps
  */
 import { state } from './state.js';
+import { rasterizeTextLayer } from './text-layer.js';
+import { rasterizeShapeLayer } from './shape-layer.js';
+import { drawLayerStack, normalizeLayerClipping } from './layer-clipping.js';
+import { groupForLayer, normalizeLayerGroups } from './layer-groups.js';
 
 function _renderSource(layer, renderLayer) {
   if (!layer) return null;
@@ -30,59 +35,55 @@ function _renderSource(layer, renderLayer) {
   }
 }
 
-function _clearBakedAdjustments(layer) {
+function _markBakedRaster(layer) {
   if (!layer) return;
+  rasterizeTextLayer(layer);
+  rasterizeShapeLayer(layer);
   layer.adjLayers = [];
   layer._adjFinal = null;
   layer._adjFinalKey = '';
   layer._adjCache = null;
   layer._adjCacheKey = '';
+  layer.masks = [];
+  layer.activeMaskId = null;
+  layer.clipped = false;
 }
 
 export function mergeLayerDownAtIndex(idx, renderLayer = null) {
   if (idx < 1 || idx >= state.layers.length) return null;
   const upper = state.layers[idx];
   const lower = state.layers[idx - 1];
-  const upperOff = state.layerOffsets.get(upper.id) || { x: 0, y: 0 };
-  const lowerOff = state.layerOffsets.get(lower.id) || { x: 0, y: 0 };
-  const lowerSource = _renderSource(lower, renderLayer);
-  const upperSource = _renderSource(upper, renderLayer);
+  if (lower.clipped || groupForLayer(state, upper.id)?.id !== groupForLayer(state, lower.id)?.id) return null;
   const merged = document.createElement('canvas');
   merged.width = state.imgWidth;
   merged.height = state.imgHeight;
   const mctx = merged.getContext('2d');
-  mctx.globalAlpha = lower.opacity;
-  mctx.drawImage(lowerSource, lowerOff.x, lowerOff.y);
-  mctx.globalAlpha = upper.opacity;
-  mctx.drawImage(upperSource, upperOff.x, upperOff.y);
-  mctx.globalAlpha = 1;
+  drawLayerStack(mctx, state, [lower, upper], layer => _renderSource(layer, renderLayer));
   lower.canvas = merged;
   lower.ctx = lower.canvas.getContext('2d');
   lower.opacity = 1;
   lower.visible = true;
+  lower.blendMode = 'source-over';
   state.layerOffsets.set(lower.id, { x: 0, y: 0 });
-  _clearBakedAdjustments(lower);
+  _markBakedRaster(lower);
   state.layers.splice(idx, 1);
   state.layerOffsets.delete(upper.id);
+  for (const group of state.layerGroups || []) group.layerIds = group.layerIds.filter(id => id !== upper.id);
+  normalizeLayerGroups(state);
+  normalizeLayerClipping(state);
   state.activeLayerId = lower.id;
   return lower;
 }
 
-export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, composite, renderLayer, uiModule }) {
+export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, composite, renderLayer, flatten, uiModule }) {
   // Flatten Copy.
   document.getElementById('ge-flatten')?.addEventListener('click', () => {
     if (state.layers.length < 2) return;
     saveState('Flatten copy');
     const merged = createLayer('Flattened', state.imgWidth, state.imgHeight);
-    const ctx = merged.ctx;
-    for (const l of state.layers) {
-      if (!l.visible) continue;
-      const off = state.layerOffsets.get(l.id) || { x: 0, y: 0 };
-      ctx.globalAlpha = l.opacity;
-      ctx.drawImage(_renderSource(l, renderLayer), off.x, off.y);
-      ctx.globalAlpha = 1;
-    }
-    _clearBakedAdjustments(merged);
+    if (typeof flatten === 'function') merged.ctx.drawImage(flatten(), 0, 0);
+    else drawLayerStack(merged.ctx, state, state.layers.filter(layer => layer.visible), layer => _renderSource(layer, renderLayer));
+    _markBakedRaster(merged);
     state.layers.push(merged);
     state.activeLayerId = merged.id;
     renderLayerPanel();
@@ -99,29 +100,26 @@ export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, com
     }
     saveState('Merge all');
     const base = visibleLayers[0];
-    const merged = document.createElement('canvas');
-    merged.width = state.imgWidth;
-    merged.height = state.imgHeight;
-    const baseCtx = merged.getContext('2d');
-    for (let i = 0; i < visibleLayers.length; i++) {
-      const l = visibleLayers[i];
-      const off = state.layerOffsets.get(l.id) || { x: 0, y: 0 };
-      baseCtx.globalAlpha = l.opacity;
-      baseCtx.drawImage(_renderSource(l, renderLayer), off.x, off.y);
-      baseCtx.globalAlpha = 1;
+    const merged = typeof flatten === 'function' ? flatten() : document.createElement('canvas');
+    if (typeof flatten !== 'function') {
+      merged.width = state.imgWidth;
+      merged.height = state.imgHeight;
+      drawLayerStack(merged.getContext('2d'), state, visibleLayers, layer => _renderSource(layer, renderLayer));
     }
     base.canvas = merged;
     base.ctx = base.canvas.getContext('2d');
     base.opacity = 1;
     base.visible = true;
+    base.blendMode = 'source-over';
     state.layerOffsets.set(base.id, { x: 0, y: 0 });
-    _clearBakedAdjustments(base);
+    _markBakedRaster(base);
     // Free offset entries for the discarded layers; keep base.
     for (const l of state.layers) {
       if (l === base) continue;
       state.layerOffsets.delete(l.id);
     }
     state.layers = [base];
+    state.layerGroups = [];
     state.activeLayerId = base.id;
     renderLayerPanel();
     composite();
@@ -132,8 +130,15 @@ export function wireMergeButtons({ saveState, createLayer, renderLayerPanel, com
   document.getElementById('ge-merge-down')?.addEventListener('click', () => {
     const idx = state.layers.findIndex(l => l.id === state.activeLayerId);
     if (idx < 1) return; // can't merge the bottom layer
+    const upper = state.layers[idx];
+    const lower = state.layers[idx - 1];
+    if (lower.clipped || groupForLayer(state, upper.id)?.id !== groupForLayer(state, lower.id)?.id) {
+      uiModule?.showToast?.('Release the lower clipping mask or keep both layers in the same group before merging');
+      return;
+    }
     saveState('Merge down');
-    mergeLayerDownAtIndex(idx, renderLayer);
+    const merged = mergeLayerDownAtIndex(idx, renderLayer);
+    if (!merged) return;
     renderLayerPanel();
     composite();
     uiModule.showToast('Layer merged down');

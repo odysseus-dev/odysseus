@@ -269,6 +269,37 @@ def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monk
         conn.close()
 
 
+def test_chat_messages_fts_migration_is_idempotent(tmp_path, monkeypatch):
+    from core import database as cdb
+
+    db_path = tmp_path / "app.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL
+        );
+        INSERT INTO chat_messages(id, session_id, role, content)
+        VALUES ('m1', 's1', 'user', 'only one indexed message');
+        """
+    )
+    conn.close()
+
+    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{db_path}")
+
+    cdb._migrate_chat_messages_fts()
+    cdb._migrate_chat_messages_fts()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM chat_messages_fts").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_search_chats_formats_shared_results(monkeypatch):
     from src import session_search
     from src.tool_implementations import do_search_chats

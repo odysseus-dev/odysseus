@@ -22,6 +22,8 @@ class UserTemplateRequest(BaseModel):
     system_prompt: str = Field("", max_length=10000)
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     max_tokens: int = Field(0, ge=0, le=65536)
+    persona_memory: str = Field("", max_length=6000)
+    persona_memory_schema: str = Field("general", pattern="^(general|health)$")
 
 
 def setup_preset_routes(preset_manager) -> APIRouter:
@@ -43,6 +45,10 @@ def setup_preset_routes(preset_manager) -> APIRouter:
                 preset_update.enabled,
                 preset_update.inject_prefix,
                 preset_update.inject_suffix,
+                preset_update.persona_memory,
+                preset_update.persona_memory_schema,
+                preset_update.thinking_mode,
+                preset_update.show_persona_name,
             )
             if success:
                 return {"success": True, "message": "Custom preset updated"}

@@ -64,7 +64,7 @@ def test_imap_connect_with_host_still_connects(monkeypatch):
         def login(self, user, password):
             opened["login"] = (user, password)
 
-    def _fake_open(host, port, *, starttls, timeout):
+    def _fake_open(host, port, *, starttls, timeout, **_policy):
         opened["host"] = host
         return _FakeConn()
 

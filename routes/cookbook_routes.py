@@ -115,6 +115,16 @@ def _append_mlx_image_server_script(runner_lines: list[str]) -> None:
     runner_lines.append('chmod +x scripts/mlx_image_server.py 2>/dev/null || true')
 
 
+def _normalize_runtime_adapter(value: str | None) -> str:
+    """Return a shell-safe explicit image adapter name."""
+    value = (value or "auto").strip().lower()
+    if not value:
+        return "auto"
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", value):
+        raise HTTPException(400, "Invalid runtime adapter")
+    return value
+
+
 def _venv_root_from_serve_cmd(cmd: str) -> str:
     """Best-effort venv root from an absolute venv python in a serve command."""
     try:
@@ -396,7 +406,34 @@ def _append_local_ollama_download_command_lines(
 
 
 def setup_cookbook_routes() -> APIRouter:
-    router = APIRouter(tags=["cookbook"])
+    async def protect_native_control(request: Request):
+        if request.method in {"GET", "HEAD"}:
+            return
+        # UI records/session strings are not process authority. Local tool
+        # launches require a one-use capability from their admitted producer.
+        path = request.url.path
+        from routes.shell_routes import _require_admin
+        if path in {"/api/cookbook/kill-pid", "/api/cookbook/state", "/api/cookbook/ssh-key"}:
+            _require_admin(request)
+        if path in {"/api/model/download", "/api/model/serve"}:
+            payload = await request.json()
+            if not payload.get("remote_host"):
+                from src.agent_runtime.local_model_control import consume_model_control
+                from src.agent_runtime.resources import ResourceIdentityError
+                try:
+                    claimed = consume_model_control(request, payload)
+                except (ResourceIdentityError, ValueError, TypeError):
+                    raise HTTPException(403, "Local model capability denied") from None
+                if not claimed:
+                    _require_admin(request)
+    router = APIRouter(tags=["cookbook"], dependencies=[Depends(protect_native_control)])
+
+    def protect_local_model_producer(request, remote_host):
+        # Scoped wrappers can call endpoint functions directly, without FastAPI
+        # dependencies. Enforce native control at the actual producer as well.
+        if not remote_host and getattr(request.state, "local_model_authority", None) is None:
+            from routes.shell_routes import _require_admin
+            _require_admin(request)
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
     _state_get_cache = {"ts": 0.0, "mtime": 0.0, "value": None}
     _tasks_status_cache = {"ts": 0.0, "value": None}
@@ -665,13 +702,17 @@ def setup_cookbook_routes() -> APIRouter:
             return cmd
 
         repo_id = "cyankiwi/MiniMax-M3-AWQ-INT4"
-        snapshot = (
-            "/home/pewds/.cache/huggingface/hub/"
-            "models--cyankiwi--MiniMax-M3-AWQ-INT4/"
-            "snapshots/4082acbbec1236d21828d55b6bb0fe02ade4ab5b"
-        )
-        if body[serve_i + 1] == repo_id:
-            body[serve_i + 1] = snapshot
+        hf_home = Path(os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface")))
+        hf_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", str(hf_home / "hub")))
+        snapshot_root = hf_cache / "models--cyankiwi--MiniMax-M3-AWQ-INT4" / "snapshots"
+        if body[serve_i + 1] == repo_id and snapshot_root.is_dir():
+            installed_snapshots = sorted(
+                (p for p in snapshot_root.iterdir() if p.is_dir()),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if installed_snapshots:
+                body[serve_i + 1] = str(installed_snapshots[0])
 
         def add_env(key: str, value: str) -> None:
             if not any(p.startswith(f"{key}=") for p in env_parts):
@@ -1070,6 +1111,7 @@ def setup_cookbook_routes() -> APIRouter:
         """Download a HuggingFace model in a tmux session.
         Uses `hf download` CLI directly — runs in tmux via `script -qc`
         for real TTY progress, streams ANSI-stripped output via log file."""
+        protect_local_model_producer(request, req.remote_host)
         require_admin(request)
         # Defence-in-depth: even though this endpoint is admin-gated, refuse
         # values that would land in shell contexts with metacharacters.
@@ -1415,7 +1457,6 @@ def setup_cookbook_routes() -> APIRouter:
         # unvalidated value (e.g. "x'; rm -rf ~ #") would be command injection.
         host = validate_remote_host(host)
         ssh_port = validate_ssh_port(ssh_port)
-        TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         model_dirs = []
         if model_dir:
@@ -1427,20 +1468,17 @@ def setup_cookbook_routes() -> APIRouter:
                     model_dirs.append(d)
         paths_code = _cached_model_scan_script(model_dirs)
 
-        scan_py = TMUX_LOG_DIR / "scan_cache.py"
-        scan_py.write_text(paths_code, encoding="utf-8")
-
         async def _run_cached_scan_once():
+            # Each request owns its script bytes. A shared scan_cache.py races
+            # when the tool scans several hosts/directories concurrently.
             if host:
-                _ssh_opts = "-o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=4 -o ServerAliveCountMax=1 "
-                _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-                if platform == "windows":
-                    # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                    cmd = f'ssh {_ssh_opts}{_pf}{host} "python -" < \'{scan_py}\''
-                else:
-                    cmd = f"ssh {_ssh_opts}{_pf}{host} 'python3 -' < '{scan_py}'"
-                proc = await asyncio.create_subprocess_shell(
-                    cmd,
+                ssh_args = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+                            '-o', 'ServerAliveInterval=4', '-o', 'ServerAliveCountMax=1']
+                if ssh_port and ssh_port != '22':
+                    ssh_args.extend(['-p', ssh_port])
+                proc = await asyncio.create_subprocess_exec(
+                    *ssh_args, host, 'python -' if platform == 'windows' else 'python3 -',
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(Path.home()),
@@ -1458,12 +1496,31 @@ def setup_cookbook_routes() -> APIRouter:
                     or which_tool("py") or "python"
                 )
                 proc = await asyncio.create_subprocess_exec(
-                    local_py, str(scan_py),
+                    local_py, '-',
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(Path.home()),
                 )
-            return await asyncio.wait_for(proc.communicate(), timeout=60), proc.returncode
+            try:
+                output = await asyncio.wait_for(proc.communicate(paths_code.encode('utf-8')), timeout=60)
+                return output, proc.returncode
+            finally:
+                # A timed-out/cancelled request must not abandon its scanner.
+                # This handle belongs only to this request, never a model job.
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+                    except asyncio.TimeoutError:
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
+                        await asyncio.wait_for(proc.wait(), timeout=2)
 
         (stdout_b, stderr_b), returncode = await _run_cached_scan_once()
         stderr_txt = stderr_b.decode(errors="replace").strip()
@@ -1975,11 +2032,13 @@ def setup_cookbook_routes() -> APIRouter:
         keep strict validation, but serving local cached models must not require
         a fake org/name wrapper.
         """
+        protect_local_model_producer(request, req.remote_host)
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
         validate_remote_host(req.remote_host)
         req.ssh_port = validate_ssh_port(req.ssh_port)
         req.gpus = _validate_gpus(req.gpus)
+        req.runtime_adapter = _normalize_runtime_adapter(req.runtime_adapter)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
         # Cookbook emits two fixed Docker exec forms for its Ollama sidecars.
@@ -2608,19 +2667,20 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('print(model)')
                 runner_lines.append('PY')
                 runner_lines.append(')"')
-                runner_lines.append('if printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -qi hidream; then')
+                runner_lines.append(f"export ODYSSEUS_MLX_IMAGE_ADAPTER='{_bash_squote(req.runtime_adapter or 'auto')}'")
+                runner_lines.append('if [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "hidream" ] || { [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "auto" ] && printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -qi hidream; }; then')
                 runner_lines.append('  if ! "$ODYSSEUS_MLX_IMAGE_CMD_PY" -c "import mlx, mlx_vlm, transformers, huggingface_hub, safetensors, numpy, PIL" >/dev/null 2>&1; then')
                 runner_lines.append('    echo "ERROR: HiDream MLX serving needs the model requirements in the launch Python: $ODYSSEUS_MLX_IMAGE_CMD_PY."')
                 runner_lines.append('    echo "Install with: $ODYSSEUS_MLX_IMAGE_CMD_PY -m pip install -U fastapi uvicorn python-multipart mlx mlx-vlm \'transformers>=4.57.0,<6.0\' huggingface_hub safetensors numpy pillow tqdm sentencepiece hf_transfer"')
                 runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('  fi')
-                runner_lines.append('elif printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -qi boogu; then')
+                runner_lines.append('elif [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "boogu" ] || { [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "auto" ] && printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -qi boogu; }; then')
                 runner_lines.append('  if ! "$ODYSSEUS_MLX_IMAGE_CMD_PY" -c "import boogu_image_mlx, mlx, huggingface_hub, safetensors, numpy, PIL" >/dev/null 2>&1; then')
                 runner_lines.append('    echo "ERROR: Boogu MLX serving needs boogu-image-mlx in the launch Python: $ODYSSEUS_MLX_IMAGE_CMD_PY."')
                 runner_lines.append('    echo "Install with: $ODYSSEUS_MLX_IMAGE_CMD_PY -m pip install -U git+https://github.com/xocialize/boogu-image-mlx.git fastapi uvicorn python-multipart pillow"')
                 runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('  fi')
-                runner_lines.append('elif printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -Eqi "ddcolor"; then')
+                runner_lines.append('elif [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "ddcolor" ] || { [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "auto" ] && printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -Eqi "ddcolor"; }; then')
                 runner_lines.append('  if ! "$ODYSSEUS_MLX_IMAGE_CMD_PY" -c "import PIL" >/dev/null 2>&1; then')
                 runner_lines.append('    echo "ERROR: DDColor MLX serving needs Pillow in the launch Python: $ODYSSEUS_MLX_IMAGE_CMD_PY."')
                 runner_lines.append('    echo "Install with: $ODYSSEUS_MLX_IMAGE_CMD_PY -m pip install -U fastapi uvicorn python-multipart pillow huggingface_hub"')
@@ -2640,7 +2700,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('      ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('    fi')
                 runner_lines.append('  fi')
-                runner_lines.append('elif printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -Eqi "mi-gan|migan|lama"; then')
+                runner_lines.append('elif [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "inpaint" ] || { [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "auto" ] && printf "%s" "$ODYSSEUS_MLX_IMAGE_MODEL" | grep -Eqi "mi-gan|migan|lama"; }; then')
                 runner_lines.append('  if ! "$ODYSSEUS_MLX_IMAGE_CMD_PY" -c "import PIL" >/dev/null 2>&1; then')
                 runner_lines.append('    echo "ERROR: LaMa / MI-GAN MLX serving needs Pillow in the launch Python: $ODYSSEUS_MLX_IMAGE_CMD_PY."')
                 runner_lines.append('    echo "Install with: $ODYSSEUS_MLX_IMAGE_CMD_PY -m pip install -U fastapi uvicorn python-multipart pillow huggingface_hub"')
@@ -2660,10 +2720,12 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('      ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('    fi')
                 runner_lines.append('  fi')
-                runner_lines.append('elif ! command -v mflux-generate >/dev/null 2>&1 && ! command -v mflux-generate-qwen >/dev/null 2>&1; then')
-                runner_lines.append('  echo "ERROR: mflux-compatible MLX image serving requires mflux-generate or mflux-generate-qwen in PATH for launch Python: $ODYSSEUS_MLX_IMAGE_CMD_PY."')
-                runner_lines.append('  echo "Install with: $ODYSSEUS_MLX_IMAGE_CMD_PY -m pip install -U mflux fastapi uvicorn python-multipart"')
-                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('elif [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "mflux" ] || [ "$ODYSSEUS_MLX_IMAGE_ADAPTER" = "auto" ]; then')
+                runner_lines.append('  if ! command -v mflux-generate >/dev/null 2>&1 && ! command -v mflux-generate-qwen >/dev/null 2>&1; then')
+                runner_lines.append('    echo "ERROR: mflux-compatible MLX image serving requires mflux-generate or mflux-generate-qwen in PATH for launch Python: $ODYSSEUS_MLX_IMAGE_CMD_PY."')
+                runner_lines.append('    echo "Install with: $ODYSSEUS_MLX_IMAGE_CMD_PY -m pip install -U mflux fastapi uvicorn python-multipart"')
+                runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
+                runner_lines.append('  fi')
                 runner_lines.append('fi')
             elif "scripts/diffusion_server.py" in req.cmd or ".diffusion_server.py" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
@@ -3528,12 +3590,19 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": False, "error": str(e)}
 
     @router.get("/api/cookbook/hf-latest")
-    async def hf_latest(vram_gb: float = 0, limit: int = 10, pipeline: str = "text-generation", owner: str = Depends(require_user)):
+    async def hf_latest(
+        vram_gb: float = 0,
+        limit: int = 10,
+        pipeline: str = "text-generation",
+        official_only: bool = False,
+        owner: str = Depends(require_user),
+    ):
         """Fetch latest HuggingFace models, filtered by what fits in available VRAM.
 
         vram_gb: total available VRAM in GB. 0 = no filter (return everything).
         limit:   how many models to return (default 10).
         pipeline: HF pipeline_tag filter (text-generation, text-to-image, etc.).
+        official_only: restrict results to recognized first-party provider namespaces.
         """
         import re
         import httpx
@@ -3599,6 +3668,20 @@ def setup_cookbook_routes() -> APIRouter:
                     return True
             return False
 
+        # HF does not expose a universal "first-party" flag. Keep this as a
+        # namespace policy rather than a model-name list, so newly published
+        # provider models are included without recommending community forks.
+        OFFICIAL_NAMESPACES = {
+            "apple", "black-forest-labs", "deepseek-ai", "google", "lightricks",
+            "meta-llama", "microsoft", "mistralai", "nvidia", "openai", "qwen",
+            "stabilityai", "tencent", "runwayml",
+        }
+
+        def _is_official(entry: dict, repo_id: str) -> bool:
+            namespace = repo_id.split("/", 1)[0].strip().lower() if "/" in repo_id else ""
+            author = str(entry.get("author") or "").strip().lower()
+            return namespace in OFFICIAL_NAMESPACES and (not author or author == namespace)
+
         out = []
         for entry in raw:
             repo_id = entry.get("modelId") or entry.get("id") or ""
@@ -3613,6 +3696,8 @@ def setup_cookbook_routes() -> APIRouter:
             # Skip adapters, LoRAs, datasets, etc.
             if _is_excluded(repo_id, tags):
                 continue
+            if official_only and not _is_official(entry, repo_id):
+                continue
 
             est_fp16 = _est_vram_fp16(repo_id)
             quant_mult = _quant_factor(repo_id, tags)
@@ -3626,7 +3711,11 @@ def setup_cookbook_routes() -> APIRouter:
                     # if we cannot estimate size from the repo id/tags, do not
                     # present it as runnable on this hardware.
                     continue
-                if needed_vram > vram_gb:
+                # Leave allocator/runtime headroom instead of treating the
+                # reported total as a safe load budget. This keeps the
+                # official-only list honest on tight GPUs as well.
+                usable_vram = vram_gb * 0.90
+                if needed_vram > usable_vram:
                     continue
 
             out.append({
@@ -4424,6 +4513,7 @@ def setup_cookbook_routes() -> APIRouter:
 
             progress_text = ""
             full_snapshot = (task.get("output") or "")[-12000:] if task_type == "serve" else ""
+            _persisted_terminal = False
 
             if local_win_task:
                 # File-based liveness + output for the detached-process model.
@@ -4457,9 +4547,10 @@ def setup_cookbook_routes() -> APIRouter:
                     and bool(full_snapshot)
                     and _parse_serve_phase(full_snapshot, task_type).get("status") == "ready"
                 )
-                if _task_status in {"stopped", "done", "completed",
+                _persisted_terminal = _task_status in {"stopped", "done", "completed",
                                     "crashed", "error", "failed",
-                                    "ended", "killed"} and not _persisted_serve_ready:
+                                    "ended", "killed"} and not _persisted_serve_ready
+                if _persisted_terminal:
                     is_alive = False
                     # Keep the persisted output_tail for the UI — it's
                     # what the agent uses to diagnose past failures.
@@ -4498,7 +4589,9 @@ def setup_cookbook_routes() -> APIRouter:
                 and (
                     ".incomplete" in full_snapshot
                     or bool(re.search(r'model-\d+-of-\d+\.[A-Za-z0-9_.-]+:\s+(?:[0-9]|[1-8][0-9])%', full_snapshot))
-                    or _download_cache_incomplete(_payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or "")
+                    or (not _persisted_terminal and _download_cache_incomplete(
+                        _payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or ""
+                    ))
                 )
             )
             if is_alive or (local_win_task and full_snapshot):
@@ -4550,6 +4643,7 @@ def setup_cookbook_routes() -> APIRouter:
                         progress_text = "Download complete"
                 elif (
                     task_type == "download"
+                    and not _persisted_terminal
                     and not download_has_incomplete_evidence
                     and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or "")
                 ):

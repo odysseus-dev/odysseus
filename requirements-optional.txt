@@ -1,4 +1,7 @@
 # Optional dependencies — install only if you use the corresponding feature.
+# Local OCR for screenshots, scans, labels, and coordinate-grounded text extraction.
+rapidocr==3.9.2
+onnxruntime>=1.20,<2
 # The app handles their absence gracefully (clear error message on first use).
 #
 # Note: chromadb-client + fastembed moved to requirements.txt — RAG, semantic
@@ -92,3 +95,6 @@ guard-core>=4.1.0
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
 maxminddb
+
+# Photoshop PSD opening / flattened previews / layer inspection.
+psd-tools

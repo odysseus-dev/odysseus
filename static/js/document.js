@@ -6,20 +6,29 @@
  */
 
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import emojiPicker from './emojiPicker.js';
+import { readEmailReplyResponse } from './emailReplyStream.js';
 import markdownModule from './markdown.js';
-import codeRunnerModule from './codeRunner.js';
-import { langIcon } from './langIcons.js';
+import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
+import { langIcon } from './langIcons.js?v=20260831richtexttools91';
 import spinnerModule from './spinner.js';
-import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
+import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js?v=20260911librarybulkdelete1';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
-import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { bindMenuDismiss, dismissOrRemove, dismissTopMenu } from './escMenuStack.js';
+import { topPortalZ } from './toolWindowZOrder.js';
+import { getDocumentStats } from './documentStats.js?v=20260831richtexttools91';
+import { parseMarkdownOutline } from './documentOutline.js?v=20260831richtexttools91';
+import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
   let API_BASE = '';
   let isOpen = false;
+  // The initial pane mount happens while the startup/session layout is still
+  // settling. Animating that first flex insertion makes the whole workspace
+  // appear to overshoot. Later restores are safe to animate.
+  let _hasMountedPanel = false;
   let _hlDebounce = null;
   let _isEditingTabTitle = false;
   let _autoDetectDebounce = null;
@@ -66,6 +75,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // "Run / Preview" path. (hljs maps detected `xml` → `html` already; this also
   // covers the doc being explicitly typed svg/xml.)
   const _isRenderLang = (l) => ['html', 'svg', 'xml'].includes((l || '').toLowerCase());
+  const _isRichTextLang = (l) => ['richtext', 'rich-text'].includes((l || '').toLowerCase());
+  const _isDocxLang = (l) => (l || '').toLowerCase() === 'docx';
   // Languages that get the segmented Code / Run-or-View toggle in the toolbar
   // (the same UX as markdown's Edit / Preview switch). CSV's "run" view is the
   // table; Python/JS/etc.'s is the code-run output; HTML/SVG/XML render via
@@ -78,7 +89,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       'c', 'cpp', 'c++', 'csharp', 'c#',
       'yaml', 'json', 'css',
       'ini', 'toml',
-    ].includes(lang) || _isRenderLang(lang);
+    ].includes(lang) || _isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang);
   };
 
   async function _getEmailAccountsCached() {
@@ -124,9 +135,907 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   let _lastSessionId = '';          // session context for "+" button
   const docs = new Map();           // docId -> { id, title, language, content, version, sessionId }
   let _emailSendInFlight = false;
+  let _emailAiReplyGeneration = 0;
+  let _docStatsFrame = 0;
+  let _docOutlineMenu = null;
+  let _docOutlineClose = null;
+  let _richSelectionToolbar = null;
+  let _richSelectionToolbarFrame = 0;
+  let _richSelectionToolbarFollowFrame = 0;
+  let _richSelectionToolbarRange = null;
+  let _richSlashMenu = null;
+  let _richSlashClose = null;
+  let _richSlashOwner = null;
+  let _richSlashActiveIndex = 0;
+  let _docHistoryStateFrame = 0;
+
+  const _DOC_SAVE_STATE = {
+    dirty: { label: 'Unsaved', title: 'Changes are waiting to be saved' },
+    saving: { label: 'Saving', title: 'Saving document' },
+    saved: { label: 'Saved', title: 'All changes saved' },
+    error: { label: 'Save failed', title: 'Document could not be saved' },
+  };
+
+  function _renderDocumentSaveState() {
+    const status = document.getElementById('doc-footer-copy-btn');
+    if (!status) return;
+    const doc = activeDocId && docs.get(activeDocId);
+    const state = doc?._saveState || 'saved';
+    const meta = _DOC_SAVE_STATE[state] || _DOC_SAVE_STATE.saved;
+    status.dataset.saveState = state;
+    status.title = `${meta.title} (Ctrl+S)`;
+    status.setAttribute('aria-label', meta.label);
+    const label = status.querySelector('.doc-save-button-label');
+    if (label) label.textContent = meta.label;
+  }
+
+  function _setDocumentSaveState(state, docId = activeDocId) {
+    const doc = docId && docs.get(docId);
+    if (!doc || !_DOC_SAVE_STATE[state]) return;
+    if (doc._saveState === state) return;
+    doc._saveState = state;
+    if (docId === activeDocId) _renderDocumentSaveState();
+  }
+
+  function _markDocumentDirty(docId = activeDocId) {
+    const doc = docId && docs.get(docId);
+    if (!doc || doc.language === 'email') return;
+    doc._editRevision = (doc._editRevision || 0) + 1;
+    _setDocumentSaveState('dirty', docId);
+  }
+
+  function _syncEditorPlaceholder() {
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (!textarea) return;
+    const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
+    const placeholders = {
+      '': 'Start typing or paste text to create a document...',
+      markdown: 'Write in Markdown...',
+      richtext: 'Start writing...',
+      email: 'Write your email...',
+      csv: 'Enter CSV data...',
+      json: 'Enter JSON...',
+      yaml: 'Enter YAML...',
+      toml: 'Enter TOML...',
+      ini: 'Enter INI configuration...',
+      html: 'Write HTML...',
+      css: 'Write CSS...',
+      xml: 'Write XML...',
+      svg: 'Write SVG...',
+      sql: 'Write SQL...',
+    };
+    textarea.placeholder = placeholders[lang] || `Write ${lang} code...`;
+  }
+
+  function _setDocumentHistoryControlState(undoAvailable, redoAvailable) {
+    const undo = document.getElementById('doc-undo-btn');
+    const redo = document.getElementById('doc-redo-btn');
+    if (undo) {
+      undo.disabled = !undoAvailable;
+      undo.setAttribute('aria-disabled', undoAvailable ? 'false' : 'true');
+    }
+    if (redo) {
+      redo.disabled = !redoAvailable;
+      redo.setAttribute('aria-disabled', redoAvailable ? 'false' : 'true');
+    }
+  }
+
+  function _syncDocumentHistoryControlsNow() {
+    if (_docHistoryStateFrame) cancelAnimationFrame(_docHistoryStateFrame);
+    _docHistoryStateFrame = 0;
+    const pdfPane = document.getElementById('doc-pdf-view');
+    if (pdfPane && pdfPane.style.display !== 'none') {
+      _setDocumentHistoryControlState(true, false);
+      return;
+    }
+    let canUndo = false;
+    let canRedo = false;
+    try {
+      canUndo = document.queryCommandEnabled('undo');
+      canRedo = document.queryCommandEnabled('redo');
+    } catch (_) {}
+    _setDocumentHistoryControlState(canUndo, canRedo);
+  }
+
+  function _scheduleDocumentHistoryControls() {
+    if (_docHistoryStateFrame) return;
+    _docHistoryStateFrame = requestAnimationFrame(_syncDocumentHistoryControlsNow);
+  }
+
+  function _normalizeRichStatsText(value) {
+    return String(value ?? '')
+      .replace(/\u00a0/gu, ' ')
+      .replace(/\n{2,}/gu, '\n')
+      .replace(/\n$/u, '');
+  }
+
+  function _documentStatsSource() {
+    const rich = document.getElementById('doc-email-richbody');
+    if (rich && rich.style.display !== 'none') {
+      const fullText = _normalizeRichStatsText(rich.innerText || rich.textContent || '');
+      const selection = window.getSelection?.();
+      if (selection && !selection.isCollapsed && selection.rangeCount) {
+        const range = selection.getRangeAt(0);
+        if (rich.contains(range.commonAncestorContainer)) {
+          return { text: _normalizeRichStatsText(selection.toString()), selected: true };
+        }
+      }
+      return { text: fullText, selected: false };
+    }
+
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (!textarea) return { text: '', selected: false };
+    const start = Number(textarea.selectionStart) || 0;
+    const end = Number(textarea.selectionEnd) || 0;
+    if (end > start) return { text: textarea.value.slice(start, end), selected: true };
+    return { text: textarea.value || '', selected: false };
+  }
+
+  function _renderDocumentStats() {
+    _docStatsFrame = 0;
+    const root = document.getElementById('doc-stats');
+    if (!root) return;
+    const source = _documentStatsSource();
+    const stats = getDocumentStats(source.text);
+    const count = root.querySelector('#doc-stats-count');
+    const unit = root.querySelector('#doc-stats-unit');
+    const scope = root.querySelector('#doc-stats-scope');
+    if (count) count.textContent = stats.words.toLocaleString();
+    if (unit) unit.textContent = source.selected ? ' selected' : ` word${stats.words === 1 ? '' : 's'}`;
+    if (scope) scope.textContent = source.selected ? 'Selection' : 'Document';
+    const values = {
+      'doc-stats-words': stats.words,
+      'doc-stats-characters': stats.characters,
+      'doc-stats-characters-no-spaces': stats.charactersNoSpaces,
+      'doc-stats-lines': stats.lines,
+      'doc-stats-reading': stats.readingMinutes ? `${stats.readingMinutes} min` : '0 min',
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const el = root.querySelector(`#${id}`);
+      if (el) el.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+    }
+    const button = root.querySelector('#doc-stats-btn');
+    if (button) {
+      button.classList.toggle('doc-stats-selected', source.selected);
+      button.title = source.selected
+        ? `${stats.words.toLocaleString()} words selected`
+        : `${stats.words.toLocaleString()} words in document`;
+      button.setAttribute('aria-label', button.title);
+    }
+  }
+
+  function _scheduleDocumentStats() {
+    if (_docStatsFrame) cancelAnimationFrame(_docStatsFrame);
+    _docStatsFrame = requestAnimationFrame(_renderDocumentStats);
+  }
+
+  function _documentOutlineSupported() {
+    const language = _activeDocLanguage();
+    return language === 'markdown' || _isRichTextLang(language);
+  }
+
+  function _documentOutlineEntries() {
+    const doc = activeDocId && docs.get(activeDocId);
+    if (!doc) return [];
+    if (_isRichTextLang(doc.language)) {
+      const rich = document.getElementById('doc-email-richbody');
+      if (!rich || rich.style.display === 'none') return [];
+      return Array.from(rich.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+        .map(node => ({
+          level: Number(node.tagName.slice(1)) || 1,
+          text: (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim(),
+          node,
+          mode: 'richtext',
+        }))
+        .filter(entry => entry.text);
+    }
+    if (doc.language !== 'markdown') return [];
+    const textarea = document.getElementById('doc-editor-textarea');
+    const entries = parseMarkdownOutline(textarea?.value || doc.content || '');
+    const preview = document.getElementById('doc-md-preview');
+    if (preview && preview.style.display !== 'none') {
+      const nodes = Array.from(preview.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+      entries.forEach((entry, index) => {
+        if (nodes[index]) {
+          entry.node = nodes[index];
+          entry.mode = 'preview';
+        }
+      });
+    }
+    return entries;
+  }
+
+  function _flashOutlineTarget(element) {
+    if (!element) return;
+    element.classList.remove('doc-outline-target');
+    void element.offsetWidth;
+    element.classList.add('doc-outline-target');
+    setTimeout(() => element.classList.remove('doc-outline-target'), 1100);
+  }
+
+  function _jumpToDocumentOutlineEntry(entry) {
+    if (entry.node?.isConnected) {
+      entry.node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      _flashOutlineTarget(entry.node);
+      if (entry.mode === 'richtext') {
+        const rich = document.getElementById('doc-email-richbody');
+        const selection = window.getSelection?.();
+        if (rich && selection) {
+          const range = document.createRange();
+          range.selectNodeContents(entry.node);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          try { rich.focus({ preventScroll: true }); } catch (_) { rich.focus(); }
+        }
+      }
+      return;
+    }
+
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (!textarea) return;
+    try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+    textarea.setSelectionRange(entry.start, entry.end);
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 18;
+    const visibleLines = Math.max(3, Math.floor(textarea.clientHeight / lineHeight));
+    textarea.scrollTop = Math.max(0, (entry.line - Math.floor(visibleLines / 3)) * lineHeight);
+    const pre = document.getElementById('doc-editor-highlight');
+    if (pre) pre.scrollTop = textarea.scrollTop;
+    _flashOutlineTarget(document.getElementById('doc-editor-wrap'));
+  }
+
+  function _renderDocumentOutlineMenu() {
+    const menu = _docOutlineMenu;
+    if (!menu) return;
+    const entries = _documentOutlineEntries();
+    const count = menu.querySelector('.doc-outline-count');
+    const list = menu.querySelector('.doc-outline-list');
+    if (count) count.textContent = entries.length ? String(entries.length) : '';
+    if (!list) return;
+    list.replaceChildren();
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'doc-outline-empty';
+      empty.textContent = 'No headings';
+      list.appendChild(empty);
+      return;
+    }
+    entries.forEach(entry => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'doc-outline-item';
+      item.style.paddingLeft = `${7 + Math.min(Math.max(0, entry.level - 1), 4) * 11}px`;
+      item.title = entry.text;
+      item.innerHTML = `<span class="doc-outline-level">H${entry.level}</span><span class="doc-outline-label"></span>`;
+      item.querySelector('.doc-outline-label').textContent = entry.text;
+      item.addEventListener('click', () => {
+        _jumpToDocumentOutlineEntry(entry);
+        _docOutlineClose?.();
+      });
+      list.appendChild(item);
+    });
+  }
+
+  function _refreshDocumentOutline() {
+    const anchor = document.getElementById('doc-outline-toolbar-btn');
+    const hasEntries = _documentOutlineSupported() && _documentOutlineEntries().length > 0;
+    if (anchor) anchor.style.display = hasEntries ? '' : 'none';
+    if (!hasEntries) _closeDocumentOutline();
+    if (_docOutlineMenu) _renderDocumentOutlineMenu();
+  }
+
+  function _closeDocumentOutline() {
+    if (_docOutlineClose) _docOutlineClose();
+  }
+
+  function _openDocumentOutline() {
+    const anchor = document.getElementById('doc-outline-toolbar-btn');
+    if (!anchor || !_documentOutlineSupported()) return;
+    if (_docOutlineMenu) {
+      _closeDocumentOutline();
+      return;
+    }
+
+    const menu = document.createElement('div');
+    menu.id = 'doc-outline-menu';
+    menu.className = 'doc-outline-menu';
+    menu.setAttribute('role', 'navigation');
+    menu.setAttribute('aria-label', 'Document outline');
+    menu.tabIndex = -1;
+    menu.innerHTML = `
+      <div class="doc-outline-header"><span>Outline</span><span class="doc-outline-count"></span></div>
+      <div class="doc-outline-list"></div>
+    `;
+    document.body.appendChild(menu);
+    _docOutlineMenu = menu;
+    _renderDocumentOutlineMenu();
+
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(320, Math.max(240, window.innerWidth - 16));
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    const height = Math.min(menu.scrollHeight, Math.max(160, window.innerHeight - 24));
+    const below = rect.bottom + 6;
+    const top = below + height <= window.innerHeight - 8
+      ? below
+      : Math.max(8, rect.top - height - 6);
+    menu.style.width = `${width}px`;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.zIndex = String(topPortalZ());
+    anchor.classList.add('is-active');
+    anchor.setAttribute('aria-expanded', 'true');
+
+    const close = bindMenuDismiss(menu, () => {
+      menu.remove();
+      window.removeEventListener('resize', close);
+      window.visualViewport?.removeEventListener('resize', close);
+      if (_docOutlineMenu === menu) _docOutlineMenu = null;
+      if (_docOutlineClose === close) _docOutlineClose = null;
+      anchor.classList.remove('is-active');
+      anchor.setAttribute('aria-expanded', 'false');
+    }, event => !menu.contains(event.target) && !anchor.contains(event.target));
+    _docOutlineClose = close;
+    window.addEventListener('resize', close);
+    window.visualViewport?.addEventListener('resize', close);
+    menu.addEventListener('keydown', event => {
+      const items = Array.from(menu.querySelectorAll('.doc-outline-item'));
+      if (!items.length) return;
+      const current = items.indexOf(document.activeElement);
+      let next = current;
+      if (event.key === 'ArrowDown') next = Math.min(items.length - 1, current + 1);
+      else if (event.key === 'ArrowUp') next = Math.max(0, current < 0 ? 0 : current - 1);
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = items.length - 1;
+      else return;
+      event.preventDefault();
+      items[next]?.focus();
+    });
+    requestAnimationFrame(() => (menu.querySelector('.doc-outline-item') || menu).focus());
+  }
+
+  function _hideRichSelectionToolbar() {
+    if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
+    _richSelectionToolbarFrame = 0;
+    _richSelectionToolbarRange = null;
+    _richSelectionToolbar?.remove();
+    _richSelectionToolbar = null;
+  }
+
+  function _restoreRichSelectionToolbarRange(rich) {
+    const range = _richSelectionToolbarRange;
+    if (!range || !rich?.isConnected) return false;
+    try {
+      // Focus first. On mobile, focusing after addRange() can collapse the
+      // restored range and make the following palette action a no-op.
+      rich.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range.cloneRange());
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function _richSelectionToolbarButton(action, label, html, title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.richSelectionAction = action;
+    button.setAttribute('aria-label', label);
+    button.title = title || label;
+    button.innerHTML = html;
+    return button;
+  }
+
+  function _richSelectionHasFormatting(rich, range) {
+    if (!rich || !range) return false;
+    const formattedTags = /^(b|i|u|s|strong|em|del|strike|a|font|h[1-6]|blockquote|pre|li)$/i;
+    const hasFormattedAncestor = (node) => {
+      for (let current = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+           current && current !== rich;
+           current = current.parentElement) {
+        if (formattedTags.test(current.tagName || '') ||
+            (current.tagName === 'SPAN' && current.hasAttribute('style'))) return true;
+      }
+      return false;
+    };
+    if (hasFormattedAncestor(range.startContainer) || hasFormattedAncestor(range.endContainer)) return true;
+    const fragment = range.cloneContents();
+    return !!fragment.querySelector?.('b,i,u,s,strong,em,del,strike,a,font,h1,h2,h3,h4,h5,h6,blockquote,pre,li,span[style]');
+  }
+
+  // Replace a selected rich-text range with its visible text in one native
+  // editing operation. This gives Ctrl+Z one coherent undo step for “Clear
+  // formatting” instead of exposing removeFormat/unlink/font/block as several
+  // unrelated browser history entries.
+  function _clearRichSelectionFormatting(rich) {
+    const selection = window.getSelection?.();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!rich || !range || range.collapsed || !rich.contains(range.commonAncestorContainer)) return false;
+    const plainText = range.toString();
+    if (!plainText) return false;
+    rich.focus({ preventScroll: true });
+    if (!document.execCommand('insertText', false, plainText)) return false;
+    return true;
+  }
+
+  function _ensureRichSelectionToolbar(rich) {
+    if (_richSelectionToolbar?.isConnected) return _richSelectionToolbar;
+    const toolbar = document.createElement('div');
+    toolbar.id = 'doc-rich-selection-toolbar';
+    toolbar.className = 'doc-rich-selection-toolbar';
+    toolbar.setAttribute('role', 'toolbar');
+    toolbar.setAttribute('aria-label', 'Format selected text');
+    toolbar.append(
+      _richSelectionToolbarButton('bold', 'Bold', '<b>B</b>', 'Bold (Ctrl+B)'),
+      _richSelectionToolbarButton('italic', 'Italic', '<i>I</i>', 'Italic (Ctrl+I)'),
+      _richSelectionToolbarButton('underline', 'Underline', '<u>U</u>', 'Underline (Ctrl+U)'),
+      _richSelectionToolbarButton('strike', 'Strikethrough', '<s>S</s>', 'Strikethrough'),
+      _richSelectionToolbarButton('link', 'Link', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>'),
+      _richSelectionToolbarButton('highlight:#fef08a', 'Highlight', '<svg class="rich-highlight-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-7-7-8.5 8.5 7 7Z"/></svg>'),
+      _richSelectionToolbarButton('insert-image', 'Add image', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/><path d="M19 5v6M16 8h6"/></svg>'),
+      _richSelectionToolbarButton('removeformat', 'Clear formatting', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M12 5v14M8 19h8"/><path d="m4 4 16 16"/></svg>')
+    );
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'doc-rich-selection-close';
+    closeButton.setAttribute('aria-label', 'Close formatting toolbar');
+    closeButton.title = 'Close';
+    closeButton.innerHTML = '<span aria-hidden="true">×</span>';
+    toolbar.appendChild(closeButton);
+    const preserve = event => event.preventDefault();
+    toolbar.addEventListener('pointerdown', preserve);
+    toolbar.addEventListener('mousedown', preserve);
+    toolbar.addEventListener('click', event => {
+      const close = event.target.closest('.doc-rich-selection-close');
+      if (close) {
+        event.preventDefault();
+        event.stopPropagation();
+        _hideRichSelectionToolbar();
+        return;
+      }
+      const button = event.target.closest('[data-rich-selection-action]');
+      if (!button || !_restoreRichSelectionToolbarRange(rich)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.dataset.richSelectionAction === 'insert-image') {
+        _richImageInsertRange = _richSelectionToolbarRange?.cloneRange?.() || null;
+        _showRichImageSourceMenu(button);
+        _hideRichSelectionToolbar();
+        return;
+      }
+      applyMdFormat(button.dataset.richSelectionAction);
+      if (button.dataset.richSelectionAction !== 'link') {
+        requestAnimationFrame(() => _scheduleRichSelectionToolbar(rich));
+      } else {
+        _hideRichSelectionToolbar();
+      }
+    });
+    document.body.appendChild(toolbar);
+    _richSelectionToolbar = toolbar;
+    return toolbar;
+  }
+
+  function _renderRichSelectionToolbar(rich) {
+    _richSelectionToolbarFrame = 0;
+    if (!rich?.isConnected || rich.style.display === 'none') {
+      _hideRichSelectionToolbar();
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || selection.isCollapsed) {
+      _hideRichSelectionToolbar();
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer) || !range.toString().trim()) {
+      _hideRichSelectionToolbar();
+      return;
+    }
+    const rects = Array.from(range.getClientRects());
+    const visibleRects = rects.filter(item => item.width > 0 && item.height > 0);
+    const bounds = range.getBoundingClientRect();
+    const anchorRect = visibleRects[0] || bounds;
+    const selectionTop = visibleRects.length
+      ? Math.min(...visibleRects.map(item => item.top))
+      : bounds.top;
+    const selectionBottom = visibleRects.length
+      ? Math.max(...visibleRects.map(item => item.bottom))
+      : bounds.bottom;
+    const visualViewport = window.visualViewport;
+    const viewportLeft = visualViewport?.offsetLeft || 0;
+    const viewportTop = visualViewport?.offsetTop || 0;
+    const viewportWidth = visualViewport?.width || window.innerWidth;
+    const viewportHeight = visualViewport?.height || window.innerHeight;
+    const viewportRight = viewportLeft + viewportWidth;
+    const viewportBottom = viewportTop + viewportHeight;
+    if (!bounds || (!bounds.width && !bounds.height)
+        || selectionBottom < viewportTop || selectionTop > viewportBottom) {
+      _hideRichSelectionToolbar();
+      return;
+    }
+
+    _richSelectionToolbarRange = range.cloneRange();
+    const toolbar = _ensureRichSelectionToolbar(rich);
+    toolbar.querySelectorAll('[data-rich-selection-action]').forEach(button => button.classList.remove('is-active'));
+    const activeCommands = {
+      bold: 'bold',
+      italic: 'italic',
+      underline: 'underline',
+      strike: 'strikeThrough',
+    };
+    for (const [action, command] of Object.entries(activeCommands)) {
+      try {
+        toolbar.querySelector(`[data-rich-selection-action="${action}"]`)
+          ?.classList.toggle('is-active', document.queryCommandState(command));
+      } catch (_) {}
+    }
+    toolbar.querySelector('[data-rich-selection-action="link"]')
+      ?.classList.toggle('is-active', !!_richLinkAtRange(rich, range));
+    const clearButton = toolbar.querySelector('[data-rich-selection-action="removeformat"]');
+    if (clearButton) clearButton.style.display = _richSelectionHasFormatting(rich, range) ? '' : 'none';
+
+    toolbar.style.visibility = 'hidden';
+    toolbar.style.zIndex = String(topPortalZ());
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const richRect = rich.getBoundingClientRect();
+    let safeLeft = Math.max(viewportLeft + 8, richRect.left + 4);
+    let safeRight = Math.min(viewportRight - 8, richRect.right - 4);
+    let safeTop = Math.max(viewportTop + 8, richRect.top + 4);
+    const safeBottom = Math.min(viewportBottom - 8, richRect.bottom - 4);
+
+    // Toolbars and find controls sit immediately above the editable surface.
+    // Keep the contextual formatter below any visible control that overlaps it.
+    for (const blocker of [
+      document.getElementById('doc-md-toolbar'),
+      document.getElementById('doc-find-bar'),
+    ]) {
+      if (!blocker || blocker.hidden || blocker.offsetParent === null) continue;
+      const blockerRect = blocker.getBoundingClientRect();
+      const overlapsHorizontally = blockerRect.right > safeLeft && blockerRect.left < safeRight;
+      if (overlapsHorizontally && blockerRect.top < selectionBottom && blockerRect.bottom > safeTop) {
+        safeTop = blockerRect.bottom + 6;
+      }
+    }
+    if (safeRight - safeLeft < toolbarRect.width) {
+      safeLeft = viewportLeft + 8;
+      safeRight = viewportRight - 8;
+    }
+    const maxLeft = Math.max(safeLeft, safeRight - toolbarRect.width);
+    const left = Math.max(safeLeft, Math.min(
+      anchorRect.left + anchorRect.width / 2 - toolbarRect.width / 2,
+      maxLeft
+    ));
+    const maxTop = Math.max(safeTop, safeBottom - toolbarRect.height);
+    const above = selectionTop - toolbarRect.height - 8;
+    const below = selectionBottom + 8;
+    const isMobileViewport = viewportWidth <= 768;
+    // Mobile browsers own the Copy/Paste selection menu and do not expose
+    // its geometry. Dock our formatter away from the selected range so the
+    // two floating controls do not stack on top of each other.
+    const top = isMobileViewport
+      ? Math.max(safeTop, Math.min(maxTop, safeBottom - toolbarRect.height))
+      : (above >= safeTop
+        ? above
+        : (below + toolbarRect.height <= safeBottom ? below : Math.min(maxTop, below)));
+    toolbar.style.left = `${left}px`;
+    toolbar.style.top = `${Math.max(safeTop, top)}px`;
+    toolbar.style.visibility = '';
+  }
+
+  function _scheduleRichSelectionToolbar(rich) {
+    if (_richSelectionToolbarFrame) cancelAnimationFrame(_richSelectionToolbarFrame);
+    _richSelectionToolbarFrame = requestAnimationFrame(() => _renderRichSelectionToolbar(rich));
+  }
+
+  function _followRichSelectionToolbarLayout(rich, duration = 360) {
+    if (_richSelectionToolbarFollowFrame) cancelAnimationFrame(_richSelectionToolbarFollowFrame);
+    const deadline = performance.now() + duration;
+    const follow = () => {
+      _renderRichSelectionToolbar(rich);
+      if (performance.now() < deadline) {
+        _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
+      } else {
+        _richSelectionToolbarFollowFrame = 0;
+      }
+    };
+    _richSelectionToolbarFollowFrame = requestAnimationFrame(follow);
+  }
+
+  const _RICH_SLASH_COMMANDS = [
+    { action: 'paragraph', label: 'Text', icon: 'P', keywords: 'paragraph normal body' },
+    { action: 'h1', label: 'Heading 1', icon: 'H1', keywords: 'title large' },
+    { action: 'h2', label: 'Heading 2', icon: 'H2', keywords: 'subtitle medium' },
+    { action: 'h3', label: 'Heading 3', icon: 'H3', keywords: 'section small' },
+    { action: 'h4', label: 'Heading 4', icon: 'H4', keywords: 'subsection small' },
+    { action: 'h5', label: 'Heading 5', icon: 'H5', keywords: 'subsection minor' },
+    { action: 'h6', label: 'Heading 6', icon: 'H6', keywords: 'subsection minor' },
+    { action: 'ul', label: 'Bullet list', icon: '•', keywords: 'unordered bullets' },
+    { action: 'ol', label: 'Numbered list', icon: '1.', keywords: 'ordered numbers' },
+    { action: 'check', label: 'Checklist', icon: '✓', keywords: 'todo task checkbox' },
+    { action: 'quote', label: 'Quote', icon: '“', keywords: 'blockquote citation' },
+    { action: 'codeblock', label: 'Code block', icon: '</>', keywords: 'preformatted snippet' },
+    { action: 'hr', label: 'Divider', icon: '—', keywords: 'rule separator line' },
+    { action: 'pagebreak', label: 'Page break', icon: '↵', keywords: 'new page print break export' },
+    { action: 'table:insert:3:3', label: 'Table', icon: '▦', keywords: 'grid rows columns' },
+    { action: 'image', label: 'Image', icon: '▧', keywords: 'photo picture upload' },
+  ];
+
+  const _RICH_BLOCK_INPUT_RULES = new Map([
+    ['#', { action: 'h1' }],
+    ['##', { action: 'h2' }],
+    ['###', { action: 'h3' }],
+    ['####', { action: 'h4' }],
+    ['#####', { action: 'h5' }],
+    ['######', { action: 'h6' }],
+    ['-', { action: 'ul' }],
+    ['*', { action: 'ul' }],
+    ['1.', { action: 'ol' }],
+    ['>', { action: 'quote' }],
+    ['```', { action: 'codeblock' }],
+    ['[]', { action: 'check' }],
+    ['- []', { action: 'check' }],
+    ['- [ ]', { action: 'check' }],
+    ['- [x]', { action: 'check', checked: true }],
+    ['- [X]', { action: 'check', checked: true }],
+  ]);
+
+  function _applyRichBlockInputRule(rich) {
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || !selection.isCollapsed) return false;
+    const caretRange = selection.getRangeAt(0);
+    if (!rich.contains(caretRange.commonAncestorContainer)) return false;
+    const node = caretRange.startContainer;
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!element) return false;
+    const listItem = element.closest('li');
+    if (listItem && rich.contains(listItem) && listItem.parentElement?.tagName === 'UL') {
+      const markerRange = document.createRange();
+      try {
+        markerRange.selectNodeContents(listItem);
+        markerRange.setEnd(caretRange.startContainer, caretRange.startOffset);
+      } catch (_) {
+        return false;
+      }
+      const marker = markerRange.toString();
+      if (marker !== '[]' && marker !== '[ ]' && marker !== '[x]' && marker !== '[X]') return false;
+      selection.removeAllRanges();
+      selection.addRange(markerRange);
+      document.execCommand('delete');
+      listItem.parentElement.classList.add('rich-checklist');
+      _normalizeRichChecklists(listItem.parentElement);
+      const checked = marker === '[x]' || marker === '[X]';
+      listItem.dataset.checked = checked ? 'true' : 'false';
+      listItem.setAttribute('aria-checked', checked ? 'true' : 'false');
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+      rich._syncActive?.();
+      return true;
+    }
+    if (element.closest('pre, blockquote, td, th')) return false;
+    const block = element.closest('p, div');
+    if (!block || block === rich || !rich.contains(block)) return false;
+    const markerRange = document.createRange();
+    try {
+      markerRange.selectNodeContents(block);
+      markerRange.setEnd(caretRange.startContainer, caretRange.startOffset);
+    } catch (_) {
+      return false;
+    }
+    const rule = _RICH_BLOCK_INPUT_RULES.get(markerRange.toString());
+    if (!rule) return false;
+    selection.removeAllRanges();
+    selection.addRange(markerRange);
+    document.execCommand('delete');
+    applyMdFormat(rule.action);
+    if (rule.checked) {
+      const item = _richSelectionChecklistItem(rich);
+      if (item) _setRichChecklistItemChecked(rich, item, true);
+    }
+    return true;
+  }
+
+  function _richSlashContext(rich) {
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount || !selection.isCollapsed) return null;
+    const caretRange = selection.getRangeAt(0);
+    if (!rich.contains(caretRange.commonAncestorContainer)) return null;
+    const node = caretRange.startContainer;
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    const block = element?.closest?.('p, div, h1, h2, h3, h4, h5, h6, blockquote, li, pre') || rich;
+    if (block !== rich && !rich.contains(block)) return null;
+    const queryRange = document.createRange();
+    try {
+      queryRange.selectNodeContents(block);
+      queryRange.setEnd(caretRange.startContainer, caretRange.startOffset);
+    } catch (_) {
+      return null;
+    }
+    const match = queryRange.toString().match(/^\/([^\s/]*)$/);
+    if (!match) return null;
+    return { block, caretRange: caretRange.cloneRange(), queryRange, query: match[1].toLowerCase() };
+  }
+
+  function _richSlashCommands(query, rich) {
+    const doc = activeDocId && docs.get(activeDocId);
+    return _RICH_SLASH_COMMANDS.filter(command => {
+      if (doc?.language === 'email' && command.action === 'check') return false;
+      if (!query) return true;
+      return `${command.label} ${command.keywords}`.toLowerCase().includes(query);
+    });
+  }
+
+  function _hideRichSlashMenu() {
+    if (_richSlashClose) {
+      _richSlashClose();
+      return;
+    }
+    _richSlashMenu?.remove();
+    _richSlashMenu = null;
+    if (_richSlashOwner) {
+      _richSlashOwner.removeAttribute('aria-controls');
+      _richSlashOwner.removeAttribute('aria-expanded');
+      _richSlashOwner.removeAttribute('aria-activedescendant');
+      _richSlashOwner.removeAttribute('aria-haspopup');
+      _richSlashOwner = null;
+    }
+    _richSlashActiveIndex = 0;
+  }
+
+  function _syncRichSlashActiveOption(menu, rich, { reveal = false } = {}) {
+    const items = Array.from(menu.querySelectorAll('.doc-rich-slash-item'));
+    items.forEach((item, index) => {
+      const active = index === _richSlashActiveIndex;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    const activeItem = items[_richSlashActiveIndex];
+    if (activeItem) rich.setAttribute('aria-activedescendant', activeItem.id);
+    else rich.removeAttribute('aria-activedescendant');
+    if (!reveal || !activeItem) return;
+    const list = menu.querySelector('.doc-rich-slash-list');
+    const itemTop = activeItem.offsetTop - list.offsetTop;
+    const itemBottom = itemTop + activeItem.offsetHeight;
+    if (itemTop < list.scrollTop) list.scrollTop = itemTop;
+    else if (itemBottom > list.scrollTop + list.clientHeight) {
+      list.scrollTop = itemBottom - list.clientHeight;
+    }
+  }
+
+  function _renderRichSlashMenu(rich, context) {
+    const menu = _richSlashMenu;
+    if (!menu) return;
+    const commands = _richSlashCommands(context.query, rich);
+    _richSlashActiveIndex = Math.max(0, Math.min(_richSlashActiveIndex, commands.length - 1));
+    menu._commands = commands;
+    const list = menu.querySelector('.doc-rich-slash-list');
+    list.replaceChildren();
+    if (!commands.length) {
+      const empty = document.createElement('div');
+      empty.className = 'doc-rich-slash-empty';
+      empty.textContent = 'No commands';
+      list.appendChild(empty);
+    } else {
+      commands.forEach((command, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'doc-rich-slash-item';
+        button.classList.toggle('is-active', index === _richSlashActiveIndex);
+        button.setAttribute('role', 'option');
+        button.setAttribute('aria-selected', index === _richSlashActiveIndex ? 'true' : 'false');
+        button.id = `doc-rich-slash-option-${index}`;
+        button.dataset.slashIndex = String(index);
+        button.innerHTML = '<span class="doc-rich-slash-icon"></span><span class="doc-rich-slash-label"></span>';
+        button.querySelector('.doc-rich-slash-icon').textContent = command.icon;
+        button.querySelector('.doc-rich-slash-label').textContent = command.label;
+        button.addEventListener('pointerenter', () => {
+          _richSlashActiveIndex = index;
+          _syncRichSlashActiveOption(menu, rich);
+        });
+        list.appendChild(button);
+      });
+    }
+    const count = menu.querySelector('.doc-rich-slash-count');
+    if (count) count.textContent = commands.length ? String(commands.length) : '';
+
+    const caretRect = context.queryRange.getBoundingClientRect();
+    const width = Math.min(280, window.innerWidth - 16);
+    menu.style.width = `${width}px`;
+    menu.style.zIndex = String(topPortalZ());
+    menu.style.visibility = 'hidden';
+    const height = Math.min(menu.scrollHeight, Math.max(160, window.innerHeight - 24));
+    const left = Math.max(8, Math.min(caretRect.left, window.innerWidth - width - 8));
+    const below = caretRect.bottom + 7;
+    const preferredTop = below + height <= window.innerHeight - 8
+      ? below
+      : Math.max(8, caretRect.top - height - 7);
+    const top = Math.max(8, Math.min(preferredTop, window.innerHeight - height - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.visibility = '';
+    _syncRichSlashActiveOption(menu, rich, { reveal: true });
+  }
+
+  function _chooseRichSlashCommand(rich, index = _richSlashActiveIndex) {
+    const context = _richSlashContext(rich);
+    const commands = context ? _richSlashCommands(context.query, rich) : [];
+    const command = commands[index];
+    if (!context || !command) return;
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(context.queryRange);
+    rich.focus({ preventScroll: true });
+    document.execCommand('delete');
+    _hideRichSlashMenu();
+    if (command.action === 'image') {
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+      document.getElementById('doc-md-image-input')?.click();
+      return;
+    }
+    applyMdFormat(command.action);
+  }
+
+  function _syncRichSlashMenu(rich) {
+    const context = _richSlashContext(rich);
+    if (!context) {
+      _hideRichSlashMenu();
+      return;
+    }
+    if (!_richSlashMenu) {
+      const menu = document.createElement('div');
+      menu.id = 'doc-rich-slash-menu';
+      menu.className = 'doc-rich-slash-menu';
+      menu.setAttribute('role', 'listbox');
+      menu.setAttribute('aria-label', 'Insert block');
+      menu.innerHTML = '<div class="doc-rich-slash-header"><span>Insert</span><span class="doc-rich-slash-count"></span></div><div class="doc-rich-slash-list"></div>';
+      menu.addEventListener('pointerdown', event => event.preventDefault());
+      menu.addEventListener('mousedown', event => event.preventDefault());
+      menu.addEventListener('click', event => {
+        const item = event.target.closest('[data-slash-index]');
+        if (!item) return;
+        event.preventDefault();
+        event.stopPropagation();
+        _chooseRichSlashCommand(rich, Number(item.dataset.slashIndex));
+      });
+      document.body.appendChild(menu);
+      _richSlashMenu = menu;
+      _richSlashOwner = rich;
+      rich.setAttribute('aria-controls', menu.id);
+      rich.setAttribute('aria-expanded', 'true');
+      rich.setAttribute('aria-haspopup', 'listbox');
+      const close = bindMenuDismiss(menu, () => {
+        menu.remove();
+        if (_richSlashMenu === menu) _richSlashMenu = null;
+        if (_richSlashClose === close) _richSlashClose = null;
+        if (_richSlashOwner === rich) {
+          rich.removeAttribute('aria-controls');
+          rich.removeAttribute('aria-expanded');
+          rich.removeAttribute('aria-activedescendant');
+          rich.removeAttribute('aria-haspopup');
+          _richSlashOwner = null;
+        }
+        _richSlashActiveIndex = 0;
+      });
+      _richSlashClose = close;
+    }
+    _renderRichSlashMenu(rich, context);
+  }
 
   const _docOpenKey = (sessionId) => 'odysseus-doc-open-' + sessionId;
   const _docMinimizedKey = (sessionId) => 'odysseus-doc-minimized-' + sessionId;
+  const _docActiveKey = (sessionId) => 'odysseus-doc-active-' + sessionId;
+
+  function _rememberActiveDoc(docId) {
+    const doc = docs.get(docId);
+    const sessionId = doc?.sessionId || _lastSessionId || sessionModule?.getCurrentSessionId?.();
+    if (sessionId && docId) localStorage.setItem(_docActiveKey(sessionId), docId);
+  }
+
+  function _forgetActiveDoc(sessionId, docId) {
+    if (!sessionId || localStorage.getItem(_docActiveKey(sessionId)) !== docId) return;
+    localStorage.removeItem(_docActiveKey(sessionId));
+  }
 
   function _markDocVisibleState(sessionId, state) {
     if (!sessionId) return;
@@ -139,6 +1048,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     } else {
       localStorage.removeItem(_docOpenKey(sessionId));
       localStorage.removeItem(_docMinimizedKey(sessionId));
+    }
+  }
+
+  // Library opens are explicit navigation, not passive session restoration.
+  // Record that intent before selectSession() schedules its delayed doc restore
+  // so the restore cannot collapse the selected document into the bottom dock.
+  export function prepareDocumentOpen(sessionId) {
+    if (sessionId) _markDocVisibleState(sessionId, 'open');
+    if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
+      _minimizedDocId = null;
+      Modals.unregister('doc-panel');
     }
   }
 
@@ -161,6 +1081,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       createDocument,
       newDocument,
       loadDocument,
+      prepareDocumentOpen,
       switchToDoc,
       openPanel,
       addDocToTabs,
@@ -552,12 +1473,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   /** Show empty state when no documents exist yet */
   function showEmptyState() {
     activeDocId = null;
+    _setDocumentHistoryControlState(false, false);
     const textarea = document.getElementById('doc-editor-textarea');
     const langSelect = document.getElementById('doc-language-select');
     const badge = document.getElementById('doc-version-badge');
 
     if (textarea) textarea.value = '';
-    if (textarea) textarea.placeholder = 'Start typing or paste text to create a document...';
+    _syncEditorPlaceholder();
     if (textarea) textarea.disabled = false;
     if (langSelect) langSelect.value = '';
     if (badge) badge.textContent = '';
@@ -944,7 +1866,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // however wide the PDF pane is rendered. `kind` and `lh` (line-height)
   // are optional for backward compat with earlier annotation formats.
   function _annotationRegexGlobal() {
-    return /^[ \t]*-\s+(.*?)\s*<!--\s*annotation\s+id=([\w-]+)\s+page=(\d+)\s+x=([\d.]+)\s+y=([\d.]+)\s+w=([\d.]+)\s+h=([\d.]+)(?:\s+kind=(\w+))?(?:\s+lh=([\d.]+))?\s*-->[ \t]*$/gm;
+    return /^[ \t]*-\s+(.*?)\s*<!--\s*annotation\s+id=([\w-]+)\s+page=(\d+)\s+x=([\d.]+)\s+y=([\d.]+)\s+w=([\d.]+)\s+h=([\d.]+)(?:\s+kind=(\w+))?(?:\s+lh=([\d.]+))?(?:\s+fs=([\d.]+))?\s*-->[ \t]*$/gm;
   }
 
   // Bullet lines are single-line, so newlines in the value are escaped to
@@ -973,6 +1895,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         h: parseFloat(m[7]),
         kind: m[8] || 'text',
         lineHeight: m[9] ? parseFloat(m[9]) : 1.3,
+        fontSize: m[10] ? parseFloat(m[10]) : 11,
       });
     }
     return out;
@@ -981,8 +1904,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function _annotationLine(a) {
     const kind = a.kind || 'text';
     const lh = (a.lineHeight && Number.isFinite(a.lineHeight)) ? a.lineHeight : 1.3;
+    const fs = (a.fontSize && Number.isFinite(a.fontSize)) ? a.fontSize : 11;
     const escaped = a.value === '' || a.value == null ? '_(empty)_' : _escapeAnnotationValue(a.value);
-    return `- ${escaped} <!-- annotation id=${a.id} page=${a.page} x=${a.x.toFixed(2)} y=${a.y.toFixed(2)} w=${a.w.toFixed(2)} h=${a.h.toFixed(2)} kind=${kind} lh=${lh.toFixed(2)} -->`;
+    return `- ${escaped} <!-- annotation id=${a.id} page=${a.page} x=${a.x.toFixed(2)} y=${a.y.toFixed(2)} w=${a.w.toFixed(2)} h=${a.h.toFixed(2)} kind=${kind} lh=${lh.toFixed(2)} fs=${fs.toFixed(1)} -->`;
   }
 
   // Strip every annotation bullet + the "## Annotations" section, then
@@ -1021,6 +1945,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         id: a.id, page: a.page, x: a.x, y: a.y, w: a.w, h: a.h,
         kind: a.kind || 'text',
         lineHeight: a.lineHeight || 1.3,
+        fontSize: a.fontSize || 11,
         value,
       };
     }));
@@ -1074,6 +1999,26 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // Per-doc last-used line spacing for text annotations. Once the user picks
   // 1.6 for one box, every text box dropped after that defaults to 1.6.
   const _pdfLastLineHeight = new Map(); // docId -> number
+  const _pdfLastFontSize = new Map(); // docId -> number
+  let _pdfAnnotationMenuDismissWired = false;
+  function _wirePdfAnnotationMenuDismiss() {
+    if (_pdfAnnotationMenuDismissWired) return;
+    _pdfAnnotationMenuDismissWired = true;
+    document.addEventListener('pointerdown', (ev) => {
+      if (ev.target.closest('.pdf-annotation-text-menu, .pdf-annotation-menu-btn')) return;
+      document.querySelectorAll('.pdf-annotation-text-menu').forEach(menu => {
+        menu.style.display = 'none';
+        menu.dataset.lhUndoCaptured = '0';
+      });
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      document.querySelectorAll('.pdf-annotation-text-menu').forEach(menu => {
+        menu.style.display = 'none';
+        menu.dataset.lhUndoCaptured = '0';
+      });
+    });
+  }
   function _setPdfDropMode(mode) {
     _pdfDropMode = mode;
     const pane = document.getElementById('doc-pdf-view');
@@ -1153,7 +2098,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const docId = activeDocId;
     // Keep the save pill across re-renders by detaching/re-attaching it
     const savedPill = document.getElementById('doc-pdf-save-pill');
-    pane.innerHTML = '<div style="color:#bbb;font-size:13px;text-align:center;padding:40px;">Loading PDF…</div>';
+    pane.innerHTML = '';
+    const pdfLoading = spinnerModule.createLoadingRow('Loading PDF…', 26);
+    pdfLoading.classList.add('pdf-loading-state');
+    pane.appendChild(pdfLoading);
     if (savedPill) pane.appendChild(savedPill);
     let data;
     try {
@@ -1183,6 +2131,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const a = allAnnotations[i];
         if (a.kind === 'text' && a.lineHeight) {
           _pdfLastLineHeight.set(docId, a.lineHeight);
+          break;
+        }
+      }
+    }
+    if (!_pdfLastFontSize.has(docId)) {
+      for (let i = allAnnotations.length - 1; i >= 0; i--) {
+        const a = allAnnotations[i];
+        if (a.kind === 'text' && Number.isFinite(a.fontSize)) {
+          _pdfLastFontSize.set(docId, a.fontSize);
           break;
         }
       }
@@ -1363,6 +2320,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           // For text drops, inherit the doc's last-used line spacing so the
           // user's "1.6" choice sticks across every new box they place.
           lineHeight: _pdfDropMode === 'text' ? (_pdfLastLineHeight.get(docId) || 1.3) : undefined,
+          fontSize: _pdfDropMode === 'text' ? (_pdfLastFontSize.get(docId) || 11) : undefined,
         };
         _pushPdfUndoSnapshot(docId);
         const built = _buildAnnotation(pageWrap, ann);
@@ -1420,7 +2378,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       input.rows = 1;
       input.spellcheck = false;
       const lh = ann.lineHeight || 1.3;
-      input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);font-family:inherit;font-size:1.5cqh;line-height:${lh};padding:1px 4px;color:#111;resize:none;overflow:auto;white-space:pre-wrap;`;
+      const fs = ann.fontSize || 11;
+      input.style.cssText = `width:100%;height:100%;box-sizing:border-box;border:1px dashed color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);font-family:inherit;font-size:${(fs * 1.5 / 11).toFixed(3)}cqh;line-height:${lh};padding:1px 4px;color:#111;resize:none;overflow:auto;white-space:pre-wrap;`;
     }
 
     // Touch devices have no cursor, so the hover/proximity reveal never fires —
@@ -1436,29 +2395,30 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // × delete button
     const del = document.createElement('button');
     del.type = 'button';
-    del.textContent = '✖';
+    del.textContent = '×';
     del.title = 'Delete annotation';
-    del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0 0 0 1px;border:1px solid var(--accent, var(--red));background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:11px;line-height:1;display:${HIDE};font-weight:bold;touch-action:none;`;
+    del.style.cssText = `position:absolute;top:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:20px;line-height:1;display:${HIDE};font-weight:400;touch-action:none;box-sizing:border-box;`;
 
     // ☰ drag handle — same size as the × button.
     const grip = document.createElement('div');
     grip.title = 'Drag to move';
     grip.textContent = '☰';
-    grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS - 2}px;text-align:center;display:${HIDE};touch-action:none;`;
+    grip.style.cssText = `position:absolute;top:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:3px;cursor:move;font-size:11px;line-height:${HS}px;text-align:center;display:${HIDE};touch-action:none;box-sizing:border-box;`;
 
     // ↘ resize handle — same size as the × button.
     const resize = document.createElement('div');
     resize.title = 'Drag to resize';
-    resize.style.cssText = `position:absolute;bottom:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:3px;cursor:nwse-resize;display:${HIDE};touch-action:none;`;
+    resize.style.cssText = `position:absolute;bottom:${OFF}px;right:${OFF}px;width:${HS}px;height:${HS}px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:3px;cursor:nwse-resize;display:${HIDE};touch-action:none;box-sizing:border-box;`;
     resize.innerHTML = '<svg width="14" height="14" viewBox="0 0 10 10" style="display:block;margin:auto;height:100%;"><path d="M2 8 L8 2 M5 8 L8 5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>';
 
     let menuBtn = null;
     if (kind === 'text') {
       menuBtn = document.createElement('button');
       menuBtn.type = 'button';
+      menuBtn.className = 'pdf-annotation-menu-btn';
       menuBtn.textContent = '…';
       menuBtn.title = 'Text annotation options';
-      menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:#fff;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;`;
+      menuBtn.style.cssText = `position:absolute;bottom:${OFF}px;left:${OFF}px;width:${HS}px;height:${HS}px;padding:0;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);background:transparent;color:var(--accent, var(--red));border-radius:50%;cursor:pointer;font-size:15px;line-height:0.8;display:${HIDE};font-weight:bold;touch-action:none;box-sizing:border-box;`;
     }
 
     // Set handle visibility together; clicking/tapping the annotation itself
@@ -1680,18 +2640,29 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (kind === 'text') {
       const popover = document.createElement('div');
       popover.className = 'pdf-annotation-text-menu';
-      popover.style.cssText = `position:absolute;bottom:${OFF + HS + 4}px;left:${OFF}px;display:none;background:#fff;border:1px solid var(--accent, var(--red));border-radius:4px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10;flex-direction:column;align-items:stretch;gap:6px;font-size:10px;color:#222;white-space:nowrap;`;
+      popover.style.cssText = 'position:absolute;bottom:calc(100% + 24px);left:0;display:none;background:#fff;border:1px solid var(--accent, var(--red));border-radius:4px;padding:6px 8px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10;flex-direction:column;align-items:stretch;gap:6px;font-size:10px;color:#222;white-space:nowrap;';
       popover.innerHTML = `
         <div style="display:flex;align-items:center;gap:6px;">
-          <span>Line spacing</span>
-          <input type="range" min="1" max="3" step="0.05" value="${ann.lineHeight || 1.3}" style="width:90px;accent-color:var(--accent, var(--red));" />
-          <input type="number" class="lh-val" min="0.5" max="5" step="0.01" value="${(ann.lineHeight || 1.3).toFixed(2)}" style="width:54px;font-size:10px;padding:1px 7px 1px 3px;border:1px solid var(--accent, var(--red));border-radius:3px;text-align:right;accent-color:var(--accent, var(--red));" />
+          <span style="min-width:58px;">Text size</span>
+          <input type="range" class="fs-slider" min="6" max="36" step="1" value="${ann.fontSize || 11}" style="width:90px;accent-color:var(--accent, var(--red));" />
+          <input type="number" class="fs-val pdf-annotation-line-value" min="6" max="72" step="1" value="${ann.fontSize || 11}" />
         </div>
-        <button type="button" class="pdf-ann-today" style="height:22px;padding:0 7px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;text-align:left;">Today</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="min-width:58px;">Line spacing</span>
+          <input type="range" class="lh-slider" min="1" max="3" step="0.05" value="${ann.lineHeight || 1.3}" style="width:90px;accent-color:var(--accent, var(--red));" />
+          <input type="number" class="lh-val pdf-annotation-line-value" min="0.5" max="5" step="0.01" value="${(ann.lineHeight || 1.3).toFixed(2)}" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+          <button type="button" class="pdf-ann-today" style="height:22px;padding:0 7px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;text-align:left;display:inline-flex;align-items:center;gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><line x1="8" y1="2" x2="8" y2="6"></line><line x1="16" y1="2" x2="16" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="m8 15 2 2 5-5"></path></svg><span>Today</span></button>
+          <button type="button" class="pdf-ann-done" style="height:22px;padding:0 8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);background:color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);color:var(--accent, var(--red));border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;display:inline-flex;align-items:center;gap:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Save</span></button>
+        </div>
       `;
-      const slider = popover.querySelector('input[type="range"]');
+      const slider = popover.querySelector('.lh-slider');
       const valInput = popover.querySelector('.lh-val');
+      const fsSlider = popover.querySelector('.fs-slider');
+      const fsInput = popover.querySelector('.fs-val');
       const todayBtn = popover.querySelector('.pdf-ann-today');
+      const doneBtn = popover.querySelector('.pdf-ann-done');
       const _applyLh = (v, fromSlider) => {
         if (!Number.isFinite(v)) return;
         if (popover.dataset.lhUndoCaptured !== '1') {
@@ -1720,6 +2691,28 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       };
       slider.addEventListener('input', () => _applyLh(parseFloat(slider.value), true));
       valInput.addEventListener('input', () => _applyLh(parseFloat(valInput.value), false));
+      const _applyFs = (v, fromSlider) => {
+        if (!Number.isFinite(v)) return;
+        if (popover.dataset.fsUndoCaptured !== '1') {
+          _pushPdfUndoSnapshot();
+          popover.dataset.fsUndoCaptured = '1';
+        }
+        v = Math.max(6, Math.min(72, v));
+        ref.fontSize = v;
+        _pdfLastFontSize.set(activeDocId, v);
+        input.style.fontSize = `${(v * 1.5 / 11).toFixed(3)}cqh`;
+        if (fromSlider) fsInput.value = String(Math.round(v));
+        else fsSlider.value = String(Math.max(6, Math.min(36, v)));
+        if (typeof ref._autoGrow === 'function') ref._autoGrow();
+        _schedulePdfPaneSave();
+      };
+      fsSlider.addEventListener('input', () => _applyFs(parseFloat(fsSlider.value), true));
+      fsInput.addEventListener('input', () => _applyFs(parseFloat(fsInput.value), false));
+      fsInput.addEventListener('blur', () => {
+        const v = parseFloat(fsInput.value);
+        if (!Number.isFinite(v)) fsInput.value = String(Math.round(ref.fontSize || 11));
+        popover.dataset.fsUndoCaptured = '0';
+      });
       // Reject invalid typed values on blur — snap back to the live ref value.
       valInput.addEventListener('blur', () => {
         const v = parseFloat(valInput.value);
@@ -1743,16 +2736,33 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         _schedulePdfPaneSave();
         input.focus({ preventScroll: true });
       });
+      doneBtn.addEventListener('click', () => {
+        popover.style.display = 'none';
+        popover.dataset.lhUndoCaptured = '0';
+        popover.dataset.fsUndoCaptured = '0';
+        input.focus({ preventScroll: true });
+      });
       // Stop popover clicks from bubbling to pageWrap (would create new ann)
       popover.addEventListener('mousedown', (e) => e.stopPropagation());
       popover.addEventListener('click', (e) => e.stopPropagation());
       menuBtn?.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        popover.style.display = popover.style.display === 'flex' ? 'none' : 'flex';
+        const opening = popover.style.display !== 'flex';
+        document.querySelectorAll('.pdf-annotation-text-menu').forEach(menu => {
+          if (menu !== popover) menu.style.display = 'none';
+        });
+        if (opening) {
+          _pdfLastLineHeight.set(activeDocId, ref.lineHeight || 1.3);
+          _pdfLastFontSize.set(activeDocId, ref.fontSize || 11);
+        }
+        popover.style.display = opening ? 'flex' : 'none';
+        if (!opening) popover.dataset.lhUndoCaptured = '0';
       });
+      _wirePdfAnnotationMenuDismiss();
       wrap.appendChild(popover);
       ref.lineHeight = ann.lineHeight || 1.3;
+      ref.fontSize = ann.fontSize || 11;
     }
 
     wrap.appendChild(input);
@@ -1935,6 +2945,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         id: a.id, page: a.page, x: a.x, y: a.y, w: a.w, h: a.h,
         kind: a.kind || 'text',
         lineHeight: a.lineHeight || 1.3,
+        fontSize: a.fontSize || 11,
         value,
       };
     }));
@@ -2070,7 +3081,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (_replyable && _copyBtn.dataset.mode !== 'reply') {
         _copyBtn.dataset.mode = 'reply';
         _copyBtn.title = 'Reply to the sender with this filled file attached';
-        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach';
+        _copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--fg);"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach';
       } else if (!_replyable && _copyBtn.dataset.mode !== 'save') {
         _copyBtn.dataset.mode = 'save';
         _copyBtn.title = 'Save new version';
@@ -2121,10 +3132,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _mdPreview = document.getElementById('doc-md-preview');
     const _csvPreview = document.getElementById('doc-csv-preview');
     const _htmlPreview = document.getElementById('doc-html-preview');
+    const _docxPreview = document.getElementById('doc-docx-preview');
     const _outputPanel = document.getElementById('doc-run-output');
     const _mdActive = _mdPreview && _mdPreview.style.display !== 'none';
     const _csvActive = _csvPreview && _csvPreview.style.display !== 'none';
     const _htmlActive = _htmlPreview && _htmlPreview.style.display !== 'none';
+    const _docxActive = _docxPreview && _docxPreview.style.display !== 'none';
+    const _richPreviewActive = lang === 'richtext' || lang === 'rich-text'
+      ? (_mdPreview && _mdPreview.style.display !== 'none')
+      : false;
     const _outputActive = _outputPanel && _outputPanel.style.display !== 'none';
 
     let show = false;
@@ -2147,7 +3163,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (lang === 'csv') {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>';
           title = 'Table view';
-        } else if (_isRenderLang(lang)) {
+        } else if (_isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang)) {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
           title = 'Preview';
         } else {
@@ -2155,7 +3171,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           title = 'Run';
         }
         if (runBtn.dataset.lastIcon !== lang) {
-          runBtn.innerHTML = icon;
+          const label = lang === 'csv' ? 'Table' : ((_isRenderLang(lang) || _isDocxLang(lang) || _isRichTextLang(lang)) ? 'Preview' : 'Run');
+          runBtn.innerHTML = `${icon}<span class="md-view-label">${label}</span>`;
           runBtn.title = title;
           runBtn.dataset.lastIcon = lang;
         }
@@ -2170,7 +3187,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
         const codeTitle = (lang === 'csv') ? 'Edit' : 'Edit code';
         if (codeBtn.dataset.lastIcon !== lang) {
-          codeBtn.innerHTML = codeIco;
+          codeBtn.innerHTML = `${codeIco}<span class="md-view-label">Edit</span>`;
           codeBtn.title = codeTitle;
           codeBtn.dataset.lastIcon = lang;
         }
@@ -2183,6 +3200,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       let _viewActive = false;
       if (lang === 'csv') _viewActive = _csvActive;
       else if (_isRenderLang(lang)) _viewActive = _htmlActive;
+      else if (_isDocxLang(lang)) _viewActive = _docxActive;
+      else if (_isRichTextLang(lang)) _viewActive = _richPreviewActive;
       else _viewActive = _outputActive;
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
       const _runBtn2 = renderToggle.querySelector('[data-renderview="run"]');
@@ -2210,6 +3229,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         renderToggle.querySelector('[data-renderview="code"]')?.classList.toggle('active', !_htmlActive);
         renderToggle.querySelector('[data-renderview="run"]')?.classList.toggle('active', _htmlActive);
       }
+    } else if (_isDocxLang(lang)) {
+      show = false;
+      if (renderToggle) {
+        renderToggle.querySelector('[data-renderview="code"]')?.classList.toggle('active', !_docxActive);
+        renderToggle.querySelector('[data-renderview="run"]')?.classList.toggle('active', _docxActive);
+      }
+    } else if (_isRichTextLang(lang)) {
+      show = false;
+      if (renderToggle) {
+        renderToggle.querySelector('[data-renderview="code"]')?.classList.toggle('active', !_richPreviewActive);
+        renderToggle.querySelector('[data-renderview="run"]')?.classList.toggle('active', _richPreviewActive);
+      }
     } else if (canRun) {
       show = true;
       actionBtn.innerHTML = _outputActive ? _codeIco : _playIco;
@@ -2225,17 +3256,57 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.querySelectorAll('.md-toolbar-edit-only').forEach(el => {
       el.style.display = (lang === 'markdown' && _mdActive) ? 'none' : '';
     });
+    const aiWritingButton = document.getElementById('doc-ai-writing-btn');
+    if (aiWritingButton) {
+      const writingMode = lang === 'email' || lang === 'markdown' || _isRichTextLang(lang);
+      aiWritingButton.style.display = writingMode && !(lang === 'markdown' && _mdActive) ? '' : 'none';
+    }
+    document.querySelectorAll('.md-toolbar-rich-only').forEach(el => {
+      el.style.display = _isRichTextLang(lang) ? '' : 'none';
+    });
+    const richMode = _isRichTextLang(lang);
+    const attachButton = document.getElementById('md-toolbar-attach-btn');
+    if (attachButton) {
+      const paperclip = attachButton.querySelector('.md-attach-paperclip-icon');
+      const imageIcon = attachButton.querySelector('.md-attach-image-icon');
+      const isEmail = lang === 'email';
+      if (paperclip) paperclip.style.display = isEmail ? '' : 'none';
+      if (imageIcon) imageIcon.style.display = isEmail ? 'none' : '';
+      attachButton.title = isEmail ? 'Attach file' : 'Insert image';
+      attachButton.setAttribute('aria-label', attachButton.title);
+    }
+    const inlineImageButton = document.getElementById('md-toolbar-inline-image-btn');
+    if (inlineImageButton) inlineImageButton.style.display = (lang === 'email' || richMode) ? '' : 'none';
+    document.querySelectorAll('.md-toolbar-inline-format').forEach(el => {
+      el.style.display = (lang === 'email' || richMode) ? '' : 'none';
+    });
+    const alignButton = document.querySelector('.md-toolbar-align-control[data-dd="align"]');
+    if (alignButton) alignButton.style.display = (lang === 'email' || richMode) ? '' : 'none';
+    _syncDocumentToolbarSeparators(document.getElementById('md-toolbar-items'));
     const fsBtn = document.getElementById('doc-fontsize-btn');
     if (fsBtn) {
       const doc = activeDocId && docs.get(activeDocId);
       const isPdfDoc = !!(doc && _isFormBackedDoc(doc.content || ''));
-      fsBtn.style.display = (isPdfDoc || (lang === 'markdown' && _mdActive)) ? 'none' : '';
+      fsBtn.style.display = (isPdfDoc || richMode || (lang === 'markdown' && _mdActive)) ? 'none' : '';
+    }
+    const redoBtn = document.getElementById('doc-redo-btn');
+    if (redoBtn) {
+      const doc = activeDocId && docs.get(activeDocId);
+      redoBtn.style.display = (doc && _isFormBackedDoc(doc.content || '')) ? 'none' : '';
+    }
+    const outlineBtn = document.getElementById('doc-outline-toolbar-btn');
+    if (outlineBtn) {
+      const hasOutline = _documentOutlineSupported() && _documentOutlineEntries().length > 0;
+      outlineBtn.style.display = hasOutline ? '' : 'none';
+      if (!hasOutline) _closeDocumentOutline();
     }
     const mdToolbar = document.getElementById('doc-md-toolbar');
     if (mdToolbar) {
       mdToolbar.classList.toggle('md-preview-active', lang === 'markdown' && !!_mdActive);
       mdToolbar.classList.toggle('md-write-active', lang === 'markdown' && !_mdActive);
     }
+    const stats = document.getElementById('doc-stats');
+    if (stats) stats.style.display = (_hasViewToggle(lang) && lang !== 'csv') ? 'none' : '';
     if (_mdPreview) _mdPreview.classList.toggle('md-preview-active', lang === 'markdown' && !!_mdActive);
     if (mdToolbar && mdToolbar._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
 
@@ -2345,9 +3416,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }).join('');
 
     if (!changed && /<[^>]+>/.test(text) && typeof document !== 'undefined') {
-      const probe = document.createElement('div');
+      const probe = document.createElement('template');
       probe.innerHTML = text;
-      const plain = (probe.innerText || probe.textContent || '').trim();
+      const plain = (probe.content.textContent || '').trim();
       const plainClean = plain ? _sanitizeOutgoingEmailBody(plain) : plain;
       if (plainClean !== plain) return plainClean;
     }
@@ -2459,9 +3530,54 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   function _emailHtmlToPlainText(html) {
     if (typeof document === 'undefined') return String(html || '');
-    const d = document.createElement('div');
+    const d = document.createElement('template');
     d.innerHTML = String(html || '');
-    return d.innerText || d.textContent || '';
+    return d.content.textContent || '';
+  }
+
+  function _sanitizedRichTextHtml(rich) {
+    if (!rich) return '';
+    const text = (rich.innerText || rich.textContent || '').replace(/\u00a0/g, ' ').trim();
+    if (!text && !rich.querySelector('img, hr, table')) return '';
+    const html = rich.innerHTML || '';
+    const sanitized = markdownModule.sanitizeAllowedHtml
+      ? markdownModule.sanitizeAllowedHtml(html)
+      : html;
+    const tpl = document.createElement('template');
+    tpl.innerHTML = sanitized;
+    tpl.content.querySelectorAll('a[href]').forEach(link => {
+      const safeUrl = _normalizeRichLinkUrl(link.getAttribute('href'));
+      if (!safeUrl) {
+        link.replaceWith(...Array.from(link.childNodes));
+        return;
+      }
+      link.setAttribute('href', safeUrl);
+      link.setAttribute('rel', 'noopener noreferrer');
+    });
+    tpl.content.querySelectorAll('span').forEach(span => {
+      if (!_isRichInlineCodeMarker(span)) return;
+      const code = document.createElement('code');
+      code.innerHTML = span.innerHTML;
+      const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) node.nodeValue = node.nodeValue.replace(/\u200b/g, '');
+      span.replaceWith(code);
+    });
+    return tpl.innerHTML
+      .replace(/\sdata-editor-(?:table|checklist|image|inline-code|link)-token="[^"]*"/gi, '')
+      .replace(/\sdata-editor-image-selected(?:="[^"]*")?/gi, '');
+  }
+
+  function _richTextContentToHtml(content) {
+    const raw = String(content || '');
+    if (!raw.trim()) return '';
+    if (/<\/?[a-z][^>]*>/i.test(raw)) {
+      return markdownModule.sanitizeAllowedHtml
+        ? markdownModule.sanitizeAllowedHtml(raw)
+        : raw;
+    }
+    try { return markdownModule.mdToHtml(raw, { shortcodes: false }); }
+    catch (_) { return _emailPlainTextToHtml(raw); }
   }
 
   function _emailQuoteMarkerMatch(text) {
@@ -2522,8 +3638,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function _syncEmailRichbody(rich) {
     const ta = document.getElementById('doc-editor-textarea');
     if (!ta) return;
-    ta.value = rich.innerText;
     const doc = activeDocId && docs.get(activeDocId);
+    if (doc && _isRichTextLang(doc.language)) {
+      const html = _sanitizedRichTextHtml(rich);
+      ta.value = html;
+      doc.content = html;
+      _syncRichEmptyImport(rich);
+      return;
+    }
+    ta.value = rich.innerText;
     if (doc && doc.language === 'email') {
       const fields = _parseEmailHeader(doc.content || '');
       doc.content = _buildEmailContent(
@@ -2539,17 +3662,548 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       );
     }
   }
+
+  function _syncRichEmptyImport(rich = document.getElementById('doc-email-richbody')) {
+    const action = document.getElementById('doc-rich-empty-import');
+    if (!action) return;
+    const doc = activeDocId && docs.get(activeDocId);
+    const empty = !!(
+      rich &&
+      rich.style.display !== 'none' &&
+      doc && _isRichTextLang(doc.language) &&
+      !rich.textContent.trim() &&
+      !rich.querySelector('img, table, hr, iframe')
+    );
+    action.style.display = empty ? 'flex' : 'none';
+  }
   function _scheduleEmailRichbodySave() {
+    const doc = activeDocId && docs.get(activeDocId);
+    if (doc && _isRichTextLang(doc.language)) _markDocumentDirty(activeDocId);
     _persistEmailLocalDraftSoon();
     clearTimeout(_emailRichbodySaveDebounce);
     _emailRichbodySaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2500);
   }
+
+  function _richSelectionElement(rich) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer)) return null;
+    const node = range.startContainer;
+    return node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  }
+
+  function _richSelectionListItem(rich) {
+    const item = _richSelectionElement(rich)?.closest?.('li');
+    return item && rich.contains(item) ? item : null;
+  }
+
+  function _richSelectionChecklistItem(rich) {
+    const item = _richSelectionListItem(rich);
+    return item?.parentElement?.classList.contains('rich-checklist') ? item : null;
+  }
+
+  function _richChecklistItems(list) {
+    return Array.from(list?.children || []).filter(child => child.tagName === 'LI');
+  }
+
+  function _normalizeRichChecklists(root) {
+    const lists = root.matches?.('ul.rich-checklist')
+      ? [root, ...root.querySelectorAll('ul.rich-checklist')]
+      : Array.from(root.querySelectorAll('ul.rich-checklist'));
+    lists.forEach(list => {
+      _richChecklistItems(list).forEach(item => {
+        const checked = item.dataset.checked === 'true';
+        item.dataset.checked = checked ? 'true' : 'false';
+        item.setAttribute('aria-checked', checked ? 'true' : 'false');
+      });
+    });
+  }
+
+  function _richTextOffsetWithin(root) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || !root.contains(selection.anchorNode)) return null;
+    const before = document.createRange();
+    before.selectNodeContents(root);
+    before.setEnd(selection.anchorNode, selection.anchorOffset);
+    return before.toString().length;
+  }
+
+  const _richSpacingBlockSelector = 'h1,h2,h3,h4,h5,h6,p,div,pre,blockquote,li,td,th';
+
+  function _richSelectionTextOffsets(root) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+    const prefix = document.createRange();
+    prefix.selectNodeContents(root);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    const throughSelection = document.createRange();
+    throughSelection.selectNodeContents(root);
+    throughSelection.setEnd(range.endContainer, range.endOffset);
+    return { start: prefix.toString().length, end: throughSelection.toString().length };
+  }
+
+  function _richTextPointAtOffset(root, requestedOffset) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let remaining = Math.max(0, requestedOffset);
+    let node;
+    let last = null;
+    while ((node = walker.nextNode())) {
+      last = node;
+      const length = (node.nodeValue || '').length;
+      if (remaining <= length) return { node, offset: remaining };
+      remaining -= length;
+    }
+    if (last) return { node: last, offset: (last.nodeValue || '').length };
+    return { node: root, offset: 0 };
+  }
+
+  function _restoreRichSelectionTextOffsets(root, offsets) {
+    if (!offsets) return;
+    const start = _richTextPointAtOffset(root, offsets.start);
+    const end = _richTextPointAtOffset(root, offsets.end);
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function _richSpacingBlocks(root) {
+    return Array.from(root.querySelectorAll(_richSpacingBlockSelector));
+  }
+
+  function _richClosestSpacingBlock(root, node) {
+    let element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    if (!element || element === root) return null;
+    const block = element.matches?.(_richSpacingBlockSelector)
+      ? element
+      : element.closest?.(_richSpacingBlockSelector);
+    return block && root.contains(block) ? block : null;
+  }
+
+  function _richSelectedSpacingBlockIndexes(root) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return [];
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return [];
+    const blocks = _richSpacingBlocks(root);
+    let startNode = range.startContainer;
+    if (startNode === root && root.childNodes.length) {
+      startNode = root.childNodes[Math.min(range.startOffset, root.childNodes.length - 1)];
+    }
+    if (range.collapsed) {
+      const block = _richClosestSpacingBlock(root, startNode);
+      const index = blocks.indexOf(block);
+      return index >= 0 ? [index] : [];
+    }
+
+    const selected = new Set();
+    const addBlockForNode = node => {
+      const block = _richClosestSpacingBlock(root, node);
+      const index = blocks.indexOf(block);
+      if (index >= 0) selected.add(index);
+    };
+    addBlockForNode(startNode);
+    addBlockForNode(range.endContainer);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let textNode;
+    while ((textNode = walker.nextNode())) {
+      try { if (range.intersectsNode(textNode)) addBlockForNode(textNode); } catch (_) {}
+    }
+    return [...selected].sort((a, b) => a - b);
+  }
+
+  function _applyRichLineSpacing(rich, value) {
+    const indexes = _richSelectedSpacingBlockIndexes(rich);
+    const offsets = _richSelectionTextOffsets(rich);
+    if (!indexes.length || !offsets) return false;
+    const clone = rich.cloneNode(true);
+    const blocks = _richSpacingBlocks(clone);
+    indexes.forEach(index => {
+      const block = blocks[index];
+      if (!block) return;
+      if (value === 'normal') block.style.removeProperty('line-height');
+      else block.style.lineHeight = value;
+      if (!block.getAttribute('style')) block.removeAttribute('style');
+    });
+    clone.querySelectorAll('[data-editor-image-selected]').forEach(image => {
+      image.removeAttribute('data-editor-image-selected');
+    });
+
+    const wholeDocument = document.createRange();
+    wholeDocument.selectNodeContents(rich);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(wholeDocument);
+    rich.focus();
+    if (!document.execCommand('insertHTML', false, clone.innerHTML)) return false;
+    _restoreRichSelectionTextOffsets(rich, offsets);
+    return true;
+  }
+
+  function _focusRichTextOffset(rich, root, textOffset = null) {
+    if (!root) return;
+    rich.focus();
+    const range = document.createRange();
+    if (!Number.isFinite(textOffset)) {
+      range.selectNodeContents(root);
+      range.collapse(false);
+    } else {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let remaining = Math.max(0, textOffset);
+      let textNode = walker.nextNode();
+      while (textNode && remaining > textNode.data.length) {
+        remaining -= textNode.data.length;
+        textNode = walker.nextNode();
+      }
+      if (textNode) range.setStart(textNode, Math.min(remaining, textNode.data.length));
+      else {
+        range.selectNodeContents(root);
+        range.collapse(false);
+      }
+      range.collapse(true);
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function _replaceRichChecklist(rich, original, replacement, targetIndex = 0, textOffset = null) {
+    const token = `doc-checklist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    replacement.dataset.editorChecklistToken = token;
+    const range = document.createRange();
+    range.selectNode(original);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.execCommand('insertHTML', false, replacement.outerHTML);
+    const inserted = rich.querySelector(`[data-editor-checklist-token="${token}"]`);
+    if (!inserted) return;
+    inserted.removeAttribute('data-editor-checklist-token');
+    _normalizeRichChecklists(inserted);
+    const items = _richChecklistItems(inserted);
+    _focusRichTextOffset(rich, items[Math.max(0, Math.min(targetIndex, items.length - 1))], textOffset);
+  }
+
+  function _setRichChecklistItemChecked(rich, item, checked) {
+    const list = item.parentElement;
+    const items = _richChecklistItems(list);
+    const itemIndex = items.indexOf(item);
+    const textOffset = _richTextOffsetWithin(item);
+    const clone = list.cloneNode(true);
+    const cloneItem = _richChecklistItems(clone)[itemIndex];
+    if (!cloneItem) return;
+    cloneItem.dataset.checked = checked ? 'true' : 'false';
+    cloneItem.setAttribute('aria-checked', checked ? 'true' : 'false');
+    _replaceRichChecklist(rich, list, clone, itemIndex, textOffset);
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+    rich._syncActive?.();
+  }
+
+  function _toggleRichChecklist(rich) {
+    const currentItem = _richSelectionListItem(rich);
+    const currentList = currentItem?.parentElement;
+    const itemIndex = currentList ? _richChecklistItems(currentList).indexOf(currentItem) : 0;
+    const textOffset = currentItem ? _richTextOffsetWithin(currentItem) : null;
+
+    if (currentList?.classList.contains('rich-checklist')) {
+      const clone = currentList.cloneNode(true);
+      clone.classList.remove('rich-checklist');
+      _richChecklistItems(clone).forEach(item => {
+        item.removeAttribute('data-checked');
+        item.removeAttribute('aria-checked');
+      });
+      _replaceRichChecklist(rich, currentList, clone, itemIndex, textOffset);
+      return true;
+    }
+
+    if (currentList && (currentList.tagName === 'UL' || currentList.tagName === 'OL')) {
+      const clone = document.createElement('ul');
+      clone.className = 'rich-checklist';
+      _richChecklistItems(currentList).forEach(item => clone.appendChild(item.cloneNode(true)));
+      _normalizeRichChecklists(clone);
+      _replaceRichChecklist(rich, currentList, clone, itemIndex, textOffset);
+      return true;
+    }
+
+    document.execCommand('insertUnorderedList');
+    const insertedItem = _richSelectionListItem(rich);
+    const insertedList = insertedItem?.parentElement;
+    if (!insertedList) return false;
+    insertedList.classList.add('rich-checklist');
+    _normalizeRichChecklists(insertedList);
+    return true;
+  }
+
+  function _handleRichChecklistEnter(rich) {
+    const item = _richSelectionChecklistItem(rich);
+    if (!item) return false;
+    const hasContent = !!item.textContent.trim() || !!item.querySelector('img, table, hr');
+    if (hasContent) {
+      document.execCommand('insertParagraph');
+      const nextItem = _richSelectionChecklistItem(rich);
+      if (nextItem) {
+        nextItem.dataset.checked = 'false';
+        nextItem.setAttribute('aria-checked', 'false');
+      }
+    } else {
+      document.execCommand('outdent');
+      document.execCommand('removeFormat');
+      document.execCommand('formatBlock', false, 'p');
+    }
+    _normalizeRichChecklists(rich);
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+    rich._syncActive?.();
+    return true;
+  }
+
+  function _handleRichHeadingEnter(rich) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || !selection.isCollapsed) return false;
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer)) return false;
+    const element = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const heading = element?.closest?.('h1, h2, h3, h4, h5, h6');
+    if (!heading || !rich.contains(heading)) return false;
+
+    const afterRange = document.createRange();
+    afterRange.selectNodeContents(heading);
+    afterRange.setStart(range.startContainer, range.startOffset);
+    const after = afterRange.cloneContents();
+    const headingHasContent = !!heading.textContent?.trim() || !!heading.querySelector('img, hr');
+    const caretAtEnd = !after.textContent?.trim() && !after.querySelector?.('img, hr');
+    if (headingHasContent && !caretAtEnd) return false;
+
+    let applied = false;
+    if (!headingHasContent) {
+      applied = document.execCommand('formatBlock', false, 'p');
+    } else {
+      document.execCommand('defaultParagraphSeparator', false, 'p');
+      applied = document.execCommand('insertParagraph');
+    }
+    if (!applied) return false;
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+    _scheduleDocumentHistoryControls();
+    rich._syncActive?.();
+    return true;
+  }
+
+  let _richInlineCodeTypingArmed = false;
+
+  function _richSelectionInlineCode(rich) {
+    const candidate = _richSelectionElement(rich)?.closest?.('code, span');
+    if (!candidate || !rich.contains(candidate) || candidate.closest('pre')) return null;
+    if (candidate.tagName === 'CODE' || _isRichInlineCodeMarker(candidate)) return candidate;
+    return null;
+  }
+
+  function _isRichInlineCodeMarker(element) {
+    return element?.tagName === 'SPAN'
+      && String(element.style?.fontFamily || '').includes('OdysseusInlineCode');
+  }
+
+  function _normalizeRichInlineCode(root) {
+    root.querySelectorAll('code, span').forEach(code => {
+      if (code.closest('pre') || (code.tagName !== 'CODE' && !_isRichInlineCodeMarker(code))) return;
+      code.removeAttribute('data-editor-inline-code-token');
+    });
+  }
+
+  function _toggleRichInlineCode(rich) {
+    if (_richInlineCodeTypingArmed) {
+      document.execCommand('removeFormat');
+      document.execCommand('styleWithCSS', false, false);
+      _richInlineCodeTypingArmed = false;
+      return true;
+    }
+    const existing = _richSelectionInlineCode(rich);
+    if (existing) {
+      const range = document.createRange();
+      range.selectNodeContents(existing);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.execCommand('removeFormat');
+      return true;
+    }
+
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return false;
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer)) return false;
+    if (range.collapsed) {
+      document.execCommand('styleWithCSS', false, true);
+      document.execCommand('fontName', false, 'OdysseusInlineCode, ui-monospace, monospace');
+      document.execCommand('backColor', false, 'rgba(127, 127, 127, 0.12)');
+      _richInlineCodeTypingArmed = true;
+      return true;
+    }
+    const code = document.createElement('span');
+    code.style.fontFamily = 'OdysseusInlineCode, ui-monospace, monospace';
+    code.style.backgroundColor = 'rgba(127, 127, 127, 0.12)';
+    const selectedText = range.toString();
+    code.textContent = selectedText;
+    document.execCommand('insertHTML', false, code.outerHTML);
+    const inserted = _richSelectionInlineCode(rich);
+    if (!inserted) return false;
+    const caret = document.createRange();
+    caret.selectNodeContents(inserted);
+    selection.removeAllRanges();
+    selection.addRange(caret);
+    return true;
+  }
+
+  function _smartRichPasteUrl(rawText) {
+    const candidate = String(rawText || '').trim();
+    if (!candidate || /\s/.test(candidate)) return '';
+    if (/^[^@/:\s]+@[^@/:\s]+\.[^@/:\s]+$/.test(candidate)) return `mailto:${candidate}`;
+    if (/^mailto:/i.test(candidate)) {
+      return /^mailto:[^@\s]+@[^@\s]+\.[^@\s]+$/i.test(candidate)
+        ? _normalizeRichLinkUrl(candidate)
+        : '';
+    }
+    if (/^tel:/i.test(candidate)) {
+      return /^tel:\+?[\d().-]+$/i.test(candidate) ? _normalizeRichLinkUrl(candidate) : '';
+    }
+    const absoluteWebUrl = /^(?:https?:)?\/\/[^/\s]+(?:\/[^\s]*)?$/i.test(candidate);
+    const bareDomain = /^(?:www\.)?[^./:\s]+\.[^/\s]+(?:\/[^\s]*)?$/i.test(candidate);
+    if (!absoluteWebUrl && !bareDomain) return '';
+    const safeUrl = _normalizeRichLinkUrl(candidate);
+    if (!safeUrl) return '';
+    try {
+      const parsed = new URL(safeUrl);
+      return /^https?:$/.test(parsed.protocol) && parsed.hostname ? parsed.href : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function _insertSmartRichPasteLink(rich, rawText) {
+    const url = _smartRichPasteUrl(rawText);
+    if (!url) return false;
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return false;
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer)) return false;
+    if (!range.collapsed) {
+      const selectionBlock = node => {
+        const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        return element?.closest?.('p, div, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th');
+      };
+      if (selectionBlock(range.startContainer) !== selectionBlock(range.endContainer)) return false;
+    }
+
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.rel = 'noopener noreferrer';
+    if (range.collapsed) {
+      anchor.textContent = String(rawText || '').trim();
+    } else {
+      const contents = range.cloneContents();
+      contents.querySelectorAll?.('a').forEach(link => link.replaceWith(...Array.from(link.childNodes)));
+      anchor.appendChild(contents);
+    }
+    const token = `doc-link-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    anchor.dataset.editorLinkToken = token;
+    if (!document.execCommand('insertHTML', false, anchor.outerHTML)) return false;
+    const inserted = rich.querySelector(`[data-editor-link-token="${token}"]`);
+    if (!inserted) return false;
+    inserted.removeAttribute('data-editor-link-token');
+    const after = document.createRange();
+    after.setStartAfter(inserted);
+    after.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(after);
+    return true;
+  }
+
+  function _cleanRichTextPasteHtml(rawHtml) {
+    const sanitized = markdownModule.sanitizeAllowedHtml
+      ? markdownModule.sanitizeAllowedHtml(String(rawHtml || ''))
+      : String(rawHtml || '');
+    const tpl = document.createElement('template');
+    tpl.innerHTML = sanitized;
+    const allowedTags = new Set([
+      'A', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'SPAN',
+      'P', 'DIV', 'BR', 'HR', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4',
+      'BLOCKQUOTE', 'CODE', 'PRE', 'SUP', 'SUB',
+      'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TH', 'TD',
+    ]);
+
+    // Keep useful document structure but discard presentation copied from the
+    // source page. Editor-applied formatting is unaffected; this only cleans
+    // newly pasted HTML before it enters the browser's undo stack.
+    tpl.content.querySelectorAll('img, video, audio, canvas').forEach(el => el.remove());
+    tpl.content.querySelectorAll('*').forEach(el => {
+      if (!allowedTags.has(el.tagName)) {
+        el.replaceWith(...Array.from(el.childNodes));
+        return;
+      }
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        const keepLink = el.tagName === 'A' && name === 'href';
+        const keepTableSpan = (el.tagName === 'TD' || el.tagName === 'TH')
+          && (name === 'colspan' || name === 'rowspan');
+        const keepChecklistClass = el.tagName === 'UL' && name === 'class'
+          && el.classList.contains('rich-checklist');
+        const keepChecklistState = el.tagName === 'LI'
+          && (name === 'data-checked' || name === 'aria-checked')
+          && el.parentElement?.classList.contains('rich-checklist');
+        if (!keepLink && !keepTableSpan && !keepChecklistClass && !keepChecklistState) {
+          el.removeAttribute(attr.name);
+        }
+      }
+      if (el.tagName === 'A') {
+        const safeUrl = _normalizeRichLinkUrl(el.getAttribute('href'));
+        if (!safeUrl) el.replaceWith(...Array.from(el.childNodes));
+        else {
+          el.setAttribute('href', safeUrl);
+          el.setAttribute('rel', 'noopener noreferrer');
+        }
+      }
+    });
+    return tpl.innerHTML;
+  }
+
   function _wireEmailRichbody(rich) {
     if (rich._wired) { _syncEmailRichbody(rich); return; }
     rich._wired = true;
     rich.addEventListener('input', () => {
+      if (_richInlineCodeTypingArmed) {
+        document.execCommand('styleWithCSS', false, false);
+        _richInlineCodeTypingArmed = false;
+      }
+      if (_activeRichImage && !_activeRichImage.isConnected) _clearRichImageSelection();
+      _normalizeRichTextImages(rich);
+      _normalizeRichChecklists(rich);
+      _normalizeRichInlineCode(rich);
       _syncEmailRichbody(rich);
       _scheduleEmailRichbodySave();
+      if (_selections.length) clearSelection({ preserveCaret: true });
+      const findBar = document.getElementById('doc-find-bar');
+      const findInput = document.getElementById('doc-find-input');
+      if (findBar?.style.display !== 'none' && findInput?.value) {
+        findInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      const doc = activeDocId && docs.get(activeDocId);
+      if (doc && _isRichTextLang(doc.language) && !(doc.title || '').trim()) {
+        clearTimeout(rich._autoTitleTimer);
+        rich._autoTitleTimer = setTimeout(() => autoTitleFromContent(rich.innerText || ''), 500);
+      }
+      _scheduleDocumentStats();
+      _refreshDocumentOutline();
+      _scheduleRichSelectionToolbar(rich);
+      _syncRichSlashMenu(rich);
+      _scheduleDocumentHistoryControls();
     });
     // Highlight toolbar buttons (B / I / S, headings, lists) when the caret
     // sits inside formatted text. queryCommandState reflects the live
@@ -2569,17 +4223,64 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         set('[data-md="bold"]',   document.queryCommandState('bold'));
         set('[data-md="italic"]', document.queryCommandState('italic'));
         set('[data-md="strike"]', document.queryCommandState('strikeThrough'));
+        set('[data-md="underline"]', document.queryCommandState('underline'));
+        set('[data-md="superscript"]', document.queryCommandState('superscript'));
+        set('[data-md="subscript"]', document.queryCommandState('subscript'));
+        const sizeValue = String(document.queryCommandValue('fontSize') || '3');
+        const sizeIcon = tb.querySelector('.rich-font-size-icon');
+        if (sizeIcon) sizeIcon.textContent = String(_RICH_FONT_SIZE_PX[sizeValue] || 16);
       } catch (_) {}
       // Block-level: heading / list dropdown toggles read their active state
       // from the current block tag.
       const cur = _currentBlockTag(rich);
       const hBtn = tb.querySelector('[data-dd="heading"]');
-      if (hBtn) hBtn.classList.toggle('is-active', cur === 'h1' || cur === 'h2' || cur === 'h3');
+      if (hBtn) hBtn.classList.toggle('is-active', /^h[1-6]$/.test(cur));
       try {
         const inList = document.queryCommandState('insertOrderedList') || document.queryCommandState('insertUnorderedList');
         const lBtn = tb.querySelector('[data-dd="list"]');
         if (lBtn) lBtn.classList.toggle('is-active', !!inList);
+        // queryCommandState() is inconsistent between browsers and can report
+        // right alignment for a plain paragraph. Read the selected block's
+        // actual style instead, so the control reflects what the user sees.
+        const alignActions = _richDropdownCurrentActions('align', rich, null, null);
+        const aBtn = tb.querySelector('[data-dd="align"]');
+        const selection = window.getSelection();
+        const node = selection?.anchorNode;
+        const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        const selectedBlock = element?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre');
+        const hasExplicitAlignment = !!selectedBlock?.style?.textAlign;
+        if (aBtn) aBtn.classList.toggle('is-active', hasExplicitAlignment || !alignActions.has('alignleft'));
       } catch (_) {}
+      const tableBtn = tb.querySelector('[data-dd="table"]');
+      if (tableBtn) tableBtn.classList.toggle('is-active', !!_richSelectionCell(rich));
+      const imageBtn = tb.querySelector('[data-dd="image"]');
+      if (imageBtn) imageBtn.classList.toggle('is-active', !!_selectedRichImage(rich));
+      const codeBtn = tb.querySelector('[data-dd="code"]');
+      if (codeBtn) codeBtn.classList.toggle('is-active', cur === 'pre' || _richInlineCodeTypingArmed || !!_richSelectionInlineCode(rich));
+      const selection = window.getSelection();
+      const selectionRange = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      const currentLink = _richLinkAtRange(rich, selectionRange);
+      set('[data-md="link"]', !!currentLink);
+      const spacingBtn = tb.querySelector('[data-dd="spacing"]');
+      if (spacingBtn) {
+        const blocks = _richSpacingBlocks(rich);
+        const indexes = _richSelectedSpacingBlockIndexes(rich);
+        spacingBtn.classList.toggle('is-active', indexes.some(index => !!blocks[index]?.style.lineHeight));
+      }
+      // Keep dropdown tools visibly latched while their formatting is active.
+      // This is especially useful for color, font, size, and alignment where
+      // the current state is otherwise only visible inside the popup.
+      const dropdownActive = (selector, kind, defaultAction) => {
+        const button = tb.querySelector(selector);
+        if (!button) return;
+        const actions = _richDropdownCurrentActions(kind, rich, null, null);
+        const active = actions.size > 0 && !(defaultAction && actions.size === 1 && actions.has(defaultAction));
+        button.classList.toggle('is-active', active);
+      };
+      dropdownActive('[data-dd="textsize"]', 'textsize', 'fontsize:3');
+      dropdownActive('[data-dd="color"]', 'color', 'forecolor:default');
+      dropdownActive('[data-dd="highlight"]', 'highlight', 'highlight:transparent');
+      dropdownActive('[data-dd="spacing"]', 'spacing');
     };
     const syncActive = () => {
       if (syncActiveFrame) return;
@@ -2588,16 +4289,283 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     rich.addEventListener('keyup',    syncActive);
     rich.addEventListener('mouseup',  syncActive);
     rich.addEventListener('focus',    syncActive);
+    rich.addEventListener('focus', _scheduleDocumentHistoryControls);
+    rich.addEventListener('mouseup', () => {
+      setTimeout(() => {
+        updateRichSelectionState(rich);
+        _scheduleRichSelectionToolbar(rich);
+      }, 50);
+    });
+    rich.addEventListener('keyup', (e) => {
+      if (e.shiftKey) updateRichSelectionState(rich);
+      _scheduleRichSelectionToolbar(rich);
+    });
+    rich.addEventListener('scroll', () => _scheduleRichSelectionToolbar(rich), { passive: true });
+    rich.addEventListener('cut', () => {
+      const selection = window.getSelection?.();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      if (!range || range.collapsed || !rich.contains(range.commonAncestorContainer)) return;
+      const caretRange = range.cloneRange();
+      caretRange.collapse(true);
+      setTimeout(() => {
+        try {
+          rich.focus();
+          const current = window.getSelection?.();
+          current?.removeAllRanges();
+          current?.addRange(caretRange);
+        } catch (_) {}
+      }, 0);
+    });
+    rich.addEventListener('paste', (e) => {
+      const doc = activeDocId && docs.get(activeDocId);
+      if (!doc || !_isRichTextLang(doc.language)) return;
+      const images = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
+      if (images.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        const selection = window.getSelection();
+        if (selection?.rangeCount && rich.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+          _richImageInsertRange = selection.getRangeAt(0).cloneRange();
+        }
+        _uploadMarkdownImages(images);
+        return;
+      }
+
+      const html = e.clipboardData?.getData('text/html') || '';
+      const text = e.clipboardData?.getData('text/plain') || '';
+      if (!html && !text) return;
+      e.preventDefault();
+      rich.focus();
+      if (!html && _insertSmartRichPasteLink(rich, text)) {
+        // Smart URL paste is already inserted through the native undo stack.
+      } else if (html) document.execCommand('insertHTML', false, _cleanRichTextPasteHtml(html));
+      else document.execCommand('insertText', false, text);
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+      e.stopPropagation();
+    });
+    rich.addEventListener('dragover', (e) => {
+      const doc = activeDocId && docs.get(activeDocId);
+      if (!doc || !_isRichTextLang(doc.language)) return;
+      if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    rich.addEventListener('drop', (e) => {
+      const doc = activeDocId && docs.get(activeDocId);
+      if (!doc || !_isRichTextLang(doc.language)) return;
+      const images = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
+      if (!images.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+      _richImageInsertRange = range && rich.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
+      _uploadMarkdownImages(images);
+    });
+    rich.addEventListener('pointerdown', (e) => {
+      const image = e.target?.closest?.('img.richtext-image, figure.richtext-image img');
+      if (image && rich.contains(image)) {
+        e.preventDefault();
+        _selectRichImage(rich, image);
+        return;
+      }
+      if (_activeRichImage) _clearRichImageSelection();
+      const item = e.target?.closest?.('ul.rich-checklist > li');
+      if (!item || !rich.contains(item)) return;
+      const rect = item.getBoundingClientRect();
+      if (e.clientX < rect.left - 30 || e.clientX > rect.left + 4) return;
+      e.preventDefault();
+      _setRichChecklistItemChecked(rich, item, item.dataset.checked !== 'true');
+    });
+    rich.addEventListener('keydown', (e) => {
+      if (_richSlashMenu) {
+        const commandCount = _richSlashMenu._commands?.length || 0;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!commandCount) _richSlashActiveIndex = 0;
+          else if (e.key === 'Home') _richSlashActiveIndex = 0;
+          else if (e.key === 'End') _richSlashActiveIndex = commandCount - 1;
+          else {
+            const delta = e.key === 'ArrowDown' ? 1 : -1;
+            _richSlashActiveIndex = (_richSlashActiveIndex + delta + commandCount) % commandCount;
+          }
+          const context = _richSlashContext(rich);
+          if (context) _renderRichSlashMenu(rich, context);
+          return;
+        }
+        if (e.key === 'Enter' && commandCount) {
+          e.preventDefault();
+          e.stopPropagation();
+          _chooseRichSlashCommand(rich);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          _hideRichSlashMenu();
+          return;
+        }
+      }
+      if (e.key === ' ' && !e.ctrlKey && !e.metaKey && !e.altKey && _applyRichBlockInputRule(rich)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const liveSelection = window.getSelection?.();
+      if (e.key === 'Escape' && _richSelectionToolbar && liveSelection && !liveSelection.isCollapsed) {
+        e.preventDefault();
+        e.stopPropagation();
+        liveSelection.collapseToEnd();
+        _hideRichSelectionToolbar();
+        return;
+      }
+      if (_activeRichImage && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault();
+        _applyRichImageAction(rich, 'image:delete');
+        return;
+      }
+      if (_activeRichImage && e.key === 'Escape') {
+        e.preventDefault();
+        _clearRichImageSelection();
+        return;
+      }
+      const mod = e.ctrlKey || e.metaKey;
+      const key = String(e.key || '').toLowerCase();
+      if (mod && key === 'enter') {
+        const item = _richSelectionChecklistItem(rich);
+        if (item) {
+          e.preventDefault();
+          _setRichChecklistItemChecked(rich, item, item.dataset.checked !== 'true');
+          return;
+        }
+      }
+      if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey && _handleRichChecklistEnter(rich)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey && _handleRichHeadingEnter(rich)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      let action = '';
+      if (mod && e.altKey && !e.shiftKey && /^[0-6]$/.test(key)) action = key === '0' ? 'paragraph' : `h${key}`;
+      else if (mod && !e.altKey && key === 'b') action = 'bold';
+      else if (mod && !e.altKey && key === 'i') action = 'italic';
+      else if (mod && !e.altKey && key === 'u') action = 'underline';
+      else if (mod && !e.altKey && key === 'k') action = 'link';
+      else if (mod && e.shiftKey && key === 'x') action = 'strike';
+      else if (mod && e.shiftKey && key === '5') action = 'strike';
+      else if (mod && e.shiftKey && key === '7') action = 'ol';
+      else if (mod && e.shiftKey && key === '8') action = 'ul';
+      else if (mod && e.shiftKey && !e.altKey && key === 'l') action = 'alignleft';
+      else if (mod && e.shiftKey && !e.altKey && key === 'e') action = 'aligncenter';
+      else if (mod && e.shiftKey && !e.altKey && key === 'j') action = 'alignjustify';
+      else if (mod && !e.altKey && key === '[') action = 'outdent';
+      else if (mod && !e.altKey && key === ']') action = 'indent';
+      else if (mod && !e.altKey && key === '.') action = 'superscript';
+      else if (mod && !e.altKey && key === ',') action = 'subscript';
+      else if (mod && !e.altKey && key === '\\') action = 'removeformat';
+      else if (mod && e.shiftKey && key === '`') action = 'codeblock';
+      else if (mod && !e.altKey && key === '`') action = 'code';
+      if (action) {
+        e.preventDefault();
+        applyMdFormat(action);
+        return;
+      }
+      if (e.key === 'Tab') {
+        const selection = window.getSelection();
+        const anchor = selection?.anchorNode;
+        const anchorEl = anchor?.nodeType === Node.ELEMENT_NODE ? anchor : anchor?.parentElement;
+        const cell = anchorEl?.closest?.('td, th');
+        if (cell && rich.contains(cell)) {
+          e.preventDefault();
+          const table = cell.closest('table');
+          let cells = Array.from(table.querySelectorAll('th, td'));
+          let index = cells.indexOf(cell) + (e.shiftKey ? -1 : 1);
+          if (index >= cells.length && !e.shiftKey) {
+            if (_appendRichTableRow(rich, table)) {
+              _syncEmailRichbody(rich);
+              _scheduleEmailRichbodySave();
+              _scheduleDocumentHistoryControls();
+            }
+            return;
+          }
+          const target = cells[Math.max(0, index)];
+          if (target) {
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+          return;
+        }
+        let inList = false;
+        try { inList = document.queryCommandState('insertOrderedList') || document.queryCommandState('insertUnorderedList'); } catch (_) {}
+        if (inList) {
+          e.preventDefault();
+          applyMdFormat(e.shiftKey ? 'outdent' : 'indent');
+        }
+      }
+    });
     // selectionchange fires on the document; filter to selections inside rich.
     document.addEventListener('selectionchange', () => {
       const sel = window.getSelection();
-      if (sel && sel.rangeCount && rich.contains(sel.anchorNode)) syncActive();
+      if (sel && sel.rangeCount && rich.contains(sel.anchorNode)) {
+        syncActive();
+        _scheduleDocumentStats();
+        _scheduleRichSelectionToolbar(rich);
+      } else if (_richSelectionToolbar) {
+        _hideRichSelectionToolbar();
+      }
+      if (!sel || !sel.rangeCount || !rich.contains(sel.anchorNode)) _hideRichSlashMenu();
     });
+    window.addEventListener('resize', () => {
+      _scheduleRichSelectionToolbar(rich);
+      _followRichSelectionToolbarLayout(rich);
+    }, { passive: true });
+    window.visualViewport?.addEventListener('resize', () => {
+      _scheduleRichSelectionToolbar(rich);
+      _followRichSelectionToolbarLayout(rich);
+    }, { passive: true });
     rich._syncActive = syncActive;
   }
   function _emailRichbodyActive() {
     const r = document.getElementById('doc-email-richbody');
     return r && r.style.display !== 'none' ? r : null;
+  }
+
+  function _showRichTextEditor(doc) {
+    const rich = document.getElementById('doc-email-richbody');
+    const source = document.getElementById('doc-editor-wrap');
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (!rich || !source) return;
+
+    _clearRichImageSelection();
+    _richInlineCodeTypingArmed = false;
+    document.execCommand('styleWithCSS', false, false);
+    source.style.display = 'none';
+    rich.style.display = '';
+    // Keep the plain-text mirror available to save/send code, but never show
+    // its second "Start writing" surface alongside the rich editor.
+    if (textarea) textarea.style.display = 'none';
+    rich.classList.add('richtext-mode');
+    // The rich editor is a formatting surface, not a browser spellcheck
+    // field. Disable native red underlines, which are especially distracting
+    // for names, code, and mixed-language email text.
+    rich.spellcheck = false;
+    rich.setAttribute('aria-label', 'Rich text document');
+    rich.innerHTML = _richTextContentToHtml(doc?.content || '');
+    _normalizeRichTextImages(rich);
+    _normalizeRichChecklists(rich);
+    _normalizeRichInlineCode(rich);
+    _wireEmailRichbody(rich);
+    _syncEmailRichbody(rich);
+    _syncRichEmptyImport(rich);
+    if (textarea) textarea.spellcheck = true;
   }
 
   function _captureEmailBodyFocusState() {
@@ -2843,6 +4811,28 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
   }
 
+  // Mobile reply drafts should open with the user's writing area at the top,
+  // ready for input. Keep this separate from the desktop Tab-to-body behavior.
+  export function focusEmailReplyBody() {
+    if (window.innerWidth > 768) return false;
+    const rich = _emailRichbodyActive();
+    if (!rich) return false;
+    const quote = rich.querySelector('.email-quoted-history');
+    const replyBlock = quote?.previousElementSibling || rich.firstElementChild || rich;
+    try { rich.focus({ preventScroll: true }); } catch (_) { rich.focus(); }
+    const range = document.createRange();
+    if (replyBlock && replyBlock !== quote) range.selectNodeContents(replyBlock);
+    else range.selectNodeContents(rich);
+    range.collapse(true);
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    rich.scrollTop = 0;
+    return true;
+  }
+
   function _syncEmailHeaderSummary() {
     const to = document.getElementById('doc-email-to')?.value?.trim() || 'No recipient';
     const subject = document.getElementById('doc-email-subject')?.value?.trim() || 'No subject';
@@ -2897,6 +4887,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function _showEmailFields(doc, { applyLocalDraft = true, forceHeaderFields = false } = {}) {
     const emailHeader = document.getElementById('doc-email-header');
     const emailActions = document.getElementById('doc-email-actions');
+    document.getElementById('doc-email-richbody')?.classList.remove('richtext-mode');
     // Show MD toolbar for email too (B, I, etc.)
     const mdToolbar = document.getElementById('doc-md-toolbar');
     if (mdToolbar) {
@@ -2919,8 +4910,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (docFooter) docFooter.style.display = 'none';
     if (emailActions) {
       const _lang = document.getElementById('doc-language-select');
+      const _langPicker = document.getElementById('doc-langpicker-trigger');
       const _sendSplit = emailActions.querySelector('.email-send-split');
       if (_lang && _sendSplit) emailActions.insertBefore(_lang, _sendSplit);
+      if (_langPicker && _sendSplit) {
+        _langPicker.classList.add('doc-langpicker-email-compact');
+        _langPicker.title = 'Change document type';
+        emailActions.insertBefore(_langPicker, _sendSplit);
+      }
     }
     // Colored system-emoji font for email compose
     document.getElementById('doc-editor-textarea')?.classList.add('email-mode');
@@ -3037,6 +5034,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
     if (textarea) {
       textarea.value = fields.body;
+      // The textarea remains the plain-text mirror for email send/draft
+      // handling; the visible editing surface is the rich body only.
+      textarea.style.display = 'none';
       // Store original body for change detection on close
       if (doc) doc._originalBody = fields.body;
       syncHighlighting();
@@ -3048,6 +5048,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _srcWrap = document.getElementById('doc-editor-wrap');
     if (_rich && _srcWrap) {
       _srcWrap.style.display = 'none';
+      if (textarea) textarea.style.display = 'none';
       _rich.style.display = '';
       if (_emailStreamAnimFrame) cancelAnimationFrame(_emailStreamAnimFrame);
       _emailStreamAnimFrame = null;
@@ -3392,15 +5393,20 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         row.dataset.id = item.id || '';
         row.dataset.kind = kind;
         if (kind === 'gallery') {
-          const src = item.url ? `${API_BASE}${item.url}` : '';
           row.innerHTML = `
             <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
-            <span class="email-odysseus-attach-thumb">${src ? `<img src="${_escHtml(src)}" alt="">` : ''}</span>
+            <span class="email-odysseus-attach-thumb"></span>
             <span class="email-odysseus-attach-main">
               <span class="email-odysseus-attach-title">${_escHtml(label)}</span>
               <span class="email-odysseus-attach-meta">${_escHtml(item.filename || 'image')}</span>
             </span>
           `;
+          if (item.url) {
+            const img = document.createElement('img');
+            img.alt = '';
+            img.src = `${API_BASE}${item.url}`;
+            row.querySelector('.email-odysseus-attach-thumb').appendChild(img);
+          }
         } else {
           row.innerHTML = `
             <span class="email-odysseus-attach-dot" aria-hidden="true"></span>
@@ -3426,8 +5432,158 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
   }
 
+  let _richImageInsertRange = null;
+  let _activeRichImage = null;
+  let _richImageToolbar = null;
+
+  function _hideRichImageToolbar() {
+    if (_richImageToolbar) _richImageToolbar.remove();
+    _richImageToolbar = null;
+  }
+
+  function _ensureRichImageToolbar(rich) {
+    if (_richImageToolbar?.isConnected) return _richImageToolbar;
+    const toolbar = document.createElement('div');
+    toolbar.className = 'doc-rich-image-toolbar';
+    toolbar.setAttribute('role', 'toolbar');
+    toolbar.setAttribute('aria-label', 'Image actions');
+    toolbar.innerHTML = `
+      <button type="button" class="doc-rich-image-edit" title="Edit image" aria-label="Edit image">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1-1-4 9.5-9.5z"></path></svg>
+      </button>
+      <button type="button" class="doc-rich-image-remove" title="Remove image" aria-label="Remove image">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>`;
+    const position = () => {
+      if (!_activeRichImage?.isConnected) return _hideRichImageToolbar();
+      const rect = _activeRichImage.getBoundingClientRect();
+      const width = toolbar.offsetWidth || 58;
+      toolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;
+      toolbar.style.top = `${Math.max(8, rect.top - toolbar.offsetHeight - 6)}px`;
+    };
+    toolbar.addEventListener('pointerdown', event => event.preventDefault());
+    toolbar.querySelector('.doc-rich-image-edit').addEventListener('click', event => {
+      event.preventDefault();
+      const imageButton = document.querySelector('[data-dd="image"]');
+      if (imageButton) {
+        imageButton.style.display = '';
+        _showMdDropdown(imageButton);
+        requestAnimationFrame(() => {
+          const menu = document.querySelector('#doc-md-dd-menu[data-dd="image"]');
+          if (!menu || !_activeRichImage?.isConnected) return;
+          const imageRect = _activeRichImage.getBoundingClientRect();
+          const menuRect = menu.getBoundingClientRect();
+          menu.style.top = `${Math.max(8, imageRect.top - menuRect.height - 6)}px`;
+          menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuRect.width - 8, imageRect.left))}px`;
+        });
+      }
+    });
+    toolbar.querySelector('.doc-rich-image-remove').addEventListener('click', event => {
+      event.preventDefault();
+      if (_activeRichImage?.isConnected) _deleteRichImage(rich, _activeRichImage);
+    });
+    document.body.appendChild(toolbar);
+    _richImageToolbar = toolbar;
+    requestAnimationFrame(position);
+    return toolbar;
+  }
+
+  function _insertRichGalleryImage(rich, item) {
+    const source = item?.url || item?.src || '';
+    if (!rich || !source) return;
+    const image = document.createElement('img');
+    image.className = 'richtext-image';
+    image.src = source.startsWith('http') ? source : `${API_BASE}${source}`;
+    image.alt = _markdownImageAlt(item.filename || item.name || item.caption || 'Gallery image');
+    let range = _richImageInsertRange;
+    if (!range || !rich.contains(range.commonAncestorContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(rich);
+      range.collapse(false);
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const token = `doc-gallery-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    image.dataset.editorImageToken = token;
+    document.execCommand('insertHTML', false, `${image.outerHTML}<br><br>`);
+    const inserted = rich.querySelector(`[data-editor-image-token="${token}"]`);
+    if (inserted) {
+      inserted.removeAttribute('data-editor-image-token');
+      _selectRichImage(rich, inserted);
+    }
+    _richImageInsertRange = null;
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+  }
+
+  function _showRichImageSourceMenu(anchor) {
+    document.querySelector('.doc-rich-image-source-menu')?.remove();
+    const rich = _emailRichbodyActive();
+    if (!rich) return;
+    const selection = window.getSelection();
+    _richImageInsertRange = null;
+    if (selection?.rangeCount && rich.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      _richImageInsertRange = selection.getRangeAt(0).cloneRange();
+    }
+    const menu = document.createElement('div');
+    menu.className = 'doc-rich-image-source-menu';
+    menu.innerHTML = `
+      <div class="doc-rich-image-source-title">Add image</div>
+      <button type="button" data-image-source="computer"><span aria-hidden="true">↑</span> Upload from computer</button>
+      <button type="button" data-image-source="gallery"><span aria-hidden="true">▧</span> Choose from Gallery</button>`;
+    document.body.appendChild(menu);
+    const rect = anchor?.getBoundingClientRect?.() || { left: 12, bottom: 40 };
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, rect.left))}px`;
+    menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 5)}px`;
+    menu.querySelector('[data-image-source="computer"]').addEventListener('click', () => {
+      menu.remove();
+      document.getElementById('doc-md-image-input')?.click();
+    });
+    menu.querySelector('[data-image-source="gallery"]').addEventListener('click', async () => {
+      menu.innerHTML = '<div class="doc-rich-image-source-title">Choose from Gallery</div><div class="doc-rich-gallery-list">Loading…</div>';
+      try {
+        const response = await fetch(`${API_BASE}/api/gallery/library?sort=recent&limit=30`, { credentials: 'same-origin' });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+        const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.images) ? data.images : [];
+        const list = menu.querySelector('.doc-rich-gallery-list');
+        if (!items.length) { list.textContent = 'No gallery images'; return; }
+        list.replaceChildren(...items.map(item => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'doc-rich-gallery-item';
+          button.innerHTML = `<span class="doc-rich-gallery-thumb"></span><span>${_escHtml(item.caption || item.filename || item.name || 'Gallery image')}</span>`;
+          const thumb = button.querySelector('.doc-rich-gallery-thumb');
+          const src = item.url || item.src || '';
+          if (src) thumb.style.backgroundImage = `url("${src.startsWith('http') ? src : `${API_BASE}${src}`}" )`;
+          button.addEventListener('click', () => { menu.remove(); _insertRichGalleryImage(rich, item); });
+          return button;
+        }));
+        menu.style.top = `${Math.max(8, Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 5))}px`;
+      } catch (error) {
+        menu.querySelector('.doc-rich-gallery-list').textContent = 'Could not load gallery';
+        console.warn('Failed to load gallery images:', error);
+      }
+    });
+    setTimeout(() => {
+      const close = event => {
+        if (!menu.contains(event.target) && event.target !== anchor) {
+          menu.remove();
+          document.removeEventListener('click', close, true);
+        }
+      };
+      document.addEventListener('click', close, true);
+    }, 0);
+  }
+
   function _showComposeAttachMenu(anchor) {
-    if (_activeDocLanguage() !== 'email') {
+    const activeLanguage = _activeDocLanguage();
+    if (_isRichTextLang(activeLanguage)) {
+      _showRichImageSourceMenu(anchor);
+      return;
+    }
+    if (activeLanguage !== 'email') {
       document.getElementById('doc-md-image-input')?.click();
       return;
     }
@@ -3437,7 +5593,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     menu.innerHTML = `
       <button type="button" class="email-odysseus-attach-local">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Upload file
+        Upload from computer
       </button>
       <div class="email-odysseus-attach-tabs">
         <button type="button" data-ody-attach-kind="document" class="active">
@@ -3446,12 +5602,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         </button>
         <button type="button" data-ody-attach-kind="gallery">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          <span>Gallery</span>
+          <span>Gallery images</span>
         </button>
       </div>
       <label class="email-odysseus-attach-search-wrap">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="search" class="email-odysseus-attach-search" placeholder="Search attachments">
+        <input type="search" class="email-odysseus-attach-search" placeholder="Search documents or images">
       </label>
       <div class="email-odysseus-attach-list"></div>
       <div class="email-odysseus-attach-actions">
@@ -3547,14 +5703,205 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     _refreshMarkdownPreviewIfVisible(activeDocId, ta.value);
   }
 
+  function _insertRichTextImages(uploadedFiles) {
+    const rich = _emailRichbodyActive();
+    const files = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+    if (!rich || !files.length) return;
+
+    const images = [];
+    for (const file of files) {
+      const id = encodeURIComponent(file.id || file.file_id || '');
+      if (!id) continue;
+      const img = document.createElement('img');
+      img.className = 'richtext-image';
+      img.src = `/api/upload/${id}`;
+      img.alt = _markdownImageAlt(file.name || file.filename);
+      images.push(img);
+    }
+    if (!images.length) return;
+
+    let range = _richImageInsertRange;
+    if (!range || !rich.contains(range.commonAncestorContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(rich);
+      range.collapse(false);
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const token = `doc-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    images[images.length - 1].dataset.editorImageToken = token;
+    document.execCommand('insertHTML', false, `${images.map(image => image.outerHTML).join('<br>')}<br><br>`);
+    const inserted = rich.querySelector(`[data-editor-image-token="${token}"]`);
+    if (inserted) {
+      inserted.removeAttribute('data-editor-image-token');
+      _selectRichImage(rich, inserted);
+    }
+    _richImageInsertRange = null;
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+  }
+
+  function _normalizeRichTextImages(root) {
+    root.querySelectorAll('figure.richtext-image').forEach(figure => {
+      const image = figure.querySelector('img');
+      if (!image) return;
+      image.classList.add('richtext-image');
+      const legacyCaption = figure.querySelector(':scope > figcaption');
+      if (legacyCaption) {
+        const caption = document.createElement('div');
+        caption.className = 'richtext-image-caption';
+        caption.setAttribute('role', 'note');
+        caption.setAttribute('aria-label', 'Image caption');
+        caption.setAttribute('contenteditable', 'false');
+        caption.innerHTML = legacyCaption.innerHTML;
+        legacyCaption.replaceWith(caption);
+      }
+      const caption = figure.querySelector(':scope > .richtext-image-caption');
+      if (caption) {
+        caption.setAttribute('role', 'note');
+        caption.setAttribute('aria-label', 'Image caption');
+        caption.setAttribute('contenteditable', 'false');
+      }
+      Array.from(figure.classList).forEach(name => {
+        if (name.startsWith('richtext-image-size-') || name.startsWith('richtext-image-align-')) {
+          image.classList.add(name);
+          figure.classList.remove(name);
+        }
+      });
+      if (figure.hasAttribute('data-editor-image-selected')) {
+        figure.removeAttribute('data-editor-image-selected');
+        image.dataset.editorImageSelected = 'true';
+      }
+    });
+  }
+
+  function _clearRichImageSelection() {
+    _hideRichImageToolbar();
+    if (_activeRichImage?.isConnected) {
+      _activeRichImage.removeAttribute('data-editor-image-selected');
+    }
+    document.querySelectorAll('#doc-email-richbody [data-editor-image-selected]').forEach(image => {
+      image.removeAttribute('data-editor-image-selected');
+    });
+    _activeRichImage = null;
+    const imageButton = document.querySelector('[data-dd="image"]');
+    if (imageButton) {
+      imageButton.style.display = 'none';
+      imageButton.classList.remove('is-active');
+      imageButton.disabled = true;
+      imageButton.setAttribute('aria-disabled', 'true');
+    }
+  }
+
+  function _selectRichImage(rich, image) {
+    if (!image || !rich.contains(image)) {
+      _clearRichImageSelection();
+      return;
+    }
+    _clearRichImageSelection();
+    _activeRichImage = image;
+    image.dataset.editorImageSelected = 'true';
+    const imageButton = document.querySelector('[data-dd="image"]');
+    if (imageButton) {
+      imageButton.style.display = '';
+      imageButton.classList.add('is-active');
+      imageButton.disabled = false;
+      imageButton.setAttribute('aria-disabled', 'false');
+    }
+    _ensureRichImageToolbar(rich);
+    requestAnimationFrame(() => {
+      if (!_richImageToolbar?.isConnected || !_activeRichImage?.isConnected) return;
+      const rect = _activeRichImage.getBoundingClientRect();
+      const width = _richImageToolbar.offsetWidth || 58;
+      _richImageToolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))}px`;
+      _richImageToolbar.style.top = `${Math.max(8, rect.top - _richImageToolbar.offsetHeight - 6)}px`;
+    });
+    rich.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNode(image);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function _selectedRichImage(rich) {
+    if (_activeRichImage?.isConnected && rich.contains(_activeRichImage)) {
+      return _activeRichImage;
+    }
+    const element = _richSelectionElement(rich);
+    const image = element?.closest?.('img.richtext-image, figure.richtext-image img');
+    return image && rich.contains(image) ? image : null;
+  }
+
+  function _replaceRichImage(rich, original, replacement) {
+    const figure = original.closest('figure.richtext-image');
+    if (figure) {
+      const figureClone = figure.cloneNode(true);
+      const clonedImage = figureClone.querySelector('img.richtext-image, img');
+      if (!clonedImage) return null;
+      clonedImage.replaceWith(replacement);
+      return _replaceRichImageFigure(rich, original, figureClone);
+    }
+    const token = `doc-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    replacement.dataset.editorImageToken = token;
+    replacement.removeAttribute('data-editor-image-selected');
+    const range = document.createRange();
+    range.selectNode(original);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.execCommand('insertHTML', false, replacement.outerHTML);
+    const inserted = rich.querySelector(`[data-editor-image-token="${token}"]`);
+    if (!inserted) return null;
+    inserted.removeAttribute('data-editor-image-token');
+    _selectRichImage(rich, inserted);
+    return inserted;
+  }
+
+  function _replaceRichImageFigure(rich, image, replacement) {
+    const original = image.closest('figure.richtext-image') || image;
+    const token = `doc-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    replacement.dataset.editorImageToken = token;
+    replacement.removeAttribute('data-editor-image-selected');
+    replacement.querySelectorAll?.('[data-editor-image-selected]').forEach(item => {
+      item.removeAttribute('data-editor-image-selected');
+    });
+    const range = document.createRange();
+    range.selectNode(original);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    if (!document.execCommand('insertHTML', false, replacement.outerHTML)) return null;
+    const inserted = rich.querySelector(`[data-editor-image-token="${token}"]`);
+    if (!inserted) return null;
+    inserted.removeAttribute('data-editor-image-token');
+    const insertedImage = inserted.matches('img') ? inserted : inserted.querySelector('img.richtext-image, img');
+    if (insertedImage) _selectRichImage(rich, insertedImage);
+    return insertedImage;
+  }
+
+  function _deleteRichImage(rich, image) {
+    const range = document.createRange();
+    range.selectNode(image);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.execCommand('delete');
+    _clearRichImageSelection();
+    rich.focus();
+  }
+
   async function _uploadMarkdownImages(files) {
     const images = Array.from(files || []).filter(_isMarkdownImageFile);
     if (!images.length) {
       if (uiModule) uiModule.showError('Choose an image file');
       return;
     }
-    if (_activeDocLanguage() !== 'markdown') {
-      if (uiModule) uiModule.showError('Switch the document to markdown before inserting images');
+    const language = _activeDocLanguage();
+    const emailRichBody = language === 'email' && _emailRichbodyActive();
+    if (language !== 'markdown' && !_isRichTextLang(language) && !emailRichBody) {
+      if (uiModule) uiModule.showError('Switch the document to Markdown or Rich Text before inserting images');
       return;
     }
 
@@ -3571,7 +5918,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!res.ok) throw new Error((data && (data.error || data.detail)) || `HTTP ${res.status}`);
       const uploaded = Array.isArray(data?.files) ? data.files : [];
       if (!uploaded.length) throw new Error('No uploaded files returned');
-      _insertMarkdownImages(uploaded);
+      if (_isRichTextLang(language) || emailRichBody) _insertRichTextImages(uploaded);
+      else _insertMarkdownImages(uploaded);
       if (uiModule) uiModule.showToast(images.length === 1 ? 'Image inserted' : 'Images inserted');
     } catch (err) {
       console.error('Failed to insert markdown image:', err);
@@ -3653,15 +6001,33 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // text field, `sugg` is its sibling .email-autocomplete div. Suggestions
   // are scoped to the LAST comma-separated fragment so already-entered
   // recipients aren't disturbed.
+  function _showContactSearchStatus(sugg, message, state = '') {
+    sugg.innerHTML = '';
+    const notice = document.createElement('div');
+    notice.className = `contact-suggestion-status${state ? ` is-${state}` : ''}`;
+    notice.setAttribute('role', 'status');
+    notice.textContent = message;
+    sugg.appendChild(notice);
+    sugg.style.display = '';
+  }
+
   async function _searchContacts(input, sugg) {
     if (!input || !sugg) return;
     const { fragment } = _splitRecipientsAndFragment(input.value);
     if (!fragment || fragment.length < 1) { sugg.style.display = 'none'; return; }
+    const searchedFragment = fragment;
+    _showContactSearchStatus(sugg, 'Searching contacts...', 'loading');
     try {
       const res = await fetch(`${API_BASE}/api/contacts/search?q=${encodeURIComponent(fragment)}`);
       const data = await res.json();
+      // A later keystroke started another lookup while this one was in flight.
+      if (_splitRecipientsAndFragment(input.value).fragment !== searchedFragment) return;
       if (!data.results || data.results.length === 0) {
-        sugg.style.display = 'none';
+        if (data.sync?.state === 'unavailable' || data.sync?.state === 'local') {
+          _showContactSearchStatus(sugg, data.sync.message, data.sync.state);
+        } else {
+          sugg.style.display = 'none';
+        }
         return;
       }
       // Already-entered emails in this field — skip in the dropdown so
@@ -3700,7 +6066,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (count === 0) { sugg.style.display = 'none'; return; }
       sugg.style.display = '';
     } catch (e) {
-      sugg.style.display = 'none';
+      if (_splitRecipientsAndFragment(input.value).fragment !== searchedFragment) return;
+      _showContactSearchStatus(sugg, 'Unable to search contacts.', 'unavailable');
     }
   }
 
@@ -3783,6 +6150,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   function _hideEmailFields() {
+    _hideRichSelectionToolbar();
+    _hideRichSlashMenu();
     const emailHeader = document.getElementById('doc-email-header');
     const emailActions = document.getElementById('doc-email-actions');
     if (emailHeader) emailHeader.style.display = 'none';
@@ -3801,14 +6170,25 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Copy/Export split) — _showEmailFields moved it into the email footer.
     if (docFooter) {
       const _lang = document.getElementById('doc-language-select');
+      const _langPicker = document.getElementById('doc-langpicker-trigger');
       const _split = docFooter.querySelector('#doc-copy-export-split');
       if (_lang && _split) docFooter.insertBefore(_lang, _split);
+      if (_langPicker && _split) {
+        _langPicker.classList.remove('doc-langpicker-email-compact');
+        _langPicker.title = 'Change document type';
+        docFooter.insertBefore(_langPicker, _split);
+      }
     }
     // Restore the source editor and hide the WYSIWYG email body.
     const _rich = document.getElementById('doc-email-richbody');
-    if (_rich) _rich.style.display = 'none';
+    if (_rich) {
+      _rich.style.display = 'none';
+      _rich.classList.remove('richtext-mode');
+      _rich.setAttribute('aria-label', 'Email body');
+    }
     const _srcWrap = document.getElementById('doc-editor-wrap');
     if (_srcWrap) _srcWrap.style.display = '';
+    document.getElementById('doc-editor-textarea')?.style.removeProperty('display');
     // Drop the email-mode class so editors return to monospace monochrome
     document.getElementById('doc-editor-textarea')?.classList.remove('email-mode');
     document.getElementById('doc-editor-code')?.classList.remove('email-mode');
@@ -3819,16 +6199,21 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   function _bodyMentionsAttachment(text) {
     if (!text) return false;
-    // Only check the user's own text, not quoted replies
-    const parts = text.split(/^>|^On .* wrote:/m);
-    const own = parts[0] || '';
-    return _ATTACH_RE.test(own);
+    // WYSIWYG replies render quoted mail as a non-editable block, so the
+    // plain-text mirror does not always retain a leading `>` or an `On …
+    // wrote:` line. Reuse the full reply parser to exclude every quote form.
+    return _ATTACH_RE.test(_emailReplyOwnText(text));
+  }
+
+  function _clearMissingAttachmentWarnings() {
+    document.querySelectorAll('.email-attachment-warning-modal').forEach(el => el.remove());
   }
 
   function _confirmMissingAttachment() {
     return new Promise(resolve => {
+      _clearMissingAttachmentWarnings();
       const overlay = document.createElement('div');
-      overlay.className = 'modal';
+      overlay.className = 'modal email-attachment-warning-modal';
       overlay.style.display = 'flex';
       overlay.innerHTML = `
         <div class="modal-content" style="width:360px;max-width:90vw;">
@@ -3845,9 +6230,59 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       document.body.appendChild(overlay);
       const cleanup = (val) => { overlay.remove(); resolve(val); };
       overlay.querySelector('#att-warn-cancel').addEventListener('click', () => cleanup(false));
-      overlay.querySelector('#att-warn-send').addEventListener('click', () => cleanup(true));
+      overlay.querySelector('#att-warn-send').addEventListener('click', () => {
+        _clearMissingAttachmentWarnings();
+        resolve(true);
+      });
       overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
     });
+  }
+
+  // Persist a compose in the mailbox before sending. The draft is the
+  // recovery copy; it is removed by the send endpoint only after delivery and
+  // Sent-folder append both succeed.
+  async function _saveEmailDraftForRecovery({
+    accountId, doc, to, cc, bcc, subject, body, bodyHtml, inReplyTo, references, attachments,
+  }) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 18000);
+    try {
+      const res = await fetch(`${API_BASE}/api/email/draft`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          to: to || '',
+          cc: cc || null,
+          bcc: bcc || null,
+          subject: subject || '',
+          body: body || '',
+          body_html: bodyHtml,
+          in_reply_to: inReplyTo || null,
+          references: references || null,
+          account_id: accountId || null,
+          attachments: attachments?.length ? attachments : null,
+          draft_uid: doc?._emailDraftUid || null,
+          draft_folder: doc?._emailDraftFolder || null,
+        }),
+      });
+      let data = null;
+      try { data = await res.json(); } catch (_) { data = null; }
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || `Draft save failed (${res.status})`);
+      }
+      if (doc) {
+        doc._emailDraftUid = data.draft_uid || doc._emailDraftUid || null;
+        doc._emailDraftFolder = data.draft_folder || doc._emailDraftFolder || null;
+      }
+      return data;
+    } catch (e) {
+      if (e?.name === 'AbortError') throw new Error('Saving draft timed out');
+      throw e;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async function _sendEmail() {
@@ -3888,10 +6323,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
       const proceed = await _confirmMissingAttachment();
       if (!proceed) return;
+      _clearMissingAttachmentWarnings();
     }
     const btn = Array.from(document.querySelectorAll('#doc-email-send-btn')).find((candidate) => candidate.offsetParent !== null) || document.getElementById('doc-email-send-btn');
     let sendSpinner = null;
     let origBtnHtml = '';
+    let recoveryDraftSaved = Boolean(doc?._emailDraftUid);
     _emailSendInFlight = true;
     if (btn) {
       btn.disabled = true;
@@ -3903,10 +6340,27 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       btn.appendChild(document.createTextNode('Sending'));
     }
     try {
-      if (uiModule) uiModule.showToast('Sending', { duration: 2200, leadingIcon: 'spinner' });
+      if (uiModule) uiModule.showToast('Sending', { duration: 2200, leadingIcon: 'spinner', toastClass: 'toast-sending' });
 
-      const activeAccountId = await _resolveComposeSendAccountId();
-      const res = await fetch(`${API_BASE}/api/email/send`, {
+      const activeAccountIdPromise = _resolveComposeSendAccountId();
+      const activeAccountId = await activeAccountIdPromise;
+      // Do this before SMTP can start. If saving the recovery copy fails, do
+      // not send an email that the user cannot reopen after a disconnect.
+      const recoveryDraft = await _saveEmailDraftForRecovery({
+        accountId: activeAccountId,
+        doc,
+        to,
+        cc,
+        bcc,
+        subject,
+        body,
+        bodyHtml,
+        inReplyTo,
+        references,
+        attachments,
+      });
+      recoveryDraftSaved = true;
+      const sendRequest = fetch(`${API_BASE}/api/email/send`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -3917,9 +6371,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           account_id: activeAccountId,
           source_uid: sourceUid || null,
           source_folder: sourceFolder || null,
+          draft_uid: recoveryDraft.draft_uid || doc?._emailDraftUid || null,
+          draft_folder: recoveryDraft.draft_folder || doc?._emailDraftFolder || null,
           wait_for_delivery: true,
         }),
       });
+      // Remote SMTP/IMAP confirmation can take several seconds. The request
+      // is now committed, so close the composer while the captured document
+      // remains available as the recovery draft until delivery is confirmed.
+      if (isLibraryOpen()) closeLibrary();
+      if (isOpen && activeDocId === sendDocId) closePanel();
+      const res = await sendRequest;
       let data = null;
       try {
         data = await res.json();
@@ -3928,19 +6390,37 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       }
       if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
       if (data.success) {
+        _clearMissingAttachmentWarnings();
+        // The send endpoint appends the message to Sent, but an already-open
+        // email library needs an explicit fresh load to show it immediately.
+        import('./emailLibrary.js?v=20260915trashmove2').then(mod => {
+          const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
+          if (refresh) return refresh();
+          return undefined;
+        }).catch(() => {});
         if (uiModule) {
           uiModule.showToast('Message sent', {
             duration: 7000,
             leadingIcon: 'check',
+            toastClass: 'toast-message-sent',
             action: 'View Message',
-            onAction: () => {
-              import('./emailLibrary.js?v=20260815approvalsave1').then(mod => {
+            onAction: async () => {
+        import('./emailLibrary.js?v=20260915trashmove2').then(async mod => {
                 const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
+                const refresh = mod.refreshEmailLibrary || (mod.default && mod.default.refreshEmailLibrary);
                 if (open) open({
                   account_id: data.account_id || activeAccountId || null,
                   folder: data.sent_folder || 'Sent',
                   uid: data.sent_uid || null,
                 });
+                // The new message is not guaranteed to be in the cached Sent
+                // snapshot used during open. Refresh after the modal has
+                // mounted so the pending UID can expand when the server list
+                // returns, without requiring a second manual refresh click.
+                if (refresh) {
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                  await refresh();
+                }
               }).catch(() => {});
             },
           });
@@ -3976,7 +6456,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         // Delete the compose document after successful send.
         if (sendDocId) {
           fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
-          const wasActiveSentDoc = activeDocId === sendDocId;
+          const wasActiveSentDoc = isOpen && activeDocId === sendDocId;
           docs.delete(sendDocId);
           if (wasActiveSentDoc) {
             activeDocId = null;
@@ -3989,10 +6469,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           _syncDocIndicator();
         }
       } else {
-        if (uiModule) uiModule.showError(data.error || 'Failed to send');
+        if (uiModule) uiModule.showError(`${data.error || 'Failed to send'} Draft kept in Drafts.`);
       }
     } catch (e) {
-      if (uiModule) uiModule.showError(e?.message ? `Failed to send email: ${e.message}` : 'Failed to send email');
+      if (uiModule) {
+        const reason = e?.message || 'connection lost';
+        uiModule.showError(recoveryDraftSaved
+          ? `Send failed: ${reason}. Draft kept in Drafts.`
+          : `Send cancelled: ${reason}. Could not save a recovery draft.`);
+      }
     } finally {
       _emailSendInFlight = false;
       if (sendSpinner) sendSpinner.destroy();
@@ -4036,10 +6521,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           in_reply_to: inReplyTo || null,
           references: references || null,
           account_id: window.__odysseusActiveEmailAccount || null,
+          attachments: (docs.get(activeDocId)?._composeAtts || []).map(a => a.token),
+          draft_uid: docs.get(activeDocId)?._emailDraftUid || null,
+          draft_folder: docs.get(activeDocId)?._emailDraftFolder || null,
         }),
       });
       const data = await res.json();
       if (data.success) {
+        const savedDoc = docs.get(activeDocId);
+        if (savedDoc) {
+          savedDoc._emailDraftUid = data.draft_uid || null;
+          savedDoc._emailDraftFolder = data.draft_folder || null;
+        }
         if (uiModule) uiModule.showToast('Draft saved to mailbox');
       } else {
         if (uiModule) uiModule.showError(data.error || 'Failed to save draft');
@@ -4209,6 +6702,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     });
   }
 
+  export async function generateEmailReply(opts = {}) {
+    return _aiReply(opts);
+  }
+
   async function _aiReply(opts = {}) {
     const { mode = 'auto', noteHint = '', contextKey = '' } = (opts || {});
     const to = document.getElementById('doc-email-to')?.value?.trim() || '';
@@ -4238,12 +6735,43 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         .trim();
     };
     const splitCurrent = _splitEmailReplyQuote(currentBody);
-    const ownText = String(splitCurrent.body || '').trim();
-    const isReplaceableDraft = !ownText || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
+    const ownBody = document.createElement('template');
+    ownBody.innerHTML = String(splitCurrent.body || '');
+    const ownText = (ownBody.content.textContent || '').trim();
+    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
     if (!isReplaceableDraft) {
       if (uiModule) uiModule.showToast('Reply already has text');
       return;
     }
+
+    // Keep the request tied to the exact draft state that the user approved.
+    // AI generation is asynchronous; a late response must never replace text
+    // the user typed while it was in flight.
+    const generationId = ++_emailAiReplyGeneration;
+    const generationDocId = activeDocId;
+    let generationBody = currentBody;
+    const generationRich = _emailRichbodyActive();
+    const richDraftSnapshot = () => {
+      if (!generationRich) return '';
+      const clone = generationRich.cloneNode(true);
+      // Focusing an empty reply inserts a caret slot, not a user edit.
+      clone.querySelectorAll('.email-reply-edit-slot').forEach(slot => {
+        if (!slot.textContent.trim() && !slot.querySelector('img,video,audio,iframe,table')) slot.remove();
+      });
+      return clone.innerHTML;
+    };
+    let generationRichHtml = richDraftSnapshot();
+    let manuallyEdited = false;
+    const markEdited = () => { manuallyEdited = true; };
+    textarea.addEventListener('input', markEdited);
+    generationRich?.addEventListener('input', markEdited);
+    const draftStillUnchanged = () => (
+      generationId === _emailAiReplyGeneration &&
+      !manuallyEdited &&
+      activeDocId === generationDocId &&
+      textarea.value === generationBody &&
+      (!generationRich || richDraftSnapshot() === generationRichHtml)
+    );
 
     // Use the current chat model
     let currentModel = '';
@@ -4255,12 +6783,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     const btn = document.getElementById('doc-email-ai-reply-btn');
     if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
+    if (uiModule) uiModule.showToast('Writing AI reply', {
+      duration: 8000,
+      leadingIcon: 'spinner',
+      aiReplyProgress: true,
+    });
 
     try {
       // Empty-compose path: if there's no original body, send a placeholder
       // so the backend's "no body" guard doesn't fail. The user_hint carries
       // the user's compose intent; the model uses To/Subject + that hint.
-      const bodyForApi = currentBody || (noteHint ? '(no prior email — compose a new message based on the To, Subject, and user instructions)' : currentBody);
+      const bodyForApi = opts.originalBody || splitCurrent.quote || currentBody || (noteHint ? '(no prior email -- compose from the user instructions)' : '');
       const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4268,18 +6801,33 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           to: to,
           subject: subject,
           original_body: bodyForApi,
+          stream: true,
           model: currentModel,
           session_id: currentSessionId,
           message_id: inReplyTo,
           uid: sourceUid,
           folder: sourceFolder,
           account_id: sourceAccountId,
-          fast: true,
+          fast: mode !== 'ai-reply-full',
           user_hint: noteHint || '',
         }),
       });
-      const data = await res.json();
+      const data = await readEmailReplyResponse(res, text => {
+        if (!draftStillUnchanged()) return false;
+        const quote = splitCurrent.quote || '';
+        _setEmailBodyText(textarea, text + (quote ? `\n\n${quote}` : ''));
+        generationBody = textarea.value;
+        generationRichHtml = richDraftSnapshot();
+        return true;
+      });
+      if (!res.ok) {
+        throw new Error(data.error || `AI reply service returned HTTP ${res.status}`);
+      }
       if (data.success && data.reply) {
+        if (!draftStillUnchanged()) {
+          if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
+          return;
+        }
         let cleanReply = cleanAiReplyText(data.reply);
         // Strip any "On <date>, <name> wrote:" attribution + everything
         // after it from the AI's output — the model sometimes re-quotes
@@ -4289,10 +6837,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         cleanReply = cleanReply.replace(/\n*On\b[\s\S]*?\bwrote:[\s\S]*$/m, '').trim();
         const quote = splitCurrent.quote || '';
         const newBody = cleanReply + (quote ? `\n\n${quote}` : '');
-        await _streamEmailBodyText(textarea, newBody);
+        // Reconcile the final body only while this generation still owns the draft.
+        if (!draftStillUnchanged()) {
+          if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
+          return;
+        }
+        _setEmailBodyText(textarea, newBody);
         _clearDocAiReplyContext(contextKey || _docAiReplyContextKey());
-        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
+        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`, { aiReplyResult: true });
+        return true;
       } else {
+        if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
         const rawMsg = data.error || 'Failed to generate reply';
         const msg = /empty response/i.test(rawMsg)
           ? 'AI reply failed: AI returned empty response.'
@@ -4300,8 +6855,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (uiModule) uiModule.showError(msg);
       }
     } catch (e) {
-      if (uiModule) uiModule.showError('Failed to generate AI reply');
+      if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
+      if (uiModule) uiModule.showError(`AI reply failed: ${e?.message || 'Unable to reach the AI reply service'}`);
     } finally {
+      textarea.removeEventListener('input', markEdited);
+      generationRich?.removeEventListener('input', markEdited);
       if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
     }
   }
@@ -4334,6 +6892,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
       const proceed = await _confirmMissingAttachment();
       if (!proceed) return;
+      _clearMissingAttachmentWarnings();
     }
 
     // Create a small modal with datetime input and quick presets
@@ -4437,6 +6996,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         });
         const data = await res.json();
         if (data.success) {
+          _clearMissingAttachmentWarnings();
           if (uiModule) uiModule.showToast(`Scheduled for ${new Date(localDt).toLocaleString()}`);
           _clearCurrentEmailLocalDraft();
           cleanup();
@@ -4464,11 +7024,34 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   function switchToDoc(docId) {
     if (!docs.has(docId)) return;
+    _closeDocumentOutline();
+    _hideRichSelectionToolbar();
+    _hideRichSlashMenu();
     _hideLoadingOverlay();
     if (_diffModeActive) exitDiffMode(true);
 
-    // Save current doc state before switching
-    saveCurrentToMap();
+    // These panes are shared by all tabs; never carry a previous document's
+    // run or preview state into the document being opened.
+    const staleRunOutput = document.getElementById('doc-run-output');
+    if (staleRunOutput) {
+      staleRunOutput.style.display = 'none';
+      staleRunOutput.innerHTML = '';
+    }
+    const staleHtmlPreview = document.getElementById('doc-html-preview');
+    if (staleHtmlPreview) {
+      staleHtmlPreview.style.display = 'none';
+      staleHtmlPreview.srcdoc = '';
+    }
+    const staleCsvPreview = document.getElementById('doc-csv-preview');
+    if (staleCsvPreview) staleCsvPreview.style.display = 'none';
+    _htmlPreviewActive = false;
+
+    // Save current doc state before switching only when this mounted pane was
+    // actually populated from that document. A freshly reopened pane has an
+    // empty textarea while activeDocId still points at the prior tab; saving
+    // that shell would erase the cached document before we can render it.
+    const mountedPane = document.getElementById('doc-editor-pane');
+    if (mountedPane?.dataset.activeDocumentId === activeDocId) saveCurrentToMap();
 
     // Auto-delete the doc we're leaving if it's completely empty
     const prevId = activeDocId;
@@ -4482,8 +7065,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
 
     activeDocId = docId;
+    if (mountedPane) mountedPane.dataset.activeDocumentId = docId;
+    _rememberActiveDoc(docId);
     clearSelection();
     const doc = docs.get(docId);
+    _renderDocumentSaveState();
+    _setDocumentHistoryControlState(false, false);
 
     // Populate editor
     const titleInput = document.getElementById('doc-title-input');
@@ -4561,7 +7148,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Font size does nothing for a PDF (annotations are placed, not styled) —
     // hide it on PDFs so the toolbar only shows what actually works.
     const _fsBtn = document.getElementById('doc-fontsize-btn');
-    if (_fsBtn) _fsBtn.style.display = isPdf ? 'none' : '';
+    if (_fsBtn) _fsBtn.style.display = (isPdf || _isRichTextLang(doc.language)) ? 'none' : '';
     // Exit CSV preview when switching docs, or auto-show for CSV
     const isCsv = doc.language === 'csv';
     const csvPreview = document.getElementById('doc-csv-preview');
@@ -4574,11 +7161,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     // Exit HTML preview on switch
     exitHtmlPreview();
+    const docxPreview = document.getElementById('doc-docx-preview');
+    if (docxPreview) { docxPreview.style.display = 'none'; docxPreview.replaceChildren(); }
 
     // Show/hide email fields. Markdown preview uses the same editor wrapper
     // as email source mode, so clear it before showing the rich email body;
     // otherwise the source wrapper can reappear over the composer.
     const isEmail = doc.language === 'email';
+    const isRichText = _isRichTextLang(doc.language);
     if (isEmail) {
       _setMarkdownPreviewActive(false, { remember: false });
       const forceHeaderFields = !!doc._skipLocalDraftOnce;
@@ -4587,9 +7177,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _showEmailFields(doc, { applyLocalDraft, forceHeaderFields });
     } else {
       _hideEmailFields();
-      const wantsMarkdownPreview = (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
-      _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
+      if (isRichText) {
+        _setMarkdownPreviewActive(false, { remember: false });
+        _showRichTextEditor(doc);
+      } else {
+        const wantsMarkdownPreview = !isPdf && (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
+        _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
+        if (_isDocxLang(doc.language)) {
+          requestAnimationFrame(() => _setDocxPreviewActive(doc._docxPreviewActive !== false, { remember: false }));
+        }
+      }
     }
+
+    _syncRichEmptyImport();
 
     // Hide version panel on switch
     const vp = document.getElementById('doc-version-panel');
@@ -4597,6 +7197,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     renderTabs();
     _syncHeaderActions();
+    _scheduleDocumentStats();
 
     // Restore any persisted suggestions for this doc
     if (_activeSuggestions.length === 0) {
@@ -4617,6 +7218,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     } else {
       fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
     }
+    _forgetActiveDoc(doc?.sessionId || _lastSessionId, docId);
     docs.delete(docId);
     _syncDocIndicator();
   }
@@ -4624,7 +7226,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   async function closeTab(docId) {
     // Save current editor content to map so the check below uses fresh data
     saveCurrentToMap();
-    _detachDocFromSession(docId, { toast: true });
+    // Closing the tab is a quiet detach action. The document-close
+    // notification is reserved for closing the document surface itself;
+    // showing it here makes a tab close look like a full document close.
+    _detachDocFromSession(docId);
     // Find next tab in the current session
     const curSession = sessionModule?.getCurrentSessionId() || '';
     let nextId = null;
@@ -4666,7 +7271,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ session_id: sessionId, title: '', content }),
+        body: JSON.stringify({ session_id: sessionId, title: '', content, language: 'richtext' }),
       });
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
       const doc = await res.json();
@@ -4675,14 +7280,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // Set the content into the map so switchToDoc preserves it
       const d = docs.get(doc.id);
       if (d) d.content = content;
-      activeDocId = doc.id;
-      // Update textarea (keep existing content the user typed)
-      const textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) {
-        textarea.placeholder = 'Document content...';
-      }
-      syncHighlighting();
-      renderTabs();
+      switchToDoc(doc.id);
       // Trigger auto-detect and auto-title
       setTimeout(attemptAutoDetect, 100);
       setTimeout(() => autoTitleFromContent(content), 300);
@@ -4706,7 +7304,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (titleInput) doc.title = titleInput.value;
     if (langSelect) doc.language = langSelect.value;
     // For email docs, reconstruct full content with header
-    if (doc.language === 'email' && textarea) {
+    if (_isRichTextLang(doc.language)) {
+      const rich = document.getElementById('doc-email-richbody');
+      if (rich && rich.style.display !== 'none') {
+        doc.content = _sanitizedRichTextHtml(rich);
+        if (textarea) textarea.value = doc.content;
+      }
+    } else if (doc.language === 'email' && textarea) {
       const to = document.getElementById('doc-email-to')?.value || '';
       const cc = document.getElementById('doc-email-cc')?.value || '';
       const bcc = document.getElementById('doc-email-bcc')?.value || '';
@@ -4735,18 +7339,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   // ---- Panel open/close ----
 
-  function _closeNotesForDocumentOpen() {
+  function _minimizeNotesForDocumentOpen() {
     try {
-      if (Modals.isRegistered('notes-panel')) {
-        Modals.close('notes-panel');
+      if (window.notesModule?.isPanelOpen?.()) {
+        window.notesModule.closePanel('down');
         return;
       }
     } catch (_) {}
     if (!document.getElementById('notes-pane') && !document.getElementById('notes-pane-backdrop')) return;
-    import('./notes.js')
+    import('./notes.js?v=20260911notesselectioncancel1')
       .then(mod => {
         const close = mod.closeNotes || mod.closePanel || mod.default?.closeNotes || mod.default?.closePanel;
-        if (typeof close === 'function') close();
+        if (typeof close === 'function') close('down');
       })
       .catch(() => {
         try { document.getElementById('notes-pane')?.remove(); } catch (_) {}
@@ -4754,8 +7358,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       });
   }
 
-  export function openPanel() {
-    _closeNotesForDocumentOpen();
+  export function openPanel(options = {}) {
+    _minimizeNotesForDocumentOpen();
     if (isOpen) return;
     // Clear any pane/divider still sliding out from a just-fired close so we
     // don't end up with two #doc-editor-pane nodes (and a stale close stripping
@@ -4812,6 +7416,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const pane = document.createElement('div');
     pane.id = 'doc-editor-pane';
     pane.className = 'doc-editor-pane';
+    if (options.restore) pane.classList.add('doc-pane-restoring');
     // ── Mobile: make toolbar/footer buttons work on the FIRST tap with the
     // keyboard up ──
     // Normally a tap while the keyboard is open is eaten by the OS keyboard
@@ -4846,7 +7451,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       <input type="hidden" id="doc-title-input" value="" />
       <div class="doc-mobile-grabber" id="doc-mobile-grabber" aria-hidden="true"></div>
       <div class="doc-editor-header" id="doc-editor-actions">
-        <button id="doc-undo-btn" class="doc-action-icon-btn" title="Undo (Ctrl+Z)" style="gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span style="font-size:11px;">Undo</span></button>
+        <button id="doc-undo-btn" class="doc-action-icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" aria-disabled="true" disabled style="gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg><span style="font-size:11px;">Undo</span></button>
+        <button id="doc-redo-btn" class="doc-action-icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" aria-disabled="true" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg></button>
         <button id="doc-header-preview-btn" class="doc-action-icon-btn" title="Run / Preview" style="display:none;opacity:0.85;gap:4px;"></button>
         <span id="doc-stream-indicator" class="doc-stream-indicator" style="display:none"><span class="doc-stream-dot"></span> editing</span>
         <span id="doc-version-badge" class="doc-version-badge" title="Version history" style="display:none">v1</span>
@@ -4859,7 +7465,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <option value="typescript">typescript</option>
           <option value="html">html</option>
           <option value="css">css</option>
+          <option value="richtext">Rich Text</option>
           <option value="markdown">markdown</option>
+          <option value="docx">Word / DOCX</option>
           <option value="json">json</option>
           <option value="yaml">yaml</option>
           <option value="bash">bash</option>
@@ -4920,7 +7528,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       </div>
       <input type="file" id="doc-md-image-input" accept="image/*" multiple style="display:none" />
       <div class="doc-md-toolbar" id="doc-md-toolbar" style="display:none">
-        <div class="md-toolbar-items" id="md-toolbar-items">
+        <div class="md-toolbar-leading-controls">
           <span class="md-view-toggle" id="doc-md-view-toggle" style="display:none" role="group" aria-label="Edit or preview">
             <button type="button" class="md-view-opt" data-mdview="edit" title="Edit source (Ctrl+Alt+M to toggle)"><span class="md-view-label">Write</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
             <button type="button" class="md-view-opt" data-mdview="preview" title="Preview (Ctrl+Alt+M to toggle)"><span class="md-view-label">Preview</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
@@ -4929,41 +7537,78 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             <button type="button" class="md-view-opt" data-renderview="code" title="Edit code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
             <button type="button" class="md-view-opt" data-renderview="run" title="Run / Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
           </span>
+        </div>
+        <button type="button" class="md-scroll-arrow md-scroll-left" id="md-scroll-left" title="Scroll left" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <div class="md-toolbar-items" id="md-toolbar-items">
           <button id="doc-email-ai-reply-btn" class="doc-action-icon-btn md-toolbar-email-only" type="button" title="Draft a reply with AI (fast + optional context)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;">Reply</span></button>
-          <button id="doc-fontsize-btn" class="doc-action-icon-btn" title="Font size" style="position:relative;width:28px;height:26px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg><span class="doc-fontsize-levels"><i data-sz="s">S</i><i data-sz="m">M</i><i data-sz="l">L</i></span></button>
+          <span id="md-toolbar-sep-after-ai-reply" class="md-toolbar-sep md-toolbar-manual-sep md-toolbar-email-only" aria-hidden="true"></span>
+          <button type="button" id="doc-ai-writing-btn" class="doc-ai-writing-btn md-toolbar-edit-only" title="Writing tools" aria-label="Writing tools" aria-haspopup="menu" aria-expanded="false"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button id="doc-fontsize-btn" class="doc-action-icon-btn" title="Editor display size" aria-label="Editor display size" style="position:relative;width:28px;height:26px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg><span class="doc-fontsize-levels"><i data-sz="s">S</i><i data-sz="m">M</i><i data-sz="l">L</i></span></button>
           <button id="doc-diff-toggle-btn" class="doc-action-icon-btn" title="Compare changes" style="opacity:0.7;display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 12H2l5-5 5 5H9"/><path d="M19 12h3l-5 5-5-5h3"/></svg></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
           <button type="button" class="md-toolbar-edit-only" data-md="bold" title="Bold (Ctrl+B)"><b>B</b></button>
           <button type="button" class="md-toolbar-edit-only" data-md="italic" title="Italic (Ctrl+I)"><i>I</i></button>
-          <button type="button" class="md-toolbar-edit-only" data-md="strike" title="Strikethrough"><s>S</s></button>
+          <button type="button" class="md-toolbar-edit-only" data-md="strike" title="Strikethrough (Ctrl+Shift+X)"><s>S</s></button>
+          <button type="button" class="md-toolbar-edit-only md-toolbar-rich-only" data-md="underline" title="Underline (Ctrl+U)" style="display:none"><u>U</u></button>
+          <button type="button" class="md-toolbar-rich-only" data-md="superscript" title="Superscript" style="display:none"><span class="rich-script-icon">x<sup>2</sup></span></button>
+          <button type="button" class="md-toolbar-rich-only" data-md="subscript" title="Subscript" style="display:none"><span class="rich-script-icon">x<sub>2</sub></span></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
-          <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="heading" title="Heading"><b>H</b><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
-          <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="list" title="List"><span style="font-variant-numeric:tabular-nums;">1.</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="heading" title="Heading (Ctrl+Alt+1-6)"><b>H</b><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="font" title="Font family" aria-label="Font family" style="display:none"><span>Aa</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <span id="md-toolbar-sep-after-heading" class="md-toolbar-sep md-toolbar-manual-sep md-toolbar-edit-only" aria-hidden="true"></span>
+          <button type="button" class="md-dd-toggle md-toolbar-edit-only" data-dd="list" title="Bulleted list"><svg class="rich-list-bullet-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="4" cy="6" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="4" cy="18" r="1.5"/><path d="M9 5h12v2H9zM9 11h12v2H9zM9 17h12v2H9z"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
-          <button type="button" class="md-toolbar-edit-only" data-md="link" title="Link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
-          <button type="button" id="md-toolbar-attach-btn" class="md-toolbar-attach-btn md-toolbar-edit-only" title="Insert image"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+          <button type="button" id="md-toolbar-attach-btn" class="md-toolbar-attach-btn md-toolbar-edit-only" title="Attach file"><svg class="md-attach-paperclip-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><svg class="md-attach-image-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/><line x1="18" y1="4" x2="18" y2="10"/><line x1="15" y1="7" x2="21" y2="7"/></svg></button>
+          <button type="button" id="md-toolbar-inline-image-btn" class="md-toolbar-inline-image-btn md-toolbar-edit-only" title="Insert image" aria-label="Insert image" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/><line x1="18" y1="4" x2="18" y2="10"/><line x1="15" y1="7" x2="21" y2="7"/></svg></button>
+          <button type="button" class="md-toolbar-edit-only" data-md="link" title="Link (Ctrl+K)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="image" title="Image options" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
           <button type="button" class="md-dd-toggle md-toolbar-email-hide md-toolbar-edit-only" data-dd="code" title="Code">\`<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <span class="md-toolbar-sep md-toolbar-rich-only" style="display:none"></span>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="textsize" title="Font size" aria-label="Font size" style="display:none"><span class="rich-font-size-icon">16</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-align-control" data-dd="align" title="Text alignment (Ctrl+Shift+L/E/J)" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="10" x2="16" y2="10"/><line x1="4" y1="14" x2="20" y2="14"/><line x1="4" y1="18" x2="14" y2="18"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="spacing" title="Line spacing" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/><path d="m1 5 2-2 2 2M3 3v16m-2-2 2 2 2-2"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-toolbar-rich-only" data-md="outdent" title="Decrease indent (Ctrl+[)" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="11" y1="18" x2="21" y2="18"/><polyline points="7 8 3 12 7 16"/></svg></button>
+          <button type="button" class="md-toolbar-rich-only" data-md="indent" title="Increase indent (Ctrl+])" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="11" y1="18" x2="21" y2="18"/><polyline points="3 8 7 12 3 16"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-inline-format" data-dd="color" title="Text color" style="display:none"><span class="rich-color-letter">A</span><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-inline-format" data-dd="highlight" title="Highlight color" style="display:none"><svg class="rich-highlight-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h3l6-6"/><path d="m22 12-7-7-8.5 8.5 7 7Z"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <span id="md-toolbar-sep-after-highlight" class="md-toolbar-sep md-toolbar-manual-sep md-toolbar-edit-only" aria-hidden="true"></span>
+          <button type="button" class="md-toolbar-rich-only" data-md="quote" title="Block quote" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 17H3l3-10h5zm10 0h-4l3-10h5z"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-rich-only" data-dd="table" title="Table" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-dd-toggle md-toolbar-inline-format" data-dd="separator" title="Insert separator" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"/></svg><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <button type="button" class="md-toolbar-rich-only md-toolbar-email-hide" data-md="pagebreak" title="Page break" aria-label="Page break" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18M3 19h18"/><path d="M12 8v7m0 0-3-3m3 3 3-3"/></svg></button>
+          <button type="button" class="md-toolbar-rich-only" data-md="unlink" title="Remove link" aria-label="Remove link" disabled style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l-2 2a4 4 0 0 1-6-6l3-3a4 4 0 0 1 5-1"/><path d="M15 9l2-2a4 4 0 0 1 6 6l-3 3a4 4 0 0 1-5 1"/><line x1="8" y1="2" x2="16" y2="22"/></svg></button>
+          <button type="button" class="md-toolbar-rich-only" data-md="removeformat" title="Clear formatting" style="display:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M12 5v14M8 19h8"/><path d="m4 4 16 16"/></svg></button>
           <span class="md-toolbar-sep md-toolbar-edit-only"></span>
+          <button type="button" id="doc-find-toolbar-btn" class="md-toolbar-edit-only" title="Find (Ctrl+F)" aria-label="Find"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+          <button type="button" id="doc-outline-toolbar-btn" title="Document outline" aria-label="Document outline" aria-haspopup="true" aria-expanded="false"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></button>
           <span id="md-toolbar-emoji-slot" class="md-toolbar-edit-only"></span>
+          <span class="md-toolbar-sep md-toolbar-pdf-only" style="display:none"></span>
+          <button type="button" id="doc-pdf-add-sign-btn" class="md-toolbar-pdf-only" title="Add signature (then click on PDF)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3l6 6-9 9-3-3z"/><path d="M9 15l-3 1 1-3"/><path d="M4 18l3-3"/><path d="M3 20l3-3"/><path d="M5 22l3-3"/></svg><span class="doc-pdf-sign-label">sign</span></button>
           <span class="md-toolbar-sep md-toolbar-pdf-only" style="display:none"></span>
           <button type="button" id="doc-pdf-add-text-btn" class="md-toolbar-pdf-only" title="Add text box (then click on PDF)" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg></button>
           <button type="button" id="doc-pdf-add-check-btn" class="md-toolbar-pdf-only" title="Add checkmark (then click on PDF)" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
-          <button type="button" id="doc-pdf-add-sign-btn" class="md-toolbar-pdf-only" title="Add signature (then click on PDF)" style="display:none"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3l6 6-9 9-3-3z"/><path d="M9 15l-3 1 1-3"/><path d="M4 18l3-3"/><path d="M3 20l3-3"/><path d="M5 22l3-3"/></svg><span class="doc-pdf-sign-label">sign</span></button>
           <button type="button" id="doc-pdf-refresh-btn" class="md-toolbar-pdf-only" title="Reload PDF view" style="display:none"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
         </div>
+        <button type="button" class="md-scroll-arrow md-scroll-right" id="md-scroll-right" title="Scroll right" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
         <div class="md-toolbar-overflow-wrapper" id="md-toolbar-overflow-wrapper" style="display:none">
           <button class="md-toolbar-overflow-toggle" id="md-toolbar-overflow-toggle" title="More formatting"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
           <div class="md-toolbar-overflow-menu" id="md-toolbar-overflow-menu"></div>
         </div>
-        <button type="button" class="md-scroll-arrow md-scroll-left" id="md-scroll-left" title="Scroll left" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
-        <button type="button" class="md-scroll-arrow md-scroll-right" id="md-scroll-right" title="Scroll right" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
       </div>
       <div id="doc-find-bar" class="doc-find-bar" style="display:none">
-        <input id="doc-find-input" class="doc-find-input" type="text" placeholder="Find..." />
-        <span id="doc-find-count" class="doc-find-count"></span>
-        <button id="doc-find-prev" class="doc-find-nav" title="Previous">&uarr;</button>
-        <button id="doc-find-next" class="doc-find-nav" title="Next">&darr;</button>
-        <button id="doc-find-close" class="doc-find-close" title="Close">&times;</button>
+        <div class="doc-find-row">
+          <input id="doc-find-input" class="doc-find-input" type="text" placeholder="Find..." autocomplete="off" />
+          <span id="doc-find-count" class="doc-find-count" aria-live="polite"></span>
+          <button type="button" id="doc-find-prev" class="doc-find-nav" title="Previous match" aria-label="Previous match">&uarr;</button>
+          <button type="button" id="doc-find-next" class="doc-find-nav" title="Next match" aria-label="Next match">&darr;</button>
+          <button type="button" id="doc-find-replace-toggle" class="doc-find-nav" title="Show replace" aria-label="Show replace" aria-expanded="false"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 3 4 4-4 4"/><path d="M3 7h18"/><path d="m7 21-4-4 4-4"/><path d="M21 17H3"/></svg></button>
+          <button type="button" id="doc-find-close" class="doc-find-close" title="Close" aria-label="Close find">&times;</button>
+        </div>
+        <div id="doc-replace-row" class="doc-replace-row" hidden>
+          <input id="doc-replace-input" class="doc-find-input" type="text" placeholder="Replace with..." autocomplete="off" />
+          <button type="button" id="doc-replace-current" class="doc-find-action">Replace</button>
+          <button type="button" id="doc-replace-all" class="doc-find-action">Replace all</button>
+        </div>
       </div>
       <div id="doc-editor-wrap" class="doc-editor-wrap">
         <div id="doc-line-numbers" class="doc-line-numbers">1</div>
@@ -4974,7 +7619,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
            B/I/S act on the live text (execCommand), and on send its HTML becomes
            the email's HTML part. Its plain text is mirrored into the textarea so
            the existing send/draft/change-detection paths keep working. -->
-      <div id="doc-email-richbody" class="doc-email-richbody" contenteditable="true" spellcheck="true" style="display:none" data-no-swipe-dismiss></div>
+      <div id="doc-email-richbody" class="doc-email-richbody" contenteditable="true" spellcheck="false" style="display:none" data-no-swipe-dismiss></div>
+      <div id="doc-rich-empty-import" class="doc-rich-empty-import" style="display:none" aria-live="polite">
+        <button type="button" class="doc-preview-hover-edit doc-rich-empty-import-btn" title="Import a document" aria-label="Import a document">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M12 12v6"></path><path d="m9 15 3 3 3-3"></path></svg>
+          <span>Import document</span>
+        </button>
+      </div>
       <div id="doc-email-actions" class="doc-email-actions" style="display:none">
         <button id="doc-email-discard-btn" class="email-discard-btn" title="Close email" style="display:inline-flex;align-items:center;gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Close</span></button>
         <span style="flex:1"></span>
@@ -4989,6 +7640,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         </div>
       </div>
       <div id="doc-md-preview" class="doc-md-preview" style="display:none"></div>
+      <div id="doc-docx-preview" class="doc-docx-preview" style="display:none"></div>
       <div id="doc-csv-preview" class="doc-csv-preview" style="display:none"></div>
       <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" style="display:none"></iframe>
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
@@ -4998,8 +7650,27 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
            pinned to the bottom no matter which pane (editor / md-preview /
            csv / html / pdf) is the one growing to fill. -->
       <div id="doc-actions-footer" class="doc-email-actions">
+        <span id="doc-stats" class="doc-stats-wrap">
+          <button type="button" id="doc-stats-btn" class="doc-stats-btn" aria-haspopup="true" aria-expanded="false" title="0 words in document">
+            <span id="doc-stats-count">0</span><span id="doc-stats-unit" class="doc-stats-unit"> words</span>
+          </button>
+          <div id="doc-stats-popover" class="doc-stats-popover" hidden>
+            <div id="doc-stats-scope" class="doc-stats-scope">Document</div>
+            <div class="doc-stats-row"><span>Words</span><strong id="doc-stats-words">0</strong></div>
+            <div class="doc-stats-row"><span>Characters</span><strong id="doc-stats-characters">0</strong></div>
+            <div class="doc-stats-row"><span>Without spaces</span><strong id="doc-stats-characters-no-spaces">0</strong></div>
+            <div class="doc-stats-row"><span>Lines</span><strong id="doc-stats-lines">0</strong></div>
+            <div class="doc-stats-row"><span>Reading time</span><strong id="doc-stats-reading">0 min</strong></div>
+          </div>
+        </span>
         <span class="email-send-split" id="doc-copy-export-split">
-          <button type="button" id="doc-footer-copy-btn" class="email-send-btn email-send-main" title="Save new version" data-mode="save"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>
+          <button type="button" id="doc-footer-copy-btn" class="email-send-btn email-send-main doc-save-button" title="All changes saved (Ctrl+S)" data-mode="save" data-save-state="saved" aria-label="Saved" aria-live="polite">
+            <svg class="doc-save-state-icon doc-save-state-dirty" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h12l4 4v14H4z"/><path d="M8 3v6h8V3"/><path d="M8 21v-6h8v6"/><path d="m16 3 6 6m0-6-6 6" stroke="var(--fg)" stroke-width="3"/></svg>
+            <svg class="doc-save-state-icon doc-save-state-saving" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56"/></svg>
+            <svg class="doc-save-state-icon doc-save-state-saved" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            <svg class="doc-save-state-icon doc-save-state-error" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="7" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span class="doc-save-button-label">Saved</span>
+          </button>
           <button type="button" id="doc-footer-export-btn" class="email-send-btn email-send-caret" title="Export as…" aria-label="Export options"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>
         </span>
       </div>
@@ -5029,6 +7700,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const _footer = pane.querySelector('#doc-actions-footer');
       const _split = _footer && _footer.querySelector('#doc-copy-export-split');
       const _undo = pane.querySelector('#doc-undo-btn');
+      const _redo = pane.querySelector('#doc-redo-btn');
       const _lang = pane.querySelector('#doc-language-select');
       const _preview = pane.querySelector('#doc-header-preview-btn');  // single Run ▶ for python/bash/js/csv
       const _exportPdf = pane.querySelector('#doc-export-pdf-btn');
@@ -5039,7 +7711,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         // button in the title strip — removed.
         if (_undo) _footer.insertBefore(_undo, _footer.firstChild);
         const _anchor = _undo;
-        if (_preview && _anchor) _anchor.after(_preview);
+        if (_redo && _anchor) _anchor.after(_redo);
+        const _historyAnchor = _redo || _anchor;
+        if (_preview && _historyAnchor) _historyAnchor.after(_preview);
         if (_lang) _split.before(_lang);
         // Pull every remaining header-only control into the footer so we
         // only ever render ONE bottom action row. The standalone top header
@@ -5064,6 +7738,52 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       });
     }
 
+    {
+      const statsRoot = pane.querySelector('#doc-stats');
+      const statsButton = pane.querySelector('#doc-stats-btn');
+      const statsPopover = pane.querySelector('#doc-stats-popover');
+      if (statsRoot && statsButton && statsPopover) {
+        statsButton.addEventListener('mousedown', (event) => event.preventDefault());
+        statsButton.addEventListener('click', () => {
+          if (!statsPopover.hidden) {
+            dismissOrRemove(statsPopover);
+            return;
+          }
+          _renderDocumentStats();
+          statsPopover.hidden = false;
+          statsPopover.style.zIndex = String(topPortalZ());
+          // The editor pane clips overflow, so a footer-anchored absolute
+          // popover can disappear underneath the document. Float it against
+          // the viewport and place it above the stats button.
+          const buttonRect = statsButton.getBoundingClientRect();
+          const popoverHeight = statsPopover.offsetHeight;
+          const popoverWidth = statsPopover.offsetWidth;
+          const left = Math.max(8, Math.min(
+            window.innerWidth - popoverWidth - 8,
+            buttonRect.right - popoverWidth,
+          ));
+          const above = buttonRect.top - popoverHeight - 7;
+          statsPopover.style.left = `${Math.round(left)}px`;
+          statsPopover.style.top = `${Math.round(above >= 8 ? above : buttonRect.bottom + 7)}px`;
+          statsButton.setAttribute('aria-expanded', 'true');
+          bindMenuDismiss(
+            statsPopover,
+            () => {
+              statsPopover.hidden = true;
+              statsButton.setAttribute('aria-expanded', 'false');
+            },
+            event => !statsRoot.contains(event.target),
+          );
+        });
+      }
+    }
+
+    // The pane must claim its final flex space before its entrance starts.
+    // Animating width from zero and then returning ownership to flex caused a
+    // second reflow, which looked like the open document rubber-banding when
+    // a chat response settled.
+    const desktopEntrance = window.innerWidth > 768;
+
     // Insert after chat-container (appears on right by default)
     // If sidebar is on the right, insert before chat-container instead
     const sidebar = document.getElementById('sidebar');
@@ -5078,20 +7798,49 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       divider.after(pane);
     }
 
-    // Slide-in animation from the correct side
-    const fromLeft = pane.classList.contains('doc-left');
-    pane.style.transform = fromLeft ? 'translateX(-40px)' : 'translateX(40px)';
-    pane.style.opacity = '0';
-    requestAnimationFrame(() => {
-      pane.style.transition = 'transform 0.15s cubic-bezier(0.22,1,0.36,1), opacity 0.12s ease-out';
-      pane.style.transform = 'translateX(0)';
-      pane.style.opacity = '1';
-      pane.addEventListener('transitionend', () => {
-        pane.style.transition = '';
-        pane.style.transform = '';
-        pane.style.opacity = '';
-      }, { once: true });
-    });
+    // Desktop: reveal from the right without translating the flex item. A
+    // transform makes the sibling layout appear to fly out and snap back.
+    // Mobile uses the sheet animation from CSS.
+    const isStartupMount = !!document.getElementById('app-loader');
+    if (desktopEntrance && (_hasMountedPanel || isStartupMount)) {
+      const isFirstMount = !_hasMountedPanel;
+      _hasMountedPanel = true;
+      // Hide the surface, not the flex item. This keeps the chat/document
+      // split stable for the entire animation.
+      pane.style.clipPath = 'inset(0 0 0 100%)';
+      pane.style.opacity = '0';
+      pane.style.borderColor = 'transparent';
+      pane.style.boxShadow = 'none';
+      divider.style.opacity = '0';
+      const reveal = () => {
+        if (!pane.isConnected || !isOpen) return;
+        pane.style.transition = 'clip-path 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.28s ease-out';
+        pane.style.clipPath = 'inset(0 0 0 0)';
+        pane.style.opacity = '1';
+        pane.style.borderColor = '';
+        pane.style.boxShadow = '';
+        divider.style.transition = 'opacity 0.2s ease-out';
+        divider.style.opacity = '1';
+        setTimeout(() => {
+          pane.style.transition = '';
+          pane.style.clipPath = '';
+          pane.style.opacity = '';
+          pane.style.borderColor = '';
+          pane.style.boxShadow = '';
+          divider.style.transition = '';
+          divider.style.opacity = '';
+        }, 380);
+      };
+      // Commit the new flex layout first, then pause briefly before revealing.
+      // The pause plus the reveal is roughly one second overall.
+      requestAnimationFrame(() => {
+        const scheduleReveal = () => setTimeout(reveal, 650);
+        if (isFirstMount) requestAnimationFrame(scheduleReveal);
+        else scheduleReveal();
+      });
+    } else if (desktopEntrance) {
+      _hasMountedPanel = true;
+    }
 
     // Wire up divider drag to resize
     initDividerDrag(divider, pane, isRight);
@@ -5104,10 +7853,31 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
      // reposition it.
     const _divCollapse = divider.querySelector('.doc-divider-collapse');
     if (_divCollapse) {
+      let _handleIdleTimer = null;
+      const _scheduleHandleIdle = () => {
+        if (_handleIdleTimer) clearTimeout(_handleIdleTimer);
+        _handleIdleTimer = setTimeout(() => {
+          if (!divider.matches(':hover') && !divider.contains(document.activeElement)) {
+            divider.classList.add('doc-divider-handle-idle');
+          }
+        }, 2000);
+      };
+      const _showDividerHandle = () => {
+        divider.classList.remove('doc-divider-handle-idle');
+        _scheduleHandleIdle();
+      };
+      divider.addEventListener('pointerenter', _showDividerHandle);
+      divider.addEventListener('pointermove', _showDividerHandle);
+      divider.addEventListener('pointerleave', _scheduleHandleIdle);
+      divider.addEventListener('focusin', _showDividerHandle);
+      divider.addEventListener('focusout', _scheduleHandleIdle);
+      _scheduleHandleIdle();
+
       _divCollapse.addEventListener('mousedown', (e) => e.stopPropagation());
       let _dragging = false;
       _divCollapse.addEventListener('click', (e) => {
         e.stopPropagation();
+        _showDividerHandle();
         if (_dragging) { _dragging = false; return; }  // suppress click after drag
         const mode = _divCollapse.dataset.mode;
         if (mode === 'fullscreen' || mode === 'unfullscreen') toggleFullscreen();
@@ -5196,11 +7966,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('doc-close-btn')?.addEventListener('click', () => closePanel('down'));
     document.getElementById('doc-footer-close-btn')?.addEventListener('click', () => { if (activeDocId) closeTab(activeDocId); });
     document.getElementById('doc-import-btn')?.addEventListener('click', () => openLibrary());
+    document.getElementById('doc-rich-empty-import')?.querySelector('button')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _importFromDevice();
+    });
     document.getElementById('doc-footer-copy-btn')?.addEventListener('click', (e) => {
       if (e.currentTarget.dataset.mode === 'reply') { if (activeDocId) _sendSignedReply(activeDocId); }
       else saveDocument({ silent: false, forceVersion: true });
     });
-    document.getElementById('doc-footer-export-btn')?.addEventListener('click', (e) => showExportMenu(null, e.currentTarget.getBoundingClientRect()));
+    document.getElementById('doc-footer-export-btn')?.addEventListener('click', (e) => showExportMenu(e, e.currentTarget.getBoundingClientRect()));
     // Mobile footer: Close the current doc + Copy its content (replaces the
     // per-tab × on small screens, mirroring the email reader's Close footer).
     document.getElementById('doc-mobile-close')?.addEventListener('click', () => { if (activeDocId) closeTab(activeDocId); });
@@ -5213,6 +7988,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const iconEl = document.getElementById('doc-language-icon');
       const v = document.getElementById('doc-language-select')?.value || '';
       if (iconEl) iconEl.innerHTML = v ? langIcon(v, 14, { style: 'opacity:0.75;' }) : '';
+      _syncEditorPlaceholder();
     };
     // Intercept programmatic `langSelect.value = …` so the icon updates without
     // having to instrument every set-site in this file.
@@ -5258,7 +8034,34 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // source of truth, future additions to the select auto-propagate.
       const _buildMenu = () => {
         menu.innerHTML = '';
-        for (const opt of ls.options) {
+        const options = Array.from(ls.options);
+        const byValue = new Map(options.map(opt => [opt.value, opt]));
+        const groups = [
+          { label: 'Documents', values: ['richtext', 'markdown', 'pdf'] },
+          { label: 'Email & data', values: ['email', 'csv'] },
+          {
+            label: 'Code',
+            values: options
+              .map(opt => opt.value)
+              .filter(value => !['richtext', 'markdown', 'pdf', 'email', 'csv'].includes(value))
+              .sort((a, b) => a.localeCompare(b)),
+          },
+        ];
+        groups.forEach((group, groupIndex) => {
+          const groupOptions = group.values.map(value => byValue.get(value)).filter(Boolean);
+          if (!groupOptions.length) return;
+          if (groupIndex) {
+            const divider = document.createElement('div');
+            divider.className = 'doc-langpicker-divider';
+            divider.setAttribute('role', 'separator');
+            menu.appendChild(divider);
+          }
+          const heading = document.createElement('div');
+          heading.className = 'doc-langpicker-group';
+          heading.textContent = group.label;
+          heading.setAttribute('aria-hidden', 'true');
+          menu.appendChild(heading);
+          groupOptions.forEach(opt => {
           const row = document.createElement('button');
           row.type = 'button';
           row.className = 'doc-langpicker-item';
@@ -5281,7 +8084,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             _close();
           });
           menu.appendChild(row);
-        }
+          });
+        });
       };
       _buildMenu();
 
@@ -5308,7 +8112,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         document.removeEventListener('keydown', _escKey, true);
       };
       const _outsideClick = (e) => {
-        if (!menu.contains(e.target) && e.target !== trigger) _close();
+        if (!menu.contains(e.target) && !trigger.contains(e.target)) _close();
       };
       const _escKey = (e) => {
         if (e.key !== 'Escape' || menu.style.display === 'none') return;
@@ -5322,20 +8126,29 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         e.stopPropagation();
         const open = menu.style.display !== 'none';
         if (open) { _close(); return; }
-        // Position the menu under the trigger (fixed so it escapes any
-        // overflow-clipped ancestor like the footer).
+        // Position the menu under the trigger. It is body-mounted + fixed so
+        // it escapes the document/footer stacking context, then promoted above
+        // whatever tool window is currently on top.
         const r = trigger.getBoundingClientRect();
         menu.style.display = 'block';
+        menu.style.visibility = 'hidden';
         menu.style.position = 'fixed';
-        menu.style.left = r.left + 'px';
-        menu.style.top = (r.bottom + 4) + 'px';
+        menu.style.zIndex = String(topPortalZ());
         menu.style.minWidth = r.width + 'px';
+        menu.style.maxWidth = 'calc(100vw - 16px)';
+        menu.style.maxHeight = 'min(60vh, calc(100dvh - 16px))';
+        const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - 168));
+        menu.style.left = left + 'px';
+        menu.style.top = Math.min(window.innerHeight - 8, r.bottom + 4) + 'px';
         // If it would overflow the bottom of the viewport, flip above.
         requestAnimationFrame(() => {
           const mr = menu.getBoundingClientRect();
+          const maxLeft = Math.max(8, window.innerWidth - mr.width - 8);
+          menu.style.left = Math.min(Math.max(8, r.left), maxLeft) + 'px';
           if (mr.bottom > window.innerHeight - 8) {
             menu.style.top = Math.max(8, r.top - mr.height - 4) + 'px';
           }
+          menu.style.visibility = 'visible';
         });
         trigger.setAttribute('aria-expanded', 'true');
         document.addEventListener('click', _outsideClick, true);
@@ -5355,6 +8168,25 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _syncLangPicker();
     })();
     document.getElementById('doc-language-select').addEventListener('change', () => {
+      // Run output belongs to the previous language. Clear it immediately so
+      // an old empty/error result cannot remain attached to the new format.
+      const staleRunOutput = document.getElementById('doc-run-output');
+      if (staleRunOutput) {
+        staleRunOutput.style.display = 'none';
+        staleRunOutput.innerHTML = '';
+      }
+      const changingDoc = activeDocId && docs.get(activeDocId);
+      const previousLanguage = changingDoc?.language || '';
+      if (_isRichTextLang(previousLanguage)) {
+        const rich = _emailRichbodyActive();
+        if (rich) _syncEmailRichbody(rich);
+      } else if (changingDoc && previousLanguage === 'email') {
+        const rich = _emailRichbodyActive();
+        const fields = _parseEmailHeader(changingDoc.content || '');
+        changingDoc.content = rich ? rich.innerHTML : (fields.body || '');
+      } else if (changingDoc && previousLanguage !== 'email') {
+        changingDoc.content = document.getElementById('doc-editor-textarea')?.value || changingDoc.content || '';
+      }
       _syncLangIcon();
       _syncLangPicker();
       const val = document.getElementById('doc-language-select').value;
@@ -5385,6 +8217,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (lang !== 'markdown') {
         _setMarkdownPreviewActive(false);
       }
+      if (_isDocxLang(lang)) {
+        _setDocxPreviewActive(true);
+      } else {
+        _setDocxPreviewActive(false);
+      }
       // If switching away from CSV, exit table preview
       if (lang !== 'csv') {
         const csvPreview = document.getElementById('doc-csv-preview');
@@ -5398,9 +8235,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (lang === 'email') {
         const doc = activeDocId && docs.get(activeDocId);
         if (doc) _showEmailFields(doc);
+      } else if (_isRichTextLang(lang)) {
+        _hideEmailFields();
+        const doc = activeDocId && docs.get(activeDocId);
+        if (doc) {
+          doc.language = lang;
+          _showRichTextEditor(doc);
+          clearTimeout(_autoSaveDebounce);
+          _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 300);
+        }
       } else {
         _hideEmailFields();
       }
+      _syncRichEmptyImport();
       // Sync header action buttons for new language
       _syncHeaderActions();
     });
@@ -5416,20 +8263,12 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       ));
     }
 
-    const _eventInsideElement = (e, el) => {
-      if (!e || !el || typeof e.clientX !== 'number' || typeof e.clientY !== 'number') return false;
-      const rect = el.getBoundingClientRect();
-      return e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-    };
-
     const handleSendIntent = (e) => {
       if (e && e.__odysseusEmailSendHandled) return;
       const rawTarget = e && e.target;
       const target = rawTarget && rawTarget.nodeType === Node.TEXT_NODE ? rawTarget.parentElement : rawTarget;
-      const sendButtons = Array.from(document.querySelectorAll('#doc-email-send-btn'));
       const targetBtn = target && target.closest ? target.closest('#doc-email-send-btn') : null;
-      const rectBtn = sendButtons.find((candidate) => _eventInsideElement(e, candidate));
-      const btn = targetBtn || rectBtn || null;
+      const btn = targetBtn || null;
       if (!btn || btn.disabled) return;
       if (e) {
         e.preventDefault();
@@ -5469,10 +8308,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       }
       const rawTarget = e && e.target;
       const target = rawTarget && rawTarget.nodeType === Node.TEXT_NODE ? rawTarget.parentElement : rawTarget;
-      const carets = Array.from(document.querySelectorAll('#doc-email-send-caret'));
       const targetCaret = target && target.closest ? target.closest('#doc-email-send-caret') : null;
-      const rectCaret = carets.find((candidate) => _eventInsideElement(e, candidate));
-      const caret = targetCaret || rectCaret || null;
+      const caret = targetCaret || null;
       if (!caret) return;
       if (e) {
         e.preventDefault();
@@ -5522,6 +8359,45 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           _syncHeaderActions();
         }
       });
+    }
+    // Keep document typing attached to the active document when the user
+    // clicks a non-editable part of another window (for example an email
+    // header or panel background). Real form fields and contenteditable areas
+    // remain independent so email composition and controls are not hijacked.
+    if (!window._docStickyTypingBound) {
+      window._docStickyTypingBound = true;
+      window.addEventListener('keydown', (e) => {
+        if (!isOpen || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+        const textarea = document.getElementById('doc-editor-textarea');
+        if (!textarea || textarea.disabled || textarea.readOnly || textarea.getClientRects().length === 0) return;
+
+        const target = e.target instanceof Element ? e.target : null;
+        if (
+          target?.matches('input, textarea, select, button, a, [contenteditable="true"]')
+          || target?.closest('input, textarea, select, button, a, [contenteditable="true"]')
+          || target?.isContentEditable
+        ) return;
+
+        let replacement = null;
+        if (e.key.length === 1) replacement = e.key;
+        else if (e.key === 'Enter') replacement = '\n';
+        else if (e.key === 'Backspace' || e.key === 'Delete') {
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          if (start === end) {
+            if (e.key === 'Backspace' && start > 0) textarea.setSelectionRange(start - 1, start);
+            else if (e.key === 'Delete' && end < textarea.value.length) textarea.setSelectionRange(end, end + 1);
+          }
+          replacement = '';
+        }
+        if (replacement === null) return;
+
+        textarea.focus({ preventScroll: true });
+        textarea.setRangeText(replacement, textarea.selectionStart, textarea.selectionEnd, 'end');
+        textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: replacement ? 'insertText' : 'deleteContentBackward', data: replacement || null }));
+        e.preventDefault();
+        e.stopPropagation();
+      }, true);
     }
     document.getElementById('doc-email-draft-btn')?.addEventListener('click', () => {
       document.getElementById('doc-email-more-menu').style.display = 'none';
@@ -5606,8 +8482,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     document.getElementById('md-toolbar-attach-btn')?.addEventListener('click', (e) => {
       if (_activeDocLanguage() === 'email') {
         _showComposeAttachMenu(e.currentTarget);
+      } else if (_isRichTextLang(_activeDocLanguage())) {
+        _showRichImageSourceMenu(e.currentTarget);
       } else {
         document.getElementById('doc-md-image-input')?.click();
+      }
+    });
+    document.getElementById('md-toolbar-inline-image-btn')?.addEventListener('click', (e) => {
+      if (_activeDocLanguage() === 'email' || _isRichTextLang(_activeDocLanguage())) {
+        _showRichImageSourceMenu(e.currentTarget);
       }
     });
     document.getElementById('doc-email-file-input')?.addEventListener('change', _handleAttachUpload);
@@ -5699,6 +8582,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const htmlPrev = document.getElementById('doc-html-preview');
         const isOn = htmlPrev && htmlPrev.style.display !== 'none';
         if (wantRun !== isOn) toggleHtmlPreview();
+      } else if (_isDocxLang(lang)) {
+        const docxPrev = document.getElementById('doc-docx-preview');
+        const isOn = docxPrev && docxPrev.style.display !== 'none';
+        if (wantRun !== isOn) toggleDocxPreview();
+      } else if (_isRichTextLang(lang)) {
+        const richPrev = document.getElementById('doc-md-preview');
+        const isOn = richPrev && richPrev.style.display !== 'none';
+        if (wantRun !== isOn) toggleRichTextPreview();
       } else {
         // Runnable language (python / js / ts / bash …) — clicking Run is
         // a one-shot execute; clicking Code dismisses the output pane.
@@ -5754,12 +8645,45 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const pdfPane = document.getElementById('doc-pdf-view');
       const pdfVisible = pdfPane && pdfPane.style.display !== 'none';
       if (pdfVisible && await _undoPdfPaneAction()) return;
+      const rich = _emailRichbodyActive();
+      if (rich) {
+        rich.focus();
+        document.execCommand('undo');
+        _syncEmailRichbody(rich);
+        _scheduleEmailRichbodySave();
+        _syncDocumentHistoryControlsNow();
+        _dismissDocKb();
+        return;
+      }
       const ta = document.getElementById('doc-editor-textarea');
       if (ta) {
         ta.focus();   // execCommand('undo') needs the textarea focused
         document.execCommand('undo');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        _syncDocumentHistoryControlsNow();
         _dismissDocKb();   // then force the keyboard back down on touch
       }
+    });
+
+    const docRedoBtn = document.getElementById('doc-redo-btn');
+    if (docRedoBtn) docRedoBtn.addEventListener('click', () => {
+      const rich = _emailRichbodyActive();
+      if (rich) {
+        rich.focus();
+        document.execCommand('redo');
+        _syncEmailRichbody(rich);
+        _scheduleEmailRichbodySave();
+        _syncDocumentHistoryControlsNow();
+        _dismissDocKb();
+        return;
+      }
+      const ta = document.getElementById('doc-editor-textarea');
+      if (!ta) return;
+      ta.focus();
+      document.execCommand('redo');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      _syncDocumentHistoryControlsNow();
+      _dismissDocKb();
     });
 
     // Diff toggle button — compare current content against previous version
@@ -5823,7 +8747,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (ta && pre) {
       ta.addEventListener('input', () => {
         // Typing invalidates any pinned selection highlight
-        if (_selections.length) clearSelection();
+        if (_selections.length) clearSelection({ preserveCaret: true });
         // Auto-create a document if user types/pastes with no active doc.
         // Skip while a createDocument POST is in flight — otherwise typing
         // during the round-trip spawns a duplicate untitled doc.
@@ -5831,6 +8755,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           _autoCreateFromInput(ta.value);
           return;
         }
+        _markDocumentDirty(activeDocId);
         // Sync text content immediately (prevents visual duplication from scroll desync)
         const codeEl = document.getElementById('doc-editor-code');
         if (codeEl && !codeEl.dataset.hasDiff) {
@@ -5853,12 +8778,20 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 2000);
         const doc = activeDocId && docs.get(activeDocId);
         if (doc && doc.language === 'email') _persistEmailLocalDraftSoon();
+        _scheduleDocumentStats();
+        _refreshDocumentOutline();
+        _scheduleDocumentHistoryControls();
       });
+      for (const eventName of ['select', 'keyup', 'mouseup']) {
+        ta.addEventListener(eventName, _scheduleDocumentStats);
+      }
+      ta.addEventListener('focus', _scheduleDocumentHistoryControls);
       ta.addEventListener('paste', (e) => {
         if (_activeDocLanguage() !== 'markdown') return;
         const files = Array.from(e.clipboardData?.files || []).filter(_isMarkdownImageFile);
         if (!files.length) return;
         e.preventDefault();
+        e.stopPropagation();
         _uploadMarkdownImages(files);
       });
       ta.addEventListener('dragover', (e) => {
@@ -5872,6 +8805,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const files = Array.from(e.dataTransfer?.files || []).filter(_isMarkdownImageFile);
         if (!files.length) return;
         e.preventDefault();
+        e.stopPropagation();
         _uploadMarkdownImages(files);
       });
       ta.addEventListener('scroll', () => {
@@ -5886,6 +8820,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           const _q = document.getElementById('doc-find-input')?.value || '';
           if (_q) renderFindRects(_findMatches.map(s => [s, s + _q.length]), _findIdx);
         }
+      });
+      ta.addEventListener('cut', () => {
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        if (start === end) return;
+        setTimeout(() => {
+          ta.focus();
+          ta.selectionStart = ta.selectionEnd = Math.min(start, ta.value.length);
+        }, 0);
       });
       // Tab key inserts a real tab; Escape clears selection
       ta.addEventListener('keydown', (e) => {
@@ -5926,11 +8869,129 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       // ── In-document find (Ctrl+F) ──
       let _findMatches = [];
       let _findIdx = -1;
+      let _richFindRanges = [];
+      let _richFindFallbackSelection = false;
+      const _richFindAllName = 'doc-find-results';
+      const _richFindCurrentName = 'doc-find-current';
 
-      function _openFindBar() {
+      function _clearRichFindHighlights() {
+        try {
+          CSS.highlights?.delete(_richFindAllName);
+          CSS.highlights?.delete(_richFindCurrentName);
+        } catch (_) {}
+        if (_richFindFallbackSelection) {
+          try { window.getSelection()?.removeAllRanges(); } catch (_) {}
+          _richFindFallbackSelection = false;
+        }
+        _richFindRanges = [];
+      }
+
+      function _buildRichFindRanges(rich, query) {
+        const nodes = [];
+        const walker = document.createTreeWalker(rich, NodeFilter.SHOW_TEXT);
+        const blockSelector = 'p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,td,th';
+        let fullText = '';
+        let node;
+        let previousNode = null;
+        let previousBlock = null;
+        while ((node = walker.nextNode())) {
+          const value = node.nodeValue || '';
+          if (!value) continue;
+          const closestBlock = node.parentElement?.closest?.(blockSelector);
+          const block = closestBlock && rich.contains(closestBlock) ? closestBlock : rich;
+          let startsNewSegment = !!nodes.length && block !== previousBlock;
+          if (!startsNewSegment && previousNode) {
+            try {
+              const between = document.createRange();
+              between.setStartAfter(previousNode);
+              between.setEndBefore(node);
+              startsNewSegment = !!between.cloneContents().querySelector?.('br');
+            } catch (_) {}
+          }
+          if (startsNewSegment) fullText += '\n';
+          nodes.push({ node, start: fullText.length, end: fullText.length + value.length });
+          fullText += value;
+          previousNode = node;
+          previousBlock = block;
+        }
+        if (!query || !fullText) return [];
+
+        const lowerText = fullText.toLocaleLowerCase();
+        const lowerQuery = query.toLocaleLowerCase();
+        const ranges = [];
+        let from = 0;
+        while (from <= lowerText.length - lowerQuery.length) {
+          const hit = lowerText.indexOf(lowerQuery, from);
+          if (hit < 0) break;
+          const end = hit + query.length;
+          const startPart = nodes.find(part => hit >= part.start && hit < part.end);
+          const endPart = nodes.find(part => end > part.start && end <= part.end);
+          if (startPart && endPart) {
+            const range = document.createRange();
+            range.setStart(startPart.node, hit - startPart.start);
+            range.setEnd(endPart.node, end - endPart.start);
+            ranges.push(range);
+          }
+          from = hit + Math.max(1, query.length);
+        }
+        return ranges;
+      }
+
+      function _renderRichFindRanges(rich, ranges, currentIdx) {
+        _clearRichFindHighlights();
+        _richFindRanges = ranges;
+        if (!ranges.length) return;
+        let painted = false;
+        try {
+          if (CSS.highlights && typeof Highlight === 'function') {
+            CSS.highlights.set(_richFindAllName, new Highlight(...ranges));
+            if (ranges[currentIdx]) {
+              CSS.highlights.set(_richFindCurrentName, new Highlight(ranges[currentIdx]));
+            }
+            painted = true;
+          }
+        } catch (_) {}
+
+        const current = ranges[currentIdx];
+        if (!current) return;
+        if (!painted) {
+          try {
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(current);
+            _richFindFallbackSelection = true;
+          } catch (_) {}
+        }
+        const rect = current.getBoundingClientRect();
+        const hostRect = rich.getBoundingClientRect();
+        if (rect.top < hostRect.top + 24 || rect.bottom > hostRect.bottom - 24) {
+          rich.scrollTop += rect.top - hostRect.top - (hostRect.height / 2) + (rect.height / 2);
+        }
+      }
+
+      function _setReplaceVisible(visible, focus = false) {
+        const bar = document.getElementById('doc-find-bar');
+        const row = document.getElementById('doc-replace-row');
+        const toggle = document.getElementById('doc-find-replace-toggle');
+        if (!bar || !row || !toggle) return;
+        row.hidden = !visible;
+        bar.classList.toggle('replace-open', visible);
+        toggle.classList.toggle('is-active', visible);
+        toggle.setAttribute('aria-expanded', visible ? 'true' : 'false');
+        toggle.setAttribute('aria-label', visible ? 'Hide replace' : 'Show replace');
+        toggle.title = visible ? 'Hide replace' : 'Show replace';
+        if (visible && focus) {
+          const replacement = document.getElementById('doc-replace-input');
+          replacement?.focus();
+          replacement?.select();
+        }
+      }
+
+      function _openFindBar(showReplace = false) {
         const bar = document.getElementById('doc-find-bar');
         if (!bar) return;
         bar.style.display = 'flex';
+        _setReplaceVisible(showReplace);
         // The highlight overlay is normally display:none (single-layer
         // rendering — textarea owns the visible text). Find marks live
         // inside that overlay, so we have to re-show it while find is
@@ -5938,12 +8999,27 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         // touching every per-language stylesheet path.
         document.body.classList.add('doc-find-active');
         const inp = document.getElementById('doc-find-input');
-        if (inp) { inp.focus(); inp.select(); }
+        if (inp) {
+          const rich = _emailRichbodyActive();
+          const selection = window.getSelection();
+          let selectedText = '';
+          if (rich && selection?.rangeCount && rich.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+            selectedText = selection.toString();
+          } else if (document.activeElement === ta) {
+            selectedText = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+          }
+          selectedText = selectedText.replace(/\s+/g, ' ').trim();
+          if (selectedText && selectedText.length <= 120) inp.value = selectedText;
+          inp.focus();
+          inp.select();
+          if (inp.value) _doFind('first', false);
+        }
       }
       function _closeFindBar() {
         const bar = document.getElementById('doc-find-bar');
         if (bar) bar.style.display = 'none';
         document.body.classList.remove('doc-find-active');
+        _clearRichFindHighlights();
         _findMatches = [];
         _findIdx = -1;
         const cnt = document.getElementById('doc-find-count');
@@ -5955,18 +9031,130 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           applyFindMarks(codeEl);
         }
         renderFindRects([], -1);
-        ta.focus();
+        const rich = _emailRichbodyActive();
+        if (rich) rich.focus();
+        else ta.focus();
       }
+
+      function _replaceAllLiteral(text, query, replacement) {
+        if (!query) return { text, count: 0 };
+        const lowerText = text.toLocaleLowerCase();
+        const lowerQuery = query.toLocaleLowerCase();
+        const parts = [];
+        let cursor = 0;
+        let count = 0;
+        while (cursor <= text.length - query.length) {
+          const hit = lowerText.indexOf(lowerQuery, cursor);
+          if (hit < 0) break;
+          parts.push(text.slice(cursor, hit), replacement);
+          cursor = hit + query.length;
+          count += 1;
+        }
+        if (!count) return { text, count: 0 };
+        parts.push(text.slice(cursor));
+        return { text: parts.join(''), count };
+      }
+
+      function _replaceFindCurrent() {
+        const query = document.getElementById('doc-find-input')?.value || '';
+        const replacementInput = document.getElementById('doc-replace-input');
+        if (!query || !replacementInput) return;
+        const rich = _emailRichbodyActive();
+        if (rich) {
+          const ranges = _buildRichFindRanges(rich, query);
+          if (!ranges.length) { _doFind('refresh', false); return; }
+          const index = Math.max(0, Math.min(_findIdx, ranges.length - 1));
+          const range = ranges[index];
+          _clearRichFindHighlights();
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          rich.focus();
+          document.execCommand('insertText', false, replacementInput.value);
+          _syncEmailRichbody(rich);
+          _scheduleEmailRichbodySave();
+        } else {
+          if (!_findMatches.length || _findIdx < 0) _doFind('first', false);
+          const match = _findMatches[_findIdx];
+          if (match == null) return;
+          _replaceRange(ta, match, match + query.length, replacementInput.value);
+        }
+        _doFind('refresh', false);
+        replacementInput.focus();
+      }
+
+      function _replaceFindAll() {
+        const query = document.getElementById('doc-find-input')?.value || '';
+        const replacementInput = document.getElementById('doc-replace-input');
+        if (!query || !replacementInput) return;
+        const replacement = replacementInput.value;
+        const rich = _emailRichbodyActive();
+        let count = 0;
+        if (rich) {
+          const clone = rich.cloneNode(true);
+          const ranges = _buildRichFindRanges(clone, query);
+          count = ranges.length;
+          if (count) {
+            [...ranges].reverse().forEach(range => {
+              range.deleteContents();
+              range.insertNode(document.createTextNode(replacement));
+            });
+            _clearRichFindHighlights();
+            const selection = window.getSelection();
+            const wholeDocument = document.createRange();
+            wholeDocument.selectNodeContents(rich);
+            selection.removeAllRanges();
+            selection.addRange(wholeDocument);
+            rich.focus();
+            document.execCommand('insertHTML', false, clone.innerHTML);
+            _syncEmailRichbody(rich);
+            _scheduleEmailRichbodySave();
+          }
+        } else {
+          const result = _replaceAllLiteral(ta.value, query, replacement);
+          count = result.count;
+          if (count) _replaceRange(ta, 0, ta.value.length, result.text);
+        }
+        _doFind('refresh', false);
+        const cnt = document.getElementById('doc-find-count');
+        if (cnt) cnt.textContent = count ? `${count} replaced` : '0 results';
+        replacementInput.focus();
+      }
+
       function _doFind(dir, focusTextarea) {
         const inp = document.getElementById('doc-find-input');
         const cnt = document.getElementById('doc-find-count');
         if (!inp) return;
         const q = inp.value;
         const codeEl = document.getElementById('doc-editor-code');
+        const rich = _emailRichbodyActive();
         if (!q) {
           _findMatches = []; _findIdx = -1;
+          _clearRichFindHighlights();
           if (cnt) cnt.textContent = '';
           if (codeEl) { delete codeEl.dataset.findQuery; delete codeEl.dataset.findCurrent; applyFindMarks(codeEl); }
+          return;
+        }
+        if (rich) {
+          const ranges = _buildRichFindRanges(rich, q);
+          _findMatches = ranges.map((_, index) => index);
+          if (!_findMatches.length) {
+            _findIdx = -1;
+            if (cnt) cnt.textContent = '0 results';
+            _renderRichFindRanges(rich, [], -1);
+            return;
+          }
+          if (dir === 'next') {
+            _findIdx = _findIdx < _findMatches.length - 1 ? _findIdx + 1 : 0;
+          } else if (dir === 'prev') {
+            _findIdx = _findIdx > 0 ? _findIdx - 1 : _findMatches.length - 1;
+          } else if (dir === 'refresh') {
+            _findIdx = Math.max(0, Math.min(_findIdx, _findMatches.length - 1));
+          } else {
+            _findIdx = 0;
+          }
+          if (cnt) cnt.textContent = `${_findIdx + 1} / ${_findMatches.length}`;
+          _renderRichFindRanges(rich, ranges, _findIdx);
           return;
         }
         const text = ta.value;
@@ -5978,7 +9166,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           const i = lt.indexOf(lq, pos);
           if (i < 0) break;
           _findMatches.push(i);
-          pos = i + 1;
+          pos = i + Math.max(1, q.length);
         }
         if (_findMatches.length === 0) {
           _findIdx = -1;
@@ -5991,6 +9179,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           _findIdx = _findIdx < _findMatches.length - 1 ? _findIdx + 1 : 0;
         } else if (dir === 'prev') {
           _findIdx = _findIdx > 0 ? _findIdx - 1 : _findMatches.length - 1;
+        } else if (dir === 'refresh') {
+          _findIdx = Math.max(0, Math.min(_findIdx, _findMatches.length - 1));
         } else {
           _findIdx = 0;
         }
@@ -6015,18 +9205,41 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       document.getElementById('doc-find-close')?.addEventListener('click', _closeFindBar);
       document.getElementById('doc-find-next')?.addEventListener('click', () => _doFind('next', true));
       document.getElementById('doc-find-prev')?.addEventListener('click', () => _doFind('prev', true));
+      document.getElementById('doc-find-toolbar-btn')?.addEventListener('click', () => _openFindBar(false));
+      document.getElementById('doc-outline-toolbar-btn')?.addEventListener('click', _openDocumentOutline);
+      document.getElementById('doc-find-replace-toggle')?.addEventListener('click', () => {
+        const row = document.getElementById('doc-replace-row');
+        _setReplaceVisible(Boolean(row?.hidden), Boolean(row?.hidden));
+      });
+      document.getElementById('doc-replace-current')?.addEventListener('click', _replaceFindCurrent);
+      document.getElementById('doc-replace-all')?.addEventListener('click', _replaceFindAll);
       document.getElementById('doc-find-input')?.addEventListener('input', () => _doFind('first', false));
       document.getElementById('doc-find-input')?.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') { e.preventDefault(); _closeFindBar(); }
         else if (e.key === 'Enter') { e.preventDefault(); _doFind(e.shiftKey ? 'prev' : 'next', false); }
       });
+      document.getElementById('doc-replace-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); _closeFindBar(); }
+        else if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? _replaceFindAll() : _replaceFindCurrent(); }
+      });
 
       // Intercept Ctrl+F on the editor pane
       pane.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        const mod = e.ctrlKey || e.metaKey;
+        const key = e.key.toLowerCase();
+        if (mod && key === 's') {
           e.preventDefault();
           e.stopPropagation();
-          _openFindBar();
+          clearTimeout(_autoSaveDebounce);
+          clearTimeout(_emailRichbodySaveDebounce);
+          const doc = activeDocId && docs.get(activeDocId);
+          saveDocument({ silent: false, forceVersion: doc?.language !== 'email' });
+          return;
+        }
+        if (mod && (key === 'f' || key === 'h')) {
+          e.preventDefault();
+          e.stopPropagation();
+          _openFindBar(key === 'h');
         }
       });
 
@@ -6108,57 +9321,284 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   /** Apply markdown formatting to the textarea selection */
   let _lastMdFormat = { action: null, t: 0 };
-  // Styled two-field link dialog (display text + URL). Resolves {url, text}
-  // or null on cancel. Reuses the styled-prompt CSS. Text is optional — left
-  // empty it falls back to the selected text, then the URL itself.
-  function _promptLink(defaultText = '') {
+  let _savedFormatTextareaSelection = null;
+  let _savedFormatRichRange = null;
+  function _normalizeRichLinkUrl(rawUrl) {
+    let url = String(rawUrl || '').trim();
+    if (!url) return '';
+    if (/^(?:#|\/|\.\/|\.\.\/)/.test(url)) return url;
+    if (url.startsWith('//')) url = `https:${url}`;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = `https://${url}`;
+    return /^(?:https?:|mailto:|tel:)/i.test(url) ? url : '';
+  }
+
+  // Styled two-field link dialog. Existing links also expose Open and Remove;
+  // all actions resolve through the same selection-safe command path.
+  function _promptLink({ text = '', url = '', editing = false } = {}) {
     return new Promise(resolve => {
       const overlay = document.createElement('div');
       overlay.id = 'doc-link-prompt-overlay';
       overlay.className = 'modal';
+      overlay.style.zIndex = String(topPortalZ());
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box styled-prompt-box">' +
-          '<div class="modal-header"><h4>Insert link</h4></div>' +
+          `<div class="modal-header"><h4>${editing ? 'Edit link' : 'Insert link'}</h4></div>` +
           '<div class="modal-body">' +
             '<input type="text" id="doc-link-text" class="styled-prompt-input" placeholder="Link text (optional)" maxlength="500" />' +
             '<input type="url" id="doc-link-url" class="styled-prompt-input" placeholder="https://example.com" maxlength="2048" style="margin-top:8px;" />' +
           '</div>' +
           '<div class="modal-footer">' +
+            (editing ? '<button id="doc-link-open" class="confirm-btn confirm-btn-secondary">Open</button>' : '') +
+            (editing ? '<button id="doc-link-remove" class="confirm-btn confirm-btn-secondary doc-link-remove-btn">Remove</button>' : '') +
+            '<span style="flex:1"></span>' +
             '<button id="doc-link-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button id="doc-link-ok" class="confirm-btn confirm-btn-primary">Insert</button>' +
+            `<button id="doc-link-ok" class="confirm-btn confirm-btn-primary">${editing ? 'Save' : 'Insert'}</button>` +
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);
       const textEl = overlay.querySelector('#doc-link-text');
       const urlEl = overlay.querySelector('#doc-link-url');
-      textEl.value = defaultText || '';
+      textEl.value = text;
+      urlEl.value = url;
       function done(result) {
         overlay.remove();
         document.removeEventListener('keydown', onKey, true);
         resolve(result);
       }
       function submit() {
-        const url = (urlEl.value || '').trim();
-        if (!url) { urlEl.focus(); return; }
-        done({ url, text: (textEl.value || '').trim() });
+        const safeUrl = _normalizeRichLinkUrl(urlEl.value);
+        if (!safeUrl) {
+          urlEl.setAttribute('aria-invalid', 'true');
+          urlEl.focus();
+          urlEl.select();
+          return;
+        }
+        done({ action: 'save', url: safeUrl, text: (textEl.value || '').trim() });
       }
       function onKey(e) {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
       }
       overlay.querySelector('#doc-link-ok').addEventListener('click', submit);
       overlay.querySelector('#doc-link-cancel').addEventListener('click', () => done(null));
+      overlay.querySelector('#doc-link-open')?.addEventListener('click', () => {
+        const safeUrl = _normalizeRichLinkUrl(urlEl.value);
+        if (!safeUrl) { urlEl.setAttribute('aria-invalid', 'true'); urlEl.focus(); return; }
+        done({ action: 'open', url: safeUrl });
+      });
+      overlay.querySelector('#doc-link-remove')?.addEventListener('click', () => done({ action: 'remove' }));
       overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+      urlEl.addEventListener('input', () => urlEl.removeAttribute('aria-invalid'));
       urlEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
       textEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); urlEl.focus(); } });
       document.addEventListener('keydown', onKey, true);
-      // Focus the URL field when the text is prefilled; otherwise start at text.
-      requestAnimationFrame(() => { (defaultText ? urlEl : textEl).focus(); });
+      requestAnimationFrame(() => {
+        const target = editing || text ? urlEl : textEl;
+        target.focus();
+        if (editing) target.select();
+      });
     });
   }
 
-  // Email WYSIWYG link insertion. We snapshot the Range first (the dialog steals
-  // focus and would otherwise collapse it) and insert via direct DOM ops, since
-  // execCommand is unreliable once focus has moved to the modal.
+  function _promptImageAlt(defaultAlt = '') {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.id = 'doc-image-alt-prompt-overlay';
+      overlay.className = 'modal';
+      overlay.style.zIndex = String(topPortalZ());
+      overlay.innerHTML =
+        '<div class="modal-content styled-confirm-box styled-prompt-box">' +
+          '<div class="modal-header"><h4>Image description</h4></div>' +
+          '<div class="modal-body">' +
+            '<input type="text" id="doc-image-alt-input" class="styled-prompt-input" placeholder="Describe the image" maxlength="500" />' +
+          '</div>' +
+          '<div class="modal-footer">' +
+            '<button id="doc-image-alt-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
+            '<button id="doc-image-alt-ok" class="confirm-btn confirm-btn-primary">Save</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      const input = overlay.querySelector('#doc-image-alt-input');
+      input.value = defaultAlt || '';
+      function done(result) {
+        overlay.remove();
+        document.removeEventListener('keydown', onKey, true);
+        resolve(result);
+      }
+      function submit() { done((input.value || '').trim()); }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+      }
+      overlay.querySelector('#doc-image-alt-ok').addEventListener('click', submit);
+      overlay.querySelector('#doc-image-alt-cancel').addEventListener('click', () => done(null));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+      document.addEventListener('keydown', onKey, true);
+      requestAnimationFrame(() => { input.focus(); input.select(); });
+    });
+  }
+
+  function _promptImageCaption(defaultCaption = '') {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.id = 'doc-image-caption-prompt-overlay';
+      overlay.className = 'modal';
+      overlay.style.zIndex = String(topPortalZ());
+      overlay.innerHTML =
+        '<div class="modal-content styled-confirm-box styled-prompt-box">' +
+          '<div class="modal-header"><h4>Image caption</h4></div>' +
+          '<div class="modal-body">' +
+            '<input type="text" id="doc-image-caption-input" class="styled-prompt-input" placeholder="Caption shown below the image" maxlength="500" />' +
+          '</div>' +
+          '<div class="modal-footer">' +
+            '<button id="doc-image-caption-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
+            '<button id="doc-image-caption-ok" class="confirm-btn confirm-btn-primary">Save</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      const input = overlay.querySelector('#doc-image-caption-input');
+      input.value = defaultCaption || '';
+      function done(result) {
+        overlay.remove();
+        document.removeEventListener('keydown', onKey, true);
+        resolve(result);
+      }
+      function submit() { done((input.value || '').trim()); }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+      }
+      overlay.querySelector('#doc-image-caption-ok').addEventListener('click', submit);
+      overlay.querySelector('#doc-image-caption-cancel').addEventListener('click', () => done(null));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+      document.addEventListener('keydown', onKey, true);
+      requestAnimationFrame(() => { input.focus(); input.select(); });
+    });
+  }
+
+  async function _editRichImageAlt(rich) {
+    const image = _selectedRichImage(rich);
+    if (!image) {
+      uiModule?.showToast?.('Select an image first');
+      return;
+    }
+    const alt = await _promptImageAlt(image.alt || '');
+    if (alt === null || !image.isConnected) return;
+    const clone = image.cloneNode(true);
+    clone.alt = alt;
+    _replaceRichImage(rich, image, clone);
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+  }
+
+  async function _editRichImageCaption(rich) {
+    const image = _selectedRichImage(rich);
+    if (!image) {
+      uiModule?.showToast?.('Select an image first');
+      return;
+    }
+    const existingFigure = image.closest('figure.richtext-image');
+    const existingCaption = existingFigure?.querySelector(':scope > .richtext-image-caption, :scope > figcaption');
+    const caption = await _promptImageCaption(existingCaption?.textContent || '');
+    if (caption === null || !image.isConnected) return;
+
+    const replacementImage = image.cloneNode(true);
+    replacementImage.removeAttribute('data-editor-image-selected');
+    let replacement = replacementImage;
+    if (caption) {
+      const figure = existingFigure?.cloneNode(true) || document.createElement('figure');
+      figure.classList.add('richtext-image');
+      const clonedImage = figure.querySelector('img');
+      if (clonedImage) clonedImage.replaceWith(replacementImage);
+      else figure.prepend(replacementImage);
+      let captionElement = figure.querySelector(':scope > .richtext-image-caption, :scope > figcaption');
+      if (!captionElement || captionElement.tagName === 'FIGCAPTION') {
+        const stableCaption = document.createElement('div');
+        stableCaption.className = 'richtext-image-caption';
+        stableCaption.setAttribute('role', 'note');
+        stableCaption.setAttribute('aria-label', 'Image caption');
+        stableCaption.setAttribute('contenteditable', 'false');
+        if (captionElement) captionElement.replaceWith(stableCaption);
+        else figure.appendChild(stableCaption);
+        captionElement = stableCaption;
+      }
+      captionElement.setAttribute('contenteditable', 'false');
+      captionElement.textContent = caption;
+      replacement = figure;
+    }
+    _replaceRichImageFigure(rich, image, replacement);
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+  }
+
+  function _applyRichImageAction(rich, action) {
+    const image = _selectedRichImage(rich);
+    if (!image) {
+      uiModule?.showToast?.('Select an image first');
+      return false;
+    }
+    if (action === 'image:delete') {
+      _deleteRichImage(rich, image);
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+      return true;
+    }
+
+    const clone = image.cloneNode(true);
+    if (action.startsWith('image:size:')) {
+      Array.from(clone.classList).forEach(name => {
+        if (name.startsWith('richtext-image-size-')) clone.classList.remove(name);
+      });
+      const size = action.slice('image:size:'.length);
+      if (size !== 'auto') clone.classList.add(`richtext-image-size-${size}`);
+    } else if (action.startsWith('image:align:')) {
+      Array.from(clone.classList).forEach(name => {
+        if (name.startsWith('richtext-image-align-')) clone.classList.remove(name);
+      });
+      clone.classList.add(`richtext-image-align-${action.slice('image:align:'.length)}`);
+    } else {
+      return false;
+    }
+    _replaceRichImage(rich, image, clone);
+    _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+    return true;
+  }
+
+  function _richLinkAtRange(rich, range) {
+    if (!rich || !range) return null;
+    const closestLink = node => {
+      const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+      const link = element?.closest?.('a[href]');
+      return link && rich.contains(link) ? link : null;
+    };
+    const startLink = closestLink(range.startContainer);
+    const endLink = closestLink(range.endContainer);
+    return startLink && (!endLink || endLink === startLink) ? startLink : null;
+  }
+
+  function _restoreRichLinkRange(rich, range) {
+    if (!range) return;
+    try {
+      rich.focus();
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch (_) {}
+  }
+
+  function _removeRichLink(rich, link) {
+    if (!link?.isConnected || !rich.contains(link)) return false;
+    const range = document.createRange();
+    range.selectNode(link);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    rich.focus();
+    return document.execCommand('insertHTML', false, link.innerHTML);
+  }
+
+  // Insert and edit links through one native insertHTML command. This retains
+  // nested inline formatting and makes insert, edit, and remove one-step undo.
   async function _wysiwygInsertLink(rich) {
     const selObj = window.getSelection();
     let savedRange = null;
@@ -6166,39 +9606,412 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const r = selObj.getRangeAt(0);
       if (rich.contains(r.commonAncestorContainer)) savedRange = r.cloneRange();
     }
-    const selText = savedRange ? savedRange.toString() : '';
+    const existingLink = _richLinkAtRange(rich, savedRange);
+    if (existingLink) {
+      savedRange = document.createRange();
+      savedRange.selectNode(existingLink);
+    }
+    const selText = existingLink?.textContent || (savedRange ? savedRange.toString() : '');
     let res;
-    try { res = await _promptLink(selText); } catch (_) { res = null; }
-    if (!res) { rich.focus(); return; }
-    let url = (res.url || '').trim();
-    if (!url) { rich.focus(); return; }
-    if (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('//')) url = 'https://' + url;
-    const linkText = (res.text || '').trim() || selText || url;
+    try {
+      res = await _promptLink({
+        text: selText,
+        url: existingLink?.getAttribute('href') || '',
+        editing: !!existingLink,
+      });
+    } catch (_) { res = null; }
+    if (!res) { _restoreRichLinkRange(rich, savedRange); return; }
+    if (res.action === 'open') {
+      window.open(res.url, '_blank', 'noopener,noreferrer');
+      _restoreRichLinkRange(rich, savedRange);
+      return;
+    }
 
     if (!savedRange) {
       savedRange = document.createRange();
       savedRange.selectNodeContents(rich);
       savedRange.collapse(false);
     }
+
+    const replacementRange = savedRange.cloneRange();
+    if (existingLink?.isConnected) replacementRange.selectNode(existingLink);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(replacementRange);
+    rich.focus();
+
+    if (res.action === 'remove') {
+      if (!_removeRichLink(rich, existingLink)) return;
+      _syncEmailRichbody(rich);
+      _scheduleEmailRichbodySave();
+      rich._syncActive?.();
+      return;
+    }
+
+    const url = _normalizeRichLinkUrl(res.url);
+    if (!url) { _restoreRichLinkRange(rich, savedRange); return; }
+    const linkText = (res.text || '').trim() || selText || url;
     const a = document.createElement('a');
-    a.href = url;
-    if (selText && linkText === selText) {
-      // Unchanged selection — wrap it to keep any inline formatting.
-      a.appendChild(savedRange.extractContents());
+    a.setAttribute('href', url);
+    a.setAttribute('rel', 'noopener noreferrer');
+    const preserveContents = existingLink
+      ? linkText === (existingLink.textContent || '')
+      : !!savedRange && linkText === selText;
+    if (preserveContents) {
+      const contents = existingLink
+        ? existingLink.cloneNode(true)
+        : savedRange.cloneContents();
+      if (existingLink) a.append(...Array.from(contents.childNodes));
+      else a.appendChild(contents);
     } else {
-      savedRange.deleteContents();
       a.textContent = linkText;
     }
-    savedRange.insertNode(a);
+    const token = `doc-link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    a.dataset.editorLinkToken = token;
+    if (!document.execCommand('insertHTML', false, a.outerHTML)) {
+      _restoreRichLinkRange(rich, savedRange);
+      return;
+    }
+    const inserted = rich.querySelector(`[data-editor-link-token="${token}"]`);
+    if (!inserted) return;
+    inserted.removeAttribute('data-editor-link-token');
     // Place the caret right after the inserted link.
     const after = document.createRange();
-    after.setStartAfter(a);
+    after.setStartAfter(inserted);
     after.collapse(true);
     rich.focus();
     const s = window.getSelection();
     s.removeAllRanges();
     s.addRange(after);
     _syncEmailRichbody(rich);
+    _scheduleEmailRichbodySave();
+    rich._syncActive?.();
+  }
+
+  function _richSelectionCell(rich) {
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer)) return null;
+    const node = range.startContainer;
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    const cell = element?.closest?.('td, th');
+    return cell && rich.contains(cell) ? cell : null;
+  }
+
+  function _focusRichTableCell(rich, cell) {
+    if (!cell) return;
+    rich.focus();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function _replaceRichTableCellTag(cell, tagName) {
+    if (!cell || cell.tagName.toLowerCase() === tagName) return cell;
+    const replacement = document.createElement(tagName);
+    for (const attr of Array.from(cell.attributes)) {
+      replacement.setAttribute(attr.name, attr.value);
+    }
+    replacement.innerHTML = cell.innerHTML;
+    cell.replaceWith(replacement);
+    return replacement;
+  }
+
+  function _richTableHeaderModes(table) {
+    const firstRow = table?.rows?.[0];
+    return {
+      headerRow: !!firstRow?.cells?.length && Array.from(firstRow.cells).every(item => item.tagName === 'TH'),
+      headerColumn: !!table?.rows?.length && Array.from(table.rows).every(row => row.cells[0]?.tagName === 'TH'),
+    };
+  }
+
+  function _applyRichTableHeaderModes(table, { headerRow, headerColumn }) {
+    Array.from(table?.rows || []).forEach((row, rowIndex) => {
+      Array.from(row.cells).forEach((cell, columnIndex) => {
+        const shouldBeHeader = (headerRow && rowIndex === 0) || (headerColumn && columnIndex === 0);
+        _replaceRichTableCellTag(cell, shouldBeHeader ? 'th' : 'td');
+      });
+    });
+  }
+
+  function _replaceRichTable(rich, original, replacement, targetRow = 0, targetCell = 0) {
+    const token = `doc-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (replacement) replacement.dataset.editorTableToken = token;
+    const range = document.createRange();
+    range.selectNode(original);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const html = replacement ? replacement.outerHTML : '<p><br></p>';
+    const applied = document.execCommand('insertHTML', false, html);
+    if (!applied) return false;
+    if (!replacement) {
+      rich.focus();
+      return true;
+    }
+    const inserted = rich.querySelector(`[data-editor-table-token="${token}"]`);
+    if (!inserted) return false;
+    inserted.removeAttribute('data-editor-table-token');
+    const row = inserted.rows[Math.max(0, Math.min(targetRow, inserted.rows.length - 1))];
+    const cell = row?.cells[Math.max(0, Math.min(targetCell, row.cells.length - 1))];
+    _focusRichTableCell(rich, cell);
+    return true;
+  }
+
+  function _appendRichTableRow(rich, original) {
+    if (!original?.rows?.length) return false;
+    const clone = original.cloneNode(true);
+    const headerModes = _richTableHeaderModes(clone);
+    const lastRow = clone.rows[clone.rows.length - 1];
+    const columnCount = Math.max(1, lastRow?.cells.length || 1);
+    const row = clone.insertRow(-1);
+    for (let index = 0; index < columnCount; index++) {
+      row.insertCell(-1).innerHTML = '<br>';
+    }
+    _applyRichTableHeaderModes(clone, headerModes);
+    return _replaceRichTable(rich, original, clone, clone.rows.length - 1, 0);
+  }
+
+  function _insertRichTable(rich, rows, columns) {
+    const table = document.createElement('table');
+    const tbody = document.createElement('tbody');
+    table.appendChild(tbody);
+    for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
+      const row = document.createElement('tr');
+      for (let columnIndex = 0; columnIndex < columns; columnIndex++) {
+        const cell = document.createElement(rowIndex === 0 ? 'th' : 'td');
+        cell.innerHTML = '<br>';
+        row.appendChild(cell);
+      }
+      tbody.appendChild(row);
+    }
+    const token = `doc-table-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    table.dataset.editorTableToken = token;
+    document.execCommand('insertHTML', false, table.outerHTML + '<p><br></p>');
+    const inserted = rich.querySelector(`[data-editor-table-token="${token}"]`);
+    if (!inserted) return;
+    inserted.removeAttribute('data-editor-table-token');
+    _focusRichTableCell(rich, inserted.rows[0]?.cells[0]);
+  }
+
+  function _richTableCellHasContent(cell) {
+    return !!cell?.textContent?.trim() || !!cell?.querySelector?.('img, table, hr');
+  }
+
+  function _richTableCanMergeRight(cell) {
+    const right = cell?.nextElementSibling;
+    return !!right && right.matches('td, th') && cell.rowSpan === right.rowSpan;
+  }
+
+  function _richTableCanSplitCell(cell) {
+    return !!cell && cell.colSpan > 1;
+  }
+
+  function _mergeRichTableCellRight(cell) {
+    if (!_richTableCanMergeRight(cell)) return false;
+    const right = cell.nextElementSibling;
+    const leftHasContent = _richTableCellHasContent(cell);
+    const rightHasContent = _richTableCellHasContent(right);
+    if (!leftHasContent) cell.innerHTML = '';
+    if (leftHasContent && rightHasContent) cell.appendChild(document.createElement('br'));
+    if (rightHasContent) cell.append(...Array.from(right.childNodes));
+    if (!leftHasContent && !rightHasContent) cell.innerHTML = '<br>';
+    cell.colSpan += right.colSpan;
+    right.remove();
+    return true;
+  }
+
+  function _splitRichTableCell(cell) {
+    if (!_richTableCanSplitCell(cell)) return false;
+    const span = cell.colSpan;
+    const segments = Array.from({ length: span }, () => document.createDocumentFragment());
+    let segmentIndex = 0;
+    Array.from(cell.childNodes).forEach(node => {
+      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR' && segmentIndex < span - 1) {
+        segmentIndex += 1;
+        return;
+      }
+      segments[segmentIndex].appendChild(node);
+    });
+    const tagName = cell.tagName.toLowerCase();
+    const rowSpan = cell.rowSpan;
+    cell.colSpan = 1;
+    cell.innerHTML = '';
+    cell.appendChild(segments[0]);
+    if (!_richTableCellHasContent(cell)) cell.innerHTML = '<br>';
+    let previous = cell;
+    for (let index = 1; index < span; index++) {
+      const created = document.createElement(tagName);
+      created.rowSpan = rowSpan;
+      created.appendChild(segments[index]);
+      if (!_richTableCellHasContent(created)) created.innerHTML = '<br>';
+      previous.after(created);
+      previous = created;
+    }
+    return true;
+  }
+
+  function _applyRichTableAction(rich, action) {
+    const insert = action.match(/^table:insert:(\d+):(\d+)$/);
+    if (insert) {
+      _insertRichTable(rich, Number(insert[1]), Number(insert[2]));
+      return true;
+    }
+
+    const cell = _richSelectionCell(rich);
+    if (!cell) {
+      uiModule?.showToast?.('Place the cursor inside a table first');
+      return false;
+    }
+    const original = cell.closest('table');
+    const clone = original.cloneNode(true);
+    const headerModes = _richTableHeaderModes(clone);
+    const rowIndex = cell.parentElement.rowIndex;
+    const cellIndex = cell.cellIndex;
+    let targetRow = rowIndex;
+    let targetCell = cellIndex;
+
+    if (action === 'table:row-above' || action === 'table:row-below') {
+      const insertAt = rowIndex + (action.endsWith('below') ? 1 : 0);
+      const sourceRow = clone.rows[Math.min(rowIndex, clone.rows.length - 1)];
+      const row = clone.insertRow(insertAt);
+      const columnCount = Math.max(1, sourceRow?.cells.length || 1);
+      for (let i = 0; i < columnCount; i++) {
+        const newCell = document.createElement('td');
+        newCell.innerHTML = '<br>';
+        row.appendChild(newCell);
+      }
+      targetRow = insertAt;
+      targetCell = Math.min(cellIndex, columnCount - 1);
+    } else if (action === 'table:toggle-header-row') {
+      headerModes.headerRow = !headerModes.headerRow;
+    } else if (action === 'table:toggle-header-column') {
+      headerModes.headerColumn = !headerModes.headerColumn;
+    } else if (action === 'table:merge-right') {
+      const target = clone.rows[rowIndex]?.cells[cellIndex];
+      if (!_mergeRichTableCellRight(target)) return false;
+    } else if (action === 'table:split-cell') {
+      const target = clone.rows[rowIndex]?.cells[cellIndex];
+      if (!_splitRichTableCell(target)) return false;
+    } else if (action.startsWith('table:cell-align:')) {
+      const alignment = action.slice('table:cell-align:'.length);
+      if (!['top', 'middle', 'bottom'].includes(alignment)) return false;
+      const target = clone.rows[rowIndex]?.cells[cellIndex];
+      if (!target) return false;
+      if (alignment === 'top') target.style.removeProperty('vertical-align');
+      else target.style.verticalAlign = alignment;
+      if (!target.getAttribute('style')) target.removeAttribute('style');
+    } else if (action === 'table:column-left' || action === 'table:column-right') {
+      const insertAt = cellIndex + (action.endsWith('right') ? 1 : 0);
+      Array.from(clone.rows).forEach(row => {
+        const reference = row.cells[insertAt] || null;
+        const newCell = document.createElement('td');
+        newCell.innerHTML = '<br>';
+        row.insertBefore(newCell, reference);
+      });
+      targetCell = insertAt;
+    } else if (action === 'table:delete-row') {
+      if (clone.rows.length <= 1) {
+        _replaceRichTable(rich, original, null);
+        return true;
+      }
+      clone.deleteRow(rowIndex);
+      targetRow = Math.min(rowIndex, clone.rows.length - 1);
+      targetCell = Math.min(cellIndex, clone.rows[targetRow].cells.length - 1);
+    } else if (action === 'table:delete-column') {
+      const rowLengths = Array.from(clone.rows).map(row => row.cells.length);
+      const maxColumns = rowLengths.length ? Math.max(...rowLengths) : 0;
+      if (maxColumns <= 1) {
+        _replaceRichTable(rich, original, null);
+        return true;
+      }
+      Array.from(clone.rows).forEach(row => {
+        if (row.cells[cellIndex]) row.deleteCell(cellIndex);
+      });
+      targetCell = Math.max(0, Math.min(cellIndex, maxColumns - 2));
+    } else if (action === 'table:delete') {
+      _replaceRichTable(rich, original, null);
+      return true;
+    } else {
+      return false;
+    }
+
+    _applyRichTableHeaderModes(clone, headerModes);
+    return _replaceRichTable(rich, original, clone, targetRow, targetCell);
+  }
+
+  function _insertRichPageBreak(rich) {
+    const token = `doc-page-break-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const html = `<hr class="richtext-page-break" data-editor-page-break-token="${token}"><p><br></p>`;
+    if (!document.execCommand('insertHTML', false, html)) return false;
+    const pageBreak = rich.querySelector(`[data-editor-page-break-token="${token}"]`);
+    if (!pageBreak) return false;
+    pageBreak.removeAttribute('data-editor-page-break-token');
+    pageBreak.setAttribute('title', 'Page break');
+    const next = pageBreak.nextElementSibling;
+    const range = document.createRange();
+    if (next) {
+      range.selectNodeContents(next);
+      range.collapse(true);
+    } else {
+      range.setStartAfter(pageBreak);
+      range.collapse(true);
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+  }
+
+  function _applyRichPixelFontSize(rich, pixels) {
+    const size = Math.max(8, Math.min(96, Math.round(Number(pixels) || 16)));
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('fontSize', false, '7');
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range || !rich.contains(range.commonAncestorContainer)) return;
+    rich.querySelectorAll('font[size="7"]').forEach(font => {
+      try {
+        if (!range.intersectsNode(font)) return;
+        const span = document.createElement('span');
+        span.style.fontSize = `${size}px`;
+        span.append(...Array.from(font.childNodes));
+        font.replaceWith(span);
+      } catch (_) {}
+    });
+  }
+
+  function _applyRichFontFamily(rich, family) {
+    const name = String(family || '').trim();
+    if (!rich || !name) return;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range || !rich.contains(range.commonAncestorContainer)) return;
+
+    // For a collapsed caret, execCommand is still needed to set the browser's
+    // typing style. An empty span looks correct in HTML but the caret can sit
+    // just outside it, causing the next characters to fall back to the body
+    // font.
+    if (range.collapsed) {
+      document.execCommand('styleWithCSS', false, true);
+      document.execCommand('fontName', false, name);
+      return;
+    }
+
+    // Applying fontName through execCommand is browser-dependent: it can
+    // return true while leaving a collapsed/cross-node selection unchanged.
+    // Wrap the live range directly so the visual result and saved HTML agree.
+    const span = document.createElement('span');
+    span.style.fontFamily = name;
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+    range.selectNodeContents(span);
+    selection.removeAllRanges();
+    selection.addRange(range);
   }
 
   function applyMdFormat(action) {
@@ -6206,37 +10019,164 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // quick succession — that would wrap then immediately unwrap, so the
     // markers appear for a split second and vanish.
     const _now = Date.now();
-    if (_lastMdFormat.action === action && _now - _lastMdFormat.t < 350) return;
+    // Keep this short: a longer window swallows legitimate repeated use of
+    // the same color on separate selections.
+    const isPaletteAction = action.startsWith('highlight:') || action.startsWith('forecolor:');
+    if (!isPaletteAction && _lastMdFormat.action === action && _now - _lastMdFormat.t < 120) return;
     _lastMdFormat = { action, t: _now };
     // Email WYSIWYG: format the live rich text via execCommand instead of
     // inserting markdown markers into the (hidden) source textarea.
     const _rich = _emailRichbodyActive();
     if (_rich) {
+      let _richFormatRange = null;
+      const _selection = window.getSelection?.();
+      const _range = _savedFormatRichRange || (_selection?.rangeCount ? _selection.getRangeAt(0) : null);
+      if (_range && !_range.collapsed && _rich.contains(_range.commonAncestorContainer)) {
+        // Toolbar clicks can move focus away from the contenteditable and
+        // collapse the browser range before execCommand runs. Preserve every
+        // formatting selection, not only color-palette selections.
+        _richFormatRange = _range.cloneRange();
+      }
+      _savedFormatRichRange = null;
       _rich.focus();
+      if (_richFormatRange && _selection) {
+        try {
+          _selection.removeAllRanges();
+          _selection.addRange(_richFormatRange.cloneRange());
+        } catch (_) {}
+      }
       // Link needs an async styled URL prompt — handle it separately so we can
       // save/restore the selection (opening the modal collapses it otherwise).
-      if (action === 'link') { _wysiwygInsertLink(_rich); return; }
-      const _cmd = { bold: 'bold', italic: 'italic', strike: 'strikeThrough',
-                     ul: 'insertUnorderedList', ol: 'insertOrderedList', hr: 'insertHorizontalRule' };
+      if (action === 'link') {
+        const selection = window.getSelection();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const existingLink = _richLinkAtRange(_rich, range);
+        if (existingLink) {
+          if (!_removeRichLink(_rich, existingLink)) return;
+          _syncEmailRichbody(_rich);
+          _scheduleEmailRichbodySave();
+          _rich._syncActive?.();
+          return;
+        }
+        _wysiwygInsertLink(_rich);
+        return;
+      }
+      if (action === 'removeformat') {
+        if (_clearRichSelectionFormatting(_rich)) {
+          _syncEmailRichbody(_rich);
+          _scheduleEmailRichbodySave();
+          _rich._syncActive?.();
+          return;
+        }
+        document.execCommand('removeFormat');
+        // Reset explicit text sizing along with the other inline formatting.
+        _applyRichPixelFontSize(_rich, _RICH_FONT_SIZE_PX[3]);
+        document.execCommand('unlink');
+        // Clear the block style too, so H1-H6 become a normal paragraph.
+        document.execCommand('formatBlock', false, 'p');
+        _syncEmailRichbody(_rich);
+        _scheduleEmailRichbodySave();
+        _rich._syncActive?.();
+        return;
+      }
+      if (action === 'image:alt') { _editRichImageAlt(_rich); return; }
+      if (action === 'image:caption') { _editRichImageCaption(_rich); return; }
+      const _cmd = {
+        bold: 'bold', italic: 'italic', underline: 'underline', strike: 'strikeThrough',
+        superscript: 'superscript', subscript: 'subscript',
+        ul: 'insertUnorderedList', ol: 'insertOrderedList',
+        indent: 'indent', outdent: 'outdent', alignleft: 'justifyLeft',
+        aligncenter: 'justifyCenter', alignright: 'justifyRight', alignjustify: 'justifyFull',
+        removeformat: 'removeFormat',
+      };
       try {
-        if (_cmd[action]) document.execCommand(_cmd[action]);
-        else if (action === 'h1' || action === 'h2' || action === 'h3') {
+        if (_cmd[action]) {
+          document.execCommand(_cmd[action]);
+          if (action === 'removeformat') document.execCommand('unlink');
+        } else if (action === 'unlink') {
+          const selection = window.getSelection();
+          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+          if (!_removeRichLink(_rich, _richLinkAtRange(_rich, range))) return;
+        } else if (action.startsWith('forecolor:')) {
+          const requestedColor = action.slice('forecolor:'.length);
+          const color = requestedColor === 'default' || requestedColor === 'theme-fg'
+            ? 'var(--fg)'
+            : requestedColor === 'theme-bg'
+              ? getComputedStyle(_rich).getPropertyValue('--bg').trim()
+              : requestedColor;
+          if (requestedColor === 'default') _applyRichDefaultTextColor(_rich);
+          else document.execCommand('foreColor', false, color);
+        } else if (action.startsWith('highlight:')) {
+          const color = action.slice('highlight:'.length);
+          _applyRichHighlight(_rich, color, _richFormatRange);
+        } else if (action.startsWith('fontname:')) {
+          // _applyRichFontFamily preserves the browser fontName command while
+          // normalizing its legacy output for storage.
+          _applyRichFontFamily(_rich, action.slice('fontname:'.length));
+        } else if (action.startsWith('fontsize:')) {
+          const value = action.slice('fontsize:'.length);
+          if (/^\d+(?:\.\d+)?px$/.test(value)) _applyRichPixelFontSize(_rich, parseFloat(value));
+          else document.execCommand('fontSize', false, value);
+        } else if (action === 'check') {
+          if (!_toggleRichChecklist(_rich)) return;
+        } else if (action.startsWith('image:')) {
+          if (!_applyRichImageAction(_rich, action)) return;
+        } else if (action.startsWith('table:')) {
+          if (!_applyRichTableAction(_rich, action)) return;
+        } else if (action.startsWith('linespacing:')) {
+          if (!_applyRichLineSpacing(_rich, action.slice('linespacing:'.length))) return;
+        } else if (action.startsWith('separator:')) {
+          const style = action.slice('separator:'.length);
+          const border = style === 'double' ? '3px double currentColor' : `1px ${style} currentColor`;
+          // Always create a real paragraph after the divider and put the caret
+          // there. Without this, browsers leave the caret on the HR's row,
+          // making the next text appear beside the line instead of below it.
+          const token = `doc-separator-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          document.execCommand('insertHTML', false,
+            `<hr class="richtext-separator" data-editor-separator-token="${token}" style="border:0;border-top:${border};margin:1em 0;" /><p data-editor-separator-caret="${token}"><br></p>`);
+          const nextParagraph = _rich.querySelector(`[data-editor-separator-caret="${token}"]`);
+          if (nextParagraph) {
+            nextParagraph.removeAttribute('data-editor-separator-caret');
+            const caretRange = document.createRange();
+            caretRange.selectNodeContents(nextParagraph);
+            caretRange.collapse(true);
+            const caretSelection = window.getSelection();
+            caretSelection?.removeAllRanges();
+            caretSelection?.addRange(caretRange);
+          }
+          _rich.querySelector(`[data-editor-separator-token="${token}"]`)?.removeAttribute('data-editor-separator-token');
+        } else if (action === 'pagebreak') {
+          if (!_insertRichPageBreak(_rich)) return;
+        } else if (action === 'paragraph') {
+          document.execCommand('formatBlock', false, 'p');
+        } else if (/^h[1-6]$/.test(action)) {
           // Toggle: if the block is already this heading, revert to a normal
           // paragraph; otherwise apply (or switch to) the heading.
           const cur = _currentBlockTag(_rich);
-          document.execCommand('formatBlock', false, (cur === action) ? 'div' : action);
+          document.execCommand('formatBlock', false, (cur === action) ? 'p' : action);
         } else if (action === 'code') {
+          if (!_toggleRichInlineCode(_rich)) return;
+        } else if (action === 'codeblock') {
           const cur = _currentBlockTag(_rich);
           document.execCommand('formatBlock', false, (cur === 'pre') ? 'div' : 'pre');
+        } else if (action === 'quote') {
+          const cur = _currentBlockTag(_rich);
+          document.execCommand('formatBlock', false, (cur === 'blockquote') ? 'div' : 'blockquote');
         }
-        // quote/check/codeblock have no clean execCommand — skipped in WYSIWYG v1.
       } catch (_) {}
       _syncEmailRichbody(_rich);
+      _scheduleEmailRichbodySave();
+      _scheduleDocumentHistoryControls();
       if (_rich._syncActive) _rich._syncActive();
       return;
     }
     const ta = document.getElementById('doc-editor-textarea');
     if (!ta) return;
+    if (_savedFormatTextareaSelection && ta.selectionStart === ta.selectionEnd) {
+      ta.selectionStart = _savedFormatTextareaSelection.start;
+      ta.selectionEnd = _savedFormatTextareaSelection.end;
+    }
+    _savedFormatTextareaSelection = null;
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
     const val = ta.value;
@@ -6260,8 +10200,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     // Headings get their own toggle so applying the same level removes it and
     // a different level switches cleanly (rather than stacking # markers).
-    if (action === 'h1' || action === 'h2' || action === 'h3') {
-      _applyHeadingToggle(ta, start, { h1: '# ', h2: '## ', h3: '### ' }[action]);
+    if (action === 'paragraph' || /^h[1-6]$/.test(action)) {
+      _applyHeadingToggle(ta, start, {
+        paragraph: '', h1: '# ', h2: '## ', h3: '### ', h4: '#### ', h5: '##### ', h6: '###### ',
+      }[action]);
       return;
     }
 
@@ -6411,7 +10353,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const line = val.substring(lineStart, lineEnd);
     const m = line.match(/^(#{1,6}) /);
     let newLine;
-    if (m && m[1].length === prefix.trim().length) {
+    if (!prefix) {
+      newLine = line.replace(/^#{1,6} /, '');
+    } else if (m && m[1].length === prefix.trim().length) {
       newLine = line.slice(m[0].length);            // same level → toggle off
     } else if (m) {
       newLine = prefix + line.slice(m[0].length);   // different level → switch
@@ -6490,25 +10434,377 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // Grouped formatting dropdown (headings / code / lists). Menu is appended to
   // <body> so the draggable panel's transform can't clip its fixed position.
   let _mdDdOpenedAt = 0;
-  function _showMdDropdown(toggleBtn) {
+  let _mdDdActivationSerial = 0;
+  let _mdDdLastActivation = { kind: '', token: 0, time: 0 };
+  const _RICH_FONT_SIZE_PX = Object.freeze({
+    1: 10,
+    2: 13,
+    3: 16,
+    4: 18,
+    5: 24,
+    6: 32,
+    7: 48,
+  });
+  const _RICH_COLOR_PALETTE = Object.freeze({
+    dark: Object.freeze([
+      ['#111827', 'Ink'],
+      ['#7f1d1d', 'Crimson'],
+      ['#7c2d12', 'Copper'],
+      ['#713f12', 'Gold'],
+      ['#14532d', 'Forest'],
+      ['#0c4a6e', 'Ocean'],
+      ['#4c1d95', 'Plum'],
+    ]),
+    light: Object.freeze([
+      ['#ffffff', 'White'],
+      ['#fecdd3', 'Rose'],
+      ['#fed7aa', 'Peach'],
+      ['#fef3c7', 'Lemon'],
+      ['#bbf7d0', 'Mint'],
+      ['#bae6fd', 'Sky'],
+      ['#ddd6fe', 'Lavender'],
+    ]),
+  });
+
+  function _richColorMenuItems(kind) {
+    const prefix = kind === 'color' ? 'forecolor' : 'highlight';
+    const reset = kind === 'color'
+      ? [`${prefix}:default`, 'No color', 'transparent', 'reset']
+      : [`${prefix}:transparent`, 'No highlight', 'transparent', 'reset'];
+    return [
+      reset,
+      ..._RICH_COLOR_PALETTE.dark.map(([color, label]) => [`${prefix}:${color}`, label, color, 'dark']),
+      ..._RICH_COLOR_PALETTE.light.map(([color, label]) => [`${prefix}:${color}`, label, color, 'light']),
+    ];
+  }
+
+  function _normalizedRichMenuColor(value) {
+    const probe = document.createElement('span');
+    probe.style.color = String(value || '');
+    return (probe.style.color || String(value || '')).replace(/\s+/g, '').toLowerCase();
+  }
+
+  function _richMenuColorHex(value, fallback) {
+    const normalized = _normalizedRichMenuColor(value);
+    const shortHex = normalized.match(/^#([0-9a-f]{3})$/i);
+    if (shortHex) return `#${shortHex[1].split('').map(char => char + char).join('')}`.toLowerCase();
+    if (/^#[0-9a-f]{6}$/i.test(normalized)) return normalized.toLowerCase();
+    const rgb = normalized.match(/^rgba?\((\d+),(\d+),(\d+)/i);
+    if (!rgb) return fallback;
+    return `#${rgb.slice(1, 4).map(channel => Math.max(0, Math.min(255, Number(channel)))
+      .toString(16).padStart(2, '0')).join('')}`;
+  }
+
+  function _richContrastTextColor(background) {
+    const hex = _richMenuColorHex(background, '#ffffff');
+    const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+    const luminance = channels
+      .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+      .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const darkContrast = (luminance + 0.05) / 0.0603;
+    const lightContrast = 1.05 / (luminance + 0.05);
+    return darkContrast >= lightContrast ? '#111827' : '#f9fafb';
+  }
+
+  function _applyRichHighlight(rich, color, preservedRange = null) {
+    const selection = window.getSelection?.();
+    const range = preservedRange || (selection?.rangeCount ? selection.getRangeAt(0) : null);
+    const clearHighlight = !color || color === 'transparent' || color === 'rgba(0,0,0,0)';
+    if (!range || range.collapsed || !rich.contains(range.commonAncestorContainer)) {
+      if (preservedRange && rich.contains(preservedRange.commonAncestorContainer)) {
+        try {
+          selection.removeAllRanges();
+          selection.addRange(preservedRange.cloneRange());
+        } catch (_) {}
+      }
+      const applied = document.execCommand('hiliteColor', false, clearHighlight ? 'transparent' : color)
+        || document.execCommand('backColor', false, clearHighlight ? 'transparent' : color);
+      if (!clearHighlight) document.execCommand('foreColor', false, _richContrastTextColor(color));
+      else document.execCommand('foreColor', false, 'var(--fg)');
+      return applied;
+    }
+
+    const selectedText = range.toString();
+    const fragment = range.cloneContents();
+    if (clearHighlight) {
+      fragment.querySelectorAll?.('[data-rich-highlight-contrast="auto"]').forEach(element => {
+        element.style.removeProperty('background');
+        element.style.removeProperty('background-color');
+        element.style.removeProperty('color');
+        element.removeAttribute('data-rich-highlight-contrast');
+        if (!element.getAttribute('style')) element.removeAttribute('style');
+      });
+    } else {
+      // A highlight owns foreground contrast so nested manual colors cannot
+      // leave text unreadable against the newly selected background.
+      fragment.querySelectorAll?.('[style]').forEach(element => {
+        element.style.removeProperty('color');
+        if (!element.getAttribute('style')) element.removeAttribute('style');
+      });
+      fragment.querySelectorAll?.('font[color]').forEach(element => element.removeAttribute('color'));
+    }
+
+    const token = `rich-highlight-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const span = document.createElement('span');
+    span.dataset.richHighlightToken = token;
+    span.style.backgroundColor = clearHighlight ? 'transparent' : color;
+    span.style.color = clearHighlight ? 'var(--fg)' : _richContrastTextColor(color);
+    if (!clearHighlight) span.dataset.richHighlightContrast = 'auto';
+    span.appendChild(fragment);
+    const holder = document.createElement('div');
+    holder.appendChild(span);
+    const applyNativeHighlight = () => {
+      const nativeColor = clearHighlight ? 'transparent' : color;
+      const applied = document.execCommand('hiliteColor', false, nativeColor)
+        || document.execCommand('backColor', false, nativeColor);
+      document.execCommand('foreColor', false, clearHighlight ? 'var(--fg)' : _richContrastTextColor(color));
+      return applied;
+    };
+
+    // insertHTML records background + contrast as one native undo step.
+    try {
+      selection.removeAllRanges();
+      selection.addRange(range.cloneRange());
+    } catch (_) {}
+    rich.focus({ preventScroll: true });
+    // Focusing a contenteditable can collapse the selection on mobile. Restore
+    // it after focus, immediately before the native edit command.
+    try {
+      selection.removeAllRanges();
+      selection.addRange(range.cloneRange());
+    } catch (_) {}
+    const insertedHtml = document.execCommand('insertHTML', false, holder.innerHTML);
+    if (!insertedHtml) {
+      // Some WebKit/contenteditable combinations reject insertHTML for a
+      // selection that crosses inline nodes. Fall back to the native command
+      // so the user still gets a visible edit instead of a silent no-op.
+      return applyNativeHighlight();
+    }
+    const inserted = rich.querySelector(`[data-rich-highlight-token="${token}"]`);
+    const insertedText = inserted?.textContent || '';
+    if (!inserted || insertedText !== selectedText) return applyNativeHighlight();
+    inserted.removeAttribute('data-rich-highlight-token');
+    const selected = document.createRange();
+    selected.selectNodeContents(inserted);
+    selection.removeAllRanges();
+    selection.addRange(selected);
+    return true;
+  }
+
+  function _applyRichDefaultTextColor(rich) {
+    const selection = window.getSelection?.();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range || range.collapsed || !rich.contains(range.commonAncestorContainer)) {
+      return document.execCommand('foreColor', false, getComputedStyle(rich).color);
+    }
+    const fragment = range.cloneContents();
+    // Remove only explicit foreground colors, leaving bold, links, sizes, and
+    // block formatting intact. The wrapper stays tied to the active theme.
+    fragment.querySelectorAll?.('[style]').forEach(element => {
+      element.style.removeProperty('color');
+      if (!element.getAttribute('style')) element.removeAttribute('style');
+    });
+    fragment.querySelectorAll?.('font[color]').forEach(element => element.removeAttribute('color'));
+    const token = `rich-default-color-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const span = document.createElement('span');
+    span.dataset.richDefaultColorToken = token;
+    span.style.color = 'var(--fg)';
+    span.appendChild(fragment);
+    const holder = document.createElement('div');
+    holder.appendChild(span);
+    rich.focus({ preventScroll: true });
+    if (!document.execCommand('insertHTML', false, holder.innerHTML)) {
+      return document.execCommand('foreColor', false, getComputedStyle(rich).color);
+    }
+    const inserted = rich.querySelector(`[data-rich-default-color-token="${token}"]`);
+    if (!inserted) return document.execCommand('foreColor', false, getComputedStyle(rich).color);
+    inserted.removeAttribute('data-rich-default-color-token');
+    const selected = document.createRange();
+    selected.selectNodeContents(inserted);
+    selection.removeAllRanges();
+    selection.addRange(selected);
+    return true;
+  }
+
+  function _richDropdownCurrentActions(kind, rich, selectedImage, selectedCell) {
+    const current = new Set();
+    if (!rich) return current;
+    const block = _currentBlockTag(rich);
+    try {
+      if (kind === 'heading') {
+        current.add(/^h[1-6]$/.test(block) ? block : 'paragraph');
+      } else if (kind === 'code') {
+        if (block === 'pre') current.add('codeblock');
+        if (_richInlineCodeTypingArmed || _richSelectionInlineCode(rich)) current.add('code');
+      } else if (kind === 'list') {
+        if (_richSelectionChecklistItem(rich)) current.add('check');
+        else if (document.queryCommandState('insertOrderedList')) current.add('ol');
+        else if (document.queryCommandState('insertUnorderedList')) current.add('ul');
+      } else if (kind === 'font') {
+        const value = String(document.queryCommandValue('fontName') || '').replace(/["']/g, '').toLowerCase();
+        for (const name of ['Arial', 'Georgia', 'Times New Roman', 'Verdana', 'Courier New']) {
+          if (value.includes(name.toLowerCase())) current.add(`fontname:${name}`);
+        }
+      } else if (kind === 'textsize') {
+        const value = String(document.queryCommandValue('fontSize') || '3');
+        current.add(`fontsize:${Object.hasOwn(_RICH_FONT_SIZE_PX, value) ? value : '3'}`);
+      } else if (kind === 'align') {
+        const selection = window.getSelection();
+        const node = selection?.anchorNode;
+        const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        const selectedBlock = element?.closest?.('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre') || rich;
+        const alignment = String(selectedBlock?.style?.textAlign || getComputedStyle(selectedBlock).textAlign || '').toLowerCase();
+        if (alignment === 'center') current.add('aligncenter');
+        else if (alignment === 'right' || alignment === 'end') current.add('alignright');
+        else if (alignment === 'justify') current.add('alignjustify');
+        else current.add('alignleft');
+      } else if (kind === 'spacing') {
+        const blocks = _richSpacingBlocks(rich);
+        const indexes = _richSelectedSpacingBlockIndexes(rich);
+        const values = new Set(indexes.map(index => blocks[index]?.style.lineHeight || 'normal'));
+        if (values.size === 1) current.add(`linespacing:${values.values().next().value}`);
+      } else if (kind === 'color' || kind === 'highlight') {
+        const command = kind === 'color' ? 'foreColor' : 'hiliteColor';
+        const value = _normalizedRichMenuColor(document.queryCommandValue(command));
+        const themeFg = _normalizedRichMenuColor(getComputedStyle(rich).color);
+        const choices = Object.values(_RICH_COLOR_PALETTE).flat().map(([choice]) => choice);
+        const noHighlight = kind === 'highlight' && (!value || value === 'transparent' || value === 'rgba(0,0,0,0)');
+        if (noHighlight) current.add('highlight:transparent');
+        else {
+          const isDefaultColor = kind === 'color' && (!value || (themeFg && value === themeFg));
+          if (isDefaultColor) current.add('forecolor:default');
+          else {
+            const match = choices.find(choice => _normalizedRichMenuColor(choice) === value);
+            if (match) current.add(`${kind === 'color' ? 'forecolor' : 'highlight'}:${match}`);
+          }
+        }
+      } else if (kind === 'image' && selectedImage) {
+        const sizeClass = Array.from(selectedImage.classList).find(name => name.startsWith('richtext-image-size-'));
+        const alignClass = Array.from(selectedImage.classList).find(name => name.startsWith('richtext-image-align-'));
+        current.add(sizeClass ? `image:size:${sizeClass.slice('richtext-image-size-'.length)}` : 'image:size:auto');
+        current.add(`image:align:${alignClass ? alignClass.slice('richtext-image-align-'.length) : 'left'}`);
+      } else if (kind === 'table' && selectedCell) {
+        const table = selectedCell.closest('table');
+        const cellAlignment = selectedCell.style.verticalAlign || 'top';
+        current.add(`table:cell-align:${['middle', 'bottom'].includes(cellAlignment) ? cellAlignment : 'top'}`);
+        const firstRow = table?.rows?.[0];
+        if (firstRow && Array.from(firstRow.cells).every(item => item.tagName === 'TH')) {
+          current.add('table:toggle-header-row');
+        }
+        if (table?.rows?.length && Array.from(table.rows).every(row => row.cells[0]?.tagName === 'TH')) {
+          current.add('table:toggle-header-column');
+        }
+      }
+    } catch (_) {}
+    return current;
+  }
+
+  function _showMdDropdown(toggleBtn, focusIndex = null, activationToken = null) {
     const kind = toggleBtn.dataset.dd;
     const now = Date.now();
+    const token = activationToken || toggleBtn._mdDdActivationToken || ++_mdDdActivationSerial;
+    toggleBtn._mdDdActivationToken = token;
+    const duplicateActivation = _mdDdLastActivation.kind === kind
+      && _mdDdLastActivation.token === token
+      && (now - _mdDdLastActivation.time) < 400;
+    if (duplicateActivation) return;
+    _mdDdLastActivation = { kind, token, time: now };
     const existing = document.getElementById('doc-md-dd-menu');
-    // Mobile fires a duplicate/ghost click right after the real one. If it lands
-    // on the same toggle it would re-toggle the menu shut the instant it opened.
-    // Ignore a same-kind re-invocation within 400ms so the menu stays up.
-    if (existing && existing.dataset.dd === kind && (now - _mdDdOpenedAt) < 400) return;
     const prevKind = existing && existing.dataset.dd;
-    if (existing) existing.remove();
+    if (existing) {
+      if (existing._dismiss) existing._dismiss(false);
+      else existing.remove();
+    }
     if (existing && prevKind === kind) return; // same toggle clicked → just close
     _mdDdOpenedAt = now;
 
     const groups = {
-      heading: [['h1', 'Heading 1', 'H1'], ['h2', 'Heading 2', 'H2'], ['h3', 'Heading 3', 'H3']],
+      heading: [
+        ['paragraph', 'Paragraph', 'P'],
+        ['h1', 'Heading 1', 'H1'],
+        ['h2', 'Heading 2', 'H2'],
+        ['h3', 'Heading 3', 'H3'],
+        ['h4', 'Heading 4', 'H4'],
+        ['h5', 'Heading 5', 'H5'],
+        ['h6', 'Heading 6', 'H6'],
+      ],
+      font: [
+        ['fontname:Arial', 'Arial', 'Aa'],
+        ['fontname:Georgia', 'Georgia', 'Gg'],
+        ['fontname:Times New Roman', 'Times New Roman', 'Tt'],
+        ['fontname:Verdana', 'Verdana', 'Vv'],
+        ['fontname:Courier New', 'Courier New', 'Cc'],
+      ],
       code: [['code', 'Inline code', '`'], ['codeblock', 'Code block', '```']],
-      list: [['ul', 'Bullet list', '•'], ['ol', 'Numbered list', '1.']],
+      list: [
+        ['ul', 'Bullet list', '•'],
+        ['ol', 'Numbered list', '1.'],
+        ['check', 'Checklist', '☑'],
+      ],
+      textsize: [
+        ['fontsize:8px', '8 px', '8'],
+        ['fontsize:10px', '10 px', '10'],
+        ['fontsize:12px', '12 px', '12'],
+        ['fontsize:16px', '16 px', '16'],
+      ],
+      align: [
+        ['alignleft', 'Align left', '≡'],
+        ['aligncenter', 'Align center', '≡'],
+        ['alignright', 'Align right', '≡'],
+        ['alignjustify', 'Justify', '☰'],
+      ],
+      spacing: [
+        ['linespacing:normal', 'Normal', 'Auto'],
+        ['linespacing:1', 'Single', '1.0'],
+        ['linespacing:1.15', 'Comfortable', '1.15'],
+        ['linespacing:1.5', 'One and a half', '1.5'],
+        ['linespacing:2', 'Double', '2.0'],
+      ],
+      table: [
+        ['table:insert:2:2', 'Insert 2 × 2', '2×2'],
+        ['table:insert:3:3', 'Insert 3 × 3', '3×3'],
+        ['table:insert:4:4', 'Insert 4 × 4', '4×4'],
+        ['table:toggle-header-row', 'Header row', 'H↔'],
+        ['table:toggle-header-column', 'Header column', 'H↕'],
+        ['table:merge-right', 'Merge with right', '↔'],
+        ['table:split-cell', 'Split cell', '÷'],
+        ['table:cell-align:top', 'Align cell top', '↑'],
+        ['table:cell-align:middle', 'Align cell middle', '↕'],
+        ['table:cell-align:bottom', 'Align cell bottom', '↓'],
+        ['table:row-above', 'Add row above', '↑'],
+        ['table:row-below', 'Add row below', '↓'],
+        ['table:column-left', 'Add column left', '←'],
+        ['table:column-right', 'Add column right', '→'],
+        ['table:delete-row', 'Delete row', '−'],
+        ['table:delete-column', 'Delete column', '−'],
+        ['table:delete', 'Delete table', '×'],
+      ],
+      image: [
+        ['image:size:auto', 'Original size', 'Auto'],
+        ['image:size:100', 'Full width', '100%'],
+        ['image:size:60', 'Medium', '60%'],
+        ['image:size:35', 'Small', '35%'],
+        ['image:align:left', 'Align left', '←'],
+        ['image:align:center', 'Align center', '↔'],
+        ['image:align:right', 'Align right', '→'],
+        ['image:caption', 'Edit caption', 'T'],
+        ['image:alt', 'Edit description', 'Aa'],
+        ['image:delete', 'Remove image', '×'],
+      ],
+      color: _richColorMenuItems('color'),
+      highlight: _richColorMenuItems('highlight'),
+      separator: [
+        ['separator:solid', 'Solid line', '—'],
+        ['separator:dashed', 'Dashed line', '╌'],
+        ['separator:dotted', 'Dotted line', '···'],
+        ['separator:double', 'Double line', '═'],
+      ],
     };
-    const items = groups[kind];
+    let items = groups[kind];
+    const activeDoc = activeDocId && docs.get(activeDocId);
+    if (kind === 'list' && activeDoc?.language === 'email') {
+      items = items?.filter(([action]) => action !== 'check');
+    }
     if (!items) return;
 
     const rect = toggleBtn.getBoundingClientRect();
@@ -6516,50 +10812,668 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     menu.id = 'doc-md-dd-menu';
     menu.dataset.dd = kind;
     menu.className = 'doc-overflow-menu open';
+    menu.setAttribute('role', 'menu');
+    const toggleId = toggleBtn.id || `doc-md-dd-toggle-${kind}`;
+    toggleBtn.id = toggleId;
+    toggleBtn.setAttribute('aria-haspopup', 'menu');
+    toggleBtn.setAttribute('aria-controls', menu.id);
+    toggleBtn.setAttribute('aria-expanded', 'true');
+    menu.setAttribute('aria-labelledby', toggleId);
+    if (kind === 'color' || kind === 'highlight') menu.classList.add('rich-color-palette-menu');
     menu.style.position = 'fixed';
     menu.style.top = (rect.bottom + 4) + 'px';
     menu.style.left = rect.left + 'px';
-    menu.style.zIndex = '9999';
-    items.forEach(([md, label, ico]) => {
+    menu.style.zIndex = String(topPortalZ());
+    const rich = _emailRichbodyActive();
+    const selectedCell = rich ? _richSelectionCell(rich) : null;
+    const selectedImage = rich ? _selectedRichImage(rich) : null;
+    const currentActions = _richDropdownCurrentActions(kind, rich, selectedImage, selectedCell);
+    const statefulKinds = new Set(['heading', 'code', 'list', 'font', 'textsize', 'align', 'spacing', 'color', 'highlight', 'image']);
+    const checkboxKinds = new Set(['code', 'image']);
+    let savedRichRange = null;
+    const selection = window.getSelection();
+    if (rich && selection?.rangeCount) {
+      const range = selection.getRangeAt(0);
+      if (rich.contains(range.commonAncestorContainer)) savedRichRange = range.cloneRange();
+    }
+    const paletteGroups = {};
+    const ensurePaletteGroup = tone => {
+      if (paletteGroups[tone]) return paletteGroups[tone];
+      let grid = menu.querySelector('.rich-color-palette-grid');
+      if (!grid) {
+        grid = document.createElement('div');
+        grid.className = 'rich-color-palette-grid';
+        grid.setAttribute('role', 'none');
+        menu.appendChild(grid);
+      }
+      const group = document.createElement('div');
+      group.className = 'rich-color-palette-group';
+      group.setAttribute('role', 'group');
+      group.setAttribute('aria-label', tone === 'dark' ? 'Dark colors' : 'Light colors');
+      const heading = document.createElement('div');
+      heading.className = 'rich-color-palette-label';
+      heading.textContent = tone === 'dark' ? 'Dark' : 'Light';
+      group.appendChild(heading);
+      grid.appendChild(group);
+      paletteGroups[tone] = group;
+      return group;
+    };
+    items.forEach(([md, label, ico, tone]) => {
       const it = document.createElement('button');
+      it.type = 'button';
       it.className = 'doc-overflow-item';
+      const tableHeaderToggle = md === 'table:toggle-header-row' || md === 'table:toggle-header-column';
+      const tableCellAlignment = md.startsWith('table:cell-align:');
+      const statefulItem = tableHeaderToggle || tableCellAlignment || (statefulKinds.has(kind) && !md.endsWith(':alt') && !md.endsWith(':delete'));
+      it.setAttribute('role', statefulItem ? ((checkboxKinds.has(kind) || tableHeaderToggle) ? 'menuitemcheckbox' : 'menuitemradio') : 'menuitem');
+      it.tabIndex = -1;
+      if (statefulItem) it.setAttribute('aria-checked', currentActions.has(md) ? 'true' : 'false');
+      if (currentActions.has(md)) it.classList.add('is-current');
+      if (md.startsWith('table:delete') || md === 'image:delete') it.classList.add('rich-table-danger');
+      const needsTableSelection = md.startsWith('table:') && !md.startsWith('table:insert:');
+      const needsImageSelection = md.startsWith('image:');
+      const unavailableTableAction = selectedCell && (
+        (md === 'table:merge-right' && !_richTableCanMergeRight(selectedCell))
+        || (md === 'table:split-cell' && !_richTableCanSplitCell(selectedCell))
+      );
+      if ((needsTableSelection && (!selectedCell || unavailableTableAction)) || (needsImageSelection && !selectedImage)) {
+        it.disabled = true;
+        it.setAttribute('aria-disabled', 'true');
+      }
       const icoSpan = document.createElement('span');
       icoSpan.className = 'md-dd-ico';
-      icoSpan.textContent = ico;
+      if (kind === 'color' || kind === 'highlight') {
+        icoSpan.classList.add('rich-color-swatch');
+        if (kind === 'highlight') icoSpan.classList.add('rich-highlight-swatch');
+        if (ico === 'transparent') icoSpan.classList.add('is-transparent');
+        else icoSpan.style.background = ico;
+      } else {
+        icoSpan.textContent = ico;
+        if (kind === 'align') icoSpan.classList.add(`rich-align-${md.replace('align', '')}`);
+        if (kind === 'font') icoSpan.style.fontFamily = md.slice('fontname:'.length);
+      }
       const lbl = document.createElement('span');
       lbl.textContent = label;
+      if (kind === 'align') {
+        const previewAlign = {
+          alignleft: 'left',
+          aligncenter: 'center',
+          alignright: 'right',
+          alignjustify: 'justify',
+        }[md];
+        lbl.classList.add('rich-align-preview');
+        lbl.style.textAlign = previewAlign || 'left';
+        lbl.style.flex = '1 1 120px';
+        lbl.style.minWidth = '120px';
+      }
+      if (kind === 'heading') {
+        const level = md === 'paragraph' ? 0 : Number(md.slice(1));
+        const scale = level ? [1.35, 1.22, 1.12, 1.04, 0.97, 0.91][level - 1] : 0.9;
+        lbl.style.fontSize = `${scale}em`;
+        lbl.style.lineHeight = '1.15';
+        if (level > 0) lbl.style.fontWeight = level <= 2 ? '600' : '500';
+      }
+      if (kind === 'font') lbl.style.fontFamily = md.slice('fontname:'.length);
       it.append(icoSpan, lbl);
+      if (statefulItem) {
+        const currentMark = document.createElement('span');
+        currentMark.className = 'md-dd-current';
+        currentMark.setAttribute('aria-hidden', 'true');
+        currentMark.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        it.appendChild(currentMark);
+      }
       // Don't let the menu item steal focus from the editor (preserve selection).
       it.addEventListener('mousedown', (ev) => ev.preventDefault());
-      it.addEventListener('click', (ev) => { ev.stopPropagation(); menu.remove(); applyMdFormat(md); });
-      menu.appendChild(it);
+      it.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (it.disabled) return;
+        menu._dismiss?.(false);
+        const applyDropdownAction = () => {
+          if (md.startsWith('table:') && rich && selectedCell?.isConnected) {
+            _focusRichTableCell(rich, selectedCell);
+          } else if (rich && savedRichRange) {
+            _restoreRichLinkRange(rich, savedRichRange);
+          }
+          applyMdFormat(md);
+        };
+        if (md.startsWith('table:')) requestAnimationFrame(applyDropdownAction);
+        else applyDropdownAction();
+      });
+      if (tone === 'dark' || tone === 'light') ensurePaletteGroup(tone).appendChild(it);
+      else {
+        if (tone === 'reset') it.classList.add('rich-color-reset');
+        menu.appendChild(it);
+      }
     });
+    if (kind === 'textsize') {
+      let sizeValue = '3';
+      try { sizeValue = String(document.queryCommandValue('fontSize') || '3'); } catch (_) {}
+      if (!Object.hasOwn(_RICH_FONT_SIZE_PX, sizeValue)) sizeValue = '3';
+
+      const sliderRow = document.createElement('div');
+      sliderRow.className = 'rich-toolbar-slider-row';
+      sliderRow.setAttribute('role', 'none');
+      const sliderLabel = document.createElement('span');
+      sliderLabel.textContent = 'Font size';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'rich-toolbar-range';
+      slider.min = '1';
+      slider.max = '7';
+      slider.step = '1';
+      slider.value = sizeValue;
+      slider.setAttribute('aria-label', 'Font size');
+      slider.setAttribute('aria-valuetext', `${_RICH_FONT_SIZE_PX[sizeValue]} pixels`);
+      let sliderPointerActive = false;
+      const valueLabel = document.createElement('input');
+      valueLabel.type = 'number';
+      valueLabel.className = 'rich-toolbar-slider-value';
+      valueLabel.value = String(_RICH_FONT_SIZE_PX[sizeValue]);
+      valueLabel.min = '8';
+      valueLabel.max = '96';
+      valueLabel.step = '1';
+      valueLabel.inputMode = 'numeric';
+      valueLabel.setAttribute('aria-label', 'Font size in pixels');
+      valueLabel.title = 'Type a font size in pixels';
+      const applySliderSize = () => {
+        const pixels = _RICH_FONT_SIZE_PX[slider.value] || 16;
+        valueLabel.value = String(pixels);
+        slider.setAttribute('aria-valuetext', `${pixels} pixels`);
+        if (rich && savedRichRange) _restoreRichLinkRange(rich, savedRichRange);
+        applyMdFormat(`fontsize:${slider.value}`);
+        const liveSelection = window.getSelection();
+        if (rich && liveSelection?.rangeCount && rich.contains(liveSelection.getRangeAt(0).commonAncestorContainer)) {
+          savedRichRange = liveSelection.getRangeAt(0).cloneRange();
+        }
+      };
+      slider.addEventListener('pointerdown', () => {
+        sliderPointerActive = true;
+      });
+      slider.addEventListener('pointerup', () => {
+        sliderPointerActive = false;
+      });
+      slider.addEventListener('pointercancel', () => {
+        sliderPointerActive = false;
+      });
+      slider.addEventListener('input', () => {
+        const pixels = _RICH_FONT_SIZE_PX[slider.value] || 16;
+        valueLabel.value = String(pixels);
+        slider.setAttribute('aria-valuetext', `${pixels} pixels`);
+        // Applying the command focuses the contenteditable. During a pointer
+        // drag that steals focus/capture from the range after its first step,
+        // making it behave like a click-only control. Keep the thumb live
+        // while dragging and commit once the native change event fires.
+        if (!sliderPointerActive) applySliderSize();
+      });
+      slider.addEventListener('change', applySliderSize);
+      const applyTypedSize = () => {
+        const pixels = Math.max(8, Math.min(96, Math.round(Number(valueLabel.value) || 16)));
+        valueLabel.value = String(pixels);
+        const closest = Object.entries(_RICH_FONT_SIZE_PX)
+          .sort(([, a], [, b]) => Math.abs(a - pixels) - Math.abs(b - pixels))[0]?.[0] || '3';
+        slider.value = closest;
+        if (rich && savedRichRange) _restoreRichLinkRange(rich, savedRichRange);
+        applyMdFormat(`fontsize:${pixels}px`);
+        const liveSelection = window.getSelection();
+        if (rich && liveSelection?.rangeCount && rich.contains(liveSelection.getRangeAt(0).commonAncestorContainer)) {
+          savedRichRange = liveSelection.getRangeAt(0).cloneRange();
+        }
+      };
+      valueLabel.addEventListener('change', applyTypedSize);
+      valueLabel.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          applyTypedSize();
+          valueLabel.blur();
+        }
+      });
+      sliderRow.append(sliderLabel, slider, valueLabel);
+      menu.appendChild(sliderRow);
+    }
+    if (kind === 'color' || kind === 'highlight') {
+      const command = kind === 'color' ? 'foreColor' : 'hiliteColor';
+      const fallback = kind === 'color'
+        ? _richMenuColorHex(getComputedStyle(rich).color, '#1f2937')
+        : '#fef08a';
+      let currentColor = fallback;
+      try { currentColor = _richMenuColorHex(document.queryCommandValue(command), fallback); } catch (_) {}
+
+      const customRow = document.createElement('div');
+      customRow.className = 'rich-toolbar-color-custom';
+      customRow.setAttribute('role', 'none');
+      const customLabel = document.createElement('span');
+      customLabel.textContent = 'Custom';
+      const customInput = document.createElement('input');
+      customInput.type = 'color';
+      customInput.className = 'rich-toolbar-color-input';
+      customInput.value = currentColor;
+      customInput.title = kind === 'color' ? 'Custom text color' : 'Custom highlight color';
+      customInput.setAttribute('aria-label', customInput.title);
+      customInput.addEventListener('input', () => {
+        if (rich && savedRichRange) _restoreRichLinkRange(rich, savedRichRange);
+        applyMdFormat(`${kind === 'color' ? 'forecolor' : 'highlight'}:${customInput.value}`);
+      });
+      customRow.append(customLabel, customInput);
+      menu.appendChild(customRow);
+      attachColorPicker(customInput);
+    }
     document.body.appendChild(menu);
 
+    // Keep long menus usable above small mobile keyboards and prevent a
+    // right-edge toolbar button from opening a menu outside the viewport.
+    const viewportWidth = window.visualViewport?.width || window.innerWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    menu.style.maxHeight = `${Math.max(120, viewportHeight - 16)}px`;
+    menu.style.overflowY = 'auto';
+    const menuRect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(rect.left, viewportWidth - menuRect.width - 8))}px`;
+    if (rect.bottom + 4 + menuRect.height > viewportHeight - 8) {
+      menu.style.top = `${Math.max(8, rect.top - menuRect.height - 4)}px`;
+    }
+
+    const dismiss = (restoreFocus = false) => {
+      if (!menu.isConnected) return;
+      menu.remove();
+      toggleBtn.setAttribute('aria-expanded', 'false');
+      toggleBtn.removeAttribute('aria-controls');
+      document.removeEventListener('click', close, true);
+      document.removeEventListener('keydown', close, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close, true);
+      window.visualViewport?.removeEventListener('resize', close, true);
+      if (restoreFocus) toggleBtn.focus();
+    };
+    menu._dismiss = dismiss;
+    const enabledItems = () => Array.from(menu.querySelectorAll('.doc-overflow-item:not(:disabled), .rich-toolbar-range'));
+    menu.addEventListener('keydown', (ev) => {
+      if (ev.target.matches?.('.rich-toolbar-range')
+          && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
+      const entries = enabledItems();
+      if (!entries.length) return;
+      const current = entries.indexOf(document.activeElement);
+      let next = null;
+      if (ev.key === 'ArrowDown') next = current < 0 ? 0 : (current + 1) % entries.length;
+      else if (ev.key === 'ArrowUp') next = current < 0 ? entries.length - 1 : (current - 1 + entries.length) % entries.length;
+      else if (ev.key === 'Home') next = 0;
+      else if (ev.key === 'End') next = entries.length - 1;
+      else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        dismiss(true);
+        return;
+      } else if (ev.key === 'Tab') {
+        dismiss(false);
+        return;
+      }
+      if (next !== null) {
+        ev.preventDefault();
+        entries[next].focus();
+      }
+    });
+
     const close = (ev) => {
+      if (ev?.type === 'scroll' && ev.target?.closest?.('.md-toolbar-items')) return;
       if (ev && ev.type === 'keydown') {
         if (ev.key !== 'Escape') return;
+        // Let the menu's own key handler restore focus to its toggle.
+        if (menu.contains(ev.target)) return;
         ev.preventDefault();
         ev.stopPropagation();
         ev.stopImmediatePropagation?.();
       }
       if (ev && ev.type === 'click') {
-        // Ignore the ghost/duplicate click mobile fires right after opening.
-        if (Date.now() - _mdDdOpenedAt < 400) return;
+        if (ev.target?.closest?.('.cp-popover')) return;
         if (menu.contains(ev.target) || toggleBtn.contains(ev.target)) return;
       }
-      menu.remove();
-      document.removeEventListener('click', close, true);
-      document.removeEventListener('keydown', close, true);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close, true);
+      dismiss(ev?.type === 'keydown');
     };
     setTimeout(() => {
       document.addEventListener('click', close, true);
       document.addEventListener('keydown', close, true);
       window.addEventListener('scroll', close, true);
       window.addEventListener('resize', close, true);
+      window.visualViewport?.addEventListener('resize', close, true);
     }, 0);
+    if (focusIndex !== null) {
+      const entries = enabledItems();
+      const index = focusIndex < 0 ? entries.length - 1 : Math.min(focusIndex, entries.length - 1);
+      requestAnimationFrame(() => entries[index]?.focus());
+    }
+  }
+
+  const _DOCUMENT_TOOLBAR_GROUPS = [
+    {
+      name: 'display-size',
+      selectors: ['#doc-fontsize-btn'],
+    },
+    {
+      name: 'type',
+      selectors: [
+        '#doc-email-ai-reply-btn',
+        '#md-toolbar-sep-after-ai-reply',
+        '#doc-ai-writing-btn',
+        '[data-dd="heading"]',
+        '[data-dd="font"]',
+        '#md-toolbar-sep-after-heading',
+        '[data-dd="textsize"]',
+      ],
+    },
+    {
+      name: 'inline-basic',
+      selectors: [
+        '[data-md="bold"]',
+        '[data-md="italic"]',
+        '[data-md="underline"]',
+        '[data-md="strike"]',
+      ],
+    },
+    {
+      name: 'inline-color',
+      selectors: [
+        '[data-dd="color"]',
+        '[data-dd="highlight"]',
+        '#md-toolbar-sep-after-highlight',
+        '[data-md="removeformat"]',
+        '#md-toolbar-attach-btn',
+        '[data-md="link"]',
+        '#md-toolbar-inline-image-btn',
+      ],
+    },
+    {
+      name: 'alignment',
+      selectors: ['[data-dd="align"]'],
+    },
+    {
+      name: 'spacing',
+      selectors: ['[data-dd="spacing"]'],
+    },
+    {
+      name: 'paragraph',
+      selectors: [
+        '[data-dd="list"]',
+        '[data-dd="separator"]',
+        '[data-md="outdent"]',
+        '[data-md="indent"]',
+        '[data-md="quote"]',
+        '[data-dd="code"]',
+      ],
+    },
+    {
+      name: 'insert',
+      selectors: [
+        '[data-dd="image"]',
+        '[data-dd="table"]',
+        '[data-md="pagebreak"]',
+      ],
+    },
+    {
+      name: 'inline-rich',
+      selectors: ['[data-md="superscript"]', '[data-md="subscript"]'],
+    },
+    {
+      name: 'document',
+      selectors: [
+        '#doc-find-toolbar-btn',
+        '#doc-outline-toolbar-btn',
+        '#md-toolbar-emoji-slot',
+      ],
+    },
+    {
+      name: 'view',
+      selectors: ['#doc-diff-toggle-btn'],
+    },
+  ];
+
+  const _AI_WRITING_ACTIONS = Object.freeze({
+    proofread: 'Fix spelling and grammar in the open document. Apply corrections directly using targeted edits. Preserve the meaning, voice, and formatting; do not rewrite for style. Keep already-correct sentences unchanged. Use each affected paragraph as an exact unique FIND anchor and change only the spelling or grammar errors in its replacement. Check every paragraph, including repeated errors. Do not just list corrections in chat.',
+    improve: 'Review the open document and create inline suggestions for clarity, wording, structure, and readability. Do not apply changes.',
+    concise: 'Make the open document more concise by proposing one concrete, shorter replacement per affected paragraph. Each REPLACE must actually shorten the prose, not merely correct spelling or grammar. Each FIND must quote the entire original paragraph exactly, including any HTML tags. Keep distinct paragraphs separate and preserve their facts and meaning. Create inline suggestions only; do not apply changes.',
+    style: 'Rewrite the open document to match my configured Writing Style setting. Preserve the meaning and create inline suggestions only; do not apply changes.',
+    sources: 'Check factual claims in the open document using web research. For each claim, verify it, suggest a source link/citation when valid, or clearly mark it as unverified when you cannot find reliable evidence. Create inline suggestions only; do not apply changes.',
+  });
+
+  const _aiWritingButtonMarkup = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+
+  function _aiWritingSelectionText() {
+    const rich = _emailRichbodyActive();
+    const browserSelection = window.getSelection?.();
+    if (rich && browserSelection?.rangeCount && rich.contains(browserSelection.anchorNode)) {
+      const text = browserSelection.toString().trim();
+      if (text) return text;
+    }
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+      const text = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd).trim();
+      if (text) return text;
+    }
+    return '';
+  }
+
+  function _setAiWritingLoading(loading) {
+    const button = document.getElementById('doc-ai-writing-btn');
+    if (!button) return;
+    if (button._writingSpinner) {
+      button._writingSpinner.destroy?.();
+      button._writingSpinner = null;
+    }
+    button.disabled = !!loading;
+    button.classList.toggle('is-loading', !!loading);
+    button.innerHTML = _aiWritingButtonMarkup;
+    if (!loading) return;
+    const whirlpool = spinnerModule.createWhirlpool(13);
+    whirlpool.element.classList.add('doc-ai-writing-whirlpool');
+    whirlpool.element.style.cssText = 'width:13px;height:13px;margin:0;display:inline-flex;align-items:center;justify-content:center;';
+    button.replaceChildren(whirlpool.element, button.lastElementChild);
+    button._writingSpinner = whirlpool;
+  }
+
+  function _closeAiWritingMenu() {
+    const menu = document.getElementById('doc-ai-writing-menu');
+    if (menu) {
+      menu._cleanup?.();
+      menu.remove();
+    }
+    document.getElementById('doc-ai-writing-btn')?.setAttribute('aria-expanded', 'false');
+  }
+
+  function _showAiWritingMenu(button) {
+    _closeAiWritingMenu();
+    // Capture before the menu can take focus or alter the browser selection.
+    // This matters for both textarea ranges and contenteditable selections.
+    const selectedTextAtOpen = _aiWritingSelectionText();
+    const menu = document.createElement('div');
+    menu.id = 'doc-ai-writing-menu';
+    menu.className = 'doc-overflow-menu doc-ai-writing-menu open';
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = `
+      <div class="doc-ai-writing-menu-title"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.8 14.45 9.55 22.2 12l-7.75 2.45L12 22.2l-2.45-7.75L1.8 12l7.75-2.45L12 1.8Z"/></svg><span>Writing tools</span></div>
+      <button type="button" class="doc-overflow-item" data-ai-writing-action="proofread" role="menuitem"><span class="doc-ai-writing-item-icon">Aa</span><span>Spelling &amp; grammar</span></button>
+      <button type="button" class="doc-overflow-item" data-ai-writing-action="improve" role="menuitem"><span class="doc-ai-writing-item-icon">✦</span><span>Suggest improvements</span></button>
+      <button type="button" class="doc-overflow-item" data-ai-writing-action="concise" role="menuitem"><span class="doc-ai-writing-item-icon">≡</span><span>Make more concise</span></button>
+      <button type="button" class="doc-overflow-item" data-ai-writing-action="style" role="menuitem"><span class="doc-ai-writing-item-icon">✎</span><span>Match my writing style</span></button>
+      <button type="button" class="doc-overflow-item" data-ai-writing-action="sources" role="menuitem"><span class="doc-ai-writing-item-icon">↗</span><span>Check sources</span></button>`;
+    document.body.appendChild(menu);
+    const rect = button.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth || 210;
+    const menuHeight = menu.offsetHeight || 132;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.left))}px`;
+    menu.style.top = `${Math.min(window.innerHeight - menuHeight - 8, rect.bottom + 5)}px`;
+    button.setAttribute('aria-expanded', 'true');
+
+    const dismiss = (event) => {
+      if (event && (menu.contains(event.target) || event.target === button)) return;
+      _closeAiWritingMenu();
+      document.removeEventListener('pointerdown', dismiss, true);
+      document.removeEventListener('keydown', onKeydown, true);
+    };
+    const onKeydown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        _closeAiWritingMenu();
+        document.removeEventListener('pointerdown', dismiss, true);
+        document.removeEventListener('keydown', onKeydown, true);
+        button.focus({ preventScroll: true });
+      }
+    };
+    menu._cleanup = () => {
+      document.removeEventListener('pointerdown', dismiss, true);
+      document.removeEventListener('keydown', onKeydown, true);
+    };
+    menu.querySelectorAll('[data-ai-writing-action]').forEach(item => {
+      item.addEventListener('mousedown', event => event.preventDefault());
+      item.addEventListener('click', async () => {
+        const action = item.dataset.aiWritingAction;
+        _closeAiWritingMenu();
+        const prompt = _AI_WRITING_ACTIONS[action];
+        if (!prompt) return;
+        let configuredStyle = '';
+        if (action === 'style') {
+          const activeDocument = activeDocId ? docs.get(activeDocId) : null;
+          const isEmailDocument = activeDocument?.language === 'email';
+          try {
+            const accountId = String(window.__odysseusActiveEmailAccount || '').trim();
+            const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+            const generalResponse = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+            const generalData = await generalResponse.json().catch(() => ({}));
+            const generalStyle = String(generalData.document_writing_style || '').trim();
+            let emailStyle = '';
+            if (isEmailDocument) {
+              const emailResponse = await fetch(`/api/email/style${suffix}`, { credentials: 'same-origin' });
+              const emailData = await emailResponse.json().catch(() => ({}));
+              if (emailResponse.ok) emailStyle = String(emailData.style || '').trim();
+            }
+            configuredStyle = isEmailDocument
+              ? [
+                  generalStyle && `GENERAL WRITING STYLE:\n${generalStyle}`,
+                  emailStyle && `EMAIL CONVENTIONS:\n${emailStyle}`,
+                ].filter(Boolean).join('\n\n')
+              : generalStyle;
+            if (!generalResponse.ok || !configuredStyle) {
+              uiModule?.showToast?.('You haven\'t set up a writing style yet.', {
+                duration: 7000,
+                action: 'Set up in Settings',
+                actionHint: isEmailDocument ? 'Email → Writing Style' : 'AI Defaults → Writing Style',
+                onAction: () => window.adminModule?.open?.(isEmailDocument ? 'email' : 'ai'),
+              });
+              return;
+            }
+          } catch (_) {
+            uiModule?.showToast?.('You haven\'t set up a writing style yet.', {
+              duration: 7000,
+              action: 'Set up in Settings',
+              actionHint: isEmailDocument ? 'Email → Writing Style' : 'AI Defaults → Writing Style',
+              onAction: () => window.adminModule?.open?.(isEmailDocument ? 'email' : 'ai'),
+            });
+            return;
+          }
+        }
+        const selectedText = selectedTextAtOpen || _aiWritingSelectionText();
+        const styleContext = configuredStyle
+          ? `\n\nUse this configured writing style as the source of truth:\n---\n${configuredStyle.slice(0, 8000)}\n---`
+          : '';
+        const scopedPrompt = selectedText
+          ? `${prompt}${styleContext}\n\nImportant scope: work only on this selected passage and do not change or suggest changes elsewhere in the document. Use the exact matching text from the active document as the FIND target even if the editor stores formatting markup around it. Selected passage:\n---\n${selectedText.slice(0, 12000)}\n---`
+          : `${prompt}${styleContext}\n\nThere is no text selection, so work on the whole open document.`;
+        // Desktop reveals the chat beside the document before dispatching the
+        // writing request. On mobile the document is already a fixed sheet;
+        // toggling its fullscreen class here reflows the sheet as the prompt is
+        // sent and makes the whole screen visibly bounce.
+        if (window.innerWidth > 768 && document.querySelector('.doc-editor-pane.doc-fullscreen')) {
+          toggleFullscreen();
+        }
+        try { await saveDocument({ silent: true }); } catch (_) {}
+        const input = document.getElementById('message');
+        const send = document.querySelector('.send-btn');
+        if (!input || !send || !window.chatModule?.handleChatSubmit) {
+          uiModule?.showError?.('Chat is not ready for writing tools.');
+          return;
+        }
+        input.value = scopedPrompt;
+        window.chatModule.setHideUserBubble?.();
+        _setAiWritingLoading(true);
+        send.click();
+        const streamSessionId = sessionModule.getCurrentSessionId?.();
+        const loadingStartedAt = Date.now();
+        const waitForWritingStream = () => {
+          const active = !!window.chatModule?.hasActiveStream?.(streamSessionId);
+          const tooLong = Date.now() - loadingStartedAt > 10 * 60 * 1000;
+          if ((!active && Date.now() - loadingStartedAt > 500) || tooLong) _setAiWritingLoading(false);
+          else setTimeout(waitForWritingStream, 250);
+        };
+        setTimeout(waitForWritingStream, 250);
+      });
+    });
+    setTimeout(() => {
+      document.addEventListener('pointerdown', dismiss, true);
+      document.addEventListener('keydown', onKeydown, true);
+    }, 0);
+  }
+
+  function _orderDocumentToolbar(itemsWrap) {
+    if (!itemsWrap) return;
+    const pdfItems = Array.from(itemsWrap.querySelectorAll(':scope > .md-toolbar-pdf-only'));
+    itemsWrap.querySelectorAll(':scope > .md-toolbar-sep:not(.md-toolbar-pdf-only):not(.md-toolbar-manual-sep)').forEach(separator => separator.remove());
+
+    _DOCUMENT_TOOLBAR_GROUPS.forEach((group, index) => {
+      group.selectors.forEach(selector => {
+        const item = itemsWrap.querySelector(`:scope > ${selector}`);
+        if (!item) return;
+        item.dataset.toolbarGroup = group.name;
+        itemsWrap.appendChild(item);
+      });
+      if (index === _DOCUMENT_TOOLBAR_GROUPS.length - 1) return;
+      const separator = document.createElement('span');
+      separator.className = 'md-toolbar-sep md-toolbar-edit-only';
+      separator.dataset.toolbarSeparator = `${group.name}-${_DOCUMENT_TOOLBAR_GROUPS[index + 1].name}`;
+      separator.setAttribute('aria-hidden', 'true');
+      itemsWrap.appendChild(separator);
+    });
+
+    pdfItems.forEach(item => itemsWrap.appendChild(item));
+  }
+
+  function _syncDocumentToolbarSeparators(itemsWrap) {
+    if (!itemsWrap) return;
+    const isVisible = (el) => el && !el.hidden && el.style.display !== 'none';
+    itemsWrap.querySelectorAll(':scope > .md-toolbar-sep:not(.md-toolbar-pdf-only)').forEach((separator) => {
+      if (separator.classList.contains('md-toolbar-manual-sep')) {
+        let following = separator.nextElementSibling;
+        while (following && !isVisible(following)) following = following.nextElementSibling;
+        separator.style.display = isVisible(separator.previousElementSibling) && following ? '' : 'none';
+        return;
+      }
+      separator.style.display = isVisible(separator.previousElementSibling) &&
+        isVisible(separator.nextElementSibling) ? '' : 'none';
+    });
+  }
+
+  function _saveFormatSelection(event) {
+    const target = event.target.closest?.('[data-md], .md-dd-toggle');
+    if (!target) return false;
+
+    // A fresh pointer press starts a new formatting action. Clear a previous
+    // saved range so an old dropdown selection cannot be reused accidentally.
+    if (event.type === 'pointerdown') {
+      _savedFormatTextareaSelection = null;
+      _savedFormatRichRange = null;
+    }
+
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+      _savedFormatTextareaSelection = {
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+      };
+    }
+
+    const rich = _emailRichbodyActive();
+    const selection = window.getSelection?.();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (rich && range && !range.collapsed && rich.contains(range.commonAncestorContainer)) {
+      _savedFormatRichRange = range.cloneRange();
+    }
+    return true;
   }
 
   function initMdToolbar() {
@@ -6572,6 +11486,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const overflowMenu = document.getElementById('md-toolbar-overflow-menu');
     const undoBtn = document.getElementById('md-toolbar-undo');
 
+    _orderDocumentToolbar(itemsWrap);
+
+    toolbar.querySelectorAll('.md-dd-toggle').forEach(button => {
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-expanded', 'false');
+    });
+
+    toolbar.addEventListener('pointerdown', (e) => {
+      const dd = e.target.closest('.md-dd-toggle');
+      if (dd) dd._mdDdActivationToken = ++_mdDdActivationSerial;
+      _saveFormatSelection(e);
+    });
+
     // Click handler for format buttons + the grouped dropdown toggles. The menu
     // is appended to <body> (not nested in the toolbar) so the draggable panel's
     // CSS transform doesn't reparent its fixed positioning or clip it.
@@ -6582,16 +11509,34 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // any dropdown that just opened. Preventing the default mousedown keeps the
     // textarea focused, so formatting hits the live selection and menus stay up.
     toolbar.addEventListener('mousedown', (e) => {
-      if (e.target.closest('[data-md], .md-dd-toggle, .emoji-picker-btn, .md-toolbar-attach-btn')) e.preventDefault();
+      if (_saveFormatSelection(e)) e.preventDefault();
     });
 
     toolbar.addEventListener('click', (e) => {
+      const aiWriting = e.target.closest('.doc-ai-writing-btn');
+      if (aiWriting) { e.preventDefault(); _showAiWritingMenu(aiWriting); return; }
       const dd = e.target.closest('.md-dd-toggle');
-      if (dd) { e.preventDefault(); _showMdDropdown(dd); return; }
+      if (dd) {
+        e.preventDefault();
+        // The contextual selection toolbar is useful until the main toolbar
+        // is used. Hide it here so the dropdown opened by the user's latest
+        // click cannot render underneath that older floating toolbar.
+        _hideRichSelectionToolbar();
+        _showMdDropdown(dd, null, dd._mdDdActivationToken);
+        return;
+      }
       const btn = e.target.closest('[data-md]');
       if (!btn) return;
       e.preventDefault();
       applyMdFormat(btn.dataset.md);
+    });
+    toolbar.addEventListener('keydown', (e) => {
+      const dd = e.target.closest?.('.md-dd-toggle');
+      if (!dd) return;
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      _showMdDropdown(dd, e.key === 'ArrowUp' ? -1 : 0, ++_mdDdActivationSerial);
     });
 
     // Undo button
@@ -6613,35 +11558,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (!itemsWrap || !scrollLeftBtn || !scrollRightBtn) return;
       const maxScroll = itemsWrap.scrollWidth - itemsWrap.clientWidth;
       const overflowing = maxScroll > 2;
-      scrollLeftBtn.style.display = (overflowing && itemsWrap.scrollLeft > 1) ? 'flex' : 'none';
-      scrollRightBtn.style.display = (overflowing && itemsWrap.scrollLeft < maxScroll - 1) ? 'flex' : 'none';
+      const showLeft = overflowing && itemsWrap.scrollLeft > 1;
+      const showRight = overflowing && itemsWrap.scrollLeft < maxScroll - 1;
+      toolbar.classList.toggle('has-left-scroll-arrow', showLeft);
+      toolbar.classList.toggle('has-right-scroll-arrow', showRight);
+      scrollLeftBtn.style.display = showLeft ? 'flex' : 'none';
+      scrollRightBtn.style.display = showRight ? 'flex' : 'none';
     }
     scrollLeftBtn?.addEventListener('click', () => itemsWrap.scrollTo({ left: 0, behavior: 'smooth' }));
     scrollRightBtn?.addEventListener('click', () => itemsWrap.scrollTo({ left: itemsWrap.scrollWidth, behavior: 'smooth' }));
     itemsWrap?.addEventListener('scroll', updateScrollArrows, { passive: true });
-    if (itemsWrap) {
-      let swipeStartX = 0;
-      let swipeStartY = 0;
-      let swipeStartScroll = 0;
-      itemsWrap.addEventListener('touchstart', (e) => {
-        const t = e.touches && e.touches[0];
-        if (!t) return;
-        swipeStartX = t.clientX;
-        swipeStartY = t.clientY;
-        swipeStartScroll = itemsWrap.scrollLeft;
-      }, { passive: true });
-      itemsWrap.addEventListener('touchend', (e) => {
-        const t = e.changedTouches && e.changedTouches[0];
-        if (!t) return;
-        const dx = t.clientX - swipeStartX;
-        const dy = t.clientY - swipeStartY;
-        if (Math.abs(dx) < 42 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
-        const maxScroll = Math.max(0, itemsWrap.scrollWidth - itemsWrap.clientWidth);
-        const page = Math.max(90, Math.round(itemsWrap.clientWidth * 0.75));
-        const nextLeft = Math.max(0, Math.min(maxScroll, swipeStartScroll - Math.sign(dx) * page));
-        itemsWrap.scrollTo({ left: nextLeft, behavior: 'smooth' });
-      }, { passive: true });
-    }
     if (window.ResizeObserver && itemsWrap) {
       new ResizeObserver(updateScrollArrows).observe(itemsWrap);
     }
@@ -6901,6 +11827,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       return;
     }
     isOpen = false;
+    _closeDocumentOutline();
+    _hideRichSelectionToolbar();
+    _hideRichSlashMenu();
+    try {
+      CSS.highlights?.delete('doc-find-results');
+      CSS.highlights?.delete('doc-find-current');
+      CSS.highlights?.delete('doc-ai-selections');
+    } catch (_) {}
     // On touch, closing the doc should leave the keyboard DOWN. The tap blurs
     // the textarea (keyboard starts down), but a stray refocus during teardown
     // (the view behind regaining focus, etc.) was bouncing it back up. Blur any
@@ -7022,6 +11956,45 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     await createDocument(sessionId);
   }
 
+  // Open an IMAP draft in the email composer instead of treating the draft
+  // itself as a message to reply to.
+  export async function openEmailDraft(data = {}) {
+    let sessionId = _lastSessionId || (sessionModule && sessionModule.getCurrentSessionId());
+    if (!sessionId) {
+      try { sessionId = await _autoCreateSession(); } catch (_) {}
+    }
+    if (!sessionId) throw new Error('Could not open draft: no session');
+    const content = _buildEmailContent(
+      data.to || '',
+      data.subject || '',
+      data.in_reply_to || data.inReplyTo || '',
+      data.references || '',
+      data.body || '',
+      data.source_uid || data.sourceUid || '',
+      data.source_folder || data.sourceFolder || '',
+      data.cc || '',
+      data.bcc || '',
+    );
+    const res = await fetch(`${API_BASE}/api/document`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        session_id: sessionId,
+        title: data.subject || 'Email draft',
+        content,
+        language: 'email',
+      }),
+    });
+    if (!res.ok) throw new Error(`Draft open failed: HTTP ${res.status}`);
+    const doc = await res.json();
+    if (!doc?.id) throw new Error('Draft open failed: missing document');
+    doc._emailDraftUid = data.uid || data.draft_uid || null;
+    doc._emailDraftFolder = data.folder || data.draft_folder || null;
+    injectFreshDoc(doc);
+    return doc.id;
+  }
+
   export async function createDocument(sessionId) {
     if (_creatingDoc) return;
     _creatingDoc = true;
@@ -7038,7 +12011,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           session_id: sessionId,
           title: '',
           content: '',
-          language: 'markdown',
+          language: 'richtext',
         }),
       });
       if (!res.ok) throw new Error(`Document create failed: HTTP ${res.status}`);
@@ -7050,7 +12023,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       let textarea = document.getElementById('doc-editor-textarea');
       if (textarea) {
         textarea.disabled = false;
-        textarea.placeholder = 'Document content...';
+        _syncEditorPlaceholder();
       }
       // Capture text typed during the round-trip (only when starting from the
       // empty editor — don't steal another doc's content).
@@ -7061,12 +12034,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         if (textarea) textarea.value = typed;
         const d = docs.get(doc.id);
         if (d) d.content = typed;
+        const rich = _emailRichbodyActive();
+        if (rich && d && _isRichTextLang(d.language)) {
+          rich.innerHTML = _richTextContentToHtml(typed);
+          _syncEmailRichbody(rich);
+        }
         syncHighlighting();
         clearTimeout(_autoSaveDebounce);
         _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
       }
       textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) textarea.focus();
+      const focusTarget = _emailRichbodyActive() || textarea;
+      if (focusTarget) focusTarget.focus();
     } catch (e) {
       console.error('Failed to create document:', e);
       if (uiModule) uiModule.showError('Failed to create document');
@@ -7102,9 +12081,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // populates it. Do not call switchToDoc synchronously here: it saves the
     // previously active doc and can re-enter the email draft path while a reply
     // document is still being injected.
-    requestAnimationFrame(() => {
+    return new Promise(resolve => requestAnimationFrame(() => {
       if (docs.has(doc.id)) switchToDoc(doc.id);
-    });
+      resolve();
+    }));
   }
 
   export async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
@@ -7114,11 +12094,23 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const oldSplit = _splitEmailReplyQuote(fields.body || '');
     const quote = oldSplit.quote;
     const ownText = _emailReplyOwnText(fields.body || '');
+    const initialBody = fields.body || '';
     if (!force && ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
       if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
       return;
     }
     const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
+    if (activeDocId === docId) {
+      const textarea = document.getElementById('doc-editor-textarea');
+      const rich = _emailRichbodyActive();
+      if (textarea && (
+        textarea.value !== initialBody ||
+        (rich && rich.innerHTML !== _emailBodyToHtml(initialBody))
+      )) {
+        if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+        return;
+      }
+    }
     doc.content = _buildEmailContent(
       fields.to,
       fields.subject,
@@ -7132,7 +12124,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     );
     if (activeDocId === docId) {
       const textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) await _streamEmailBodyText(textarea, body);
+      if (textarea) _setEmailBodyText(textarea, body);
     }
     clearTimeout(_autoSaveDebounce);
     _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
@@ -7227,28 +12219,43 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // email modal): in that case openPanel() early-returns and nothing mounts, so
   // the doc silently never appears. Reset the stale flag and re-open for real.
   function _ensureDocPaneMounted() {
+    // Loading a specific document is an explicit open action. A minimized
+    // registration can survive session switching on mobile, leaving the newly
+    // selected document represented only by its bottom dock tab even though
+    // the editor has mounted. Clear that stale dock state before deciding
+    // whether the existing pane can be reused.
+    if (Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel')) {
+      _minimizedDocId = null;
+      Modals.unregister('doc-panel');
+    }
     if (!isOpen || !document.getElementById('doc-editor-pane')) {
       isOpen = false;
       openPanel();
+    } else {
+      _markDocVisibleState(_lastSessionId, 'open');
     }
   }
 
   export async function loadDocument(docId) {
-    _closeNotesForDocumentOpen();
+    _minimizeNotesForDocumentOpen();
     // If already in tabs, just switch
     if (docs.has(docId)) {
       _ensureDocPaneMounted();
       switchToDoc(docId);
       return;
     }
+    // Mount the editor before the network request so mobile gets immediate
+    // feedback instead of appearing unchanged while the document loads.
+    _ensureDocPaneMounted();
+    _showLoadingOverlay();
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}`);
       if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
       const doc = await res.json();
       addDocToTabs(doc, doc.session_id);
-      _ensureDocPaneMounted();
       switchToDoc(doc.id);
     } catch (e) {
+      _hideLoadingOverlay();
       console.error('Failed to load document:', e);
       if (uiModule) {
         const msg = e.message === 'Not found'
@@ -7285,16 +12292,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   /** Create a session and sync it with the sessions module */
-  async function _autoCreateSession() {
+  async function _autoCreateSession({ adopt = true, forceNew = false } = {}) {
     // Materialize pending chat first if one exists
-    if (sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+    if (!forceNew && sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       await sessionModule.materializePendingSession();
       const id = sessionModule.getCurrentSessionId();
       if (id) { _lastSessionId = id; return id; }
     }
     // Preserve the current model when creating a doc session
     const curModel = sessionModule?.getCurrentModel ? sessionModule.getCurrentModel() : null;
-    const sessions = sessionModule ? sessionModule.getSessions() : [];
+    const sessionsRaw = sessionModule?.getSessions?.();
+    const sessions = Array.isArray(sessionsRaw) ? sessionsRaw : [];
     const match = curModel && sessions.find(s => s.model === curModel && s.endpoint_url);
     const fd = new FormData();
     fd.append('name', `Notes ${new Date().toLocaleTimeString()}`);
@@ -7304,13 +12312,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       fd.append('model', match.model);
       if (match.endpoint_id) fd.append('endpoint_id', match.endpoint_id);
     }
-    const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd });
-    if (!res.ok) throw new Error('Session create failed');
-    const payload = await res.json();
+    const res = await fetch(`${API_BASE}/api/session`, {
+      method: 'POST',
+      body: fd,
+      credentials: 'same-origin',
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.detail || `Session create failed: HTTP ${res.status}`);
     const sessionId = payload.id;
+    if (!sessionId) throw new Error('Session create returned no session ID');
     _lastSessionId = sessionId;
     // Tell sessions module so chat uses the same session
-    if (sessionModule && sessionModule.setCurrentSessionId) {
+    if (adopt && sessionModule && sessionModule.setCurrentSessionId) {
       sessionModule.setCurrentSessionId(sessionId);
     }
     if (sessionModule && sessionModule.loadSessions) sessionModule.loadSessions();
@@ -7334,7 +12347,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (isOpen) _showLoadingOverlay();
 
     try {
-      const res = await fetch(`${API_BASE}/api/documents/${sessionId}`);
+      const res = await fetch(`${API_BASE}/api/documents/${sessionId}`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
       const allDocs = await res.json();
       _hideLoadingOverlay();
       // Only load active docs
@@ -7349,13 +12365,22 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         return;
       }
       for (const doc of activeDocs) {
-        if (!docs.has(doc.id)) {
-          addDocToTabs(doc, sessionId);
-        }
+        // Always rehydrate from the canonical DB row. A cached tab shell can
+        // survive panel/session restoration with an empty or stale `content`
+        // field; skipping existing IDs then shows the document but not its
+        // body after refresh.
+        addDocToTabs(doc, sessionId);
       }
       _syncDocIndicator();
-      // Switch to the most recently active one (or first)
-      const target = activeDocs[0];
+      // Restore the exact document that was active in this conversation.
+      // Keeping only the panel-open bit made a hard refresh reopen the editor
+      // on activeDocs[0], silently severing follow-up edits from the document
+      // the user had actually been discussing.
+      const rememberedDocId = localStorage.getItem(_docActiveKey(sessionId));
+      const target = activeDocs.find(doc => doc.id === rememberedDocId) || activeDocs[0];
+      if (rememberedDocId && target.id !== rememberedDocId) {
+        localStorage.removeItem(_docActiveKey(sessionId));
+      }
       if (restoreMode && !shouldRestoreOpen) {
         // Coming back to a chat with documents should advertise the doc without
         // stealing half the screen. Default to a docked chip; only reopen the
@@ -7373,7 +12398,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         return;
       }
       _markDocVisibleState(sessionId, 'open');
-      if (!isOpen) openPanel();
+      if (!isOpen) openPanel({ restore: restoreMode && shouldRestoreOpen });
       switchToDoc(target.id);
     } catch (e) {
       _hideLoadingOverlay();
@@ -7589,6 +12614,10 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // hljs has no 'svg' grammar — highlight it as xml (the dropdown value stays
     // 'svg' so the preview/run routing still treats it as renderable markup).
     const _hlLang = lang === 'svg' ? 'xml' : lang;
+    const syntaxEnabled = !!(window.hljs?.getLanguage(_hlLang || '')
+      && !['markdown', 'text', 'plaintext', 'email', 'richtext'].includes(lang));
+    document.getElementById('doc-editor-wrap')?.classList.toggle('doc-code-syntax', syntaxEnabled);
+    textarea.wrap = syntaxEnabled ? 'off' : 'soft';
     codeEl.className = _hlLang ? `language-${_hlLang}` : '';
     if (window.hljs && _hlLang) {
       codeEl.removeAttribute('data-highlighted');
@@ -7873,6 +12902,68 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   // Tracked selection state — when set, the next chat message auto-includes this context
   let _selections = [];  // [{ text, startLine, endLine, start, end }, ...]
+  const _richSelectionHighlightName = 'doc-ai-selections';
+
+  function _richRootText(rich) {
+    if (!rich) return '';
+    const range = document.createRange();
+    range.selectNodeContents(rich);
+    return range.toString();
+  }
+
+  function _richRangeFromOffsets(rich, start, end) {
+    if (!rich || start < 0 || end <= start) return null;
+    const walker = document.createTreeWalker(rich, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    let startNode = null, startOffset = 0, endNode = null, endOffset = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+      const length = (node.nodeValue || '').length;
+      if (!startNode && start >= offset && start < offset + length) {
+        startNode = node;
+        startOffset = start - offset;
+      }
+      if (end > offset && end <= offset + length) {
+        endNode = node;
+        endOffset = end - offset;
+        break;
+      }
+      offset += length;
+    }
+    if (!startNode || !endNode) return null;
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
+    return range;
+  }
+
+  function updateRichSelectionState(rich) {
+    if (!rich || !rich.isConnected || rich.style.display === 'none') return;
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    if (!rich.contains(range.commonAncestorContainer)) return;
+
+    const selectedText = range.toString();
+    if (!selectedText.trim()) return;
+    const prefix = document.createRange();
+    prefix.selectNodeContents(rich);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    const start = prefix.toString().length;
+    const end = start + selectedText.length;
+    const fullText = _richRootText(rich);
+    const startLine = fullText.slice(0, start).split('\n').length;
+    const endLine = fullText.slice(0, end).split('\n').length;
+    const entry = { kind: 'rich', text: selectedText, startLine, endLine, start, end };
+    const overlapIdx = _selections.findIndex(s => s.kind === 'rich' && (
+      (start >= s.start && start <= s.end) || (end >= s.start && end <= s.end)
+      || (start <= s.start && end >= s.end)
+    ));
+    if (overlapIdx >= 0) _selections[overlapIdx] = entry;
+    else _selections.push(entry);
+    showSelectionBadge();
+    renderAllSelectionHighlights();
+  }
 
   // Pinned-selection overlays are positioned in pixel coords measured
   // against the textarea's current size. When the window shrinks (or
@@ -7971,15 +13062,40 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       badge.style.display = 'none';
       return;
     }
-    const labels = _selections.map(s =>
-      s.startLine === s.endLine ? `L${s.startLine}` : `L${s.startLine}-${s.endLine}`
-    );
-    const label = _selections.length === 1
-      ? `${labels[0]} selected`
-      : `${_selections.length} selections (${labels.join(', ')})`;
-    badge.innerHTML = `${label}<button class="doc-selection-clear" title="Clear all selections">&times;</button>`;
+    const labels = _selections.map(s => s.kind === 'rich'
+      ? 'Text'
+      : (s.startLine === s.endLine ? `L${s.startLine}` : `L${s.startLine}-${s.endLine}`));
+    badge.replaceChildren();
+    if (_selections.length === 1) {
+      badge.append(document.createTextNode(`${labels[0]} selected`));
+    } else {
+      badge.append(document.createTextNode(`${_selections.length} selections`));
+      labels.forEach((selectionLabel, index) => {
+        const chip = document.createElement('span');
+        chip.className = 'doc-selection-chip';
+        chip.textContent = selectionLabel;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'doc-selection-chip-clear';
+        remove.title = `Remove ${selectionLabel} selection`;
+        remove.setAttribute('aria-label', `Remove ${selectionLabel} selection`);
+        remove.textContent = '×';
+        remove.addEventListener('click', (e) => {
+          e.stopPropagation();
+          clearSelectionAt(index);
+        });
+        chip.appendChild(remove);
+        badge.appendChild(chip);
+      });
+    }
+    const clearAll = document.createElement('button');
+    clearAll.className = 'doc-selection-clear doc-selection-chip-clear';
+    clearAll.title = 'Clear Selection';
+    clearAll.setAttribute('aria-label', 'Clear Selection');
+    clearAll.textContent = 'Clear Selection';
+    badge.appendChild(clearAll);
     badge.style.display = '';
-    badge.querySelector('.doc-selection-clear').addEventListener('click', (e) => {
+    clearAll.addEventListener('click', (e) => {
       e.stopPropagation();
       clearSelection();
     });
@@ -8026,12 +13142,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   // Cheap O(N) per selection; only runs when _selections is non-empty.
   function _validateSelections(text) {
     if (_selections.length === 0) return;
+    const rich = _emailRichbodyActive();
+    const richText = rich ? _richRootText(rich) : '';
     const survivors = [];
     for (const s of _selections) {
       const captured = s.text || '';
       if (!captured) continue;
+      const source = s.kind === 'rich' ? richText : text;
+      if (s.kind === 'rich' && !rich) continue;
       // Fast path: still at the same offsets.
-      if (text.substring(s.start, s.end) === captured) {
+      if (source.substring(s.start, s.end) === captured) {
         survivors.push(s);
         continue;
       }
@@ -8041,7 +13161,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       let best = -1, bestDist = Infinity;
       let from = 0;
       while (true) {
-        const idx = text.indexOf(captured, from);
+        const idx = source.indexOf(captured, from);
         if (idx === -1) break;
         const dist = Math.abs(idx - s.start);
         if (dist < bestDist) { best = idx; bestDist = dist; }
@@ -8054,14 +13174,19 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         ...s,
         start: newStart,
         end: newEnd,
-        startLine: text.substring(0, newStart).split('\n').length,
-        endLine: text.substring(0, newEnd).split('\n').length,
+        startLine: source.substring(0, newStart).split('\n').length,
+        endLine: source.substring(0, newEnd).split('\n').length,
       });
     }
     _selections = survivors;
   }
 
   function renderAllSelectionHighlights() {
+    document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
+    // Delete the persistent CSS highlight before checking whether any
+    // selections remain; otherwise clearing the last selection leaves the
+    // painted range visible until the next render.
+    try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
     const wrap = document.getElementById('doc-editor-wrap');
     if (!wrap) return;
     // Remove old overlays
@@ -8075,7 +13200,41 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // shifted (undo, programmatic edits, etc.) so the overlays never
     // draw on the wrong region.
     _validateSelections(text);
-    if (_selections.length === 0) return;
+    const rich = _emailRichbodyActive();
+    const richRanges = rich
+      ? _selections.filter(s => s.kind === 'rich').map(s => _richRangeFromOffsets(rich, s.start, s.end)).filter(Boolean)
+      : [];
+    if (richRanges.length) {
+      try {
+        if (CSS.highlights && typeof Highlight === 'function') {
+          CSS.highlights.set(_richSelectionHighlightName, new Highlight(...richRanges));
+        }
+      } catch (_) {}
+      const richSelections = _selections.filter(s => s.kind === 'rich');
+      richRanges.forEach((range, rangeIndex) => {
+        const rects = Array.from(range.getClientRects());
+        const rect = rects[rects.length - 1];
+        if (!rect || (!rect.width && !rect.height)) return;
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'doc-selection-rich-clear';
+        clearBtn.title = 'Remove this selection';
+        clearBtn.setAttribute('aria-label', 'Remove this selection');
+        clearBtn.textContent = '×';
+        clearBtn.style.left = `${Math.max(4, rect.right - 10)}px`;
+        clearBtn.style.top = `${Math.max(4, rect.top - 6)}px`;
+        const selectionIndex = _selections.indexOf(richSelections[rangeIndex]);
+        clearBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelectionAt(selectionIndex);
+        });
+        document.body.appendChild(clearBtn);
+      });
+    }
+    const sourceSelections = _selections.filter(s => s.kind !== 'rich');
+    if (_selections.length === 0) { showSelectionBadge(); return; }
+    if (sourceSelections.length === 0) return;
     const style = getComputedStyle(textarea);
     const paddingTop = parseFloat(style.paddingTop) || 10;
     const paddingLeft = parseFloat(style.paddingLeft) || 48;
@@ -8111,7 +13270,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const codeDoc = _isCodeDoc();
     const scrollTop = textarea.scrollTop;
 
-    for (const sel of _selections) {
+    for (const sel of sourceSelections) {
+      const selectionIndex = _selections.indexOf(sel);
       if (codeDoc) {
         // Line-based: span every line that contains any selected char.
         const beforeStart = text.substring(0, sel.start);
@@ -8135,6 +13295,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         overlay.style.left = paddingLeft + 'px';
         overlay.style.right = '0';
         overlay.style.height = height + 'px';
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'doc-selection-overlay-clear';
+        clearBtn.title = 'Remove this selection';
+        clearBtn.setAttribute('aria-label', 'Remove this selection');
+        clearBtn.textContent = '×';
+        clearBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelectionAt(selectionIndex);
+        });
+        overlay.appendChild(clearBtn);
         wrap.appendChild(overlay);
       } else {
         // Character-precise: measure the actual selection start/end via
@@ -8145,7 +13317,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const endPos = _measurePos(mirror, text, sel.end);
         mirror.innerHTML = '';
 
-        const addRect = (top, left, width, height) => {
+        const addRect = (top, left, width, height, withClear = false) => {
           const overlay = document.createElement('div');
           overlay.className = 'doc-selection-overlay';
           overlay.style.top = (paddingTop + top - scrollTop) + 'px';
@@ -8153,15 +13325,29 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           if (width != null) overlay.style.width = width + 'px';
           else overlay.style.right = '0';
           overlay.style.height = height + 'px';
+          if (withClear) {
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'doc-selection-overlay-clear';
+            clearBtn.title = 'Remove this selection';
+            clearBtn.setAttribute('aria-label', 'Remove this selection');
+            clearBtn.textContent = '×';
+            clearBtn.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              clearSelectionAt(selectionIndex);
+            });
+            overlay.appendChild(clearBtn);
+          }
           wrap.appendChild(overlay);
         };
 
         if (Math.abs(endPos.y - startPos.y) < 1) {
           // Single visual line.
-          addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight);
+          addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight, true);
         } else {
           // First line: from selection start to right edge.
-          addRect(startPos.y, startPos.x, null, lineHeight);
+          addRect(startPos.y, startPos.x, null, lineHeight, true);
           // Middle lines (if any): full-width band between the two.
           const middleTop = startPos.y + lineHeight;
           const middleHeight = endPos.y - middleTop;
@@ -8180,12 +13366,44 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   /** Clear all selections, badge, and highlights */
-  function clearSelection() {
+  function clearSelection({ preserveCaret = false } = {}) {
     _selections = [];
+    try { CSS.highlights?.delete(_richSelectionHighlightName); } catch (_) {}
+    document.querySelectorAll('.doc-selection-rich-clear').forEach(el => el.remove());
+    // A restored rich-text reference also creates a native browser range so
+    // the referenced text is visibly selected. Clear that range with the
+    // pinned selection; otherwise document stats keep reporting "selected"
+    // after the badge's X has cleared the actual AI-edit context.
+    const rich = _emailRichbodyActive();
+    const browserSelection = window.getSelection?.();
+    // Input already placed the caret after the edit. Clearing pinned AI
+    // context must not discard that live insertion point.
+    if (!preserveCaret && rich && browserSelection?.rangeCount
+        && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
+      browserSelection.removeAllRanges();
+    }
     const badge = document.getElementById('doc-selection-badge');
     if (badge) badge.style.display = 'none';
     const wrap = document.getElementById('doc-editor-wrap');
     if (wrap) wrap.querySelectorAll('.doc-selection-overlay').forEach(el => el.remove());
+    _scheduleDocumentStats();
+  }
+
+  function clearSelectionAt(index) {
+    if (index < 0 || index >= _selections.length) return;
+    const removed = _selections[index];
+    _selections.splice(index, 1);
+    if (removed?.kind === 'rich') {
+      const rich = _emailRichbodyActive();
+      const browserSelection = window.getSelection?.();
+      if (rich && browserSelection?.rangeCount
+          && (rich.contains(browserSelection.anchorNode) || rich.contains(browserSelection.focusNode))) {
+        browserSelection.removeAllRanges();
+      }
+    }
+    renderAllSelectionHighlights();
+    showSelectionBadge();
+    _scheduleDocumentStats();
   }
 
   /**
@@ -8212,9 +13430,116 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     return ctx;
   }
 
+  /** Restore a document selection referenced by a chat bubble. */
+  export async function restoreSelectionReference(reference, options = {}) {
+    const requestedDocId = String(options.documentId || '').trim();
+    if (requestedDocId) await loadDocument(requestedDocId);
+    if (!activeDocId || !docs.has(activeDocId)) return false;
+
+    _ensureDocPaneMounted();
+    const doc = docs.get(activeDocId);
+    const rich = _isRichTextLang(doc.language) ? _emailRichbodyActive() : null;
+    const textarea = document.getElementById('doc-editor-textarea');
+    const source = rich ? _richRootText(rich) : (textarea?.value || doc.content || '');
+    const supplied = Array.isArray(options.selections)
+      ? options.selections
+      : (options.selections ? [options.selections] : []);
+    const restored = [];
+
+    for (const selection of supplied) {
+      const selectedText = String(selection?.text || '');
+      if (!selectedText) continue;
+      const start = source.indexOf(selectedText);
+      if (start < 0) continue;
+      const end = start + selectedText.length;
+      restored.push({
+        kind: rich ? 'rich' : undefined,
+        text: selectedText,
+        start,
+        end,
+        startLine: source.slice(0, start).split('\n').length,
+        endLine: source.slice(0, end).split('\n').length,
+      });
+    }
+
+    if (!restored.length) {
+      const lineMatches = Array.from(String(reference || '').matchAll(/(?:L|lines?)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi));
+      const lines = source.split('\n');
+      const lineStart = lineNumber => {
+        let offset = 0;
+        for (let index = 1; index < lineNumber && index <= lines.length; index++) {
+          offset += lines[index - 1].length + 1;
+        }
+        return offset;
+      };
+      for (const match of lineMatches) {
+        const startLine = Math.max(1, Math.min(lines.length, Number(match[1]) || 1));
+        const endLine = Math.max(startLine, Math.min(lines.length, Number(match[2]) || startLine));
+        const start = lineStart(startLine);
+        const end = lineStart(endLine) + (lines[endLine - 1] || '').length;
+        if (end <= start) continue;
+        restored.push({
+          kind: rich ? 'rich' : undefined,
+          text: source.slice(start, end),
+          start,
+          end,
+          startLine,
+          endLine,
+        });
+      }
+    }
+    if (!restored.length) return false;
+
+    _selections = restored;
+    showSelectionBadge();
+    renderAllSelectionHighlights();
+    const first = restored[0];
+    if (rich) {
+      const range = _richRangeFromOffsets(rich, first.start, first.end);
+      const browserSelection = window.getSelection?.();
+      if (range && browserSelection) {
+        browserSelection.removeAllRanges();
+        browserSelection.addRange(range);
+        range.startContainer.parentElement?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      }
+      rich.focus({ preventScroll: true });
+    } else if (textarea) {
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(first.start, first.end, 'forward');
+      const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 18;
+      textarea.scrollTop = Math.max(0, (first.startLine - 2) * lineHeight);
+      syncSelectionOverlay();
+    }
+    return true;
+  }
+
   // ── Inline Suggestion Comments (Google Docs style) ──
 
   let _activeSuggestions = []; // [{ id, find, replace, reason, highlightEl, bubbleEl }]
+  let _suggestionSelectionRange = null;
+
+  function _selectSuggestionText(textarea, start, end) {
+    if (!textarea || start < 0 || end <= start) return;
+    const scrollTop = textarea.scrollTop;
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(start, end, 'forward');
+    textarea.scrollTop = scrollTop;
+    _suggestionSelectionRange = { start, end };
+  }
+
+  function _clearSuggestionTextSelection() {
+    const textarea = document.getElementById('doc-editor-textarea');
+    const range = _suggestionSelectionRange;
+    if (
+      textarea
+      && range
+      && textarea.selectionStart === range.start
+      && textarea.selectionEnd === range.end
+    ) {
+      textarea.setSelectionRange(range.end, range.end);
+    }
+    _suggestionSelectionRange = null;
+  }
 
   /** Persist suggestions to localStorage for the active doc */
   function _saveSuggestionsToStorage() {
@@ -8247,21 +13572,36 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
    *  appended to the live queue rather than replacing it. The agent (or a
    *  follow-up batch) can keep adding edits while the user reviews; the count
    *  and "n of m" header update on the fly. */
-  export function handleDocSuggestions(data) {
+  export async function handleDocSuggestions(data) {
     if (_diffModeActive) exitDiffMode(true);
     if (!data.suggestions || !data.suggestions.length) return;
 
-    if (!isOpen) openPanel();
-    if (data.doc_id && data.doc_id !== activeDocId) switchToDoc(data.doc_id);
+    const openedPanel = !isOpen;
+    if (openedPanel) openPanel();
+    if (data.doc_id && data.doc_id !== activeDocId) {
+      if (!docs.has(data.doc_id)) await loadDocument(data.doc_id);
+      else switchToDoc(data.doc_id);
+    } else if (data.doc_id && openedPanel && docs.has(data.doc_id)) {
+      // openPanel creates a fresh editor shell. Rebind it even when the
+      // logical active ID did not change, or the shell remains empty and its
+      // first autosave can overwrite the real document.
+      switchToDoc(data.doc_id);
+    }
+    if (data.doc_id && activeDocId !== data.doc_id) {
+      console.error('Could not activate suggestion document:', data.doc_id);
+      if (uiModule) uiModule.showError('Could not open the document for these suggestions.');
+      return;
+    }
 
     const hadPending = _activeSuggestions.length > 0;
     const existingIds = new Set(_activeSuggestions.map(s => s.id));
+    const existingFinds = new Set(_activeSuggestions.map(s => s.find));
 
     // Append new suggestions, skipping any IDs already in the queue so a
     // re-sent batch doesn't duplicate.
     let added = 0;
     for (const sugg of data.suggestions) {
-      if (existingIds.has(sugg.id)) continue;
+      if (existingIds.has(sugg.id) || existingFinds.has(sugg.find)) continue;
       _activeSuggestions.push({
         id: sugg.id,
         find: sugg.find,
@@ -8269,6 +13609,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         reason: sugg.reason,
         cardEl: null,
       });
+      existingFinds.add(sugg.find);
       added++;
     }
     _suggestionTotal = (_suggestionTotal || 0) + added;
@@ -8308,15 +13649,13 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     _clearInlineDiff();
 
     if (_activeSuggestions.length === 0) {
+      _clearSuggestionTextSelection();
       return;
     }
 
     const sugg = _activeSuggestions[0];
     const remaining = _activeSuggestions.length;
     const num = _suggestionTotal - remaining + 1;
-
-    // Show inline diff in the document
-    _showInlineDiff(sugg.find, sugg.replace);
 
     const textarea = document.getElementById('doc-editor-textarea');
 
@@ -8329,11 +13668,25 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         const lineH = parseFloat(getComputedStyle(textarea).lineHeight) || 20;
         const target = Math.max(0, lineNum * lineH - (textarea.clientHeight / 3));
         textarea.scrollTop = target;
+        _selectSuggestionText(textarea, idx, idx + sugg.find.length);
       }
     }
 
     // Position card next to the highlighted text
     function _positionCard(card) {
+      card.style.zIndex = String(Math.max(topPortalZ(), (parseInt(getComputedStyle(pane).zIndex, 10) || 0) + 1));
+      if (window.innerWidth <= 768) {
+        const viewport = window.visualViewport;
+        const top = viewport?.offsetTop || 0;
+        const height = viewport?.height || window.innerHeight;
+        card.style.position = 'fixed';
+        card.style.left = ((viewport?.offsetLeft || 0) + 8) + 'px';
+        card.style.right = 'auto';
+        card.style.width = Math.max(0, (viewport?.width || window.innerWidth) - 16) + 'px';
+        card.style.maxHeight = Math.max(0, height - 16) + 'px';
+        card.style.top = Math.max(top + 8, top + height - card.offsetHeight - 8) + 'px';
+        return;
+      }
       if (!textarea) return;
       const text = textarea.value;
       const idx = text.indexOf(sugg.find);
@@ -8377,19 +13730,21 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           <span class="doc-suggestion-counter">${num} / ${_suggestionTotal}</span>
           <button class="doc-suggestion-nav-btn doc-suggestion-next" title="Next">&rsaquo;</button>
         </div>
-        <button class="doc-suggestion-close" title="Close all suggestions">&times;</button>
+        <button class="doc-suggestion-close close-btn" title="Close all suggestions" aria-label="Close all suggestions"></button>
       </div>
       <div class="doc-suggestion-reason">${_esc(sugg.reason)}</div>
       <div class="doc-suggestion-actions">
         <button class="doc-suggestion-accept">Accept</button>
+        <button class="doc-suggestion-accept-all" title="Apply all ${remaining} pending suggestions" aria-label="Accept all ${remaining} pending suggestions">Accept All</button>
         <button class="doc-suggestion-dismiss">Skip</button>
-        ${remaining > 1 ? '<button class="doc-suggestion-accept-all">Accept All</button>' : ''}
       </div>
     `;
 
     // Wire buttons
     card.querySelector('.doc-suggestion-close').addEventListener('click', clearAllSuggestions);
-    card.querySelector('.doc-suggestion-prev').addEventListener('click', () => {
+    card.querySelector('.doc-suggestion-prev').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const current = _activeSuggestions.shift();
       _activeSuggestions.push(current);
       const prev = _activeSuggestions.pop();
@@ -8397,14 +13752,16 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _suggestionIndex = (_suggestionIndex - 1 + _suggestionTotal) % _suggestionTotal;
       _showCurrentSuggestion();
     });
-    card.querySelector('.doc-suggestion-next').addEventListener('click', () => {
+    card.querySelector('.doc-suggestion-next').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const current = _activeSuggestions.shift();
       _activeSuggestions.push(current);
       _suggestionIndex = (_suggestionIndex + 1) % _suggestionTotal;
       _showCurrentSuggestion();
     });
     card.querySelector('.doc-suggestion-accept').addEventListener('click', () => {
-      _applySuggestion(sugg);
+      if (!_applySuggestions([sugg]).length) return;
       _activeSuggestions.shift();
       _animateNext();
     });
@@ -8415,8 +13772,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const acceptAllBtn = card.querySelector('.doc-suggestion-accept-all');
     if (acceptAllBtn) {
       acceptAllBtn.addEventListener('click', () => {
-        for (const s of _activeSuggestions) _applySuggestion(s);
-        _activeSuggestions = [];
+        const applied = new Set(_applySuggestions(_activeSuggestions));
+        if (!applied.size) return;
+        _activeSuggestions = _activeSuggestions.filter(s => !applied.has(s.id));
         _animateNext();
       });
     }
@@ -8431,10 +13789,14 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _reposition = () => { if (card.isConnected) _positionCard(card); };
     if (textarea) textarea.addEventListener('scroll', _reposition);
     window.addEventListener('resize', _reposition);
+    window.visualViewport?.addEventListener('resize', _reposition);
+    window.visualViewport?.addEventListener('scroll', _reposition);
     // Store cleanup refs on the card
     card._cleanup = () => {
       if (textarea) textarea.removeEventListener('scroll', _reposition);
       window.removeEventListener('resize', _reposition);
+      window.visualViewport?.removeEventListener('resize', _reposition);
+      window.visualViewport?.removeEventListener('scroll', _reposition);
     };
   }
 
@@ -8850,7 +14212,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   /** Exit diff mode and apply resolved changes */
-  function exitDiffMode(discard) {
+  function exitDiffMode(discard, { persist = true } = {}) {
     if (!_diffModeActive) return;
     _diffModeActive = false;
     const acceptedAnyDiffChunk = !discard && _diffChunks.some(chunk => chunk && chunk.resolved && chunk.accepted);
@@ -8916,7 +14278,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     syncHighlighting();
     updateLineNumbers(textarea ? textarea.value : '');
-    saveDocument({ silent: true });
+    if (persist) saveDocument({ silent: true });
     if (acceptedAnyDiffChunk) {
       const lang = ((docs.get(activeDocId)?.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
       if (lang === 'markdown') {
@@ -8935,14 +14297,41 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   const _origHandleDocSuggestions = handleDocSuggestions;
   // (total is set inside handleDocSuggestions before _showCurrentSuggestion)
 
-  /** Apply a single suggestion edit without removing from queue */
-  function _applySuggestion(sugg) {
-    const textarea = document.getElementById('doc-editor-textarea');
-    if (textarea && sugg.find && textarea.value.includes(sugg.find)) {
-      textarea.value = textarea.value.replace(sugg.find, sugg.replace);
-      syncHighlighting();
-      saveDocument({ silent: true });
+  /** Apply exact suggestion matches to the active editor surface, then save once. */
+  function _applySuggestions(suggestions) {
+    if (!activeDocId || !docs.has(activeDocId)) return [];
+    // The textarea is only a hidden mirror for rich-text and email documents.
+    // Capture the visible editor first, then replace in the document source.
+    saveCurrentToMap();
+    const doc = docs.get(activeDocId);
+    let content = doc.content || '';
+    const applied = [];
+    for (const sugg of suggestions) {
+      if (!sugg.find || content.split(sugg.find).length !== 2) continue;
+      content = content.replace(sugg.find, sugg.replace || '');
+      applied.push(sugg.id);
     }
+    if (!applied.length) {
+      uiModule?.showError?.('Suggestion no longer matches the document. Refresh suggestions to review it.');
+      return [];
+    }
+    doc.content = content;
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (_isRichTextLang(doc.language)) {
+      _showRichTextEditor(doc);
+    } else if (doc.language === 'email') {
+      _showEmailFields(doc, { applyLocalDraft: false, forceHeaderFields: true });
+    } else if (textarea) {
+      textarea.value = content;
+      syncHighlighting();
+      _refreshMarkdownPreviewIfVisible(doc.id, content);
+      if (_htmlPreviewActive && _isRenderLang(doc.language)) {
+        const iframe = document.getElementById('doc-html-preview');
+        if (iframe) iframe.srcdoc = _themedRenderSrcdoc(content, doc.language);
+      }
+    }
+    saveDocument({ silent: true });
+    return applied;
   }
 
   /** Animate transition to next suggestion */
@@ -9019,6 +14408,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     _suggestionTotal = 0;
     _saveSuggestionsToStorage();
     _clearSuggestionHighlight();
+    _clearSuggestionTextSelection();
     _clearInlineDiff();
     const old = document.getElementById('doc-suggestion-active');
     if (old) { if (old._cleanup) old._cleanup(); old.remove(); }
@@ -9029,7 +14419,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (ta) updateLineNumbers(ta.value);
   }
 
-  /** Highlight the referenced text in the editor when hovering a suggestion */
+  /** Highlight the exact text referenced by the active suggestion. */
   function _highlightSuggestionText(findText) {
     _clearSuggestionHighlight();
     const textarea = document.getElementById('doc-editor-textarea');
@@ -9041,51 +14431,65 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (idx === -1) return;
 
     const style = getComputedStyle(textarea);
-    const paddingTop = parseFloat(style.paddingTop) || 10;
-    const paddingLeft = parseFloat(style.paddingLeft) || 48;
     const lineHeight = parseFloat(style.lineHeight) || 20;
 
     let mirror = document.getElementById('doc-selection-mirror');
-    if (!mirror) return;
+    if (!mirror) {
+      mirror = document.createElement('div');
+      mirror.id = 'doc-selection-mirror';
+      mirror.style.cssText = 'position:absolute;top:0;left:0;right:0;visibility:hidden;pointer-events:none;' +
+        'white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden;box-sizing:border-box;';
+      wrap.appendChild(mirror);
+    }
+    mirror.style.font = style.font;
+    mirror.style.padding = style.padding;
+    mirror.style.borderWidth = style.borderWidth;
+    mirror.style.borderStyle = 'solid';
+    mirror.style.borderColor = 'transparent';
+    mirror.style.width = textarea.clientWidth + 'px';
+    mirror.style.tabSize = style.tabSize;
+    mirror.style.letterSpacing = style.letterSpacing;
+    mirror.style.wordSpacing = style.wordSpacing;
+    mirror.style.textIndent = style.textIndent;
 
-    const beforeStart = text.substring(0, idx);
-    const lastNewline = beforeStart.lastIndexOf('\n');
-    const startLineBegin = lastNewline + 1;
-    mirror.textContent = text.substring(0, startLineBegin);
-    const startTop = mirror.scrollHeight - paddingTop;
+    const startPos = _measurePos(mirror, text, idx);
+    const endPos = _measurePos(mirror, text, idx + findText.length);
+    mirror.innerHTML = '';
 
-    const endIdx = idx + findText.length;
-    const afterEnd = text.indexOf('\n', endIdx);
-    const endLineEnd = afterEnd === -1 ? text.length : afterEnd;
-    mirror.textContent = text.substring(0, endLineEnd);
-    const endBottom = mirror.scrollHeight - paddingTop;
-    mirror.textContent = '';
+    const addRect = (top, left, width, height) => {
+      const highlight = document.createElement('div');
+      highlight.className = 'doc-suggestion-highlight';
+      highlight.style.top = (top - textarea.scrollTop) + 'px';
+      highlight.style.left = left + 'px';
+      if (width == null) highlight.style.right = '8px';
+      else highlight.style.width = Math.max(width, 2) + 'px';
+      highlight.style.height = height + 'px';
+      wrap.appendChild(highlight);
+    };
 
-    const top = paddingTop + startTop - textarea.scrollTop;
-    const height = Math.max(endBottom - startTop, lineHeight);
-
-    const highlight = document.createElement('div');
-    highlight.className = 'doc-suggestion-highlight';
-    highlight.id = 'doc-suggestion-hover-hl';
-    highlight.style.top = top + 'px';
-    highlight.style.left = paddingLeft + 'px';
-    highlight.style.right = '0';
-    highlight.style.height = height + 'px';
-    wrap.appendChild(highlight);
+    if (Math.abs(endPos.y - startPos.y) < 1) {
+      addRect(startPos.y, startPos.x, endPos.x - startPos.x, lineHeight);
+    } else {
+      addRect(startPos.y, startPos.x, null, lineHeight);
+      const middleTop = startPos.y + lineHeight;
+      const middleHeight = endPos.y - middleTop;
+      if (middleHeight > 0) addRect(middleTop, parseFloat(style.paddingLeft) || 0, null, middleHeight);
+      addRect(endPos.y, parseFloat(style.paddingLeft) || 0, endPos.x - (parseFloat(style.paddingLeft) || 0), lineHeight);
+    }
 
     // Don't auto-scroll here — caller handles scrolling
   }
 
   /** Remove hover highlight */
   function _clearSuggestionHighlight() {
-    const hl = document.getElementById('doc-suggestion-hover-hl');
-    if (hl) hl.remove();
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (wrap) wrap.querySelectorAll('.doc-suggestion-highlight').forEach(el => el.remove());
   }
 
   /** Run the document's code using the in-browser code runner */
   function runDocument() {
     const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea || !textarea.value.trim()) return;
+    if (!textarea) return;
 
     const code = textarea.value;
     const langSelect = document.getElementById('doc-language-select');
@@ -9102,6 +14506,11 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
     outputPanel.style.display = 'block';
     outputPanel.innerHTML = '';
+
+    if (!code.trim()) {
+      outputPanel.innerHTML = '<pre class="doc-run-error">Nothing to run. Add some code first.</pre>';
+      return;
+    }
 
     if (_isRenderLang(lang)) {
       // HTML / SVG / XML — render inline in the sandboxed preview iframe.
@@ -9157,6 +14566,151 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (_docTabMenu) { _docTabMenu.style.display = 'none'; }
   }
 
+  // Escape must clear document-local UI before ui.js gets a chance to close
+  // the hovered window. This listener is on window capture, which runs before
+  // document capture listeners regardless of module registration order.
+  if (!window._documentInnerEscapeBound) {
+    window._documentInnerEscapeBound = true;
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !isOpen) return;
+
+      // If email is the visible foreground window, its own inner Escape
+      // handler owns the event. A document selection behind it should not
+      // intercept the email reader's Escape key.
+      const emailModal = document.getElementById('email-lib-modal');
+      const target = e.target;
+      if (emailModal && !emailModal.classList.contains('hidden')
+          && !target?.closest?.('.doc-editor-pane, #doc-rich-selection-toolbar, #doc-selection-badge, #doc-md-dd-menu')) {
+        return;
+      }
+
+      // A pinned text selection is the user's most local Escape target. Clear
+      // it before closing any menu, toolbar, or the document itself.
+      if (_selections.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        clearSelection();
+        return;
+      }
+
+      const versionPanel = document.getElementById('doc-version-panel');
+      if (versionPanel && !versionPanel.classList.contains('hidden')) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        _closeVersionPanel();
+        return;
+      }
+
+      // Menus are transient and must close before selection state. The stack
+      // also covers color pickers and other document dropdowns.
+      if (dismissTopMenu()) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        return;
+      }
+      const menu = document.getElementById('doc-md-dd-menu');
+      const menuVisible = menu && !menu.hidden && getComputedStyle(menu).display !== 'none';
+      if (menuVisible) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        menu._dismiss?.(true);
+        return;
+      }
+      if (_docTabMenu && _docTabMenu.style.display === 'block') {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        _closeDocTabMenu();
+        return;
+      }
+      if (_richSlashMenu) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        _hideRichSlashMenu();
+        return;
+      }
+      if (_richSelectionToolbar) {
+        const rich = _emailRichbodyActive();
+        const selection = window.getSelection?.();
+        if (rich && selection && !selection.isCollapsed
+            && rich.contains(selection.anchorNode) && rich.contains(selection.focusNode)) {
+          selection.collapseToEnd();
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        _hideRichSelectionToolbar();
+        return;
+      }
+    }, true);
+  }
+
+  async function _moveDocToSession(docId, sessionId, { switchChat = false } = {}) {
+    const doc = docs.get(docId);
+    if (!doc || !sessionId) return false;
+    if (docId === activeDocId) {
+      try { await saveDocument({ silent: true }); } catch (_) {}
+    }
+    const res = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!res.ok) throw new Error(`Move failed: HTTP ${res.status}`);
+    const updated = await res.json();
+    doc.sessionId = updated.session_id || sessionId;
+    doc.title = updated.title ?? doc.title;
+    doc.language = updated.language ?? doc.language;
+    doc.content = updated.current_content ?? doc.content;
+    docs.set(docId, doc);
+    _lastSessionId = sessionId;
+    try { sessionModule?.setSessionHasDocs?.(sessionId, true); } catch (_) {}
+    if (switchChat && sessionModule?.selectSession) {
+      await sessionModule.selectSession(sessionId);
+      addDocToTabs(updated, sessionId);
+      switchToDoc(docId);
+      if (!isOpen) openPanel();
+    } else {
+      renderTabs();
+    }
+    _syncDocIndicator();
+    return true;
+  }
+
+  async function moveActiveDocumentToCurrentChat({ quiet = false } = {}) {
+    if (!activeDocId) return;
+    let sessionId = sessionModule?.getCurrentSessionId?.() || '';
+    if (!sessionId) sessionId = await _autoCreateSession();
+    try {
+      await _moveDocToSession(activeDocId, sessionId);
+      if (!quiet) uiModule?.showToast?.('Document moved to current chat');
+    } catch (e) {
+      console.error('Failed to move document to current chat:', e);
+      uiModule?.showError?.('Could not move document to current chat');
+    }
+  }
+
+  async function moveActiveDocumentToNewChat() {
+    if (!activeDocId) return;
+    try {
+      // Do not adopt the empty destination before the active document has
+      // saved and moved. Switching currentSessionId early made saveDocument
+      // operate against the wrong chat and aborted the move client-side.
+      const sessionId = await _autoCreateSession({ adopt: false, forceNew: true });
+      await _moveDocToSession(activeDocId, sessionId, { switchChat: true });
+      uiModule?.showToast?.('Document moved to new chat');
+    } catch (e) {
+      console.error('Failed to move document to new chat:', e);
+      uiModule?.showError?.('Could not move document to new chat');
+    }
+  }
+
   function showDocTabMenu(btnEl, docId) {
     // Toggle off if already open for this doc
     if (_docTabMenu && _docTabMenu.style.display === 'block' && _docTabMenu._docId === docId) {
@@ -9207,6 +14761,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (lang === 'markdown') { previewIcon = 'MD'; previewLabel = _mdActive ? 'Edit' : 'Preview'; }
     else if (lang === 'csv') { previewIcon = '⊞'; previewLabel = _csvActive ? 'Edit' : 'Table View'; }
     else if (_isRenderLang(lang)) { previewIcon = '▶'; previewLabel = _htmlActive ? 'Edit' : 'Run / Preview'; }
+    else if (_isDocxLang(lang)) { previewIcon = 'W'; previewLabel = 'Word Preview'; }
 
     const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
     const _saveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>';
@@ -9214,6 +14769,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const _runIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
     const _previewIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
     const _deleteIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+    const _moveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3"/><path d="M13 17h8"/><path d="m17 13 4 4-4 4"/><path d="M3 9v8a2 2 0 0 0 2 2h6"/></svg>';
+    const _newChatIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h9"/><path d="M19 3v6"/><path d="M16 6h6"/></svg>';
 
     let items = '';
     items += `<div class="dropdown-item-compact doc-tab-action" data-action="save">${_di(_saveIco)}<span>Save</span></div>`;
@@ -9226,6 +14783,9 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     }
     const _downloadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     items += `<div class="dropdown-item-compact doc-tab-action" data-action="download">${_di(_downloadIco)}<span>Download</span></div>`;
+    items += `<div class="dropdown-divider"></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action" data-action="move-current">${_di(_moveIco)}<span>Move to current chat</span></div>`;
+    items += `<div class="dropdown-item-compact doc-tab-action" data-action="move-new">${_di(_newChatIco)}<span>Move to new chat</span></div>`;
     // "Send signed reply" — only if this doc was opened from an email attachment
     if (doc.sourceEmailUid && doc.sourceEmailFolder) {
       const _sendBackIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
@@ -9277,12 +14837,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
             if (lang === 'markdown') toggleMarkdownPreview();
             else if (lang === 'csv') toggleCsvPreview();
             else if (_isRenderLang(lang)) toggleHtmlPreview();
+            else if (_isDocxLang(lang)) toggleDocxPreview();
             break;
           case 'download': {
             const btn = document.getElementById('doc-fontsize-btn') || document.getElementById('doc-language-select');
             showExportMenu(null, btn?.getBoundingClientRect());
             break;
           }
+          case 'move-current': moveActiveDocumentToCurrentChat(); break;
+          case 'move-new': moveActiveDocumentToNewChat(); break;
           case 'signed-reply': _sendSignedReply(docId); break;
           case 'close': closeTab(docId); break;
           case 'delete': deleteActiveDocument(); break;
@@ -9401,13 +14964,26 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   /** Save manual edits */
   export async function saveDocument({ silent = false, forceVersion = false } = {}) {
-    if (!activeDocId) return false;
+    const savingDocId = getChatDocumentId();
+    if (!savingDocId) return false;
     const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return false;
-    const savingDocId = activeDocId;
-    saveCurrentToMap();
+    // Minimizing removes the editor DOM, but closePanel already captured its
+    // content in docs. Persist that cache without reading an absent/new pane.
+    if (isOpen && activeDocId === savingDocId) saveCurrentToMap();
     const localDoc = docs.get(savingDocId);
-    const contentToSave = localDoc?.content ?? textarea.value;
+    if (!localDoc) return false;
+    const contentToSave = localDoc.content ?? textarea?.value ?? '';
+    const saveRevision = localDoc?._editRevision || 0;
+    const saveRequest = (localDoc?._saveRequest || 0) + 1;
+    if (localDoc) localDoc._saveRequest = saveRequest;
+    _setDocumentSaveState('saving', savingDocId);
+    const previousSave = localDoc?._saveQueueTail || Promise.resolve();
+    let releaseSaveTurn = () => {};
+    const saveTurn = new Promise(resolve => { releaseSaveTurn = resolve; });
+    if (localDoc) {
+      localDoc._saveQueueTail = previousSave.catch(() => {}).then(() => saveTurn);
+    }
+    await previousSave.catch(() => {});
 
     try {
       const res = await fetch(`${API_BASE}/api/document/${savingDocId}`, {
@@ -9441,21 +15017,36 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const badge = document.getElementById('doc-version-badge');
       if (badge) { const _v = doc.version_count || 1; badge.textContent = `v${_v}`; badge.style.display = _v > 1 ? '' : 'none'; }
       // Update map
+      let versionChanged = false;
       if (docs.has(savingDocId)) {
-        docs.get(savingDocId).version = doc.version_count || 1;
-        docs.get(savingDocId).content = contentToSave;
+        const savedDoc = docs.get(savingDocId);
+        const previousVersion = savedDoc.version || 1;
+        savedDoc.version = Math.max(previousVersion, doc.version_count || 1);
+        versionChanged = savedDoc.version !== previousVersion;
+        if (savedDoc._saveRequest === saveRequest) {
+          savedDoc.content = contentToSave;
+          _setDocumentSaveState(
+            (savedDoc._editRevision || 0) === saveRevision ? 'saved' : 'dirty',
+            savingDocId,
+          );
+        }
       }
+      if (versionChanged) renderTabs();
       _syncDocIndicator();
       if (!silent && uiModule) uiModule.showToast(forceVersion ? 'New version saved' : 'Document saved');
       return true;
     } catch (e) {
       console.error('Failed to save document:', e);
+      const failedDoc = docs.get(savingDocId);
+      if (failedDoc?._saveRequest === saveRequest) _setDocumentSaveState('error', savingDocId);
       const now = Date.now();
       if (uiModule && (!silent || now - _lastAutoSaveErrorAt > 10000)) {
         uiModule.showError(silent ? 'Autosave failed' : 'Failed to save document');
         _lastAutoSaveErrorAt = now;
       }
       return false;
+    } finally {
+      releaseSaveTurn();
     }
   }
 
@@ -9474,20 +15065,6 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     return _docxReady;
   }
 
-  let _html2pdfReady = null;
-  function ensureHtml2Pdf() {
-    if (_html2pdfReady) return _html2pdfReady;
-    if (window.html2pdf) return (_html2pdfReady = Promise.resolve());
-    _html2pdfReady = new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = '/static/lib/html2pdf.bundle.min.js';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load PDF library'));
-      document.head.appendChild(s);
-    });
-    return _html2pdfReady;
-  }
-
   function _getExportBaseName() {
     const doc = docs.get(activeDocId);
     const title = (doc && doc.title) || 'document';
@@ -9504,7 +15081,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const title = (doc && doc.title) || 'document';
     const lang = document.getElementById('doc-language-select')?.value || '';
     const extMap = {
-      javascript: '.js', python: '.py', html: '.html', css: '.css',
+      javascript: '.js', python: '.py', html: '.html', svg: '.svg', xml: '.xml', css: '.css',
+      richtext: '.html',
       markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
       sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
       typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
@@ -9513,7 +15091,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const ext = extMap[lang] || '.txt';
     const safeName = title.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'document';
     const ver = doc && doc.version ? `_v${doc.version}` : '';
-    const mime = lang === 'csv' ? 'text/csv' : lang === 'json' ? 'application/json' : 'text/plain';
+    const mime = lang === 'csv' ? 'text/csv' : lang === 'json' ? 'application/json' : _isRichTextLang(lang) ? 'text/html' : 'text/plain';
     const blob = new Blob([textarea.value], { type: mime });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -9549,6 +15127,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const baseTitle = dotIdx > 0 ? name.slice(0, dotIdx) : name;
       const isSpreadsheet = ['.xlsx','.xls','.ods'].includes(ext);
       const isPdf = ext === '.pdf';
+      const isDocx = ext === '.docx';
       // Spreadsheets need the library's per-sheet split — defer to it.
       if (isSpreadsheet) {
         openLibrary();
@@ -9566,6 +15145,15 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
           if (!r.ok) throw new Error('PDF import failed');
           const j = await r.json();
           docId = j.doc_id || j.id;
+        } else if (isDocx) {
+          const fd = new FormData();
+          fd.append('file', file);
+          const sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId()) || _lastSessionId || '';
+          if (sid) fd.append('session_id', sid);
+          const r = await fetch(`${API_BASE}/api/documents/import-docx`, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.detail || 'DOCX import failed');
+          docId = j.id || j.doc_id;
         } else {
           const content = await new Promise((res, rej) => {
             const reader = new FileReader();
@@ -9629,12 +15217,20 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const lang = document.getElementById('doc-language-select')?.value || '';
     const extMap = {
       javascript: '.js', python: '.py', html: '.html', css: '.css',
+      richtext: '.html',
       markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
       sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
       typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
       xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
     };
     const ext = extMap[lang] || '.txt';
+    const codeLanguages = new Set([
+      'python', 'javascript', 'typescript', 'bash', 'sh', 'shell', 'php',
+      'ruby', 'sql', 'java', 'go', 'rust', 'c', 'cpp', 'c++', 'csharp', 'c#',
+      'css', 'json', 'yaml', 'ini', 'toml', 'html', 'svg', 'xml',
+    ]);
+    const isSourceCode = codeLanguages.has(String(lang).toLowerCase());
+    const isCsv = String(lang).toLowerCase() === 'csv';
 
     const menu = document.createElement('div');
     menu.id = 'doc-export-menu';
@@ -9658,11 +15254,41 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     options.push({ label: 'Import from library', fn: () => openLibrary() });
     options.push({ label: 'Import from device', fn: () => _importFromDevice(), _divider: true });
     if (isForm) options.push({ label: 'Filled PDF (.pdf)', fn: _downloadFilledPdf });
-    options.push(
-      { label: 'Export Markdown', fn: exportDocument },
-      { label: 'Print as PDF', fn: exportAsPdf },
-      { label: 'Export as Word', fn: exportAsDocx },
-    );
+    if (isSourceCode) {
+      options.push({ label: `Export source (${ext})`, fn: exportDocument });
+    } else if (isCsv) {
+      options.push({ label: 'Export CSV (.csv)', fn: exportDocument });
+    } else {
+      options.push({ label: _isRichTextLang(lang) ? 'Export HTML' : 'Export Markdown', fn: exportDocument });
+    }
+    if (lang === 'markdown') {
+      options.push({ label: 'Preview Visual Report', fn: previewVisualReport });
+      options.push({ label: 'Export as Visual Report', fn: exportAsVisualReport });
+    }
+    if (_isDocxLang(lang)) {
+      options.push({ label: 'Convert to Rich Text', fn: _convertDocxToRichText });
+      options.push({ label: 'Sign / annotate (PDF)', fn: convertOriginalToPdfForSigning });
+    }
+    // Keep document-format conversions explicit. DOCX is rendered through the
+    // white paper preview; PDF is converted from its extracted text into an
+    // editable DOCX in the browser.
+    // PDF-backed documents already have a lossless filled-PDF export above.
+    // Running the generic browser print path would rebuild the extracted text and
+    // destroy the original page layout, images, and form structure.
+    if (!isForm && (_isDocxLang(lang) || typeof window.print === 'function')) {
+      options.push({
+        label: _isDocxLang(lang) ? 'Convert to PDF' : 'Print / save PDF',
+        fn: _isDocxLang(lang) ? () => convertOriginalDocument('pdf') : exportAsPdf,
+      });
+    }
+    if (lang === 'pdf') {
+      options.push({ label: 'Convert to Word (.docx)', fn: () => convertOriginalDocument('docx') });
+    }
+    if (!isSourceCode && !isCsv && !_isRichTextLang(lang) && lang !== 'markdown') {
+      if (lang !== 'pdf') options.push({ label: 'Export as Word', fn: exportAsDocx });
+    } else if (_isRichTextLang(lang) || lang === 'markdown') {
+      options.push({ label: 'Export as Word', fn: exportAsDocx });
+    }
 
     options.forEach(opt => {
       const item = document.createElement('button');
@@ -9691,6 +15317,44 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const close = bindMenuDismiss(menu, () => { menu.remove(); });
   }
 
+  function _richTextExportCss() {
+    return [
+      'html,body{background:#fff;color:#000}',
+      'img{max-width:100%;height:auto}',
+      'img.richtext-image{display:block;max-width:100%;height:auto;margin:1em 0}',
+      'figure.richtext-image{max-width:100%;margin:1em 0}',
+      'figure.richtext-image img.richtext-image{margin-top:0;margin-bottom:0}',
+      'figure.richtext-image .richtext-image-caption{margin-top:.45em;max-width:100%;color:#6b7280;font-size:.84em;line-height:1.4;text-align:center;overflow-wrap:anywhere}',
+      'figure.richtext-image:has(img.richtext-image-size-60) .richtext-image-caption{width:60%}',
+      'figure.richtext-image:has(img.richtext-image-size-35) .richtext-image-caption{width:35%}',
+      'figure.richtext-image:has(img.richtext-image-align-left) .richtext-image-caption{margin-left:0;margin-right:auto}',
+      'figure.richtext-image:has(img.richtext-image-align-center) .richtext-image-caption{margin-left:auto;margin-right:auto}',
+      'figure.richtext-image:has(img.richtext-image-align-right) .richtext-image-caption{margin-left:auto;margin-right:0}',
+      'img.richtext-image-size-100{width:100%}',
+      'img.richtext-image-size-60{width:60%}',
+      'img.richtext-image-size-35{width:35%}',
+      'img.richtext-image-align-left{margin-left:0;margin-right:auto}',
+      'img.richtext-image-align-center{margin-left:auto;margin-right:auto}',
+      'img.richtext-image-align-right{margin-left:auto;margin-right:0}',
+      'table{width:100%;border-collapse:collapse;table-layout:fixed;margin:1em 0}',
+      'th,td{border:1px solid #c9ced6;padding:7px 8px;vertical-align:top;overflow-wrap:anywhere}',
+      'th{background:#f1f3f5;text-align:left}',
+      'blockquote{margin:1em 0;padding-left:1em;border-left:3px solid #c9ced6;color:#4b5563}',
+      'code{padding:.12em .35em;border:1px solid #d1d5db;border-radius:3px;background:#f3f4f6;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:.9em;white-space:break-spaces}',
+      'pre{padding:12px;overflow:auto;background:#f5f6f8;border-radius:4px}',
+      'pre code{padding:0;border:0;background:transparent;font:inherit}',
+      'hr{border:0;border-top:1px solid #c9ced6;margin:1.25em 0}',
+      'hr.richtext-page-break{border:0;border-top:1px dashed #9ca3af;margin:1.5em 0;break-after:page;page-break-after:always}',
+      '@media print{hr.richtext-page-break{border:0;margin:0}}',
+      'ul.rich-checklist{list-style:none;padding-left:1.8em}',
+      'ul.rich-checklist>li{position:relative;min-height:1.6em}',
+      'ul.rich-checklist>li:before{content:"";position:absolute;left:-1.55em;top:.3em;width:.95em;height:.95em;box-sizing:border-box;border:1.5px solid #8b929c;border-radius:3px;background:#fff}',
+      'ul.rich-checklist>li[data-checked="true"]:before{border-color:#2563eb;background:#2563eb}',
+      'ul.rich-checklist>li[data-checked="true"]:after{content:"";position:absolute;left:-1.27em;top:.44em;width:.28em;height:.5em;border:solid #fff;border-width:0 1.5px 1.5px 0;transform:rotate(45deg)}',
+      'ul.rich-checklist>li[data-checked="true"]{color:#6b7280;text-decoration:line-through}',
+    ].join('');
+  }
+
   function exportAsHtml() {
     if (!activeDocId) return;
     const textarea = document.getElementById('doc-editor-textarea');
@@ -9698,14 +15362,17 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const lang = document.getElementById('doc-language-select')?.value || '';
     const text = textarea.value || '';
     let body;
-    if (lang === 'markdown' && markdownModule?.mdToHtml) {
+    if (_isRichTextLang(lang)) {
+      body = text;
+    } else if (lang === 'markdown' && markdownModule?.mdToHtml) {
       body = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
       body = '<pre style="white-space:pre-wrap;font-size:12px;font-family:monospace;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
     }
     const title = docs.get(activeDocId)?.title || 'document';
-    const html = `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>${title.replace(/</g,'&lt;')}</title></head><body style="max-width:800px;margin:40px auto;font-family:sans-serif;line-height:1.6;padding:0 20px;">\n${body}\n</body></html>`;
+    const richStyles = _isRichTextLang(lang) ? `<style>${_richTextExportCss()}</style>` : '';
+    const html = `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>${_esc(title)}</title>${richStyles}</head><body style="max-width:800px;margin:40px auto;font-family:sans-serif;line-height:1.6;padding:0 20px;background:#fff;color:#000;">\n${body}\n</body></html>`;
     const blob = new Blob([html], { type: 'text/html' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -9715,43 +15382,549 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (uiModule) uiModule.showToast('Exported as HTML');
   }
 
+  async function exportAsVisualReport() {
+    if (!activeDocId) return;
+    try {
+      await _saveActiveDocBeforeExport();
+      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(activeDocId)}/visual-report`, {
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || response.statusText || 'Request failed');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = _getExportBaseName() + '-visual-report.html';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (uiModule?.showToast) uiModule.showToast('Exported visual report');
+    } catch (error) {
+      if (uiModule?.showError) uiModule.showError('Visual report export failed: ' + (error.message || error));
+    }
+  }
+
+  async function previewVisualReport() {
+    if (!activeDocId) return;
+    const preview = window.open('', '_blank');
+    if (!preview) {
+      if (uiModule?.showError) uiModule.showError('Preview blocked — please allow popups for this site.');
+      return;
+    }
+    preview.document.write('<!DOCTYPE html><title>Loading visual report...</title><body style="font-family:sans-serif;padding:2rem;">Loading visual report...</body>');
+    preview.document.close();
+    try {
+      await _saveActiveDocBeforeExport();
+      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(activeDocId)}/visual-report`, {
+        credentials: 'same-origin',
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()) || response.statusText || 'Request failed');
+      }
+      const html = await response.text();
+      preview.document.open();
+      preview.document.write(html);
+      preview.document.close();
+    } catch (error) {
+      preview.document.open();
+      preview.document.write(`<title>Visual report preview failed</title><body style="font-family:sans-serif;padding:2rem;color:#b00;">${String(error.message || error).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</body>`);
+      preview.document.close();
+      if (uiModule?.showError) uiModule.showError('Visual report preview failed: ' + (error.message || error));
+    }
+  }
+
   async function exportAsPdf() {
     if (!activeDocId) return;
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
-    try {
-      await ensureHtml2Pdf();
-    } catch (e) {
-      if (uiModule) uiModule.showError('Failed to load PDF library');
+    if (typeof window.print !== 'function') {
+      if (uiModule) uiModule.showError('Browser printing is unavailable.');
       return;
     }
     const lang = document.getElementById('doc-language-select')?.value || '';
     const text = textarea.value || '';
-    // Render content as HTML for PDF
+    // Render content as HTML for the browser print dialog.
     let html;
-    if (lang === 'markdown' && markdownModule?.mdToHtml) {
+    if (_isRichTextLang(lang)) {
+      html = text;
+    } else if (_isDocxLang(lang)) {
+      html = document.querySelector('#doc-docx-preview .doc-docx-paper')?.innerHTML ||
+        '<pre style="white-space:pre-wrap">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+    } else if (lang === 'markdown' && markdownModule?.mdToHtml) {
       html = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
       html = '<pre style="white-space:pre-wrap;font-size:11px;font-family:monospace;color:#000;background:#fff;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
     }
-    const container = document.createElement('div');
-    container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
-    container.innerHTML = html;
-    // This container is detached, so the document-scoped flush mdToHtml
-    // schedules never sees it. Typeset the deferred math before html2pdf
-    // rasterises, or the PDF gets raw formula source. renderMath() returns
-    // immediately, without loading KaTeX, when there is nothing pending.
-    await markdownModule.renderMath(container);
-    const baseName = _getExportBaseName();
-    window.html2pdf().set({
-      margin: 10,
-      filename: baseName + '.pdf',
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    }).from(container).save();
-    if (uiModule) uiModule.showToast('Exporting PDF...');
+    // Use a sandboxed same-origin frame: rich text can render, but scripts,
+    // event handlers and embedded plugins cannot execute in the print view.
+    document.getElementById('doc-browser-print-frame')?.remove();
+    const frame = document.createElement('iframe');
+    frame.id = 'doc-browser-print-frame';
+    frame.title = 'Document print view';
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+    frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:800px;height:600px;border:0;';
+    document.body.appendChild(frame);
+    try {
+      const printDoc = frame.contentDocument;
+      printDoc.open();
+      printDoc.write('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>');
+      printDoc.close();
+      printDoc.title = _getExportBaseName();
+      const container = printDoc.createElement('div');
+      container.style.cssText = 'padding:20px;font-family:sans-serif;font-size:12px;color:#000;background:#fff;line-height:1.6;';
+      container.innerHTML = html;
+      if (_isRichTextLang(lang)) {
+        const style = printDoc.createElement('style');
+        style.textContent = _richTextExportCss();
+        container.prepend(style);
+      }
+      // Typeset deferred math before copying it into the print document.
+      await markdownModule.renderMath(container);
+      const styles = [];
+      document.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
+        if (!link.href.includes('/katex/')) return;
+        const copy = printDoc.createElement('link');
+        copy.rel = 'stylesheet';
+        copy.href = link.href;
+        styles.push(new Promise((resolve, reject) => {
+          copy.onload = resolve;
+          copy.onerror = () => reject(new Error('Math styles could not be loaded'));
+        }));
+        printDoc.head.appendChild(copy);
+      });
+      const printStyle = printDoc.createElement('style');
+      printStyle.textContent = '@page { margin: 10mm; } body { margin: 0; } img { max-width: 100%; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }';
+      printDoc.head.appendChild(printStyle);
+      printDoc.body.appendChild(printDoc.importNode(container, true));
+      await Promise.all(styles);
+      await printDoc.fonts.ready;
+      await Promise.all(Array.from(printDoc.images, img => img.decode().catch(() => {})));
+      frame.contentWindow.addEventListener('afterprint', () => frame.remove(), { once: true });
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (error) {
+      frame.remove();
+      if (uiModule) uiModule.showError('Could not open browser print: ' + (error.message || error));
+    }
+  }
+
+  function _docxHexColor(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    const named = {
+      black: '000000', white: 'FFFFFF', red: 'FF0000', orange: 'FFA500', yellow: 'FFFF00',
+      green: '008000', blue: '0000FF', purple: '800080', gray: '808080', grey: '808080',
+    };
+    if (named[raw]) return named[raw];
+    const short = raw.match(/^#([0-9a-f]{3})$/i);
+    if (short) return short[1].split('').map(part => part + part).join('').toUpperCase();
+    const hex = raw.match(/^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i);
+    if (hex) return hex[1].toUpperCase();
+    const rgb = raw.match(/^rgba?\(\s*(\d+)\D+(\d+)\D+(\d+)/i);
+    if (!rgb) return '';
+    return rgb.slice(1, 4)
+      .map(part => Math.max(0, Math.min(255, Number(part))).toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase();
+  }
+
+  function _docxInlineStyle(element, inherited = {}) {
+    const next = { ...inherited };
+    const tag = element?.tagName || '';
+    if (tag === 'B' || tag === 'STRONG') next.bold = true;
+    if (tag === 'I' || tag === 'EM') next.italics = true;
+    if (tag === 'U') next.underline = true;
+    if (tag === 'S' || tag === 'STRIKE' || tag === 'DEL') next.strike = true;
+    if (tag === 'SUP') { next.superScript = true; delete next.subScript; }
+    if (tag === 'SUB') { next.subScript = true; delete next.superScript; }
+    if (tag === 'CODE') {
+      next.font = 'Consolas';
+      next.shading = 'F3F4F6';
+    }
+    const style = element?.style;
+    if (style) {
+      const weight = String(style.fontWeight || '').toLowerCase();
+      if (weight === 'bold' || Number(weight) >= 600) next.bold = true;
+      if (style.fontStyle === 'italic') next.italics = true;
+      const decoration = String(style.textDecoration || style.textDecorationLine || '').toLowerCase();
+      if (decoration.includes('underline')) next.underline = true;
+      if (decoration.includes('line-through')) next.strike = true;
+      const color = _docxHexColor(style.color);
+      if (color) next.color = color;
+      const shading = _docxHexColor(style.backgroundColor);
+      if (shading) next.shading = shading;
+      if (style.fontFamily) next.font = style.fontFamily.split(',')[0].replace(/["']/g, '').trim();
+      const size = String(style.fontSize || '').match(/^([\d.]+)(px|pt)$/i);
+      if (size) next.size = Math.max(12, Math.round(Number(size[1]) * (size[2].toLowerCase() === 'px' ? 1.5 : 2)));
+    }
+    if (tag === 'FONT') {
+      const color = _docxHexColor(element.getAttribute('color'));
+      if (color) next.color = color;
+      if (element.getAttribute('face')) next.font = element.getAttribute('face').split(',')[0].trim();
+      const sizes = { '1': 16, '2': 20, '3': 24, '4': 28, '5': 36, '6': 48, '7': 56 };
+      if (sizes[element.getAttribute('size')]) next.size = sizes[element.getAttribute('size')];
+    }
+    return next;
+  }
+
+  function _docxTextRuns(text, style, docx) {
+    const value = String(text || '').replace(/\u200b/g, '');
+    if (!value) return [];
+    const parts = value.split('\n');
+    return parts.map((part, index) => {
+      const options = { text: part };
+      if (index) options.break = 1;
+      if (style.bold) options.bold = true;
+      if (style.italics) options.italics = true;
+      if (style.underline) options.underline = { type: docx.UnderlineType.SINGLE };
+      if (style.strike) options.strike = true;
+      if (style.superScript) options.superScript = true;
+      if (style.subScript) options.subScript = true;
+      if (style.font) options.font = style.font;
+      if (style.size) options.size = style.size;
+      if (style.color) options.color = style.color;
+      if (style.shading) options.shading = { type: docx.ShadingType.CLEAR, fill: style.shading };
+      return new docx.TextRun(options);
+    });
+  }
+
+  function _docxImageFallbackRun(image, docx) {
+    const label = (image?.getAttribute?.('alt') || '').trim();
+    return new docx.TextRun({
+      text: label ? `[Image: ${label}]` : '[Image]',
+      italics: true,
+      color: '6B7280',
+    });
+  }
+
+  function _docxImageWidth(image, naturalWidth) {
+    const pageWidth = 624;
+    const classWidths = {
+      'richtext-image-size-100': pageWidth,
+      'richtext-image-size-60': Math.round(pageWidth * 0.6),
+      'richtext-image-size-35': Math.round(pageWidth * 0.35),
+    };
+    for (const [className, width] of Object.entries(classWidths)) {
+      if (image.classList.contains(className)) return width;
+    }
+    const styleWidth = String(image.style?.width || '').trim().match(/^([\d.]+)(px|%)$/i);
+    if (styleWidth) {
+      const value = Number(styleWidth[1]);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.max(1, Math.round(styleWidth[2] === '%' ? pageWidth * value / 100 : Math.min(pageWidth, value)));
+      }
+    }
+    return Math.max(1, Math.min(pageWidth, Math.round(naturalWidth || pageWidth)));
+  }
+
+  function _docxImageAlignment(image, docx) {
+    if (image?.classList?.contains('richtext-image-align-center')) return docx.AlignmentType.CENTER;
+    if (image?.classList?.contains('richtext-image-align-right')) return docx.AlignmentType.RIGHT;
+    return docx.AlignmentType.LEFT;
+  }
+
+  async function _docxImagePngData(image) {
+    const src = image?.getAttribute?.('src') || '';
+    if (!src) throw new Error('Image has no source');
+    const response = await fetch(src, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`Image request failed (${response.status})`);
+    const blob = await response.blob();
+    let drawable;
+    let cleanup = () => {};
+    if (typeof createImageBitmap === 'function') {
+      drawable = await createImageBitmap(blob);
+      cleanup = () => drawable.close?.();
+    } else {
+      const objectUrl = URL.createObjectURL(blob);
+      cleanup = () => URL.revokeObjectURL(objectUrl);
+      try {
+        drawable = await new Promise((resolve, reject) => {
+          const loaded = new Image();
+          loaded.onload = () => resolve(loaded);
+          loaded.onerror = () => reject(new Error('Image could not be decoded'));
+          loaded.src = objectUrl;
+        });
+      } catch (error) {
+        cleanup();
+        throw error;
+      }
+    }
+    try {
+      const naturalWidth = drawable.width || drawable.naturalWidth || 1;
+      const naturalHeight = drawable.height || drawable.naturalHeight || 1;
+      const rasterScale = Math.min(1, 2400 / Math.max(naturalWidth, naturalHeight));
+      const rasterWidth = Math.max(1, Math.round(naturalWidth * rasterScale));
+      const rasterHeight = Math.max(1, Math.round(naturalHeight * rasterScale));
+      const canvas = document.createElement('canvas');
+      canvas.width = rasterWidth;
+      canvas.height = rasterHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Canvas is unavailable');
+      context.drawImage(drawable, 0, 0, rasterWidth, rasterHeight);
+      const png = await new Promise((resolve, reject) => {
+        canvas.toBlob(result => result ? resolve(result) : reject(new Error('PNG conversion failed')), 'image/png');
+      });
+      return { data: new Uint8Array(await png.arrayBuffer()), naturalWidth, naturalHeight };
+    } finally {
+      cleanup();
+    }
+  }
+
+  async function _docxPrepareImages(root, docx) {
+    const prepared = new Map();
+    const images = Array.from(root.querySelectorAll('img'));
+    await Promise.all(images.map(async (image, index) => {
+      try {
+        const source = await _docxImagePngData(image);
+        const width = _docxImageWidth(image, source.naturalWidth);
+        const height = Math.max(1, Math.round(width * source.naturalHeight / source.naturalWidth));
+        const description = (image.getAttribute('alt') || '').trim();
+        prepared.set(image, {
+          data: source.data,
+          transformation: { width, height },
+          altText: {
+            name: `Document image ${index + 1}`,
+            title: description || `Image ${index + 1}`,
+            description,
+          },
+        });
+      } catch (error) {
+        console.warn('Could not include image in Word export:', image.getAttribute('src') || '', error);
+      }
+    }));
+    return prepared;
+  }
+
+  function _docxInlineChildren(nodes, docx, inherited = {}, preparedImages = new Map()) {
+    const children = [];
+    Array.from(nodes || []).forEach(node => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        children.push(..._docxTextRuns(node.nodeValue, inherited, docx));
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.tagName === 'BR') {
+        children.push(new docx.TextRun({ text: '', break: 1 }));
+        return;
+      }
+      if (node.tagName === 'IMG') {
+        const imageOptions = preparedImages.get(node);
+        children.push(imageOptions ? new docx.ImageRun(imageOptions) : _docxImageFallbackRun(node, docx));
+        return;
+      }
+      const style = _docxInlineStyle(node, inherited);
+      const nested = _docxInlineChildren(node.childNodes, docx, style, preparedImages);
+      if (node.tagName === 'A' && node.getAttribute('href') && nested.length) {
+        children.push(new docx.ExternalHyperlink({ link: node.getAttribute('href'), children: nested }));
+      } else {
+        children.push(...nested);
+      }
+    });
+    return children;
+  }
+
+  function _docxParagraphOptions(element, docx) {
+    const options = {};
+    const heading = {
+      H1: docx.HeadingLevel.HEADING_1, H2: docx.HeadingLevel.HEADING_2,
+      H3: docx.HeadingLevel.HEADING_3, H4: docx.HeadingLevel.HEADING_4,
+      H5: docx.HeadingLevel.HEADING_5, H6: docx.HeadingLevel.HEADING_6,
+    }[element?.tagName];
+    if (heading) options.heading = heading;
+    const alignment = String(element?.style?.textAlign || element?.getAttribute?.('align') || '').toLowerCase();
+    const alignments = {
+      left: docx.AlignmentType.LEFT, center: docx.AlignmentType.CENTER,
+      right: docx.AlignmentType.RIGHT, justify: docx.AlignmentType.JUSTIFIED,
+    };
+    if (alignments[alignment]) options.alignment = alignments[alignment];
+    const lineHeight = Number.parseFloat(element?.style?.lineHeight || '');
+    options.spacing = { after: 120 };
+    if (Number.isFinite(lineHeight)) options.spacing.line = Math.round(240 * lineHeight);
+    if (element?.tagName === 'BLOCKQUOTE') options.indent = { left: 720 };
+    if (element?.tagName === 'PRE') {
+      options.shading = { type: docx.ShadingType.CLEAR, fill: 'F5F6F8' };
+      options.spacing.before = 120;
+    }
+    const image = element?.tagName === 'IMG'
+      ? element
+      : (!(element?.textContent || '').trim() ? element?.querySelector?.('img.richtext-image, img') : null);
+    if (image) options.alignment = _docxImageAlignment(image, docx);
+    return options;
+  }
+
+  function _docxParagraphFromElement(element, docx, extra = {}, preparedImages = new Map()) {
+    let children;
+    if (element.tagName === 'PRE') {
+      children = _docxTextRuns(element.textContent || '', { font: 'Consolas', size: 20 }, docx);
+    } else if (element.tagName === 'IMG') {
+      children = _docxInlineChildren([element], docx, {}, preparedImages);
+    } else {
+      const inlineNodes = Array.from(element.childNodes).filter(node => {
+        return node.nodeType !== Node.ELEMENT_NODE || !['UL', 'OL', 'TABLE'].includes(node.tagName);
+      });
+      children = _docxInlineChildren(inlineNodes, docx, {}, preparedImages);
+    }
+    return new docx.Paragraph({ ..._docxParagraphOptions(element, docx), ...extra, children });
+  }
+
+  function _docxListBlocks(list, docx, level = 0, preparedImages = new Map()) {
+    const blocks = [];
+    const checklist = list.classList.contains('rich-checklist');
+    Array.from(list.children).filter(item => item.tagName === 'LI').forEach(item => {
+      const inlineNodes = Array.from(item.childNodes).filter(node => {
+        return node.nodeType !== Node.ELEMENT_NODE || (node.tagName !== 'UL' && node.tagName !== 'OL');
+      });
+      const children = _docxInlineChildren(inlineNodes, docx, {}, preparedImages);
+      const extra = checklist
+        ? { indent: { left: 720 + level * 360, hanging: 300 } }
+        : list.tagName === 'OL'
+          ? { numbering: { reference: 'rich-numbered-list', level: Math.min(5, level) } }
+          : { bullet: { level: Math.min(5, level) } };
+      if (checklist) {
+        children.unshift(new docx.TextRun({ text: item.dataset.checked === 'true' ? '[x] ' : '[ ] ', bold: true }));
+      }
+      blocks.push(new docx.Paragraph({ ...extra, spacing: { after: 60 }, children }));
+      Array.from(item.children).filter(child => child.tagName === 'UL' || child.tagName === 'OL')
+        .forEach(child => blocks.push(..._docxListBlocks(child, docx, level + 1, preparedImages)));
+    });
+    return blocks;
+  }
+
+  function _docxTableBlock(table, docx, preparedImages = new Map()) {
+    const rows = Array.from(table.rows).map(row => {
+      const tableHeader = Array.from(row.cells).every(cell => cell.tagName === 'TH');
+      const cells = Array.from(row.cells).map(cell => {
+        const hasBlockChildren = Array.from(cell.children).some(child => {
+          return /^(P|DIV|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE|HR)$/.test(child.tagName);
+        });
+        let children = cell.tagName === 'TH' && !hasBlockChildren
+          ? [new docx.Paragraph({ children: _docxInlineChildren(cell.childNodes, docx, { bold: true }, preparedImages) })]
+          : _docxBlocksFromNodes(cell.childNodes, docx, preparedImages);
+        if (!children.length) children = [new docx.Paragraph({})];
+        const options = { children };
+        if (cell.colSpan > 1) options.columnSpan = cell.colSpan;
+        if (cell.rowSpan > 1) options.rowSpan = cell.rowSpan;
+        const verticalAlignment = String(cell.style.verticalAlign || '').toLowerCase();
+        const docxVerticalAlignment = {
+          top: docx.VerticalAlign?.TOP,
+          middle: docx.VerticalAlign?.CENTER,
+          bottom: docx.VerticalAlign?.BOTTOM,
+        }[verticalAlignment];
+        if (docxVerticalAlignment) options.verticalAlign = docxVerticalAlignment;
+        if (cell.tagName === 'TH') {
+          options.shading = { type: docx.ShadingType.CLEAR, fill: 'F1F3F5' };
+        }
+        return new docx.TableCell(options);
+      });
+      return new docx.TableRow({ children: cells, tableHeader });
+    });
+    return new docx.Table({
+      rows,
+      width: { size: 100, type: docx.WidthType.PERCENTAGE },
+      margins: { top: 80, bottom: 80, left: 100, right: 100 },
+    });
+  }
+
+  function _docxFigureBlocks(figure, docx, preparedImages = new Map()) {
+    const image = figure.querySelector(':scope > img, :scope > picture img');
+    if (!image) return [];
+    const blocks = [new docx.Paragraph({
+      alignment: _docxImageAlignment(image, docx),
+      children: _docxInlineChildren([image], docx, {}, preparedImages),
+    })];
+    const caption = figure.querySelector(':scope > .richtext-image-caption, :scope > figcaption');
+    if (caption?.textContent?.trim()) {
+      blocks.push(new docx.Paragraph({
+        alignment: _docxImageAlignment(image, docx),
+        spacing: { before: 60, after: 120 },
+        children: _docxInlineChildren(caption.childNodes, docx, {
+          italics: true,
+          color: '6B7280',
+          size: 18,
+        }, preparedImages),
+      }));
+    }
+    return blocks;
+  }
+
+  function _docxBlocksFromNodes(nodes, docx, preparedImages = new Map()) {
+    const blocks = [];
+    Array.from(nodes || []).forEach(node => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.nodeValue.trim()) {
+          blocks.push(new docx.Paragraph({ children: _docxTextRuns(node.nodeValue, {}, docx) }));
+        }
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.tagName === 'UL' || node.tagName === 'OL') {
+        blocks.push(..._docxListBlocks(node, docx, 0, preparedImages));
+      } else if (node.tagName === 'FIGURE' && node.classList.contains('richtext-image')) {
+        blocks.push(..._docxFigureBlocks(node, docx, preparedImages));
+      } else if (node.tagName === 'TABLE') {
+        blocks.push(_docxTableBlock(node, docx, preparedImages));
+      } else if (node.tagName === 'HR') {
+        blocks.push(node.classList.contains('richtext-page-break')
+          ? new docx.Paragraph({ children: [new docx.PageBreak()] })
+          : new docx.Paragraph({ thematicBreak: true }));
+      } else if (node.tagName === 'DIV' && Array.from(node.children).some(child => {
+        return /^(P|DIV|H[1-6]|UL|OL|BLOCKQUOTE|PRE|TABLE|HR)$/.test(child.tagName);
+      })) {
+        blocks.push(..._docxBlocksFromNodes(node.childNodes, docx, preparedImages));
+      } else {
+        blocks.push(_docxParagraphFromElement(node, docx, {}, preparedImages));
+      }
+    });
+    return blocks;
+  }
+
+  async function _richTextToDocxChildren(html, docx) {
+    const template = document.createElement('template');
+    template.innerHTML = _richTextContentToHtml(html);
+    const preparedImages = await _docxPrepareImages(template.content, docx);
+    return _docxBlocksFromNodes(template.content.childNodes, docx, preparedImages);
+  }
+
+  function _markdownToDocxChildren(text, docx) {
+    return String(text || '').split('\n').map(line => {
+      const heading = line.match(/^(#{1,6})\s+(.+)/);
+      if (heading) {
+        return new docx.Paragraph({
+          text: heading[2],
+          heading: docx.HeadingLevel[`HEADING_${heading[1].length}`],
+        });
+      }
+      const runs = [];
+      const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/);
+      for (const part of parts) {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          runs.push(new docx.TextRun({ text: part.slice(2, -2), bold: true }));
+        } else if (part.startsWith('*') && part.endsWith('*')) {
+          runs.push(new docx.TextRun({ text: part.slice(1, -1), italics: true }));
+        } else {
+          runs.push(new docx.TextRun(part));
+        }
+      }
+      return new docx.Paragraph({ children: runs });
+    });
+  }
+
+  function _richDocxNumbering(docx) {
+    return {
+      config: [{
+        reference: 'rich-numbered-list',
+        levels: Array.from({ length: 6 }, (_, level) => ({
+          level,
+          format: docx.NumberFormat.DECIMAL,
+          text: `%${level + 1}.`,
+          alignment: docx.AlignmentType.START,
+          style: { paragraph: { indent: { left: 720 + level * 360, hanging: 300 } } },
+        })),
+      }],
+    };
   }
 
   async function exportAsDocx() {
@@ -9764,35 +15937,21 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (uiModule) uiModule.showError('Failed to load DOCX library');
       return;
     }
-    const text = textarea.value || '';
-    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
-    // Parse text into paragraphs, handle markdown headings
-    const paragraphs = text.split('\n').map(line => {
-      const h1 = line.match(/^# (.+)/);
-      const h2 = line.match(/^## (.+)/);
-      const h3 = line.match(/^### (.+)/);
-      if (h1) return new Paragraph({ text: h1[1], heading: HeadingLevel.HEADING_1 });
-      if (h2) return new Paragraph({ text: h2[1], heading: HeadingLevel.HEADING_2 });
-      if (h3) return new Paragraph({ text: h3[1], heading: HeadingLevel.HEADING_3 });
-      // Handle bold/italic
-      const runs = [];
-      const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/);
-      for (const part of parts) {
-        if (part.startsWith('**') && part.endsWith('**')) {
-          runs.push(new TextRun({ text: part.slice(2, -2), bold: true }));
-        } else if (part.startsWith('*') && part.endsWith('*')) {
-          runs.push(new TextRun({ text: part.slice(1, -1), italics: true }));
-        } else {
-          runs.push(new TextRun(part));
-        }
-      }
-      return new Paragraph({ children: runs });
+    // PDF/DOCX documents carry an internal upload pointer for their native
+    // preview. It is useful to the app, but should never appear in a
+    // converted editable Word file.
+    const text = (textarea.value || '')
+      .replace(/^\s*<!--\s*(?:pdf|pdf_form|docx)_source\s+upload_id="[^"]+"\s*-->\s*/i, '')
+      .replace(/^\s*<!--\s*docx_source\s+upload_id="[^"]+"\s*-->\s*/i, '');
+    const lang = document.getElementById('doc-language-select')?.value || '';
+    const children = _isRichTextLang(lang)
+      ? await _richTextToDocxChildren(text, window.docx)
+      : _markdownToDocxChildren(text, window.docx);
+    const doc = new window.docx.Document({
+      numbering: _richDocxNumbering(window.docx),
+      sections: [{ children }],
     });
-
-    const doc = new Document({
-      sections: [{ children: paragraphs }],
-    });
-    const blob = await Packer.toBlob(doc);
+    const blob = await window.docx.Packer.toBlob(doc);
     const baseName = _getExportBaseName();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -9800,6 +15959,81 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     a.click();
     URL.revokeObjectURL(a.href);
     if (uiModule) uiModule.showToast('Exported as DOCX');
+  }
+
+  async function convertOriginalDocument(target) {
+    if (!activeDocId) return;
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/document/${encodeURIComponent(activeDocId)}/convert-original/${target}`,
+        { credentials: 'same-origin' },
+      );
+      if (!response.ok) {
+        let message = `Conversion failed (HTTP ${response.status})`;
+        try {
+          const data = await response.json();
+          if (data?.detail) message = data.detail;
+        } catch (_) {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = match?.[1] || `${_getExportBaseName()}.${target}`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (uiModule) uiModule.showToast(`Converted original file to ${target.toUpperCase()}`);
+    } catch (error) {
+      if (uiModule) uiModule.showError(error.message || String(error));
+    }
+  }
+
+  async function convertOriginalToPdfForSigning() {
+    if (!activeDocId) return;
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/document/${encodeURIComponent(activeDocId)}/convert-original/pdf`,
+        { credentials: 'same-origin' },
+      );
+      if (!response.ok) {
+        let message = `Conversion failed (HTTP ${response.status})`;
+        try {
+          const data = await response.json();
+          if (data?.detail) message = data.detail;
+        } catch (_) {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const source = docs.get(activeDocId);
+      const name = `${source?.title || 'document'}.pdf`;
+      const file = new File([blob], name, { type: 'application/pdf' });
+      const form = new FormData();
+      form.append('file', file);
+      const sessionId = (sessionModule?.getCurrentSessionId?.() || _lastSessionId || '');
+      if (sessionId) form.append('session_id', sessionId);
+      const imported = await fetch(`${API_BASE}/api/documents/import-pdf`, {
+        method: 'POST',
+        body: form,
+        credentials: 'same-origin',
+      });
+      const payload = await imported.json().catch(() => ({}));
+      if (!imported.ok) throw new Error(payload.detail || 'Could not open converted PDF');
+      const docId = payload.doc_id || payload.id;
+      if (!docId) throw new Error('Converted PDF did not return a document');
+      const fullResponse = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}`, { credentials: 'same-origin' });
+      const full = fullResponse.ok ? await fullResponse.json() : payload;
+      addDocToTabs(full, full.session_id || sessionId);
+      switchToDoc(full.id || docId);
+      if (uiModule) uiModule.showToast('PDF opened — signature and annotation tools are ready');
+    } catch (error) {
+      if (uiModule) uiModule.showError(error.message || String(error));
+    }
   }
 
   /** Delete the active document */
@@ -9853,7 +16087,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       clearTimeout(tabBar._fsHideTimer);
       tabBar._fsHideTimer = setTimeout(() => {
         tabBar.style.visibility = '';
-      }, 240);
+      }, 100);
     }
 
     if (pane.classList.contains('doc-fullscreen')) {
@@ -9869,15 +16103,43 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   /** Toggle markdown preview */
+  function _installMarkdownPreviewEditButton(preview) {
+    if (!preview || preview.querySelector('.doc-preview-hover-edit')) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'doc-preview-hover-edit';
+    button.title = 'Edit document';
+    button.setAttribute('aria-label', 'Edit document');
+    button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Edit</span>';
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      _setMarkdownPreviewActive(false, { remember: true });
+      requestAnimationFrame(() => document.getElementById('doc-editor-textarea')?.focus());
+    });
+    preview.prepend(button);
+  }
+
   function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     const preview = document.getElementById('doc-md-preview');
     const wrap = document.getElementById('doc-editor-wrap');
     const textarea = document.getElementById('doc-editor-textarea');
+    const emptyImport = document.getElementById('doc-rich-empty-import');
     if (!preview || !wrap || !textarea) return;
 
     if (active) {
+      // The import action belongs to the empty editor, not the preview. Keep
+      // the preview surface to a single Edit action.
+      if (emptyImport) emptyImport.style.display = 'none';
       const md = textarea.value || '';
-      if (markdownModule && markdownModule.mdToHtml) {
+      const richMode = _isRichTextLang(document.getElementById('doc-language-select')?.value || '');
+      if (richMode) {
+        const safe = markdownModule?.sanitizeAllowedHtml
+          ? markdownModule.sanitizeAllowedHtml(md)
+          : md;
+        preview.classList.add('doc-rich-preview');
+        preview.innerHTML = safe || '<p class="doc-rich-preview-empty">No preview yet.</p>';
+      } else if (markdownModule && markdownModule.mdToHtml) {
         preview.innerHTML = markdownModule.mdToHtml(md, { shortcodes: false }); // doc preview: keep :shortcodes: literal
       } else {
         preview.innerHTML = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
@@ -9888,19 +16150,36 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       if (markdownModule && markdownModule.renderMermaid) {
         markdownModule.renderMermaid(preview);
       }
+      _installMarkdownPreviewEditButton(preview);
       preview.style.display = '';
       wrap.style.display = 'none';
+      const rich = document.getElementById('doc-email-richbody');
+      if (richMode && rich) rich.style.display = 'none';
     } else {
       preview.style.display = 'none';
       preview.innerHTML = '';
+      preview.classList.remove('doc-rich-preview');
       const isEmailDoc = docs.get(activeDocId)?.language === 'email';
       const richEmailBody = document.getElementById('doc-email-richbody');
-      if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
+      const currentLang = document.getElementById('doc-language-select')?.value || '';
+      const richMode = _isRichTextLang(currentLang);
+      if (richMode && richEmailBody) {
+        richEmailBody.style.display = '';
+      }
+      if (richMode) {
+        // Rich Text edits through the contenteditable surface; its mirrored
+        // textarea and line-number wrapper must stay hidden when returning
+        // from preview.
+        wrap.style.display = 'none';
+      } else if (!(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
         wrap.style.display = '';
       }
+      _syncRichEmptyImport(richEmailBody);
     }
     if (remember && activeDocId && docs.has(activeDocId)) {
-      docs.get(activeDocId)._markdownPreviewActive = !!active;
+      const currentLang = document.getElementById('doc-language-select')?.value || '';
+      if (_isRichTextLang(currentLang)) docs.get(activeDocId)._richPreviewActive = !!active;
+      else docs.get(activeDocId)._markdownPreviewActive = !!active;
     }
     _syncHeaderActions();
   }
@@ -9908,6 +16187,81 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   function toggleMarkdownPreview() {
     const preview = document.getElementById('doc-md-preview');
     _setMarkdownPreviewActive(!(preview && preview.style.display !== 'none'));
+  }
+
+  function toggleRichTextPreview() {
+    const preview = document.getElementById('doc-md-preview');
+    _setMarkdownPreviewActive(!(preview && preview.style.display !== 'none'));
+  }
+
+  let _docxPreviewRequest = 0;
+  async function _setDocxPreviewActive(active, { remember = true } = {}) {
+    const requestId = ++_docxPreviewRequest;
+    const docId = activeDocId;
+    const isCurrent = () => requestId === _docxPreviewRequest && activeDocId === docId;
+    const preview = document.getElementById('doc-docx-preview');
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (!preview || !wrap) return;
+    if (!active) {
+      preview.style.display = 'none';
+      preview.replaceChildren();
+      wrap.style.display = '';
+      if (remember && activeDocId && docs.has(activeDocId)) docs.get(activeDocId)._docxPreviewActive = false;
+      _syncHeaderActions();
+      return;
+    }
+    preview.style.display = '';
+    wrap.style.display = 'none';
+    preview.innerHTML = '<div class="doc-docx-preview-loading">Loading Word preview…</div>';
+    try {
+      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/render-docx`, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({}));
+      if (!isCurrent()) return;
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      const raw = String(payload.html || '');
+      const safe = markdownModule.sanitizeAllowedHtml
+        ? markdownModule.sanitizeAllowedHtml(raw)
+        : _escHtml(raw);
+      preview.innerHTML = `<article class="doc-docx-paper">${safe || '<p>No preview content.</p>'}</article>`;
+      if (remember && activeDocId && docs.has(activeDocId)) docs.get(activeDocId)._docxPreviewActive = true;
+    } catch (error) {
+      if (!isCurrent()) return;
+      preview.innerHTML = `<div class="doc-docx-preview-error">Could not render Word preview: ${_escHtml(error.message || error)}</div>`;
+    }
+    _syncHeaderActions();
+  }
+
+  function toggleDocxPreview() {
+    const preview = document.getElementById('doc-docx-preview');
+    _setDocxPreviewActive(!(preview && preview.style.display !== 'none'));
+  }
+
+  async function _convertDocxToRichText() {
+    const docId = activeDocId;
+    const doc = docs.get(docId);
+    if (!doc || !_isDocxLang(doc.language)) return;
+    const originalContent = doc.content;
+    try {
+      const response = await fetch(`${API_BASE}/api/document/${encodeURIComponent(docId)}/render-docx`, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({}));
+      // A conversion must not replace another tab, concurrent edits, or a
+      // document that was closed while the server was rendering it.
+      if (activeDocId !== docId || docs.get(docId) !== doc
+          || doc.content !== originalContent || !_isDocxLang(doc.language)) return;
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      const html = String(payload.html || '');
+      if (!html.trim()) throw new Error('The DOCX contained no readable content');
+      doc.content = html;
+      doc.language = 'richtext';
+      doc._docxPreviewActive = false;
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) textarea.value = html;
+      switchToDoc(activeDocId);
+      await saveDocument({ silent: true, forceVersion: true });
+      if (uiModule?.showToast) uiModule.showToast('Converted DOCX to Rich Text');
+    } catch (error) {
+      if (uiModule?.showError) uiModule.showError(`DOCX conversion failed: ${error.message || error}`);
+    }
   }
 
   /** Parse CSV text into a 2D array (handles quoted fields) */
@@ -10063,6 +16417,21 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
   }
 
   /** Toggle inline HTML preview (iframe) */
+  function _themedRenderSrcdoc(code, lang) {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const bg = rootStyle.getPropertyValue('--bg').trim() || '#111';
+    const fg = rootStyle.getPropertyValue('--fg').trim() || '#f5f5f5';
+    const theme = `html,body{margin:0;min-height:100%;background:${bg};color:${fg}}body{box-sizing:border-box;padding:20px}`;
+    const source = String(code || '');
+    if ((lang || '').toLowerCase() === 'svg' || (lang || '').toLowerCase() === 'xml') {
+      return `<!doctype html><html><head><style>${theme}</style></head><body>${source}</body></html>`;
+    }
+    if (/<head\b[^>]*>/i.test(source)) {
+      return source.replace(/(<head\b[^>]*>)/i, `$1<style>${theme}</style>`);
+    }
+    return `<style>${theme}</style>${source}`;
+  }
+
   function toggleHtmlPreview() {
     const iframe = document.getElementById('doc-html-preview');
     const wrap = document.getElementById('doc-editor-wrap');
@@ -10074,7 +16443,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       const mdPreview = document.getElementById('doc-md-preview');
       if (mdPreview) mdPreview.style.display = 'none';
       const code = textarea.value || '';
-      iframe.srcdoc = code;
+      const lang = document.getElementById('doc-language-select')?.value || '';
+      iframe.srcdoc = _themedRenderSrcdoc(code, lang);
       iframe.style.display = '';
       wrap.style.display = 'none';
       _htmlPreviewActive = true;
@@ -10360,6 +16730,8 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     _syncDocIndicator();
 
     if (!isOpen) openPanel();
+    // A previous SVG preview must not hide the next document's live code.
+    exitHtmlPreview();
 
     // Force doc button visible
     const toggleBtn = document.getElementById('overflow-doc-btn');
@@ -10381,7 +16753,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (textarea) {
       textarea.disabled = false;
-      textarea.placeholder = 'Document content...';
+      _syncEditorPlaceholder();
       textarea.value = '';
     }
     // Show streaming indicator
@@ -10404,6 +16776,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   /** Simulate streaming effect for doc edits */
   let _editAnimFrame = null;
+
   function _animateDocEdit(textarea, newContent) {
     if (_editAnimFrame) cancelAnimationFrame(_editAnimFrame);
     const indicator = document.getElementById('doc-stream-indicator');
@@ -10520,6 +16893,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
    *  Returns the old _streamDocId so handleDocUpdate can migrate temp→real. */
   export function streamDocFinalize() {
     const oldId = _streamDocId;
+    if (!oldId) return null;
     const finishingDoc = oldId ? docs.get(oldId) : null;
     if (oldId === activeDocId && (finishingDoc?.language || '').toLowerCase() === 'email') {
       const fields = _parseEmailHeader(finishingDoc.content || '');
@@ -10588,7 +16962,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // the previously-active doc here, so exitDiffMode(true) restores and saves
     // THAT doc before we reassign activeDocId below — mirroring switchToDoc()
     // and enterDiffMode().
-    if (_diffModeActive) exitDiffMode(true);
+    if (_diffModeActive) exitDiffMode(true, { persist: data.doc_id !== activeDocId });
     let docId = data.doc_id;
     let newContent = data.content || '';
 
@@ -10737,7 +17111,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     // Re-enable editor if it was in empty state
     if (textarea) {
       textarea.disabled = false;
-      textarea.placeholder = 'Document content...';
+      _syncEditorPlaceholder();
     }
     if (badge) badge.textContent = `v${data.version || 1}`;
     if (data.title && titleInput) titleInput.value = data.title;
@@ -10746,26 +17120,23 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (docLang && langSelect) langSelect.value = docLang;
     if (!docLang) attemptAutoDetect();
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
+    const isRichTextUpdate = _isRichTextLang(docLang);
     const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
 
-    // Animate content update for edits; apply directly for creates/streaming
-    const isEdit = !isEmailUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
-    if (isEdit && textarea) {
-      // Count changed lines to decide between animation and diff mode
-      const oldLines = oldContent.split('\n');
-      const newLines = newContent.split('\n');
-      let changedLines = 0;
-      const maxLen = Math.max(oldLines.length, newLines.length);
-      for (let li = 0; li < maxLen; li++) {
-        if (oldLines[li] !== newLines[li]) changedLines++;
-      }
-      if (changedLines >= DIFF_MODE_THRESHOLD) {
-        if (markdownPreviewWasVisible) _setMarkdownPreviewActive(false, { remember: false });
-        enterDiffMode(oldContent, newContent);
-      } else if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
-        // Preview is the visible surface, so refresh it instead of animating a hidden editor.
+    // The server has already saved doc_update. Show its current content now;
+    // a temporary diff or typing animation makes a completed edit look pending.
+    const isEdit = !isEmailUpdate && !isRichTextUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
+    const updatedDocForRichText = isRichTextUpdate ? docs.get(docId) : null;
+    if (isRichTextUpdate && updatedDocForRichText) {
+      _showRichTextEditor(updatedDocForRichText);
+    } else if (isEdit && textarea) {
+      // This event reports an already-saved edit. Do not turn it into a
+      // pending accept/reject diff that can later restore the old content.
+      if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
+        // Keep the visible preview synchronized with the saved document.
       } else {
-        _animateDocEdit(textarea, newContent);
+        textarea.value = newContent;
+        syncHighlighting();
       }
     } else {
       if (isEmailUpdate) {
@@ -10785,7 +17156,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
     // Flash the editor wrap to indicate content was updated
     const wrap = document.getElementById('doc-editor-wrap');
-    if (wrap && !isEdit) {
+    if (wrap) {
       wrap.classList.remove('doc-updated-flash');
       void wrap.offsetWidth; // force reflow
       wrap.classList.add('doc-updated-flash');
@@ -10812,7 +17183,18 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     if (mdToolbar) mdToolbar.style.display = '';
     // Auto-show table view for CSV after streaming
     const finalLangLower = (finalLang || '').toLowerCase();
-    if (finalLangLower === 'csv') {
+    if (finalLangLower === 'svg') {
+      requestAnimationFrame(() => {
+        if (activeDocId !== docId || !isOpen) return;
+        // Idempotent: doc_update and the tool-output fallback may both arrive.
+        // SVG uses the existing sandboxed preview, never the server code runner.
+        if (!_htmlPreviewActive) toggleHtmlPreview();
+        else {
+          const iframe = document.getElementById('doc-html-preview');
+          if (iframe) iframe.srcdoc = _themedRenderSrcdoc(docs.get(docId)?.content || '', 'svg');
+        }
+      });
+    } else if (finalLangLower === 'csv') {
       requestAnimationFrame(() => {
         const csvPreview = document.getElementById('doc-csv-preview');
         if (csvPreview && csvPreview.style.display === 'none') toggleCsvPreview();
@@ -11135,13 +17517,39 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
     return activeDocId;
   }
 
+  export function getChatDocumentId() {
+    // A minimized document remains the document linked to this conversation.
+    // On mobile, minimizing the sheet is the only way to reach the composer;
+    // treating that layout action as unlinking erased the document exactly
+    // when the user tried to say "edit this". A real tab close clears
+    // `_minimizedDocId` and removes the document from `docs`.
+    const pane = document.getElementById('doc-editor-pane');
+    const style = pane ? window.getComputedStyle(pane) : null;
+    const visiblyOpen = !!(
+      activeDocId
+      && pane?.isConnected
+      && !(Modals.isRegistered('doc-panel') && Modals.isMinimized('doc-panel'))
+      && style?.display !== 'none'
+      && style?.visibility !== 'hidden'
+      && style?.opacity !== '0'
+    );
+    const minimizedId = (
+      Modals.isRegistered('doc-panel')
+      && Modals.isMinimized('doc-panel')
+      && _minimizedDocId
+    ) ? _minimizedDocId : null;
+    const id = visiblyOpen ? activeDocId : minimizedId;
+    return id && docs.has(id) ? id : null;
+  }
+
   export function getActiveEmailComposerContext() {
-    if (!activeDocId) return null;
-    const doc = docs.get(activeDocId);
+    const docId = getChatDocumentId();
+    if (!docId) return null;
+    const doc = docs.get(docId);
     if (!doc || doc.language !== 'email') return null;
     const fields = _parseEmailHeader(doc.content || '');
     return {
-      docId: activeDocId,
+      docId,
       sourceUid: fields.sourceUid || '',
       sourceFolder: fields.sourceFolder || 'INBOX',
       inReplyTo: fields.inReplyTo || '',
@@ -11179,6 +17587,8 @@ const documentModule = {
   injectFreshDoc,
   replaceEmailReplyBody,
   ensureEmailDraftEnvelope,
+  openEmailDraft,
+  generateEmailReply,
   ensurePaneMounted: _ensureDocPaneMounted,
   loadSessionDocs,
   ensureDocPanel,
@@ -11193,9 +17603,14 @@ const documentModule = {
   exitDiffMode,
   isDiffModeActive,
   getCurrentDocId,
+  getChatDocumentId,
   getActiveEmailComposerContext,
+  focusEmailReplyBody,
+  moveActiveDocumentToCurrentChat,
+  moveActiveDocumentToNewChat,
   findEmailDocId,
   getSelectionContext,
+  restoreSelectionReference,
   clearSelection,
   clearAll,
   openLibrary,

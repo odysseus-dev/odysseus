@@ -184,6 +184,7 @@ export function enable(containerId, itemSelector, options = {}) {
   let _touchItem = null;
 
   function onTouchStart(e) {
+    if (_pointerId !== null) return;
     // Don't start on buttons/inputs.
     if (e.target.closest('button, input, select, a')) return;
     // Respect handleSelector on touch too — long-press anywhere was
@@ -240,7 +241,68 @@ export function enable(containerId, itemSelector, options = {}) {
     }
   }
 
+  // Modern mobile browsers expose touch as pointer events. Use pointer
+  // capture for pen input so a reorder continues even when the row becomes
+  // absolutely positioned or the pen leaves its original handle. Finger
+  // gestures stay on the touch path below because browsers may cancel a
+  // synthetic pointer stream while preserving touch events.
+  let _pointerId = null;
+  function onPointerDown(e) {
+    if (e.pointerType !== 'pen') return;
+    if (_touchTimer || draggedEl) return;
+    if (e.target.closest('button, input, select, a')) return;
+    if (config.handleSelector && !e.target.closest(config.handleSelector)) return;
+    const item = e.target.closest(itemSelector);
+    if (!item || !container.contains(item)) return;
+    if (config.excludeSelector && item.matches(config.excludeSelector)) return;
+    _pointerId = e.pointerId;
+    _touchItem = item;
+    _touchStartY = e.clientY;
+    try { container.setPointerCapture(_pointerId); } catch {}
+    _touchTimer = setTimeout(() => {
+      _touchTimer = null;
+      if (!_touchItem) return;
+      if (navigator.vibrate) navigator.vibrate(30);
+      startDrag(_touchStartY, _touchItem);
+      _touchItem.classList.add('touch-dragging');
+    }, 400);
+  }
+
+  function onPointerMove(e) {
+    if (e.pointerId !== _pointerId) return;
+    if (_touchTimer) {
+      if (Math.abs(e.clientY - _touchStartY) > 10) {
+        clearTimeout(_touchTimer);
+        _touchTimer = null;
+        _touchItem = null;
+      }
+      return;
+    }
+    if (draggedEl) {
+      e.preventDefault();
+      moveDrag(e.clientY);
+    }
+  }
+
+  function onPointerEnd(e) {
+    if (e.pointerId !== _pointerId) return;
+    if (_touchTimer) {
+      clearTimeout(_touchTimer);
+      _touchTimer = null;
+      _touchItem = null;
+    } else if (draggedEl) {
+      draggedEl.classList.remove('touch-dragging');
+      endDrag();
+    }
+    try { container.releasePointerCapture(_pointerId); } catch {}
+    _pointerId = null;
+  }
+
   container.addEventListener('mousedown', onMouseDown);
+  container.addEventListener('pointerdown', onPointerDown);
+  container.addEventListener('pointermove', onPointerMove, { passive: false });
+  container.addEventListener('pointerup', onPointerEnd);
+  container.addEventListener('pointercancel', onPointerEnd);
   container.addEventListener('touchstart', onTouchStart, { passive: true });
   container.addEventListener('touchmove', onTouchMove, { passive: false });
   container.addEventListener('touchend', onTouchEnd);
@@ -249,6 +311,10 @@ export function enable(containerId, itemSelector, options = {}) {
   const instance = {
     cleanup: () => {
       container.removeEventListener('mousedown', onMouseDown);
+      container.removeEventListener('pointerdown', onPointerDown);
+      container.removeEventListener('pointermove', onPointerMove);
+      container.removeEventListener('pointerup', onPointerEnd);
+      container.removeEventListener('pointercancel', onPointerEnd);
       container.removeEventListener('touchstart', onTouchStart);
       container.removeEventListener('touchmove', onTouchMove);
       container.removeEventListener('touchend', onTouchEnd);

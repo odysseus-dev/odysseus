@@ -5,8 +5,10 @@ CardDAV contacts integration. Reads from local Radicale, supports
 search and adding new contacts.
 """
 
+import asyncio
 import re
 import logging
+import threading
 import uuid
 import json
 import csv
@@ -19,11 +21,12 @@ from datetime import datetime
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from core.log_safety import redact_url
-from fastapi import APIRouter, Query, Depends, Response, HTTPException
+from fastapi import APIRouter, Query, Depends, Request, Response, HTTPException
 from typing import List, Dict, Optional
 
 from core.middleware import require_admin
 from core.guard_deco import content_type, usage_monitor
+from src.auth_helpers import effective_user
 from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -94,22 +97,37 @@ def _normalize_contact(contact: Dict) -> Dict:
     if not name and emails:
         name = emails[0].split("@")[0]
     address = str(contact.get("address") or "").strip()
-    return {
+    out = {
         "uid": str(contact.get("uid") or uuid.uuid4()),
         "name": name,
         "emails": emails,
         "phones": phones,
         "address": address,
     }
+    owner = str(contact.get("owner") or "").strip()
+    if owner:
+        out["owner"] = owner
+    return out
 
 
-def _load_local_contacts() -> List[Dict]:
+def _contact_visible_to_owner(contact: Dict, owner: Optional[str]) -> bool:
+    owner = str(owner or "").strip()
+    row_owner = str(contact.get("owner") or "").strip()
+    if owner:
+        if row_owner:
+            return row_owner == owner
+        return not owner.startswith("sft_")
+    return True
+
+
+def _load_local_contacts(owner: Optional[str] = None) -> List[Dict]:
     try:
         if not LOCAL_CONTACTS_FILE.exists():
             return []
         data = json.loads(LOCAL_CONTACTS_FILE.read_text(encoding="utf-8"))
         rows = data.get("contacts", data) if isinstance(data, dict) else data
-        return [_normalize_contact(c) for c in (rows or []) if isinstance(c, dict)]
+        contacts = [_normalize_contact(c) for c in (rows or []) if isinstance(c, dict)]
+        return [c for c in contacts if _contact_visible_to_owner(c, owner)]
     except Exception as e:
         logger.error(f"Failed to load local contacts: {e}")
         return []
@@ -120,7 +138,9 @@ def _save_local_contacts(contacts: List[Dict]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     atomic_write_json(str(LOCAL_CONTACTS_FILE), {"contacts": [_normalize_contact(c) for c in contacts]}, indent=2)
     _contact_cache["contacts"] = [_normalize_contact(c) for c in contacts]
+    _contact_cache["by_owner"] = {}
     _contact_cache["fetched_at"] = datetime.utcnow()
+    _contact_cache["failed_at"] = None
 
 
 # ── vCard parsing ──
@@ -265,7 +285,58 @@ def _build_vcard(name: str, email: str, uid: Optional[str] = None,
 
 # ── In-memory cache ──
 
-_contact_cache = {"contacts": [], "fetched_at": None}
+_CONTACT_CACHE_TTL_SECONDS = 60
+_CONTACT_FAILURE_BACKOFF_SECONDS = 120
+_CARDDAV_TIMEOUT = httpx.Timeout(5.0, connect=2.0)
+
+# CardDAV can be unavailable for a while. Keep the UI responsive by serving
+# the last known result (or an empty list on first use) while a single worker
+# attempts a refresh in the background.
+_contact_cache = {
+    "contacts": [],
+    "fetched_at": None,
+    "failed_at": None,
+    "by_owner": {},
+}
+_contact_fetch_lock = threading.Lock()
+
+
+def _cached_contacts(owner_key: str) -> List[Dict]:
+    cached = (_contact_cache.get("by_owner") or {}).get(owner_key) or {}
+    if owner_key and cached:
+        return cached.get("contacts") or []
+    return _contact_cache.get("contacts") or []
+
+
+def _mark_contact_fetch_failure(owner_key: str) -> List[Dict]:
+    now = datetime.utcnow()
+    stale_contacts = _cached_contacts(owner_key)
+    _contact_cache["failed_at"] = now
+    if owner_key:
+        _contact_cache.setdefault("by_owner", {})[owner_key] = {
+            "contacts": stale_contacts,
+            "fetched_at": now,
+        }
+    else:
+        _contact_cache["fetched_at"] = now
+    return stale_contacts
+
+
+def _contact_sync_status() -> Dict[str, str]:
+    """Return a safe, user-facing summary for contact autocomplete clients."""
+    if not _carddav_configured():
+        return {"state": "local", "message": "No contact sync is configured."}
+    if _contact_fetch_lock.locked():
+        return {"state": "syncing", "message": "Syncing contacts..."}
+    failed_at = _contact_cache.get("failed_at")
+    if failed_at:
+        age = (datetime.utcnow() - failed_at).total_seconds()
+        if age < _CONTACT_FAILURE_BACKOFF_SECONDS:
+            return {
+                "state": "unavailable",
+                "message": "Contacts sync is unavailable. Try again later.",
+            }
+    return {"state": "ready", "message": ""}
 
 
 def _abs_url(href: str) -> str:
@@ -307,7 +378,7 @@ def _fetch_via_report(cfg, auth):
             "REPORT", cfg["url"],
             content=_ADDRESSBOOK_QUERY.encode("utf-8"),
             headers={"Content-Type": "application/xml; charset=utf-8", "Depth": "1"},
-            auth=auth, timeout=10,
+            auth=auth, timeout=_CARDDAV_TIMEOUT,
         )
         if r.status_code not in (207, 200):
             return None
@@ -338,19 +409,50 @@ def _fetch_via_report(cfg, auth):
         return None
 
 
-def _fetch_contacts(force=False):
+def _fetch_contacts(force=False, owner: Optional[str] = None):
     """Fetch all contacts. Uses CardDAV when configured, otherwise local JSON."""
-    if not force and _contact_cache["fetched_at"]:
+    owner_key = str(owner or "").strip()
+    by_owner = _contact_cache.setdefault("by_owner", {})
+    if owner_key and not force and owner_key in by_owner:
+        cached = by_owner.get(owner_key) or {}
+        fetched_at = cached.get("fetched_at")
+        if fetched_at:
+            age = (datetime.utcnow() - fetched_at).total_seconds()
+            if age < _CONTACT_CACHE_TTL_SECONDS:
+                return cached.get("contacts") or []
+
+    if not owner_key and not force and _contact_cache["fetched_at"]:
         age = (datetime.utcnow() - _contact_cache["fetched_at"]).total_seconds()
-        if age < 60:
+        if age < _CONTACT_CACHE_TTL_SECONDS:
             return _contact_cache["contacts"]
+
+    failed_at = _contact_cache.get("failed_at")
+    if not force and failed_at:
+        failure_age = (datetime.utcnow() - failed_at).total_seconds()
+        if failure_age < _CONTACT_FAILURE_BACKOFF_SECONDS:
+            return _cached_contacts(owner_key)
+
+    # SFT users must not see the operator's personal/CardDAV contact book.
+    # Their training contacts are seeded as owner-scoped local rows.
+    if owner_key.startswith("sft_"):
+        contacts = _load_local_contacts(owner_key)
+        by_owner[owner_key] = {"contacts": contacts, "fetched_at": datetime.utcnow()}
+        return contacts
 
     cfg = _get_carddav_config()
     if not _carddav_configured(cfg):
-        contacts = _load_local_contacts()
-        _contact_cache["contacts"] = contacts
-        _contact_cache["fetched_at"] = datetime.utcnow()
+        contacts = _load_local_contacts(owner_key or None)
+        if owner_key:
+            by_owner[owner_key] = {"contacts": contacts, "fetched_at": datetime.utcnow()}
+        else:
+            _contact_cache["contacts"] = contacts
+            _contact_cache["fetched_at"] = datetime.utcnow()
         return contacts
+
+    # Do not let a burst of typeahead requests start parallel CardDAV timeouts.
+    # A caller that arrives during a refresh gets the most recent cache instead.
+    if not _contact_fetch_lock.acquire(blocking=False):
+        return _cached_contacts(owner_key)
 
     try:
         cfg["url"] = _carddav_base_url(cfg)
@@ -361,17 +463,23 @@ def _fetch_contacts(force=False):
         contacts = _fetch_via_report(cfg, auth)
         if contacts is None:
             # Fallback: plain GET, concatenated vCards, no hrefs.
-            r = httpx.get(cfg["url"], auth=auth, timeout=10)
+            r = httpx.get(cfg["url"], auth=auth, timeout=_CARDDAV_TIMEOUT)
             if r.status_code != 200:
                 logger.warning(f"CardDAV returned {r.status_code}")
-                return _contact_cache["contacts"]
+                return _mark_contact_fetch_failure(owner_key)
             contacts = _parse_vcards(r.text)
+        fetched_at = datetime.utcnow()
         _contact_cache["contacts"] = contacts
-        _contact_cache["fetched_at"] = datetime.utcnow()
+        _contact_cache["fetched_at"] = fetched_at
+        _contact_cache["failed_at"] = None
+        if owner_key:
+            by_owner[owner_key] = {"contacts": contacts, "fetched_at": fetched_at}
         return contacts
     except Exception as e:
         logger.error(f"Failed to fetch contacts: {e}")
-        return _contact_cache["contacts"]
+        return _mark_contact_fetch_failure(owner_key)
+    finally:
+        _contact_fetch_lock.release()
 
 
 def _resolve_resource_url(uid: str) -> str:
@@ -395,25 +503,31 @@ def _resolve_resource_url(uid: str) -> str:
     return _lookup() or _vcard_url(uid)
 
 
-def _create_contact(name: str, email: str = "", address: str = "", phones: Optional[List[str]] = None) -> bool:
+def _create_contact(name: str, email: str = "", address: str = "", phones: Optional[List[str]] = None, owner: Optional[str] = None) -> bool:
     """Add a new contact via CardDAV or local contacts."""
     email = (email or "").strip()
     phone_list = [str(p or "").strip() for p in (phones or []) if str(p or "").strip()]
     cfg = _get_carddav_config()
-    if not _carddav_configured(cfg):
+    owner_key = str(owner or "").strip()
+    if owner_key.startswith("sft_") or not _carddav_configured(cfg):
         contacts = _load_local_contacts()
         email_l = email.lower()
         for c in contacts:
+            if owner_key and not _contact_visible_to_owner(c, owner_key):
+                continue
             if email_l and email_l in [e.lower() for e in c.get("emails", [])]:
                 return True
             if phone_list and any(p in (c.get("phones") or []) for p in phone_list):
                 return True
-        contacts.append(_normalize_contact({
+        row = {
             "name": name,
             "emails": [email] if email else [],
             "phones": phone_list,
             "address": address,
-        }))
+        }
+        if owner_key:
+            row["owner"] = owner_key
+        contacts.append(_normalize_contact(row))
         _save_local_contacts(contacts)
         return True
 
@@ -651,24 +765,34 @@ def _contacts_to_csv(contacts: List[Dict]) -> str:
     return out.getvalue()
 
 
-def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], address: str = "") -> bool:
+def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], address: str = "", owner: Optional[str] = None) -> bool:
     """Rewrite an existing contact via CardDAV or local contacts."""
     cfg = _get_carddav_config()
-    if not _carddav_configured(cfg):
+    owner_key = str(owner or "").strip()
+    if owner_key.startswith("sft_") or not _carddav_configured(cfg):
         contacts = _load_local_contacts()
         found = False
         out = []
         for c in contacts:
             if c.get("uid") == uid:
+                if owner_key and not _contact_visible_to_owner(c, owner_key):
+                    out.append(c)
+                    continue
                 # Preserve existing address when caller passes "" (only
                 # updating name/emails/phones, not touching address).
                 addr = address if address else c.get("address", "")
-                out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones, "address": addr}))
+                row = {"uid": uid, "name": name, "emails": emails, "phones": phones, "address": addr}
+                if owner_key:
+                    row["owner"] = owner_key
+                out.append(_normalize_contact(row))
                 found = True
             else:
                 out.append(c)
         if not found:
-            out.append(_normalize_contact({"uid": uid, "name": name, "emails": emails, "phones": phones, "address": address}))
+            row = {"uid": uid, "name": name, "emails": emails, "phones": phones, "address": address}
+            if owner_key:
+                row["owner"] = owner_key
+            out.append(_normalize_contact(row))
         _save_local_contacts(out)
         return True
 
@@ -695,12 +819,16 @@ def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], a
         return False
 
 
-def _delete_contact(uid: str) -> bool:
+def _delete_contact(uid: str, owner: Optional[str] = None) -> bool:
     """Delete a contact via CardDAV or local contacts."""
     cfg = _get_carddav_config()
-    if not _carddav_configured(cfg):
+    owner_key = str(owner or "").strip()
+    if owner_key.startswith("sft_") or not _carddav_configured(cfg):
         contacts = _load_local_contacts()
-        remaining = [c for c in contacts if c.get("uid") != uid]
+        remaining = [
+            c for c in contacts
+            if c.get("uid") != uid or (owner_key and not _contact_visible_to_owner(c, owner_key))
+        ]
         _save_local_contacts(remaining)
         return True
 
@@ -740,17 +868,17 @@ def setup_contacts_routes():
     router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
     @router.get("/list")
-    async def list_contacts(_admin: str = Depends(require_admin)):
+    async def list_contacts(request: Request, _admin: str = Depends(require_admin)):
         """List all contacts."""
-        contacts = _fetch_contacts()
-        return {"contacts": contacts, "count": len(contacts)}
+        contacts = await asyncio.to_thread(_fetch_contacts, owner=effective_user(request))
+        return {"contacts": contacts, "count": len(contacts), "sync": _contact_sync_status()}
 
     @router.get("/search")
-    async def search_contacts(q: str = Query(""), _admin: str = Depends(require_admin)):
+    async def search_contacts(request: Request, q: str = Query(""), _admin: str = Depends(require_admin)):
         """Search contacts by name or email. Returns up to 10 matches."""
-        contacts = _fetch_contacts()
+        contacts = await asyncio.to_thread(_fetch_contacts, owner=effective_user(request))
         if not q:
-            return {"results": []}
+            return {"results": [], "sync": _contact_sync_status()}
         q_lower = q.lower()
         results = []
         for c in contacts:
@@ -761,12 +889,13 @@ def setup_contacts_routes():
                 if q_lower in em.lower():
                     results.append(c)
                     break
-        return {"results": results[:10]}
+        return {"results": results[:10], "sync": _contact_sync_status()}
 
     @router.post("/add")
     @content_type(["application/json"])
-    async def add_contact(data: dict, _admin: str = Depends(require_admin)):
+    async def add_contact(data: dict, request: Request, _admin: str = Depends(require_admin)):
         """Add a new contact."""
+        owner = effective_user(request)
         name = (data.get("name") or "").strip()
         email = (data.get("email") or "").strip()
         phone = (data.get("phone") or "").strip()
@@ -780,17 +909,20 @@ def setup_contacts_routes():
             return {"success": False, "error": "Name, email, phone, or address required"}
         if not name:
             name = email.split("@")[0] if email else (phones[0] if phones else "Contact")
-        contacts = _fetch_contacts()
+        contacts = _fetch_contacts(owner=owner)
         for c in contacts:
             if email and email.lower() in [e.lower() for e in c.get("emails", [])]:
                 return {"success": True, "message": "Already exists", "contact": c}
             if phones and any(p in (c.get("phones") or []) for p in phones):
                 return {"success": True, "message": "Already exists", "contact": c}
         create_params = inspect.signature(_create_contact).parameters
-        if "phones" in create_params:
-            ok = _create_contact(name, email, address, phones=phones)
-        elif len(create_params) >= 3:
-            ok = _create_contact(name, email, address)
+        if len(create_params) >= 3:
+            create_kwargs = {}
+            if "phones" in create_params:
+                create_kwargs["phones"] = phones
+            if "owner" in create_params:
+                create_kwargs["owner"] = owner
+            ok = _create_contact(name, email, address, **create_kwargs)
         else:
             ok = _create_contact(name, email)
         # If a phone was provided, do an immediate update to thread it
@@ -798,7 +930,7 @@ def setup_contacts_routes():
         # email + address; phones happen via update).
         if ok and phones and "phones" not in create_params:
             try:
-                fresh = _fetch_contacts(force=True)
+                fresh = _fetch_contacts(force=True, owner=owner)
                 created = next((c for c in fresh if name == c.get("name") and (not email or email in c.get("emails", []))), None)
                 if created:
                     _update_contact(
@@ -806,6 +938,7 @@ def setup_contacts_routes():
                         created.get("emails", []),
                         phones,
                         address,
+                        owner=owner,
                     )
             except Exception:
                 pass
@@ -833,11 +966,16 @@ def setup_contacts_routes():
 
     @router.get("/export")
     async def export_contacts(
+        request: Request,
         format: str = Query("vcf", pattern="^(vcf|csv)$"),
         _admin: str = Depends(require_admin),
     ):
         """Export all contacts as vCard or CSV."""
-        contacts = _fetch_contacts(force=True)
+        contacts = await asyncio.to_thread(
+            _fetch_contacts,
+            force=True,
+            owner=effective_user(request),
+        )
         if format == "csv":
             content = _contacts_to_csv(contacts)
             media_type = "text/csv; charset=utf-8"
@@ -881,12 +1019,21 @@ def setup_contacts_routes():
         _save_settings(settings)
         # Force re-fetch
         _contact_cache["fetched_at"] = None
+        _contact_cache["failed_at"] = None
         return {"success": True}
 
     @router.delete("/clear")
-    async def clear_contacts(_admin: str = Depends(require_admin)):
+    async def clear_contacts(request: Request, _admin: str = Depends(require_admin)):
         """Clear all local contacts. If CardDAV is configured, only clears the local fallback cache."""
-        _save_local_contacts([])
+        owner = effective_user(request)
+        if owner:
+            remaining = [
+                c for c in _load_local_contacts()
+                if not _contact_visible_to_owner(c, owner)
+            ]
+            _save_local_contacts(remaining)
+        else:
+            _save_local_contacts([])
         return {"success": True}
 
     # NOTE: the /{uid} routes are declared LAST so the literal paths above
@@ -894,7 +1041,7 @@ def setup_contacts_routes():
     # match PUT /{uid} with uid="config".
     @router.put("/{uid}")
     @content_type(["application/json"])
-    async def edit_contact(uid: str, data: dict, _admin: str = Depends(require_admin)):
+    async def edit_contact(uid: str, data: dict, request: Request, _admin: str = Depends(require_admin)):
         """Edit an existing contact — name / emails / phones / address."""
         name = (data.get("name") or "").strip()
         emails = data.get("emails")
@@ -908,15 +1055,15 @@ def setup_contacts_routes():
             return {"success": False, "error": "Name, email, or address required"}
         if not name and emails:
             name = emails[0].split("@")[0]
-        ok = _update_contact(uid, name, emails, phones, address)
+        ok = _update_contact(uid, name, emails, phones, address, owner=effective_user(request))
         return {"success": ok}
 
     @router.delete("/{uid}")
-    async def delete_contact(uid: str, _admin: str = Depends(require_admin)):
+    async def delete_contact(uid: str, request: Request, _admin: str = Depends(require_admin)):
         """Delete a contact by UID."""
         if not uid:
             return {"success": False, "error": "UID required"}
-        ok = _delete_contact(uid)
+        ok = _delete_contact(uid, owner=effective_user(request))
         return {"success": ok}
 
     return router

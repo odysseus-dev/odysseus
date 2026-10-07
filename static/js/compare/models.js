@@ -1,7 +1,7 @@
 // compare/models.js — model classification, fetching, display names, persistence
 import Storage from '../storage.js';
 import state from './state.js';
-import uiModule from '../ui.js';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 import { sortModelObjects } from '../modelSort.js';
 
 var escapeHtml = uiModule.esc;

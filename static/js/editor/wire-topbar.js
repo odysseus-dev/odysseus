@@ -4,9 +4,10 @@
  * coordination (close-others + global outside-click).
  *
  *   #ge-undo / #ge-redo / #ge-history-btn
+ *   #ge-compare-btn
  *   #ge-save-menu-btn + #ge-save-menu  (Save / Save as / Download /
  *                                       Save project / Load project)
- *   #ge-zoom-out / #ge-zoom-in / #ge-zoom-fit / #ge-zoom-100
+ *   #ge-zoom-out / #ge-zoom-in / #ge-zoom-100 (Fit / 1:1 toggle)
  *   #ge-export-gallery / #ge-download
  *   #ge-save-project / #ge-load-project
  *   #ge-edge-menu-btn + #ge-edge-menu (Width input + Feather / Delete
@@ -20,6 +21,7 @@
  *   undo:                 () => void,
  *   redo:                 () => void,
  *   toggleHistoryPanel:   () => void,
+ *   toggleCompare:        () => void,
  *   fitZoom:              () => void,
  *   applyZoom:            () => void,
  *   exportToGallery:      () => void,
@@ -35,9 +37,10 @@
  * }} deps
  */
 import { state } from './state.js';
+import { isLayerPixelLocked, isLayerTransparencyLocked } from './layer-groups.js';
 
-const TOPBAR_MENU_IDS = ['ge-image-menu', 'ge-filter-menu', 'ge-resize-menu', 'ge-save-menu'];
-const TOPBAR_TRIGGER_IDS = ['ge-image-menu-btn', 'ge-filter-menu-btn', 'ge-resize-menu-btn', 'ge-save-menu-btn'];
+const TOPBAR_MENU_IDS = ['ge-view-menu', 'ge-image-menu', 'ge-selection-menu', 'ge-filter-menu', 'ge-resize-menu', 'ge-save-menu'];
+const TOPBAR_TRIGGER_IDS = ['ge-view-menu-btn', 'ge-image-menu-btn', 'ge-selection-menu-btn', 'ge-filter-menu-btn', 'ge-resize-menu-btn', 'ge-save-menu-btn'];
 
 /**
  * Close every topbar dropdown except an optional "keep open" one.
@@ -54,7 +57,7 @@ export function closeOtherTopbarMenus(keepId) {
 
 export function wireTopbar(deps) {
   const {
-    undo, redo, toggleHistoryPanel,
+    undo, redo, toggleHistoryPanel, toggleCompare,
     fitZoom, applyZoom,
     exportToGallery, downloadPNG, saveProject, loadProjectPrompt,
     activeLayer, saveState, applyEdgeFeather, composite,
@@ -65,6 +68,7 @@ export function wireTopbar(deps) {
   document.getElementById('ge-undo')?.addEventListener('click', undo);
   document.getElementById('ge-redo')?.addEventListener('click', redo);
   document.getElementById('ge-history-btn')?.addEventListener('click', toggleHistoryPanel);
+  document.getElementById('ge-compare-btn')?.addEventListener('click', toggleCompare);
 
   // Save dropdown — "Save ▾" toggles a small menu (Save / Save-as /
   // Download / Save project / Load project). Inner items keep their
@@ -118,8 +122,11 @@ export function wireTopbar(deps) {
   }
 
   // Zoom buttons.
-  document.getElementById('ge-zoom-fit')?.addEventListener('click', fitZoom);
-  document.getElementById('ge-zoom-100')?.addEventListener('click', () => { state.zoom = 1; applyZoom(); });
+  document.getElementById('ge-zoom-100')?.addEventListener('click', () => {
+    if (state.zoomViewMode === 'scale' ||
+        (Math.abs(state.zoom - 1) < 0.001 && state.zoomViewMode !== 'fit')) fitZoom();
+    else { state.zoom = 1; state.zoomViewMode = 'scale'; applyZoom(); }
+  });
   document.getElementById('ge-zoom-in')?.addEventListener('click', () => { state.zoom = Math.min(5, state.zoom * 1.25); applyZoom(); });
   document.getElementById('ge-zoom-out')?.addEventListener('click', () => { state.zoom = Math.max(0.1, state.zoom / 1.25); applyZoom(); });
 
@@ -146,14 +153,16 @@ export function wireTopbar(deps) {
   });
 
   // Edge popup — Width input + Feather / Delete action buttons.
-  function applyEdgeAction(hardDelete) {
+  async function applyEdgeAction(hardDelete) {
     const layer = activeLayer();
-    if (!layer || layer.locked) { uiModule.showToast('Select an unlocked layer'); return; }
+    if (!layer || isLayerPixelLocked(state, layer) || isLayerTransparencyLocked(state, layer)) {
+      uiModule.showToast('Unlock image and transparent pixels before changing edges');
+      return;
+    }
     const widthInput = document.getElementById('ge-edge-width');
     const width = parseInt(widthInput?.value || '8');
     if (isNaN(width) || width < 1) { uiModule.showToast('Invalid width'); return; }
-    saveState();
-    applyEdgeFeather(layer, width, hardDelete);
+    if (!await applyEdgeFeather(layer, width, hardDelete)) return;
     composite();
     uiModule.showToast(hardDelete ? `Edges deleted ${width}px` : `Edges feathered ${width}px`);
   }

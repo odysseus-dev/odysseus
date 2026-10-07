@@ -1,8 +1,10 @@
 name: ci / docker publish
 
 # Build the Odysseus image and publish to GHCR.
-#   push to main -> :latest, :X.Y.Z            (curated release; main is fast-forwarded at releases)
-#   push to dev  -> :dev,    :X.Y.Z-dev.<sha>  (rolling dev + an immutable, traceable pin)
+#   push to main -> :latest, :X.Y.Z, :X.Y.Z-<sha>  (curated release; main is fast-forwarded at releases;
+#                              :X.Y.Z-<sha> is an immutable, traceable prod pin — APP_VERSION may
+#                              not move between builds, so the bare :X.Y.Z tag alone is mutable)
+#   push to dev  -> :dev,    :X.Y.Z-dev.<sha>      (rolling dev + an immutable, traceable pin)
 # Multi-arch (linux/amd64 + linux/arm64): each arch builds on its own native
 # runner and pushes by digest, then a merge job stitches the digests into one
 # manifest list and applies the tags (faster + cleaner than QEMU emulation).
@@ -120,6 +122,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.short }},enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=raw,value=${{ steps.ver.outputs.version }}-dev.${{ steps.ver.outputs.short }},enable=${{ github.ref == 'refs/heads/dev' }}
       - name: Create manifest list + push tags
@@ -135,8 +138,16 @@ jobs:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
       - name: Inspect
         run: |
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then ref=latest; else ref=dev; fi
-          docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${ref}"
+          # main: verify both the mutable :latest and the immutable :X.Y.Z-<sha> prod pin
+          #        actually resolved in the registry; dev: verify :dev.
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            refs=("latest" "${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.short }}")
+          else
+            refs=("dev")
+          fi
+          for ref in "${refs[@]}"; do
+            docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${ref}"
+          done
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}

@@ -36,6 +36,7 @@
  * @returns {{ buildSelectionHintMask: () => string | null }}
  */
 import { state } from './state.js';
+import { selectionMaskToDocument } from './selection-mask.js';
 
 export function wireRembgAndSharpen({
   applyImageTool, openCookbookForDependency,
@@ -69,9 +70,9 @@ export function wireRembgAndSharpen({
     // which to hide after a successful cutout.
     const prevVisible = state.layers.filter(l => l.visible).map(l => l.id);
     await applyImageTool('/api/image/remove-bg', payload, 'BG Removed', btn);
-    // applyImageTool finishes after fetch but the new layer is added
-    // inside img.onload (one tick later). Poll for up to 60 frames
-    // (~1s) for the new layer to appear before we auto-hide.
+    // applyImageTool resolves after the returned image is decoded and the
+    // new layer is inserted. Keep a short poll for defensive compatibility
+    // with alternate runners that may still commit on the next frame.
     let frames = 0;
     while (state.layers.length <= before && frames < 60) {
       await new Promise(r => requestAnimationFrame(r));
@@ -204,9 +205,13 @@ export function wireRembgAndSharpen({
     const w = state.imgWidth, h = state.imgHeight;
     if (state.wandMask && state.wandLayerId) {
       const off = state.layerOffsets.get(state.wandLayerId) || { x: 0, y: 0 };
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      c.getContext('2d').drawImage(state.wandMask, off.x, off.y);
+      const c = selectionMaskToDocument(
+        state.wandMask,
+        state.wandMaskSpace || 'layer',
+        off,
+        w,
+        h,
+      );
       return c.toDataURL('image/png').split(',')[1];
     }
     if (state.lassoPoints.length >= 3 && !state.lassoActive) {

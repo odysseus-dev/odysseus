@@ -1,12 +1,14 @@
 // Memory Management Functions
 // This module handles all memory-related operations
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { snapModalToZone } from './tileManager.js';
+import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 import { topPortalZ } from './toolWindowZOrder.js';
+import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -16,6 +18,7 @@ let sortOrder = 'newest';
 let selectMode = false;
 let selectedIds = new Set();
 let memoriesLoading = false;
+let activeMemoryModalMode = 'memory';
 
 
 const MEMORY_CATEGORIES = ['fact', 'identity', 'preference', 'contact', 'project', 'goal', 'task'];
@@ -66,12 +69,21 @@ function _initMemorySortPicker() {
     </button>
   `).join('');
 
-  const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  let unregister = () => {};
+  const close = () => {
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    unregister();
+    unregister = () => {};
+  };
   const open  = () => { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); };
 
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (menu.hidden) open(); else close();
+    if (menu.hidden) {
+      open();
+      unregister = bindMenuDismiss(menu, close, e => picker.contains(e.target));
+    } else close();
   });
   menu.addEventListener('click', (e) => {
     const item = e.target.closest('.memory-sort-item');
@@ -84,13 +96,6 @@ function _initMemorySortPicker() {
   document.addEventListener('click', (e) => {
     if (!menu.hidden && !picker.contains(e.target)) close();
   });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !menu.hidden) {
-      e.stopPropagation();
-      close();
-    }
-  }, { capture: true });
-
   _renderMemorySortPickerCurrent();
 }
 
@@ -164,16 +169,25 @@ function buildCategoryChips() {
 
   const cats = new Set(memories.map(m => m.category || 'fact'));
   const sorted = ['all', ...Array.from(cats).sort()];
+  const counts = memories.reduce((result, memory) => {
+    const category = memory.category || 'fact';
+    result[category] = (result[category] || 0) + 1;
+    return result;
+  }, {});
 
   container.innerHTML = '';
   sorted.forEach(cat => {
     const btn = document.createElement('button');
-    btn.className = 'memory-cat-chip' + (cat === activeCategory ? ' active' : '');
+    btn.className = 'skills-summary-chip memory-filter-chip' + (cat === activeCategory ? ' active' : '');
     btn.dataset.cat = cat;
-    btn.textContent = cat;
+    const label = document.createElement('span');
+    label.textContent = cat === 'all' ? 'All' : cat;
+    const count = document.createElement('strong');
+    count.textContent = String(cat === 'all' ? memories.length : counts[cat] || 0);
+    btn.replaceChildren(label, count);
     btn.addEventListener('click', () => {
       activeCategory = cat;
-      container.querySelectorAll('.memory-cat-chip').forEach(b => b.classList.remove('active'));
+      container.querySelectorAll('[data-cat]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       renderMemoryList();
       updateMemoryCount();
@@ -215,7 +229,10 @@ async function syncToggles() {
   const skillsToggle = document.getElementById('skills-enabled-header-toggle');
   if (skillsToggle) {
     const skillsPanel = document.querySelector('[data-memory-panel="skills"]');
-    const applyDim = () => { if (skillsPanel) skillsPanel.style.opacity = skillsToggle.checked ? '' : '0.3'; };
+    const applyDim = () => {
+      if (skillsPanel) skillsPanel.style.opacity = skillsToggle.checked ? '' : '0.3';
+      reflectSkillsToggleInSidebar(skillsToggle.checked);
+    };
     applyDim();
     if (!skillsToggle.dataset.boundUx) {
       skillsToggle.dataset.boundUx = '1';
@@ -224,9 +241,96 @@ async function syncToggles() {
   }
 }
 
+function _applyMemoryModalMode(mode) {
+  activeMemoryModalMode = mode === 'skills' ? 'skills' : 'memory';
+  const modal = document.getElementById('memory-modal');
+  if (!modal) return;
+  modal.dataset.memoryMode = activeMemoryModalMode;
+  modal.setAttribute('aria-label', activeMemoryModalMode === 'skills' ? 'Skills' : 'Memory');
+  const titleText = document.getElementById('memory-modal-title-text');
+  if (titleText) titleText.textContent = activeMemoryModalMode === 'skills' ? 'Skills' : 'Memory';
+  modal.querySelectorAll('[data-memory-scope]').forEach(el => {
+    const scope = el.dataset.memoryScope;
+    const scopedOut = !!scope && scope !== activeMemoryModalMode;
+    el.hidden = scopedOut;
+    el.classList.toggle('hidden', scopedOut);
+    el.setAttribute('aria-hidden', scopedOut ? 'true' : 'false');
+  });
+}
+
+export function openMemoryModal(tabName = 'browse') {
+  const modal = document.getElementById('memory-modal');
+  if (!modal) return;
+  const mode = tabName === 'skills' ? 'skills' : 'memory';
+  _applyMemoryModalMode(mode);
+  modal.classList.remove('hidden', 'modal-minimized');
+  modal.style.display = '';
+  if (renderMemoryList) renderMemoryList();
+  if (updateMemoryCount) updateMemoryCount();
+  const target = mode === 'skills' ? 'skills' : 'browse';
+  const tab = document.querySelector(`.memory-tab[data-memory-tab="${target}"]`);
+  if (tab) {
+    tab.click();
+  } else if (target === 'skills') {
+    import('./skills.js?v=20260909kebabconsistency1').then(m => {
+      if (m.loadSkills) m.loadSkills(true);
+      else if (m.default?.loadSkills) m.default.loadSkills(true);
+    });
+  }
+}
+
+function _decodeMemoryAnchorId(memoryId) {
+  try { return decodeURIComponent(String(memoryId || '').replace(/\+/g, ' ')).trim(); }
+  catch (_) { return String(memoryId || '').trim(); }
+}
+
+function _resetMemoryDeepLinkFilters() {
+  activeCategory = 'all';
+  const search = document.getElementById('memory-search');
+  if (search && search.value) search.value = '';
+  document.querySelectorAll('#memory-category-filters [data-cat]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.cat === 'all');
+  });
+}
+
+// Open the memory panel and focus the memory referenced by a chat tool link.
+// Memory search output may expose a shortened id, so prefix matching is
+// intentional here.
+export async function openMemory(memoryId, attempt = 0) {
+  openMemoryModal('browse');
+  _resetMemoryDeepLinkFilters();
+  await loadMemories();
+  if (renderMemoryList) renderMemoryList();
+  const wanted = _decodeMemoryAnchorId(memoryId);
+  if (!wanted) return;
+  const item = Array.from(document.querySelectorAll('.memory-item[data-memory-id]'))
+    .find(el => String(el.dataset.memoryId || '') === wanted)
+    || Array.from(document.querySelectorAll('.memory-item[data-memory-id]'))
+      .find(el => String(el.dataset.memoryId || '').startsWith(wanted));
+  if (!item) {
+    if (attempt < 12) setTimeout(() => openMemory(wanted, attempt + 1), 120);
+    return;
+  }
+  item.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+  item.classList.add('memory-item-focus');
+  setTimeout(() => item.classList.remove('memory-item-focus'), 2200);
+}
+
 function reflectMemoryToggleInSidebar(enabled) {
-  const btn = document.getElementById('tool-memory-btn');
-  if (btn) btn.classList.toggle('tool-disabled', !enabled);
+  document.body.classList.toggle('memory-disabled', !enabled);
+  if (!enabled) document.getElementById('synapse-canvas')?.remove();
+  window.dispatchEvent(new CustomEvent('memory-visual-state', { detail: { enabled } }));
+  ['tool-memory-btn', 'rail-memory'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle('tool-disabled', !enabled);
+  });
+}
+
+function reflectSkillsToggleInSidebar(enabled) {
+  ['tool-skills-btn', 'rail-skills'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle('tool-disabled', !enabled);
+  });
 }
 
 function syncToggleDim(toggle) {
@@ -416,7 +520,7 @@ export async function loadMemories() {
 
 // ---- Bulk select mode ----
 
-const _SELECT_BTN_DOT_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>';
+const _SELECT_BTN_DOT_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="11" r="3" fill="currentColor" stroke="none"/></svg>';
 const _SELECT_BTN_X_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 function enterSelectMode() {
@@ -819,7 +923,7 @@ export function renderMemoryList() {
       menuBtn.title = 'Actions';
 
       const dropdown = document.createElement('div');
-      dropdown.className = 'memory-item-dropdown';
+      dropdown.className = 'dropdown session-dropdown-menu memory-item-dropdown';
 
       // Pin / Unpin — bookmark icon matches the chat-session "Favorite" SVG.
       // Filled when pinned, outlined when not.
@@ -834,19 +938,19 @@ export function renderMemoryList() {
 
       const editItem = document.createElement('div');
       editItem.className = 'dropdown-item-compact';
-      editItem.textContent = '✎ Edit';
+      editItem.innerHTML = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span><span>Edit</span>';
       editItem.addEventListener('click', () => { dropdown.style.display = 'none'; startInlineEdit(item, memory); });
 
       const deleteItem = document.createElement('div');
-      deleteItem.className = 'dropdown-item-compact memory-dropdown-delete';
-      deleteItem.textContent = '✕ Delete';
+      deleteItem.className = 'dropdown-item-compact dropdown-item-danger';
+      deleteItem.innerHTML = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></span><span>Delete</span>';
       deleteItem.addEventListener('click', () => { dropdown.style.display = 'none'; deleteMemory(memory.id); });
 
       // Select — enters bulk-select mode and pre-selects this memory. Same
       // pattern as the email/documents/skills Select item.
       const selectItem = document.createElement('div');
       selectItem.className = 'dropdown-item-compact';
-      selectItem.innerHTML = '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;">●</span></span><span>Select</span>';
+      selectItem.innerHTML = `<span class="dropdown-icon">${SELECT_MENU_ICON}</span><span>Select</span>`;
       selectItem.addEventListener('click', (e) => {
         e.stopPropagation();
         if (dropdown.parentNode) dropdown.remove();
@@ -861,25 +965,48 @@ export function renderMemoryList() {
       // dismisses cleanly.
       const cancelItem = document.createElement('div');
       cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-      cancelItem.textContent = '✕ Cancel';
+      cancelItem.innerHTML = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Cancel</span>';
       cancelItem.addEventListener('click', (e) => { e.stopPropagation(); if (dropdown.parentNode) dropdown.remove(); });
 
-      dropdown.appendChild(pinItem);
-      dropdown.appendChild(selectItem);
-      dropdown.appendChild(editItem);
-      dropdown.appendChild(deleteItem);
-      dropdown.appendChild(cancelItem);
+      const orderedMenuItems = orderActionMenuItems([
+        { label: 'Edit', node: editItem },
+        { label: 'Select', node: selectItem },
+        { label: memory.pinned ? 'Unpin' : 'Pin', node: pinItem },
+        { label: 'Delete', node: deleteItem },
+        { label: 'Cancel', node: cancelItem },
+      ]);
+      let addedActionDivider = false;
+      orderedMenuItems.forEach((entry, index) => {
+        if (!addedActionDivider && index > 0 && actionMenuRank(entry) >= 700) {
+          const divider = document.createElement('div');
+          divider.className = 'dropdown-divider';
+          dropdown.appendChild(divider);
+          addedActionDivider = true;
+        }
+        dropdown.appendChild(entry.node);
+      });
 
       menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        const openForButton = [...document.querySelectorAll('.memory-item-dropdown')]
+          .find(menu => menu._anchor === menuBtn);
+        if (openForButton) {
+          if (typeof openForButton._dismiss === 'function') openForButton._dismiss();
+          else openForButton.remove();
+          return;
+        }
         // Close any other open dropdowns
-        document.querySelectorAll('.memory-item-dropdown').forEach(d => d.remove());
+        document.querySelectorAll('.memory-item-dropdown').forEach(d => {
+          if (typeof d._dismiss === 'function') d._dismiss();
+          else d.remove();
+        });
+        dropdown._anchor = menuBtn;
         const rect = menuBtn.getBoundingClientRect();
         dropdown.style.position = 'fixed';
-        dropdown.style.top = rect.bottom + 2 + 'px';
+        dropdown.style.top = rect.bottom + 4 + 'px';
         dropdown.style.right = (window.innerWidth - rect.right) + 'px';
         dropdown.style.left = 'auto';
-        // Portaled to <body>, so it must outrank the Brain modal it belongs to.
+        // Portaled to <body>, so it must outrank the Memory modal it belongs to.
         // Tool modals get a monotonically increasing z-index from modalManager's
         // bring-to-front counter, which climbs unbounded over a long session —
         // once it passed the old hardcoded 10001 the menu rendered behind the
@@ -892,7 +1019,7 @@ export function renderMemoryList() {
         // bottom, clamp the left edge, cap height as a last resort.
         const dr = dropdown.getBoundingClientRect();
         if (dr.bottom > window.innerHeight - 6) {
-          dropdown.style.top = Math.max(6, rect.top - dr.height - 2) + 'px';
+          dropdown.style.top = Math.max(6, rect.top - dr.height - 4) + 'px';
         }
         if (dr.left < 6) {
           dropdown.style.right = Math.max(6, window.innerWidth - 6 - dr.width) + 'px';
@@ -972,8 +1099,17 @@ export function renderMemoryList() {
         item.addEventListener('pointercancel', _lpCancel);
       }
 
-      // Close dropdown on outside click
-      document.addEventListener('click', () => { if (dropdown.parentNode) dropdown.remove(); }, { once: false });
+      // Close dropdown on an outside click. Delay registration so the opening
+      // tap cannot immediately close its own menu.
+      const closeDropdown = () => {
+        document.removeEventListener('click', onOutsideClick, true);
+        if (dropdown.parentNode) dropdown.remove();
+      };
+      const onOutsideClick = (event) => {
+        if (!dropdown.contains(event.target) && !menuBtn.contains(event.target)) closeDropdown();
+      };
+      dropdown._dismiss = closeDropdown;
+      setTimeout(() => document.addEventListener('click', onOutsideClick, true), 0);
     }
 
     memoryList.appendChild(item);
@@ -1258,7 +1394,7 @@ export async function extractMemory(sessionId) {
     });
   }
 
-  modal.classList.remove('hidden');
+  openMemoryModal('browse');
 }
 
 // ---- Export ----
@@ -1442,8 +1578,7 @@ async function handleImportFile(file) {
       });
     }
 
-    modal.classList.remove('hidden');
-    document.querySelector('.memory-tab[data-memory-tab="browse"]')?.click();
+    openMemoryModal('browse');
   } catch (error) {
     console.error('Import failed:', error);
     showError('Import failed — ' + error.message);
@@ -1470,6 +1605,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Memory modal tabs
   document.querySelectorAll('.memory-tab[data-memory-tab]').forEach(tab => {
     tab.addEventListener('click', () => {
+      if (tab.hidden || tab.classList.contains('hidden')) return;
       const target = tab.dataset.memoryTab;
       document.querySelectorAll('.memory-tab').forEach(t => t.classList.toggle('active', t === tab));
       document.querySelectorAll('.memory-tab-panel[data-memory-panel]').forEach(p => {
@@ -1477,7 +1613,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       // Lazy-load skills tab (cascade=true → play the domino-in entrance)
       if (target === 'skills') {
-        import('./skills.js').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
+        import('./skills.js?v=20260909kebabconsistency1').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
       }
     });
   });
@@ -1543,7 +1679,9 @@ const memoryModule = {
   buildCategoryChips,
   tidyMemories,
   importMemories,
-  exportMemories
+  exportMemories,
+  openMemoryModal,
+  openMemory
 };
 
 export default memoryModule;

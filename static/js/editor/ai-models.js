@@ -27,11 +27,18 @@
 import { state } from './state.js';
 import { sortModelIds } from '../modelSort.js';
 
+export function resolveInpaintModel(select) {
+  const options = Array.from(select?.options || []).filter(option =>
+    !option.disabled && option.value && option.value !== '__serve_cookbook__');
+  const explicit = options.find(option => option.value === select.value);
+  return explicit || options.find(option => /inpaint|edit|fill/i.test(option.value)) || options[0] || null;
+}
+
 // Heuristic classifier on a model id + endpoint name. A model can be:
 //   - gen: text-to-image generation
 //   - inpaint: image+mask edit (inpaint / img2img)
 // Some models do only one (e.g. dall-e-3 = gen-only, no edits API).
-function modelCaps(modelId, endpointName, endpointType) {
+export function modelCaps(modelId, endpointName, endpointType) {
   const id = (modelId || '').toLowerCase();
   const name = (endpointName || '').toLowerCase();
   const type = (endpointType || '').toLowerCase();
@@ -41,7 +48,9 @@ function modelCaps(modelId, endpointName, endpointType) {
   // OpenAI image family.
   if (/dall-e-3/.test(id))    return { gen: true,  inpaint: false };
   if (/dall-e-2/.test(id))    return { gen: true,  inpaint: true  };
-  if (/gpt-image/.test(id))   return { gen: true,  inpaint: true  };
+  if (/(?:^|\/)(?:gpt-image[^/]*|gpt-[^/]*-image[^/]*|gemini-[^/]*image[^/]*|qwen-image[^/]*)$/.test(id)) {
+    return { gen: true, inpaint: true };
+  }
   // Diffusion families — most generic SD/SDXL/Flux base models
   // support both via diffusers.
   if (/(?:^|[/\-_])(?:sd-?xl|sdxl|sd3|sd-|stable[\s-]*diffusion|flux|playground|pixart|kandinsky)/i.test(id)) {
@@ -95,13 +104,13 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       const prevGenValue = aiGenSelect?.value || '';
       const prevInpaintValue = aiInpaintSelect?.value || '';
       const res = await fetch(`${apiBase}/api/model-endpoints`);
+      if (!res.ok) throw new Error(`Could not load image models (${res.status})`);
       const endpoints = await res.json();
       if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">None</option>';
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = '<option value="">Auto</option>';
       const perToolSelects = Array.from(document.querySelectorAll('select.ge-tool-model'));
       for (const ts of perToolSelects) ts.innerHTML = '<option value="">Auto</option>';
       let firstGen = null;
-      let firstInpaint = null;
       let selectedGen = null;
       let selectedInpaint = null;
       for (const ep of endpoints) {
@@ -137,10 +146,6 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
             opt.disabled = !epUsable;
             aiInpaintSelect.appendChild(opt);
             if (epUsable && selectBaseUrl && ep.base_url === selectBaseUrl && !selectedInpaint) selectedInpaint = value;
-            // Prefer dedicated inpaint/edit models for default selection.
-            if (epUsable && !firstInpaint && (!modelId || /inpaint|edit|fill|gpt-image/i.test(modelId) || /inpaint|edit|fill/i.test(ep.name || ''))) {
-              firstInpaint = value;
-            }
           }
           // Per-tool selectors get every img2img-capable entry. Both
           // caps.inpaint AND caps.gen models work for harmonize /
@@ -165,7 +170,8 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       if (aiInpaintSelect) {
         if (selectedInpaint) aiInpaintSelect.value = selectedInpaint;
         else if (hasValue(aiInpaintSelect, prevInpaintValue)) aiInpaintSelect.value = prevInpaintValue;
-        else if (firstInpaint) aiInpaintSelect.value = firstInpaint;
+        const auto = resolveInpaintModel({ options: aiInpaintSelect.options, value: '' });
+        aiInpaintSelect.options[0].textContent = auto ? `Auto (${auto.textContent})` : 'Auto (no available model)';
       }
       // Append the "Serve a model in Cookbook…" sentinel at the
       // bottom of every model dropdown.
@@ -221,7 +227,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       // Fetch failed — still give the user the affordance to set up
       // a model. Otherwise the dropdown shows only "Auto" with no
       // hint about what to do next.
-      const fallback = '<option value="">Auto</option><option value="" disabled>──────────</option><option value="__serve_cookbook__">+ Serve a model in Cookbook…</option>';
+      const fallback = '<option value="">Auto</option><option disabled>Could not load image models</option><option value="__serve_cookbook__">+ Serve a model in Cookbook…</option>';
       if (aiGenSelect) aiGenSelect.innerHTML = fallback;
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = fallback;
       document.querySelectorAll('select.ge-tool-model').forEach(ts => { ts.innerHTML = fallback; });
