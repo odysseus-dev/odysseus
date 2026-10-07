@@ -1,3 +1,5 @@
+import pytest
+
 from src.embedding_lanes import (
     EmbeddingLane,
     LANE_CUSTOM,
@@ -91,7 +93,7 @@ def test_memory_search_merges_fallback_only_results_before_limit():
     assert [row["memory_id"] for row in results] == ["fallback-only", "old-1"]
 
 
-def test_memory_rebuild_does_not_reimport_legacy_collection(monkeypatch):
+def test_memory_rebuild_does_not_reimport_legacy_collection(monkeypatch, tmp_path):
     fake = FakeChroma()
     legacy = fake.get_or_create_collection("odysseus_memories", metadata={"hnsw:space": "cosine"})
     legacy.add(
@@ -116,7 +118,7 @@ def test_memory_rebuild_does_not_reimport_legacy_collection(monkeypatch):
 
     from src.memory_vector import MemoryVectorStore
 
-    store = MemoryVectorStore("data")
+    store = MemoryVectorStore(tmp_path)
     assert fake.collections["odysseus_memories_fastembed"].count() == 1
 
     store.rebuild([{"id": "current-memory", "text": "current rebuilt memory"}])
@@ -168,7 +170,7 @@ def test_memory_remove_deletes_inactive_lane_collection(monkeypatch):
     assert fast_collection.count() == 0
 
 
-def test_memory_rebuild_continues_when_custom_lane_fails(monkeypatch):
+def test_memory_rebuild_continues_when_custom_lane_fails(monkeypatch, tmp_path):
     fake = FakeChroma()
     patch_chroma(monkeypatch, fake)
 
@@ -179,9 +181,44 @@ def test_memory_rebuild_continues_when_custom_lane_fails(monkeypatch):
 
     from src.memory_vector import MemoryVectorStore
 
-    store = MemoryVectorStore("data")
-    store.rebuild([{"id": "current-memory", "text": "current rebuilt memory"}])
+    store = MemoryVectorStore(tmp_path)
+    rebuilt = store.rebuild([{"id": "current-memory", "text": "current rebuilt memory"}])
 
-    assert fake.collections["odysseus_memories_custom"].count() == 0
+    assert "odysseus_memories_custom" not in fake.collections
     assert fake.collections["odysseus_memories_fastembed"].count() == 1
     assert fake.collections["odysseus_memories_fastembed"].get()["ids"] == ["current-memory"]
+    assert rebuilt is True
+    assert store.healthy is True
+    results, query_healthy = store.search_with_status("current rebuilt memory")
+    assert query_healthy is True
+    assert results[0]["memory_id"] == "current-memory"
+    assert results[0]["embedding_lane"] == LANE_FASTEMBED
+
+    restarted = MemoryVectorStore(tmp_path)
+    assert restarted.healthy is True
+    assert restarted.count() == 1
+    restarted_results, restarted_healthy = restarted.search_with_status("current rebuilt memory")
+    assert restarted_healthy is True
+    assert restarted_results[0]["memory_id"] == "current-memory"
+    assert restarted_results[0]["embedding_lane"] == LANE_FASTEMBED
+
+
+def test_memory_strict_rebuild_propagates_custom_lane_failure(monkeypatch, tmp_path):
+    fake = FakeChroma()
+    patch_chroma(monkeypatch, fake)
+
+    import src.embedding_lanes as lanes
+
+    monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
+    monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
+
+    from src.memory_vector import MemoryVectorStore
+
+    store = MemoryVectorStore(tmp_path)
+
+    with pytest.raises(RuntimeError, match="embedding endpoint rate limited"):
+        store.rebuild([{"id": "current-memory", "text": "current rebuilt memory"}], strict=True)
+
+    assert store.healthy is False
+    assert "odysseus_memories_custom" not in fake.collections
+    assert "odysseus_memories_fastembed" not in fake.collections
