@@ -6941,6 +6941,17 @@ import { invalidateSettings } from './appConfig.js';
 
       const keepCount = msgIndex;
       try {
+        // Replacing this message also replaces its immediate reply. Warn when
+        // the edit would remove later turns the user may want to keep.
+        const extraCount = allMsgs.length - msgIndex - 2;
+        if (extraCount > 0) {
+          const confirmed = await uiModule.styledConfirm(
+            `Editing here will also permanently delete the ${extraCount} ` +
+            `message${extraCount === 1 ? '' : 's'} after this exchange. This can't be undone.`,
+            { confirmText: 'Delete and send', cancelText: 'Cancel', danger: true }
+          );
+          if (!confirmed) return;
+        }
         await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
