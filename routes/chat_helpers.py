@@ -551,6 +551,7 @@ async def auto_name_session(session_manager, sess):
     try:
         from src.llm_core import llm_call_async
         from src.task_endpoint import resolve_task_endpoint
+        from src.utility_effort import effort_for_call
 
         # Find first user message
         first_msg = ""
@@ -603,6 +604,7 @@ async def auto_name_session(session_manager, sess):
             max_tokens=64,
             headers=t_headers,
             timeout=15,
+            reasoning_effort=effort_for_call(t_url, t_model, owner, sess),
         )
 
         title = title.strip().strip('"\'').strip()

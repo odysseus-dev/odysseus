@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from src.model_context import estimate_text_tokens, get_context_length, estimate_tokens
 from src.llm_core import llm_call_async
 from src.endpoint_resolver import resolve_endpoint
+from src.utility_effort import effort_for_call
 from src.settings import get_setting
 from core.models import ChatMessage
 
@@ -556,7 +557,13 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
+    util_url, util_model, util_headers = resolve_endpoint(
+        "utility",
+        fallback_url=endpoint_url,
+        fallback_model=model,
+        fallback_headers=headers,
+        owner=owner,
+    )
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers
@@ -580,6 +587,7 @@ async def maybe_compact(
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
             timeout=30,
+            reasoning_effort=effort_for_call(compact_url, compact_model, owner, session),
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

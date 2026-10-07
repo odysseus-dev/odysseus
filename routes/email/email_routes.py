@@ -5920,7 +5920,12 @@ def setup_email_routes():
                 },
             ]
 
-            style = await llm_call_async(url, model, messages, headers=headers, max_tokens=2048)
+            from src.utility_effort import effort_for_call
+
+            style = await llm_call_async(
+                url, model, messages, headers=headers, max_tokens=2048,
+                reasoning_effort=effort_for_call(url, model, owner),
+            )
             style = _strip_think(style or "")
             if not style:
                 return {"success": False, "error": "LLM failed to generate style description"}
@@ -6004,6 +6009,7 @@ def setup_email_routes():
                     headers=req_headers,
                     max_tokens=8192,
                     timeout=180,
+                    owner=owner,
                 )
             except Exception as e:
                 logger.warning(
@@ -6125,6 +6131,8 @@ def setup_email_routes():
             if not candidates:
                 return {"success": False, "error": "No LLM endpoint configured"}
 
+            from src.utility_effort import candidate_effort_factory
+
             content = await llm_call_async_with_fallback(
                 candidates,
                 messages=[
@@ -6152,6 +6160,7 @@ def setup_email_routes():
                 temperature=0.2,
                 max_tokens=8192,
                 timeout=180,
+                candidate_request_factory=candidate_effort_factory(owner),
             )
             model = candidates[0][1] if candidates else ""
             content = (content or "").strip()

@@ -237,6 +237,18 @@ def _keep_count_before_message(db_messages, before_msg_id: str | None) -> int | 
     return None
 
 
+def _effort_mode(model: str, raw_effort: Any) -> str:
+    """Session ``thinking_mode`` for a picked effort: ``effort:<level>`` or ``off``.
+
+    Validated like the chat routes do, so llama-swap advertised efforts persist
+    as well as ChatGPT subscription levels.
+    """
+    from src.chatgpt_subscription import validate_reasoning_effort
+
+    effort = validate_reasoning_effort(model, raw_effort)
+    return f"effort:{effort}" if effort else "off"
+
+
 def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(
         tags=["history"],
@@ -1031,26 +1043,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         mode = getattr(session, "thinking_mode", "off") or "off"
         raw_effort = body.get("reasoning_effort")
         if raw_effort is not None:
-            clean_effort = str(raw_effort).strip().lower()
-            if clean_effort in {"", "default"}:
-                mode = "off"
-            else:
-                from src.chatgpt_subscription import get_chatgpt_model_metadata
-                meta = get_chatgpt_model_metadata(session.model)
-                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
-                    mode = f"effort:{clean_effort}"
-                else:
-                    mode = "off"
+            mode = _effort_mode(session.model, raw_effort)
         elif "thinking_mode" in body:
             raw_mode = str(body.get("thinking_mode") or "").strip().lower()
             if raw_mode.startswith("effort:"):
-                clean_effort = raw_mode[7:].strip()
-                from src.chatgpt_subscription import get_chatgpt_model_metadata
-                meta = get_chatgpt_model_metadata(session.model)
-                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
-                    mode = f"effort:{clean_effort}"
-                else:
-                    mode = "off"
+                mode = _effort_mode(session.model, raw_mode[7:])
             elif raw_mode in {"", "on", "off"}:
                 mode = raw_mode
                 from src.model_profiles import supports_user_thinking_toggle
@@ -1129,7 +1126,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             )
 
             # Use utility model if available
-            util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner or None)
+            from src.utility_effort import effort_for_call
+            util_url, util_model, util_headers = resolve_endpoint(
+                "utility",
+                fallback_url=getattr(session, "endpoint_url", None),
+                fallback_model=getattr(session, "model", None),
+                fallback_headers=getattr(session, "headers", None),
+                owner=owner or None,
+            )
             compact_url = util_url or session.endpoint_url
             compact_model = util_model or session.model
             compact_headers = util_headers if util_url else session.headers
@@ -1145,6 +1149,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 ],
                 temperature=0.2, max_tokens=1024,
                 headers=compact_headers, timeout=30,
+                reasoning_effort=effort_for_call(compact_url, compact_model, owner, session),
             )
             summary = normalize_compaction_summary(summary)
 

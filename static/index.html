@@ -1597,6 +1597,12 @@
                 <span class="adm-model-logo" id="set-utilityModelSelect-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
                 <select id="set-utilityModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
+              <div class="settings-row" id="set-utilityEffortRow" style="display:none;">
+                <label class="settings-label" id="set-utilityEffortLabel">Effort<span class="settings-label-sub" id="set-utilityEffortQualifier">(when supported)</span></label>
+                <span class="adm-model-logo" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;opacity:0.9;color:var(--fg);"></span>
+                <select id="set-utilityEffortSelect" class="settings-select"><option value="">Provider default</option></select>
+              </div>
+              <div class="admin-toggle-sub" id="set-utilityEffortHelp" style="display:none;margin-top:-2px;">Applied to utility and background calls, not chat. Use &ldquo;Same as chat&rdquo; to match active chat effort and potentially ensure cache hits to speed up responses. Reasoning tokens count against each call's output limit, so higher efforts can truncate or empty short outputs such as auto-generated titles.</div>
               <div class="settings-row" style="align-items:flex-start;">
                 <label class="settings-label" style="margin-top:6px;">Fallbacks</label>
                 <div style="flex:1;display:flex;flex-direction:column;gap:6px;">

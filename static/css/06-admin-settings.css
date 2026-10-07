@@ -445,6 +445,7 @@
   flex-shrink: 0; color: var(--fg); opacity: 0.85;
 }
 .adm-provider-logo svg { width: 14px; height: 14px; }
+.adm-model-logo { margin-right: 8px; }
 /* Pull the settings-select 4px closer to its logo chip so the row
    reads as logo+select instead of having an extra gap. */
 .adm-model-logo + .settings-select { margin-left: -4px; }
@@ -454,6 +455,8 @@
    select shrinks to its content and the trash button rides up
    tight to it. */
 .settings-fallback-row > .settings-select { flex: 1 1 0; min-width: 0; }
+.settings-fallback-row > .settings-select:first-of-type { flex: 0 1 128px; max-width: 34%; }
+.settings-fallback-row > .settings-select.settings-fallback-effort { flex: 0 1 130px; max-width: 32%; }
 /* Constrain logo SVGs in settings dropdown chips. Many provider
    icons in providers.js declare only viewBox (no width/height),
    so without this rule the browser falls back to 300x150 and
