@@ -20,6 +20,15 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/sidebar.js'),
   path.join(JS, 'settings/navigation.js'),
   path.join(JS, 'settings/lifecycle.js'),
+  path.join(JS, 'settings/api.js'),
+  path.join(JS, 'settings/speech.js'),
+  path.join(JS, 'settings/writingStyle.js'),
+  path.join(JS, 'settings/imageModels.js'),
+  path.join(JS, 'settings/agent.js'),
+  path.join(JS, 'settings/shell.js'),
+  path.join(JS, 'settings/peek.js'),
+  path.join(JS, 'settings/oauthReturn.js'),
+  path.join(JS, 'searchProviderIcons.js'),
 ]);
 
 const realModulesLoaded = new Set();
@@ -496,6 +505,11 @@ function buildFixture(document) {
   header.className = 'modal-header';
   modal.appendChild(header);
 
+  const peekToggle = document.createElement('button');
+  peekToggle.id = 'settings-opacity-wrap';
+  peekToggle.className = 'theme-opacity-wrap theme-opacity-toggle hidden';
+  header.appendChild(peekToggle);
+
   const close = document.createElement('button');
   close.className = 'close-btn';
   header.appendChild(close);
@@ -537,6 +551,14 @@ function buildFixture(document) {
   const panels = document.createElement('div');
   panels.className = 'settings-panels';
   content.appendChild(panels);
+
+  const adminCard = document.createElement('div');
+  adminCard.className = 'admin-card';
+  panels.appendChild(adminCard);
+
+  const adminOnly = document.createElement('div');
+  adminOnly.className = 'admin-only';
+  adminCard.appendChild(adminOnly);
 
   const panelIds = [
     'services',
@@ -589,6 +611,9 @@ function buildFixture(document) {
     sidebarHandle,
     searchInput,
     searchResults,
+    peekToggle,
+    adminCard,
+    adminOnly,
     services: settingsPanels.services,
     appearance: settingsPanels.appearance,
     ai: settingsPanels.ai,
@@ -796,6 +821,14 @@ const STUBS = new Map([
     },
   ],
   [
+    path.join(JS, 'editor/ai-models.js'),
+    {
+      modelCaps() {
+        return {};
+      },
+    },
+  ],
+  [
     path.join(JS, 'providers.js'),
     {
       providerLogo() {
@@ -846,9 +879,10 @@ function resolveImport(specifier, parent) {
     throw new Error(`Unexpected non-relative import: ${specifier}`);
   }
 
+  const cleanSpecifier = specifier.split('?')[0].split('#')[0];
   return path.resolve(
     path.dirname(parent),
-    specifier,
+    cleanSpecifier,
   );
 }
 
@@ -992,6 +1026,14 @@ assert(
 );
 
 
+// shell.js owns admin-only visibility. A non-admin must not merely see an
+// unpopulated admin control — the element has to be hidden on every open().
+assert(
+  fixture.adminOnly.style.display === 'none',
+  'open() did not hide .admin-only for a non-admin',
+);
+
+
 // #6040 coordinator integration: initAll() must bind the real finder and
 // sidebar controllers, not merely make their modules link successfully.
 assert(
@@ -1048,6 +1090,28 @@ assert(
   'navigation callback did not apply Appearance coordinator state',
 );
 
+assert(
+  !fixture.peekToggle.classList.contains('hidden'),
+  'Appearance activation did not reveal the Peek toggle',
+);
+
+
+// peek.js fades the window background via color-mix, never element opacity, so
+// the controls stay readable while the user previews the page behind Settings.
+fixture.peekToggle.click();
+
+assert(
+  fixture.content.style.values.background
+    === 'color-mix(in srgb, var(--bg) 55%, transparent)',
+  'Peek toggle did not fade the Settings window background',
+);
+
+assert(
+  fixture.adminCard.style.values.background
+    === 'color-mix(in srgb, var(--panel) 55%, transparent)',
+  'Peek toggle did not fade the Settings cards',
+);
+
 
 // Direct public open() after initialization must still coordinate activation.
 settings.open('ai');
@@ -1067,6 +1131,19 @@ assert(
   'direct open("ai") did not clear Appearance coordinator state',
 );
 
+// Leaving Appearance with Peek still toggled on must not leave the rest of
+// Settings faded — this is the bug the sync exists to prevent.
+assert(
+  fixture.content.style.values.background === undefined
+    && fixture.adminCard.style.values.background === undefined,
+  'leaving Appearance left the Peek fade applied',
+);
+
+assert(
+  fixture.peekToggle.classList.contains('hidden'),
+  'leaving Appearance left the Peek toggle visible',
+);
+
 
 // Public close() must route through the real lifecycle module.
 settings.close();
@@ -1079,6 +1156,44 @@ assert(
 assert(
   !document.body.classList.contains('settings-appearance-open'),
   'close() left Appearance coordinator state behind',
+);
+
+
+// shell.js hands an admin-managed tab to admin.js and must not then perform a
+// second local activation. Nothing before this point installs an admin module,
+// so the earlier assertions covered the no-admin-module fallback.
+const adminCalls = [];
+
+sandbox.adminModule = {
+  open(tab) {
+    adminCalls.push(tab);
+    return true;
+  },
+  _initData() {
+    adminCalls.push('_initData');
+  },
+};
+
+fixture.settingsPanels.users.button.click();
+
+assert(
+  adminCalls.length === 1 && adminCalls[0] === 'users',
+  `admin tab click did not hand "users" to the admin module: ${adminCalls}`,
+);
+
+assert(
+  !fixture.settingsPanels.users.button.classList.contains('active'),
+  'shell activated an admin tab locally after the admin module claimed it',
+);
+
+
+// Admin status is read per open(), not cached at initialization.
+sandbox._isAdmin = true;
+settings.open('services');
+
+assert(
+  fixture.adminOnly.style.display === '',
+  'open() did not reveal .admin-only for an admin',
 );
 
 
@@ -1096,4 +1211,7 @@ console.log(JSON.stringify({
   navigationCallback: true,
   directOpen: true,
   directClose: true,
+  peekChrome: true,
+  adminVisibility: true,
+  adminTabHandoff: true,
 }));

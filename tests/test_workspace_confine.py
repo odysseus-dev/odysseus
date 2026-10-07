@@ -12,10 +12,12 @@ the get_workspace tool, no-leak across calls, and the admin-gated browse route.
 """
 import json
 import os
+from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
 
 from src.tool_execution import (
     NO_TOOL_SECURITY_CONTEXT,
@@ -28,6 +30,9 @@ from src.tool_execution import (
     execute_tool_block as _execute_tool_block,
     get_active_workspace,
 )
+
+
+_execute_tool_block = server_authorized_executor(_execute_tool_block)
 
 
 async def execute_tool_block(*args, **kwargs):
@@ -198,11 +203,15 @@ async def test_grep_and_ls_confined_e2e(ws, admin):
         f.write("hello workspace\n")
     _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": "hello"})), owner="a", workspace=ws)
     assert r["exit_code"] == 0 and "doc.txt" in r["output"]
+    assert ws not in r["output"]
+    assert "/workspace/doc.txt" in r["output"]
     outside = tempfile.mkdtemp()
     _, r = await execute_tool_block(_block("grep", json.dumps({"pattern": "x", "path": outside})), owner="a", workspace=ws)
     assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
     _, r = await execute_tool_block(_block("ls", ""), owner="a", workspace=ws)
     assert r["exit_code"] == 0 and "doc.txt" in r["output"]
+    assert ws not in r["output"]
+    assert r["output"].startswith("/workspace:")
     _, r = await execute_tool_block(_block("ls", outside), owner="a", workspace=ws)
     assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
 
@@ -217,9 +226,16 @@ async def test_glob_confined_e2e(ws, admin):
         f.write("x")
     _, r = await execute_tool_block(_block("glob", json.dumps({"pattern": "found.py"})), owner="a", workspace=ws)
     assert r["exit_code"] == 0 and "found.py" in r["output"]
+    assert ws not in r["output"]
+    assert "/workspace/found.py" in r["output"]
 
-    # a secret outside the workspace must not be discoverable via glob
-    outside = tempfile.mkdtemp()
+    # a secret outside the workspace must not be discoverable via glob.
+    # realpath so this directory and os.path.realpath(ws) below sit in the same
+    # resolved tree. On macOS /tmp is a symlink to /private/tmp, and mixing a
+    # resolved workspace with an unresolved secret makes relpath emit
+    # "../../../../tmp/<abs path>", which trivially contains the absolute path
+    # the assertion is checking for.
+    outside = os.path.realpath(tempfile.mkdtemp())
     secret = os.path.join(outside, "secret.txt")
     with open(secret, "w") as f:
         f.write("nope")
@@ -271,7 +287,23 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
     assert r["exit_code"] == 0
-    assert os.path.realpath(r["output"].strip()) == os.path.realpath(ws)
+    expected_cwd = "/workspace" if "filesystem" in r["containment"]["enforced"] else ws
+    assert os.path.realpath(r["output"].strip()) == os.path.realpath(expected_cwd)
+
+
+@pytest.mark.asyncio
+async def test_python_virtual_workspace_path_works_for_tmp_workspace(ws, admin):
+    """The bwrap /tmp tmpfs must not hide a task workspace bound at /workspace."""
+    _, result = await execute_tool_block(
+        _block(
+            "python",
+            "from pathlib import Path; Path('/workspace/native.txt').write_text('ok')",
+        ),
+        owner="a",
+        workspace=ws,
+    )
+    assert result["exit_code"] == 0, result
+    assert Path(ws, "native.txt").read_text() == "ok"
 
 
 # ── get_workspace tool ──────────────────────────────────────────────────
@@ -279,7 +311,8 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
 @pytest.mark.asyncio
 async def test_get_workspace_tool(ws, admin):
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a", workspace=ws)
-    assert r["exit_code"] == 0 and r["output"].startswith(ws) and "not sandboxed" in r["output"]
+    assert r["exit_code"] == 0 and r["output"].startswith("/workspace") and "not sandboxed" in r["output"]
+    assert ws not in r["output"]
     _, r = await execute_tool_block(_block("get_workspace", ""), owner="a")  # none active
     assert r["exit_code"] == 0 and "No workspace" in r["output"]
 
@@ -404,6 +437,26 @@ def test_explicit_workspace_request_without_workspace_stops(monkeypatch):
     assert '"missing_workspace": true' in text
 
 
+def test_tui_host_workspace_does_not_trigger_missing_workspace_shortcut():
+    import src.agent_loop as al
+
+    assert not al._explicitly_references_missing_workspace(
+        "In this workspace, inspect the project.",
+        None,
+        client_runtime_context={
+            "surface": "odysseus-tui",
+            "session_cwd": "/home/tester/project",
+            "host_shell_bridge": {"url": "http://127.0.0.1:47475/run", "token": "x"},
+        },
+    )
+
+
+def test_webui_workspace_command_accepts_short_path_form():
+    text = Path("static/js/slashCommands.js").read_text(encoding="utf-8")
+    assert "Match the TUI's short form" in text
+    assert "return setWorkspace(args.join(' ').trim())" in text
+
+
 def test_workspace_coding_mode_prompt_is_injected(monkeypatch):
     import src.agent_loop as al
 
@@ -487,6 +540,7 @@ def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch):
     router = wr.setup_workspace_routes()
     browse = next(r.endpoint for r in router.routes if r.path == "/api/workspace/browse")
     vet = next(r.endpoint for r in router.routes if r.path == "/api/workspace/vet")
+    default = next(r.endpoint for r in router.routes if r.path == "/api/workspace/default")
 
     monkeypatch.setattr(wr, "get_current_user", lambda req: "admin")
     monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
@@ -505,6 +559,13 @@ def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         vet(request=object(), path="/tmp")
     assert ei.value.status_code == 403
+
+    monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
+    monkeypatch.setenv("ODYSSEUS_WORKSPACE_DEFAULT", home)
+    assert default(request=object()) == {"ok": True, "path": home}
+
+    monkeypatch.setenv("ODYSSEUS_WORKSPACE_DEFAULT", "/")
+    assert default(request=object()) == {"ok": False, "path": None}
 
 
 # ── send-time privilege gate (no path oracle for non-admins) ────────────
@@ -531,3 +592,70 @@ def test_request_workspace_gate(ws, monkeypatch):
     monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: True)
     assert cr._resolve_request_workspace(object(), ws) == (os.path.realpath(ws), "")
     assert cr._resolve_request_workspace(object(), "/nonexistent/xyz") == ("", "/nonexistent/xyz")
+
+
+def test_request_workspace_gate_uses_api_token_owner(ws, monkeypatch):
+    """Bearer clients must bind workspaces using their real owner, not api."""
+    import routes.chat_routes as cr
+    import src.tool_security as ts
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="admin",
+        )
+    )
+    seen = []
+    monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: seen.append(owner) or True)
+
+    assert cr._resolve_request_workspace(request, ws) == (os.path.realpath(ws), "")
+    assert seen == ["admin"]
+
+
+def test_persisted_session_workspace_falls_back_to_cwd(monkeypatch):
+    import routes.chat_routes as cr
+
+    calls = []
+
+    def fake_resolve(_request, raw_value):
+        calls.append(raw_value)
+        return os.path.realpath(raw_value), ""
+
+    monkeypatch.setattr(cr, "_resolve_request_workspace", fake_resolve)
+
+    workspace, rejected = cr._resolve_persisted_session_workspace(
+        object(),
+        SimpleNamespace(cwd="/tmp/project"),
+        current_workspace="",
+        current_rejected="",
+    )
+
+    assert workspace == os.path.realpath("/tmp/project")
+    assert rejected == ""
+    assert calls == ["/tmp/project"]
+
+
+def test_persisted_session_workspace_does_not_override_request_result(monkeypatch):
+    import routes.chat_routes as cr
+
+    calls = []
+    monkeypatch.setattr(
+        cr,
+        "_resolve_request_workspace",
+        lambda _request, raw_value: calls.append(raw_value) or ("/tmp/cwd", ""),
+    )
+
+    assert cr._resolve_persisted_session_workspace(
+        object(),
+        SimpleNamespace(cwd="/tmp/project"),
+        current_workspace="/tmp/requested",
+        current_rejected="",
+    ) == ("/tmp/requested", "")
+    assert cr._resolve_persisted_session_workspace(
+        object(),
+        SimpleNamespace(cwd="/tmp/project"),
+        current_workspace="",
+        current_rejected="/bad/request",
+    ) == ("", "/bad/request")
+    assert calls == []

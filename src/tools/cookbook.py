@@ -10,12 +10,15 @@ them does a function-local import to avoid a top-level circular dependency,
 matching the system-domain split.
 """
 import asyncio
+import contextlib
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from core import platform_compat
 from routes._validators import validate_remote_host, validate_ssh_port
 
 from src.tools._common import _parse_tool_args
@@ -39,6 +42,132 @@ def _cookbook_label_key(value: Any) -> str:
 
 def _cookbook_is_exact_repo_id(value: Any) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", str(value or "").strip()))
+
+
+_HF_OFFICIAL_AUTHOR_ALIASES: Dict[str, str] = {
+    "qwen": "Qwen",
+    "qwen2": "Qwen",
+    "qwen3": "Qwen",
+    "qwen4": "Qwen",
+    "deepseek": "deepseek-ai",
+    "deepseek-ai": "deepseek-ai",
+    "llama": "meta-llama",
+    "meta": "meta-llama",
+    "meta-llama": "meta-llama",
+    "mistral": "mistralai",
+    "mixtral": "mistralai",
+    "codestral": "mistralai",
+    "mistralai": "mistralai",
+    "gemma": "google",
+    "google": "google",
+    "phi": "microsoft",
+    "microsoft": "microsoft",
+    "nemotron": "nvidia",
+    "nvidia": "nvidia",
+    "gpt-oss": "openai",
+    "openai": "openai",
+    "kimi": "moonshotai",
+    "moonshot": "moonshotai",
+    "moonshotai": "moonshotai",
+    "stable-diffusion": "stabilityai",
+    "stability": "stabilityai",
+    "stabilityai": "stabilityai",
+    "falcon": "tiiuae",
+    "tii": "tiiuae",
+    "tiiuae": "tiiuae",
+    "granite": "ibm-granite",
+    "ibm": "ibm-granite",
+    "allenai": "allenai",
+    "olmo": "allenai",
+    "huggingfacetb": "HuggingFaceTB",
+    "smollm": "HuggingFaceTB",
+}
+
+
+_HF_SEARCH_STOPWORDS = {
+    "a", "an", "and", "are", "best", "by", "can", "find", "for", "from",
+    "hf", "hugging", "huggingface", "in", "is", "latest", "link", "me",
+    "model", "models", "new", "newest", "official", "on", "out", "recent",
+    "released", "search", "show", "the", "there", "to", "what", "with",
+}
+
+
+_HF_QUANT_TERMS = {
+    "awq", "gguf", "gptq", "exl2", "mlx", "fp8", "fp4", "int8", "int4",
+    "q8", "q6", "q5", "q4", "q3", "q2", "quant", "quantized", "quantization",
+    "4bit", "8bit",
+}
+
+
+def _hf_official_author_for_query(query: str) -> Optional[str]:
+    q = str(query or "").strip()
+    if _cookbook_is_exact_repo_id(q):
+        return q.split("/", 1)[0]
+    lowered = q.lower()
+    for alias, author in sorted(_HF_OFFICIAL_AUTHOR_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", lowered):
+            return author
+    return None
+
+
+def _hf_query_mentions_quant(query: str) -> bool:
+    lowered = str(query or "").lower()
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", lowered) for term in _HF_QUANT_TERMS)
+
+
+def _hf_query_terms(query: str, author: str = "") -> List[str]:
+    lowered = str(query or "").lower()
+    author_bits = {author.lower()}
+    author_bits.update(k for k, v in _HF_OFFICIAL_AUTHOR_ALIASES.items() if v.lower() == author.lower())
+    terms: List[str] = []
+    for term in re.findall(r"[a-z0-9]+(?:\.[a-z0-9]+)?", lowered):
+        if term in _HF_SEARCH_STOPWORDS or term in author_bits:
+            continue
+        if term not in terms:
+            terms.append(term)
+    return terms
+
+
+def _hf_row_text(row: Dict[str, Any]) -> str:
+    parts = [
+        row.get("id"),
+        row.get("modelId"),
+        row.get("pipeline_tag"),
+        row.get("library_name"),
+        " ".join(str(t) for t in (row.get("tags") or []) if t),
+    ]
+    return " ".join(str(p or "") for p in parts).lower()
+
+
+def _hf_model_matches_terms(row: Dict[str, Any], terms: List[str]) -> bool:
+    if not terms:
+        return True
+    haystack = _hf_row_text(row)
+    return all(term in haystack for term in terms)
+
+
+def _hf_model_is_quant_variant(row: Dict[str, Any]) -> bool:
+    haystack = _hf_row_text(row)
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", haystack) for term in _HF_QUANT_TERMS)
+
+
+def _hf_format_model_search_output(models: List[Dict[str, Any]], query: str, official_author: str = "") -> str:
+    scope = f" official {official_author} model(s)" if official_author else " model(s)"
+    lines = [f"Found {len(models)}{scope} for {query!r}:" if query else f"Found {len(models)}{scope}:"]
+    for m in models:
+        repo_id = str(m.get("id") or m.get("modelId") or "?")
+        bits = []
+        if m.get("pipeline_tag"):
+            bits.append(str(m["pipeline_tag"]))
+        if m.get("downloads") is not None:
+            bits.append(f"{m['downloads']} downloads")
+        if m.get("likes") is not None:
+            bits.append(f"{m['likes']} likes")
+        if m.get("lastModified"):
+            bits.append(f"updated {m['lastModified']}")
+        suffix = f" ({'; '.join(bits)})" if bits else ""
+        lines.append(f"- {repo_id}{suffix}\n  URL: https://huggingface.co/{repo_id}")
+    return "\n".join(lines)
 
 
 def _cookbook_match_saved_preset(query: str, presets: List[Any], host: str = "") -> Optional[Dict[str, Any]]:
@@ -549,17 +678,17 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
     a dict shaped like a cookbook task so the caller can merge cleanly.
     """
     import os
-    if not os.path.isdir("/proc"):
+    if not platform_compat.has_procfs():
         return []
+    proc_root = platform_compat.PROC_ROOT
     out: List[Dict[str, Any]] = []
     seen_keys = set()
     try:
-        for pid_dir in os.listdir("/proc"):
+        for pid_dir in os.listdir(proc_root):
             if not pid_dir.isdigit():
                 continue
             try:
-                with open(f"/proc/{pid_dir}/cmdline", "rb") as f:
-                    raw = f.read()
+                raw = (proc_root / pid_dir / "cmdline").read_bytes()
             except (OSError, PermissionError):
                 continue
             if not raw:
@@ -643,9 +772,11 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("download_model", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -728,9 +859,11 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_model", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -896,6 +1029,158 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
     return {"output": "\n".join(lines), "tasks": merged, "exit_code": 0}
 
 
+# How long a tmux query may take before the stop gives up on identifying the
+# session's processes and says so. The kill itself does not depend on it.
+_TMUX_QUERY_TIMEOUT_S = 5
+# Grace between SIGTERM and SIGKILL for a model server that ignored SIGHUP.
+_SWEEP_GRACE_S = 2.0
+_SWEEP_POLL_S = 0.05
+
+
+async def _capture_session_processes(session_id: str) -> tuple[List[Dict[str, Any]], str]:
+    """Snapshot the processes belonging to a local tmux session.
+
+    This is what gives the survivor sweep an *ownership* record rather than a
+    resemblance. tmux knows which pane hosts the session, the pane pid's
+    descendants are the processes that session started, and a start token taken
+    now is what lets the sweep prove, after the kill, that a pid it is about to
+    signal is still one of them.
+
+    Returns ``(records, note)``. An empty list with a note is the honest
+    outcome when the session cannot be enumerated — the note reaches the tool
+    result, because "I found no survivors" and "I could not look" are different
+    answers and the sweep used to give the first for both (ODY-94).
+    """
+    from src import process_ownership
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tmux", "list-panes", "-a", "-F", "#{session_name} #{pane_pid}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=_TMUX_QUERY_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                await proc.communicate()
+            return [], "; could not identify the session's processes (tmux timed out)"
+    except (OSError, FileNotFoundError) as exc:
+        return [], f"; could not identify the session's processes (tmux unavailable: {exc})"
+    if proc.returncode not in (0, None):
+        return [], "; could not identify the session's processes (tmux listed no panes)"
+
+    pane_pids: List[int] = []
+    for line in (stdout or b"").decode("utf-8", errors="replace").splitlines():
+        name, _, pid_text = line.strip().rpartition(" ")
+        if name == session_id and pid_text.isdigit():
+            pane_pids.append(int(pid_text))
+    if not pane_pids:
+        # The session is already gone, so nothing links a survivor to it. Said
+        # out loud rather than reported as a clean sweep.
+        return [], "; the session had no live pane, so its processes could not be identified"
+
+    def _snapshot() -> tuple[List[Dict[str, Any]], str]:
+        from src import process_lifecycle
+
+        # Membership (descends from the pane) and identity (start token) are
+        # bound together: a pid that changed hands after the table was read
+        # is dropped instead of being recorded under a stranger's token.
+        try:
+            bound = process_lifecycle.bind_descendants(
+                pane_pids, exclude={os.getpid(), os.getppid()})
+        except process_ownership.InspectionUnavailable as exc:
+            return [], f"; could not identify the session's processes ({exc})"
+        return [{
+            "pid": seen.identity.pid,
+            "start_token": seen.identity.start_token,
+            "command": seen.facts.command,
+        } for seen in bound], ""
+
+    return await asyncio.to_thread(_snapshot)
+
+
+def _sweep_session_survivors(
+    owned: List[Dict[str, Any]], tracked_cmd: str, capture_note: str,
+) -> str:
+    """Terminate the captured processes that outlived the tmux kill.
+
+    Blocking; call it off the event loop. Returns the note to append to the
+    tool result — the sweep's outcome is part of whether the stop worked, and
+    silence here is what let a half-stopped server read as stopped.
+
+    Only captured pids are signalled. A process that merely matches
+    ``tracked_cmd`` is reported and left alone: the Cookbook composed that
+    command line, so an identical one may well be a server the user started by
+    hand, and killing it because it resembles ours is indistinguishable from
+    killing ours. Naming it lets whoever is reading decide.
+
+    The TERM → verify → KILL → verify ladder, and the re-verification before
+    every signal, are :func:`src.process_lifecycle.terminate_identities`.
+    """
+    from src import process_lifecycle
+
+    if capture_note:
+        return capture_note
+
+    sweep = process_lifecycle.terminate_identities(
+        (process_lifecycle.ProcessIdentity(pid=int(rec["pid"]), start_token=rec["start_token"])
+         for rec in owned),
+        steps=process_lifecycle.term_kill_steps(_SWEEP_GRACE_S),
+        poll_s=_SWEEP_POLL_S,
+    )
+
+    note = ""
+    if sweep.killed:
+        note += f"; killed {len(sweep.killed)} surviving process(es) owned by the session"
+    if sweep.survivors:
+        note += (
+            f"; {len(sweep.survivors)} process(es) survived SIGKILL and are still "
+            f"running (pid {', '.join(str(pid) for pid in sweep.survivors)})"
+        )
+    if sweep.unverified:
+        # Captured as the session's, but this host can no longer say whether
+        # the pid still holds that process — so it was not signalled.
+        note += (
+            f"; {len(sweep.unverified)} process(es) could not be re-identified and "
+            f"were not signalled (pid {', '.join(str(pid) for pid in sweep.unverified)})"
+        )
+    note += _unowned_match_note(tracked_cmd, {rec["pid"] for rec in owned})
+    return note
+
+
+def _unowned_match_note(tracked_cmd: str, owned_pids: set) -> str:
+    """Report, without signalling, processes that look like the tracked command.
+
+    The old sweep killed these. It could not tell them apart from the server it
+    started, and neither can this — so it names them instead. Reporting keeps
+    the information the old behaviour acted on while giving up the one thing it
+    was never entitled to do.
+    """
+    from src import process_ownership
+
+    if not tracked_cmd:
+        return ""
+    try:
+        table = process_ownership.process_table()
+    except process_ownership.InspectionUnavailable:
+        return "; could not check for unowned processes matching the command"
+    strangers = sorted(
+        pid for pid, info in table.items()
+        if info.command == tracked_cmd and pid not in owned_pids and pid != os.getpid()
+    )
+    if not strangers:
+        return ""
+    return (
+        f"; note: {len(strangers)} other process(es) match this server's command "
+        f"line (pid {', '.join(str(pid) for pid in strangers)}) — not signalled, "
+        f"because nothing identifies them as started by this session"
+    )
+
+
 async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                                  ssh_port: str = "", verb: str = "Stopped") -> Dict:
     """Kill a cookbook tmux session — remote-aware — AND mark the task
@@ -946,23 +1231,51 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         )
         target_label = f"{session_id} on {remote}"
     else:
-        cmd = f"tmux kill-session -t {shlex.quote(session_id)}"
-        target_label = session_id
+        return {"error": "Local Cookbook control has no admitted process resource; session discovery is not ownership",
+                "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
+
+    # Capture what this session owns BEFORE the kill. Once tmux tears the
+    # session down the pane is gone, and with it the only evidence linking a
+    # surviving model server to the session that started it. A sweep that looks
+    # afterwards has nothing left but the command line, which identifies a
+    # *kind* of process and not one we started.
+    owned: List[Dict[str, Any]] = []
+    owned_note = ""
+    if not remote and isinstance(matched, dict):
+        owned, owned_note = await _capture_session_processes(session_id)
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
-                                     json={"command": cmd}, headers=headers)
-        if resp.status_code >= 400:
-            return {
-                "error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}",
-                "exit_code": 1,
-                "untrusted_content": True,
+        if remote:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
+                                         json={"command": cmd}, headers=headers)
+            if resp.status_code >= 400:
+                return {
+                    "error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}",
+                    "exit_code": 1,
+                    "untrusted_content": True,
+                }
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+        else:
+            import asyncio
+            proc = await asyncio.create_subprocess_exec(
+                "tmux", "kill-session", "-t", session_id,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+            except asyncio.TimeoutError:
+                proc.kill()
+                stdout, stderr = await proc.communicate()
+            data = {
+                "stdout": stdout.decode("utf-8", errors="replace"),
+                "stderr": stderr.decode("utf-8", errors="replace"),
+                "exit_code": proc.returncode,
             }
-        try:
-            data = resp.json()
-        except Exception:
-            data = {}
         kill_failed = isinstance(data, dict) and data.get("exit_code") not in (None, 0)
         kill_err = ((data.get("stderr") or data.get("error") or "").strip() if isinstance(data, dict) else "")
         # "no server running" / "can't find session" means it was already
@@ -970,6 +1283,17 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         already_gone = any(s in kill_err.lower() for s in ("no server running", "can't find session", "session not found"))
         if kill_failed and not already_gone:
             return {"error": f"Failed to {verb.lower()} {target_label}: {kill_err or 'kill-session returned non-zero'}", "exit_code": 1}
+
+        # Some model servers survive the tmux session's SIGHUP. Terminate the
+        # ones this session actually owns — captured above, each verified by
+        # identity at signal time — and report, without signalling, anything
+        # that merely looks like the tracked command.
+        sweep_note = ""
+        if not remote and isinstance(matched, dict):
+            tracked_cmd = str((matched.get("payload") or {}).get("_cmd") or "").strip()
+            sweep_note = await asyncio.to_thread(
+                _sweep_session_survivors, owned, tracked_cmd, owned_note,
+            )
 
         # Update state: mark stopped (so the UI + list reflect reality).
         if matched is not None:
@@ -982,7 +1306,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                 logger.debug(f"failed to mark {session_id} stopped in state: {e}")
 
         suffix = " (was already gone)" if already_gone else ""
-        return {"output": f"{verb} {target_label}{suffix}", "exit_code": 0}
+        return {"output": f"{verb} {target_label}{suffix}{sweep_note}", "exit_code": 0}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
 
@@ -1185,44 +1509,91 @@ async def do_cancel_download(content: str, owner: Optional[str] = None) -> Dict:
 
 
 async def do_search_hf_models(content: str, owner: Optional[str] = None) -> Dict:
-    """Search HuggingFace via the cookbook /api/cookbook/hf-latest endpoint."""
-    from src.tool_implementations import _internal_headers, _INTERNAL_BASE  # shared, lives in facade
+    """Search Hugging Face Hub models via the public HF API.
+
+    This intentionally does not use the cookbook's ``/hf-latest`` route:
+    that route is a VRAM/trending browser and ignores semantic search terms.
+    """
     import httpx
     try:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
-    query = args.get("query", "") or args.get("search", "")
-    limit = args.get("limit", 10)
-    params: Dict[str, str] = {}
-    if query:
+    query = _string_arg(args.get("query") or args.get("search") or args.get("q"))
+    try:
+        limit = max(1, min(int(args.get("limit") or 10), 25))
+    except Exception:
+        limit = 10
+    explicit_author = _string_arg(args.get("author") or args.get("owner") or args.get("namespace"))
+    official_only = bool(args.get("official_only") or args.get("official") or args.get("provider_only"))
+    if re.search(r"\bofficial\b|\blatest\b|\bnewest\b|\brecent\b", query, flags=re.I):
+        official_only = True
+    official_author = explicit_author or (_hf_official_author_for_query(query) if official_only else "")
+    wants_latest = bool(re.search(r"\blatest\b|\bnewest\b|\brecent\b|\breleased\b", query, flags=re.I))
+    wants_quant = bool(args.get("quantized") or args.get("quant") or _hf_query_mentions_quant(query))
+    exact_repo_query = _cookbook_is_exact_repo_id(query)
+    if wants_quant and not (args.get("official_only") or args.get("official") or explicit_author):
+        official_only = False
+        official_author = ""
+
+    params: Dict[str, str] = {
+        "limit": str(max(limit * 8, 50) if official_author else max(limit * 4, limit)),
+        "full": "false",
+        "sort": "lastModified" if wants_latest else "downloads",
+        "direction": "-1",
+    }
+    if official_author:
+        params["author"] = official_author
+    elif query:
         params["search"] = query
-    if limit:
-        params["limit"] = str(limit)
+    pipeline = _string_arg(args.get("pipeline") or args.get("filter"))
+    if pipeline:
+        params["filter"] = pipeline
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/hf-latest",
-                                    params=params, headers=_internal_headers())
-            data = resp.json()
-        models = data.get("models") if isinstance(data, dict) else data
-        if not models:
-            return {"output": f"No models found for query: {query!r}", "exit_code": 0}
-        lines = [f"Found {len(models)} model(s) for {query!r}:" if query else f"{len(models)} model(s):"]
-        for m in models[:limit if isinstance(limit, int) else 10]:
-            if isinstance(m, dict):
-                name = m.get("repo_id") or m.get("modelId") or m.get("id") or "?"
-                dl = m.get("downloads")
-                size = m.get("size_gb") or m.get("needed_vram_gb")
-                bits = []
-                if size:
-                    bits.append(f"~{size}GB")
-                if dl:
-                    bits.append(f"{dl} downloads")
-                tail = f" ({', '.join(bits)})" if bits else ""
-                lines.append(f"- {name}{tail}")
+            if exact_repo_query:
+                resp = await client.get(f"https://huggingface.co/api/models/{query}")
             else:
-                lines.append(f"- {m}")
-        return {"output": "\n".join(lines), "models": models, "exit_code": 0}
+                resp = await client.get("https://huggingface.co/api/models", params=params)
+            if resp.status_code != 200:
+                return {"error": f"HF API HTTP {resp.status_code}: {resp.text[:300]}", "exit_code": 1}
+            data = resp.json()
+        if isinstance(data, dict) and (data.get("id") or data.get("modelId")):
+            models = [data]
+        else:
+            models = data if isinstance(data, list) else []
+        if official_author:
+            author_lc = official_author.lower()
+            terms = _hf_query_terms(query, official_author)
+            filtered = [
+                m for m in models if isinstance(m, dict)
+                and str(m.get("id") or m.get("modelId") or "").lower().startswith(f"{author_lc}/")
+                and _hf_model_matches_terms(m, terms)
+            ]
+            # For "latest official Qwen model", family/org is the only useful
+            # constraint. If local term filtering removes every result, show
+            # the official author's recent models rather than unrelated Hub hits.
+            models = filtered or [
+                m for m in models if isinstance(m, dict)
+                and str(m.get("id") or m.get("modelId") or "").lower().startswith(f"{author_lc}/")
+            ]
+            if not wants_quant and not exact_repo_query:
+                models = [m for m in models if not _hf_model_is_quant_variant(m)]
+        else:
+            models = [m for m in models if isinstance(m, dict)]
+            if not wants_quant:
+                models = [m for m in models if not _hf_model_is_quant_variant(m)]
+        models = models[:limit]
+        if not models:
+            scope = f" official author {official_author!r}" if official_author else ""
+            return {"output": f"No{scope} models found for query: {query!r}", "models": [], "exit_code": 0}
+        return {
+            "output": _hf_format_model_search_output(models, query, official_author),
+            "models": models,
+            "official_author": official_author or None,
+            "exit_code": 0,
+        }
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
 
@@ -1256,9 +1627,26 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     port = args.get("port") or 8000
     display_name = (args.get("name") or "").strip() or (model.split("/")[-1] if "/" in model else model)
     add_endpoint = args.get("add_endpoint", True)
+    dry_run = bool(args.get("dry_run", False))
 
     if not sess or not model:
         return {"error": "tmux_session and model are required", "exit_code": 1}
+
+    if dry_run:
+        return {
+            "output": (
+                f"Dry run: would verify tmux session {sess!r} on {host or 'local'}, "
+                f"register model {model!r} on port {int(port)}, and "
+                f"{'add' if add_endpoint else 'not add'} a chat endpoint. No state was changed."
+            ),
+            "dry_run": True,
+            "host": host,
+            "tmux_session": sess,
+            "model": model,
+            "port": int(port),
+            "add_endpoint": bool(add_endpoint),
+            "exit_code": 0,
+        }
 
     # Verify tmux session exists on the target host
     if host:
@@ -1460,6 +1848,7 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
     name = (args.get("name") or args.get("preset") or "").strip()
+    dry_run = bool(args.get("dry_run", False))
     if not name:
         return {"error": "name (preset name) is required. Call list_serve_presets to see what's available.", "exit_code": 1}
 
@@ -1494,6 +1883,20 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
     if not repo_id or not cmd:
         return {"error": f"Preset {chosen.get('name')!r} is missing model or cmd — can't launch.", "exit_code": 1}
 
+    if dry_run:
+        return {
+            "output": (
+                f"Dry run: would launch preset {chosen.get('name')!r}: {repo_id} "
+                f"on {host or 'local'} with command {cmd!r}. No server was started."
+            ),
+            "dry_run": True,
+            "preset": chosen.get("name") or name,
+            "model": repo_id,
+            "host": host,
+            "command": cmd,
+            "exit_code": 0,
+        }
+
     payload: Dict[str, Any] = {"repo_id": repo_id, "cmd": cmd}
     if host:
         payload["remote_host"] = host
@@ -1509,9 +1912,11 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
         payload["ssh_port"] = env_cfg["ssh_port"]
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
-                                     json=payload, headers=_internal_headers())
+        from src.agent_runtime.local_model_control import model_control_headers
+        with model_control_headers("serve_preset", content, owner, payload) as launch_headers:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
+                                         json=payload, headers=launch_headers)
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
@@ -1549,6 +1954,7 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
         return {"error": "Invalid JSON arguments", "exit_code": 1}
     raw_host = (args.get("host") or "").strip()
     headers = _internal_headers()
+    scan_errors = []
 
     async def _scan_one(host_label: str, host_val: str, ssh_port: str = "",
                         platform: str = "", model_dir: str = "") -> list:
@@ -1573,13 +1979,22 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.get(f"{_INTERNAL_BASE}/api/model/cached",
                                         params=p, headers=headers)
+                resp.raise_for_status()
                 data = resp.json()
+                if isinstance(data, dict) and data.get('error'):
+                    scan_errors.append({
+                        'host': host_label or 'local',
+                        'reason': str(data.get('error'))[:500],
+                    })
+                    return []
             ms = data.get("models", []) if isinstance(data, dict) else (data or [])
             for m in ms:
                 m["host"] = host_label or "local"
             return ms or []
         except Exception as e:
             logger.debug(f"list_cached_models scan({host_label}) failed: {e}")
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            scan_errors.append({'host': host_label or 'local', 'reason': f'HTTP {status}' if status else type(e).__name__})
             return []
 
     # When the caller specifies a host explicitly, scan only that one (old behaviour).
@@ -1592,10 +2007,13 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 st = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
+                st.raise_for_status()
                 st_data = st.json() if st.headers.get("content-type", "").startswith("application/json") else {}
             servers = (st_data.get("env", {}) or {}).get("servers") or []
         except Exception as e:
             logger.debug(f"server list fetch failed: {e}")
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            scan_errors.append({'host': 'server inventory', 'reason': f'HTTP {status}' if status else type(e).__name__})
             st_data = {}
 
         def _dirs_for(server_record: Dict[str, Any]) -> str:
@@ -1624,7 +2042,25 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                  and (s.get("name") == raw_host or s.get("host") == host or s.get("host") == raw_host)),
                 {},
             )
+            error_start = len(scan_errors)
             models = await _scan_one(raw_host, host, model_dir=_dirs_for(srv))
+            # Friendly Cookbook names commonly double as SSH aliases. If a
+            # saved LAN address goes stale after a reboot/network change,
+            # retry the validated alias before declaring the server offline.
+            # This is read-only and never mutates the saved configuration.
+            if not models and len(scan_errors) > error_start and host != raw_host:
+                try:
+                    alias = validate_remote_host(raw_host)
+                except Exception:
+                    alias = None
+                if alias:
+                    configured_errors = scan_errors[error_start:]
+                    del scan_errors[error_start:]
+                    models = await _scan_one(
+                        raw_host, alias, model_dir=_dirs_for(srv),
+                    )
+                    if not models:
+                        scan_errors[error_start:error_start] = configured_errors
         else:
             # Always include local. Local's saved record is the one with no host.
             local_srv = next((s for s in servers if isinstance(s, dict) and not (s.get("host") or "").strip()), {})
@@ -1654,6 +2090,9 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                         continue
                     seen.add(key)
                     models.append(m)
+        if not models and scan_errors:
+            return {'error': 'Cache inventory could not be verified; one or more server scans failed.',
+                    'scan_errors': scan_errors, 'models': [], 'exit_code': 1}
         if not models:
             # Cache scans can miss models downloaded into the HF default cache
             # when the server has no explicit model_dir configured. Surface
@@ -1708,6 +2147,11 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                     kind = " [diffusion]" if m.get("is_diffusion") else ""
                     backend = f" ({m.get('backend')})" if m.get("backend") else ""
                     lines.append(f"- {name}{kind}{backend} — {sz}{inc}")
+        if scan_errors:
+            warning = 'Cache inventory is incomplete; failed scans: ' + ', '.join(
+                f"{item['host']} ({item['reason']})" for item in scan_errors)
+            return {'output': warning + '\n\n' + '\n'.join(lines), 'models': models,
+                    'error': warning, 'scan_errors': scan_errors, 'partial': True, 'exit_code': 1}
         return {"output": "\n".join(lines), "models": models, "exit_code": 0}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}

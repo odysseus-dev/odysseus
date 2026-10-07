@@ -23,6 +23,23 @@ export function transformPopupHTML() {
       </span>
     </div>
     <div class="ge-transform-popup-body">
+      <div class="ge-transform-field ge-transform-position-field">
+        <label for="ge-transform-x" title="Transform center X">X</label>
+        <input type="number" class="ge-transform-popup-input" id="ge-transform-x" step="1" aria-label="Transform center X" />
+        <span class="ge-transform-spin" data-spin-for="ge-transform-x">
+          <button type="button" data-spin="down" tabindex="-1" aria-label="Move left">−</button>
+          <button type="button" data-spin="up" tabindex="-1" aria-label="Move right">+</button>
+        </span>
+      </div>
+      <div class="ge-transform-field ge-transform-position-field">
+        <label for="ge-transform-y" title="Transform center Y">Y</label>
+        <input type="number" class="ge-transform-popup-input" id="ge-transform-y" step="1" aria-label="Transform center Y" />
+        <span class="ge-transform-spin" data-spin-for="ge-transform-y">
+          <button type="button" data-spin="down" tabindex="-1" aria-label="Move up">−</button>
+          <button type="button" data-spin="up" tabindex="-1" aria-label="Move down">+</button>
+        </span>
+      </div>
+      <div class="ge-row-break ge-transform-position-break"></div>
       <div class="ge-transform-field">
         <label>W</label>
         <input type="number" class="ge-transform-popup-input" id="ge-transform-w" step="1" />
@@ -48,9 +65,24 @@ export function transformPopupHTML() {
           <button type="button" data-spin="up" tabindex="-1" aria-label="Rotate +1°">+</button>
         </span>
       </div>
+      <span class="ge-transform-quick" aria-label="Transform actions">
+        <button type="button" class="ge-transform-quick-btn" id="ge-transform-flip-h" title="Flip horizontally" aria-label="Flip horizontally">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="m8 7-4 5 4 5"/><path d="m16 7 4 5-4 5"/></svg>
+        </button>
+        <button type="button" class="ge-transform-quick-btn" id="ge-transform-flip-v" title="Flip vertically" aria-label="Flip vertically">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="m7 8 5-4 5 4"/><path d="m7 16 5 4 5-4"/></svg>
+        </button>
+        <button type="button" class="ge-transform-quick-btn" id="ge-transform-rot-90" title="Rotate 90 degrees (Shift: counter-clockwise)" aria-label="Rotate 90 degrees">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+        </button>
+      </span>
       <button type="button" class="ge-btn ge-btn-sm" id="ge-transform-cancel-btn">Cancel</button>
       <button type="button" class="ge-btn ge-btn-sm ge-btn-primary" id="ge-transform-apply">Apply</button>
     </div>
+    <label class="ge-transform-preserve-field">
+      <input type="checkbox" id="ge-transform-preserve-source" />
+      <span>Preserve source pixels</span>
+    </label>
     <p class="ge-transform-popup-hint">Type <strong>-</strong> before W / H to flip.</p>
   `;
 }

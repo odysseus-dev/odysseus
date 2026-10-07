@@ -46,6 +46,51 @@ async def _immediate_to_thread(fn, *args, **kwargs):
     return fn(*args, **kwargs)
 
 
+def test_admin_password_reset_revokes_only_target_sessions(tmp_path):
+    mgr = _make_manager(tmp_path)
+    mgr.create_user('admin', 'admin-password', is_admin=True)
+    alice = mgr.create_session('alice', 'old-password')
+    bob = mgr.create_session('bob', 'bob-password')
+    assert not mgr.reset_user_password('alice', 'new-password', 'bob')
+    assert not mgr.reset_user_password('admin', 'new-password', 'admin')
+    assert not mgr.reset_user_password('missing', 'new-password', 'admin')
+    assert mgr.validate_token(alice)
+    assert mgr.reset_user_password('alice', 'new-password', 'admin')
+    assert not mgr.validate_token(alice)
+    assert mgr.validate_token(bob)
+    assert not mgr.verify_password('alice', 'old-password')
+    assert mgr.verify_password('alice', 'new-password')
+
+
+@pytest.mark.parametrize('admin,password,status', [
+    (False, 'valid-password', 403),
+    (True, 'x', 400),
+    (True, 'a' * 73, 400),
+    (True, '\u00e9' * 37, 400),
+    (True, 'valid-password', None),
+])
+def test_admin_password_reset_route(admin, password, status):
+    _real_core_package()
+    sys.modules.pop('routes.auth_routes', None)
+    from routes.auth_routes import ResetUserPasswordRequest, setup_auth_routes
+    auth = MagicMock()
+    auth.get_username_for_token.return_value = 'admin'
+    auth.is_admin.return_value = admin
+    auth.reset_user_password.return_value = True
+    endpoint = next(route.endpoint for route in setup_auth_routes(auth).routes
+                    if route.path == '/api/auth/users/{username}/password')
+    request = SimpleNamespace(cookies={'odysseus_session': 'token'})
+    call = endpoint('alice', ResetUserPasswordRequest(new_password=password), request)
+    if status:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(call)
+        assert exc.value.status_code == status
+        auth.reset_user_password.assert_not_called()
+    else:
+        assert asyncio.run(call) == {'ok': True}
+        auth.reset_user_password.assert_called_once_with('alice', password, 'admin')
+
+
 def test_revoke_user_sessions_preserves_current_and_persists(tmp_path):
     mgr = _make_manager(tmp_path)
     current = mgr.create_session("alice", "old-password")

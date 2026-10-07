@@ -25,7 +25,7 @@
  *   }
  */
 
-import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
+import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
 import { nextToolWindowZ } from './toolWindowZOrder.js';
@@ -135,7 +135,7 @@ const _LABELS = {
   // Full SVG markup (not a single path-d) — the rounded-lobe brain needs
   // three sub-paths, which the dock renderer supports when the icon string
   // contains '<'.
-  'memory-modal':      { label: 'Brain',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>' },
+  'memory-modal':      { label: 'Memory',    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>' },
   'notes-panel':       { label: 'Notes',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>' },
   'email-lib-modal':   { label: 'Email',     icon: 'M2 4h20v16H2zM22 7l-9.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7' },
   // The Prompt window (characters / inject / group). Syringe = "prompt" icon,
@@ -455,6 +455,14 @@ function _trashBurst() {
   setTimeout(() => { z.classList.remove('dropping'); }, 360);
 }
 
+// The close target grows with proximity instead of jumping to one fixed size
+// when the dragged chip enters the capture radius.
+function _setTrashZoneProximity(z, distance, radius) {
+  if (!z) return;
+  const pull = Math.max(0, Math.min(1, 1 - (distance / radius)));
+  z.style.setProperty('--trash-zone-scale', (1 + pull * 0.24).toFixed(3));
+}
+
 // Place the X on the opposite vertical half from the chip so the user always
 // has somewhere to drag toward. Locked at drag-start so it doesn't flip while
 // the user is mid-gesture.
@@ -616,6 +624,7 @@ function _stepChain(state, trashZone, captureRadius) {
     const dist = Math.hypot(hcx - tzcx, hcy - tzcy);
     // Trash zone is shown for the whole drag; only .engaged tracks proximity.
     const inZone = dist < captureRadius;
+    _setTrashZoneProximity(trashZone, dist, captureRadius);
     if (inZone !== state.overTrash) {
       state.overTrash = inZone;
       trashZone.classList.toggle('engaged', inZone);
@@ -664,6 +673,7 @@ function _wireChipDrag(chip, dock) {
     if (onTouch) {
       const isFree = _chipPositions.has(chip.dataset.modalId);
       trashZone = _ensureTrashZone();
+      trashZone.style.setProperty('--trash-zone-scale', '1');
       overTrash = false;
       // Decide drag mode purely by chip count, not by whether this chip is
       // currently dock-resident or free. As long as there are 2+ chips, the
@@ -825,6 +835,7 @@ function _wireChipDrag(chip, dock) {
       const tzcy = tz.top + tz.height / 2;
       const dist = Math.hypot(e.clientX - tzcx, e.clientY - tzcy);
       const inZone = dist < CAPTURE_RADIUS;
+      _setTrashZoneProximity(trashZone, dist, CAPTURE_RADIUS);
       // Trash X stays visible for the entire drag; only .engaged tracks
       // when the chip is close enough to capture.
       let tx = e.clientX - (chipStartLeft + chip.offsetWidth / 2);
@@ -890,6 +901,7 @@ function _wireChipDrag(chip, dock) {
         const dockCy = newTop + dock.offsetHeight / 2;
         const dist = Math.hypot(dockCx - tzcx, dockCy - tzcy);
         const inZone = dist < CAPTURE_RADIUS;
+        _setTrashZoneProximity(trashZone, dist, CAPTURE_RADIUS);
         // Trash X stays visible for the entire drag — only .engaged
         // tracks proximity to the capture point.
         if (inZone) {
@@ -1473,6 +1485,7 @@ const _SWIPE_DOWN_MINIMIZES = new Set([
   'cookbook-modal',
   'calendar-modal',
   'email-lib-modal',
+  'theme-modal',
 ]);
 // Same idea but matched by id prefix — so dynamically-created modals
 // (per-email reader tabs) survive swipe-down too.

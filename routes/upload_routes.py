@@ -25,6 +25,7 @@ from src.auth_helpers import effective_user
 from src.owner_identity import auth_disabled
 from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
+from src.path_confinement import is_inside
 from src.upload_handler import (
     UploadCleanupSafetyError,
     count_recent_uploads,
@@ -153,10 +154,7 @@ def setup_upload_routes(upload_handler):
         return os.path.realpath(getattr(upload_handler, "upload_dir", UPLOAD_DIR))
 
     def _path_inside_upload_dir(path: str) -> bool:
-        try:
-            return os.path.commonpath([_upload_root(), os.path.realpath(path)]) == _upload_root()
-        except Exception:
-            return False
+        return is_inside(_upload_root(), path)
 
     def _resolve_upload_path(file_id: str) -> str:
         from src.constants import UPLOAD_DIR
@@ -191,7 +189,8 @@ def setup_upload_routes(upload_handler):
             return None
         return session_id
 
-    def _promote_chat_image_to_gallery(meta: dict, owner: str | None, session_id: str | None = None) -> str | None:
+    def _promote_chat_image_to_gallery(meta: dict, owner: str | None, session_id: str | None = None,
+                                       gallery_id: str | None = None) -> str | None:
         """Make chat-uploaded images visible in Gallery without changing chat storage."""
         is_image_file = getattr(upload_handler, "is_image_file", None)
         if not callable(is_image_file):
@@ -206,6 +205,21 @@ def setup_upload_routes(upload_handler):
         db = SessionLocal()
         try:
             file_hash = meta.get("hash")
+            if gallery_id:
+                existing = db.query(GalleryImage).filter(
+                    GalleryImage.id == gallery_id,
+                    GalleryImage.is_active == True,  # noqa: E712
+                ).first()
+                if existing and (not owner or existing.owner == owner):
+                    image_dir = Path(GENERATED_IMAGES_DIR)
+                    image_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source_path, image_dir / existing.filename)
+                    existing.file_hash = file_hash
+                    existing.file_size = meta.get("size")
+                    existing.width = meta.get("width")
+                    existing.height = meta.get("height")
+                    db.commit()
+                    return existing.id
             if file_hash:
                 q = db.query(GalleryImage).filter(
                     GalleryImage.file_hash == file_hash,
@@ -260,6 +274,7 @@ def setup_upload_routes(upload_handler):
         request: Request,
         files: List[UploadFile] = File(...),
         session_id: Optional[str] = Form(None),
+        gallery_id: Optional[str] = Form(None),
     ):
         """Upload files with enhanced security and organization."""
         if not isinstance(session_id, str):
@@ -290,7 +305,7 @@ def setup_upload_routes(upload_handler):
             try:
                 owner = effective_user(request)
                 meta = upload_handler.save_upload(u, client_ip, owner=owner)
-                gallery_id = _promote_chat_image_to_gallery(meta, owner, session_id)
+                promoted_gallery_id = _promote_chat_image_to_gallery(meta, owner, session_id, gallery_id)
                 item = {
                     "id": meta["id"],
                     "name": meta["name"],
@@ -304,8 +319,8 @@ def setup_upload_routes(upload_handler):
                     "height": meta.get("height"),
                     "is_duplicate": meta.get("is_duplicate", False)
                 }
-                if gallery_id:
-                    item["gallery_id"] = gallery_id
+                if promoted_gallery_id:
+                    item["gallery_id"] = promoted_gallery_id
                 out.append(item)
             except HTTPException:
                 raise

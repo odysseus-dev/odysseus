@@ -4,6 +4,8 @@
 // their .value stays the source of truth, and we dispatch 'input'
 // events so existing listeners keep working.
 
+import { topPortalZ } from './toolWindowZOrder.js';
+
 const LS_RECENT = 'odysseus-recent-colors';
 const MAX_RECENT = 12;
 
@@ -110,10 +112,13 @@ function buildPopover() {
     <div class="cp-row">
       <div class="cp-preview"></div>
       <input type="text" class="cp-hex" maxlength="7" spellcheck="false" autocomplete="off">
+      <button class="cp-copy" title="Copy color" type="button" aria-label="Copy color">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      </button>
       <button class="cp-eyedropper" title="Eyedropper" type="button">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 22l4-4m0 0l3-3 5 5-3 3a2 2 0 01-2.8 0l-2.2-2.2a2 2 0 010-2.8z"/>
-          <path d="M14 8l3-3a3 3 0 014.2 4.2l-3 3-4.2-4.2z"/>
+          <path d="M12 2.5S5 10.1 5 14.5a7 7 0 0014 0C19 10.1 12 2.5 12 2.5Z"/>
+          <path d="M9 16.5c.6 1.2 1.6 1.9 3 2"/>
         </svg>
       </button>
     </div>
@@ -177,6 +182,56 @@ function setFromHex(hex) {
   _h = v.h; _s = v.s; _v = v.v;
 }
 
+function cssColorToHex(value) {
+  const match = String(value || '').match(/rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:[, /]+\s*([\d.]+%?))?\s*\)/i);
+  if (!match) return null;
+  const alpha = match[4] == null ? 1 : (match[4].endsWith('%') ? parseFloat(match[4]) / 100 : parseFloat(match[4]));
+  if (!Number.isFinite(alpha) || alpha <= 0) return null;
+  return rgbToHex(parseFloat(match[1]), parseFloat(match[2]), parseFloat(match[3]));
+}
+
+function colorAtPoint(x, y) {
+  const candidates = document.elementsFromPoint(x, y)
+    .filter(el => el !== _popover && !_popover?.contains(el));
+  for (const el of candidates) {
+    const style = getComputedStyle(el);
+    for (const value of [style.backgroundColor, style.borderTopColor, style.color]) {
+      const hex = cssColorToHex(value);
+      if (hex) return hex;
+    }
+  }
+  return null;
+}
+
+function openFallbackEyedropper() {
+  return new Promise((resolve) => {
+    const hint = document.createElement('div');
+    hint.textContent = 'Click a visible color to sample · Esc to cancel';
+    hint.style.cssText = 'position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:2147483647;padding:5px 9px;border:1px solid var(--border,#555);border-radius:5px;background:var(--bg,#222);color:var(--fg,#fff);font:12px sans-serif;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.35)';
+    document.body.appendChild(hint);
+    const finish = (value) => {
+      document.removeEventListener('click', onClick, true);
+      document.removeEventListener('keydown', onKey, true);
+      hint.remove();
+      resolve(value);
+    };
+    const onClick = (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      finish(colorAtPoint(event.clientX, event.clientY));
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        finish(null);
+      }
+    };
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('keydown', onKey, true);
+  });
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────
 // Window-level pointer listeners — installed ONCE, not per-popover, so they
 // don't leak when the popover is rebuilt on every open.
@@ -197,6 +252,7 @@ function wireHandlers(p) {
   const sl = p.querySelector('.cp-sl');
   const hue = p.querySelector('.cp-hue');
   const hex = p.querySelector('.cp-hex');
+  const copy = p.querySelector('.cp-copy');
   const eye = p.querySelector('.cp-eyedropper');
 
   const onDown = (type) => (e) => {
@@ -221,6 +277,29 @@ function wireHandlers(p) {
     if (e.key === 'Escape') { close(); }
   });
 
+  copy.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const value = hsvToHex(_h, _s, _v);
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch (_) {
+      hex.focus();
+      hex.select();
+      document.execCommand('copy');
+      hex.setSelectionRange(hex.value.length, hex.value.length);
+    }
+    copy.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+    copy.title = 'Copied';
+    copy.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      if (!copy.isConnected) return;
+      copy.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+      copy.title = 'Copy color';
+      copy.setAttribute('aria-label', 'Copy color');
+    }, 900);
+  });
+
   p.addEventListener('click', (e) => {
     const sw = e.target.closest('.cp-swatch');
     if (sw && sw.dataset.hex) {
@@ -230,8 +309,7 @@ function wireHandlers(p) {
     }
   });
 
-  if (window.EyeDropper) {
-    eye.addEventListener('click', async (ev) => {
+  eye.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       // Suppress the outside-click close while the OS eyedropper is open.
       // Without this, the user's pixel-pick fires a window click that
@@ -239,7 +317,9 @@ function wireHandlers(p) {
       const wasOnOutside = _onOutside;
       _detachOutsideHandlers();
       try {
-        const r = await new window.EyeDropper().open();
+        const r = window.EyeDropper
+          ? await new window.EyeDropper().open()
+          : { sRGBHex: await openFallbackEyedropper() };
         if (r && r.sRGBHex) {
           setFromHex(r.sRGBHex);
           applyToInput(true);
@@ -258,10 +338,8 @@ function wireHandlers(p) {
         });
       }
     });
-  } else {
-    eye.disabled = true;
-    eye.style.opacity = '0.3';
-    eye.title = 'Eyedropper not supported in this browser';
+  if (!window.EyeDropper) {
+    eye.title = 'Click a visible UI color to sample it';
   }
 }
 
@@ -291,6 +369,14 @@ function commitCurrent() {
 
 // ── Open / close ──────────────────────────────────────────────────────
 function position(p, anchor) {
+  p.style.zIndex = String(topPortalZ());
+  if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) {
+    p.style.left = '50%';
+    p.style.top = '50%';
+    p.style.transform = 'translate(-50%, -50%)';
+    return;
+  }
+  p.style.transform = '';
   const rect = anchor.getBoundingClientRect();
   const pRect = p.getBoundingClientRect();
   let left = rect.left;

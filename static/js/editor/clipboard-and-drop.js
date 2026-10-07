@@ -22,58 +22,74 @@
  *   createLayer:          (name: string, w: number, h: number) => object,
  *   renderLayerPanel:     () => void,
  *   composite:            () => void,
- *   handleImportedImage:  (img: HTMLImageElement) => void,
+ *   handleImportedImage:  (img: HTMLImageElement, sourceName?: string) => void,
  *   uiModule:             object,
  * }} deps
  */
 import { state } from './state.js';
+import { createPlacedData, renderPlacedLayer } from './placed-layer.js';
+
+let clipboardBindings;
 
 export function wireClipboardAndDrop({
   container, saveState, createLayer, renderLayerPanel, composite,
   handleImportedImage, uiModule,
 }) {
+  clipboardBindings?.abort();
+  clipboardBindings = new AbortController();
+  const { signal } = clipboardBindings;
   // ── Paste ──
   window.addEventListener('paste', (e) => {
-    if (!state.editorOpen) return;
+    if (!state.editorOpen || state.container !== container) return;
+    // Editable fields keep native paste. The Clipboard button focuses the
+    // canvas container before asking for a keyboard paste when read() is
+    // unavailable on an insecure origin.
+    if (e.target?.isContentEditable || e.target?.closest?.('input, textarea, select, [role="dialog"]')) return;
 
-    function pasteAsLayer(imgSource, label) {
+    function pasteAsLayer(imgSource, label, offset = { x: 0, y: 0 }) {
       if (!state.editorOpen) return; // user closed mid-paste
       saveState();
       const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
-      layer.ctx.drawImage(imgSource, 0, 0);
+      // Selection clipboard data is already a complete layer-sized surface.
+      // Keep it source-backed with an identity matrix so future transforms do
+      // not repeatedly resample the pasted pixels.
+      layer.kind = 'placed';
+      layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, offset.x, offset.y], label || 'Pasted');
+      const rendered = renderPlacedLayer(layer);
+      state.layerOffsets.set(layer.id, rendered.offset);
       state.layers.push(layer);
       state.activeLayerId = layer.id;
-      state.tool = 'move';
+      state.selectedLayerIds = [layer.id];
+      state.activeGroupId = null;
       const tb = state.container?.querySelector('.ge-toolbar');
-      if (tb) tb.querySelectorAll('.ge-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === 'move'));
+      tb?.querySelector('[data-tool="move"]')?.click();
       renderLayerPanel();
       composite();
       uiModule.showToast('Pasted as new layer');
     }
 
-    // Check internal clipboard first (from Ctrl+C lasso/wand).
-    if (state.internalClipboard) {
+    const imageItem = Array.from(e.clipboardData?.items || []).find(item => item.type.startsWith('image/'));
+    if (imageItem) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      pasteAsLayer(state.internalClipboard, 'Pasted Selection');
-      return;
-    }
-
-    // Fall back to system clipboard.
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (!item.type.startsWith('image/')) continue;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const blob = item.getAsFile();
+      const blob = imageItem.getAsFile();
+      if (!blob) return;
       const url = URL.createObjectURL(blob);
       const img = new Image();
-      img.onload = () => { pasteAsLayer(img, 'Pasted'); URL.revokeObjectURL(url); };
+      // External clipboard images follow the same source-backed import path
+      // as files, gallery images, and drops. Internal selection clipboard
+      // content is handled above as an identity placed layer.
+      img.onload = () => { handleImportedImage(img, 'Pasted image'); URL.revokeObjectURL(url); };
+      img.onerror = () => { URL.revokeObjectURL(url); uiModule?.showToast('Failed to load clipboard image'); };
       img.src = url;
-      break;
+      return;
     }
-  }, true);  // capture phase so we beat chat input
+    if (state.internalClipboard && !e.defaultPrevented && !e.clipboardData?.types?.includes?.('text/plain')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
+    }
+  }, { capture: true, signal });
 
   // ── Drag-and-drop ──
   // Visual drop-zone overlay appears mid-drag; routes via

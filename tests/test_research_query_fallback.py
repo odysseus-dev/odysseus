@@ -51,6 +51,17 @@ async def test_continuation_phrase_falls_back_to_original_ask(handler, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_search_continuation_falls_back_to_original_ask(handler, monkeypatch):
+    monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
+    sess = _session([
+        ("user", "Which Swedish king was most associated with dancing and court balls?"),
+        ("assistant", "Gustav III is the likely answer. Want me to verify?"),
+    ])
+    result = await handler.synthesize_query(sess, "can you search", "http://local.test", "m")
+    assert result == "Which Swedish king was most associated with dancing and court balls?"
+
+
+@pytest.mark.asyncio
 async def test_short_country_answer_is_kept(handler, monkeypatch):
     # original ask + assistant asks "which country?" + user "UK" => "UK"
     monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
