@@ -531,7 +531,9 @@ def setup_upload_routes(upload_handler):
             body = await request.json()
         except json.JSONDecodeError:
             raise HTTPException(400, "Request body must be valid JSON")
-        text = (body or {}).get("text", "")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
+        text = body.get("text", "")
         if not isinstance(text, str):
             raise HTTPException(400, "text must be a string")
         with open(_vision_cache_path(file_id), "w", encoding="utf-8") as f:

@@ -294,7 +294,8 @@ def test_put_vision_text_denies_cross_owner_before_cache_write(tmp_path, monkeyp
     assert not cache_path.exists()
 
 
-def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("text", ["edited alice text", ""])
+def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch, text):
     handler, alice_id, _bob_id, upload_dir = _make_upload_store(tmp_path, monkeypatch)
     put_vision_text = _upload_endpoints(handler, monkeypatch)["put_vision_text"]
 
@@ -303,7 +304,7 @@ def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch)
             _Request(
                 user="alice",
                 auth_manager=_AuthManager(),
-                body={"text": "edited alice text"},
+                body={"text": text},
             ),
             alice_id,
         )
@@ -312,7 +313,7 @@ def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch)
     assert response == {"ok": True}
     assert (upload_dir / ".vision" / f"{alice_id}.txt").read_text(
         encoding="utf-8"
-    ) == "edited alice text"
+    ) == text
 
 
 def test_download_file_survives_corrupted_uploads_json(tmp_path, monkeypatch):
@@ -342,3 +343,25 @@ def test_put_vision_text_returns_400_on_malformed_json(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(put_vision_text(_BadJsonRequest(), alice_id))
     assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("body", [["caption"], [], "caption", "", 42, 0, True, None])
+def test_put_vision_text_rejects_non_object_json_without_changing_caption(tmp_path, monkeypatch, body):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    handler, alice_id, _bob_id, upload_dir = _make_upload_store(tmp_path, monkeypatch)
+    # Keep the test's route registration local to this monkeypatch context.
+    from routes.upload_routes import router
+    monkeypatch.setattr(router, "routes", list(router.routes))
+    put_vision_text = _upload_endpoints(handler, monkeypatch)["put_vision_text"]
+    cache_dir = upload_dir / ".vision"
+    cache_dir.mkdir()
+    cache_path = cache_dir / f"{alice_id}.txt"
+    cache_path.write_text("Existing edited caption", encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(put_vision_text(
+            _Request(user="alice", auth_manager=_AuthManager(), body=body), alice_id
+        ))
+
+    assert exc.value.status_code == 400
+    assert cache_path.read_text(encoding="utf-8") == "Existing edited caption"
