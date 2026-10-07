@@ -105,6 +105,14 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+    # Cap RAM. Unbounded (the Docker default), any one container can consume the
+    # whole host — which on a desktop means a reclaim livelock and a hard freeze,
+    # not a tidy OOM kill. With a limit set, the *cgroup* OOM killer bounds and
+    # logs the container instead. Highest of the four because fastembed can load
+    # an embedding model in-process; steady state is ~750 MiB with the default
+    # model. A large local model (e.g. bge-large) needs more — raise
+    # ODYSSEUS_MEM_LIMIT rather than removing the cap.
+    mem_limit: ${ODYSSEUS_MEM_LIMIT:-4g}
     restart: unless-stopped
 
   chromadb:
@@ -115,6 +123,8 @@ services:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    # Vector stores grow with the collection; cap it. Steady state is ~70 MiB.
+    mem_limit: ${CHROMADB_MEM_LIMIT:-2g}
     restart: unless-stopped
 
   searxng:
@@ -170,6 +180,8 @@ services:
       timeout: 6s
       retries: 20
       start_period: 10s
+    # Steady state is ~200 MiB.
+    mem_limit: ${SEARXNG_MEM_LIMIT:-1g}
     restart: unless-stopped
 
   ntfy:
@@ -181,6 +193,8 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    # Steady state is ~45 MiB.
+    mem_limit: ${NTFY_MEM_LIMIT:-512m}
     restart: unless-stopped
 
 volumes:
