@@ -2515,8 +2515,8 @@ def format_tool_result(description: str, result: Dict) -> str:
     elif "success" in result:
         if result["success"]:
             parts.append(f"File written: {result['path']} ({result['size']} bytes)")
-        else:
-            parts.append(f"Error: {result.get('error', 'unknown')}")
+        elif not result.get("error"):
+            parts.append("Error: unknown")
     elif "action" in result:
         action = result["action"]
         if action == "create":
@@ -2525,7 +2525,9 @@ def format_tool_result(description: str, result: Dict) -> str:
             parts.append(f"Document updated: \"{result.get('title', '')}\" (v{result['version']})")
         elif action == "edit":
             parts.append(f'Document edited: "{result.get("title", "")}" (v{result.get("version", "?")}, {result.get("applied", 0)} edit(s) applied)')
-    elif "error" in result:
+    # Failures can include partial output or another primary result body.
+    # Render the diagnostic independently so those branches cannot hide it.
+    if result.get("error"):
         parts.append(f"**Error:** {result['error']}")
 
     if result.get("detached") or (
