@@ -198,22 +198,51 @@ function documentFunction(name, text = source) {
 
     const names = ['_unfoldEmailHeaderLines', '_parseEmailHeader', '_looksLikeWrappedEmailContent', '_decodeBase64EmailWrapper',
       '_sanitizeOutgoingEmailBody', '_emailHtmlToPlainText', '_aiReply',
+      '_emailPlainTextToHtml', '_emailQuoteMarkerMatch', '_emailBodyFragmentToHtml', '_emailBodyToHtml', '_setEmailBodyText',
       '_loadOdysseusAttachItems', '_odysseusAttachLabel', '_escHtml',
       '_normalizeRichLinkUrl', '_smartRichPasteUrl', '_insertSmartRichPasteLink', '_cleanRichTextPasteHtml', 'exportAsPdf'];
     const functions = Object.fromEntries(names.map(name => [name, documentFunction(name)]));
     const email = await page.evaluate(async functions => {
       window.executed = 0;
+      const { cleanEmailReplyText } = await import('/static/js/emailReplyText.js');
+      const { readEmailReplyResponse } = await import('/static/js/emailReplyStream.js');
+      const markdownModule = await import('/static/js/markdown.js');
       const _unfoldEmailHeaderLines = eval('(' + functions._unfoldEmailHeaderLines + ')');
       const _parseEmailHeader = eval('(' + functions._parseEmailHeader + ')');
       const _looksLikeWrappedEmailContent = eval('(' + functions._looksLikeWrappedEmailContent + ')');
       const _decodeBase64EmailWrapper = eval('(' + functions._decodeBase64EmailWrapper + ')');
       const _sanitizeOutgoingEmailBody = eval('(' + functions._sanitizeOutgoingEmailBody + ')');
       const _emailHtmlToPlainText = eval('(' + functions._emailHtmlToPlainText + ')');
+      const _emailPlainTextToHtml = eval('(' + functions._emailPlainTextToHtml + ')');
+      const _emailQuoteMarkerMatch = eval('(' + functions._emailQuoteMarkerMatch + ')');
+      const _emailBodyFragmentToHtml = eval('(' + functions._emailBodyFragmentToHtml + ')');
+      const _emailBodyToHtml = eval('(' + functions._emailBodyToHtml + ')');
+      const _setEmailBodyText = eval('(' + functions._setEmailBodyText + ')');
       const activeDocId = 'fixture';
-      const docs = new Map();
-      const toasts = [];
-      const uiModule = { showToast: text => toasts.push(text) };
+      const docs = new Map([['fixture', { language: 'email', content: '' }]]);
+      let _docAiReplyRequestSeq = 0, _emailAiReplyGeneration = 0, _autoSaveDebounce = null;
+      let richbody = null;
+      const _emailRichbodyActive = () => richbody;
+      const _syncEmailRichbody = rich => { document.getElementById('doc-editor-textarea').value = rich.innerText; };
+      const syncHighlighting = () => {};
+      const _persistEmailLocalDraftSoon = () => {};
+      const saveCurrentToMap = () => {};
+      const saveDocument = () => {};
+      const _docAiReplyContextKey = () => 'fixture-context';
+      const _clearDocAiReplyContext = () => {};
+      const sessionModule = { getCurrentModel: () => '', getCurrentSessionId: () => 'fixture-session' };
+      const toasts = [], errors = [], requests = [];
+      const uiModule = { showToast: text => toasts.push(text), showError: text => errors.push(text) };
       const _splitEmailReplyQuote = text => ({ body: text, quote: '' });
+      const API_BASE = '';
+      let reply = 'Hi Taylor,\n\nThursday works.\n\nMorgan';
+      const fetch = async (url, options) => {
+        if (url !== '/api/email/ai-reply') throw new Error('Unexpected fixture request');
+        requests.push(JSON.parse(options.body));
+        return new Response(JSON.stringify({ success: true, reply }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      };
       const generate = eval('(' + functions._aiReply + ')');
       const payloads = [
         '<img src="/inert-probe" onerror="window.executed++">',
@@ -221,33 +250,98 @@ function documentFunction(name, text = source) {
         '<iframe srcdoc="<script>parent.executed++</script>"></iframe>',
         '<img src="data:,bad" onerror="window.executed++">',
       ];
-      const plain = [];
+      const plain = [], expectedDrafts = [], inputResults = [];
       for (const payload of payloads) {
         _sanitizeOutgoingEmailBody(payload);
         plain.push(_emailHtmlToPlainText(payload));
-        // A user-authored body must be inspected without executing its HTML.
-        document.getElementById('doc-editor-textarea').value = '<p>Existing draft</p>' + payload;
-        await generate();
+        // Explicit AI may polish existing text. Inspecting/requesting its HTML
+        // must remain inert, and it must stay separate from original_body.
+        const body = '<p>Existing draft</p>' + payload;
+        document.getElementById('doc-editor-textarea').value = body;
+        expectedDrafts.push(body);
+        inputResults.push(await generate());
       }
-      // Media-only drafts must not be mistaken for an empty reply. This checks
-      // the query boundary moved from the element to template.content too.
+      // Media-only content remains nonempty draft guidance; it must not be
+      // dropped as if the user had requested an empty reply.
       for (const body of ['<img src="/inert-probe">', '<video src="/inert-probe"></video>',
         '<audio src="/inert-probe"></audio>', '<iframe src="/inert-probe"></iframe>', '<table><tr><td></td></tr></table>']) {
         document.getElementById('doc-editor-textarea').value = body;
-        await generate();
+        expectedDrafts.push(body);
+        inputResults.push(await generate());
       }
+      const inputRequests = requests.slice();
+      const inputToasts = toasts.slice();
       const normal = _emailHtmlToPlainText('<p>Hello <b>world</b> &amp; friends</p>');
       const literal = _emailHtmlToPlainText('&lt;img src=x onerror="window.executed++"&gt;');
       const outgoing = _sanitizeOutgoingEmailBody('Hello\n\nworld');
-      const wrapped = _sanitizeOutgoingEmailBody(btoa('To: person@example.com\nSubject: Test\n---\nValid reply'));
+      const wrapped = _sanitizeOutgoingEmailBody(btoa('To: taylor@example.invalid\nSubject: Test\n---\nValid reply'));
+
+      // Exercise the actual insertion/render helpers on a connected rich body:
+      // a completed model response is still untrusted at the DOM boundary.
+      richbody = document.createElement('div');
+      richbody.id = 'doc-email-richbody';
+      richbody.contentEditable = 'true';
+      document.body.appendChild(richbody);
+      let outputUnsafe = 0;
+      const outputResults = [];
+      let isolatedSvgPreviews = 0;
+      for (const payload of [
+        '<img src="data:,bad" onerror="window.executed++">',
+        '<svg onload="window.executed++"><script>window.executed++</script></svg>',
+        '<iframe srcdoc="<script>parent.executed++</script>"></iframe>',
+        '<a href="javascript:window.executed++" onclick="window.executed++">unsafe link</a>',
+      ]) for (const prefix of ['<p>Hi Taylor, Thursday works.</p>', 'Hi Taylor, Thursday works.\n\n']) {
+        richbody.innerText = 'Morgan typed a safe draft.';
+        reply = '<think><img src="/inert-probe" onerror="window.executed++"></think>'
+          + '<<<REPLY>>>' + prefix + payload + '<<<END>>>Done';
+        outputResults.push(await generate());
+        outputUnsafe += richbody.querySelectorAll('script,svg,[onerror],[onload],[onclick],a[href^="javascript:"]').length;
+        // Plaintext SVG is rendered through the existing isolated preview.
+        // The untrusted child must have no script/network access to this page.
+        for (const frame of richbody.querySelectorAll('iframe')) {
+          const policy = new DOMParser().parseFromString(frame.srcdoc, 'text/html')
+            .querySelector('meta[http-equiv="Content-Security-Policy"]')?.content;
+          if (frame.className === 'chat-svg-preview' && frame.getAttribute('sandbox') === ''
+            && frame.referrerPolicy === 'no-referrer' && !frame.hasAttribute('src')
+            && policy === "default-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; style-src 'unsafe-inline'") {
+            isolatedSvgPreviews++;
+          } else outputUnsafe++;
+        }
+        if (!richbody.textContent.includes('Hi Taylor, Thursday works.')) throw new Error('Final reply content lost');
+        const body = document.getElementById('doc-editor-textarea').value;
+        if (/think|<<<|\/inert-probe|\bDone\b/.test(body)) throw new Error('Reasoning or status reached the draft');
+        richbody.querySelectorAll('a').forEach(a => a.click());
+      }
+      const failureResults = [];
+      for (const invalid of ['Done', '<<<REPLY>>>Unfinished reply']) {
+        richbody.innerText = 'Morgan typed a safe draft.';
+        reply = invalid;
+        failureResults.push(await generate());
+        if (richbody.innerText !== 'Morgan typed a safe draft.'
+          || document.getElementById('doc-editor-textarea').value !== 'Morgan typed a safe draft.') {
+          throw new Error('Unusable model output replaced user text');
+        }
+      }
       await new Promise(resolve => setTimeout(resolve, 150));
-      return { normal, literal, outgoing, wrapped, toasts, executed: window.executed };
+      richbody.remove();
+      clearTimeout(_autoSaveDebounce);
+      return { normal, literal, outgoing, wrapped, inputResults, expectedDrafts, inputRequests,
+        inputToasts, outputResults, outputUnsafe, isolatedSvgPreviews, failureResults, errors, executed: window.executed };
     }, functions);
     assert.equal(email.normal, 'Hello world & friends');
     assert.equal(email.literal, '<img src=x onerror="window.executed++">');
     assert.equal(email.outgoing, 'Hello\n\nworld');
     assert.equal(email.wrapped, 'Valid reply');
-    assert.deepEqual(email.toasts, Array(9).fill('Reply already has text'));
+    assert.deepEqual(email.inputResults, Array(9).fill(true));
+    assert.deepEqual(email.inputRequests.map(request => request.current_draft), email.expectedDrafts);
+    assert(email.inputRequests.every(request => request.stream === true
+      && !request.original_body.includes('window.executed')));
+    assert.deepEqual(email.inputToasts, Array.from({ length: 9 }, () => ['Writing AI reply', 'AI draft inserted']).flat());
+    assert.deepEqual(email.outputResults, Array(8).fill(true));
+    assert.equal(email.outputUnsafe, 0);
+    assert.equal(email.isolatedSvgPreviews, 1);
+    assert.deepEqual(email.failureResults, [false, false]);
+    assert.equal(email.errors.length, 2);
     assert.equal(email.executed, 0);
     assert.deepEqual(probes, []);
 

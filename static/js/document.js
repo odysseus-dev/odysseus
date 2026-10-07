@@ -18,6 +18,7 @@ import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documen
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
 import { bindMenuDismiss, dismissOrRemove, dismissTopMenu } from './escMenuStack.js';
+import { cleanEmailReplyText } from './emailReplyText.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { getDocumentStats } from './documentStats.js?v=20260831richtexttools91';
 import { parseMarkdownOutline } from './documentOutline.js?v=20260831richtexttools91';
@@ -6586,6 +6587,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   // Mirrors the email reader's AI reply choice popover: textarea for an
   // optional steering note, then one Submit button.
   let _docAiReplyChoiceMenu = null;
+  let _docAiReplyRequestSeq = 0;
   const _AI_REPLY_CONTEXT_STORE_PREFIX = 'odysseus:email-ai-reply-context:v1:';
   function _docAiReplyContextKey() {
     try {
@@ -6601,7 +6603,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           : activeDocId
             ? `doc:${activeDocId}`
             : `compose:${to}:${subject}`;
-      return _AI_REPLY_CONTEXT_STORE_PREFIX + stable;
+      const accountId = docs.get(activeDocId)?.sourceEmailAccountId || window.__odysseusActiveEmailAccount || '';
+      return _AI_REPLY_CONTEXT_STORE_PREFIX + encodeURIComponent(accountId) + ':' + stable;
     } catch (_) {
       return '';
     }
@@ -6711,69 +6714,48 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     const to = document.getElementById('doc-email-to')?.value?.trim() || '';
     const subject = document.getElementById('doc-email-subject')?.value?.trim() || '';
     const textarea = document.getElementById('doc-editor-textarea');
-    if (!textarea) return;
+    if (!textarea) return false;
+    const richbody = _emailRichbodyActive();
+    if (richbody) _syncEmailRichbody(richbody);
     const currentBody = textarea.value || '';
+    const requestDocId = activeDocId;
+    const requestSeq = ++_docAiReplyRequestSeq;
+    const generationId = ++_emailAiReplyGeneration;
+    const activeAccountAtStart = window.__odysseusActiveEmailAccount || '';
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim() || '';
     const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim() || '';
     const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-    const sourceAccountId = docs.get(activeDocId)?.sourceEmailAccountId || window.__odysseusActiveEmailAccount || '';
-    const cleanAiReplyText = (text) => {
-      if (!text) return '';
-      let t = String(text);
-      const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
-      const close = /<<<\s*END\s*>>+/i;
-      const m = open.exec(t);
-      if (m) {
-        const rest = t.slice(m.index + m[0].length);
-        const c = close.exec(rest);
-        t = c ? rest.slice(0, c.index) : rest;
-      }
-      return t
-        .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
-        .replace(/<<<\s*END\s*>>+/gi, '')
-        .replace(/<\/?\|(?:assistant|assistan|user|system|tool)\|>?|<\/\|end\|>?/gi, '')
-        .trim();
-    };
-    const splitCurrent = _splitEmailReplyQuote(currentBody);
-    const ownBody = document.createElement('template');
-    ownBody.innerHTML = String(splitCurrent.body || '');
-    const ownText = (ownBody.content.textContent || '').trim();
-    const isReplaceableDraft = (!ownText && !ownBody.content.querySelector('img,video,audio,iframe,table')) || /^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText);
-    if (!isReplaceableDraft) {
-      if (uiModule) uiModule.showToast('Reply already has text');
-      return;
-    }
-
-    // Keep the request tied to the exact draft state that the user approved.
-    // AI generation is asynchronous; a late response must never replace text
-    // the user typed while it was in flight.
-    const generationId = ++_emailAiReplyGeneration;
-    const generationDocId = activeDocId;
-    let generationBody = currentBody;
-    const generationRich = _emailRichbodyActive();
+    const sourceAccountId = docs.get(activeDocId)?.sourceEmailAccountId || activeAccountAtStart;
+    const envelopeIds = ['doc-email-to', 'doc-email-cc', 'doc-email-bcc', 'doc-email-subject',
+      'doc-email-in-reply-to', 'doc-email-source-uid', 'doc-email-source-folder'];
+    const envelopeAtStart = envelopeIds.map(id => document.getElementById(id)?.value || '');
+    const isCurrentRequest = () => requestSeq === _docAiReplyRequestSeq &&
+      generationId === _emailAiReplyGeneration &&
+      activeDocId === requestDocId && docs.has(requestDocId) &&
+      document.getElementById('doc-editor-textarea') === textarea &&
+      (window.__odysseusActiveEmailAccount || '') === activeAccountAtStart &&
+      (docs.get(requestDocId)?.sourceEmailAccountId || activeAccountAtStart) === sourceAccountId;
     const richDraftSnapshot = () => {
-      if (!generationRich) return '';
-      const clone = generationRich.cloneNode(true);
-      // Focusing an empty reply inserts a caret slot, not a user edit.
+      if (!richbody) return '';
+      const clone = richbody.cloneNode(true);
+      // An empty caret slot added on focus does not change the user's draft.
       clone.querySelectorAll('.email-reply-edit-slot').forEach(slot => {
         if (!slot.textContent.trim() && !slot.querySelector('img,video,audio,iframe,table')) slot.remove();
       });
       return clone.innerHTML;
     };
-    let generationRichHtml = richDraftSnapshot();
+    const initialRichHtml = richDraftSnapshot();
     let manuallyEdited = false;
     const markEdited = () => { manuallyEdited = true; };
     textarea.addEventListener('input', markEdited);
-    generationRich?.addEventListener('input', markEdited);
-    const draftStillUnchanged = () => (
-      generationId === _emailAiReplyGeneration &&
-      !manuallyEdited &&
-      activeDocId === generationDocId &&
-      textarea.value === generationBody &&
-      (!generationRich || richDraftSnapshot() === generationRichHtml)
-    );
-
-    // Use the current chat model
+    richbody?.addEventListener('input', markEdited);
+    const draftStillUnchanged = () => isCurrentRequest() && !manuallyEdited &&
+      textarea.value === currentBody &&
+      (!richbody || (_emailRichbodyActive() === richbody && richDraftSnapshot() === initialRichHtml)) &&
+      envelopeIds.every((id, index) => (document.getElementById(id)?.value || '') === envelopeAtStart[index]);
+    const splitCurrent = _splitEmailReplyQuote(currentBody);
+    const ownText = String(splitCurrent.body || '').trim();
+    const currentDraft = /^(?:\[AI reply draft will appear here\]|Drafting AI reply(?:\.{3}|…)?)[.!]?$/i.test(ownText) ? '' : ownText;
     let currentModel = '';
     let currentSessionId = '';
     try {
@@ -6782,7 +6764,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     } catch (_) {}
 
     const btn = document.getElementById('doc-email-ai-reply-btn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
+    const originalButton = btn?._aiReplyOriginalHTML ?? btn?.innerHTML;
+    if (btn) { btn._aiReplyOriginalHTML = originalButton; btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
     if (uiModule) uiModule.showToast('Writing AI reply', {
       duration: 8000,
       leadingIcon: 'spinner',
@@ -6790,17 +6773,17 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     });
 
     try {
-      // Empty-compose path: if there's no original body, send a placeholder
-      // so the backend's "no body" guard doesn't fail. The user_hint carries
-      // the user's compose intent; the model uses To/Subject + that hint.
-      const bodyForApi = opts.originalBody || splitCurrent.quote || currentBody || (noteHint ? '(no prior email -- compose from the user instructions)' : '');
+      // Keep the original message and the user's draft separate. A reader
+      // supplies its original body; an explicit note steers the final reply.
+      const bodyForApi = opts.originalBody || splitCurrent.quote || '(no prior email — compose a new message based on the To, Subject, and user instructions)';
       const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          to: to,
-          subject: subject,
+          to,
+          subject,
           original_body: bodyForApi,
+          current_draft: currentDraft,
           stream: true,
           model: currentModel,
           session_id: currentSessionId,
@@ -6812,55 +6795,47 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           user_hint: noteHint || '',
         }),
       });
-      const data = await readEmailReplyResponse(res, text => {
-        if (!draftStillUnchanged()) return false;
-        const quote = splitCurrent.quote || '';
-        _setEmailBodyText(textarea, text + (quote ? `\n\n${quote}` : ''));
-        generationBody = textarea.value;
-        generationRichHtml = richDraftSnapshot();
-        return true;
-      });
-      if (!res.ok) {
-        throw new Error(data.error || `AI reply service returned HTTP ${res.status}`);
+      // Stream frames are provisional. Only the terminal, validated result may
+      // replace the draft, so reasoning or an interrupted answer never appears.
+      const data = await readEmailReplyResponse(res, () => draftStillUnchanged());
+      if (!isCurrentRequest()) return false;
+      if (!draftStillUnchanged()) {
+        if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
+        return false;
       }
-      if (data.success && data.reply) {
-        if (!draftStillUnchanged()) {
-          if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
-          return;
-        }
-        let cleanReply = cleanAiReplyText(data.reply);
-        // Strip any "On <date>, <name> wrote:" attribution + everything
-        // after it from the AI's output — the model sometimes re-quotes
-        // the original thread, and we already have the real quote in
-        // currentBody. Without this, AI's invented quote stacked on top
-        // of the real one and looked like the history had been "edited".
-        cleanReply = cleanReply.replace(/\n*On\b[\s\S]*?\bwrote:[\s\S]*$/m, '').trim();
+      const cleanReply = data.success
+        ? cleanEmailReplyText(data.reply, { userHint: noteHint, currentDraft }) : '';
+      if (cleanReply) {
         const quote = splitCurrent.quote || '';
         const newBody = cleanReply + (quote ? `\n\n${quote}` : '');
-        // Reconcile the final body only while this generation still owns the draft.
-        if (!draftStillUnchanged()) {
-          if (uiModule) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
-          return;
-        }
         _setEmailBodyText(textarea, newBody);
+        saveCurrentToMap();
+        clearTimeout(_autoSaveDebounce);
+        _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
         _clearDocAiReplyContext(contextKey || _docAiReplyContextKey());
-        if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`, { aiReplyResult: true });
+        if (uiModule) uiModule.showToast('AI draft inserted', { aiReplyResult: true });
         return true;
-      } else {
-        if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
-        const rawMsg = data.error || 'Failed to generate reply';
-        const msg = /empty response/i.test(rawMsg)
-          ? 'AI reply failed: AI returned empty response.'
-          : rawMsg;
-        if (uiModule) uiModule.showError(msg);
       }
+      const rawMsg = data.error || 'AI returned no usable reply text. Your draft was kept.';
+      const msg = /empty response/i.test(rawMsg)
+        ? 'AI reply failed: AI returned empty response.'
+        : rawMsg;
+      if (uiModule) uiModule.showError(msg);
+      return false;
     } catch (e) {
-      if (draftStillUnchanged()) _setEmailBodyText(textarea, currentBody);
-      if (uiModule) uiModule.showError(`AI reply failed: ${e?.message || 'Unable to reach the AI reply service'}`);
+      if (isCurrentRequest() && uiModule) {
+        if (!draftStillUnchanged()) uiModule.showToast('AI reply ready, but draft was edited', { aiReplyResult: true });
+        else uiModule.showError('Failed to generate AI reply. Your draft was kept.');
+      }
+      return false;
     } finally {
       textarea.removeEventListener('input', markEdited);
-      generationRich?.removeEventListener('input', markEdited);
-      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
+      richbody?.removeEventListener('input', markEdited);
+      if (btn && requestSeq === _docAiReplyRequestSeq) {
+        btn.disabled = false;
+        btn.innerHTML = originalButton;
+        delete btn._aiReplyOriginalHTML;
+      }
     }
   }
 
@@ -12087,30 +12062,36 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }));
   }
 
-  export async function replaceEmailReplyBody(docId, replyText, { force = false } = {}) {
+  export async function replaceEmailReplyBody(docId, replyText, { force = false, userHint = '' } = {}) {
     const doc = docs.get(docId);
-    if (!doc) return;
-    const fields = _parseEmailHeader(doc.content || '');
-    const oldSplit = _splitEmailReplyQuote(fields.body || '');
-    const quote = oldSplit.quote;
-    const ownText = _emailReplyOwnText(fields.body || '');
-    const initialBody = fields.body || '';
-    if (!force && ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
-      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
-      return;
+    if (!doc) return false;
+    const cleanReply = cleanEmailReplyText(replyText, { userHint });
+    if (!cleanReply) {
+      if (uiModule) uiModule.showError('AI returned no usable reply text. Your draft was kept.');
+      return false;
     }
-    const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
+    const rich = activeDocId === docId ? _emailRichbodyActive() : null;
+    if (rich) _syncEmailRichbody(rich);
+    if (activeDocId === docId) saveCurrentToMap();
+    const fields = _parseEmailHeader(doc.content || '');
+    const initialBody = fields.body || '';
+    const oldText = rich ? rich.innerText : /<\/?(?:p|div|br|blockquote|ul|ol|li|b|strong|em|span)\b/i.test(initialBody)
+      ? _emailHtmlToPlainText(initialBody) : initialBody;
+    const oldSplit = _splitEmailReplyQuote(oldText);
+    const quote = oldSplit.quote;
+    const ownText = oldSplit.body;
+    if (!force && ownText && !/^(?:\[AI reply draft will appear here\]|Drafting AI reply(?:\.{3}|…)?)[.!]?$/i.test(ownText)) {
+      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+      return false;
+    }
     if (activeDocId === docId) {
       const textarea = document.getElementById('doc-editor-textarea');
-      const rich = _emailRichbodyActive();
-      if (textarea && (
-        textarea.value !== initialBody ||
-        (rich && rich.innerHTML !== _emailBodyToHtml(initialBody))
-      )) {
+      if (textarea && ((!rich && textarea.value !== initialBody) || (rich && rich.innerHTML !== initialBody))) {
         if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
-        return;
+        return false;
       }
     }
+    const body = cleanReply + (quote ? `\n\n${quote}` : '');
     doc.content = _buildEmailContent(
       fields.to,
       fields.subject,
@@ -12128,6 +12109,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     clearTimeout(_autoSaveDebounce);
     _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+    return true;
   }
 
   function _buildEmailContentFromFields(fields, body) {

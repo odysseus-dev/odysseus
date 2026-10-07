@@ -17,7 +17,7 @@ def reply_body(raw, *, complete=False):
     return body.strip()
 
 
-async def stream_reply(candidates, messages, emit, *, max_tokens=1536):
+async def stream_reply(candidates, messages, emit, *, max_tokens=1536, require_complete_response=False):
     from src.llm_core import stream_llm
     error = 'No usable reply returned'
     for url, model, headers in candidates:
@@ -25,14 +25,23 @@ async def stream_reply(candidates, messages, emit, *, max_tokens=1536):
         visible = ''
         await emit({'type': 'reply', 'text': ''})
         try:
+            event_is_error = False
             async for chunk in stream_llm(url, model, messages, headers=headers,
-                    temperature=0.3, max_tokens=max_tokens, timeout=120, thinking_mode='off'):
+                    temperature=0.3, max_tokens=max_tokens, timeout=120, thinking_mode='off',
+                    **({'require_complete_response': True} if require_complete_response else {})):
                 for line in chunk.splitlines():
-                    if not line.startswith('data: ') or line[6:] == '[DONE]':
+                    if line.startswith('event:'):
+                        event_is_error = line[6:].strip() == 'error'
                         continue
-                    event = json.loads(line[6:])
-                    if event.get('error'):
-                        raise RuntimeError(event['error'])
+                    if not line.startswith('data:'):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == '[DONE]':
+                        continue
+                    event = json.loads(data)
+                    if event_is_error or event.get('error'):
+                        raise RuntimeError('Model did not return a completed reply')
+                    event_is_error = False
                     if event.get('thinking'):
                         continue
                     raw += event.get('delta') or ''

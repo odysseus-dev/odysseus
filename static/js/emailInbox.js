@@ -11,6 +11,7 @@ import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc, extractEmail } from './emailLibrary/replyRecipients.js';
 import { emailApiUrl, emailAccountQuery } from './emailShared.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { cleanEmailReplyText } from './emailReplyText.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => emailAccountQuery('&');
@@ -100,22 +101,8 @@ function _clearDoneResponseTagsLocal(em) {
   em.tags = em.tags.filter(t => !_DONE_RESPONSE_TAGS.has(String(t || '').trim().toLowerCase().replace(/_/g, '-')));
 }
 
-function _cleanAiReplyText(text) {
-  if (!text) return '';
-  let t = String(text);
-  const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
-  const close = /<<<\s*END\s*>>+/i;
-  const m = open.exec(t);
-  if (m) {
-    const rest = t.slice(m.index + m[0].length);
-    const c = close.exec(rest);
-    t = c ? rest.slice(0, c.index) : rest;
-  }
-  return t
-    .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
-    .replace(/<<<\s*END\s*>>+/gi, '')
-    .replace(/<\/?\|(?:assistant|assistan|user|system|tool)\|>?|<\/\|end\|>?/gi, '')
-    .trim();
+function _cleanAiReplyText(text, opts) {
+  return cleanEmailReplyText(text, opts);
 }
 
 let _emails = [];
@@ -854,8 +841,10 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
     }
     if (wantsAiReply) {
       const activeReplyAccount = data.account_id || em.account_id || accountAtStart;
-      if (data.cached_ai_reply && !noteHint && !activeReplyAccount) {
-        aiSuggestedBody = _cleanAiReplyText(data.cached_ai_reply);
+      const cachedReply = data.cached_ai_reply && !noteHint && !activeReplyAccount
+        ? _cleanAiReplyText(data.cached_ai_reply) : '';
+      if (cachedReply) {
+        aiSuggestedBody = cachedReply;
       } else {
       import('./ui.js?v=20260916largetoolscroll1').then(m => m.showToast && m.showToast('Writing AI reply', {
         duration: 8000,
@@ -895,10 +884,12 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
             throw new Error(result.error || `AI reply service returned HTTP ${res.status}`);
           }
           if (!isCurrentOpen()) return;
-          if (result.success && result.reply) {
-            aiSuggestedBody = _cleanAiReplyText(result.reply);
+          const cleanReply = result.success && res.ok
+            ? _cleanAiReplyText(result.reply, { userHint: noteHint }) : '';
+          if (cleanReply) {
+            aiSuggestedBody = cleanReply;
           } else {
-            const _rawMsg = result.error || 'AI reply could not be generated';
+            const _rawMsg = result.error || 'AI returned no usable reply text. Your draft was kept.';
             const _msg = /empty response/i.test(_rawMsg)
               ? 'AI returned empty response.'
               : _rawMsg;
@@ -1064,8 +1055,11 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', note
           if (!isCurrentOpen()) return;
         }
         if (aiSuggestedBody && typeof _docModule.replaceEmailReplyBody === 'function') {
-          await _docModule.replaceEmailReplyBody(existingDocId, aiSuggestedBody, { force: false });
+          const inserted = await _docModule.replaceEmailReplyBody(existingDocId, aiSuggestedBody, { force: false, userHint: noteHint });
           if (!isCurrentOpen()) return;
+          if (!inserted) return false;
+        } else if (aiSuggestedBody) {
+          return false;
         }
         _bringEmailReplyDraftToFrontOnMobile();
         if (mode !== 'forward') _focusMobileReplyBody();
