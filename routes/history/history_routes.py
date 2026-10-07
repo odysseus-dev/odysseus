@@ -391,9 +391,29 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     async def truncate_session(request: Request, session_id: str):
         _verify_session_owner(request, session_id)
         try:
-            body = await request.json()
-            keep_count = int(body.get("keep_count", 0))
-            before_msg_id = str(body.get("before_msg_id") or body.get("message_id") or "").strip()
+            try:
+                body = await request.json()
+            except json.JSONDecodeError:
+                raise HTTPException(400, "Request body must be valid JSON")
+            if not isinstance(body, dict):
+                raise HTTPException(400, "Request body must be a JSON object")
+            before_msg_id = body.get("before_msg_id") or body.get("message_id") or ""
+            if not isinstance(before_msg_id, str):
+                raise HTTPException(400, "Message ID must be a string")
+            before_msg_id = before_msg_id.strip()
+            if "keep_count" not in body and not before_msg_id:
+                raise HTTPException(400, "keep_count or before_msg_id required")
+            raw_count = body.get("keep_count", 0)
+            # Keep integer-string clients working, but do not silently convert
+            # booleans or fractional numbers into destructive message counts.
+            if type(raw_count) not in (int, str):
+                raise HTTPException(400, "keep_count must be a non-negative integer")
+            try:
+                keep_count = int(raw_count)
+            except ValueError:
+                raise HTTPException(400, "keep_count must be a non-negative integer")
+            if keep_count < 0:
+                raise HTTPException(400, "keep_count must be a non-negative integer")
             deleted_sft_pairs: list[dict[str, str]] = []
             if keep_count >= 0:
                 db = SessionLocal()
