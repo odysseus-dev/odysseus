@@ -656,6 +656,10 @@ class McpManager:
 
     async def _reconnect_builtin(self, server_id: str) -> bool:
         """Tear down and reconnect a crashed builtin MCP server."""
+        return await self.restart_builtin(server_id)
+
+    async def restart_builtin(self, server_id: str, timeout: float = 60.0) -> bool:
+        """Restart a built-in Python server under a long-lived owner task."""
         import sys
         from src.builtin_mcp import _BUILTIN_SERVERS, builtin_python_env
 
@@ -666,23 +670,52 @@ class McpManager:
         base_dir = get_app_root()
         script_path = os.path.join(base_dir, script_rel)
 
-        # Clean up old connection
+        # Clean up old connection (signals any existing owner task to close it).
         await self.disconnect_server(server_id)
+        return await self._connect_owned(
+            server_id,
+            timeout=timeout,
+            name=name,
+            transport="stdio",
+            command=sys.executable,
+            args=[script_path],
+            env=builtin_python_env(base_dir),
+        )
 
-        try:
-            ok = await self.connect_server(
-                server_id=server_id,
-                name=name,
-                transport="stdio",
-                command=sys.executable,
-                args=[script_path],
-                env=builtin_python_env(base_dir),
-            )
+    async def _connect_owned(self, server_id: str, *, timeout: float = 60.0, **connect_kwargs) -> bool:
+        """Connect a stdio server from a background task that keeps owning it.
+
+        A stdio transport must be closed by the task that entered it (AnyIO
+        cancel-scope affinity), and it lives only as long as that task. Callers
+        that reconnect are usually short-lived (an HTTP request handler, the
+        recovery branch of call_tool), so the connection is made and then held
+        by a background owner task, exactly like startup registration in
+        src/builtin_mcp.py. Connecting in the caller's task leaves a session
+        whose streams close when the caller returns, and that the next
+        disconnect cannot close. Waits until the connection is ready.
+        """
+        from src.builtin_mcp import _spawn_bg
+
+        name = connect_kwargs.get("name", server_id)
+        ready: asyncio.Future = asyncio.get_running_loop().create_future()
+
+        async def _owner():
+            try:
+                ok = await self.connect_server(server_id=server_id, **connect_kwargs)
+            except Exception as e:
+                logger.error(f"Failed to reconnect MCP server {name}: {e}")
+                ok = False
+            if not ready.done():
+                ready.set_result(bool(ok))
             if ok:
-                logger.info(f"Reconnected builtin MCP server: {name}")
-            return ok
-        except Exception as e:
-            logger.error(f"Failed to reconnect builtin MCP server {name}: {e}")
+                logger.info(f"Reconnected MCP server: {name}")
+                await self.hold_owned_connection(server_id)
+
+        _spawn_bg(_owner())
+        try:
+            return await asyncio.wait_for(asyncio.shield(ready), timeout)
+        except asyncio.TimeoutError:
+            logger.error(f"Timed out reconnecting MCP server {name}")
             return False
 
     def get_all_openai_schemas(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
