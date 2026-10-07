@@ -79,7 +79,7 @@ def test_cookie_user_is_unchanged():
 
 
 def test_bearer_token_attributes_to_its_owner():
-    # A paired phone runs as the "api" pseudo-user but must act as the token owner.
+    # A bearer client runs as the "api" pseudo-user but must act as the token owner.
     assert effective_user(_req(api_token=True, api_token_owner="alice", current_user="api")) == "alice"
 
 
