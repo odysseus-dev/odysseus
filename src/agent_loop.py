@@ -8749,7 +8749,8 @@ _LOCAL_COMPUTER_REFERENCE_RE = re.compile(
     r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"
-    r"|\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b)(?:[a-z][a-z0-9_.-]{1,31})\b",
+    r"|\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b)"
+    r"(?:[a-z][a-z0-9_]*[.\-_][a-z0-9_.\-]{1,28})\b",
     re.IGNORECASE,
 )
 _LOCAL_NETWORK_REFERENCE_RE = re.compile(
@@ -22523,7 +22524,8 @@ async def stream_agent_loop(
             _relevant_tools.difference_update(WEB_TOOL_NAMES)
             logger.info("[agent-intent] explicit no-web request: pruned web tools")
         if (
-            (
+            not relevant_tools
+            and (
                 (
                     workspace
                     and _looks_like_workspace_coding_request(_retrieval_query or _last_user)
