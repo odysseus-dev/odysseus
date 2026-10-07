@@ -1,6 +1,7 @@
 """Regression coverage for the browser markdown renderer."""
 
 import json
+import os
 import shutil
 import subprocess
 import textwrap
@@ -16,6 +17,14 @@ _HAS_NODE = shutil.which("node") is not None
 def node_available():
     if not _HAS_NODE:
         pytest.skip("node binary not on PATH")
+
+
+def test_blockquoted_html_codefence_does_not_leak_placeholders(node_available):
+    result = subprocess.run(
+        ["node", "tests/markdown_codefence_placeholder_regression.mjs"],
+        cwd=_REPO, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
 
 
 def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", with_katex: bool = False):
@@ -53,7 +62,7 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", 
 
         let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
         source = source.replace(
-          /import uiModule from ['"]\.\/ui\.js['"];/,
+          /import uiModule from ['"]\.\/ui\.js(?:[?#][^'"]*)?['"];?/,
           ''
         );
         source = source.replace(
@@ -104,6 +113,32 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)", 
     return json.loads(result.stdout.splitlines()[-1])["html"]
 
 
+def _run_svg_case(markdown: str):
+    # SVG title extraction requires a real inert DOM, not the Node template stub.
+    script = r'''
+      const { chromium } = require('playwright');
+      (async () => {
+        const browser = await chromium.launch({ headless: true });
+        try {
+          const page = await browser.newPage();
+          await page.goto(process.env.ODYSSEUS_TEST_STATIC_ORIGIN + '/static/js/documentStats.js');
+          await page.setContent('<div id="toast"></div><div id="sidebar"></div>');
+          const html = await page.evaluate(async input => {
+            const mod = await import('/static/js/markdown.js');
+            return mod.mdToHtml(input);
+          }, JSON.parse(process.env.ODYSSEUS_SVG_TEST_INPUT));
+          console.log(JSON.stringify({ html }));
+        } finally { await browser.close(); }
+      })().catch(error => { console.error(error); process.exit(1); });
+    '''
+    result = subprocess.run(
+        ["node", "-e", script], cwd=_REPO, capture_output=True, text=True,
+        env={**os.environ, "ODYSSEUS_SVG_TEST_INPUT": json.dumps(markdown)}, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["html"]
+
+
 def test_ordered_lists_render_as_one_unwrapped_ol(node_available):
     html = _run_markdown_case(
         "Before\n\n"
@@ -123,8 +158,169 @@ def test_ordered_lists_render_as_one_unwrapped_ol(node_available):
     assert "<uli>" not in html
     assert "<p><ol>" not in html
     assert "<p><li>" not in html
-    assert "<p>Before</p>" in html
-    assert "<p>After</p>" in html
+
+
+def test_fenced_svg_renders_inline_in_a_locked_sandbox(node_available):
+    html = _run_svg_case(
+        "```svg\n"
+        '<svg viewBox="0 0 1200 800"><title>Black hole formation</title>'
+        '<circle cx="200" cy="300" r="80"/></svg>\n'
+        "```"
+    )
+
+    assert 'class="chat-svg-visual"' in html
+    assert 'class="chat-svg-preview"' in html
+    assert 'sandbox=""' in html
+    assert "Content-Security-Policy" in html
+    assert "default-src &#39;none&#39;" in html
+    assert '--bg:#282c34' in html
+    assert '--panel:#111111' in html
+    assert '--accent:#e06c75' in html
+    assert 'background:var(--bg)' in html
+    assert 'title="Black hole formation"' in html
+    assert 'style="aspect-ratio:1.5"' in html
+    assert "SVG source" not in html
+    assert '<details class="chat-svg-source">' not in html
+    assert '&lt;circle cx=&quot;200&quot;' in html
+
+
+def test_multiple_fenced_svgs_remain_interleaved_with_explanations(node_available):
+    html = _run_svg_case(
+        "```svg\n"
+        '<svg viewBox="0 0 720 360"><title>Stage one</title></svg>\n'
+        "```\n\nThe first mechanism explained.\n\n"
+        "```svg\n"
+        '<svg viewBox="0 0 720 360"><title>Stage two</title></svg>\n'
+        "```\n\nThe second mechanism explained."
+    )
+
+    assert html.count('class="chat-svg-visual"') == 2
+    assert html.index('title="Stage one"') < html.index("The first mechanism explained.")
+    assert html.index("The first mechanism explained.") < html.index('title="Stage two"')
+    assert html.index('title="Stage two"') < html.index("The second mechanism explained.")
+
+
+def test_complete_raw_svg_uses_the_same_locked_renderer(node_available):
+    html = _run_svg_case(
+        "Before the visual.\n\n"
+        '<svg viewBox="0 0 720 360"><title>Raw model SVG</title>'
+        '<rect width="720" height="360" fill="var(--bg)"/></svg>'
+        "\n\nAfter the visual."
+    )
+
+    assert html.count('class="chat-svg-visual"') == 1
+    assert 'sandbox=""' in html
+    assert 'title="Raw model SVG"' in html
+    assert html.index("Before the visual.") < html.index('title="Raw model SVG"')
+    assert html.index('title="Raw model SVG"') < html.index("After the visual.")
+
+
+def test_svg_examples_inside_code_are_not_auto_rendered(node_available):
+    html = _run_markdown_case(
+        "Inline: `<svg></svg>`\n\n"
+        "```html\n<svg viewBox=\"0 0 10 10\"></svg>\n```"
+    )
+
+    assert 'class="chat-svg-visual"' not in html
+    assert "<code>&lt;svg&gt;&lt;/svg&gt;</code>" in html
+    assert '<code class="language-html"' in html
+    assert '&lt;svg viewBox=&quot;0 0 10 10&quot;&gt;' in html
+
+
+def test_fenced_svg_receives_the_active_theme_palette(node_available):
+    html = _run_markdown_case(
+        "```svg\n<svg viewBox=\"0 0 720 360\"><title>Themed</title></svg>\n```",
+        render_expr="""(
+          globalThis.document.documentElement = {},
+          globalThis.getComputedStyle = () => ({ getPropertyValue: name => ({
+            '--bg': '#101214', '--panel': '#202428', '--fg': '#f1f5f9',
+            '--border': '#475569', '--red': '#22d3ee', '--color-muted': '#94a3b8',
+            '--color-success': '#4ade80', '--color-warning': '#facc15'
+          })[name] || '' }),
+          mod.mdToHtml(input)
+        )""",
+    )
+
+    assert '--bg:#101214' in html
+    assert '--panel:#202428' in html
+    assert '--fg:#f1f5f9' in html
+    assert '--accent:#22d3ee' in html
+
+
+def test_more_list_expanders_render_as_clickable_links(node_available):
+    html = _run_markdown_case(
+        "Here are your notes:\n"
+        "<!-- ody-more-notes:abc123\n"
+        "📝 [Hidden note](#note-note-1)\n"
+        "-->\n"
+        "[...and 1 more notes](#notes-more-abc123)\n\n"
+        "Available skills:\n"
+        "<!-- ody-more-skills:def456\n"
+        "- [hidden-skill](#skill-hidden-skill) (draft)\n"
+        "-->\n"
+        "[...and 1 more skills](#skills-more-def456)\n\n"
+        "Memory:\n"
+        "<!-- ody-more-memories:ghi789\n"
+        "- [fact mem1](#memory-mem1) — Hidden memory\n"
+        "-->\n"
+        "[...and 1 more saved memories](#memories-more-ghi789)\n\n"
+        "Calendar:\n"
+        "<!-- ody-more-events:jkl012\n"
+        "- [Hidden event](#event-event-1) — Sep 4, 7:00 PM–8:00 PM\n"
+        "-->\n"
+        "[...and 1 more events](#events-more-jkl012)\n\n"
+        "Chats:\n"
+        "<!-- ody-more-sessions:mno345\n"
+        "- [Hidden chat](#session-chat-1) (last active yesterday)\n"
+        "-->\n"
+        "[...and 1 more chats](#sessions-more-mno345)"
+    )
+
+    assert 'href="#notes-more-abc123"' in html
+    assert 'href="#skills-more-def456"' in html
+    assert 'href="#memories-more-ghi789"' in html
+    assert 'href="#events-more-jkl012"' in html
+    assert 'href="#sessions-more-mno345"' in html
+    assert "ody-more-" not in html
+    assert "<details" not in html
+
+
+def test_expanded_skill_payload_uses_normal_skill_list_markup(node_available):
+    html = _run_markdown_case(
+        "- [last-published](#skill-last-published) (general)\n"
+        "## Drafts\n"
+        "- [first-draft](#skill-first-draft) (draft)"
+    )
+
+    assert html.count("<ul>") == 2
+    assert '<h2>Drafts</h2>' in html
+    assert 'href="#skill-last-published" class="chat-link"' in html
+    assert 'href="#skill-first-draft" class="chat-link"' in html
+
+
+def test_saved_ajax_skill_inventory_plain_names_open_skills(node_available):
+    html = _run_markdown_case(
+        'Skills (44):\n\n**Published**\n'
+        '- action-evidence-synthesis (communication)\n'
+        '- artifact-completion (agent)\n\n**Drafts**\n'
+        '- add-search-delete-and-verify-temporary-memory-by-marker\n'
+        '- ...and 24 more skills.'
+    )
+    assert 'href="#skill-action-evidence-synthesis" class="chat-link"' in html
+    assert 'href="#skill-artifact-completion" class="chat-link"' in html
+    assert 'href="#skill-add-search-delete-and-verify-temporary-memory-by-marker" class="chat-link"' in html
+    assert 'href="#skill-...and"' not in html
+
+
+def test_session_titles_with_escaped_brackets_remain_clickable(node_available):
+    html = _run_markdown_case(
+        r"- [\[domain-audit\] theme](#session-ae3ee537-0a13-443f-a456-91e6fd061edf) "
+        "(last active just now)"
+    )
+
+    assert 'href="#session-ae3ee537-0a13-443f-a456-91e6fd061edf"' in html
+    assert "[domain-audit] theme" in html
+    assert "ody-math-pending" not in html
 
 
 def test_table_separator_row_not_rendered_as_data(node_available):

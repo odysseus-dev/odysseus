@@ -5,13 +5,19 @@
  */
 
 import { topPortalZ } from './toolWindowZOrder.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { langIcon } from './langIcons.js';
-import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { langIcon } from './langIcons.js?v=20260831richtexttools91';
+import {
+  registerMenuDismiss,
+  dismissOrRemove,
+  bindExpandedCardDismiss,
+  unbindExpandedCardDismiss,
+} from './escMenuStack.js';
+import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -21,10 +27,102 @@ let _isOpenFn;     // () => boolean — is doc panel open
 let _createDocument;
 let _newDocument;
 let _loadDocument;
+let _prepareDocumentOpen;
 let _switchToDoc;
 let _openPanel;
 let _addDocToTabs;
 let _syncDocIndicator;
+
+function _isEmailDocument(doc) {
+  return String(doc?.language || '').toLowerCase() === 'email';
+}
+
+function _documentExport(doc, extMap, format = 'original') {
+  const email = _isEmailDocument(doc);
+  const requestedFormat = String(format || 'original').toLowerCase();
+  const forcedMarkdown = requestedFormat === 'markdown' || requestedFormat === 'md';
+  const forcedText = requestedFormat === 'text' || requestedFormat === 'txt';
+  const ext = forcedMarkdown ? '.md' : forcedText ? '.txt'
+    : email ? '.eml' : (extMap[doc?.language] || '.txt');
+  const title = String(doc?.title || 'document').trim() || 'document';
+  const filename = title.toLowerCase().endsWith(ext) ? title : title + ext;
+  // Email drafts use an internal header/body separator for the editor. Turn it
+  // into the blank line required by RFC 5322 when exporting as .eml.
+  const content = email && !forcedMarkdown && !forcedText
+    ? String(doc?.current_content || '').replace(/\r?\n---\r?\n/, '\r\n\r\n')
+    : String(doc?.current_content || '');
+  return {
+    filename,
+    content,
+    type: forcedMarkdown ? 'text/markdown;charset=utf-8'
+      : email && !forcedText ? 'message/rfc822' : 'text/plain;charset=utf-8',
+  };
+}
+
+const _LIBRARY_SORT_ICONS = {
+  recent: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>',
+  oldest: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 .7-9.4L1 10"/><polyline points="12 7 12 12 15 14"/></svg>',
+  'most-messages': '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>',
+  'most-sources': '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>',
+  edits: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  alpha: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m15 4 3 4 3-4"/><path d="M18 8v12"/></svg>',
+};
+
+function _librarySortIcon(value) {
+  return _LIBRARY_SORT_ICONS[value] || _LIBRARY_SORT_ICONS.recent;
+}
+
+function _enhanceLibrarySortSelect(select) {
+  if (!select || select.dataset.enhanced === 'true') return;
+  select.dataset.enhanced = 'true';
+  const picker = document.createElement('div');
+  picker.className = 'email-filter-picker library-sort-picker';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'email-filter-btn library-sort-btn';
+  button.setAttribute('aria-haspopup', 'listbox');
+  button.setAttribute('aria-expanded', 'false');
+  const menu = document.createElement('div');
+  menu.className = 'email-filter-menu library-sort-menu';
+  menu.setAttribute('role', 'listbox');
+  menu.hidden = true;
+
+  const render = () => {
+    const selected = select.options[select.selectedIndex] || select.options[0];
+    button.innerHTML = `<span class="email-filter-current"><span class="email-filter-icon">${_librarySortIcon(selected?.value)}</span><span class="email-filter-label"></span></span><svg class="email-filter-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    button.querySelector('.email-filter-label').textContent = selected?.textContent || 'Recent';
+    menu.replaceChildren(...Array.from(select.options, option => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'email-filter-item library-sort-item';
+      item.dataset.value = option.value;
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(option.value === select.value));
+      item.innerHTML = `<span class="email-filter-item-icon">${_librarySortIcon(option.value)}</span><span class="email-filter-item-label"></span>`;
+      item.querySelector('.email-filter-item-label').textContent = option.textContent;
+      item.addEventListener('click', () => {
+        select.value = option.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        menu.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+        render();
+      });
+      return item;
+    }));
+  };
+  button.addEventListener('click', () => {
+    const willOpen = menu.hidden;
+    picker.closest('#doclib-modal')?.querySelectorAll('.library-sort-menu:not([hidden])').forEach(other => { other.hidden = true; });
+    picker.closest('#doclib-modal')?.querySelectorAll('.library-sort-btn[aria-expanded="true"]').forEach(other => { other.setAttribute('aria-expanded', 'false'); });
+    menu.hidden = !willOpen;
+    button.setAttribute('aria-expanded', String(willOpen));
+  });
+  select.addEventListener('change', render);
+  select.parentNode.insertBefore(picker, select);
+  picker.append(select, button, menu);
+  select.style.display = 'none';
+  render();
+}
 
 export function initLibrary(config) {
   API_BASE        = config.apiBase;
@@ -34,6 +132,7 @@ export function initLibrary(config) {
   _createDocument = config.createDocument;
   _newDocument = config.newDocument;
   _loadDocument   = config.loadDocument;
+  _prepareDocumentOpen = config.prepareDocumentOpen;
   _switchToDoc    = config.switchToDoc;
   _openPanel      = config.openPanel;
   _addDocToTabs   = config.addDocToTabs;
@@ -95,12 +194,21 @@ let _libraryImportMode = false;
 let _libScrollBound = false;   // infinite-scroll listener attached once
 let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
+function _setLibraryCountChipContent(chip, label, count) {
+  const text = document.createElement('span');
+  text.textContent = label;
+  const value = document.createElement('strong');
+  value.textContent = String(count);
+  chip.replaceChildren(text, value);
+}
+
 // ---- Library animation helpers ----
 
   /** Collapse an expanded card */
   function _collapseExpandedCard(card) {
     const grid = card.closest('.doclib-grid');
     const instant = card?.dataset?.spaceToggle === '1';
+    unbindExpandedCardDismiss(card);
     card.classList.remove('doclib-card-expanded');
     // Release the height lock so grid returns to natural size
     if (grid) {
@@ -171,6 +279,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card._suppressNextClick = true;
         setTimeout(() => { card._suppressNextClick = false; }, 400);
         if (navigator.vibrate) try { navigator.vibrate(15); } catch {}
+        // On mobile, a hold is the direct shortcut into bulk selection. The
+        // existing menu remains available from the kebab for other actions.
+        if (window.innerWidth <= 768 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) {
+          const selectBtn = [...document.querySelectorAll('[id$="-select-btn"]')]
+            .find(btn => btn.offsetParent !== null);
+          if (selectBtn) {
+            if (!selectBtn.classList.contains('active')) selectBtn.click();
+            setTimeout(() => card.querySelector('.memory-select-cb')?.click(), 40);
+            return;
+          }
+        }
         const btn = card.querySelector(menuSelector);
         if (btn) btn.click();
       }, 500);
@@ -191,44 +310,51 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     archive: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
     restore: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 4 3 9 8 9"/></svg>',
     delete: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
+    export: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
     clone: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   };
 
   function _showLibDropdown(anchor, items, opts) {
     opts = opts || {};
+    const openForAnchor = [...document.querySelectorAll('._lib-dd')]
+      .find(menu => menu._anchor === anchor);
+    if (openForAnchor) {
+      if (typeof openForAnchor._dismiss === 'function') openForAnchor._dismiss();
+      else openForAnchor.remove();
+      return;
+    }
     document.querySelectorAll('._lib-dd').forEach(dismissOrRemove);
     const dd = document.createElement('div');
     dd.className = 'dropdown session-dropdown-menu _lib-dd';
-    for (const item of items) {
+    dd._anchor = anchor;
+    const menuItems = [...items];
+    if (typeof opts.onSelect === 'function') {
+      menuItems.push({ label: 'Select', menuOrder: 650, action: opts.onSelect, iconSvg: SELECT_MENU_ICON });
+    }
+    menuItems.push({ label: 'Cancel', menuOrder: 1000, cancel: true, action: opts.onCancel,
+      iconSvg: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' });
+    const orderedItems = orderActionMenuItems(menuItems);
+    let addedActionDivider = false;
+    for (const [index, item] of orderedItems.entries()) {
+      if (!addedActionDivider && index > 0 && actionMenuRank(item) >= 700) {
+        const divider = document.createElement('div');
+        divider.className = 'dropdown-divider';
+        dd.appendChild(divider);
+        addedActionDivider = true;
+      }
       const row = document.createElement('div');
-      row.className = 'dropdown-item-compact' + (item.danger ? ' dropdown-item-danger' : '');
+      row.className = 'dropdown-item-compact' + (item.danger ? ' dropdown-item-danger' : '') + (item.cancel ? ' dropdown-cancel-mobile' : '');
       const iconKey = item.icon || item.label.toLowerCase();
-      const iconSvg = _LIB_DD_ICONS[iconKey] || '';
+      const iconSvg = item.iconSvg || _LIB_DD_ICONS[iconKey] || '';
       row.innerHTML = (iconSvg ? '<span class="dropdown-icon">' + iconSvg + '</span>' : '') + '<span>' + item.label + '</span>';
-      row.addEventListener('click', (e) => { e.stopPropagation(); teardown(); item.action(); });
+      row.addEventListener('click', (e) => { e.stopPropagation(); teardown(); if (typeof item.action === 'function') item.action(); });
       dd.appendChild(row);
     }
-    if (typeof opts.onSelect === 'function') {
-      const sel = document.createElement('div');
-      sel.className = 'dropdown-item-compact';
-      sel.innerHTML =
-        '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span></span>'
-        + '<span>Select</span>';
-      sel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); opts.onSelect(); });
-      dd.appendChild(sel);
-    }
-    const cancel = document.createElement('div');
-    cancel.className = 'dropdown-item-compact dropdown-cancel-mobile';
-    cancel.innerHTML =
-      '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>'
-      + '<span>Cancel</span>';
-    cancel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); if (typeof opts.onCancel === 'function') opts.onCancel(); });
-    dd.appendChild(cancel);
     document.body.appendChild(dd);
     const rect = anchor.getBoundingClientRect();
     dd.style.right = (window.innerWidth - rect.right) + 'px';
-    dd.style.top = (rect.bottom + 2) + 'px';
+    dd.style.top = (rect.bottom + 4) + 'px';
     dd.style.display = 'block';
     dd.style.zIndex = String(topPortalZ());
     requestAnimationFrame(() => {
@@ -366,16 +492,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   function libraryRenderLangChips() {
     const wrap = document.getElementById('doclib-chips');
     if (!wrap) return;
-    // Remove only language chip buttons, keep sort/select elements
-    wrap.querySelectorAll('.memory-cat-chip').forEach(c => c.remove());
+    wrap.replaceChildren();
     const totalAll = Object.values(_libraryLanguages).reduce((a, b) => a + b, 0);
 
     // Hide the "all (0)" chip + lang chips entirely when there are no docs.
     if (totalAll === 0) return;
 
     const allChip = document.createElement('button');
-    allChip.className = 'memory-cat-chip' + (!_libraryActiveLanguage ? ' active' : '');
-    allChip.textContent = `all (${totalAll})`;
+    allChip.className = 'skills-summary-chip' + (!_libraryActiveLanguage ? ' active' : '');
+    _setLibraryCountChipContent(allChip, 'All', totalAll);
     allChip.addEventListener('click', () => {
       if (_librarySelectMode) {
         _libraryDocs.forEach(d => _librarySelectedIds.add(d.id));
@@ -393,8 +518,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const sorted = Object.entries(_libraryLanguages).sort((a, b) => b[1] - a[1]);
     for (const [lang, count] of sorted) {
       const chip = document.createElement('button');
-      chip.className = 'memory-cat-chip' + (_libraryActiveLanguage === lang ? ' active' : '');
-      chip.textContent = `${lang} (${count})`;
+      chip.className = 'skills-summary-chip' + (_libraryActiveLanguage === lang ? ' active' : '');
+      _setLibraryCountChipContent(chip, lang, count);
       chip.addEventListener('click', () => {
         _libraryActiveLanguage = lang;
         libraryFetch(false);
@@ -542,14 +667,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
     // Content wrapper
     const content = document.createElement('div');
-    content.style.cssText = 'flex:1;min-width:0;padding-top:4px;';
+    content.style.cssText = 'flex:1;min-width:0;';
 
     // Title row with version badge
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;width:100%;';
     const titleEl = document.createElement('span');
     titleEl.className = 'memory-item-title';
-    titleEl.style.cssText = 'flex:0 1 auto;min-width:0;';
+    titleEl.style.cssText = 'display:block;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     // Language-specific icon next to the title (matches the document's type:
     // markdown/csv/python/html/etc.). Falls back to the generic document icon
     // when the language has no dedicated glyph.
@@ -563,14 +688,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     verBadge.style.cssText = 'font-size:9px;padding:1px 6px;border-radius:8px;background:color-mix(in srgb, var(--red) 15%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);color:var(--red);flex-shrink:0;';
     verBadge.textContent = 'v' + (doc.version_count || 1);
     titleRow.appendChild(verBadge);
-    // Chevron pushed to the right end of the title row — collapsed
-    // shows nothing, expanded reveals a downward chevron so the user
-    // sees the card is open and can tap to close it.
+    // The chevron is appended beside the flexible title/meta column below,
+    // matching the structure used by chat library rows.
     const chevron = document.createElement('span');
     chevron.className = 'doclib-card-chevron';
-    chevron.style.marginLeft = 'auto';
+    chevron.style.cssText = 'margin-left:auto;flex:0 0 auto;';
     chevron.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-    titleRow.appendChild(chevron);
     content.appendChild(titleRow);
 
     // Meta line: session → [lang-icon language] → time
@@ -588,32 +711,39 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     pieces.push(`<span>${_esc(libraryRelativeTime(doc.updated_at))}</span>`);
     meta.innerHTML = pieces.join('<span style="opacity:0.5;">\u00b7</span>');
     content.appendChild(meta);
-    card.appendChild(content);
-
-    // Header element (kept for expand/preview compatibility)
-    const header = document.createElement('div');
-    header.className = 'doclib-card-header';
-    header.style.display = 'none';
-
     // Action buttons — "..." menu
     const actionsWrap = document.createElement('div');
     actionsWrap.className = 'memory-item-actions';
+    actionsWrap.style.cssText = 'flex:0 0 auto;margin-left:0;';
     const menuWrap = document.createElement('span');
     menuWrap.className = 'doclib-card-menu-wrap';
     menuWrap.style.position = 'relative';
     const menuBtn = document.createElement('button');
     menuBtn.className = 'memory-item-btn';
     menuBtn.title = 'Actions';
+    menuBtn.style.position = 'relative';
+    menuBtn.style.top = '-2px';
     menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      // In select mode every part of a document card selects the document.
+      // Do not let the card action menu interrupt that workflow.
+      if (_librarySelectMode) {
+        libraryToggleCardSelection(card, doc.id);
+        return;
+      }
       // Mobile: the custom 5-item dropdown is too crowded — route through the
-      // shared _showLibDropdown with a small set (Open, Clone) plus Select +
+      // shared _showLibDropdown with clear open destinations plus Select +
       // Cancel. Heavier actions (Archive, Delete, Export) live in bulk mode.
       if (window.innerWidth <= 768) {
-        const items = [];
-        if (doc.session_id) items.push({ label: 'Open', action: () => libraryOpenInSession(doc) });
-        items.push({ label: 'Clone', action: () => libraryImportDocument(doc) });
+        const items = [
+          {
+            label: doc.session_id ? 'Open in original' : 'Open document',
+            icon: 'open',
+            action: () => doc.session_id ? libraryOpenInSession(doc) : libraryOpenDocument(doc),
+          },
+          { label: 'Open in new chat', icon: 'copy', action: () => libraryImportDocument(doc, { newSession: true }) },
+        ];
         _showLibDropdown(menuBtn, items, { onSelect: () => {
           libraryEnterSelectMode();
           _librarySelectedIds.add(doc.id);
@@ -655,7 +785,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
     // Dropdown menu
     const dropdown = document.createElement('div');
-    dropdown.className = 'doclib-card-dropdown';
+    dropdown.className = 'dropdown session-dropdown-menu doclib-card-dropdown';
     dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;';
 
     // Single close path for the card action dropdown, shared by the toggle
@@ -691,40 +821,61 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
     dropdown.appendChild(openItem);
 
+    // Select — same position and behavior as every other Library card menu.
+    const selectItem = document.createElement('button');
+    selectItem.className = 'dropdown-item-compact';
+    selectItem.style.cssText = 'background:none;border:none;width:100%;';
+    selectItem.innerHTML = _di(SELECT_MENU_ICON) + '<span>Select</span>';
+    selectItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideCardDropdown();
+      libraryEnterSelectMode();
+      _librarySelectedIds.add(doc.id);
+      libraryUpdateBulkCount();
+      libraryRenderGrid();
+    });
+
     // Clone
     const _cloneIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
     const cloneItem = document.createElement('button');
     cloneItem.className = 'dropdown-item-compact';
     cloneItem.style.cssText = 'background:none;border:none;width:100%;';
-    cloneItem.innerHTML = _di(_cloneIco) + '<span>Clone</span>';
-    cloneItem.title = 'Clone to active session';
+    cloneItem.innerHTML = _di(_cloneIco) + '<span>Copy to session</span>';
+    cloneItem.title = 'Copy to current session';
     cloneItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryImportDocument(doc); });
     dropdown.appendChild(cloneItem);
 
     // Export
     const _exportIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     const exportItem = document.createElement('button');
+    exportItem.type = 'button';
     exportItem.className = 'dropdown-item-compact';
     exportItem.style.cssText = 'background:none;border:none;width:100%;';
     exportItem.innerHTML = _di(_exportIco) + '<span>Export</span>';
-    exportItem.addEventListener('click', async (e) => {
-      e.stopPropagation();
+    const exportDocumentFile = async (format = 'original') => {
       hideCardDropdown();
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}`);
         if (!res.ok) throw new Error('Failed');
         const full = await res.json();
-        const extMap = { javascript: '.js', python: '.py', html: '.html', css: '.css', markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh', sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', typescript: '.ts', ruby: '.rb', php: '.php', xml: '.xml', toml: '.toml', ini: '.ini' };
-        const ext = extMap[full.language] || '.txt';
-        const blob = new Blob([full.current_content || ''], { type: 'text/plain' });
+        const extMap = { javascript: '.js', python: '.py', html: '.html', svg: '.svg', css: '.css', markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh', sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', typescript: '.ts', ruby: '.rb', php: '.php', xml: '.xml', toml: '.toml', ini: '.ini' };
+        const exported = _documentExport(full, extMap, format);
+        const blob = new Blob([exported.content], { type: exported.type });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = (full.title || 'document') + ext;
+        a.download = exported.filename;
         a.click();
         URL.revokeObjectURL(a.href);
       } catch { if (uiModule) uiModule.showError('Failed to export document'); }
+    };
+    exportItem.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await exportDocumentFile();
     });
     dropdown.appendChild(exportItem);
+    // Keep Select immediately before the archive/destructive section.
+    dropdown.appendChild(selectItem);
 
     // Archive / Restore — soft-archive a doc out of the main list, or bring it back.
     const _archiveIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
@@ -746,6 +897,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
     });
+    const actionDivider = document.createElement('div');
+    actionDivider.className = 'dropdown-divider';
+    dropdown.appendChild(actionDivider);
     dropdown.appendChild(archiveItem);
 
     // Delete
@@ -759,16 +913,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
     menuWrap.appendChild(dropdown);
     actionsWrap.appendChild(menuWrap);
-    card.appendChild(actionsWrap);
-
-    // Hidden header for expand/preview compatibility
-    card.appendChild(header);
+    // Match chat rows: a flexible title/meta column followed by the
+    // chevron and kebab as sibling controls in one full-width header row.
+    const visibleHeader = document.createElement('div');
+    visibleHeader.className = 'doclib-document-header';
+    visibleHeader.style.cssText = 'display:flex;align-items:center;width:100%;gap:6px;';
+    visibleHeader.appendChild(content);
+    visibleHeader.appendChild(actionsWrap);
+    visibleHeader.appendChild(chevron);
+    card.appendChild(visibleHeader);
 
     // Inject library card hover styles once
     if (!document.getElementById('doclib-card-styles')) {
       const s = document.createElement('style');
       s.id = 'doclib-card-styles';
-      s.textContent = `.doclib-card:hover .doclib-card-icon-btn{opacity:.4}.doclib-card-icon-btn:hover{opacity:1!important}.doclib-card-text-btn{background:none;border:1px solid var(--border);color:var(--fg-muted);font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;transition:border-color .15s,color .15s}.doclib-card-text-btn:hover{border-color:var(--accent,var(--red));color:var(--accent,var(--red))}.doclib-card-text-btn-danger{border-color:var(--color-danger,#e06c75)!important;color:var(--color-danger,#e06c75)!important}.doclib-card-text-btn-danger:hover{border-color:#ff4d4d!important;color:#ff4d4d!important}.doclib-card-chevron{display:none;align-items:center;justify-content:center;align-self:center;opacity:0.6;transition:transform .15s ease;flex-shrink:0;height:14px;line-height:0}.doclib-card-expanded .doclib-card-chevron{display:inline-flex;transform:rotate(180deg)}.doclib-card-chevron svg{display:block}`;
+      s.textContent = `.doclib-card:hover .doclib-card-icon-btn{opacity:.4}.doclib-card-icon-btn:hover{opacity:1!important}.doclib-card-text-btn{background:none;border:1px solid var(--border);color:var(--fg-muted);font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;transition:border-color .15s,color .15s}.doclib-card-text-btn:hover{border-color:var(--accent,var(--red));color:var(--accent,var(--red))}.doclib-card-text-btn-danger{border-color:var(--color-danger,#e06c75)!important;color:var(--color-danger,#e06c75)!important}.doclib-card-text-btn-danger:hover{border-color:#ff4d4d!important;color:#ff4d4d!important}.doclib-card-chevron{display:inline-flex;align-items:center;justify-content:center;align-self:center;opacity:0.6;transition:transform .15s ease;flex-shrink:0;height:14px;line-height:0;transform:rotate(0deg)}.doclib-card-expanded .doclib-card-chevron{transform:rotate(180deg)}.doclib-card-chevron svg{display:block}`;
       document.head.appendChild(s);
     }
 
@@ -798,33 +957,54 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     expandedActions.className = 'doclib-card-expanded-actions';
 
     const openBtn = document.createElement('button');
-    openBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+    openBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-expanded-open-btn';
     openBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M5 12h14M13 5l7 7-7 7"/></svg>Open';
-    if (doc.session_id) {
-      openBtn.title = 'Open in original session';
-      openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenInSession(doc); });
-    } else {
-      // Orphaned doc (closed / session detached) is still openable in the editor
-      // by id — libraryOpenDocument handles the no-session case (#1602).
-      openBtn.title = 'Open in the editor';
-      openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenDocument(doc); });
-    }
+    openBtn.title = 'Open document';
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.innerWidth <= 768) {
+        _showLibDropdown(openBtn, [
+          {
+            label: doc.session_id ? 'Open in original' : 'Open document',
+            icon: 'open',
+            action: () => doc.session_id ? libraryOpenInSession(doc) : libraryOpenDocument(doc),
+          },
+          { label: 'Open in new chat', icon: 'copy', action: () => libraryImportDocument(doc, { newSession: true }) },
+        ]);
+      } else if (doc.session_id) {
+        libraryOpenInSession(doc);
+      } else {
+        // Orphaned docs remain directly openable by id.
+        libraryOpenDocument(doc);
+      }
+    });
 
     const cloneBtn = document.createElement('button');
-    cloneBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    cloneBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Clone';
-    cloneBtn.title = 'Clone — copy to active session';
+    cloneBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-expanded-clone-btn';
+    cloneBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy to session';
+    cloneBtn.title = 'Copy to current session';
     cloneBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryImportDocument(doc); });
 
+    const expandedExportBtn = document.createElement('button');
+    expandedExportBtn.type = 'button';
+    expandedExportBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-expanded-export-btn';
+    expandedExportBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export';
+    expandedExportBtn.title = 'Export — save to this computer';
+    expandedExportBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await exportDocumentFile();
+    });
+
     const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
+    deleteBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger doclib-expanded-delete-btn';
     deleteBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete';
     deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryDeleteSingle(doc.id, card); });
 
     // Archive sits next to Delete on the LEFT — same lineup as the chat
     // and research footers. Label flips to Restore inside the Archive view.
     const archiveBtn = document.createElement('button');
-    archiveBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+    archiveBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-expanded-archive-btn';
     archiveBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>' + (_libraryArchivedView ? 'Restore' : 'Archive');
     archiveBtn.title = _libraryArchivedView ? 'Restore to active documents' : 'Archive (hide from the main list)';
     archiveBtn.addEventListener('click', async (e) => {
@@ -843,7 +1023,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     leftGroup.className = 'doclib-action-group';
     const btnRow = document.createElement('div');
     btnRow.className = 'doclib-action-btn-row';
-    // Export lives in the ⋮ menu — keep the footer uncrowded with Clone + Open.
+    btnRow.appendChild(expandedExportBtn);
     btnRow.appendChild(cloneBtn);
     btnRow.appendChild(openBtn);
     leftGroup.appendChild(btnRow);
@@ -855,14 +1035,55 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     expandedActions.appendChild(archiveBtn);
     expandedActions.appendChild(leftGroup);
 
+    const mobileMoreBtn = document.createElement('button');
+    mobileMoreBtn.type = 'button';
+    mobileMoreBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-expanded-mobile-more';
+    mobileMoreBtn.title = 'Document actions';
+    mobileMoreBtn.setAttribute('aria-label', 'Document actions');
+    mobileMoreBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+    mobileMoreBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _showLibDropdown(mobileMoreBtn, [
+        {
+          label: 'Export file ›',
+          icon: 'export',
+          action: () => {
+            const formatItems = [
+              { label: 'Original format', icon: 'export', action: () => expandedExportBtn.click() },
+              { label: 'Markdown (.md)', action: () => exportDocumentFile('markdown') },
+              { label: 'Plain text (.txt)', action: () => exportDocumentFile('text') },
+            ];
+            const language = String(doc.language || '').toLowerCase();
+            if (language === 'docx' || language === 'pdf') {
+              formatItems.push(
+                { label: 'PDF (.pdf)', action: () => exportDocumentFile('pdf') },
+                { label: 'Word (.docx)', action: () => exportDocumentFile('docx') },
+              );
+            }
+            _showLibDropdown(mobileMoreBtn, formatItems);
+          },
+        },
+        {
+          label: _libraryArchivedView ? 'Restore document' : 'Archive document',
+          icon: _libraryArchivedView ? 'restore' : 'archive',
+          action: () => archiveBtn.click(),
+        },
+        { label: 'Delete document', icon: 'delete', danger: true, action: () => deleteBtn.click() },
+      ]);
+    });
+    expandedActions.appendChild(mobileMoreBtn);
+
     preview.appendChild(expandedActions);
     card.appendChild(preview);
 
-    card.addEventListener('click', () => {
+    card.addEventListener('click', (e) => {
       if (card._suppressNextClick) { card._suppressNextClick = false; return; }
       if (_librarySelectMode) {
-        const cb = card.querySelector('.memory-select-cb');
-        if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
+        // Checkbox and menu clicks have their own handlers. Other clicks on
+        // the card, including code previews, select the whole document.
+        if (e.target.closest('.memory-select-cb, .doclib-card-menu-wrap')) return;
+        libraryToggleCardSelection(card, doc.id);
       } else {
         libraryExpandCard(card, doc);
       }
@@ -911,6 +1132,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     if (!instant) await new Promise(r => setTimeout(r, 120));
 
     card.classList.add('doclib-card-expanded');
+    bindExpandedCardDismiss(card, () => _collapseExpandedCard(card));
     if (grid) grid.scrollTop = 0;
 
     // Clean up sibling inline styles (CSS display:none takes over now)
@@ -996,65 +1218,61 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   }
 
   async function libraryOpenDocument(doc) {
+    _prepareDocumentOpen?.(doc.session_id);
     closeLibrary();
     // Orphaned doc (session deleted) — just open in editor without switching session
     if (!doc.session_id) {
-      _loadDocument(doc.id);
+      await _loadDocument(doc.id);
       return;
     }
     const currentSessionId = sessionModule && sessionModule.getCurrentSessionId();
     if (doc.session_id !== currentSessionId) {
       await sessionModule.selectSession(doc.session_id);
     }
-    _loadDocument(doc.id);
+    await _loadDocument(doc.id);
   }
 
   /** Open a document in its linked session */
   async function libraryOpenInSession(doc) {
     if (!doc.session_id) return;
+    _prepareDocumentOpen?.(doc.session_id);
     closeLibrary();
 
     // Step 1: switch session if needed and wait for it to load
     const currentSessionId = sessionModule && sessionModule.getCurrentSessionId();
     if (doc.session_id !== currentSessionId) {
       await sessionModule.selectSession(doc.session_id);
-      // Give the session UI a moment to settle
-      await new Promise(r => setTimeout(r, 150));
     }
 
-    // Step 2: ensure doc is in tabs
-    const docs = _getDocs();
-    if (!docs.has(doc.id)) {
-      const res = await fetch(`${API_BASE}/api/document/${doc.id}`);
-      if (res.ok) {
-        const full = await res.json();
-        _addDocToTabs(full, doc.session_id);
-      }
-    }
-
-    // Step 3: open panel (slide-in is handled by openPanel)
-    if (!_isOpenFn()) _openPanel();
-
-    _switchToDoc(doc.id);
+    // Explicit loads also restore a minimized editor. Checking only isOpen here
+    // left mobile documents switched behind their bottom dock chip because a
+    // minimized panel intentionally keeps the document module alive.
+    await _loadDocument(doc.id);
     _syncDocIndicator();
   }
 
-  /** Copy a document from the library into the current session */
-  async function libraryImportDocument(doc) {
-    let sessionId = sessionModule && sessionModule.getCurrentSessionId();
+  /** Copy a document from the library into the current or a fresh session. */
+  async function libraryImportDocument(doc, { newSession = false } = {}) {
+    let sessionId = newSession ? null : (sessionModule && sessionModule.getCurrentSessionId());
     if (!sessionId) {
-      // Create a new session if none exists
-      if (sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+      // "Open here" may target an already prepared new chat. "Open in new
+      // chat" always creates a distinct session, even when a chat is active.
+      if (!newSession && sessionModule && sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
         const ok = await sessionModule.materializePendingSession();
         if (ok) sessionId = sessionModule.getCurrentSessionId();
       }
       if (!sessionId) {
-        // No pending chat either — trigger new session, preserving the current model
+        // Trigger a session using the current chat model when possible.
         const curModel = sessionModule.getCurrentModel ? sessionModule.getCurrentModel() : null;
         const sessions = sessionModule ? sessionModule.getSessions() : [];
-        // Prefer the session matching the current model, otherwise fall back to first with a model
+        const currentId = sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+        const current = sessions.find(s => s.id === currentId);
+        // Prefer the current endpoint, then a session matching the current
+        // model, otherwise fall back to the first configured chat endpoint.
         const withModel = sessions.filter(s => s.endpoint_url && s.model);
-        const match = (curModel && withModel.find(s => s.model === curModel)) || withModel[0];
+        const match = (current?.endpoint_url && current?.model ? current : null)
+          || (curModel && withModel.find(s => s.model === curModel))
+          || withModel[0];
         if (match) {
           sessionModule.createDirectChat(match.endpoint_url, match.model, match.endpoint_id);
           const ok = await sessionModule.materializePendingSession();
@@ -1108,7 +1326,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
       _switchToDoc(created.id);
       _syncDocIndicator();
-      if (uiModule) uiModule.showToast('Document cloned to session');
+      if (uiModule) uiModule.showToast(newSession ? 'Document opened in new chat' : 'Document opened here');
     } catch (e) {
       console.error('Failed to import document:', e);
       if (uiModule) uiModule.showError('Failed to import document');
@@ -1147,6 +1365,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       _librarySelectedIds.add(id);
     }
     libraryUpdateBulkCount();
+  }
+
+  function libraryToggleCardSelection(card, id) {
+    const cb = card?.querySelector('.memory-select-cb');
+    if (!cb) return;
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event('change', { bubbles: true }));
+    card.classList.toggle('selected', _librarySelectedIds.has(id));
   }
 
   function libraryToggleSelectAll() {
@@ -1326,7 +1552,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return;
     }
     const extMap = {
-      javascript: '.js', python: '.py', html: '.html', css: '.css',
+      javascript: '.js', python: '.py', html: '.html', svg: '.svg', css: '.css',
       markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
       sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp',
       typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
@@ -1345,9 +1571,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }));
     for (const doc of docs) {
       if (!doc) continue;
-      const ext = extMap[doc.language] || '.txt';
-      const filename = (doc.title || 'document') + (doc.title && doc.title.includes('.') ? '' : ext);
-      const blob = new Blob([doc.current_content || ''], { type: 'text/plain' });
+      const exported = _documentExport(doc, extMap);
+      const filename = exported.filename;
+      const blob = new Blob([exported.content], { type: exported.type });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1489,7 +1715,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       '.scss': 'css', '.sass': 'css', '.less': 'css',
       '.csv': 'csv', '.tsv': 'csv',
       '.xlsx': 'csv', '.xls': 'csv', '.ods': 'csv',
-      '.docx': 'markdown', '.doc': 'markdown',
+      '.docx': 'docx', '.doc': 'markdown',
     };
 
     let imported = 0;
@@ -1508,6 +1734,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
         const isSpreadsheet = ['.xlsx', '.xls', '.ods'].includes(ext);
         const isPdf = ext === '.pdf';
+        const isDocx = ext === '.docx';
 
         if (isPdf) {
           // Backend handles save + AcroForm detection in one shot — picks the
@@ -1523,6 +1750,24 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             let _e = `HTTP ${res.status}`;
             try { const _j = await res.json(); _e = _j.detail || _j.error || _e; } catch {}
             throw new Error('PDF import failed: ' + _e);
+          }
+          imported++;
+          continue;
+        }
+
+        if (isDocx) {
+          // Preserve the original upload so the document panel can render a
+          // Word-style preview and offer conversion/export actions later.
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(`${API_BASE}/api/documents/import-docx`, {
+            method: 'POST',
+            body: fd,
+          });
+          if (!res.ok) {
+            let _e = `HTTP ${res.status}`;
+            try { const _j = await res.json(); _e = _j.detail || _j.error || _e; } catch {}
+            throw new Error('DOCX import failed: ' + _e);
           }
           imported++;
           continue;
@@ -1616,7 +1861,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;overflow:hidden;">
           <div id="doclib-panel-chats" data-doclib-panel="chats" class="admin-card" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;">Chats <span id="doclib-chats-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="margin:0;padding:0;line-height:1;"><svg class="doclib-section-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chats <span id="doclib-chats-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
             </div>
             <p class="memory-desc doclib-desc">All active chat sessions. Click to open.</p>
             <div class="memory-toolbar">
@@ -1627,8 +1872,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                   <option value="most-messages">Most messages</option>
                   <option value="alpha">A\u2013Z</option>
                 </select>
+                <button class="memory-toolbar-btn" id="doclib-chats-tidy-btn" title="AI tidy: delete junk sessions and organize into folders"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;color:var(--accent, var(--red));"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</button>
                 <button class="memory-toolbar-btn" id="doclib-chats-select-btn">Select</button>
-                <button class="memory-toolbar-btn" id="doclib-chats-tidy-btn" title="AI tidy: delete junk sessions and organize into folders"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</button>
               </div>
               <input type="text" id="doclib-chats-search" placeholder="Search chats\u2026" class="memory-search-input" />
               <div id="doclib-chats-chips" class="doclib-lang-chips"></div>
@@ -1644,7 +1889,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           </div>
           <div id="doclib-panel-archive" data-doclib-panel="archive" class="admin-card" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;position:relative;top:2px;">Archive <span id="doclib-arc-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="margin:0;padding:0;line-height:1;position:relative;top:2px;"><svg class="doclib-section-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>Archive <span id="doclib-arc-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
             </div>
             <p class="memory-desc doclib-desc" style="position:relative;top:0.5px;">Archived sessions. Restore to make active again.</p>
             <div class="memory-toolbar">
@@ -1671,7 +1916,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           </div>
           <div id="doclib-panel-research" data-doclib-panel="research" class="admin-card" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:10px;">
-              <h2 style="margin:0;padding:0;line-height:1;">Research <span id="doclib-research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <h2 style="margin:0;padding:0;line-height:1;"><svg class="doclib-section-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Research <span id="doclib-research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
             </div>
             <p class="memory-desc doclib-desc" style="position:relative;top:-1px;">Completed deep research reports. Click to view.</p>
             <div class="memory-toolbar">
@@ -1682,8 +1927,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                   <option value="most-sources">Most sources</option>
                   <option value="alpha">A\u2013Z</option>
                 </select>
-                <button class="memory-toolbar-btn" id="doclib-research-select-btn">Select</button>
                 <button class="memory-toolbar-btn" id="doclib-research-tidy-btn" title="Tidy: delete research with no sources or empty reports">Tidy</button>
+                <button class="memory-toolbar-btn" id="doclib-research-select-btn">Select</button>
               </div>
               <input type="text" id="doclib-research-search" placeholder="Search research\u2026" class="memory-search-input" />
             </div>
@@ -1698,9 +1943,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           </div>
           <div data-doclib-panel="documents" class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-              <h2 style="margin:0;padding:0;line-height:1;">Documents <span id="doclib-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
-              <button class="memory-toolbar-btn" id="doclib-import-file-btn" title="Import files from disk" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="21" x2="19" y2="21"/></svg> Import</button>
-              <button class="memory-toolbar-btn" id="doclib-create-btn" title="Create new blank document"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Create</button>
+              <h2 style="margin:0;padding:0;line-height:1;"><svg class="doclib-section-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>Documents <span id="doclib-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <button class="memory-toolbar-btn" id="doclib-import-file-btn" title="Import files from disk" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="21" x2="19" y2="21"/></svg> Import</button>
+              <button class="memory-toolbar-btn" id="doclib-create-btn" title="Create new blank document"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Create</button>
             </div>
             <p class="memory-desc doclib-desc">Open documents in a session, clone to a new or import new files.</p>
             <div class="memory-toolbar">
@@ -1711,8 +1956,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                   <option value="edits">Most edits</option>
                   <option value="alpha">A\u2013Z</option>
                 </select>
-                <button class="memory-toolbar-btn" id="doclib-select-btn" title="Select documents">Select</button>
                 <button class="memory-toolbar-btn" id="doclib-tidy-btn" title="Tidy: remove empty / junk / duplicate documents">Tidy</button>
+                <button class="memory-toolbar-btn" id="doclib-select-btn" title="Select documents">Select</button>
               </div>
               <input type="text" id="doclib-search" placeholder="Search titles &amp; content\u2026" class="memory-search-input" />
               <div id="doclib-chips" class="doclib-lang-chips"></div>
@@ -1722,6 +1967,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               <label class="memory-bulk-check-all" style="position:relative;top:0px;left:1px;"><input type="checkbox" id="doclib-select-all" /> All</label>
               <span id="doclib-selected-count">0 Selected</span>
               <button id="doclib-bulk-actions" class="memory-toolbar-btn" style="position:relative;top:-2px;margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:9px;">&#9660;</span></button>
+              <button id="doclib-bulk-delete" class="memory-toolbar-btn danger" title="Delete selected documents" disabled style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>Delete</button>
               <button id="doclib-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;margin-right:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div class="doclib-grid" id="doclib-grid"></div>
@@ -1731,6 +1977,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       </div>
     `;
     document.body.appendChild(modal);
+    modal.querySelectorAll('#doclib-chats-sort, #doclib-arc-sort, #doclib-research-sort, #doclib-sort')
+      .forEach(_enhanceLibrarySortSelect);
+    modal.addEventListener('click', (event) => {
+      if (event.target.closest('.library-sort-picker')) return;
+      modal.querySelectorAll('.library-sort-menu:not([hidden])').forEach(menu => { menu.hidden = true; });
+      modal.querySelectorAll('.library-sort-btn[aria-expanded="true"]').forEach(button => { button.setAttribute('aria-expanded', 'false'); });
+    });
 
     // Make modal draggable (same logic as other modals)
     {
@@ -1918,6 +2171,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (grid) {
         grid.querySelectorAll('.doclib-card-expanded').forEach(c => {
           if (c !== card) {
+            unbindExpandedCardDismiss(c);
             c.classList.remove('doclib-card-expanded');
             const p = c.querySelector('.doclib-chat-preview');
             if (p) { p.style.display = 'none'; p.innerHTML = ''; }
@@ -1925,12 +2179,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
       }
       if (isOpen) {
+        unbindExpandedCardDismiss(card);
         card.classList.remove('doclib-card-expanded');
         preview.style.display = 'none';
         preview.innerHTML = '';
         return;
       }
       card.classList.add('doclib-card-expanded');
+      bindExpandedCardDismiss(card, () => {
+        unbindExpandedCardDismiss(card);
+        card.classList.remove('doclib-card-expanded');
+        preview.style.display = 'none';
+        preview.innerHTML = '';
+      });
       preview.style.display = 'block';
       preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
       try {
@@ -2101,7 +2362,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         // brand-new "New Chat" rows don't show "\u00b7 0 msgs".
         const _chatMsgs = s.message_count || 0;
         const msgCountHtml = _chatMsgs > 0
-          ? '<span style="opacity:0.45;font-weight:normal;font-size:0.9em;margin-left:6px;">\u00b7 ' + _chatMsgs + ' msg' + (_chatMsgs === 1 ? '' : 's') + '</span>'
+          ? '<span style="color:var(--accent,var(--red));opacity:0.8;font-weight:normal;font-size:0.9em;margin-left:6px;">\u00b7 ' + _chatMsgs + ' msg' + (_chatMsgs === 1 ? '' : 's') + '</span>'
           : '';
         card.innerHTML =
           '<div class="doclib-chat-header" style="display:flex;align-items:center;width:100%;gap:6px;">' +
@@ -2157,8 +2418,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const folders = Object.keys(counts).sort();
       if (folders.length < 1) { el.innerHTML = ''; return; }
       el.innerHTML = '';
-      const mk = (label, val, count) => { const c = document.createElement('button'); c.className = 'memory-cat-chip' + (_chatsModelFilter === val ? ' active' : ''); c.textContent = label + ' (' + count + ')'; c.addEventListener('click', () => { _chatsModelFilter = _chatsModelFilter === val ? '' : val; _renderChatsGrid(); _renderChatsChips(); }); el.appendChild(c); };
-      mk('all', '', _chatsSessions.length);
+      const mk = (label, val, count) => { const c = document.createElement('button'); c.className = 'skills-summary-chip' + (_chatsModelFilter === val ? ' active' : ''); _setLibraryCountChipContent(c, label, count); c.addEventListener('click', () => { _chatsModelFilter = _chatsModelFilter === val ? '' : val; _renderChatsGrid(); _renderChatsChips(); }); el.appendChild(c); };
+      mk('All', '', _chatsSessions.length);
       folders.forEach(f => mk(f, f, counts[f]));
     }
 
@@ -2350,6 +2611,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (grid) {
         grid.querySelectorAll('.doclib-card-expanded').forEach(c => {
           if (c !== card) {
+            unbindExpandedCardDismiss(c);
             c.classList.remove('doclib-card-expanded');
             const p = c.querySelector('.doclib-chat-preview');
             if (p) { p.style.display = 'none'; p.innerHTML = ''; }
@@ -2357,11 +2619,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
       }
       if (card.classList.contains('doclib-card-expanded')) {
+        unbindExpandedCardDismiss(card);
         card.classList.remove('doclib-card-expanded');
         preview.style.display = 'none'; preview.innerHTML = '';
         return;
       }
       card.classList.add('doclib-card-expanded');
+      bindExpandedCardDismiss(card, () => {
+        unbindExpandedCardDismiss(card);
+        card.classList.remove('doclib-card-expanded');
+        preview.style.display = 'none';
+        preview.innerHTML = '';
+      });
       preview.style.display = 'block';
       preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
       try {
@@ -2466,6 +2735,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               '<div class="memory-item-title">' + arcIconSvg + _esc(s.name || 'Untitled') + '</div>' +
               '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + [model, _relTime(s.updated_at)].filter(Boolean).join(' \u00b7 ') + '</div>' +
             '</div>' +
+            '<span class="doclib-card-chevron" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>' +
             '<div class="memory-item-actions"><button class="memory-item-btn _arc-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
@@ -2510,6 +2780,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               '<div class="memory-item-title">' + _arcDocIco + _esc(d.title || 'Untitled') + '</div>' +
               '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + ['Document', (d.language || 'text'), _relTime(d.updated_at)].filter(Boolean).join(' · ') + '</div>' +
             '</div>' +
+            '<span class="doclib-card-chevron" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>' +
             '<div class="memory-item-actions"><button class="memory-item-btn _arc-doc-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
@@ -2547,6 +2818,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               '<div class="memory-item-title">' + _arcResIco + _esc(r.query || 'Research') + '</div>' +
               '<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">' + ['Research', (r.source_count ? r.source_count + ' sources' : ''), _relTime(r.completed_at ? new Date(r.completed_at * 1000).toISOString() : '')].filter(Boolean).join(' · ') + '</div>' +
             '</div>' +
+            '<span class="doclib-card-chevron" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>' +
             '<div class="memory-item-actions"><button class="memory-item-btn _arc-res-menu" title="Actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>' +
           '</div>' +
           '<div class="doclib-chat-preview" style="display:none;"></div>';
@@ -2583,8 +2855,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       el.innerHTML = '';
       const mk = (label, val, count) => {
         const c = document.createElement('button');
-        c.className = 'memory-cat-chip' + (_arcTypeFilter === val ? ' active' : '');
-        c.textContent = label + ' (' + count + ')';
+        c.className = 'skills-summary-chip' + (_arcTypeFilter === val ? ' active' : '');
+        _setLibraryCountChipContent(c, label, count);
         c.addEventListener('click', () => { _arcTypeFilter = _arcTypeFilter === val ? '' : val; _renderArcGrid(); _renderArcChips(); });
         el.appendChild(c);
       };
@@ -2710,6 +2982,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (grid) {
         grid.querySelectorAll('.doclib-card-expanded').forEach(c => {
           if (c !== card) {
+            unbindExpandedCardDismiss(c);
             c.classList.remove('doclib-card-expanded');
             const p = c.querySelector('.doclib-chat-preview');
             if (p) { p.style.display = 'none'; p.innerHTML = ''; }
@@ -2717,12 +2990,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
       }
       if (isOpen) {
+        unbindExpandedCardDismiss(card);
         card.classList.remove('doclib-card-expanded');
         preview.style.display = 'none';
         preview.innerHTML = '';
         return;
       }
       card.classList.add('doclib-card-expanded');
+      bindExpandedCardDismiss(card, () => {
+        unbindExpandedCardDismiss(card);
+        card.classList.remove('doclib-card-expanded');
+        preview.style.display = 'none';
+        preview.innerHTML = '';
+      });
       preview.style.display = 'block';
       preview.innerHTML = '<div style="opacity:0.4;font-size:11px;padding:8px 4px;">Loading…</div>';
       let detail = item;
@@ -2904,6 +3184,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         html += `<div class="memory-item-title"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.4;flex-shrink:0;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>${_esc(r.query || 'Untitled Research')}</div>`;
         html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaText}</div>`;
         html += `</div>`;
+        html += `<span class="doclib-card-chevron" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>`;
         if (!_researchSelectMode) html += `<div class="memory-item-actions"><button class="memory-item-btn doclib-research-delete" data-rid="${r.id}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>`;
         html += `</div>`;
         html += `<div class="doclib-chat-preview" style="display:none;"></div>`;
@@ -3353,9 +3634,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         { label: _libraryArchivedView ? 'Restore' : 'Archive', icon: _libraryArchivedView ? 'restore' : 'archive', action: libraryBulkArchive },
         { label: 'Clone', icon: 'clone', action: libraryBulkClone },
         { label: 'Export', icon: 'open', action: libraryBulkExport },
-        { label: 'Delete', icon: 'delete', danger: true, action: libraryBulkDelete },
       ], { onCancel: libraryExitSelectMode });
     });
+
+    document.getElementById('doclib-bulk-delete')?.addEventListener('click', libraryBulkDelete);
 
     const bulkCancelBtn = document.getElementById('doclib-bulk-cancel');
     if (bulkCancelBtn) bulkCancelBtn.addEventListener('click', libraryExitSelectMode);

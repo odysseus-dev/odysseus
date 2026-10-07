@@ -1,0 +1,3202 @@
+/* 05-documents - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+.memory-suggestions-actions {
+  position: relative;
+  left: -4px;
+}
+.memory-suggestions-actions .memory-item-btn,
+.memory-suggestion-actions .memory-item-btn {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: color-mix(in srgb, var(--border) 85%, transparent);
+}
+.memory-suggestions-actions .memory-item-btn.save,
+.memory-suggestion-actions .memory-item-btn.save {
+  background: color-mix(in srgb, var(--red) 9%, transparent);
+  border-color: color-mix(in srgb, var(--red) 28%, transparent);
+}
+
+.memory-suggestion-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--red) 3%, transparent);
+}
+
+/* Tidy animations */
+.memory-tidy-editing {
+  border-color: color-mix(in srgb, var(--hl-function) 40%, transparent);
+  background: color-mix(in srgb, var(--hl-function) 6%, transparent);
+  transition: all 0.3s;
+}
+
+.memory-tidy-text-old {
+  opacity: 0.4;
+  text-decoration: line-through;
+  transition: opacity 0.25s;
+}
+
+.memory-tidy-text-new {
+  color: var(--hl-function);
+  transition: color 0.4s;
+}
+
+.memory-tidy-removing {
+  text-decoration: line-through;
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-color: transparent;
+  overflow: hidden;
+  transition: opacity 0.3s, max-height 0.4s 0.1s, padding 0.4s 0.1s, border-color 0.3s;
+}
+
+/* ===== DOCUMENT EDITOR (ARTIFACTS) PANEL ===== */
+
+/* Doc editor is a body-level sibling of chat-container */
+
+/* Divider between chat and doc editor */
+.doc-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 11%, transparent);
+  cursor: col-resize;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 10;
+}
+.doc-divider::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -10px;
+  width: 21px;
+  cursor: col-resize;
+}
+.doc-divider:hover {
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+/* Always-visible "›" handle on the drag divider — clickable to collapse the
+   panel, and signals the divider is interactive. */
+.doc-divider-collapse {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 0.1s, border-color 0.1s, left 0.08s ease;
+  z-index: 12;
+}
+.doc-divider.doc-divider-handle-idle:hover .doc-divider-collapse,
+.doc-divider.doc-divider-handle-idle:focus-within .doc-divider-collapse {
+  opacity: 0.92;
+  pointer-events: auto;
+}
+/* When in fullscreen mode (cursor outside the doc), the flap itself slides
+   to the OUTSIDE edge of the divider — visually belonging to the chat side
+   the cursor is on, not the doc. The left/right shift pairs with the glyph
+   rotation for a single coordinated transition. */
+.doc-divider-collapse[data-mode="fullscreen"] {
+  left: -22px;
+}
+.doc-divider-collapse:hover { opacity: 1 !important; border-color: var(--accent, var(--red)); }
+/* The same `›` glyph is in the markup; CSS rotates 180° for the left-pointing
+   (fullscreen) state. Smooth transition pairs with the chevron's slide. */
+.doc-divider-collapse > span {
+  display: inline-block;
+  transition: transform 0.08s ease, opacity 0.08s ease;
+}
+.doc-divider-collapse[data-mode="fullscreen"] > span {
+  transform: rotate(180deg);
+}
+/* Secondary "hide panel" X button in the divider — invisible until the pane
+   is fullscreen, then floats just below the unfullscreen chevron so the user
+   has a one-tap escape that minimises the pane instead of just exiting
+   fullscreen. */
+.doc-divider-hide {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  margin-top: 22px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--accent, var(--red));
+  cursor: pointer;
+  padding: 0;
+  z-index: 12;
+  opacity: 0.85;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.doc-divider-hide:hover {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+}
+
+/* Copy / Export split button — main click copies, the caret opens the export menu. */
+.doc-split-btn {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  height: 22px;
+  flex-shrink: 0;
+}
+.doc-split-btn .doc-split-main,
+.doc-split-btn .doc-split-caret {
+  border: none !important;
+  border-radius: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  /* Keep the element fully opaque so the divider line stays crisp; dim the
+     glyph via colour instead (the base .doc-action-icon-btn fades the whole
+     element to 0.3, which also hides the divider). */
+  opacity: 1 !important;
+  color: color-mix(in srgb, var(--fg) 55%, transparent) !important;
+  background: none !important;
+  transition: color 0.12s, background 0.12s;
+}
+.doc-split-btn:hover .doc-split-main,
+.doc-split-btn:hover .doc-split-caret { color: var(--fg) !important; }
+.doc-split-btn .doc-split-caret {
+  border-left: 1px solid var(--border) !important;
+  padding: 0 5px 0 7px !important;
+}
+.doc-split-btn .doc-split-main:hover,
+.doc-split-btn .doc-split-caret:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+  color: var(--fg) !important;
+}
+
+/* Editor pane — body-level flex sibling */
+.doc-editor-pane {
+  flex: 1;
+  min-width: 0;
+  max-width: 70vw;
+  container-type: inline-size;
+  container-name: docpane;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -10px 0 22px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  height: 100%;
+  position: relative;
+  z-index: 1;
+  color-scheme: dark;
+  /* Desktop entrance is driven by openPanel() so the pane has one transform
+     owner. The mobile sheet has its own animation below. */
+  animation: none;
+  transform-origin: right center;
+  will-change: clip-path, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-editor-pane,
+  .doc-editor-pane.doc-pane-leaving { animation: none; }
+}
+.doc-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+/* ---- Tab bar ---- */
+.doc-tab-bar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 36px;
+}
+.doc-tab-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  justify-content: flex-start;
+  /* Fade tabs into the bar's background at the edges (next to the scroll
+     arrows) so an overflowing tab dissolves instead of being hard-cut. The
+     fade is conditional — when we're at an edge there's nothing to fade to,
+     so the mask gradient becomes flat on that side (no shadow). */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.doc-tab-arrow {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  position: relative;
+  top: -2px;
+}
+.doc-tab-arrow:hover {
+  opacity: 1;
+}
+/* Mobile swipe-down grab handle at the top of the doc sheet. */
+.doc-mobile-grabber { display: none; }
+@media (max-width: 768px) {
+  body.doc-view .doc-mobile-grabber {
+    display: block;
+    flex-shrink: 0;
+    height: 18px;
+    position: relative;
+    background: transparent;
+    background-color: transparent;
+    background-image: none;
+    touch-action: none;
+    cursor: grab;
+  }
+  body.doc-view .doc-mobile-grabber::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: var(--fg);
+    opacity: 0.25;
+    border-radius: 2px;
+  }
+}
+
+.doc-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  position: relative;
+}
+.doc-tab:hover {
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.doc-tab.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 7px 7px 0 0;
+}
+.doc-tab-title {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-tab-title-input {
+  background: transparent;
+  border: 1px solid var(--fg);
+  border-radius: 2px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  height: 18px;
+  width: 120px;
+  max-width: 180px;
+  outline: none;
+}
+.doc-tab-lang {
+  font-size: 9px;
+  opacity: 0.5;
+}
+.doc-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  box-sizing: border-box;
+  margin-left: 3px;
+  flex-shrink: 0;
+  align-self: center;
+  transition: opacity 0.12s, color 0.12s, background 0.12s, border-color 0.12s;
+}
+.doc-tab-close:hover {
+  opacity: 1;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+/* Mobile-only footer (Close + Copy); hidden on desktop and in email mode. */
+.doc-mobile-footer { display: none; }
+.doc-tab-new {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.25;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.doc-tab-new:hover {
+  opacity: 0.7;
+}
+.doc-tab-play {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.55;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 1;
+  transition: opacity 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.doc-tab-play:hover {
+  opacity: 1;
+  color: var(--green, #4ec970);
+}
+.doc-tab-play.active {
+  opacity: 1;
+  color: var(--green, #4ec970);
+}
+.doc-tab.dragging {
+  opacity: 0.3;
+}
+.doc-tab.drag-over {
+  border-left: 2px solid var(--fg);
+}
+
+/* ---- HTML preview iframe ---- */
+.doc-html-preview {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+/* ---- Editor header ---- */
+.doc-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  /* Moved to the bottom as a footer: flex order pushes it last in the pane
+     column, and the divider flips to the top edge. */
+  order: 99;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  min-height: 36px;
+  background: var(--bg);
+}
+/* Version now lives in the document tab, not the footer. */
+#doc-version-badge { display: none !important; }
+/* Language icon chip on doc tabs — sits between the version pill and title.
+   Hidden when empty so docs without a language don't get awkward spacing. */
+.doc-tab-lang {
+  display: inline-flex; align-items: center;
+  flex-shrink: 0;
+  align-self: center;
+}
+.doc-tab-lang:empty { display: none; }
+.doc-tab-lang svg { display: block; }
+
+.doc-tab-version {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  line-height: 1.4;
+  /* Sits to the LEFT of the title now — space it off the title text. */
+  margin-right: 6px;
+  /* Accent pill so it's obvious the version is a clickable control. */
+  color: var(--accent-primary, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+  border-radius: 9px;
+}
+.doc-tab-version:hover {
+  border-color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 22%, transparent);
+}
+.doc-close-btn {
+  order: -1;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.doc-close-btn:hover {
+  opacity: 1;
+}
+
+.doc-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+}
+.doc-left .doc-editor-actions {
+  margin-left: 0;
+}
+
+.doc-version-badge {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, border-color 0.1s;
+  opacity: 0.9;
+}
+.doc-version-badge:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  border-color: var(--red);
+}
+
+.doc-stream-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+  white-space: nowrap;
+  animation: doc-stream-pulse 1.5s ease-in-out infinite;
+}
+.doc-stream-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* In the doc footer the type picker sits next to the accent Copy/Export split —
+   match its 28px height and 6px radius so the right-hand controls line up. */
+.doc-actions-footer #doc-language-select {
+  height: 28px;
+  border-radius: 6px;
+  font-size: 11px;
+  top: 0;
+}
+/* Lang-type icon shown to the LEFT of the language select. Browsers won't
+   render SVG inside <option>, so this surface the current selection's icon
+   externally. */
+#doc-language-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  color: var(--accent-primary, var(--red));
+  flex-shrink: 0;
+}
+#doc-language-icon:empty { display: none; }
+#doc-language-icon svg { display: block; }
+
+/* Visually hidden but available to assistive tech (screen readers, axe).
+   Use for content that should be announced/structural but not painted —
+   e.g. the persistent page <h1>. */
+.a11y-visually-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important; border: 0 !important;
+}
+
+/* ── Custom language type picker (replaces visible chrome of native <select>
+   — <option>s can't render SVG). Hidden select stays as the source of truth. */
+.doc-langpicker-native-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0,0,0,0) !important;
+  border: 0 !important;
+}
+.doc-langpicker-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 8px 0 10px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 11px; cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.doc-langpicker-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, var(--border));
+}
+.doc-langpicker-trigger.doc-langpicker-email-compact .doc-langpicker-label,
+.doc-langpicker-trigger.doc-langpicker-email-compact > svg:last-child {
+  display: none;
+}
+.doc-langpicker-trigger svg { display: block; flex-shrink: 0; }
+.doc-langpicker-label {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 90px;
+}
+.doc-langpicker-ico-blank {
+  display: inline-block; width: 14px; height: 14px; flex-shrink: 0;
+}
+.doc-langpicker-menu {
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+  max-height: 60vh; overflow-y: auto;
+  z-index: 10000;
+  min-width: 160px;
+}
+.doc-langpicker-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none; color: var(--fg);
+  border: none; border-radius: 5px;
+  font-size: 12px; text-align: left;
+  cursor: pointer;
+}
+.doc-langpicker-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.doc-langpicker-group {
+  padding: 6px 10px 3px;
+  color: var(--fg-muted, var(--fg));
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+.doc-langpicker-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+  opacity: 0.65;
+}
+.doc-langpicker-item.is-selected {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 14%, transparent);
+  color: var(--accent-primary, var(--red));
+}
+.doc-langpicker-item svg { display: block; flex-shrink: 0; }
+.doc-langpicker-item .doc-langpicker-label { max-width: 220px; }
+
+.doc-language-select {
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239cdef2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 15 12 9 18 15'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  color: var(--fg);
+  color-scheme: dark;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  position: relative;
+  top: 0;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 20px 2px 8px;
+  height: 22px;
+  /* Fixed width so the right-anchored chevron doesn't shift when the selected
+     option's text width changes. */
+  width: 96px;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+  cursor: pointer;
+  -moz-appearance: none;
+  appearance: none;
+}
+/* Light theme: tint the chevron with the light foreground instead of cyan. */
+:root.light .doc-language-select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%232b2b2b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 15 12 9 18 15'/></svg>");
+}
+/* New-tab "+" spins on hover, like the library sidebar "+". */
+.doc-tab-new svg { transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.doc-tab-new:hover svg { transform: rotate(180deg) scale(1.15); }
+
+.doc-action-btn {
+  background: none;
+  color: var(--fg);
+  border: none;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  height: 22px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.1s;
+}
+.doc-action-btn:hover {
+  opacity: 1;
+}
+.doc-action-icon-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s;
+}
+.doc-action-icon-btn:hover {
+  opacity: 1;
+}
+.doc-action-icon-btn:disabled {
+  opacity: 0.18;
+  cursor: default;
+  pointer-events: none;
+}
+#doc-undo-btn:not(:disabled),
+#doc-redo-btn:not(:disabled) {
+  opacity: 0.68;
+}
+.doc-fontsize-levels {
+  position: absolute;
+  right: 6px;
+  bottom: 3px;
+  display: inline-flex;
+  line-height: 1;
+  pointer-events: none;
+}
+.doc-fontsize-levels i {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 7px;
+  /* Bare --accent is undefined in this codebase, was falling back to the
+     hardcoded blue #4a9eff — use the real theme accent. */
+  color: var(--accent-primary, var(--red));
+  opacity: 1;
+}
+.doc-fontsize-levels i.active { opacity: 1; }
+/* Collapsed buttons hidden in header, shown in overflow menu */
+.doc-collapsible-btn.doc-collapsed { display: none !important; }
+.doc-overflow-toggle:hover { opacity: 1; }
+.doc-overflow-menu {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.doc-overflow-menu.open { display: block; }
+.doc-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.doc-overflow-item:hover,
+.doc-overflow-item:focus-visible {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+  outline: none;
+}
+.doc-overflow-item .rich-align-preview {
+  display: inline-block;
+  white-space: nowrap;
+}
+.doc-overflow-item:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+.doc-overflow-item.is-current {
+  color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 9%, transparent);
+}
+.md-dd-current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  margin-left: auto;
+  opacity: 0;
+}
+.doc-overflow-item.is-current .md-dd-current { opacity: 1; }
+.doc-overflow-item.rich-table-danger { color: var(--color-danger, #c0392b); }
+.doc-overflow-item svg { flex-shrink: 0; opacity: 0.5; }
+.doc-ai-writing-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--accent-primary, var(--red));
+}
+.doc-ai-writing-btn svg:first-child { color: var(--accent-primary, var(--red)); opacity: 1; }
+.doc-ai-writing-whirlpool { position: relative; top: -4px; }
+.doc-ai-writing-menu { min-width: 206px; }
+.doc-ai-writing-menu-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 6px;
+  color: var(--accent-primary, var(--red));
+  font-size: 10px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.doc-ai-writing-menu-title svg { opacity: 1; }
+.doc-ai-writing-item-icon {
+  width: 16px;
+  flex: 0 0 16px;
+  text-align: center;
+  color: var(--accent-primary, var(--red));
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Markdown Edit/Preview two-icon switch — segmented, styled to match the Copy
+   split button. The active half gets a static highlight (no sliding). */
+.md-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 22px;
+}
+.md-view-toggle .md-view-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 26px;
+  width: auto;
+  height: 100%;
+  padding: 0 7px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+  color: var(--fg);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.md-view-label {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.md-view-toggle .md-view-opt:hover { opacity: 0.8; }
+.md-view-toggle .md-view-opt.active {
+  opacity: 1;
+  color: var(--fg);
+  background: var(--bg) !important;
+  /* "Punch" pop when a side becomes active (only fires on an actual switch —
+     re-applying .active without a change doesn't restart the animation). */
+  animation: md-view-punch 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes md-view-punch {
+  0%   { transform: scale(0.8); }
+  55%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-view-toggle .md-view-opt.active { animation: none; }
+}
+
+.doc-md-toolbar.md-preview-active {
+  border-bottom-color: var(--bg);
+}
+.doc-md-toolbar.md-write-active {
+  border-bottom-color: var(--sidebar-bg, var(--panel));
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle,
+.doc-md-toolbar.md-write-active #doc-md-view-toggle {
+  align-self: flex-end;
+  height: 28px;
+  margin-bottom: -6px;
+  border-radius: 7px 7px 0 0;
+  box-shadow: 0 -1px 0 var(--border), -1px 0 0 var(--border), 1px 0 0 var(--border);
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle {
+  background: var(--bg);
+  border-bottom-color: var(--bg);
+}
+.doc-md-toolbar.md-write-active #doc-md-view-toggle {
+  background: var(--sidebar-bg, var(--panel));
+  border-bottom-color: var(--sidebar-bg, var(--panel));
+}
+.doc-md-toolbar.md-preview-active #doc-md-view-toggle .md-view-opt.active {
+  background: var(--bg) !important;
+}
+.doc-md-toolbar.md-write-active #doc-md-view-toggle .md-view-opt.active {
+  background: var(--bg) !important;
+}
+.doc-md-preview.md-preview-active {
+  background: var(--bg);
+  border-top: 0;
+  margin-top: 0;
+}
+
+/* Write and Preview are separate tabs that sit out from the toolbar. */
+.md-view-toggle {
+  position: relative;
+  gap: 2px;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: var(--bg) !important;
+  box-shadow: none !important;
+}
+/* The toolbar owns the boundary beneath the editor. A second full-width
+   baseline here would remain visible directly under the active tab. */
+.md-view-toggle::after { content: none; }
+.md-view-toggle .md-view-opt {
+  height: 28px;
+  border: 1px solid var(--border) !important;
+  border-bottom-color: transparent !important;
+  border-radius: 7px 7px 0 0 !important;
+  position: relative;
+  z-index: 2;
+}
+.md-view-toggle .md-view-opt.active {
+  z-index: 3;
+}
+.md-view-toggle .md-view-opt:first-child,
+#doc-render-view-toggle .md-view-opt:first-child {
+  background: var(--sidebar-bg, var(--panel)) !important;
+}
+.md-view-toggle .md-view-opt:last-child,
+#doc-render-view-toggle .md-view-opt:last-child {
+  background: var(--sidebar-bg, var(--panel)) !important;
+}
+
+/* Keep code's Edit/Run switch in the same visual language as Write/Preview:
+   Edit is attached to the sidebar-colored editor surface, while Run/Preview
+   is attached to the lighter content surface. */
+#doc-render-view-toggle .md-view-opt {
+  color: var(--fg);
+  border-color: var(--border) !important;
+}
+#doc-render-view-toggle .md-view-opt.active {
+  opacity: 1;
+  color: var(--fg);
+}
+
+/* Code/Run uses the same tab shape and baseline as Write/Preview. */
+.doc-md-toolbar #doc-render-view-toggle {
+  align-self: flex-end;
+  height: 28px;
+  margin-bottom: -6px;
+}
+.doc-md-toolbar #doc-render-view-toggle .md-view-opt:first-child {
+  background: var(--sidebar-bg, var(--panel)) !important;
+}
+.doc-md-toolbar #doc-render-view-toggle .md-view-opt:last-child {
+  background: var(--bg) !important;
+}
+
+/* Mobile: the doc/email footer controls (format toggle, export button, export
+   menu) were slimmer than the Send button, so the row looked ragged. Bump them
+   to match the Send button height (and give the export/overflow menu bigger,
+   touch-friendly rows). */
+@media (max-width: 768px) {
+  .md-view-toggle { height: 28px; }
+  .md-view-toggle .md-view-opt { min-width: 38px; padding: 0 8px !important; }
+  .doc-action-icon-btn { padding: 6px; }
+  .email-send-btn { height: 28px; }
+  /* The type/language picker was the slim one stuck at 22px — match it to the
+     rest of the row. */
+  .doc-language-select { height: 28px; font-size: 13px; padding: 2px 22px 2px 10px; }
+  .doc-overflow-item { font-size: 13px; padding: 9px 14px; }
+  .doc-overflow-item .overflow-icon svg,
+  .doc-overflow-item svg { width: 16px; height: 16px; }
+  .email-more-menu .dropdown-item-compact { padding: 9px 12px; font-size: 13px; }
+
+  /* The doc footer is tight once the run/preview toggle joins it, so on mobile
+     go icon-only for Close, Undo & Copy (their icons are clear).
+     font-size:0 drops the text node next to the SVG (the SVG has fixed w/h, so
+     it's unaffected). Slightly narrower type picker buys a little more room. */
+  #doc-actions-footer #doc-undo-btn span,
+  #doc-actions-footer #doc-footer-close-btn span,
+  #doc-email-actions #doc-email-discard-btn span { display: none; }
+  #doc-actions-footer #doc-undo-btn,
+  #doc-actions-footer #doc-redo-btn,
+  #doc-actions-footer #doc-footer-close-btn,
+  #doc-email-actions #doc-email-discard-btn { gap: 0; padding: 0 9px; }
+  #doc-actions-footer #doc-footer-copy-btn { gap: 0; padding: 0 13px; font-size: 0 !important; }
+  /* In reply mode the button carries a "Reply" label that should stay visible
+     (the icon-only treatment above is only for the plain Copy action). */
+  #doc-actions-footer #doc-footer-copy-btn[data-mode="reply"] { gap: 5px; padding: 0 13px; font-size: 12px; }
+  #doc-actions-footer #doc-language-select { width: 80px; }
+  #doc-actions-footer .doc-stats-btn { width: 28px; padding: 0 4px; }
+  #doc-actions-footer .doc-stats-unit { display: none; }
+  #doc-actions-footer .doc-stats-popover { right: -34px; }
+  #doc-actions-footer .doc-save-button-label { display: none; }
+}
+
+/* Very narrow document panes: keep the primary Save action visible while
+   collapsing secondary labels before allowing the footer to clip. This uses
+   the pane width, not the viewport width, because the editor can be docked. */
+@container docpane (max-width: 420px) {
+  #doc-actions-footer {
+    gap: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+    overflow: hidden;
+  }
+  #doc-actions-footer > #doc-undo-btn,
+  #doc-actions-footer > #doc-redo-btn {
+    flex: 0 0 28px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  #doc-actions-footer > #doc-undo-btn span,
+  #doc-actions-footer > #doc-footer-copy-btn,
+  #doc-actions-footer .doc-save-button-label,
+  #doc-actions-footer > #doc-stats .doc-stats-unit {
+    font-size: 0;
+  }
+  #doc-actions-footer > #doc-undo-btn span,
+  #doc-actions-footer .doc-save-button-label,
+  #doc-actions-footer > #doc-stats .doc-stats-unit {
+    display: none;
+  }
+  #doc-actions-footer > #doc-stats {
+    flex: 0 0 28px;
+  }
+  #doc-actions-footer #doc-copy-export-split {
+    flex: 0 0 auto;
+  }
+  #doc-actions-footer #doc-footer-copy-btn {
+    flex: 0 0 36px;
+    width: 36px;
+    min-width: 36px;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 0 !important;
+    align-items: center;
+    justify-content: center;
+  }
+  #doc-actions-footer #doc-footer-export-btn {
+    flex: 0 0 24px;
+    width: 24px;
+    min-width: 24px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+  #doc-actions-footer #doc-copy-export-split {
+    border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 50%, transparent);
+    border-radius: 6px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--accent-primary, var(--red)) 20%, transparent);
+  }
+  #doc-actions-footer #doc-copy-export-split .email-send-btn {
+    border-top: 0;
+    border-bottom: 0;
+  }
+  #doc-actions-footer #doc-copy-export-split #doc-footer-copy-btn {
+    border-left: 0;
+  }
+  #doc-actions-footer #doc-copy-export-split #doc-footer-export-btn {
+    border-right: 0;
+  }
+  #doc-actions-footer #doc-footer-export-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+}
+
+/* Markdown formatting toolbar */
+.doc-md-toolbar [data-md="unlink"] { display: none !important; }
+/* In code-mode the toolbar only hosts the view toggles + utility buttons
+   (font-size, diff). Hide markdown-only formatting controls — bold,
+   italic, headings, list, link, attach, code-dropdown, emoji, hr, and
+   the PDF-only buttons. The view toggles + fontsize + diff stay. */
+.doc-md-toolbar[data-mode="code"] [data-md],
+.doc-md-toolbar[data-mode="code"] .md-dd-toggle,
+.doc-md-toolbar[data-mode="code"] #md-toolbar-attach-btn,
+.doc-md-toolbar[data-mode="code"] #md-toolbar-emoji-slot,
+.doc-md-toolbar[data-mode="code"] .md-toolbar-pdf-only,
+.doc-md-toolbar[data-mode="code"] .md-toolbar-sep {
+  display: none !important;
+}
+.doc-md-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar-bg, var(--panel));
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 36px;
+  position: relative;
+  /* Same edge fade as the tab strip — toolbar buttons dissolve into the bar's
+     background at the edges instead of being hard-cut when they overflow. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.doc-md-toolbar button {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.85;
+  padding: 4px 7px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: opacity 0.1s;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.doc-md-toolbar button:hover {
+  opacity: 1;
+}
+.doc-md-toolbar button:disabled {
+  opacity: 0.28;
+  cursor: default;
+  pointer-events: none;
+}
+.doc-link-remove-btn {
+  color: var(--red, #dc2626);
+  border-color: color-mix(in srgb, var(--red, #dc2626) 45%, var(--border));
+}
+.doc-md-toolbar button:active {
+  opacity: 0.6;
+}
+/* Active formatting state — set by the email WYSIWYG sync. Mirrors the
+   selection's current marks (B/I/S, heading level, list) so the toolbar
+   acts as an indicator, not just a launcher. */
+.doc-md-toolbar button.is-active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+.doc-md-toolbar button.is-active:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+}
+.doc-md-toolbar button:focus:not(:focus-visible),
+.doc-tab-new:focus:not(:focus-visible),
+.doc-tab-arrow:focus:not(:focus-visible) {
+  outline: none;
+  background: none;
+}
+.doc-md-toolbar button:focus-visible,
+.doc-tab-new:focus-visible,
+.doc-tab-arrow:focus-visible {
+  outline: 1px solid var(--accent-primary, var(--red));
+  outline-offset: -1px;
+}
+/* Grouped formatting dropdown toggles (heading / code / list) */
+.md-dd-toggle { gap: 1px !important; }
+/* Tint only dropdown chevrons accent; the main tool icon keeps toolbar color. */
+.md-dd-toggle svg { opacity: 1; margin-left: 1px; flex-shrink: 0; transform: translateY(0); }
+.md-dd-toggle > svg:last-child { color: var(--accent-primary, var(--red, #4a9eff)); }
+.md-dd-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.md-toolbar-sep {
+  width: 1px;
+  height: 12px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.md-toolbar-items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+.md-toolbar-leading-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.md-toolbar-items::-webkit-scrollbar { display: none; }
+/* On a PDF, the annotation tools (text / checkmark / signature) are the primary
+   actions — pull them to the far left of the toolbar. `order` is visual only
+   (they're display:none on non-PDF docs), so it has no effect elsewhere. */
+.md-toolbar-items #doc-pdf-add-text-btn { order: -3; }
+.md-toolbar-items #doc-pdf-add-check-btn { order: -2; }
+.md-toolbar-items #doc-pdf-add-sign-btn { order: -1; }
+@media (min-width: 769px) {
+  .md-toolbar-items #doc-pdf-add-text-btn {
+    margin-left: 14px;
+  }
+}
+/* Stack the signature icon over a tiny "sign" caption so the tool reads
+   clearly (the icon alone is ambiguous). The JS toggles inline display
+   none/'' for PDF mode, so this flex display only applies when shown. */
+#doc-pdf-add-sign-btn {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  line-height: 1;
+}
+.doc-pdf-sign-label {
+  font-size: 6.5px;
+  letter-spacing: 0.3px;
+  margin-top: 0;
+  opacity: 1;
+  color: var(--accent, var(--red));
+}
+/* Edge scroll arrows — appear when the toolbar has more icons off-screen. */
+.md-scroll-arrow {
+  position: static;
+  flex: 0 0 28px;
+  align-self: stretch;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  border: none;
+  cursor: pointer;
+  color: var(--fg);
+  padding: 0 !important;
+  min-height: 0 !important;
+  opacity: 1 !important;
+  z-index: 6;
+}
+.md-scroll-arrow svg { position: relative; top: 2px; opacity: 0.75; transition: opacity 0.1s; }
+.md-scroll-arrow:hover svg { opacity: 1; }
+@media (min-width: 769px) {
+  /* On desktop the arrow rides 2px lower than the toolbar baseline. */
+  .md-scroll-arrow svg { top: 0; }
+}
+.md-scroll-left {
+  justify-content: flex-start;
+  padding-left: 3px;
+  /* Mostly-solid toolbar bg so the icons behind the arrow are hidden, fading
+     to transparent only at the inner edge. */
+  background: linear-gradient(to right, var(--bg) 0%, var(--bg) 80%, transparent 100%);
+}
+.md-scroll-right {
+  justify-content: flex-end;
+  padding-right: 3px;
+  background: linear-gradient(to left, var(--bg) 0%, var(--bg) 80%, transparent 100%);
+}
+.md-toolbar-overflow-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.md-toolbar-overflow-toggle {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg);
+  opacity: 0.4;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.md-toolbar-overflow-toggle:hover {
+  opacity: 1;
+}
+.md-toolbar-overflow-menu {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 0;
+  width: max-content;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  backdrop-filter: blur(12px);
+}
+.md-toolbar-overflow-menu.open {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 200px;
+}
+.md-toolbar-overflow-item {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg);
+  opacity: 0.5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: opacity 0.1s, background 0.1s;
+}
+.md-toolbar-overflow-item:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--border);
+}
+
+/* Find bar */
+.doc-find-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--panel, var(--bg));
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.doc-find-row,
+.doc-replace-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.doc-replace-row[hidden] { display: none; }
+.doc-find-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+}
+.doc-find-input:focus { border-color: var(--accent); }
+.doc-find-count {
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: center;
+}
+.doc-find-nav, .doc-find-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 14px;
+  border-radius: 3px;
+  opacity: 0.7;
+}
+.doc-find-nav:hover, .doc-find-close:hover,
+.doc-find-nav.is-active { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.doc-find-action {
+  min-height: 25px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.doc-find-action:hover,
+.doc-find-action:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Live document outline. It is body-portaled so the toolbar's clipping and
+   edge mask cannot cut it off in the mobile full-screen editor. */
+.doc-outline-menu {
+  position: fixed;
+  box-sizing: border-box;
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+  color: var(--fg);
+}
+.doc-outline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+}
+.doc-outline-list {
+  overflow-y: auto;
+  padding: 4px;
+  overscroll-behavior: contain;
+}
+.doc-outline-item {
+  width: 100%;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 4px 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.doc-outline-item:hover,
+.doc-outline-item:focus-visible {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  outline: none;
+}
+.doc-outline-level {
+  opacity: 0.42;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.doc-outline-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-outline-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.52;
+}
+
+@media (max-width: 768px) {
+  .doc-outline-menu { max-height: min(52vh, 420px); }
+  .doc-outline-item { min-height: 38px; font-size: 12px; }
+}
+
+/* Selection formatting stays close to the selected text. The controls are
+   symbols only and mirror the same commands as the full Rich Text toolbar. */
+.doc-rich-selection-toolbar {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  color: var(--fg);
+  user-select: none;
+  overflow: visible;
+}
+.doc-rich-selection-toolbar button {
+  width: 30px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.doc-rich-selection-toolbar button:nth-child(5) {
+  margin-left: 3px;
+  border-left: 1px solid var(--border);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.doc-rich-selection-toolbar button:hover,
+.doc-rich-selection-toolbar button:focus-visible,
+.doc-rich-selection-toolbar button.is-active {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  outline: none;
+}
+.doc-rich-selection-toolbar .doc-rich-selection-close {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: 700 15px/1 system-ui, sans-serif;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.35);
+}
+.doc-rich-selection-toolbar .doc-rich-selection-close:hover,
+.doc-rich-selection-toolbar .doc-rich-selection-close:focus-visible {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel, var(--bg)));
+  outline: none;
+}
+
+@media (max-width: 768px) {
+  .doc-rich-selection-toolbar { padding: 4px; }
+  .doc-rich-selection-toolbar button { width: 38px; height: 34px; font-size: 13px; }
+  .doc-rich-selection-toolbar .doc-rich-selection-close { width: 20px; height: 20px; top: -10px; right: -10px; }
+}
+
+.doc-rich-slash-menu {
+  position: fixed;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: hidden;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+  color: var(--fg);
+}
+.doc-rich-slash-header {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+}
+.doc-rich-slash-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+.doc-rich-slash-item {
+  width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.doc-rich-slash-item:hover,
+.doc-rich-slash-item:focus-visible,
+.doc-rich-slash-item.is-active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 13%, transparent);
+  outline: none;
+}
+.doc-rich-slash-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  color: var(--accent, var(--red));
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.82;
+}
+.doc-rich-slash-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.52;
+}
+
+@media (max-width: 768px) {
+  .doc-rich-slash-menu { max-height: min(54vh, 420px); }
+  .doc-rich-slash-item { min-height: 42px; font-size: 12px; }
+}
+
+/* Editor — highlighted overlay + transparent textarea.
+   Lock the editor wrap to a fixed text-column width, centered horizontally
+   in the doc pane. This eliminates wrap-related drift bugs as a class:
+   the textarea + overlay always have the same available width regardless
+   of viewport, sidebar state, dock state, or window resize. Whitespace on
+   either side reads like a writing-app column (Bear / iA Writer pattern).
+   container-type: inline-size lets us hide the line-number gutter via a
+   container query when the editor's own width is narrow (rather than
+   viewport-width, which would miss the case of a narrow side-docked
+   editor inside a wide window). */
+.doc-editor-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  /* Cap the column at ~820px outer (~760px content area after the 60px
+     of horizontal padding the textarea+overlay use for the gutter). */
+  max-width: 820px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+  background: var(--bg);
+  container-type: inline-size;
+  container-name: doceditor;
+}
+
+/* When the editor itself is narrow, soft-wrap makes one logical line
+   span multiple visual rows but the gutter still shows ONE number per
+   logical line — so the gutter and the visible rows fall out of sync.
+   Hide the gutter (and reclaim the 48px of left padding it reserved)
+   below a threshold where the mismatch reads as a glitch. */
+@container doceditor (max-width: 360px) {
+  .doc-line-numbers { display: none !important; }
+  .doc-editor-textarea,
+  .doc-editor-highlight {
+    padding-left: 12px !important;
+  }
+}
+.doc-line-numbers {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 36px;
+  padding: 10px 8px 10px 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: right;
+  color: var(--fg);
+  opacity: 0.18;
+  background: var(--bg);
+  overflow: hidden;
+  white-space: pre;
+  tab-size: 4;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+}
+.doc-line-number-content {
+  display: block;
+  will-change: transform;
+}
+.doc-line-number-row {
+  position: relative;
+  box-sizing: border-box;
+}
+.doc-line-number-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  text-align: right;
+}
+.doc-line-number-measure {
+  position: absolute !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  left: -9999px !important;
+  top: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  border: 0 !important;
+  resize: none !important;
+  box-sizing: content-box !important;
+  color: transparent !important;
+  background: transparent !important;
+}
+mark.doc-find-mark.current {
+  background: var(--accent) !important;
+  color: var(--bg) !important;
+  box-shadow: 0 0 0 2px var(--fg);
+  outline: 1px solid var(--fg);
+}
+
+/* Find-match overlay rects — drawn on top of the textarea, work in
+   every doc mode (markdown, email, plain) regardless of whether the
+   syntax-highlight overlay is shown. Translucent band so the underlying
+   text stays readable; current match gets a brighter solid band. */
+.doc-find-rect {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.doc-find-rect.current {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.doc-editor-highlight {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  margin: 0;
+  padding: 10px 12px 10px 48px;
+  font-family: inherit;
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  /* `scrollbar-gutter: stable` reserves scrollbar-track width in the
+     layout even when no scrollbar is shown. The textarea below has the
+     same setting — without this, the textarea would consume scrollbar
+     space the moment its content overflows vertically, shrinking its
+     content width and wrapping lines earlier than the overlay. The
+     visible-text-drift bug user reports as "after ~16 rows it wraps
+     even though there's space" was caused by exactly that. */
+  scrollbar-gutter: stable;
+  scrollbar-width: none;
+  pointer-events: none;
+  z-index: 0;
+  background: var(--bg) !important;
+  color: var(--hl-fg, var(--fg));
+  border: none;
+  /* Disable ligatures + kerning everywhere in the editor. Monospace fonts
+     like Fira Code form ligatures for `=>`, `!=`, `->`, `==` etc., but
+     hljs splits those pairs into separate <span>s in the overlay, which
+     breaks the ligature on this side while the textarea still forms it.
+     Result: visible row drift whenever code contains those pairs. Pin
+     ligatures off in both layers (textarea below) so widths stay equal. */
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+  box-sizing: border-box;
+}
+
+/* Document font size options */
+.doc-font-m .doc-editor-textarea,
+.doc-font-m .doc-editor-highlight,
+.doc-font-m .doc-line-numbers { font-size: 13px !important; }
+.doc-font-l .doc-editor-textarea,
+.doc-font-l .doc-editor-highlight,
+.doc-font-l .doc-line-numbers { font-size: 15px !important; }
+.doc-email-richbody.doc-font-m { font-size: 15px !important; }
+.doc-email-richbody.doc-font-l { font-size: 17px !important; }
+/* Markdown base text should match chat text color, not code color */
+.doc-editor-highlight .language-markdown {
+  color: var(--fg) !important;
+}
+.doc-editor-highlight code,
+.doc-editor-highlight code.hljs,
+.doc-editor-highlight .hljs {
+  font-family: inherit;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  display: block;
+  pointer-events: none;
+}
+.doc-editor-textarea {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%;
+  height: 100% !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  z-index: 1;
+  background: var(--bg) !important;
+  color: transparent !important;
+  color-scheme: dark;
+  caret-color: var(--fg);
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  /* Caret position only matches the underlying highlight if BOTH layers use
+     identical metrics — !important on font-size + line-height defends against
+     anything else in the cascade nudging the textarea but not the overlay. */
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  padding: 10px 12px 10px 48px;
+  overflow-y: scroll;
+  /* Pair with .doc-editor-highlight's scrollbar-gutter: stable so the
+     textarea's content width DOESN'T shrink the moment its scrollbar
+     appears (overflow-y: scroll keeps scrollbar permanent, gutter
+     reserves the space layout-wise). Without this, line wrap diverges
+     between textarea and overlay whenever content exceeds the visible
+     area — caret stays right, but typed text appears on a different row
+     than the caret. */
+  scrollbar-gutter: stable;
+  /* Show a real scrollbar for long documents. scrollbar-gutter above keeps
+     the text column stable so the gutter, textarea, and find overlay stay
+     metrically aligned while the scrollbar is present. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
+  -webkit-overflow-scrolling: touch;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  -moz-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  /* Mirror the ligature/kerning lockdown from .doc-editor-highlight above.
+     Without this the textarea forms `=>`/`!=`/`->`/`==` as single-glyph
+     ligatures while the overlay can't (hljs splits the pair into
+     separate spans), so glyph widths diverge and the visible text drifts
+     down relative to the caret as code accumulates. */
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+}
+.doc-editor-textarea::-webkit-scrollbar { width: 8px; }
+.doc-editor-textarea::-webkit-scrollbar-track { background: transparent; }
+.doc-editor-textarea::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  border-radius: 999px;
+}
+.doc-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 36%, transparent);
+}
+.doc-editor-textarea:hover,
+.doc-editor-textarea:focus,
+.doc-editor-textarea:active {
+  background: var(--bg) !important;
+  /* Used to force `color: transparent` here so the hidden two-layer
+     textarea wouldn't bleed through on hover/focus. Now that the
+     textarea renders its OWN visible text (overlay is hidden), forcing
+     transparent here makes typed text disappear the moment the cursor
+     enters the page. Keep the visible fg color instead. */
+  color: var(--fg) !important;
+  outline: none !important;
+}
+.doc-editor-textarea::placeholder {
+  color: var(--fg);
+  opacity: 0.25;
+}
+/* Show real text when selecting so copy/paste is visible */
+.doc-editor-textarea::selection {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent, var(--red)) 48%, transparent);
+}
+
+/* ---- Selection indicator badge ---- */
+.doc-selection-badge {
+  font-size: 10px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px 1px 6px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
+}
+.doc-selection-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  box-sizing: border-box;
+  transition: opacity 0.12s, color 0.12s, background 0.12s, border-color 0.12s;
+}
+.doc-selection-clear:hover {
+  opacity: 1;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.doc-selection-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 3px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: 700 15px/1 system-ui, sans-serif;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.doc-selection-chip-clear:hover,
+.doc-selection-chip-clear:focus-visible {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel, var(--bg)));
+  outline: none;
+}
+.doc-selection-clear {
+  width: auto;
+  height: 18px;
+  margin-left: 3px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font: 700 11px/1 system-ui, sans-serif;
+  opacity: 1;
+}
+.doc-edit-tag {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 32%, transparent);
+  color: var(--accent, var(--red));
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.68em;
+  line-height: 1;
+  opacity: 0.78;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  border-radius: 999px;
+  padding: 1px 5px;
+  margin-right: 2px;
+  white-space: nowrap;
+  transition: opacity 0.12s, background 0.12s, border-color 0.12s;
+}
+.doc-edit-tag:hover,
+.doc-edit-tag:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+.doc-edit-tag:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+  outline-offset: 2px;
+}
+/* Attachment cards in user messages */
+.attach-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.attach-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  /* Same border as the chat bubbles. */
+  border: 1px solid var(--bubble-border, var(--border));
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.attach-card[style*="cursor: pointer"]:hover,
+.attach-card[data-file-id]:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.attach-card-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.attach-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.attach-card-size {
+  opacity: 0.45;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.history-attach-card {
+  cursor: default;
+  opacity: 0.82;
+}
+.history-attach-card .attach-card-size {
+  text-transform: lowercase;
+}
+/* Import prompt banner (above chatbar) */
+.import-prompt-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 0 auto 6px;
+  max-width: 800px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  backdrop-filter: blur(12px);
+  animation: modal-enter 0.15s ease-out;
+}
+.import-prompt-banner span { flex: 1; }
+.import-prompt-banner button {
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.import-prompt-banner button:hover {
+  border-color: var(--fg);
+}
+.import-prompt-dismiss {
+  border: none !important;
+  background: none !important;
+  opacity: 0.5;
+  font-size: 16px !important;
+  padding: 0 4px !important;
+}
+.import-prompt-dismiss:hover { opacity: 1; background: none !important; }
+.doc-selection-overlay {
+  position: absolute;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--red) 50%, transparent);
+  pointer-events: none;
+  z-index: 2;
+  transition: top 0.05s;
+}
+.doc-selection-overlay-clear {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--fg);
+  font: 16px/1 inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.doc-selection-overlay-clear:hover,
+.doc-selection-overlay-clear:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, var(--panel));
+  outline: none;
+}
+.doc-selection-rich-clear {
+  position: fixed;
+  z-index: 10040;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel, var(--bg));
+  color: var(--fg);
+  font: 700 15px/1 system-ui, sans-serif;
+  opacity: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.35);
+}
+.doc-selection-rich-clear:hover,
+.doc-selection-rich-clear:focus-visible {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel, var(--bg)));
+  outline: none;
+}
+
+/* ── Suggestion comments (Google Docs style) ── */
+.doc-suggestion-highlight {
+  position: absolute;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 72%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 3;
+  transition: top 0.1s, opacity 0.15s;
+}
+/* Suggestion card — fixed next to editor, anchored to the change */
+.doc-suggestion-card {
+  position: fixed;
+  width: 250px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 12px 10px;
+  font-size: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  animation: suggestion-enter 0.25s ease-out;
+  z-index: 250;
+  overflow: visible;
+}
+.doc-suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.doc-suggestion-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-suggestion-nav-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  opacity: 0.35;
+  transition: opacity 0.1s;
+}
+.doc-suggestion-nav-btn:hover { opacity: 1; }
+.doc-suggestion-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: -2px -2px -2px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
+  opacity: 1;
+  cursor: pointer;
+  font-size: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  position: relative;
+}
+.doc-suggestion-close:hover,
+.doc-suggestion-close:focus-visible {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg);
+  outline: none;
+}
+.doc-suggestion-counter {
+  font-size: 10px;
+  opacity: 0.4;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+/* Inline diff markers — injected into the code highlight element */
+.sugg-inline-del {
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  color: color-mix(in srgb, var(--red) 70%, var(--fg));
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--red) 40%, transparent);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.sugg-inline-add {
+  background: color-mix(in srgb, var(--green) 25%, transparent);
+  color: var(--green);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+/* ---- Diff mode ---- */
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.diff-toolbar-status {
+  opacity: 0.5;
+  font-size: 10px;
+  margin-right: auto;
+}
+.diff-toolbar-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.diff-toolbar-btn:hover {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+.diff-toolbar-btn-accept { color: #58a6ff; border-color: color-mix(in srgb, #58a6ff 36%, transparent); }
+.diff-toolbar-btn-accept:hover { border-color: #58a6ff; background: color-mix(in srgb, #58a6ff 12%, transparent); }
+.diff-toolbar-btn-reject { color: #f2cc60; border-color: color-mix(in srgb, #f2cc60 36%, transparent); }
+.diff-toolbar-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 12%, transparent); }
+.diff-line-del {
+  display: block;
+  background: color-mix(in srgb, #f2cc60 24%, transparent);
+  border-left: 3px solid #f2cc60;
+  color: #f2cc60;
+  padding-left: 4px;
+  margin-left: -7px;
+  text-decoration: line-through;
+}
+.diff-line-add {
+  display: block;
+  background: color-mix(in srgb, #58a6ff 24%, transparent);
+  border-left: 3px solid #58a6ff;
+  color: #58a6ff;
+  padding-left: 4px;
+  margin-left: -7px;
+}
+/* Inline diff summary (version history cards) */
+.diff-del {
+  color: #f2cc60;
+  background: color-mix(in srgb, #f2cc60 16%, transparent);
+  text-decoration: line-through;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.diff-add {
+  color: #58a6ff;
+  background: color-mix(in srgb, #58a6ff 16%, transparent);
+  font-weight: 600;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.diff-line-equal {
+  display: block;
+}
+.diff-chunk-resolved {
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+.diff-chunk-actions {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+  pointer-events: auto;
+}
+/* Diff mode: textarea sits on top of the highlight where chunk buttons live.
+   Disable its pointer events so clicks reach the buttons in the layer below. */
+.doc-editor-wrap.diff-mode .doc-editor-textarea {
+  pointer-events: none;
+  color: transparent !important;
+  caret-color: transparent !important;
+}
+.doc-editor-wrap.diff-mode .doc-editor-highlight {
+  display: block !important;
+  pointer-events: auto;
+  z-index: 3;
+  color: var(--fg) !important;
+  background: var(--sidebar-bg, var(--panel)) !important;
+  overflow: hidden;
+}
+.doc-editor-wrap.diff-mode .doc-editor-highlight * {
+  color: inherit;
+}
+.doc-editor-wrap.diff-mode .diff-line-del {
+  color: #f2cc60 !important;
+}
+.doc-editor-wrap.diff-mode .diff-line-add {
+  color: #58a6ff !important;
+}
+.diff-chunk-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  transition: border-color 0.15s, background 0.15s;
+  opacity: 0.6;
+}
+.diff-chunk-btn:hover { opacity: 1; }
+.diff-chunk-btn-accept { color: #58a6ff; }
+.diff-chunk-btn-accept:hover { border-color: #58a6ff; background: color-mix(in srgb, #58a6ff 15%, transparent); }
+.diff-chunk-btn-reject { color: #f2cc60; }
+.diff-chunk-btn-reject:hover { border-color: #f2cc60; background: color-mix(in srgb, #f2cc60 15%, transparent); }
+
+.doc-suggestion-accept-all {
+  flex: 1.3;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  white-space: nowrap;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--bg);
+  transition: background 0.1s;
+}
+.doc-suggestion-accept-all:hover {
+  background: color-mix(in srgb, var(--accent) 85%, var(--bg));
+}
+.doc-suggestion-reason {
+  opacity: 0.6;
+  margin-bottom: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.doc-suggestion-diff {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--code-font, monospace);
+  font-size: 11px;
+  margin-bottom: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+.doc-suggestion-del {
+  color: var(--red);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.doc-suggestion-add {
+  color: var(--green);
+}
+.doc-suggestion-actions {
+  display: flex;
+  gap: 6px;
+}
+.doc-suggestion-accept,
+.doc-suggestion-dismiss {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  transition: background 0.1s;
+}
+.doc-suggestion-accept {
+  background: var(--accent, var(--red));
+  color: #fff;
+}
+.doc-suggestion-dismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.doc-suggestion-dismiss:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+@keyframes suggestion-enter {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* Mobile: suggestion card overlays top of editor (no room on side) */
+@media (max-width: 768px) {
+  .doc-suggestion-card {
+    box-sizing: border-box;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    overflow-y: auto;
+  }
+  .doc-suggestion-card::before { display: none; }
+}
+
+/* ---- Streaming animation ---- */
+.doc-editor-textarea[readonly] {
+  caret-color: var(--red);
+}
+
+/* Diff overlay */
+.doc-diff-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 5;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  border-radius: 6px;
+}
+.doc-diff-overlay.visible { opacity: 1; }
+.doc-diff-overlay.fading { opacity: 0; transition: opacity 0.4s ease; }
+.doc-diff-stats {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.diff-stat-del { color: var(--warn); }
+.diff-stat-add { color: var(--green); }
+.doc-diff-line {
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.doc-diff-line.same {
+  opacity: 0.4;
+}
+.doc-diff-line.del {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.doc-diff-line.add {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+}
+.doc-diff-sep {
+  text-align: center;
+  padding: 2px 0;
+  font-size: 0.7rem;
+  opacity: 0.3;
+  color: var(--fg);
+}
+
+/* Version history panel (slide-out) */
+.doc-version-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  box-shadow: 4px 0 16px rgba(0,0,0,0.35);
+  animation: version-slide-in 0.2s ease-out;
+  /* Match the app modal aesthetic so nothing inherits the large body font. */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+@keyframes version-slide-in {
+  from { opacity: 0; transform: translateX(-30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.doc-version-panel.hidden {
+  display: none;
+}
+@media (max-width: 768px) {
+  .doc-version-panel {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    height: 50vh;
+    border-right: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+    /* It's a bottom sheet on mobile — slide UP from the bottom, not in from
+       the left (the desktop animation looked like a black box janking in). */
+    animation: version-slide-up 0.2s ease-out;
+  }
+}
+@keyframes version-slide-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.doc-version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.doc-version-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.doc-version-item {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.doc-version-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: var(--fg);
+}
+
+.doc-version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.doc-version-num {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--fg);
+}
+.doc-version-source {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.doc-version-time {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.4;
+  margin-left: auto;
+}
+.doc-version-summary {
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+.doc-version-restore {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.doc-version-restore:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: var(--fg);
+}
+/* "latest" badge */
+.doc-version-latest {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+/* Diff preview lines — small and muted so they don't dominate the item. */
+.doc-version-diff {
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.8;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+.doc-version-diff .diff-del {
+  color: #f2cc60;
+  background: color-mix(in srgb, #f2cc60 16%, transparent);
+  opacity: 1;
+}
+.doc-version-diff .diff-add {
+  color: #58a6ff;
+  background: color-mix(in srgb, #58a6ff 16%, transparent);
+}
+
+/* Mobile: doc editor takes over full screen as toggle */
+@media (max-width: 768px) {
+  body.doc-view .doc-editor-pane {
+    /* Force its own full-screen window on mobile. !important on these so an
+       inline width/position left over from desktop drag-resize, or the base
+       desktop split layout (flex: 1; max-width: 70vw; border-left), can never
+       render it as a narrow side pane ("sidebar") on a phone. */
+    position: fixed !important;
+    inset: 0 !important;
+    top: env(safe-area-inset-top, 0px) !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    flex: none !important;
+    z-index: 170;
+    /* Stroke the top edge so the rounded corners read as a curved sheet edge. */
+    border: 1px solid var(--border);
+    border-bottom: none;
+    /* Rounded top corners like the other mobile sheet windows. */
+    border-radius: 14px 14px 0 0;
+    /* Slide up from the bottom (sheet), not in from the side, on mobile. */
+    animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: bottom center;
+  }
+  /* A document that was already open before refresh should be restored in
+     place, not replay the mobile sheet entrance and visibly jump upward. */
+  body.doc-view .doc-editor-pane.doc-pane-restoring {
+    animation: none;
+    transform: none;
+  }
+  body.doc-view .doc-divider {
+    display: none;
+  }
+  /* Hide chat behind doc panel on mobile */
+  body.doc-view .chat-container {
+    display: none;
+  }
+  /* Doc + email windows alternate: whichever was opened last is in front.
+     Default (a doc was opened last) → email windows sit BELOW the full-screen
+     doc pane (170) so the draft is on top. When the user re-opens an email
+     window (body.email-front, set by openEmailLibrary / reader open+restore) →
+     the email windows jump ABOVE the doc. Covers the email library AND any open
+     reader window (email-reader-<uid>); both are .modal at z-250 by default. */
+  body.doc-view #email-lib-modal,
+  body.doc-view .modal[id^="email-reader-"] { z-index: 150 !important; }
+  body.doc-view.email-front #email-lib-modal,
+  body.doc-view.email-front .modal[id^="email-reader-"] { z-index: 300 !important; }
+  body.doc-view:not(.email-front) .doc-editor-pane { z-index: 10010 !important; }
+  body.doc-view:not(.email-front) #email-lib-modal,
+  body.doc-view:not(.email-front) .modal[id^="email-reader-"] { z-index: 10000 !important; }
+  /* Hide new-session button and hamburger when doc editor is open on mobile */
+  body.doc-view .mobile-new-chat-btn,
+  /* Hide the global hamburger while Compare Mode is active — the compare
+   header has its own close button in the top-right, and overlapping the
+   two looks like a bug. The .compare-active class lives on the chat
+   container, not body, so use :has(). */
+body:has(.compare-active) .hamburger-btn { display: none !important; }
+/* Mobile: hide the sidebar hamburger when a document panel (or notes pane)
+   is open — those sheets cover the whole screen on mobile, so a floating
+   hamburger sticking out over them is just clutter / mis-tap bait. */
+@media (max-width: 768px) {
+  body.doc-view .hamburger-btn,
+  body:has(#notes-pane) .hamburger-btn { display: none !important; }
+}
+  /* Make room for hamburger button alongside the tab/header bars (fallback if shown) */
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-md-toolbar {
+    padding-left: 44px;
+  }
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-md-toolbar {
+    padding-right: 44px;
+  }
+  /* ── Tab bar — match header height, bigger touch targets ── */
+  .doc-tab-bar {
+    padding: 0;
+    height: 40px;
+  }
+  .doc-tab {
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  /* Bigger × touch target on mobile. */
+  .doc-tab-close {
+    font-size: 22px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    opacity: 0.5;
+  }
+  .doc-tab .doc-tab-menu-btn {
+    opacity: 0.4 !important;
+    padding: 4px 6px !important;
+  }
+  .doc-tab .doc-tab-menu-btn svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+  /* Footer is identical to desktop now, so the separate mobile Close/Copy
+     footer is dropped and the per-tab × stays (matching desktop). */
+  .doc-mobile-footer { display: none !important; }
+  .doc-tab-new {
+    font-size: 13px !important;
+    padding: 0 14px !important;
+    gap: 4px;
+  }
+  /* No hamburger padding — it's hidden in doc-view */
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-md-toolbar {
+    padding-left: 0 !important;
+  }
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-md-toolbar {
+    padding-right: 0 !important;
+  }
+  /* ── Header — identical layout to desktop (left-aligned), match tab height ── */
+  .doc-editor-header {
+    padding: 6px 12px 6px 8px;
+    gap: 6px;
+    min-height: 40px;
+  }
+  .doc-import-label,
+  #doc-version-badge {
+    display: none !important;
+  }
+  /* ── Markdown toolbar — same height as tab bar ── */
+  .doc-md-toolbar {
+    height: 40px !important;
+    padding: 4px 8px;
+    gap: 2px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* The toolbar's padding-left is forced to 0 by the hamburger rules, so give
+     the Edit/Preview toggle its own left margin to clear the screen edge +
+     the 18px mask fade. Margin isn't overridden by those !important paddings. */
+  .doc-md-toolbar .md-view-toggle { margin-left: 8px; }
+  .doc-md-toolbar button {
+    font-size: 13px !important;
+    padding: 6px 10px !important;
+    min-width: 34px;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .md-toolbar-sep {
+    height: 18px;
+    margin: 0 4px;
+  }
+}
+
+/* Opacity slider in the theme tabs row — lets the user see the page behind
+   the modal while tweaking colors. JS toggles .hidden based on active tab. */
+.theme-opacity-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  opacity: 0.65;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
+  height: 22px;
+  align-self: center;
+  /* Now a <button> toggle, not a slider wrapper. */
+  cursor: pointer;
+  color: var(--fg);
+  font: inherit;
+  background: transparent;
+}
+.theme-opacity-wrap.hidden { display: none; }
+.theme-opacity-wrap:hover { opacity: 1; }
+/* The title h4 already carries margin-right:auto to group header controls
+   on the right. BOTH the Peek button AND the injected minimize button also
+   have margin-left:auto — and multiple competing auto-margins split the
+   free space, stranding Peek in the middle. Zero their left-autos here so
+   the h4 alone pushes Peek + minimize + close together, flush right. */
+.modal-header .theme-opacity-wrap,
+.modal-header .modal-minimize-btn { margin-left: 0 !important; }
+/* On = peeking through; highlight with the accent so the state is obvious. */
+.theme-opacity-wrap.active {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+}
+.theme-opacity-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.theme-opacity-wrap > svg { flex-shrink: 0; opacity: 0.7; }
+.theme-opacity-wrap input[type="range"] {
+  width: 92px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 2px;
+  outline: none;
+  margin: 0;
+}
+.theme-opacity-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: none;
+  cursor: pointer;
+}
+.theme-opacity-wrap input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: none;
+  cursor: pointer;
+}
+
+/* ── Theme editor: hover-to-highlight zone ── */
+.theme-zone-highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9998;
+  border: 2px dashed var(--accent, var(--red));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent),
+              0 0 18px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  animation: theme-zone-pulse 1.4s ease-in-out infinite;
+}
+@keyframes theme-zone-pulse {
+  0%, 100% { opacity: 0.95; }
+  50%      { opacity: 0.55; }
+}
+/* Highlight the color row itself too so the user has a strong visual link
+   between the input they're hovering and the zone overlay on the page. */
+#theme-tab-customize .color-row {
+  transition: background 0.15s, border-color 0.15s;
+  border-radius: 6px;
+}
+#theme-tab-customize .color-row:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+
+/* "Auto-saved" pill that flashes after each color/font change. */
+.theme-autosaved-pill {
+  position: sticky;
+  bottom: 8px;
+  margin: 8px auto 0;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--color-success, #4caf50) 18%, var(--bg));
+  color: var(--color-success, #4caf50);
+  border: 1px solid color-mix(in srgb, var(--color-success, #4caf50) 40%, transparent);
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  pointer-events: none;
+  z-index: 5;
+}
+.theme-autosaved-pill.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Doc fullscreen ---- */
+.doc-editor-pane.doc-fullscreen {
+  flex: 1;
+  max-width: 100%;
+  width: 100% !important;
+  border-left: none;
+}
+/* Keep the hamburger reachable in fullscreen — version history can still
+   hide it (the panel covers that area). */
+body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
+  display: none !important;
+}
+
+/* ---- Document run output ---- */
+.doc-run-output {
+  border-top: 2px solid var(--hl-function, #61afef);
+  background: var(--bg);
+  padding: 6px 12px 8px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  position: relative;
+}
+.doc-run-output .code-runner-pre { background: none !important; border: none !important; margin: 0; padding: 0; }
+.doc-run-output .code-runner-copy-inline {
+  right: 16px;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+}
+.doc-run-output .code-runner-error { color: var(--red); }
+.doc-run-output .code-runner-loading { font-style: italic; color: var(--red); }
+.doc-run-output .code-runner-empty { color: var(--fg-muted, var(--fg)); padding: 2px 0; }
+.doc-run-output .code-runner-close { position: absolute; top: 4px; right: 4px; background: none; border: none; color: var(--fg); cursor: pointer; opacity: 0.5; font-size: 14px; padding: 2px 6px; }
+.doc-run-output .code-runner-close:hover { opacity: 1; }
+.doc-run-pre { color: var(--fg); white-space: pre-wrap; word-break: break-word; margin: 0; }
+.doc-run-error { color: var(--red); white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* ---- Markdown preview ---- */
+.doc-md-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+}
+.doc-md-preview.doc-rich-preview {
+  background: #fff;
+  color: #111;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 32px max(24px, calc((100% - 780px) / 2));
+}
+.doc-rich-preview > :not(.doc-preview-hover-edit) {
+  max-width: 780px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.doc-rich-preview-empty {
+  position: relative;
+  left: -16px;
+  top: -8px;
+  color: #6b7280;
+  text-align: center;
+}
+.doc-preview-hover-edit {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 8px 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s, transform 0.12s, background 0.12s, border-color 0.12s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.doc-md-preview:hover .doc-preview-hover-edit,
+.doc-preview-hover-edit:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.doc-preview-hover-edit:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+
+/* DOCX visual preview — keep the Word document on a readable white sheet even
+   when the surrounding workspace uses a dark theme. */
+.doc-docx-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 18px 42px;
+  background: #d9dce1;
+  color: #111827;
+}
+.doc-docx-paper {
+  width: min(816px, 100%);
+  min-height: 1056px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 72px 76px;
+  background: #fff;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  box-shadow: 0 4px 18px rgba(0,0,0,.22);
+}
+.doc-docx-paper h1, .doc-docx-paper h2, .doc-docx-paper h3,
+.doc-docx-paper h4, .doc-docx-paper h5, .doc-docx-paper h6 {
+  color: #111;
+  line-height: 1.2;
+  margin: 1.2em 0 .55em;
+}
+.doc-docx-paper p { margin: 0 0 .8em; }
+.doc-docx-paper img { max-width: 100%; height: auto; }
+.doc-docx-paper table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+.doc-docx-paper td, .doc-docx-paper th { border: 1px solid #c7cbd1; padding: 6px 8px; vertical-align: top; }
+.doc-docx-paper th { background: #f2f3f5; }
+.doc-docx-paper a { color: #1757a6; }
+.doc-docx-preview-loading, .doc-docx-preview-error {
+  max-width: 816px;
+  margin: 40px auto;
+  padding: 20px;
+  color: var(--fg);
+  text-align: center;
+}
+.doc-docx-preview-error { color: var(--color-error, #c2413d); }
+@media (max-width: 700px) {
+  .doc-docx-preview { padding: 12px 8px 28px; }
+  .doc-docx-paper { min-height: 0; padding: 34px 24px; font-size: 14px; }
+}
+.doc-md-preview pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.doc-md-preview code {
+  font-size: 0.95em;
+}
+.doc-md-preview p { margin: 0.6em 0; }
+.doc-md-preview h1, .doc-md-preview h2, .doc-md-preview h3 {
+  margin: 0.8em 0 0.4em;
+  color: var(--hl-string);
+}
+.doc-md-preview ul, .doc-md-preview ol {
+  margin-left: 20px;
+  margin-bottom: 0.6em;
+}
+.doc-md-preview blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 12px;
+  margin: 0.6em 0;
+  opacity: 0.8;
+}
+
+/* ---- Active state for doc action icon buttons ---- */
+.doc-action-icon-btn.active {
+  opacity: 1;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+#doc-run-btn:hover {
+  color: var(--hl-function, #61afef);
+}
+
+/* ===== ADMIN PANEL (inside settings modal) ===== */
+
+/* Cards */
+.admin-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+/* When the integrations editor opens, the inner admin-card should match the
+   listed integration cards (subtle tint, same border) instead of reverting
+   to the solid-panel admin-card surface used elsewhere. */
+#unified-intg-form .admin-card,
+#integrations-form .admin-card {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.admin-card h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.admin-danger-card {
+  border-color: color-mix(in srgb, var(--color-error) 27%, transparent);
+}
+
+/* Toggle switch */
+.admin-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.admin-toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.admin-toggle-sub {
+  /* 65% mix keeps this helper text above WCAG AA 4.5:1 on the dark panel
+     (50% only reached ~3.9:1). */
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 11px;
+  margin-top: 2px;
+}
+/* Hide the native up/down spinners on the Max auto-skills number input. */
+#skill-max-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+#skill-max-input::-webkit-inner-spin-button,
+#skill-max-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.admin-switch {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.admin-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.admin-slider {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--fg) 50%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.08s;
+}

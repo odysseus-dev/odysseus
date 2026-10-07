@@ -18,6 +18,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
 
 
 def _make_block(tool_type, content):
@@ -161,12 +169,14 @@ def test_blocks_netrc():
         _resolve_tool_path("~/.netrc")
 
 
-def test_allows_project_data(tmp_path):
-    """Paths under project data/ must resolve cleanly."""
+def test_allows_agent_workspace(tmp_path):
+    """Paths under the agent's workspace in project data/ must resolve
+    cleanly. The rest of data/ is application state and is rejected;
+    tests/test_agent_state_dir_confinement.py covers that side."""
     from src.tool_execution import _resolve_tool_path
-    from src.constants import DATA_DIR
-    target = os.path.join(DATA_DIR, "test-confinement-ok.txt")
-    os.makedirs(DATA_DIR, exist_ok=True)
+    from src.constants import AGENT_WORKSPACE_DIR
+    target = os.path.join(AGENT_WORKSPACE_DIR, "test-confinement-ok.txt")
+    os.makedirs(AGENT_WORKSPACE_DIR, exist_ok=True)
     with open(target, "w") as f:
         f.write("ok")
     try:
@@ -244,7 +254,8 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "outside the allowed roots" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "sealed resource root" in (result.get("error") or "")
     assert result.get("exit_code") == 1
 
 
@@ -273,8 +284,43 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "sensitive directory" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "sealed resource root" in (result.get("error") or "")
     assert result.get("exit_code") == 1
+
+
+@pytest.mark.asyncio
+async def test_write_file_dispatch_rejects_empty_directory_like_workspace_path(monkeypatch, tmp_path):
+    """End-to-end: benchmark agents must not turn a directory path into an empty file."""
+    auth_mod = sys.modules.get("core.auth")
+    if auth_mod is None:
+        import core.auth as _real_auth
+        auth_mod = _real_auth
+
+    class _AdminAuth:
+        is_configured = True
+        def is_admin(self, username):
+            return True
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: _AdminAuth())
+    monkeypatch.setattr(
+        "src.tool_execution.owner_is_admin_or_single_user",
+        lambda owner: True,
+    )
+
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
+    desc, result = await execute_tool_block(
+        _make_block("write_file", "/workspace/papers"),
+        owner="admin-user",
+        workspace=str(tmp_path),
+        security_context=NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert "BLOCKED" in desc
+    assert "content required; missing content section" in (
+        result.get("error") or ""
+    )
+    assert result.get("exit_code") == 1
+    assert not (tmp_path / "papers").exists()
 
 
 @pytest.mark.asyncio
@@ -302,5 +348,11 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "outside the allowed roots" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "sealed resource root" in (result.get("error") or "")
     assert result.get("exit_code") == 1
+@pytest.mark.parametrize("filename", ["auth.json", "app.db", "settings.json"])
+def test_application_secrets_are_sensitive_paths(filename):
+    from src.tool_execution import _is_sensitive_path
+
+    assert _is_sensitive_path(f"/tmp/odysseus-data/{filename}")

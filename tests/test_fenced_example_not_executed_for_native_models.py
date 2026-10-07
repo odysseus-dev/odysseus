@@ -25,6 +25,7 @@ import asyncio
 import json
 
 import src.agent_loop as al
+from src.tool_capabilities import ToolGateDecision
 
 
 def _collect(gen):
@@ -52,6 +53,12 @@ def _patch_common(monkeypatch, exec_calls):
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
     # These tests exercise tool-channel parsing, not owner authorization.
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+    monkeypatch.setattr(
+        al.ToolRunSecurityContext,
+        "decision_for",
+        lambda self, *a, **k: ToolGateDecision(True),
+        raising=False,
+    )
 
     async def _fake_exec(block, *a, **k):
         exec_calls.append(block)
@@ -88,6 +95,10 @@ def _run_loop(monkeypatch, model, deltas, native_calls=None, max_rounds=2, endpo
         [{"role": "user", "content": "Do not run anything yet, just show me an example."}],
         max_rounds=max_rounds,
         relevant_tools={"bash"},
+        # These tests isolate parser/channel selection. Use the privileged
+        # fixture owner so the native-call execution assertion does not stop
+        # at the unrelated production approval policy.
+        owner="admin",
     )
     return _types(_collect(gen))
 
@@ -193,6 +204,152 @@ def test_resolve_tool_blocks_keeps_textual_fallback_for_non_native_models():
     assert used_native is False
 
 
+def test_declared_textual_transport_executes_flat_json_function_envelope():
+    text = '''```json
+{"function":"inspect_state","arguments":{"scope":"active"}}
+```'''
+
+    blocks, used_native, converted = al._resolve_tool_blocks(
+        text,
+        [],
+        round_num=1,
+        is_api_model=True,
+        allow_fenced_for_api=True,
+        offered_tool_names={"inspect_state"},
+        declared_tool_names={"inspect_state"},
+    )
+
+    assert [(block.tool_type, block.content) for block in blocks] == [
+        ("inspect_state", '{"scope": "active"}')
+    ]
+    assert used_native is False
+    assert converted == []
+
+
+def test_declared_textual_transport_recovers_unique_bare_json_schema_match():
+    schemas = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_media",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "media_type": {"type": "string"},
+                        "max_frames": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+    ]
+
+    blocks, used_native, converted = al._resolve_tool_blocks(
+        '```json\n{"path":"/workspace/input.webm","media_type":"video","max_frames":20}\n```',
+        [],
+        round_num=1,
+        is_api_model=True,
+        allow_fenced_for_api=True,
+        offered_tool_names={"read_file", "read_media"},
+        declared_tool_names={"read_file", "read_media"},
+        declared_tool_schemas=schemas,
+    )
+
+    assert [(block.tool_type, json.loads(block.content)) for block in blocks] == [
+        (
+            "read_media",
+            {
+                "path": "/workspace/input.webm",
+                "media_type": "video",
+                "max_frames": 20,
+            },
+        )
+    ]
+    assert used_native is False
+    assert converted == []
+
+
+def test_declared_textual_transport_rejects_ambiguous_bare_json_schema_match():
+    schemas = [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        }
+        for name in ("read_file", "read_media")
+    ]
+
+    blocks, _, _ = al._resolve_tool_blocks(
+        '```json\n{"path":"/workspace/input.webm"}\n```',
+        [],
+        round_num=1,
+        is_api_model=True,
+        allow_fenced_for_api=True,
+        offered_tool_names={"read_file", "read_media"},
+        declared_tool_names={"read_file", "read_media"},
+        declared_tool_schemas=schemas,
+    )
+
+    assert blocks == []
+
+
+def test_declared_textual_transport_executes_exact_function_name_fence():
+    blocks, used_native, converted = al._resolve_tool_blocks(
+        "```function_name\nlist_queue\n```",
+        [],
+        round_num=1,
+        is_api_model=True,
+        allow_fenced_for_api=True,
+        offered_tool_names={"list_queue"},
+        declared_tool_names={"list_queue"},
+    )
+
+    assert [(block.tool_type, block.content) for block in blocks] == [
+        ("list_queue", "{}")
+    ]
+    assert used_native is False
+    assert converted == []
+
+
+def test_declared_environment_drops_unrelated_textual_and_native_tools():
+    textual, used_native, converted = al._resolve_tool_blocks(
+        '<invoke name="use_mcp_tool"><parameter name="server">ocr</parameter></invoke>',
+        [],
+        round_num=1,
+        is_api_model=False,
+        declared_tool_names={"ocr_extract"},
+    )
+    native, native_used, native_converted = al._resolve_tool_blocks(
+        "",
+        [{"id": "call-1", "name": "use_mcp_tool", "arguments": '{}'}],
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"ocr_extract"},
+        declared_tool_names={"ocr_extract"},
+    )
+
+    assert textual == [] and used_native is False and converted == []
+    assert native == [] and native_used is False and native_converted == []
+
+
 def test_resolve_tool_blocks_native_path_untouched_when_native_calls_present():
     native_calls = [{"name": "bash", "arguments": json.dumps({"command": "echo hi"})}]
     blocks, used_native, _ = al._resolve_tool_blocks("some prose", native_calls, round_num=1, is_api_model=True)
@@ -292,6 +449,23 @@ def test_skip_fenced_still_recovers_dsml_markup():
     assert "latest python release" in blocks[0].content
 
 
+def test_short_dsml_calls_wrapper_is_parsed_and_fully_stripped():
+    dsml = (
+        "Evidence gathered.\n"
+        "<｜｜DSML｜｜ calls>"
+        '<｜｜DSML｜｜ invoke name="extract_text">'
+        '<｜｜DSML｜｜ parameter name="path" string="true">/workspace/frame.png'
+        '</｜｜DSML｜｜ parameter>'
+        "</｜｜DSML｜｜ invoke>"
+        "</｜｜DSML｜｜ calls>"
+    )
+    blocks = parse_tool_blocks(dsml, skip_fenced=True, additional_tool_names=["extract_text"])
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "extract_text"
+    assert json.loads(blocks[0].content) == {"path": "/workspace/frame.png"}
+    assert strip_tool_blocks(dsml, skip_fenced=True) == "Evidence gathered."
+
+
 def test_skip_fenced_ignores_only_the_fenced_pattern():
     text = "```bash\nnpm run plan:articles\n```"
     assert parse_tool_blocks(text, skip_fenced=True) == []
@@ -312,6 +486,158 @@ def test_resolve_tool_blocks_recovers_invoke_markup_for_native_model_with_no_nat
     assert len(blocks) == 1
     assert blocks[0].tool_type == "web_search"
     assert "odysseus changelog" in blocks[0].content
+
+
+def test_resolve_tool_blocks_drops_unoffered_textual_call_for_api_model():
+    leaked = (
+        "Finished answer.\n"
+        '<invoke name="python"><parameter name="code"></parameter></invoke>'
+    )
+
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        leaked,
+        [],
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"ask_teacher", "chat_with_model"},
+    )
+
+    assert blocks == []
+    assert used_native is False
+
+
+def test_resolve_tool_blocks_keeps_offered_textual_call_for_api_model():
+    leaked = (
+        '<invoke name="web_search">'
+        '<parameter name="query">odysseus changelog</parameter>'
+        '</invoke>'
+    )
+
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        leaked,
+        [],
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"web_search"},
+    )
+
+    assert [block.tool_type for block in blocks] == ["web_search"]
+    assert used_native is False
+
+
+def test_resolve_tool_blocks_maps_legacy_native_email_alias_to_offered_mcp_name():
+    native_calls = [{"name": "list_emails", "arguments": json.dumps({"max_results": 5})}]
+
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        native_calls,
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"mcp__email__list_emails"},
+    )
+
+    assert used_native is True
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "mcp__email__list_emails"
+    assert json.loads(blocks[0].content)["max_results"] == 5
+
+
+def test_resolve_tool_blocks_maps_create_draft_alias_to_reviewable_email_draft():
+    native_calls = [{
+        "name": "mcp__email__create_draft",
+        "arguments": json.dumps({
+            "to": "review@example.com",
+            "subject": "Review",
+            "body": "Please review this draft.",
+        }),
+    }]
+
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        native_calls,
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"mcp__email__draft_email"},
+    )
+
+    assert used_native is True
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "mcp__email__draft_email"
+    assert json.loads(blocks[0].content)["to"] == "review@example.com"
+
+
+def test_resolve_tool_blocks_maps_open_url_to_offered_private_browser():
+    native_calls = [{
+        "name": "open_url",
+        "arguments": json.dumps({"url": "file:///workspace/output.html"}),
+    }]
+
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        native_calls,
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"private_browser"},
+    )
+
+    assert used_native is True
+    assert [block.tool_type for block in blocks] == ["private_browser"]
+    assert json.loads(blocks[0].content) == {
+        "action": "open",
+        "url": "file:///workspace/output.html",
+    }
+
+
+def test_resolve_tool_blocks_does_not_map_open_url_without_browser_offer():
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        [{"name": "open_url", "arguments": json.dumps({"url": "https://example.test"})}],
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"web_fetch"},
+    )
+
+    assert blocks == []
+    assert used_native is False
+
+
+def test_resolve_tool_blocks_routes_local_html_inspection_to_browser():
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        [{
+            "name": "inspect_media",
+            "arguments": json.dumps({
+                "path": "/workspace/output.html",
+                "max_dimension": 640,
+            }),
+        }],
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"inspect_media", "private_browser"},
+    )
+
+    assert used_native is True
+    assert [block.tool_type for block in blocks] == ["private_browser"]
+    assert json.loads(blocks[0].content) == {
+        "action": "open",
+        "url": "file:///workspace/output.html",
+    }
+
+
+def test_resolve_tool_blocks_keeps_html_inspection_without_browser_offer():
+    blocks, used_native, _ = al._resolve_tool_blocks(
+        "",
+        [{
+            "name": "inspect_media",
+            "arguments": json.dumps({"path": "/workspace/output.html"}),
+        }],
+        round_num=1,
+        is_api_model=True,
+        offered_tool_names={"inspect_media"},
+    )
+
+    assert used_native is True
+    assert [block.tool_type for block in blocks] == ["inspect_media"]
 
 
 # ---------------------------------------------------------------------------

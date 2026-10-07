@@ -13,6 +13,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 from fastapi import APIRouter, Request
+from fastapi import HTTPException
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -75,6 +76,19 @@ def _save_config(cfg: dict):
     # POSIX: restrict the BW_SESSION store to 0o600. Windows: no-op (profile dir
     # is ACL-restricted already).
     safe_chmod(str(VAULT_FILE), 0o600)
+
+
+def _bind_config_owner(cfg: dict, request: Request):
+    from src.auth_helpers import effective_user
+    from src.owner_identity import effective_storage_owner
+    owner = effective_storage_owner(effective_user(request))
+    if not owner or (cfg.get("owner") and cfg["owner"] != owner):
+        raise HTTPException(403, "Vault configuration requires its explicit owner")
+    if not cfg.get("owner"):
+        # Legacy credentials cannot silently acquire a new ownership binding.
+        cfg.pop("session", None)
+        cfg.pop("unlocked_at", None)
+    cfg["owner"] = owner
 
 
 async def _run_bw(args: list, session: str = None, input_text: str = None,
@@ -144,6 +158,7 @@ def setup_vault_routes():
         """Save vault URL + email. Runs 'bw config server' to point at Vaultwarden."""
         require_admin(request)
         cfg = _load_config()
+        _bind_config_owner(cfg, request)
         cfg["server_url"] = req.server_url.strip().rstrip("/")
         cfg["email"] = req.email.strip()
 

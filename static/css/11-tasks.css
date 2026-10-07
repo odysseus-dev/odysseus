@@ -1,0 +1,1972 @@
+/* 11-tasks - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+/* Snapped/narrow Settings window: move the tab rail to the top. Viewport media
+   alone misses desktop right-half snapping, where the modal is narrow but the
+   browser window is not. */
+@container settings-modal (max-width: 620px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-sidebar {
+    width: auto;
+    max-height: none;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px;
+    scrollbar-width: none;
+  }
+  .settings-sidebar::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-sidebar-divider,
+  .settings-sidebar-label {
+    display: none;
+  }
+  .settings-nav-item {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .settings-panels {
+    padding: 12px 14px;
+  }
+}
+
+/* ── Entrance Animations ── */
+
+/* Welcome name — left-to-right wipe with a touch of horizontal stretch.
+   Fires on initial render via the .welcome-name rule; restarts on Nobody⇄
+   Odysseus toggle via JS reflow trick. */
+.welcome-name {
+  transform-origin: left center;
+  animation: welcome-name-reveal 0.55s cubic-bezier(0.34, 1.32, 0.55, 1) both;
+}
+/* Hold the welcome-screen entrance animations until the app has finished its
+   initial load (fonts loaded + layout settled). Running them mid-load made the
+   splash jump/flicker as the page reflowed ("haywire"). Until body.welcome-ready
+   is set by JS, the splash sits in its final, static state (no flash, since the
+   non-animated state IS the resting state); adding the class then plays the
+   entrance once, cleanly. */
+body:not(.welcome-ready) #welcome-screen,
+body:not(.welcome-ready) .welcome-name {
+  animation: none !important;
+}
+/* Hold the splash invisible (the entrance's start state) until ready, so when
+   the animation is released it fades/wipes in smoothly instead of flashing
+   from fully-visible to the animation's hidden first frame. */
+body:not(.welcome-ready) #welcome-screen {
+  opacity: 0;
+}
+@keyframes welcome-name-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+    transform: scaleX(0.96);
+    opacity: 0.5;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -45%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes msg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes picker-roll-up {
+  from {
+    opacity: 0;
+    transform: scaleY(0.4) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+}
+@keyframes picker-roll-down {
+  from {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scaleY(0.4) translateY(8px);
+  }
+}
+@keyframes model-picker-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes modal-exit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+}
+.modal-content.modal-closing {
+  animation: modal-exit 0.18s ease-in both;
+}
+
+#cookbook-modal .modal-content.cookbook-modal-entering {
+  animation: cookbook-modal-enter 0.28s cubic-bezier(0.22, 1.35, 0.36, 1) both;
+}
+/* Mobile: real bottom-sheet slide-up — the existing 12px translate is
+   too subtle on a phone, the modal effectively just appeared. */
+@media (max-width: 768px) {
+  #cookbook-modal .modal-content.cookbook-modal-entering {
+    animation: cookbook-modal-enter-mobile 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+#cookbook-modal .modal-content:not(.cookbook-modal-entering):not(.modal-closing) {
+  animation: none;
+}
+#cookbook-modal .modal-content.modal-closing {
+  animation: modal-exit 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* Per-token streaming fade — new words materialize */
+.token-new {
+  animation: token-fade 0.4s ease-out both;
+}
+
+@keyframes token-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Disable entrance animations when loading chat history (bulk render) */
+.chat-history.no-animate .msg {
+  animation: none;
+}
+
+/* Prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .msg,
+  .modal-content,
+  #welcome-screen,
+  .toast,
+  .token-new {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  #tool-tasks-btn #assistant-notif-dot.sidebar-notif-dot,
+  #tool-tasks-btn.task-failure-pending::after,
+  #tool-tasks-btn.task-completion-pending::after {
+    transform: translateX(-2px);
+  }
+}
+.tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
+.task-completed-preview-row {
+  cursor: default;
+  margin-bottom: 6px;
+  padding: 8px 10px 10px;
+  max-height: none;
+  overflow: visible;
+}
+.task-completed-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  font-size: 11px;
+}
+.task-completed-chat-preview {
+  padding: 0 0 4px;
+}
+.task-completed-chat-preview .doclib-chat-preview-messages {
+  max-height: 220px;
+  margin-top: 7px;
+}
+.task-completed-chat-preview .doclib-chat-bubble {
+  max-width: 92%;
+}
+.task-completed-chat-preview .doclib-chat-preview-actions {
+  top: 2px;
+  margin-top: 4px;
+}
+.task-completed-preview-row .task-log-time {
+  margin-left: 8px;
+}
+
+/* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
+   full-bleed (its underline spans the whole modal width). The Tasks bar is a
+   direct child of .modal-content (padding:10px), so cancel that padding with
+   negative side margins to span edge-to-edge, then re-inset the tabs by 10px
+   so they line up with the rest of the modal content — matching the Brain bar. */
+.tasks-modal-content .tasks-tabs {
+  margin: -2px -10px 8px;
+  padding: 0 10px;
+}
+
+/* Activity log — compact by default. Click the row to expand body+actions. */
+.task-log-row {
+  --cat-hue: 220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin-bottom: 3px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  position: relative;
+  cursor: pointer;
+  transition: padding .12s ease;
+}
+.task-log-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.task-log-row.task-log-row-error {
+  border-color: color-mix(in srgb, var(--red, #f87171) 35%, var(--border));
+  background: color-mix(in srgb, var(--red, #f87171) 4%, transparent);
+}
+.task-log-row.task-log-row-error:hover {
+  background: color-mix(in srgb, var(--red, #f87171) 7%, transparent);
+}
+.task-log-row.expanded { padding: 8px 10px 6px; }
+.task-log-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 0;
+}
+.task-log-row.expanded .task-log-row-head { margin-bottom: 4px; }
+/* Collapsed: body + footer hidden. Expanded: visible. */
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-body,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-actions,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-prompt {
+  display: none;
+}
+.task-log-name {
+  font-weight: 600;
+  /* Pull saturation from the per-row hue but mix with the foreground so the
+     title still reads in dark mode. Lightness stays adaptive. */
+  color: hsl(var(--cat-hue) 60% 60%);
+}
+.task-log-failed-tag {
+  color: var(--red, #f87171);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  margin-left: -2px;
+}
+.task-log-task-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: -3px;
+}
+.task-log-row.task-log-row-error .task-log-name,
+.task-log-row.task-log-row-error .task-log-task-icon {
+  color: var(--red, #f87171);
+}
+.task-log-task-icon svg {
+  top: 0 !important;
+  opacity: 0.46 !important;
+}
+.task-log-row-head .task-ai-mark {
+  top: 0;
+  margin-left: -4px;
+}
+.task-log-repeat {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  border-radius: 999px;
+  padding: 1px 0;
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: light) {
+  .task-log-name { color: hsl(var(--cat-hue) 65% 38%); }
+}
+/* Per-account prefix in fan-out results — e.g. "[Default] No recent emails"
+   becomes a compact accent chip + plain message. Makes multi-account activity
+   rows readable instead of a bracket soup. */
+/* Running / queued status line in the Activity tab — whirlpool + label. */
+.task-log-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.task-log-running-label { font-style: normal; }
+
+/* New right-side placement: "Running <whirlpool>" sits where the timestamp
+   normally would, on the head row's right edge. */
+.task-log-running-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.task-log-force-run {
+  appearance: none;
+  box-sizing: border-box;
+  border: 0;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  box-shadow: none;
+  color: inherit;
+  opacity: .82;
+  margin-left: 7px;
+  padding: 1px 6px 1px 4px;
+  height: 18px;
+  min-height: 16px;
+  max-height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+}
+.task-log-force-run svg,
+.task-log-stop svg {
+  display: block;
+  flex-shrink: 0;
+  transform: translateY(1px);
+}
+.task-log-force-run:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b);
+}
+.task-log-stop {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .72;
+  padding: 0;
+  margin-left: 6px;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+}
+.task-log-stop:hover {
+  opacity: 1;
+  color: var(--red, #f87171);
+}
+
+/* Slim single-line row for skipped (noop) runs — body/actions stripped, font
+   shrunk, opacity dropped. Distinguishes "task ran but had nothing to do"
+   from a "real" entry without flooding the feed visually. */
+.task-log-row.is-skipped {
+  padding: 4px 8px;
+  opacity: 0.45;
+  font-size: 11px;
+  background: transparent;
+}
+.task-log-row.is-skipped .task-log-row-head { padding: 0; }
+.task-log-row.is-skipped .task-log-name { font-weight: 500; }
+.task-log-row.is-skipped .task-log-skipped-reason {
+  flex: 1 1 auto;
+  margin-left: 6px;
+  font-style: italic;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.task-log-row.is-skipped:hover { opacity: 0.7; }
+
+.task-log-account-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  margin-right: 4px;
+  border-radius: 10px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  vertical-align: 1px;
+}
+.task-log-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.task-log-status-ok    { background: #4ade80; box-shadow: 0 0 6px #4ade80, 0 0 3px #4ade80; }
+.task-log-status-error { background: var(--red, #f87171); box-shadow: 0 0 6px var(--red, #f87171), 0 0 3px var(--red, #f87171); }
+.task-log-status-info  { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.task-log-status-queued  { background: #fbbf24; box-shadow: 0 0 0 2px color-mix(in srgb, #fbbf24 30%, transparent); }
+.task-log-status-running { background: #60a5fa; animation: task-log-pulse 1.4s ease-in-out infinite; }
+.task-log-status-skipped { background: color-mix(in srgb, var(--fg) 20%, transparent); }
+.task-log-status-aborted { background: color-mix(in srgb, var(--fg) 30%, transparent); border: 1px dashed color-mix(in srgb, var(--fg) 50%, transparent); }
+.task-log-row-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--fg) 85%, transparent);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.task-log-row-body p { margin: 0 0 6px 0; }
+.task-log-row-body p:last-child { margin-bottom: 0; }
+.task-log-row-body pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  max-height: 180px;
+  overflow: auto;
+}
+.task-log-row-body code {
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.task-log-row-body ul, .task-log-row-body ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+/* Markdown headings inside a task result — without these, ## headings
+   render at browser-default huge sizes and blow out the cramped row. */
+.task-log-row-body h1,
+.task-log-row-body h2,
+.task-log-row-body h3,
+.task-log-row-body h4 {
+  margin: 10px 0 4px;
+  line-height: 1.3;
+  font-weight: 650;
+  color: var(--fg);
+}
+.task-log-row-body h1 { font-size: 14px; }
+.task-log-row-body h2 { font-size: 13px; }
+.task-log-row-body h3,
+.task-log-row-body h4 { font-size: 12px; opacity: 0.9; }
+.task-log-row-body h1:first-child,
+.task-log-row-body h2:first-child,
+.task-log-row-body h3:first-child { margin-top: 0; }
+.task-log-row-body blockquote {
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  opacity: 0.85;
+}
+.task-log-row-body a { color: var(--accent, #60a5fa); text-decoration: none; }
+.task-log-row-body a:hover { text-decoration: underline; }
+.task-log-row-body strong { font-weight: 650; color: var(--fg); }
+/* Email-summary tables — render compactly instead of default browser ugliness. */
+.task-log-row-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+  font-size: 11px;
+}
+.task-log-row-body th,
+.task-log-row-body td {
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.task-log-row-body th {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font-weight: 600;
+}
+.task-log-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.task-log-open-chat,
+.task-log-open-report,
+.task-log-copy,
+.task-log-clear-cache,
+.task-log-run-again,
+.task-log-force-run-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 5px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  line-height: 1.4;
+}
+.task-log-open-chat:hover,
+.task-log-open-report:hover,
+.task-log-copy:hover,
+.task-log-clear-cache:hover,
+.task-log-run-again:hover,
+.task-log-force-run-action:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.task-log-row-actions > .task-log-open-chat,
+.task-log-row-actions > .task-log-copy {
+  margin-left: auto;
+}
+.task-log-clear-cache svg {
+  position: relative;
+  top: 0;
+}
+/* Activity filter chips — toggle-out model: ON by default (solid),
+   click to toggle OFF (dimmed + strikethrough) to hide that group. */
+.tasks-af-chip {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity .12s, background .12s, border-color .12s;
+}
+.tasks-af-chip:hover { border-color: color-mix(in srgb, var(--fg) 32%, transparent); }
+.tasks-af-chip.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+  background: transparent;
+}
+.tasks-af-chip.active {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  opacity: 1;
+}
+.tasks-af-chip-error { border-color: color-mix(in srgb, var(--red, #f87171) 45%, transparent); }
+.tasks-af-chip-error:not(.off) { color: var(--red, #f87171); }
+
+/* "Open in Deep Research" is now a regular clickable chat link (a
+   `#research-<id>` markdown anchor in the assistant's message), rendered as
+   an a.chat-link. Nudge it 4px right so it sits slightly inset. */
+a.chat-link[href^="#research-"] {
+  margin-left: 4px;
+}
+.task-log-row.is-long .task-log-row-body {
+  max-height: 8.5em;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.task-log-row.is-long.expanded .task-log-row-body {
+  max-height: none;
+  overflow: visible;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+.task-log-row-toggle {
+  margin-top: 6px;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  color: transparent;          /* hide raw "Show more" text */
+}
+.task-log-row:not(.expanded) .task-log-row-toggle::before { content: 'Show more'; }
+.task-log-row.expanded .task-log-row-toggle::before { content: 'Show less'; }
+.task-log-prompt {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.task-log-prompt summary {
+  cursor: pointer;
+  opacity: 0.5;
+  user-select: none;
+}
+.task-log-prompt summary:hover { opacity: 0.8; }
+.task-log-prompt pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  opacity: 0.75;
+  max-height: 200px;
+  overflow: auto;
+}
+
+/* Tasks is the shared theme reference for procedural cards. Keep the tint
+   together so Skills cannot drift when theme colors change. Hover and
+   selection remain owned by the shared card state rules above. */
+.task-card,
+.skill-card {
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.task-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 8px;
+  margin-bottom: 0;
+  min-height: 46px;
+  box-sizing: border-box;
+  align-items: center;
+}
+/* When expanded, height grows to fit the detail panel. */
+.task-card.expanded { align-items: flex-start; }
+.task-card .memory-item-title {
+  position: relative;
+  top: -2px;
+}
+/* Always show the per-card ⋮ kebab on task cards (the default opacity:0 +
+   hover-reveal is unreliable on touch and easy to miss on desktop).
+   pointer-events / z-index belt-and-braces against any sibling overlay,
+   margin reset undoes the global `.modal-body button { margin-top:6px }`
+   that was punting the hit-target down. */
+.task-card .memory-item-actions {
+  opacity: 0.55;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+}
+.task-card:hover .memory-item-actions,
+.task-card .memory-item-actions:hover { opacity: 1; }
+.task-card .memory-item-actions .memory-item-btn {
+  margin: 0 !important;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Make the SVG inside the kebab transparent to pointer events so the click
+   always lands on the BUTTON itself (some browsers / nested SVG events lose
+   the click when hitting the inner glyph). */
+.task-card .memory-item-actions .memory-item-btn svg { pointer-events: none; }
+.task-ai-mark {
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+  opacity: 0.78;
+}
+/* Per-card select checkbox rides up to the title line. The "All" checkbox is
+   #tasks-select-all (not .memory-select-cb), so it stays put. */
+.task-card .memory-select-cb { position: relative; }
+.task-card.task-card-deleting {
+  opacity: 0.68;
+  pointer-events: none;
+  position: relative;
+}
+.task-card-delete-busy {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, var(--panel, #111));
+  border: 1px solid color-mix(in srgb, var(--red) 24%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  z-index: 7;
+}
+.task-card-delete-busy-spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  animation: spin 0.8s linear infinite;
+}
+#tasks-pause-all-btn { position: relative; top: -2px; }
+#tasks-pause-all-btn:has(input:disabled) { opacity: 0.4; }
+/* Bigger ⋮ dropdown on mobile (its buttons carry inline styles → !important). */
+@media (max-width: 768px) {
+  .task-card .task-status-badge {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .task-card .task-state-badge svg,
+  .task-card .task-card-run-btn svg {
+    width: 10px;
+    height: 10px;
+  }
+}
+
+.task-card-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.task-card-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task-card-schedule {
+  font-size: 10.5px;
+  opacity: 0.5;
+  margin-left: auto;
+}
+
+.task-card-output {
+  font-size: 10px;
+  opacity: 0.45;
+}
+
+.task-card-prompt {
+  font-size: 11px;
+  opacity: 0.55;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.task-card-meta {
+  font-size: 10.5px;
+  opacity: 0.45;
+  margin-bottom: 6px;
+}
+
+.task-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.task-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+.task-btn:hover { opacity: 1; }
+.task-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.task-btn-primary {
+  background: var(--red);
+  color: #fff;
+  border-color: transparent;
+  opacity: 1;
+}
+.task-btn-primary:hover { opacity: 0.85; }
+
+.task-btn-danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }
+.task-btn-danger:hover { opacity: 1; border-color: var(--red); }
+
+.tasks-clock {
+  font-size: 10px;
+  opacity: 0.35;
+  text-align: center;
+  padding: 6px 0 8px;
+}
+
+.task-preset-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+}
+.task-preset-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); cursor: pointer; transition: all 0.15s; text-align: left;
+  color: var(--fg);
+}
+.task-preset-card:hover {
+  border-color: var(--accent, #cc6a3a); background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, var(--bg));
+}
+.task-preset-icon { font-size: 20px; margin-bottom: 2px; }
+.task-preset-label { font-size: 12px; font-weight: 600; }
+.task-preset-desc { font-size: 10px; opacity: 0.5; line-height: 1.3; }
+
+.task-form { display: flex; flex-direction: column; gap: 4px; }
+.task-form-label {
+  font-size: 11px;
+  opacity: 0.55;
+  font-weight: 500;
+  display: block;
+  /* Consistent rhythm: 8px above each label (section gap), 4px below to the
+     field — same spacing for Name/Prompt/Trigger/Output/Model/Chain. */
+  margin: 8px 0 4px;
+}
+.task-form-input {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.task-form-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+.task-form-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+
+.task-form-notif-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 9px 0 3px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.task-form-notif-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.task-form-notif-switch {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  position: relative;
+  flex: 0 0 auto;
+  transition: background 0.15s, border-color 0.15s;
+}
+.task-form-notif-toggle input:checked + .task-form-notif-switch {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 58%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+}
+.task-form-notif-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.task-form-notif-copy span:last-child {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.52;
+}
+
+.task-form-toggle {
+  display: flex; gap: 4px;
+}
+.task-toggle-btn {
+  flex: 1; padding: 4px 8px; font-size: 10px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 6px; background: transparent;
+  color: var(--fg); opacity: 0.4; cursor: pointer; transition: all 0.15s;
+}
+.task-toggle-btn:hover { opacity: 0.7; border-color: var(--fg); }
+.task-toggle-btn.active {
+  opacity: 1; border-color: var(--red); color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.task-time-picker, .task-date-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.task-time-select, .task-date-select {
+  width: auto;
+  min-width: 48px;
+  font-size: 11px;
+}
+.task-time-sep { opacity: 0.4; font-size: 11px; }
+
+.task-history-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.task-runs-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.task-run-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.task-run-item-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.task-run-time { margin-left: auto; font-size: 10px; opacity: 0.45; }
+.task-run-result {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-top: 4px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Settings Form Utilities ── */
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-label {
+  font-size: 12px;
+  min-width: 70px;
+}
+.settings-select {
+  flex: 1;
+  /* Allow the select to shrink below its longest option's width inside a flex
+     row — without this a long model name (e.g. the Vision picker) overflowed
+     the card off-screen on mobile. */
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+  outline: none;
+}
+input.settings-select::-webkit-outer-spin-button,
+input.settings-select::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.settings-select:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+/* Deep Research uses long labels and previously fixed-width fields. Keep
+   every control constrained by the card at intermediate desktop widths too. */
+.admin-card:has(#set-researchSearch) .settings-row { min-width: 0; }
+.admin-card:has(#set-researchSearch) .settings-row > .settings-label { flex: 0 0 112px; min-width: 0; }
+#set-researchSearch,
+#set-researchMaxTokens,
+#set-researchRunTimeout,
+.settings-row div:has(> #set-researchExtractTimeout),
+.settings-row div:has(> #set-researchExtractConcurrency) {
+  width: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  flex: 1 1 0 !important;
+}
+
+@media (max-width: 768px) {
+  /* Deep Research settings contain desktop-sized inline widths. On mobile,
+     let each control claim the card width instead of escaping the admin block. */
+  .settings-row:has(#set-researchSearch),
+  .settings-row:has(#set-researchMaxTokens),
+  .settings-row:has(#set-researchExtractTimeout),
+  .settings-row:has(#set-researchExtractConcurrency),
+  .settings-row:has(#set-researchRunTimeout) {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .settings-row:has(#set-researchSearch) .settings-label,
+  .settings-row:has(#set-researchMaxTokens) .settings-label,
+  .settings-row:has(#set-researchExtractTimeout) .settings-label,
+  .settings-row:has(#set-researchExtractConcurrency) .settings-label,
+  .settings-row:has(#set-researchRunTimeout) .settings-label {
+    flex: 1 1 auto;
+  }
+  #set-researchSearch,
+  #set-researchMaxTokens,
+  #set-researchRunTimeout,
+  .settings-row div:has(> #set-researchExtractTimeout),
+  .settings-row div:has(> #set-researchExtractConcurrency) {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+    margin-left: 0 !important;
+  }
+}
+
+/* Default-chat fallback chain editor. Each row mirrors the primary
+   endpoint/model selectors, indented under them to read as a chain. */
+.settings-fallbacks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-fallbacks:not(:empty) { margin-top: 2px; }
+.settings-fallback-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.settings-fallback-num {
+  font-size: 11px;
+  opacity: 0.4;
+  min-width: 14px;
+  text-align: right;
+}
+.settings-fallback-row .settings-select {
+  width: 0;
+  min-width: 0;
+  min-inline-size: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-fallback-row .settings-select:first-of-type {
+  flex: 0 1 128px;
+  width: 128px;
+  max-width: 34%;
+}
+.settings-fallback-row .settings-select:nth-of-type(2) {
+  flex: 1 1 0;
+  width: 0;
+  max-width: 100%;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row,
+details.hwfit-serve-advanced > .hwfit-serve-checks,
+details.hwfit-serve-advanced > .hwfit-serve-cmd-wrap,
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* Inside Advanced, tighten the per-row grid gap and the label →
+   select gap so rows of single-line dropdowns don't visually sit
+   on top of half a row of empty space. Outside Advanced (Core,
+   etc.) the original ~6px breathing room stays. */
+details.hwfit-serve-advanced > .hwfit-serve-row {
+  gap: 4px;
+  row-gap: 4px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-backend-llamacpp,
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-llamacpp {
+  margin-top: -20px;
+  position: relative;
+  left: 4px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-backend-llamacpp {
+  column-gap: 8px;
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-llama-placement-row {
+  margin-top: -6px !important;
+}
+details.hwfit-serve-advanced > .hwfit-llama-memory-row {
+  margin-top: -20px !important;
+}
+.cookbook-llama-cpu-mode details.hwfit-serve-advanced > .hwfit-llama-memory-row {
+  margin-top: -8px !important;
+}
+details.hwfit-serve-advanced > .hwfit-llama-batch-row,
+details.hwfit-serve-advanced > .hwfit-llama-monitor-row,
+details.hwfit-serve-advanced > .hwfit-llama-checks-row {
+  margin-top: -18px !important;
+}
+details.hwfit-serve-advanced > .hwfit-diff-settings-row {
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-diff-checks-row,
+details.hwfit-serve-advanced > .hwfit-diff-harmonize-row {
+  margin-top: -10px !important;
+}
+details.hwfit-serve-advanced > .hwfit-diff-checks-row {
+  row-gap: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor {
+  gap: 4px !important;
+  grid-template-columns: max-content minmax(0, 1fr);
+  white-space: nowrap;
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_block_size"] {
+  width: calc(100% - 6px);
+}
+details.hwfit-serve-advanced .hwfit-sf[data-field="vllm_kv_cache_dtype"] {
+  width: 60px;
+  min-width: 60px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-checks {
+  gap: 4px;
+  row-gap: 4px;
+}
+/* Pull the vLLM/SGLang checks row, Extra args, and the trailing
+   model-specific (Speculative) checks row up tight against the row
+   above — the previous 4px gap plus per-row baseline padding left a
+   ~8px gap that read as too airy in the Advanced fold. */
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-vllm,
+details.hwfit-serve-advanced > .hwfit-serve-checks.hwfit-backend-sglang,
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: -8px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: -18px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row:last-of-type,
+details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
+  margin-bottom: 0;
+}
+
+.settings-fallback-remove {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.settings-fallback-remove:hover {
+  border-color: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.settings-fallback-add {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11px;
+  padding: 3px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.settings-fallback-add:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.settings-input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  transition: border-color 0.15s;
+}
+.settings-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+/* ── Contacts manager (Settings → Integrations → CardDAV) ── */
+.contacts-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.contacts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.contact-row {
+  padding: 6px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+.contact-row:last-child { border-bottom: none; }
+.contact-row-edit { margin-top: 4px; }
+
+/* ── Sort Dropdown ── */
+
+.sort-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 1000;
+  min-width: 120px !important;
+  width: max-content;
+  padding: 4px !important;
+  margin-top: 4px;
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+  backdrop-filter: none !important;
+}
+.sort-dropdown-item {
+  cursor: pointer;
+  padding: 6px 8px 6px 6px !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
+  border-bottom: none !important;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.sort-dropdown-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
+}
+.sort-dropdown-item.ai-sort-option {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+.sort-dropdown-item.ai-sort-option .auto-sort-icon {
+  color: var(--accent, var(--red));
+  display: inline-flex;
+  align-items: center;
+}
+#auto-sort-sessions-btn {
+  transform: translateX(-4px);
+}
+.sort-dropdown-item.ai-sort-option:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent) !important;
+}
+.sort-dropdown-sep {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 6px;
+}
+
+/* Mobile: bigger taps for the chats sort/funnel menu and the select-mode
+   bulk-action bar. Also drop the "Rearrange" item — it's a touch-finicky
+   feature better left to desktop. */
+@media (max-width: 768px) {
+  /* Nudge the funnel/sort button right on mobile so it doesn't hug the
+     chevron next to it. */
+  #session-sort-btn { transform: translateX(13px); }
+  #session-sort-dropdown.sort-dropdown {
+    min-width: 200px !important;
+    padding: 6px !important;
+  }
+  #session-sort-dropdown .sort-dropdown-item {
+    padding: 12px 14px !important;
+    font-size: 14px !important;
+  }
+  #session-rearrange-toggle { display: none !important; }
+
+  /* Select-mode bar — make Archive / Delete / Cancel buttons + the
+     Select-all toggle finger-sized. */
+  .session-bulk-bar {
+    padding: 8px 10px;
+    font-size: 14px;
+    gap: 10px;
+  }
+  .session-bulk-btn {
+    padding: 10px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .session-bulk-btn svg { width: 20px; height: 20px; }
+  #session-select-all-dot { font-size: 22px !important; padding: 6px; }
+  #session-select-all-label { font-size: 14px !important; padding: 4px; }
+}
+
+
+/* ── Admin: Built-in tools ── */
+.admin-tool-category {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.admin-tool-category:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+.admin-tool-cat-header {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+  transition: background 0.15s;
+}
+.admin-tool-cat-header:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.admin-tool-cat-body {
+  border-top: 1px solid var(--border);
+  padding: 4px 0;
+}
+.admin-tool-cat-body.hidden {
+  display: none;
+}
+.admin-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  padding-right: 28px; /* align toggles with header toggle (chevron 12px + gap 6px + padding) */
+  transition: background 0.08s;
+}
+.admin-tool-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.admin-tool-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.admin-tool-name {
+  font-size: 11px;
+  font-weight: 500;
+}
+.admin-tool-desc {
+  font-size: 10px;
+  opacity: 0.4;
+}
+.admin-tool-ctx {
+  font-size: 9px;
+  opacity: 0.3;
+  flex-shrink: 0;
+  min-width: 35px;
+  text-align: right;
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Cookbook serve param hints */
+.hwfit-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  font-size: 8px;
+  font-weight: 600;
+  opacity: 0.35;
+  cursor: help;
+  margin-left: 2px;
+  vertical-align: middle;
+  transition: opacity 0.1s;
+}
+.hwfit-hint:hover {
+  opacity: 0.8;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.hwfit-dl-dot {
+  color: var(--green);
+  font-size: 8px;
+  margin-left: 4px;
+  opacity: 0.7;
+}
+.hwfit-parser-tag {
+  font-size: 9px;
+  opacity: 0.4;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Cookbook output copy — show only on hover */
+.cookbook-output-wrap .cookbook-output-copy {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+/* Cached model menu button */
+.hwfit-cached-menu-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+  position: relative;
+  top: -2px;
+}
+.memory-item:hover .hwfit-cached-menu-btn,
+.hwfit-cached-item:hover .hwfit-cached-menu-btn { opacity: 0.4; }
+.hwfit-cached-menu-btn:hover { opacity: 1 !important; }
+.hwfit-cached-menu-btn svg { pointer-events: none; }
+@media (max-width: 768px) {
+  #cookbook-modal .hwfit-cached-menu-btn {
+    opacity: 0.72 !important;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0;
+    justify-content: center;
+    top: -4px;
+  }
+  #cookbook-modal .hwfit-cached-menu-btn:active {
+    opacity: 1 !important;
+    background: color-mix(in srgb, var(--fg) 9%, transparent);
+  }
+}
+
+/* Quick run button */
+.cookbook-run-btn {
+  background: var(--accent, var(--red)) !important;
+  color: var(--panel) !important;
+  border-color: var(--accent, var(--red)) !important;
+  font-weight: 600;
+}
+.cookbook-run-btn:hover {
+  opacity: 0.9;
+}
+#hwfit-cache-scan {
+  position: relative;
+  top: 1px;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+#hwfit-cache-scan.spinning svg {
+  animation: modelPickerRefreshSpin 0.75s linear infinite;
+}
+#serve-search {
+  height: 28px;
+  min-height: 28px;
+  font-family: inherit;
+  font-size: 11px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e06c75' stroke-opacity='0.85' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat;
+  background-position: 9px center;
+  padding-left: 28px;
+}
+.cookbook-sort-select-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+.cookbook-sort-select-wrap > svg {
+  position: absolute;
+  left: 9px;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.65;
+  transform: translateY(4px);
+}
+
+/* Cookbook model directory tags */
+.cookbook-modeldir-tag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'Berkeley Mono', 'SF Mono', monospace;
+}
+.cookbook-modeldir-default {
+  opacity: 0.5;
+}
+.cookbook-server-bottom-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+}
+.cookbook-server-bottom-actions > button {
+  height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+}
+/* Default-server radio-check in a Settings server title (same look as the
+   model-dir download target). Active = accent-tinted. */
+.cookbook-srv-default {
+  cursor: pointer;
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+  transition: opacity 0.12s, color 0.12s;
+}
+.cookbook-srv-default:hover { opacity: 0.8; }
+.cookbook-srv-default.active { opacity: 1; color: var(--accent, var(--red)); }
+.cookbook-srv-default-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.cookbook-srv-default-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+.cookbook-srv-default-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.cookbook-srv-default-icon,
+.cookbook-srv-default-label {
+  position: relative;
+  top: 2px;
+}
+.email-settings-default,
+.email-settings-default .cookbook-srv-default-icon,
+.email-settings-default .cookbook-srv-default-label {
+  position: relative;
+  top: -2px;
+}
+/* Download-target toggle inside a model-dir tag */
+.cookbook-modeldir-dl {
+  cursor: pointer;
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+.cookbook-modeldir-dl:hover { opacity: 0.8; }
+.cookbook-modeldir-dl.active { opacity: 1; color: var(--accent, var(--red)); }
+/* The tag currently flagged as the download target — clearly highlighted so
+   it's obvious where downloads land. */
+.cookbook-modeldir-target {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
+}
+.cookbook-modeldir-rm {
+  cursor: pointer;
+  opacity: 0.4;
+  font-size: 10px;
+}
+.cookbook-modeldir-rm:hover {
+  opacity: 1;
+}
+.cookbook-modeldir-add {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 10px;
+  font-weight: 500;
+  height: 19.5px;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  top: -3px;
+  padding: 0 9px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.cookbook-modeldir-add:hover { border-color: var(--accent, var(--red)); background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent); }
+
+/* Cookbook serve optimizations */
+.hwfit-serve-opts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.hwfit-apply-opts {
+  font-size: 11px !important;
+  min-width: auto !important;
+  white-space: nowrap;
+}
+.hwfit-opts-desc {
+  font-size: 9px;
+  opacity: 0.4;
+  font-style: italic;
+}
+
+/* Library modal tabs */
+.lib-tabs,
+.admin-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.lib-tab,
+.admin-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+.lib-tab:hover,
+.admin-tab:hover { color: var(--fg); }
+.lib-tab.active,
+.admin-tab.active {
+  color: var(--accent, var(--red));
+  border-bottom-color: var(--accent, var(--red));
+}
+
+/* Cookbook tab count badge */
+.cookbook-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+  color: var(--accent, var(--red));
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 4px;
+  line-height: 1;
+}
+
+/* ── Generate Visual Report button (deep research) ── */
+.view-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 0.88em;
+  font-weight: 500;
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+.view-report-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+}
+.view-report-btn svg {
+  flex-shrink: 0;
+}
+.report-btn-wrap {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.view-report-btn.chat-about-btn {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.view-report-btn.chat-about-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.view-report-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.report-spinner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88em;
+  color: var(--fg);
+  opacity: 0.7;
+}
+.report-spinner-text {
+  font-weight: 500;
+}
+.report-spinner-dots::after {
+  content: '';
+  animation: report-dots 1.4s steps(4, end) infinite;
+}
+@keyframes report-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
+/* ── Continue research hint ────────────────────────── */
+.continue-research-wrap {
+  margin-top: 8px;
+}
+.continue-research-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78em;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.5;
+  padding: 4px 0;
+}
+.continue-research-hint svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* ── Research reconnect & timer ────────────────────── */
+.msg.research-reconnect {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.research-timer {
+  font-size: 0.8em;
+  opacity: 0.6;
+  margin-top: 4px;
+  font-family: monospace;
+  color: var(--fg-dim, var(--fg));
+}
+
+/* ── Research synapse visualization ───────────────────────────────
+   Live SVG graph of an in-flight deep-research run. The query is the
+   central node; sub-questions branch off per round; sources are leaf
+   nodes that pop in as they're captured. Pulses indicate activity. */
+.research-synapse {
+  margin: 6px 0 4px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 24%, var(--border));
+  border-radius: 7px;
+  background:
+    linear-gradient(color-mix(in srgb, var(--fg) 3%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--fg) 3%, transparent) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 48%, color-mix(in srgb, var(--accent, var(--red)) 13%, transparent) 0%, transparent 62%),
+    color-mix(in srgb, var(--panel) 68%, var(--bg));
+  background-size: 18px 18px, 18px 18px, auto, auto;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent);
+  overflow: hidden;
+}
+.research-synapse .rs-stage {
+  height: 400px;
+  position: relative;
+}
+.research-synapse .rs-meta-header {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
+  border-top: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding: 5px 8px 6px;
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+.research-synapse-ascii-filter > .rs-stage > svg {
+  display: none;
+}
+.research-synapse-ascii-filter .rs-ascii-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 28px 10px 10px;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: color-mix(in srgb, var(--accent, var(--red)) 76%, var(--fg));
+  font: 600 10px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre;
+  text-align: center;
+  opacity: 1;
+  text-shadow: 0 0 7px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  mix-blend-mode: screen;
+}
+.research-synapse-compact .rs-meta { padding: 5px 8px 6px; font-size: 10px; }
+.research-synapse-compact .rs-label-sub { font-size: 8px; }
+.research-synapse .rs-stage-head {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  left: 9px;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-dim, var(--fg));
+  font: 600 8px/1 ui-monospace, "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.research-synapse .rs-live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 75%, transparent);
+  animation: rs-live 1.8s ease-in-out infinite;
+}
+.research-synapse .rs-phase-chip {
+  margin-left: auto;
+  padding: 3px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 25%, var(--border));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, var(--bg));
+  color: var(--accent, var(--red));
+}
+.research-synapse svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.research-synapse .rs-edge {
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 32%, var(--border));
+  stroke-width: 1.35;
+  fill: none;
+  opacity: 0.72;
+}
+.research-synapse .rs-node {
+  fill: var(--bg);
+  stroke: var(--accent, var(--red));
+  stroke-width: 1.5;
+  transition: all 0.3s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.research-synapse .rs-source-index {
+  fill: var(--fg);
+  font: 650 4.5px/1 ui-monospace, "JetBrains Mono", monospace;
+  pointer-events: none;
+  opacity: 0.88;
+}
+.research-synapse .rs-node-expanded { animation: rs-hub-expand 0.75s ease-out; }
+.research-synapse .rs-node-new {
+  animation: rs-pop 0.6s ease-out;
+}
+.research-synapse .rs-pulse {
+  fill: var(--accent, var(--red));
+  opacity: 0;
+  animation: rs-pulse 2.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.research-synapse .rs-label {
+  fill: var(--fg);
+  font-size: 10px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.research-synapse .rs-label-sub {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.research-synapse .rs-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 8px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.92;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+.research-synapse .rs-meta .rs-status {
+  display: none;
+  color: var(--accent, var(--red));
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.research-synapse .rs-meta b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.research-synapse.rs-complete .rs-meta .rs-status { color: var(--color-success, #4caf50); }
+.research-synapse.rs-error .rs-meta .rs-status { color: var(--red); }

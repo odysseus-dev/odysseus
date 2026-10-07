@@ -1,29 +1,131 @@
 """History routes — session history, truncation, fork, conversation topics."""
 
 import json
+import os
 import uuid
 import logging
 import re
 from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.auth_helpers import effective_user
+from src.auth_helpers import effective_user, require_chat_api_token_scope
 from src.topic_analyzer import analyze_topics
 from src.upload_handler import reserve_message_upload_references
+from src.tool_approval_scopes import sanitize_client_message_metadata
 from routes.session_routes import (
     _message_role,
     _message_text,
     _reject_compact_during_active_run,
     _verify_session_owner,
 )
+from routes.chat_helpers import strip_tui_local_context
 
 logger = logging.getLogger(__name__)
 
 _HISTORY_INLINE_MEDIA_THRESHOLD = 200_000
 _DATA_IMAGE_RE = re.compile(r"data:image/[^;,\"]+;base64,[A-Za-z0-9+/=\s]+")
+
+
+def _sft_trace_file_for_owner(owner: str | None) -> str | None:
+    if not str(owner or "").startswith("sft_"):
+        return None
+    flag = os.getenv("ODYSSEUS_SFT_TRACE_CAPTURE", "1").strip().lower()
+    if flag in {"0", "false", "no", "off"}:
+        return None
+    try:
+        from src.constants import DATA_DIR
+        trace_dir = os.getenv("ODYSSEUS_SFT_TRACE_DIR") or os.path.join(DATA_DIR, "sft_traces")
+        return os.path.join(trace_dir, f"{owner}.jsonl")
+    except Exception:
+        return None
+
+
+def _remove_deleted_sft_trace_rows(
+    *,
+    owner: str | None,
+    session_id: str,
+    deleted_pairs: list[dict[str, str]],
+) -> None:
+    """Keep the training JSONL aligned with user-deleted chat attempts."""
+    path = _sft_trace_file_for_owner(owner)
+    if not path or not deleted_pairs or not os.path.exists(path):
+        return
+    try:
+        kept: list[str] = []
+        removed: list[str] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                raw = line.rstrip("\n")
+                if not raw.strip():
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    kept.append(raw)
+                    continue
+                if row.get("session_id") != session_id:
+                    kept.append(raw)
+                    continue
+                row_user = str(row.get("user") or "").strip()
+                row_assistant = str(row.get("assistant") or "").strip()
+                should_remove = any(
+                    row_user == pair.get("user", "").strip()
+                    and row_assistant == pair.get("assistant", "").strip()
+                    for pair in deleted_pairs
+                )
+                if should_remove:
+                    tombstone = dict(row)
+                    tombstone["deleted_from_training"] = True
+                    removed.append(json.dumps(tombstone, ensure_ascii=False))
+                else:
+                    kept.append(raw)
+        with open(path, "w", encoding="utf-8") as f:
+            for raw in kept:
+                f.write(raw + "\n")
+        if removed:
+            trash_path = path + ".trash"
+            with open(trash_path, "a", encoding="utf-8") as f:
+                for raw in removed:
+                    f.write(raw + "\n")
+            logger.info(
+                "Removed %d SFT trace row(s) for deleted messages in session %s",
+                len(removed),
+                session_id,
+            )
+    except Exception as exc:
+        logger.warning("Failed to prune SFT trace rows for %s: %s", session_id, exc)
+
+
+def _deleted_sft_pairs_from_db_rows(rows: list[DbChatMessage]) -> list[dict[str, str]]:
+    """Build user/assistant pairs affected by deleted messages.
+
+    The SFT trace row is one assistant turn paired with the nearest preceding
+    user turn. If the user deletes either side of a failed attempt before
+    retrying, remove that pair from the training JSONL.
+    """
+    pairs: list[dict[str, str]] = []
+    last_user = ""
+    pending_deleted_user = ""
+    for row in rows:
+        role = str(getattr(row, "role", "") or "")
+        content = str(getattr(row, "content", "") or "").strip()
+        will_delete = bool(getattr(row, "_will_delete_for_sft", False))
+        if role == "user":
+            last_user = content
+            if will_delete:
+                pending_deleted_user = content
+            continue
+        if role != "assistant":
+            continue
+        if will_delete and last_user:
+            pairs.append({"user": last_user, "assistant": content})
+        elif pending_deleted_user:
+            pairs.append({"user": pending_deleted_user, "assistant": content})
+            pending_deleted_user = ""
+    return pairs
 
 
 def _history_display_content(content: Any) -> Any:
@@ -100,8 +202,46 @@ def _merge_continue_rows_to_delete(db_messages, db1, db2):
     return to_delete
 
 
+def _is_continue_interruption_message(message: Any) -> bool:
+    if isinstance(message, ChatMessage):
+        role = message.role
+        content = message.content
+    elif isinstance(message, dict):
+        role = message.get("role", "")
+        content = message.get("content", "")
+    else:
+        role = getattr(message, "role", "")
+        content = getattr(message, "content", "")
+    normalized = " ".join(str(content or "").strip().lower().split())
+    return role == "user" and (
+        "previous response was interrupted" in normalized
+        or normalized in {
+            "continue from where you left off.",
+            "continue from where you left off",
+        }
+    )
+
+
+def _has_immediate_continue_marker(messages: list[Any], idx1: int, idx2: int) -> bool:
+    return idx2 - idx1 == 2 and _is_continue_interruption_message(messages[idx1 + 1])
+
+
+def _keep_count_before_message(db_messages, before_msg_id: str | None) -> int | None:
+    """Return the durable-history keep count before a DB message id."""
+    wanted = str(before_msg_id or "").strip()
+    if not wanted:
+        return None
+    for pos, row in enumerate(db_messages):
+        if str(getattr(row, "id", "")) == wanted:
+            return pos
+    return None
+
+
 def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
-    router = APIRouter(tags=["history"])
+    router = APIRouter(
+        tags=["history"],
+        dependencies=[Depends(require_chat_api_token_scope)],
+    )
 
     def _reserve_message_uploads(
         request: Request,
@@ -124,13 +264,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             )
 
     def _db_history_entry(m: DbChatMessage) -> Dict[str, Any]:
-        entry = {"role": m.role, "content": _history_display_content(m.content)}
+        entry = {"role": m.role, "content": strip_tui_local_context(_history_display_content(m.content))}
         meta = {}
         if m.meta_data:
             try:
                 meta = json.loads(m.meta_data) or {}
             except (json.JSONDecodeError, ValueError):
                 meta = {}
+        meta["_db_id"] = m.id
         if m.timestamp and "timestamp" not in meta:
             meta["timestamp"] = m.timestamp.isoformat() + "Z"
         if meta:
@@ -178,6 +319,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     "history": history_dict,
                     "model": db_session.model,
                     "endpoint_url": db_session.endpoint_url,
+                    "endpoint_id": getattr(db_session, "endpoint_id", None),
                     "name": db_session.name,
                     "offset": page_offset,
                     "limit": page_limit,
@@ -199,7 +341,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 # Skip hidden messages (e.g. compaction summaries for AI context)
                 if msg.metadata and msg.metadata.get("hidden"):
                     continue
-                entry = {"role": msg.role, "content": _history_display_content(msg.content)}
+                entry = {"role": msg.role, "content": strip_tui_local_context(_history_display_content(msg.content))}
                 if msg.metadata:
                     entry["metadata"] = msg.metadata
                 history_dict.append(entry)
@@ -208,7 +350,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     continue
                 entry = {
                     "role": msg.get("role", ""),
-                    "content": _history_display_content(msg.get("content", "")),
+                    "content": strip_tui_local_context(_history_display_content(msg.get("content", ""))),
                 }
                 if msg.get("metadata"):
                     entry["metadata"] = msg["metadata"]
@@ -241,6 +383,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             "history": history_dict,
             "model": session.model,
             "endpoint_url": session.endpoint_url,
+            "endpoint_id": getattr(session, "endpoint_id", None),
             "name": session.name,
         }
 
@@ -249,11 +392,36 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
-            keep_count = body.get("keep_count", 0)
+            keep_count = int(body.get("keep_count", 0))
+            before_msg_id = str(body.get("before_msg_id") or body.get("message_id") or "").strip()
+            deleted_sft_pairs: list[dict[str, str]] = []
+            if keep_count >= 0:
+                db = SessionLocal()
+                try:
+                    all_db_messages = db.query(DbChatMessage).filter(
+                        DbChatMessage.session_id == session_id
+                    ).order_by(DbChatMessage.timestamp).all()
+                    if before_msg_id:
+                        resolved_keep_count = _keep_count_before_message(all_db_messages, before_msg_id)
+                        if resolved_keep_count is None:
+                            raise HTTPException(404, "Message not found")
+                        keep_count = resolved_keep_count
+                    for pos, row in enumerate(all_db_messages):
+                        row._will_delete_for_sft = pos >= keep_count
+                    deleted_sft_pairs = _deleted_sft_pairs_from_db_rows(all_db_messages)
+                finally:
+                    db.close()
             result = session_manager.truncate_messages(session_id, keep_count)
+            _remove_deleted_sft_trace_rows(
+                owner=effective_user(request),
+                session_id=session_id,
+                deleted_pairs=deleted_sft_pairs,
+            )
             return {"status": "ok", "kept": keep_count, "truncated": result}
         except KeyError:
             raise HTTPException(404, "Session not found")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Truncate error {session_id}: {e}")
             raise HTTPException(500, str(e))
@@ -268,7 +436,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             content = body.get("content", "")
             if not content:
                 raise HTTPException(400, "content is required")
-            metadata = body.get("metadata")
+            metadata = sanitize_client_message_metadata(body.get("metadata"))
             _reserve_message_uploads(request, content, metadata)
             msg = ChatMessage(role=role, content=content, metadata=metadata)
             session_manager.add_message(session_id, msg)
@@ -288,6 +456,18 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             session = session_manager.get_session(session_id)
             db = SessionLocal()
             try:
+                all_db_messages = db.query(DbChatMessage).filter(
+                    DbChatMessage.session_id == session_id
+                ).order_by(DbChatMessage.timestamp).all()
+                delete_id_set = set(msg_ids or [])
+                delete_index_set = set(indices or [])
+                for pos, row in enumerate(all_db_messages):
+                    row._will_delete_for_sft = (
+                        (bool(delete_id_set) and row.id in delete_id_set)
+                        or (not delete_id_set and bool(delete_index_set) and pos in delete_index_set)
+                    )
+                deleted_sft_pairs = _deleted_sft_pairs_from_db_rows(all_db_messages)
+
                 if msg_ids:
                     # New ID-based delete
                     deleted = 0
@@ -330,6 +510,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                     db_session.updated_at = datetime.now(timezone.utc)
 
                 db.commit()
+                _remove_deleted_sft_trace_rows(
+                    owner=effective_user(request),
+                    session_id=session_id,
+                    deleted_pairs=deleted_sft_pairs,
+                )
                 return {"status": "ok", "deleted": deleted}
             finally:
                 db.close()
@@ -520,6 +705,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 return {"status": "ok", "merged": False}
 
             idx1, idx2 = ai_indices[-2], ai_indices[-1]
+            if not _has_immediate_continue_marker(session.history, idx1, idx2):
+                return {"status": "ok", "merged": False, "reason": "no_continue_marker"}
+
             msg1, msg2 = session.history[idx1], session.history[idx2]
 
             content1 = msg1.content if isinstance(msg1, ChatMessage) else msg1.get('content', '')
@@ -530,7 +718,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             meta1 = (msg1.metadata if isinstance(msg1, ChatMessage) else msg1.get('metadata')) or {}
             meta2 = (msg2.metadata if isinstance(msg2, ChatMessage) else msg2.get('metadata')) or {}
             merged_meta = {**meta1, **meta2}
+            thinking1 = str(meta1.get('thinking') or '').strip()
+            thinking2 = str(meta2.get('thinking') or '').strip()
+            if thinking1 and thinking2:
+                merged_meta['thinking'] = thinking1 + "\n\n(continued)\n\n" + thinking2
+            elif thinking1:
+                merged_meta['thinking'] = thinking1
             merged_meta.pop('stopped', None)  # no longer stopped after continue
+            merged_meta.pop('thinking_interrupted', None)
 
             # Update first message, remove second
             if isinstance(msg1, ChatMessage):
@@ -542,13 +737,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
 
             # Also remove the hidden "continue" user message between them if present
             # It's the message at idx2-1 if it's a user message with continue text
-            remove_indices = [idx2]
-            if idx2 - 1 > idx1:
-                between = session.history[idx2 - 1]
-                between_role = between.role if isinstance(between, ChatMessage) else between.get('role', '')
-                between_content = between.content if isinstance(between, ChatMessage) else between.get('content', '')
-                if between_role == 'user' and 'previous response was interrupted' in between_content:
-                    remove_indices.insert(0, idx2 - 1)
+            remove_indices = [idx2, idx1 + 1]
 
             for ri in sorted(remove_indices, reverse=True):
                 session.history.pop(ri)
@@ -566,19 +755,20 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 # Find last two assistant messages in DB
                 ai_db = [(i, m) for i, m in enumerate(db_messages) if m.role == 'assistant']
                 if len(ai_db) >= 2:
-                    (_, db1), (_, db2) = ai_db[-2], ai_db[-1]
-                    db1.content = merged_content
-                    db1.meta_data = _json.dumps(merged_meta)
+                    (db_idx1, db1), (db_idx2, db2) = ai_db[-2], ai_db[-1]
+                    if _has_immediate_continue_marker(db_messages, db_idx1, db_idx2):
+                        db1.content = merged_content
+                        db1.meta_data = _json.dumps(merged_meta)
 
-                    # Mirror the in-memory deletion: remove the second assistant
-                    # message and ONLY the "continue" user message between them
-                    # (not arbitrary tool/system/user rows). The old
-                    # range-delete destroyed every row between the two assistant
-                    # messages, desyncing the DB from the in-memory history.
-                    for _row in _merge_continue_rows_to_delete(db_messages, db1, db2):
-                        db.delete(_row)
+                        # Mirror the in-memory deletion: remove the second assistant
+                        # message and ONLY the "continue" user message between them
+                        # (not arbitrary tool/system/user rows). The old
+                        # range-delete destroyed every row between the two assistant
+                        # messages, desyncing the DB from the in-memory history.
+                        for _row in _merge_continue_rows_to_delete(db_messages, db1, db2):
+                            db.delete(_row)
 
-                    db.commit()
+                        db.commit()
             finally:
                 db.close()
             session_manager.save_sessions()
@@ -618,6 +808,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 model=source.model,
                 rag=False,
                 owner=getattr(source, 'owner', None),
+                endpoint_id=getattr(source, 'endpoint_id', None),
             )
 
             # Copy messages up to keep_count
@@ -672,13 +863,17 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(404, "Session not found")
 
         try:
+            from src.context_compactor import auto_compact_threshold_percent
             from src.model_context import estimate_tokens, get_context_length
+            from src.model_profiles import supports_user_thinking_toggle
 
             messages = session.get_context_messages()
             used = int(estimate_tokens(messages))
             ctx_len = int(get_context_length(session.endpoint_url, session.model) or 0)
+            thinking_supported = supports_user_thinking_toggle(session.model)
             pct = round((used / ctx_len) * 100, 1) if ctx_len else 0.0
             pct = max(0.0, min(100.0, pct))
+            auto_threshold = auto_compact_threshold_percent()
             visible_messages = sum(
                 1 for m in session.history
                 if not (getattr(m, "metadata", None) or {}).get("hidden")
@@ -692,6 +887,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "session_id": session_id,
                 "model": session.model,
                 "endpoint_url": session.endpoint_url,
+                "endpoint_id": getattr(session, "endpoint_id", None),
                 "used_tokens": used,
                 "context_length": ctx_len,
                 "context_percent": pct,
@@ -699,12 +895,200 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 "context_messages": len(messages),
                 "compacted_messages": compacted_messages,
                 "can_compact": can_compact,
-                "should_compact": pct >= 70,
-                "auto_compact_threshold": 85,
+                "should_compact": pct >= auto_threshold,
+                "auto_compact_threshold": auto_threshold,
+                "memory_extraction_enabled": getattr(session, "memory_extraction_enabled", True) is not False,
+                "memory_injection_enabled": getattr(session, "memory_injection_enabled", True) is not False,
+                "skill_injection_enabled": getattr(session, "skill_injection_enabled", True) is not False,
+                "thinking_mode": (getattr(session, "thinking_mode", "") or "off") if thinking_supported else "off",
+                "thinking_supported": thinking_supported,
+                "temperature_override": getattr(session, "temperature_override", None),
+                "max_tokens_override": getattr(session, "max_tokens_override", None),
             }
         except Exception as e:
             logger.error(f"Context usage error {session_id}: {e}")
             raise HTTPException(500, str(e))
+
+    @router.post("/api/session/{session_id}/memory-extraction")
+    async def set_session_memory_extraction(request: Request, session_id: str) -> Dict[str, Any]:
+        """Toggle automatic memory extraction for one chat session."""
+        _verify_session_owner(request, session_id)
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if "enabled" not in body:
+            raise HTTPException(400, "Missing enabled")
+        enabled = bool(body.get("enabled"))
+
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if not db_session:
+                raise HTTPException(404, "Session not found")
+            db_session.memory_extraction_enabled = enabled
+            db.commit()
+            session.memory_extraction_enabled = enabled
+            return {"status": "success", "memory_extraction_enabled": enabled}
+        except HTTPException:
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Memory extraction toggle error {session_id}: {e}")
+            raise HTTPException(500, "Failed to update memory extraction")
+        finally:
+            db.close()
+
+    @router.post("/api/session/{session_id}/skill-injection")
+    async def set_session_skill_injection(request: Request, session_id: str) -> Dict[str, Any]:
+        """Toggle skill injection for one chat session."""
+        _verify_session_owner(request, session_id, session_manager)
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if "enabled" not in body:
+            raise HTTPException(400, "Missing enabled")
+        enabled = bool(body.get("enabled"))
+
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if not db_session:
+                # Some active chats exist only in the in-memory manager until
+                # their first persisted write. Keep the toggle usable there.
+                session.skill_injection_enabled = enabled
+                session_manager.save_sessions()
+                return {"status": "success", "skill_injection_enabled": enabled}
+            db_session.skill_injection_enabled = enabled
+            db.commit()
+            session.skill_injection_enabled = enabled
+            return {"status": "success", "skill_injection_enabled": enabled}
+        except HTTPException:
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Skill injection toggle error {session_id}: {e}")
+            raise HTTPException(500, "Failed to update skill injection")
+        finally:
+            db.close()
+
+    @router.post("/api/session/{session_id}/memory-injection")
+    async def set_session_memory_injection(request: Request, session_id: str) -> Dict[str, Any]:
+        """Toggle saved-memory injection for one chat session."""
+        _verify_session_owner(request, session_id, session_manager)
+        try:
+            session = session_manager.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if "enabled" not in body:
+            raise HTTPException(400, "Missing enabled")
+        enabled = bool(body.get("enabled"))
+
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if not db_session:
+                session.memory_injection_enabled = enabled
+                session_manager.save_sessions()
+                return {"status": "success", "memory_injection_enabled": enabled}
+            db_session.memory_injection_enabled = enabled
+            db.commit()
+            session.memory_injection_enabled = enabled
+            return {"status": "success", "memory_injection_enabled": enabled}
+        except HTTPException:
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Memory injection toggle error {session_id}: {e}")
+            raise HTTPException(500, "Failed to update memory injection")
+        finally:
+            db.close()
+
+    @router.post("/api/session/{session_id}/generation-settings")
+    async def set_session_generation_settings(request: Request, session_id: str) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id, session_manager)
+        try:
+            session = session_manager.get_session(session_id)
+            body = await request.json()
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+        mode = getattr(session, "thinking_mode", "off") or "off"
+        raw_effort = body.get("reasoning_effort")
+        if raw_effort is not None:
+            clean_effort = str(raw_effort).strip().lower()
+            if clean_effort in {"", "default"}:
+                mode = "off"
+            else:
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                meta = get_chatgpt_model_metadata(session.model)
+                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
+                    mode = f"effort:{clean_effort}"
+                else:
+                    mode = "off"
+        elif "thinking_mode" in body:
+            raw_mode = str(body.get("thinking_mode") or "").strip().lower()
+            if raw_mode.startswith("effort:"):
+                clean_effort = raw_mode[7:].strip()
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                meta = get_chatgpt_model_metadata(session.model)
+                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
+                    mode = f"effort:{clean_effort}"
+                else:
+                    mode = "off"
+            elif raw_mode in {"", "on", "off"}:
+                mode = raw_mode
+                from src.model_profiles import supports_user_thinking_toggle
+                if not supports_user_thinking_toggle(session.model):
+                    mode = "off"
+            else:
+                raise HTTPException(400, "Invalid thinking mode")
+
+        if "temperature_override" in body:
+            temperature = body.get("temperature_override")
+            temperature = None if temperature in (None, "") else max(0.0, min(2.0, float(temperature)))
+        else:
+            temperature = getattr(session, "temperature_override", None)
+
+        if "max_tokens_override" in body:
+            max_tokens = body.get("max_tokens_override")
+            max_tokens = None if max_tokens in (None, "", 0) else max(256, min(32768, int(max_tokens)))
+        else:
+            max_tokens = getattr(session, "max_tokens_override", None)
+
+        db = SessionLocal()
+        try:
+            row = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if not row:
+                raise HTTPException(404, "Session not found")
+            row.thinking_mode, row.temperature_override, row.max_tokens_override = mode, temperature, max_tokens
+            db.commit()
+            session.thinking_mode, session.temperature_override, session.max_tokens_override = mode, temperature, max_tokens
+            resp_effort = mode[7:] if mode.startswith("effort:") else ("default" if mode in {"", "off"} else None)
+            return {
+                "status": "success",
+                "thinking_mode": mode,
+                "reasoning_effort": resp_effort,
+                "temperature_override": temperature,
+                "max_tokens_override": max_tokens,
+            }
+        finally:
+            db.close()
 
     @router.post("/api/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):

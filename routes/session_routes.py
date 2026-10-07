@@ -3,18 +3,27 @@ import re
 import html
 import json
 import uuid
+import time
+from pathlib import Path
 from datetime import datetime
-from fastapi import APIRouter, Form, HTTPException, Response, Request
+from fastapi import APIRouter, Form, HTTPException, Response, Request, Depends, Query
 import logging
 
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import effective_user, _auth_disabled, owner_filter
+from src.auth_helpers import (
+    effective_user,
+    _auth_disabled,
+    owner_filter,
+    is_delegated_credential,
+    require_chat_api_token_scope,
+)
 from src.session_image_cleanup import _generated_image_path_for_cleanup, session_image_refs
 from src.session_actions import is_session_recently_active
 from src.upload_handler import reserve_message_upload_references
+from src.tool_approval_scopes import sanitize_client_message_metadata
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -58,6 +67,114 @@ def _content_to_text(content) -> str:
             if isinstance(b, dict) and b.get("text")
         )
     return ""
+
+
+def _context_info_skill_inventory(
+    skills_manager, owner: str | None, limit: int = 80
+) -> list[dict]:
+    """Compact skill metadata for TUI context/status/autocomplete.
+
+    This intentionally exposes only the skill index fields. Full SKILL.md
+    bodies remain behind manage_skills/view so context_info cannot become a
+    prompt/body dump path.
+    """
+    if not skills_manager:
+        return []
+    try:
+        indexed = skills_manager.index_for(owner=owner, active_toolsets=None)
+    except Exception:
+        return []
+    try:
+        loaded = skills_manager.load(owner=owner)
+    except Exception:
+        loaded = []
+    paths_by_name = {
+        str(skill.get("name") or ""): str(skill.get("path") or "").strip()
+        for skill in loaded
+        if isinstance(skill, dict)
+    }
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in indexed:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        item = {"name": name}
+        description = str(row.get("description") or "").strip()
+        if description:
+            item["description"] = description
+        path = paths_by_name.get(name, "")
+        if path:
+            item["source"] = f"file: {path}"
+        out.append(item)
+        seen.add(name)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _context_info_tool_inventory(limit: int = 80) -> list[dict]:
+    """Compact built-in tool metadata for TUI context/status/autocomplete."""
+    try:
+        from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
+    except Exception:
+        return []
+    out: list[dict] = []
+    for name, description in BUILTIN_TOOL_DESCRIPTIONS.items():
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            continue
+        item = {"name": clean_name, "source": "backend"}
+        clean_description = re.sub(r"\s+", " ", str(description or "")).strip()
+        if clean_description:
+            item["description"] = clean_description[:280]
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _context_info_agents_md_inventory(workspace: str | None, limit: int = 8) -> list[dict]:
+    """Compact AGENTS.md path metadata for the active workspace.
+
+    Bodies intentionally stay on disk. The TUI can read a selected file only
+    when the user asks for `/agent <path> --show`.
+    """
+    try:
+        from src.tool_execution import vet_workspace
+        root = vet_workspace(workspace or "")
+    except Exception:
+        root = None
+    if not root:
+        return []
+
+    start = Path(root).resolve()
+    candidates = []
+    current = start
+    while True:
+        candidate = current / "AGENTS.md"
+        if candidate.is_file():
+            candidates.append(candidate)
+        if current.parent == current:
+            break
+        current = current.parent
+        if len(candidates) >= limit:
+            break
+
+    # Codex-style precedence reads parent instructions before child overrides.
+    out: list[dict] = []
+    seen: set[str] = set()
+    for candidate in reversed(candidates):
+        path = str(candidate)
+        if path in seen:
+            continue
+        out.append({"path": path, "source": "workspace"})
+        seen.add(path)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _message_role(message) -> str:
@@ -124,9 +241,15 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["sessions"])
+router = APIRouter(
+    prefix="/api",
+    tags=["sessions"],
+    dependencies=[Depends(require_chat_api_token_scope)],
+)
 
 def _current_user_is_admin(request: Request, user: str | None) -> bool:
+    if is_delegated_credential(request):
+        return False
     if not user:
         return False
     auth_mgr = getattr(request.app.state, "auth_manager", None)
@@ -157,20 +280,52 @@ def _reject_raw_endpoint_url_for_non_admin(
         raise HTTPException(403, "Choose a registered model endpoint")
 
 
-def _persist_session_headers(session_id: str, headers: dict | None) -> None:
+def _reject_delegated_session_options(
+    request: Request,
+    *,
+    skip_validation: bool = False,
+    api_key: str | None = None,
+) -> None:
+    """Keep bearer credentials from exercising interactive-admin options."""
+    if is_delegated_credential(request) and (
+        skip_validation or bool((api_key or "").strip())
+    ):
+        raise HTTPException(
+            403,
+            "API tokens cannot supply endpoint credentials or skip endpoint validation",
+        )
+
+
+def _persist_session_headers(session_id: str, headers: dict | None) -> bool:
     """Persist endpoint auth headers for DB-backed session metadata."""
-    db = SessionLocal()
-    try:
-        db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-        if db_session:
-            db_session.headers = headers or {}
-            db_session.updated_at = utcnow_naive()
-            db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    delays = (0.05, 0.15, 0.35)
+    last_exc: Exception | None = None
+    for attempt in range(len(delays) + 1):
+        db = SessionLocal()
+        try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session:
+                db_session.headers = headers or {}
+                db_session.updated_at = utcnow_naive()
+                db.commit()
+            return True
+        except Exception as exc:
+            db.rollback()
+            last_exc = exc
+            if attempt >= len(delays):
+                break
+            if "database is locked" not in str(exc).lower():
+                break
+            time.sleep(delays[attempt])
+        finally:
+            db.close()
+
+    logger.warning(
+        "Failed to persist headers for session %s; continuing with in-memory headers: %s",
+        session_id,
+        last_exc,
+    )
+    return False
 
 
 _HIDDEN_SYSTEM_SESSION_NAMES = {
@@ -182,6 +337,16 @@ _HIDDEN_SYSTEM_SESSION_NAMES = {
     "[Task] Email Tags",
     "[Task] Skills Audit",
 }
+
+
+def _is_hidden_session_name(name: str | None) -> bool:
+    """Return whether a session should be omitted from the sidebar list."""
+    clean = (name or "").strip()
+    return (
+        clean in ("Nobody", "Incognito")
+        or clean in _HIDDEN_SYSTEM_SESSION_NAMES
+        or clean.startswith("SFT trace batch ")
+    )
 
 
 def _pick_endpoint_for_sort(owner=None):
@@ -210,6 +375,7 @@ def setup_session_routes(
     config: dict,
     webhook_manager=None,
     upload_handler=None,
+    skills_manager=None,
 ):
     """Setup session routes with the provided manager and config"""
 
@@ -258,35 +424,22 @@ def setup_session_routes(
         except Exception:
             pass
         user_sessions = session_manager.get_sessions_for_user(user)
-        # Fetch folder info from DB for each session
+        # The sidebar must be backed by persisted DB rows. SessionManager only
+        # hydrates a bounded recent cache at startup, so older-but-valid
+        # conversations can disappear after refresh if this endpoint trusts
+        # memory as the source of truth.
         db = SessionLocal()
         try:
-            folder_map = {}
-            token_map = {}
-            important_map = {}
-            created_map = {}
-            updated_map = {}
-            last_msg_map = {}
-            mode_map = {}
-            msg_count_map = {}
-            q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
+            q = (
+                db.query(DbSession)
+                .filter(DbSession.archived == False)
+                .order_by(DbSession.is_important.desc(), DbSession.updated_at.desc())
+            )
             q = owner_filter(q, DbSession, user)
-            rows = q.all()
-            for row in rows:
-                folder_map[row.id] = row.folder
-                token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
-                important_map[row.id] = row.is_important or False
-                created_map[row.id] = row.created_at.isoformat() if row.created_at else None
-                updated_map[row.id] = row.updated_at.isoformat() if row.updated_at else None
-                # Fall back to updated_at then created_at so sessions that
-                # predate the column (or have no messages) still sort sanely.
-                last_msg_map[row.id] = (
-                    row.last_message_at.isoformat() if row.last_message_at
-                    else (row.updated_at.isoformat() if row.updated_at
-                          else (row.created_at.isoformat() if row.created_at else None))
-                )
-                mode_map[row.id] = row.mode
-                msg_count_map[row.id] = row.message_count or 0
+            rows = [
+                row for row in q.all()
+                if not _is_hidden_session_name(row.name)
+            ]
             # Sessions with active documents that have content
             from sqlalchemy import func
             doc_session_ids = set(
@@ -305,25 +458,61 @@ def setup_session_routes(
                     GalleryImage, user)
                 .distinct().all()
             )
+
+            # Resolve saved routes without waiting for the frontend model catalog.
+            from core.database import ModelEndpoint
+            from src.endpoint_resolver import build_chat_url, normalize_base
+            endpoint_routes = {}
+            endpoint_query = owner_filter(db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True), ModelEndpoint, user)
+            for endpoint in endpoint_query.all():
+                route_url = build_chat_url(normalize_base(endpoint.base_url or '')).rstrip('/')
+                endpoint_routes.setdefault(route_url, []).append(endpoint)
+            sessions = []
+            for s in rows:
+                if (
+                    (s.message_count or 0) <= 0
+                    and s.id not in doc_session_ids
+                    and s.id not in img_session_ids
+                    and s.id not in user_sessions
+                ):
+                    continue
+                # Fall back to updated_at then created_at so sessions that
+                # predate the column (or have no messages) still sort sanely.
+                last_message_at = (
+                    s.last_message_at.isoformat() if s.last_message_at
+                    else (s.updated_at.isoformat() if s.updated_at
+                          else (s.created_at.isoformat() if s.created_at else None))
+                )
+                matches = endpoint_routes.get((s.endpoint_url or '').rstrip('/'), [])
+                bound_id = getattr(s, "endpoint_id", None)
+                selected_endpoint = (
+                    next((ep for ep in matches if ep.id == bound_id), None)
+                    if bound_id else (matches[0] if len(matches) == 1 else None)
+                )
+                sessions.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "model": _public_model(s.name, s.model),
+                    "endpoint_url": s.endpoint_url,
+                    "endpoint_id": bound_id or (selected_endpoint.id if selected_endpoint else None),
+                    "endpoint_name": selected_endpoint.name if selected_endpoint else None,
+                    "rag": s.rag,
+                    "archived": s.archived,
+                    "folder": s.folder,
+                    "cwd": s.cwd,
+                    "total_tokens": (s.total_input_tokens or 0) + (s.total_output_tokens or 0),
+                    "total_cost_usd": s.total_cost_usd or 0.0,
+                    "is_important": s.is_important or False,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                    "last_message_at": last_message_at,
+                    "has_documents": s.id in doc_session_ids,
+                    "has_images": s.id in img_session_ids,
+                    "mode": s.mode,
+                    "message_count": s.message_count or 0,
+                })
         finally:
             db.close()
-
-        sessions = [{"id": s.id, "name": s.name, "model": _public_model(s.name, s.model),
-                     "endpoint_url": s.endpoint_url, "rag": s.rag,
-                     "archived": s.archived, "folder": folder_map.get(s.id),
-                     "total_tokens": token_map.get(s.id, 0),
-                     "is_important": important_map.get(s.id, False),
-                     "created_at": created_map.get(s.id),
-                     "updated_at": updated_map.get(s.id),
-                     "last_message_at": last_msg_map.get(s.id),
-                     "has_documents": s.id in doc_session_ids,
-                     "has_images": s.id in img_session_ids,
-                     "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
-                    for s in user_sessions.values()
-                    if not s.archived
-                    and (s.name or "").strip() not in ("Nobody", "Incognito")
-                    and (s.name or "").strip() not in _HIDDEN_SYSTEM_SESSION_NAMES]
 
         return sessions
     
@@ -337,9 +526,15 @@ def setup_session_routes(
         skip_validation: str = Form(None),
         api_key: str = Form(""),
         endpoint_id: str = Form(""),
+        cwd: str = Form(None),
     ):
         skip_val = str(skip_validation).lower() == "true"
         user = effective_user(request)
+        _reject_delegated_session_options(
+            request,
+            skip_validation=skip_val,
+            api_key=api_key,
+        )
         endpoint_api_key = ""
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
@@ -432,6 +627,8 @@ def setup_session_routes(
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             owner=user,
+            cwd=cwd or None,
+            endpoint_id=endpoint_id.strip() if endpoint_id else None,
         )
         # Set auth headers for custom API-key endpoints
         resolved_key = request_api_key
@@ -439,7 +636,8 @@ def setup_session_routes(
         if not resolved_key and endpoint_api_key:
             resolved_key = endpoint_api_key
             resolved_base = endpoint_base_url
-        if resolved_key:
+        from src.chatgpt_subscription import is_chatgpt_subscription_base
+        if resolved_key and not is_chatgpt_subscription_base(endpoint_url):
             from src.endpoint_resolver import build_headers
             session.headers = build_headers(resolved_key, resolved_base)
             _persist_session_headers(sid, session.headers)
@@ -456,7 +654,8 @@ def setup_session_routes(
             name=session.name,
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
-            archived=False
+            archived=False,
+            cwd=session.cwd,
         )    
     @router.patch("/session/{sid}")
     def rename_session(
@@ -464,6 +663,7 @@ def setup_session_routes(
         name: str = Form(None), folder: str = Form(None),
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
+        cwd: str = Form(None),
     ):
         _verify_session_owner(request, sid)
         try:
@@ -484,6 +684,19 @@ def setup_session_routes(
                     db_session.updated_at = utcnow_naive()
                     db.commit()
                     result["folder"] = folder if folder else None
+            finally:
+                db.close()
+        if cwd is not None:
+            clean_cwd = cwd.strip() or None
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                if db_session:
+                    db_session.cwd = clean_cwd
+                    db_session.updated_at = utcnow_naive()
+                    db.commit()
+                    session.cwd = clean_cwd
+                    result["cwd"] = clean_cwd
             finally:
                 db.close()
         # Switch model/endpoint mid-session
@@ -512,14 +725,26 @@ def setup_session_routes(
                     endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
                 finally:
                     _db.close()
+            previous_url = session.endpoint_url
             session.model = model
             session.endpoint_url = endpoint_url
+            # A registered endpoint id pins the exact route; a raw URL switch
+            # (admin only) clears any previous binding.
+            session.endpoint_id = (endpoint_id or "").strip() or (
+                getattr(session, "endpoint_id", None) if endpoint_url == previous_url else None
+            )
             # Update auth headers from the endpoint's stored API key
             if endpoint_api_key:
                 from src.endpoint_resolver import build_headers
                 session.headers = build_headers(endpoint_api_key, endpoint_base_url)
             else:
                 session.headers = {}
+            if getattr(session, "thinking_mode", "").startswith("effort:"):
+                current_effort = session.thinking_mode[7:]
+                from src.chatgpt_subscription import get_chatgpt_model_metadata
+                meta = get_chatgpt_model_metadata(model)
+                if not meta or current_effort not in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
+                    session.thinking_mode = "off"
             # Persist to DB
             db = SessionLocal()
             try:
@@ -527,7 +752,9 @@ def setup_session_routes(
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
+                    db_session.endpoint_id = session.endpoint_id
                     db_session.headers = session.headers or {}
+                    db_session.thinking_mode = getattr(session, "thinking_mode", "off") or "off"
                     db_session.updated_at = utcnow_naive()
                     db.commit()
             finally:
@@ -564,7 +791,11 @@ def setup_session_routes(
         except (AttributeError, TypeError, ValueError) as exc:
             raise HTTPException(400, "Invalid message attachment metadata") from exc
         for m in messages:
-            sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
+            sess.add_message(ChatMessage(
+                m["role"],
+                m["content"],
+                metadata=sanitize_client_message_metadata(m.get("metadata")),
+            ))
         session_manager.save_sessions()
         return {"ok": True, "count": len(messages)}
 
@@ -597,13 +828,26 @@ def setup_session_routes(
                     db.close()
 
                 if session_manager.delete_session(sid):
+                    from routes.chat_helpers import remove_session_sft_trace_rows
+                    remove_session_sft_trace_rows(effective_user(request), sid)
                     deleted_count += 1
             except Exception:
                 pass
         return {"deleted": deleted_count}
 
+    @router.get("/session/{sid}/deletion-info")
+    def session_deletion_info(request: Request, sid: str):
+        _verify_session_owner(request, sid, session_manager)
+        from src.session_image_cleanup import session_gallery_images
+        db = SessionLocal()
+        try:
+            count = session_gallery_images(db, sid).filter(GalleryImage.is_active.is_(True)).count()
+            return {"image_count": count}
+        finally:
+            db.close()
+
     @router.delete("/session/{sid}")
-    def delete_session(request: Request, sid: str):
+    def delete_session(request: Request, sid: str, delete_images: bool = False):
         """Permanently delete a session and all its messages."""
         _verify_session_owner(request, sid, session_manager)
         try:
@@ -620,7 +864,10 @@ def setup_session_routes(
                 db.close()
 
             # Delete the session and all its messages
-            if session_manager.delete_session(sid):
+            if (session_manager.delete_session(sid, delete_images=True) if delete_images
+                    else session_manager.delete_session(sid)):
+                from routes.chat_helpers import remove_session_sft_trace_rows
+                remove_session_sft_trace_rows(effective_user(request), sid)
                 return {"status": "deleted"}
             else:
                 raise HTTPException(404, "Session not found")
@@ -637,7 +884,7 @@ def setup_session_routes(
             )
     
     @router.delete("/sessions/all")
-    def delete_all_sessions(request: Request):
+    def delete_all_sessions(request: Request, delete_images: bool = False):
         """Admin only: permanently delete ALL sessions and their messages."""
         from core.middleware import require_admin
         require_admin(request)
@@ -664,7 +911,7 @@ def setup_session_routes(
                 if filenames:
                     clauses.append(GalleryImage.filename.in_(list(filenames)))
                 image_query = db.query(GalleryImage).filter(or_(*clauses))
-            images = image_query.all()
+            images = image_query.all() if delete_images else []
             removed_images = 0
             for img in images:
                 img.is_active = False
@@ -676,6 +923,9 @@ def setup_session_routes(
                         except Exception as exc:
                             logger.warning("Could not remove generated image %s during all-session delete: %s", img.filename, exc)
                 removed_images += 1
+            db.query(GalleryImage).filter(GalleryImage.session_id.in_(session_ids)).update(
+                {GalleryImage.session_id: None}, synchronize_session=False
+            )
             db.query(DbChatMessage).delete()
             db.query(DbSession).delete()
             db.commit()
@@ -906,6 +1156,8 @@ def setup_session_routes(
         model: str = Form("gpt-4o"),
         rag: str = Form(None)
     ):
+        if is_delegated_credential(request):
+            raise HTTPException(403, "This session type requires an interactive session")
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
         sid = str(uuid.uuid4())
@@ -1034,11 +1286,19 @@ def setup_session_routes(
         if not session_manager.replace_messages(session_id, new_history):
             raise HTTPException(500, "Failed to save compacted history")
 
+        # Rough token estimate of the compacted history so clients can
+        # refresh their context-pressure display without waiting for the
+        # next turn's metrics event.
+        context_tokens_estimate = sum(
+            len(_message_text(m) or "") // 4 + 8 for m in new_history
+        )
+
         return {
             "ok": True,
             "summarized": len(older),
             "kept": len(recent),
             "message_count": len(new_history),
+            "context_tokens_estimate": context_tokens_estimate,
         }
 
     @router.post("/sessions/auto-sort")
@@ -1328,19 +1588,83 @@ def setup_session_routes(
         }
 
     @router.get("/session/{session_id}/context_info")
-    async def get_context_info(request: Request, session_id: str):
+    async def get_context_info(
+        request: Request,
+        session_id: str,
+        cwd: str | None = Query(default=None),
+    ):
         """Get the real context length for a session's model from the endpoint."""
         _verify_session_owner(request, session_id)
+        owner = effective_user(request)
         session = session_manager.get_session(session_id)
         if not session:
             raise HTTPException(404, "Session not found")
+        skills = _context_info_skill_inventory(skills_manager, owner=owner)
+        tools = _context_info_tool_inventory()
+        # `cwd` is caller-chosen. Walking it for AGENTS.md and reporting whether
+        # it exists confirms paths on the host, which /api/workspace/browse and
+        # /vet reserve for admins (or single-user mode); keep that boundary here.
+        from src.tool_security import owner_is_admin_or_single_user
+
+        _host_paths_visible = owner_is_admin_or_single_user(owner)
+        agents_md = _context_info_agents_md_inventory(cwd) if _host_paths_visible else []
+        # Workspace visibility: lets the TUI answer "can the backend actually
+        # see this directory?" (mounted vs bridge-only) without probing.
+        from src.workspace_paths import backend_workspace_path, workspace_mount_pairs
+
+        _raw_cwd = str(cwd or getattr(session, "cwd", "") or "").strip()
+        _backend_cwd = backend_workspace_path(_raw_cwd)[:400] if _raw_cwd else ""
+        # Server-side tool policy: non-admin owners silently lose the computer
+        # tools (src/tool_security); surface that so the TUI can show it.
+        try:
+            from src.tool_security import blocked_tools_for_owner, delegated_credential_blocked_tools
+
+            _blocked = blocked_tools_for_owner(owner)
+            if is_delegated_credential(request):
+                _blocked.update(delegated_credential_blocked_tools())
+        except Exception:
+            _blocked = set()
+        _computer = {"bash", "python", "read_file", "write_file", "host_shell"}
+        _policy = {
+            "computer_tools": "restricted" if _computer & _blocked else "full",
+            "reason": "API-token caller" if is_delegated_credential(request) else
+                      "non-admin owner" if _blocked else "single-user or admin",
+        }
+        _workspace = {
+            "backend_path": _backend_cwd,
+            "exists_in_backend": _host_paths_visible and bool(_backend_cwd) and Path(_backend_cwd).is_dir(),
+            "mount_configured": bool(workspace_mount_pairs()),
+            "via_mount": bool(_raw_cwd) and backend_workspace_path(_raw_cwd) != _raw_cwd,
+        }
         if not session.endpoint_url or not session.model:
-            return {"context_length": None}
+            return {
+                "context_length": None,
+                "skills": skills,
+                "tools": tools,
+                "agents_md": agents_md,
+                "workspace": _workspace,
+                "tool_policy": _policy,
+            }
         try:
             from src.model_context import get_context_length
             ctx = get_context_length(session.endpoint_url, session.model)
-            return {"context_length": ctx, "model": session.model}
+            return {
+                "context_length": ctx,
+                "model": session.model,
+                "skills": skills,
+                "tools": tools,
+                "agents_md": agents_md,
+                "workspace": _workspace,
+                "tool_policy": _policy,
+            }
         except Exception:
-            return {"context_length": None}
+            return {
+                "context_length": None,
+                "skills": skills,
+                "tools": tools,
+                "agents_md": agents_md,
+                "workspace": _workspace,
+                "tool_policy": _policy,
+            }
 
     return router

@@ -8,6 +8,8 @@ run-local integrity gates before dispatch.
 from __future__ import annotations
 
 import json
+import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -15,7 +17,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from src.tool_approval_scopes import CHAT_SESSION_APPROVAL_CONTEXT_MARKER
-from src.tool_security import BUILTIN_EMAIL_TOOLS
+from src.tool_security import BUILTIN_EMAIL_TOOLS, is_public_blocked_tool
 
 
 class ToolEffect(str, Enum):
@@ -99,7 +101,7 @@ _register(
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
 _register(
-    {"web_search"},
+    {"get_weather", "private_browser", "web_search", "youtube_tool"},
     ToolEffect.BROKERED_NETWORK_READ,
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
@@ -110,10 +112,21 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
+    {"pdf_extract"},
+    ToolEffect.BROKERED_NETWORK_READ,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
+    {"inspect_media", "extract_text", "transcribe_media"},
+    ToolEffect.READ_WORKSPACE,
+    result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
+)
+_register(
     {
         "list_email_accounts",
         "list_emails",
         "read_email",
+        "scan_spam",
         "resolve_contact",
         "scan_email_unsubscribes",
         "search_chats",
@@ -127,7 +140,7 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"bash", "manage_bg_jobs", "python"},
+    {"bash", "host_shell", "manage_bg_jobs", "python"},
     ToolEffect.EXECUTE_CODE,
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
@@ -206,7 +219,9 @@ _register(
 _register(
     {
         "archive_email",
+        "block_sender",
         "bulk_email",
+        "manage_email_state",
         "mark_email_read",
         "reply_to_email",
         "send_email",
@@ -287,6 +302,8 @@ _BROWSER_MCP_READ_CAPABILITIES = _capabilities(
 )
 _BROWSER_MCP_READ_TOOLS = frozenset(
     {
+        "private_browser",
+        "youtube_tool",
         "mcp__builtin_browser__browser_console_messages",
         "mcp__builtin_browser__browser_network_requests",
         "mcp__builtin_browser__browser_snapshot",
@@ -315,7 +332,7 @@ def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
 _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "manage_calendar": frozenset({"list_calendars", "list_events"}),
-        "manage_contact": frozenset({"list"}),
+        "manage_contact": frozenset({"list", "search", "find"}),
         "manage_documents": frozenset({"list", "read", "view", "open", "get"}),
         "manage_memory": frozenset({"list", "search"}),
         "manage_notes": frozenset({"list", "search", "find", "view"}),
@@ -323,6 +340,12 @@ _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
         "manage_session": frozenset({"list", "switch", "open", "select", "view"}),
         "manage_skills": frozenset({"list", "index", "view", "view_ref", "search"}),
         "manage_tasks": frozenset({"list"}),
+        "manage_email_state": frozenset({"list_blocked"}),
+        "manage_endpoints": frozenset({"list"}),
+        "manage_mcp": frozenset({"list", "list_tools"}),
+        "manage_tokens": frozenset({"list"}),
+        "manage_webhooks": frozenset({"list"}),
+        "manage_settings": frozenset({"list", "get", "list_tools"}),
     }
 )
 
@@ -350,6 +373,25 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         ),
         "manage_skills": frozenset({"add", "edit", "patch", "publish", "delete"}),
         "manage_tasks": frozenset({"create", "edit", "delete", "pause", "resume", "run"}),
+        "manage_email_state": frozenset(
+            {
+                "favorite",
+                "unfavorite",
+                "mark_read",
+                "mark_unread",
+                "mark_done",
+                "mark_undone",
+                "unarchive",
+                "unblock_sender",
+            }
+        ),
+        "manage_endpoints": frozenset({"add", "delete", "enable", "disable"}),
+        "manage_mcp": frozenset({"add", "delete", "enable", "disable", "reconnect"}),
+        "manage_settings": frozenset(
+            {"set", "delete", "reset", "disable_tool", "enable_tool"}
+        ),
+        "manage_tokens": frozenset({"create", "delete"}),
+        "manage_webhooks": frozenset({"add", "delete", "enable", "disable"}),
     }
 )
 
@@ -459,6 +501,77 @@ def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
     if not isinstance(tool_name, str):
         return base
 
+    if tool_name in {"web_fetch", "pdf_extract"}:
+        payload = content
+        raw = content.strip() if isinstance(content, str) else ""
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(raw) if raw.startswith("{") else {}
+            except (TypeError, ValueError):
+                payload = {}
+        if not isinstance(payload, Mapping):
+            payload = {}
+        if tool_name == "web_fetch" and "urls" in payload:
+            urls = payload["urls"]
+            sources = []
+            if isinstance(urls, list):
+                for item in urls:
+                    source = item.get("url") if isinstance(item, Mapping) else item
+                    sources.append(str(source or "").strip())
+        else:
+            source = payload.get("url") or (payload.get("path") if tool_name == "pdf_extract" else "")
+            sources = [str(source or "").strip() or raw.split("\n", 1)[0].strip()]
+        # Match the native readers' local selectors without resolving or
+        # opening files. A mixed batch retains its network effects as well.
+        if tool_name == "web_fetch":
+            local = [source.startswith("/workspace/") or source.lower().startswith("file:///workspace/")
+                     for source in sources]
+        else:
+            local = [os.path.isabs(source) or source.lower().startswith("file://") for source in sources]
+        if any(local):
+            effects = {ToolEffect.READ_WORKSPACE}
+            if not all(local):
+                effects.update(base.effects)
+            return ToolCapabilities(
+                frozenset(effects),
+                ResultIntegrity.WORKSPACE_UNTRUSTED if all(local) else base.result_integrity,
+                known=base.known,
+            )
+
+    if tool_name == "extract_text":
+        payload = content
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError):
+                payload = None
+        if isinstance(payload, Mapping) and re.fullmatch(
+            r'odysseus://attachment/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9]+)?', str(payload.get('path') or '')
+        ):
+            return _capabilities(ToolEffect.READ_PRIVATE,
+                                 result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+
+    # Media inspection is normally read-only, but its export forms create
+    # workspace artifacts.  Classify the concrete call instead of treating
+    # every inspect_media invocation as a read; completion and security gates
+    # both rely on these effects being truthful.
+    if tool_name == "inspect_media":
+        payload: Any = content
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload) if payload.strip() else {}
+            except (TypeError, ValueError):
+                payload = {}
+        if isinstance(payload, Mapping) and any(
+            payload.get(key) not in (None, "", [], {})
+            for key in ("output_path", "export_path", "exports", "export")
+        ):
+            return ToolCapabilities(
+                frozenset(set(base.effects) | {ToolEffect.WRITE_WORKSPACE}),
+                base.result_integrity,
+                known=base.known,
+            )
+
     action = _action_from_content(tool_name, content)
     destructive = action in _ACTION_DESTRUCTIVE.get(tool_name, ())
     if tool_name not in _PRIVATE_ACTION_READS:
@@ -565,6 +678,16 @@ POST_EXTERNAL_BLOCKED_EFFECTS = frozenset(
 )
 
 
+# On by default: until agent processes run without network and side-effecting
+# non-process tools have their own exact-approval boundary, this gate is the
+# only check between injected external content and those tools. Set it to a
+# falsy value to opt out.
+TOOL_APPROVAL_GATE_ENABLED = (
+    str(os.getenv("ODYSSEUS_TOOL_APPROVAL_GATE", "1")).strip().lower()
+    not in {"0", "false", "no", "off"}
+)
+
+
 @dataclass(frozen=True)
 class ToolGateDecision:
     allowed: bool
@@ -581,6 +704,22 @@ _EXTERNAL_MESSAGE_SOURCES = frozenset(
     }
 )
 _EXTERNAL_MESSAGE_SOURCE_PREFIXES = ("web page:",)
+_CONTROL_PLANE_CONTEXT_SOURCES = frozenset(
+    {
+        "skills",
+        "client runtime context",
+        "backend runtime context",
+        "integrations",
+        "mcp tools",
+        "agents.md",
+        "active editor document",
+        "active email reader",
+        "email writing style",
+        "current chat uploaded files",
+        "saved memory: minimal context",
+        "recent tool context",
+    }
+)
 
 
 def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> bool:
@@ -612,6 +751,18 @@ def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> boo
     return False
 
 
+def delegated_tool_is_blocked(tool_name: Any, content: Any = None) -> bool:
+    """Filter tool names for discovery and concrete workspace reads at dispatch."""
+    # The bridge exposes these spellings for the same filesystem surfaces.
+    if isinstance(tool_name, str):
+        tool_name = tool_name.strip()
+        tool_name = {"list_dir": "ls", "find_files": "glob"}.get(tool_name, tool_name)
+    return is_public_blocked_tool(tool_name) or (
+        content is not None
+        and ToolEffect.READ_WORKSPACE in capabilities_for_action(tool_name, content).effects
+    )
+
+
 @dataclass
 class ToolRunSecurityContext:
     """Server-owned integrity state for one agent run."""
@@ -619,16 +770,28 @@ class ToolRunSecurityContext:
     external_untrusted_context_seen: bool = False
     external_sources: list[str] = field(default_factory=list)
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Request-scoped local tools explicitly authorized by a trusted execution
+    # surface (for example, TUI --yolo plus its authenticated host bridge).
+    # This never authorizes personal, network, or deployment-local tools.
+    unattended_tools: frozenset[str] = field(default_factory=frozenset)
     # Task-scope approval sets this for the resumed in-memory run. Chat-scope
     # approval is projected from the server-owned session history marker below.
     # The bypass affects only this automatic gate; current tool policy, ownership,
     # workspace confinement, and execution/sandbox restrictions still apply.
     approval_gate_bypassed: bool = False
+    # Driven by a bearer API token, not a person at a browser. Privileged
+    # tools are refused outright and no approval can lift that.
+    delegated_credential: bool = False
 
     def observe_messages(self, messages: Iterable[dict]) -> None:
         """Apply server-owned chat scope and promote untrusted prompt context."""
         message_list = list(messages or ())
-        if any(
+        if self.delegated_credential:
+            # A delegated run has no human to grant chat-session scope, so a
+            # grant sitting in this chat's history (left by the owner's own
+            # browser) must not be picked up by a token driving the same chat.
+            self.approval_gate_bypassed = False
+        elif any(
             isinstance(message, dict)
             and isinstance(message.get("metadata"), dict)
             and message["metadata"].get(
@@ -637,29 +800,80 @@ class ToolRunSecurityContext:
             for message in message_list
         ):
             self.approval_gate_bypassed = True
+        for message in message_list:
+            if not isinstance(message, dict):
+                continue
+            metadata = message.get("metadata")
+            if not isinstance(metadata, dict) or metadata.get("trusted") is not False:
+                continue
+            if metadata.get("tool_gate_untrusted") is not True:
+                continue
+            source = str(metadata.get("source") or "").strip().casefold()
+            if source and source not in self.external_sources:
+                self.external_sources.append(source)
+            self.external_untrusted_context_seen = True
         if messages_contain_external_untrusted_context(message_list):
             self.external_untrusted_context_seen = True
 
     def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
+        # Checked before the bypasses below, because neither may lift it, and
+        # kept independent of external_untrusted_context_seen so it holds on a
+        # run where that gate never arms and raises no prompt to bypass.
+        if self.delegated_credential and delegated_tool_is_blocked(tool_name, content):
+            return ToolGateDecision(
+                False,
+                (
+                    f"Tool '{tool_name}' is not available to API-token callers. "
+                    "It requires an interactive session."
+                ),
+            )
+        if not TOOL_APPROVAL_GATE_ENABLED:
+            return ToolGateDecision(True)
         if self.approval_gate_bypassed:
+            return ToolGateDecision(True)
+        if isinstance(tool_name, str) and tool_name in self.unattended_tools:
             return ToolGateDecision(True)
         if not self.external_untrusted_context_seen:
             return ToolGateDecision(True)
-        capabilities = capabilities_for_action(tool_name, content)
-        blocked_effects = capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
-        if capabilities.known and not blocked_effects:
-            return ToolGateDecision(True)
-        effects = ", ".join(sorted(effect.value for effect in blocked_effects))
-        if not capabilities.known:
-            effects = "unknown/high-impact"
-        return ToolGateDecision(
-            False,
-            (
-                "External untrusted context has already influenced this run. "
-                f"Tool '{tool_name}' requires a separate user-authorized action "
-                f"because it can cause {effects}."
-            ),
+
+        # Skills and other server-owned descriptors are control-plane metadata
+        # rather than external result content; web/document/tool-result taint
+        # still gates actions that can mutate state or execute code.
+        control_plane_only = bool(self.external_sources) and set(self.external_sources).issubset(
+            _CONTROL_PLANE_CONTEXT_SOURCES
         )
+        capabilities = capabilities_for_action(tool_name, content)
+        read_only_effects = frozenset(
+            {
+                ToolEffect.READ_PUBLIC,
+                ToolEffect.READ_WORKSPACE,
+                ToolEffect.READ_PRIVATE,
+                ToolEffect.BROKERED_NETWORK_READ,
+                ToolEffect.USER_INTERACTION,
+            }
+        )
+        if control_plane_only and capabilities.known and not (capabilities.effects - read_only_effects):
+            return ToolGateDecision(True)
+        if control_plane_only and tool_name == "manage_skills":
+            try:
+                action = str(json.loads(content or "{}").get("action") or "").strip().lower()
+            except (TypeError, ValueError, json.JSONDecodeError, AttributeError):
+                action = str(content or "").strip().splitlines()[0].lower()
+            if action in {"list", "index", "search", "view", "view_ref"}:
+                return ToolGateDecision(True)
+        if not capabilities.known:
+            return ToolGateDecision(
+                False,
+                "external untrusted context blocks unknown/high-impact tool",
+            )
+        blocked_effects = capabilities.effects & POST_EXTERNAL_BLOCKED_EFFECTS
+        if blocked_effects:
+            effects = ", ".join(sorted(effect.value for effect in blocked_effects))
+            return ToolGateDecision(
+                False,
+                f"external untrusted context blocks {effects}",
+            )
+        return ToolGateDecision(True)
 
     def observe_tool_result(
         self,

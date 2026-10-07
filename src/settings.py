@@ -132,6 +132,7 @@ DEFAULT_SETTINGS = {
     # `compute_input_token_budget`.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
+    "auto_compact_threshold_percent": 85,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
@@ -145,6 +146,7 @@ DEFAULT_SETTINGS = {
     # Email replies use email_writing_style instead because greetings,
     # signatures, and mailbox identity rules are medium-specific.
     "document_writing_style": "",
+    "email_writing_style": "",
     # Legacy ordered fallback chain for the default chat model. Values remain
     # stored for compatibility and rollback reference, but model routing no
     # longer reads this key.
@@ -195,7 +197,6 @@ DEFAULT_SETTINGS = {
     # Keyboard shortcuts (action: key combination)
     "keybinds": {
         "search": "ctrl+k",
-        "toggle_sidebar": "ctrl+b",
         "new_session": "ctrl+alt+n",
         "star_session": "ctrl+alt+s",
         "delete_session": "ctrl+alt+d",

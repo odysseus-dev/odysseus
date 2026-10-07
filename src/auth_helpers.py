@@ -7,6 +7,27 @@ from fastapi import Request, HTTPException
 from src.owner_identity import auth_disabled, effective_storage_owner
 
 
+def is_direct_loopback_request(request: Request) -> bool:
+    """Local operator transport, excluding reverse proxies and cross-site calls.
+
+    Locality supplies no model/tool authority. Native administration uses this
+    only in the operator's explicit auth-disabled single-user mode.
+    """
+    client = getattr(request, "client", None)
+    if not client or client.host not in {"127.0.0.1", "::1"}:
+        return False
+    forwarding = ("cf-connecting-ip", "cf-ray", "cf-visitor", "x-forwarded-for",
+                  "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "forwarded")
+    if any(request.headers.get(name) for name in forwarding):
+        return False
+    if request.headers.get("sec-fetch-site") in {"cross-site", "same-site"}:
+        return False
+    origin = request.headers.get("origin")
+    if origin and origin != str(request.base_url).rstrip("/"):
+        return False
+    return True
+
+
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
     return getattr(request.state, 'current_user', None)
@@ -39,6 +60,45 @@ def effective_user(request: Request) -> Optional[str]:
 def _is_api_token_request(request: Request) -> bool:
     """Return True when middleware authenticated a bearer API token."""
     return bool(getattr(request.state, "api_token", False))
+
+
+def is_delegated_credential(request: Request) -> bool:
+    """Whether this request arrived on a credential acting FOR a human.
+
+    A bearer API token is minted by a person and then handed to something
+    else: an integration, a script, a third party. :func:`effective_user`
+    resolves it back to that person for ownership and attribution, which is
+    correct for data but wrong for authority. Only admins can mint tokens, so
+    every token resolves to an admin, and any gate that asks "is the owner an
+    admin?" answers yes for a credential the owner has given away.
+
+    Security decisions about what the AGENT may do should ask this instead, so
+    a token cannot inherit the shell merely because its owner could use one.
+    """
+    return _is_api_token_request(request)
+
+
+def require_api_token_scope(request: Request, scope: str) -> Optional[str]:
+    """Require ``scope`` when the request is authenticated by an API token.
+
+    Browser sessions are unaffected.  Scoped bearer routes use this before
+    touching owner data so resolving the token back to its owner never also
+    grants the owner's interactive-session authority.
+    """
+    if not _is_api_token_request(request):
+        return get_current_user(request)
+    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+    if scope not in scopes:
+        raise HTTPException(403, f"API token missing required scope: {scope}")
+    owner = getattr(request.state, "api_token_owner", None)
+    if not owner:
+        raise HTTPException(403, "API token has no owner")
+    return owner
+
+
+def require_chat_api_token_scope(request: Request) -> Optional[str]:
+    """FastAPI dependency for chat/session/history bearer surfaces."""
+    return require_api_token_scope(request, "chat")
 
 
 def require_authenticated_request(request: Request) -> str:

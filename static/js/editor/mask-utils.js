@@ -46,6 +46,33 @@ export function dilateMask(src, px) {
   return tmp;
 }
 
+/** Invert a mask's reveal amount while preserving partial opacity. */
+export function invertMaskInPlace(canvas) {
+  if (!canvas?.width || !canvas?.height) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < image.data.length; index += 4) {
+    const alpha = 255 - image.data[index + 3];
+    image.data[index] = 255;
+    image.data[index + 1] = 255;
+    image.data[index + 2] = 255;
+    image.data[index + 3] = alpha;
+  }
+  ctx.putImageData(image, 0, 0);
+  return true;
+}
+
+export function normalizeMaskDensity(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 1;
+}
+
+export function normalizeMaskFeather(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(200, parsed)) : 0;
+}
+
 
 /**
  * Re-derive an inpaint-result layer's alpha from its cached AI image +

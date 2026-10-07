@@ -16,7 +16,7 @@ This spec covers durable state in:
 - `src/attachment_refs.py`, `src/upload_handler.py`, and
   `routes/upload_routes.py` for durable upload references and retention;
 - JSON stores managed by `core/auth.py`, `src/settings.py`, `src/api_key_manager.py`, `src/preset_manager.py`, `src/integrations.py`, `src/upload_handler.py`, `src/personal_docs.py`, `src/research_handler.py`, `src/bg_jobs.py`, `routes/prefs_routes.py`, canonical `routes/contacts/contacts_routes.py` and `routes/vault/vault_routes.py` plus their shims, `routes/cookbook_routes.py`, and memory/skills managers;
-- `routes/email_helpers.py` scheduled-email storage;
+- canonical `routes/email/email_helpers.py` scheduled-email storage;
 - `routes/backup_routes.py` and `scripts/odysseus-backup`;
 - runtime data under `data/`.
 
@@ -61,7 +61,7 @@ Email default-account state is serialized per owner. Startup normalizes legacy d
 
 `core/models.py` owns pure dataclasses used by `SessionManager`. It does not own database persistence.
 
-`routes/email_helpers.py` owns a second SQLite database at `data/scheduled_emails.db` for scheduled email, summary, reply, tag, sender-signature, urgency-alert, calendar-extraction, and cache state. Its migrations and owner backfills are local to that module, not `core/database.py`, and those auxiliary tables are owner-scoped.
+`routes/email/email_helpers.py` owns a second SQLite database at `data/scheduled_emails.db` for scheduled email, summary, reply, tag, sender-signature, urgency-alert, calendar-extraction, and cache state. Its migrations and owner backfills are local to that module, not `core/database.py`, and those auxiliary tables are owner-scoped.
 
 ## Migration Policy
 

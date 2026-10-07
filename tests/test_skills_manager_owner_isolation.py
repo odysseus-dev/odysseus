@@ -288,7 +288,16 @@ def test_usage_sidecar_is_owner_scoped(tmp_path):
 
     sm = SkillsManager(str(tmp_path))
     sm.record_use("shared-flow", owner="alice")
-    sm.set_audit("shared-flow", "pass", by_teacher=False, owner="bob")
+    sm.set_audit(
+        "shared-flow",
+        "pass",
+        by_teacher=False,
+        owner="bob",
+        saved_turns=3,
+        saved_tool_calls=1,
+        baseline_verdict="better",
+        usefulness=0.9,
+    )
     sm.set_necessity("shared-flow", False, ["other-flow"], "redundant", owner="bob")
 
     alice = sm.load(owner="alice")[0]
@@ -299,8 +308,48 @@ def test_usage_sidecar_is_owner_scoped(tmp_path):
     assert alice["necessity"] is None
     assert bob["uses"] == 0
     assert bob["audit_verdict"] == "pass"
+    assert bob["audit_version"] == 2
+    assert bob["saved_turns"] == 3
+    assert bob["saved_tool_calls"] == 1
+    assert bob["baseline_verdict"] == "better"
+    assert bob["usefulness"] == 0.9
     assert bob["necessity"] == {
         "necessary": False,
         "redundant_with": ["other-flow"],
         "reason": "redundant",
     }
+
+
+def test_legacy_inconclusive_audit_is_eligible_for_fixed_protocol(tmp_path):
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    _write_skill_md(
+        skills_root, category="general", name="release-checklist",
+        owner="alice", description="Prepare a release checklist.",
+    )
+    usage_file = skills_root / "_usage.json"
+    usage_file.write_text(
+        '{"alice::release-checklist":{"uses":1,"audit_verdict":"inconclusive",'
+        '"audited_at":1234}}',
+        encoding="utf-8",
+    )
+
+    skill = SkillsManager(str(tmp_path)).load(owner="alice")[0]
+
+    assert skill["audit_verdict"] is None
+    assert skill["audited_at"] is None
+    assert skill["audit_version"] == 0
+
+
+def test_audit_explanation_survives_reload_and_is_replaced(tmp_path):
+    root = tmp_path / "skills"
+    root.mkdir()
+    _write_skill_md(root, category="general", name="release-checklist",
+                    owner="alice", description="Prepare a release checklist.")
+    manager = SkillsManager(str(tmp_path))
+    manager.set_audit("release-checklist", "inconclusive", owner="alice",
+                      audit_summary="Missing a safe test fixture.")
+    assert SkillsManager(str(tmp_path)).load(owner="alice")[0]["audit_summary"] == "Missing a safe test fixture."
+    assert SkillsManager(str(tmp_path)).load(owner="bob") == []
+    manager.set_audit("release-checklist", "pass", owner="alice")
+    assert manager.load(owner="alice")[0]["audit_summary"] == ""

@@ -12,6 +12,22 @@
 export function controlsHTML({ color, brushSize, wandTolerance }) {
   const brushSliderValue = Math.round(Math.log(Math.max(1, brushSize)) / Math.log(800) * 1000);
   return `
+    <div id="ge-pen-section" style="display:none;">
+      <div class="ge-section-title">Pen Selection</div>
+      <div class="ge-control-row ge-actions">
+        <button type="button" class="ge-btn ge-btn-sm" id="ge-pen-commit" title="Close path and make selection (Enter)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg> Make selection</button>
+        <button type="button" class="ge-btn ge-btn-sm" id="ge-pen-cancel" title="Cancel path (Escape)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg> Cancel</button>
+      </div>
+    </div>
+    <div class="ge-layer-geometry-section" id="ge-layer-geometry-section">
+      <div class="ge-section-title"><span>Position</span><span id="ge-layer-geometry-name"></span></div>
+      <div class="ge-layer-geometry-grid">
+        <label><span>X</span><input id="ge-layer-x" type="number" step="1" inputmode="numeric" /></label>
+        <label><span>Y</span><input id="ge-layer-y" type="number" step="1" inputmode="numeric" /></label>
+        <label><span>W</span><input id="ge-layer-width" type="number" readonly title="Edit width with Transform" /></label>
+        <label><span>H</span><input id="ge-layer-height" type="number" readonly title="Edit height with Transform" /></label>
+      </div>
+    </div>
     <div id="ge-brush-controls">
       <div class="ge-control-row" id="ge-color-row">
         <label>Color</label>
@@ -20,9 +36,204 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
       <div class="ge-control-row">
         <label>Size <span class="ge-size-label">${brushSize}px</span></label>
       <input type="range" class="ge-size-slider" min="0" max="1000" value="${brushSliderValue}" />
+      </div>
+      <div class="ge-section-title">Stroke</div>
+      <div class="ge-control-row ge-eraser-row">
+        <label>Spacing <span id="ge-brush-spacing-label">15%</span></label>
+        <input type="range" id="ge-brush-spacing" min="1" max="100" value="15" />
+      </div>
+      <div class="ge-control-row ge-eraser-row">
+        <label>Smoothing <span id="ge-brush-smoothing-label">25%</span></label>
+        <input type="range" id="ge-brush-smoothing" min="0" max="95" value="25" />
+      </div>
+      <div class="ge-control-row">
+        <label for="ge-brush-blend">Blend</label>
+        <select id="ge-brush-blend">
+          <option value="source-over">Normal</option><option value="multiply">Multiply</option>
+          <option value="screen">Screen</option><option value="overlay">Overlay</option>
+          <option value="soft-light">Soft Light</option><option value="color">Color</option>
+        </select>
+      </div>
+      <div class="ge-control-row ge-brush-pressure-row">
+        <span class="ge-pressure-option" title="Pen pressure changes brush size"><span>Size</span><label class="toggle-switch"><input type="checkbox" id="ge-pressure-size" checked /><span class="toggle-slider"></span></label></span>
+        <span class="ge-pressure-option" title="Pen pressure changes opacity"><span>Opacity</span><label class="toggle-switch"><input type="checkbox" id="ge-pressure-opacity" /><span class="toggle-slider"></span></label></span>
+        <span class="ge-pressure-option" title="Pen pressure changes flow"><span>Flow</span><label class="toggle-switch"><input type="checkbox" id="ge-pressure-flow" checked /><span class="toggle-slider"></span></label></span>
+      </div>
+      <div class="ge-control-row ge-brush-preset-row">
+        <select id="ge-brush-preset" aria-label="Brush preset"></select>
+        <button type="button" class="ge-btn ge-btn-sm" id="ge-brush-preset-save" title="Save current brush preset">Save</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-icon-btn" id="ge-brush-preset-delete" title="Delete selected preset" aria-label="Delete selected preset">×</button>
+      </div>
     </div>
+    <div class="ge-gradient-section" id="ge-gradient-section" style="display:none;">
+      <div class="ge-section-title">Gradient</div>
+      <div class="ge-control-row"><label for="ge-gradient-type">Type</label><select id="ge-gradient-type"><option value="linear-gradient">Linear</option><option value="radial-gradient">Radial</option></select></div>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Start</span><input type="color" class="ge-color-picker" id="ge-gradient-start" value="${color}" /></label>
+        <label class="ge-text-field"><span>End</span><input type="color" class="ge-color-picker" id="ge-gradient-end" value="#ffffff" /></label>
+      </div>
+      <div class="ge-control-row ge-gradient-mid-row">
+        <span class="ge-gradient-mid-toggle"><span>Midpoint</span><label class="toggle-switch"><input type="checkbox" id="ge-gradient-mid-enabled" /><span class="toggle-slider"></span></label></span>
+        <input type="color" class="ge-color-picker" id="ge-gradient-mid" value="#808080" title="Midpoint color" disabled />
+        <input type="range" id="ge-gradient-mid-position" min="1" max="99" value="50" title="Midpoint position" disabled />
+        <span id="ge-gradient-mid-position-label">50%</span>
+      </div>
+      <div class="ge-gradient-extra-stops" id="ge-gradient-extra-stops"></div>
+      <button type="button" class="ge-btn ge-btn-sm ge-gradient-add-stop" id="ge-gradient-add-stop">Add stop</button>
+      <div class="ge-control-row"><label for="ge-gradient-end-alpha">End opacity <span id="ge-gradient-end-alpha-label">100%</span></label><input type="range" id="ge-gradient-end-alpha" min="0" max="100" value="100" /></div>
+      <div class="ge-control-row"><label for="ge-gradient-opacity">Opacity <span id="ge-gradient-opacity-label">100%</span></label><input type="range" id="ge-gradient-opacity" min="0" max="100" value="100" /></div>
+      <p class="ge-section-hint">Drag across the active layer. Switch tools or press Esc to cancel.</p>
+    </div>
+    <div class="ge-eraser-section" id="ge-eyedropper-section" style="display:none;">
+      <div class="ge-section-title">Eyedropper</div>
+      <div class="ge-eyedropper-live" id="ge-eyedropper-live" aria-live="polite">
+        <canvas class="ge-eyedropper-loupe" id="ge-eyedropper-loupe" width="84" height="84" aria-hidden="true"></canvas>
+        <span class="ge-eyedropper-live-swatch" id="ge-eyedropper-live-swatch" aria-hidden="true"></span>
+        <span class="ge-eyedropper-live-values">
+          <code id="ge-eyedropper-live-value">Move over the canvas</code>
+          <span id="ge-eyedropper-live-rgb">RGB --</span>
+          <span id="ge-eyedropper-live-hsl">HSL --</span>
+        </span>
+      </div>
+      <div class="ge-control-row"><label for="ge-eyedropper-sample">Sample</label><select id="ge-eyedropper-sample"><option value="composite">All layers</option><option value="layer">Active layer</option></select></div>
+    </div>
+    <div class="ge-text-section" id="ge-text-section" style="display:none;">
+      <textarea id="ge-text-content" rows="3" placeholder="Type text..." aria-label="Text content"></textarea>
+      <div class="ge-text-grid">
+        <label class="ge-text-field ge-text-font-field"><span>Font</span>
+          <select id="ge-text-font">
+            <option value="Arial">Arial</option>
+            <option value="Verdana">Verdana</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="Courier New">Courier New</option>
+            <option value="Impact">Impact</option>
+            <option value="system-ui">System</option>
+          </select>
+        </label>
+        <label class="ge-text-field ge-text-size-field"><span>Size</span>
+          <input id="ge-text-size" type="number" min="1" max="2000" value="48" />
+        </label>
+      </div>
+      <div class="ge-control-row ge-text-format-row">
+        <input type="color" class="ge-color-picker" id="ge-text-color" value="${color}" title="Text color" aria-label="Text color" />
+        <button type="button" class="ge-text-toggle" id="ge-text-bold" title="Bold" aria-pressed="false"><strong>B</strong></button>
+        <button type="button" class="ge-text-toggle" id="ge-text-italic" title="Italic" aria-pressed="false"><em>I</em></button>
+        <span class="ge-text-format-sep"></span>
+        <button type="button" class="ge-text-toggle active" data-text-align="left" title="Align left" aria-pressed="true">&#8676;</button>
+        <button type="button" class="ge-text-toggle" data-text-align="center" title="Align center" aria-pressed="false">&#8596;</button>
+        <button type="button" class="ge-text-toggle" data-text-align="right" title="Align right" aria-pressed="false">&#8677;</button>
+      </div>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Line</span>
+          <input id="ge-text-line-height" type="number" min="0.5" max="5" step="0.1" value="1.2" />
+        </label>
+        <label class="ge-text-field"><span>Spacing</span>
+          <input id="ge-text-letter-spacing" type="number" min="-100" max="500" step="0.5" value="0" />
+        </label>
+      </div>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Frame</span>
+          <input id="ge-text-frame-width" type="number" min="1" max="10000" step="1" value="320" />
+        </label>
+        <label class="ge-text-field"><span>Height</span>
+          <input id="ge-text-frame-height" type="number" min="0" max="10000" step="1" value="0" />
+        </label>
+        <label class="ge-text-field"><span>Vertical</span>
+          <select id="ge-text-vertical-align"><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select>
+        </label>
+      </div>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Stroke</span>
+          <input id="ge-text-stroke-width" type="number" min="0" max="100" step="1" value="0" />
+        </label>
+        <input type="color" class="ge-color-picker" id="ge-text-stroke-color" value="#000000" title="Stroke color" aria-label="Stroke color" />
+      </div>
+      <label class="ge-text-auto-width-option"><span>Auto width</span><span class="toggle-switch"><input type="checkbox" id="ge-text-auto-width" /><span class="toggle-slider"></span></span></label>
+      <button type="button" class="ge-btn ge-btn-sm" id="ge-text-rasterize">Rasterize</button>
+    </div>
+    <div class="ge-shape-section" id="ge-shape-section" style="display:none;">
+      <div class="ge-section-title">Shape</div>
+      <div class="ge-shape-types" role="group" aria-label="Shape type">
+        <button type="button" class="ge-text-toggle active" data-shape-type="rectangle" title="Rectangle" aria-pressed="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="1"/></svg></button>
+        <button type="button" class="ge-text-toggle" data-shape-type="ellipse" title="Ellipse" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="8" ry="7"/></svg></button>
+        <button type="button" class="ge-text-toggle" data-shape-type="line" title="Line" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="19" x2="20" y2="5"/></svg></button>
+        <button type="button" class="ge-text-toggle" data-shape-type="polygon" title="Polygon" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 9 7-3.5 11h-11L3 10Z"/></svg></button>
+      </div>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Fill</span><input type="color" class="ge-color-picker" id="ge-shape-fill" value="${color}" /></label>
+        <label class="ge-text-field"><span>Stroke</span><input type="color" class="ge-color-picker" id="ge-shape-stroke" value="#111111" /></label>
+      </div>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Fill type</span>
+          <select id="ge-shape-fill-type"><option value="solid">Solid</option><option value="linear-gradient">Linear gradient</option></select>
+        </label>
+        <label class="ge-text-field ge-shape-gradient-angle-field" hidden><span>Angle</span><input id="ge-shape-gradient-angle" type="number" min="-36000" max="36000" step="1" value="0" /></label>
+      </div>
+      <div class="ge-text-grid ge-shape-gradient-fields" hidden>
+        <label class="ge-text-field"><span>Start</span><input type="color" class="ge-color-picker" id="ge-shape-gradient-start" value="#ffffff" /></label>
+        <label class="ge-text-field"><span>End</span><input type="color" class="ge-color-picker" id="ge-shape-gradient-end" value="#000000" /></label>
+        <label class="ge-text-field"><span>Midpoint</span><input type="color" class="ge-color-picker" id="ge-shape-gradient-mid" value="#808080" /></label>
+        <label class="ge-text-field"><span>Position</span><input id="ge-shape-gradient-mid-position" type="number" min="1" max="99" step="1" value="50" /></label>
+        <label class="ge-text-field ge-shape-gradient-mid-enabled"><span>Use midpoint</span><input id="ge-shape-gradient-mid-enabled" type="checkbox" /></label>
+      </div>
+      <div class="ge-shape-gradient-extra-stops" id="ge-shape-gradient-extra-stops"></div>
+      <button type="button" class="ge-btn ge-btn-sm ge-shape-gradient-add-stop" id="ge-shape-gradient-add-stop">Add stop</button>
+      <div class="ge-text-grid">
+        <label class="ge-text-field"><span>Width</span><input id="ge-shape-stroke-width" type="number" min="0" max="500" step="1" value="2" /></label>
+        <label class="ge-text-field"><span>Radius</span><input id="ge-shape-radius" type="number" min="0" max="5000" step="1" value="0" /></label>
+      </div>
+      <label class="ge-text-field ge-shape-sides-field" hidden><span>Sides</span><input id="ge-shape-sides" type="number" min="3" max="24" step="1" value="5" /></label>
+      <button type="button" class="ge-btn ge-btn-sm" id="ge-shape-rasterize">Rasterize</button>
+    </div>
+    <div class="ge-marquee-section" id="ge-marquee-section" style="display:none;">
+      <div class="ge-control-row" style="display:flex;gap:4px;margin-bottom:4px;">
+        <button type="button" class="ge-btn ge-btn-sm ge-marquee-shape-btn active" data-marquee-shape="rectangle" title="Rectangular marquee" aria-pressed="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5" width="16" height="14"/></svg>
+        </button>
+        <button type="button" class="ge-btn ge-btn-sm ge-marquee-shape-btn" data-marquee-shape="ellipse" title="Elliptical marquee" aria-pressed="false">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="8" ry="7"/></svg>
+        </button>
+        <span style="flex:1"></span>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn active" data-wand-mode="replace" title="New selection">New</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="add" title="Add to selection">+</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="subtract" title="Subtract from selection">−</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="intersect" title="Intersect selection">∩</button>
+      </div>
+      <div class="ge-marquee-constraint-row">
+        <label for="ge-marquee-constraint">Style</label>
+        <select id="ge-marquee-constraint" title="Marquee sizing style">
+          <option value="free">Free</option>
+          <option value="ratio">Fixed ratio</option>
+          <option value="size">Fixed size</option>
+        </select>
+        <div class="ge-marquee-dimensions" hidden>
+          <label>W <input type="number" id="ge-marquee-width" min="1" step="1" value="1" inputmode="decimal" /></label>
+          <label>H <input type="number" id="ge-marquee-height" min="1" step="1" value="1" inputmode="decimal" /></label>
+          <button type="button" class="ge-icon-btn" id="ge-marquee-swap" title="Swap width and height" aria-label="Swap width and height">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 4 4-4 4"/><path d="M4 7h16"/><path d="m8 21-4-4 4-4"/><path d="M20 17H4"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="ge-control-row ge-actions" style="margin-top:4px;flex-wrap:wrap;">
+        <button class="ge-btn ge-btn-sm ge-mask-vis-btn visible" id="ge-marquee-vis" title="Hide selection overlay" aria-label="Toggle selection overlay">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-marquee-clear" title="Clear selection">Clear</button>
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-marquee-invert" title="Invert selection">Invert</button>
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-marquee-delete" title="Erase selected pixels">Erase</button>
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-marquee-copy" title="Copy selection to a new layer">Copy Layer</button>
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-marquee-mask" title="Add selection to mask">To Mask</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-btn-iconlabel ge-quick-mask-toggle" title="Edit selection as Quick Mask (Q)" aria-pressed="false">Quick Mask</button>
+      </div>
     </div>
     <div class="ge-lasso-section" id="ge-lasso-section" style="display:none;">
+      <div class="ge-control-row" style="display:flex;gap:4px;margin-bottom:4px;" title="How the next lasso combines with the current selection.">
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn active" data-wand-mode="replace" title="New selection">New</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="add" title="Add to selection">+</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="subtract" title="Subtract from selection">−</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="intersect" title="Intersect selection">∩</button>
+      </div>
       <div class="ge-control-row ge-eraser-row ge-sel-refine" id="ge-lasso-refine-feather" style="display:none;">
         <span class="ge-eraser-preview" id="ge-lasso-feather-preview" aria-hidden="true"></span>
         <label>Feather <span id="ge-lasso-feather-label">0px</span></label>
@@ -34,7 +245,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         <input type="range" id="ge-lasso-grow" min="-40" max="40" value="0" title="Expand (+) or contract (−) the selection before baking." />
       </div>
       <div class="ge-control-row ge-actions" style="margin-top:4px;flex-wrap:wrap;">
-        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-lasso-invert" title="Invert selection (Ctrl+Alt+I)">
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-lasso-invert" title="Invert selection (Ctrl+Alt+Shift+I)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           Invert
         </button>
@@ -50,6 +261,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>
           To Mask
         </button>
+        <button type="button" class="ge-btn ge-btn-sm ge-btn-iconlabel ge-quick-mask-toggle" title="Edit selection as Quick Mask (Q)" aria-pressed="false">Quick Mask</button>
       </div>
       <p style="font-size:9px;opacity:0.4;margin:4px 0 0;">Draw a freehand selection. Esc to cancel.</p>
     </div>
@@ -58,6 +270,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn active" data-wand-mode="replace" title="Replace selection on each click">New</button>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="add" title="Add to selection (Shift)">+ Add</button>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="subtract" title="Subtract from selection (Alt)">− Subtract</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="intersect" title="Intersect selection">∩</button>
       </div>
       <div class="ge-control-row ge-eraser-row">
         <span class="ge-eraser-preview" id="ge-wand-tol-preview" aria-hidden="true"></span>
@@ -83,7 +296,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           Clear
         </button>
-        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-wand-invert" title="Invert selection (Ctrl+Alt+I)">
+        <button class="ge-btn ge-btn-sm ge-btn-iconlabel" id="ge-wand-invert" title="Invert selection (Ctrl+Alt+Shift+I)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           Invert
         </button>
@@ -99,6 +312,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>
           To Mask
         </button>
+        <button type="button" class="ge-btn ge-btn-sm ge-btn-iconlabel ge-quick-mask-toggle" title="Edit selection as Quick Mask (Q)" aria-pressed="false">Quick Mask</button>
       </div>
       <p style="font-size:9px;opacity:0.4;margin:4px 0 0;">Click a region to select similar pixels. Shift+click to add, Alt+click to subtract. Esc to clear.</p>
     </div>
@@ -108,6 +322,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn active" data-wand-mode="replace" title="Replace selection">New</button>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="add" title="Add to selection">+ Add</button>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="subtract" title="Subtract from selection">− Subtract</button>
+        <button type="button" class="ge-btn ge-btn-sm ge-wand-mode-btn" data-wand-mode="intersect" title="Intersect selection">∩</button>
       </div>
       <div class="ge-control-row" style="display:flex;gap:6px;align-items:center;min-width:0;">
         <input type="text" class="ge-inpaint-prompt" id="ge-sam-query" placeholder="Object to select..." style="flex:1 1 auto;min-width:0;" />
@@ -128,6 +343,7 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>
           To Mask
         </button>
+        <button type="button" class="ge-btn ge-btn-sm ge-btn-iconlabel ge-quick-mask-toggle" title="Edit selection as Quick Mask (Q)" aria-pressed="false">Quick Mask</button>
       </div>
       <p style="font-size:9px;opacity:0.4;margin:4px 0 0;">Click an object, or type a neutral object label. Shift adds, Alt subtracts.</p>
     </div>
@@ -230,6 +446,17 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
       <p class="ge-section-hint" style="margin-top:0;">
         <strong class="ge-clone-hint-desktop">Alt-click</strong><strong class="ge-clone-hint-mobile">Double-tap</strong> to set source · drag to paint
       </p>
+      <div class="ge-clone-source-status" id="ge-clone-source-status" aria-live="polite">
+        <span id="ge-clone-source-label">No source selected</span>
+        <button type="button" class="ge-btn ge-btn-sm ge-icon-btn" id="ge-clone-source-clear" title="Clear sampled source" aria-label="Clear sampled source">×</button>
+      </div>
+      <div class="ge-control-row">
+        <label for="ge-clone-sample-mode">Sample</label>
+        <select id="ge-clone-sample-mode">
+          <option value="active-layer">Active layer</option>
+          <option value="composite">All visible layers</option>
+        </select>
+      </div>
       <div class="ge-control-row ge-eraser-row">
         <span class="ge-eraser-preview" id="ge-clone-preview-opacity" aria-hidden="true"></span>
         <label>Opacity <span id="ge-clone-opacity-label">100%</span></label>
@@ -247,7 +474,12 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
       </div>
     </div>
     <div class="ge-eraser-section" id="ge-brush-section" style="display:none;">
-      <div class="ge-section-title">Brush</div>
+      <div class="ge-section-title"><span>Brush</span></div>
+      <div class="ge-control-row ge-eraser-row" id="ge-smudge-strength-row" style="display:none;">
+        <span class="ge-eraser-preview" id="ge-smudge-preview-strength" aria-hidden="true"></span>
+        <label>Strength <span id="ge-smudge-strength-label">65%</span></label>
+        <input type="range" id="ge-smudge-strength" min="5" max="100" value="65" title="How strongly Smudge carries sampled pixels into the stroke." />
+      </div>
       <div class="ge-control-row ge-eraser-row">
         <span class="ge-eraser-preview" id="ge-brush-preview-opacity" aria-hidden="true"></span>
         <label>Opacity <span id="ge-brush-opacity-label">100%</span></label>
@@ -387,6 +619,10 @@ export function layerPanelHTML() {
   return `<div class="ge-layers-header">
       <span class="ge-layers-grab"></span>
       <span class="ge-layers-title">Layers</span>
+      <div class="ge-layer-header-tools" role="group" aria-label="Layer actions">
+      <button type="button" class="ge-btn ge-btn-sm ge-icon-btn" id="ge-add-layer" title="New layer" aria-label="New layer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
       <button class="ge-btn ge-btn-sm ge-icon-btn" id="ge-merge-down" title="Merge down" aria-label="Merge down">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/></svg>
       </button>
@@ -396,6 +632,49 @@ export function layerPanelHTML() {
       <button class="ge-btn ge-btn-sm ge-icon-btn" id="ge-flatten" title="Flatten copy (keeps originals)" aria-label="Flatten copy">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L4 6 L4 18 L12 22 L20 18 L20 6 Z"/><path d="M12 2 L12 22"/><path d="M4 6 L20 6"/><path d="M4 18 L20 18"/></svg>
       </button>
-      <button class="ge-btn ge-btn-sm" id="ge-add-layer" title="Add empty layer">+ Add</button>
-    </div><div class="ge-layers-list" id="ge-layers-list"></div>`;
+      <button class="ge-btn ge-btn-sm ge-icon-btn" id="ge-select-all-layers" title="Select all layers" aria-label="Select all layers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="13" height="13" rx="1"/><path d="M4 16H3V3h13v1"/></svg>
+      </button>
+      <button class="ge-btn ge-btn-sm ge-icon-btn" id="ge-group-selected" title="Group selected layers" aria-label="Group selected layers">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h7l2 2h9v10H3z"/></svg>
+      </button>
+      <button class="ge-btn ge-btn-sm" id="ge-layer-fill" title="Fill selected layer or selection with foreground color (Alt+Backspace)">Fill</button>
+      </div>
+    </div>
+    <div class="ge-layer-blend-row">
+      <label for="ge-layer-blend">Blend</label>
+      <select id="ge-layer-blend" title="Active layer blend mode">
+        <option value="source-over">Normal</option>
+        <option value="multiply">Multiply</option>
+        <option value="screen">Screen</option>
+        <option value="overlay">Overlay</option>
+        <option value="soft-light">Soft Light</option>
+        <option value="hard-light">Hard Light</option>
+        <option value="darken">Darken</option>
+        <option value="lighten">Lighten</option>
+        <option value="color-dodge">Color Dodge</option>
+        <option value="color-burn">Color Burn</option>
+        <option value="difference">Difference</option>
+        <option value="exclusion">Exclusion</option>
+        <option value="hue">Hue</option>
+        <option value="saturation">Saturation</option>
+        <option value="color">Color</option>
+        <option value="luminosity">Luminosity</option>
+      </select>
+    </div>
+    <div class="ge-layer-selection-bar" id="ge-layer-selection-bar" hidden>
+      <span id="ge-layer-selection-count">2 layers</span>
+      <button class="ge-icon-btn" id="ge-selected-visibility" title="Toggle selected visibility" aria-label="Toggle selected visibility">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+      <button class="ge-icon-btn" id="ge-selected-lock" title="Toggle selected lock" aria-label="Toggle selected lock">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      </button>
+      <button class="ge-icon-btn" id="ge-selected-align" title="Align or distribute selected layers" aria-label="Align or distribute selected layers">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16M7 12h10M4 19h16"/><path d="M12 3v18"/></svg>
+      </button>
+      <button class="ge-icon-btn danger" id="ge-selected-delete" title="Delete selected layers" aria-label="Delete selected layers">×</button>
+    </div>
+    <div class="ge-layers-list" id="ge-layers-list"></div>
+    <div class="ge-layer-tools" id="ge-layer-tools" aria-label="Selected layer tools"></div>`;
 }
