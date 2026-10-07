@@ -57,8 +57,17 @@ def _message_to_context(msg: DBChatMessage) -> dict[str, Any]:
     }
 
 
-def _escape_like(value: str) -> str:
+def escape_like_pattern(value: str) -> str:
+    """Escape SQL LIKE wildcards (``%``, ``_``) and the escape char itself.
+
+    Public shared helper for building ``ilike(f"%{...}%", escape="\\\\")``
+    patterns from user input. Must escape backslash first.
+    """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _escape_like(value: str) -> str:
+    return escape_like_pattern(value)
 
 
 def _snippet(content: str, query: str, radius: int = 60) -> str:
