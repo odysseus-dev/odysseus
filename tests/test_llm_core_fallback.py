@@ -1091,6 +1091,43 @@ def test_degenerate_stream_guard_allows_long_rows_with_changing_values():
     assert guard.check(rows) is None
 
 
+def _latex_matrix(cell):
+    rows = (" & ".join(cell(i, j) for j in range(8)) for i in range(8))
+    return "$$\\begin{pmatrix}\n" + " \\\\\n".join(rows) + "\n\\end{pmatrix}$$"
+
+
+@pytest.mark.parametrize("text", [
+    _latex_matrix(lambda i, j: "0"),
+    _latex_matrix(lambda i, j: "1" if i == j else "0"),
+    "buf = [" + ", ".join("0" for _ in range(64)) + "]",
+])
+@pytest.mark.parametrize("chunk", [1, 6, 64])
+def test_degenerate_stream_guard_allows_numeric_data(text, chunk):
+    """#5560: zero/identity matrices and padded buffers repeat numbers by
+    design; they are not token collapse."""
+    guard = llm_core._DegenerateStreamGuard("math-model")
+
+    assert all(guard.check(text[i:i + chunk]) is None for i in range(0, len(text), chunk))
+
+
+def test_degenerate_stream_guard_still_stops_an_endless_number_run():
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+
+    chunk = guard.check("0 " * 3000)
+
+    assert chunk is not None
+    assert "numbers in a row" in chunk
+
+
+def test_degenerate_stream_guard_still_stops_a_mixed_word_number_loop():
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+
+    chunk = guard.check("row 0 0 0 0 " * 300)
+
+    assert chunk is not None
+    assert "repeated" in chunk
+
+
 def test_terminal_stream_retries_degenerate_generation_before_emitting(monkeypatch):
     calls = 0
     requests = []
