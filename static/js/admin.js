@@ -6,6 +6,7 @@ import settingsModule from './settings.js?v=20260912writingstyle3';
 import { providerLogo, providerLogoFromUrl } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import { renderDeviceAuthWaitPanel } from './deviceAuthPanel.js';
 import {
   accountTitle as chatgptAccountTitle,
   buildUsageViewModel as buildChatgptUsageViewModel,
@@ -1474,46 +1475,11 @@ async function _saveEpModelState(epId, panel) {
 // Built for both the Add Models flow and per-account Reconnect. Never opens a
 // tab automatically; the user clicks the Authorize link.
 function _renderDeviceAuthWaitPanel(status, providerKey, start, authUrl) {
-  if (!status) return;
-  status.className = '';
-  const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
-  const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
-  status.innerHTML =
-    '<div class="adm-copilot-panel">' +
-      '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
-        '<span>' + esc(waitLabel) + '</span></div>' +
-      '<div class="adm-copilot-coderow">' +
-        '<span class="adm-copilot-code-label">Code</span>' +
-        '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
-        '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
-      '</div>' +
-      '<a class="admin-btn-add adm-copilot-auth" href="' + esc(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
-    '</div>';
-  const copyBtn = status.querySelector('.adm-device-auth-copy');
-  if (copyBtn) copyBtn.addEventListener('click', async () => {
-    const code = start.user_code || '';
-    let ok = false;
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(code);
-        ok = true;
-      }
-    } catch (e) {}
-    if (!ok) {
-      // navigator.clipboard is unavailable in non-secure contexts (HTTP
-      // self-host over a LAN IP), so fall back to execCommand('copy').
-      const ta = document.createElement('textarea');
-      ta.value = code;
-      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      try { ta.setSelectionRange(0, code.length); } catch (e) {}
-      try { ok = document.execCommand('copy'); } catch (e) {}
-      ta.remove();
-    }
-    copyBtn.textContent = ok ? 'Copied' : 'Failed';
-    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+  renderDeviceAuthWaitPanel(status, {
+    userCode: start.user_code,
+    authUrl,
+    authLabel: providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI',
+    waitLabel: providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...',
   });
 }
 

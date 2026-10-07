@@ -857,6 +857,23 @@ const STUBS = new Map([
     },
   ],
   [
+    path.join(JS, 'providerDeviceFlow.js'),
+    {
+      formatDeviceFlowError(error) {
+        return String(error || '');
+      },
+      async runProviderDeviceFlow() {
+        return { status: 'expired' };
+      },
+    },
+  ],
+  [
+    path.join(JS, 'deviceAuthPanel.js'),
+    {
+      renderDeviceAuthWaitPanel() {},
+    },
+  ],
+  [
     path.join(JS, 'windowDrag.js'),
     {
       makeWindowDraggable() {},

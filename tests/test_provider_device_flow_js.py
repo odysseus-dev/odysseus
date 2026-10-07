@@ -155,3 +155,43 @@ def test_expired_flow_returns_expired_status():
     """
     out = _run_node(js)
     assert out == {"status": "expired"}
+
+
+def test_microsoft_mail_sends_account_id_and_uses_plain_verification_uri():
+    js = f"""
+      import {{ runProviderDeviceFlow }} from '{_HELPER.as_posix()}';
+      const calls = [];
+      const opened = [];
+      const response = (ok, status, payload) => ({{ ok, status, async json() {{ return payload; }} }});
+      const fetchImpl = async (url, opts) => {{
+        calls.push([url, opts.body.get('account_id'), opts.body.get('poll_id')]);
+        if (url.endsWith('/device/start')) {{
+          // Microsoft returns no code-prefilled verification_uri_complete.
+          return response(true, 200, {{
+            poll_id: 'poll-ms',
+            user_code: 'MS-CODE',
+            verification_uri: 'https://login.microsoft.com/device',
+            interval: 5,
+            expires_in: 900,
+          }});
+        }}
+        return response(true, 200, {{ status: 'authorized', endpoint: {{ account_id: 'acc-1', email: 'me@contoso.com' }} }});
+      }};
+      const formData = new FormData();
+      formData.append('account_id', 'acc-1');
+      const result = await runProviderDeviceFlow('microsoft-mail', {{
+        fetchImpl,
+        formData,
+        openWindow: (url) => opened.push(url),
+        sleep: async () => {{}},
+        now: () => 0,
+      }});
+      console.log(JSON.stringify({{ result, calls, opened }}));
+    """
+    out = _run_node(js)
+    assert out["result"] == {"status": "authorized", "endpoint": {"account_id": "acc-1", "email": "me@contoso.com"}}
+    assert out["calls"] == [
+        ["/api/email/oauth/microsoft/device/start", "acc-1", None],
+        ["/api/email/oauth/microsoft/device/poll", None, "poll-ms"],
+    ]
+    assert out["opened"] == ["https://login.microsoft.com/device"]

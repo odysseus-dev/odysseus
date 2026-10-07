@@ -9,6 +9,16 @@ export const PROVIDER_DEVICE_FLOWS = {
       return start?.verification_uri_complete || start?.verification_uri || '';
     },
   },
+  // Outlook / Office 365 mail. Microsoft returns only the bare
+  // verification_uri (no code-prefilled link); the panel shows the code.
+  'microsoft-mail': {
+    label: 'Microsoft',
+    startUrl: '/api/email/oauth/microsoft/device/start',
+    pollUrl: '/api/email/oauth/microsoft/device/poll',
+    authUrl(start) {
+      return start?.verification_uri_complete || start?.verification_uri || 'https://microsoft.com/devicelogin';
+    },
+  },
   'chatgpt-subscription': {
     label: 'ChatGPT Subscription',
     startUrl: '/api/chatgpt-subscription/device/start',

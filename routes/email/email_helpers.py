@@ -153,6 +153,160 @@ def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
     return _refresh_google_token(account_id)
 
 
+# --- Microsoft / Office 365 OAuth (device flow + XOAUTH2) ------------------
+#
+# Microsoft removed basic auth for IMAP/SMTP on Exchange Online, so Outlook /
+# Office 365 mailboxes authenticate with OAuth2 XOAUTH2 exactly like Google.
+# The connect flow uses the device-code grant (no redirect URI / public
+# callback URL needed) — see routes/email_routes.py.
+
+# Resource scopes as documented for Exchange Online IMAP/SMTP OAuth:
+# https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth
+_MS_IMAP_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All"
+_MS_SMTP_SCOPE = "https://outlook.office.com/SMTP.Send"
+# openid/email/profile ride along so the ID token carries the signing user's
+# UPN (preferred_username), which the connect flow checks against the
+# configured IMAP username — same wrong-mailbox guard the Google flow uses.
+MICROSOFT_OAUTH_SCOPES = (
+    f"{_MS_IMAP_SCOPE} {_MS_SMTP_SCOPE} openid email profile offline_access"
+)
+
+
+# Hosts a Microsoft bearer token may be presented to. Work/school and
+# personal (outlook.com) mailboxes share the IMAP host; personal accounts
+# submit through smtp-mail.outlook.com.
+MICROSOFT_OAUTH_IMAP_HOSTS = frozenset({"outlook.office365.com"})
+MICROSOFT_OAUTH_SMTP_HOSTS = frozenset({"smtp.office365.com", "smtp-mail.outlook.com"})
+
+
+class OAuthTransportPolicyError(RuntimeError):
+    """An OAuth mail account is configured with a host/transport its bearer
+    token must never be sent to. Raised before any token is fetched."""
+
+
+def _normalized_mail_host(value) -> str:
+    """Normalize a mail hostname for exact provider-bound comparisons."""
+    return str(value or "").strip().lower().rstrip(".")
+
+
+def _microsoft_oauth_imap_transport_allowed(port: int, starttls: bool) -> bool:
+    # Exchange Online IMAP: implicit TLS on 993 (standard) or STARTTLS on 143.
+    return (port == 993 and not starttls) or (port == 143 and starttls)
+
+
+def _microsoft_oauth_smtp_transport_allowed(port: int, security: str) -> bool:
+    # Exchange Online SMTP client submission: STARTTLS on 587 only.
+    return port == 587 and security == "starttls"
+
+
+def microsoft_oauth_imap_policy_error(host, port, starttls) -> str | None:
+    """Why a Microsoft OAuth token must not be used for this IMAP endpoint,
+    or None when the endpoint is allowed."""
+    if _normalized_mail_host(host) not in MICROSOFT_OAUTH_IMAP_HOSTS:
+        return "Microsoft OAuth IMAP requires outlook.office365.com"
+    try:
+        port = int(port or 993)
+    except (TypeError, ValueError):
+        port = -1
+    if not _microsoft_oauth_imap_transport_allowed(port, bool(starttls)):
+        return "Microsoft OAuth IMAP requires TLS on port 993 or STARTTLS on port 143"
+    return None
+
+
+def microsoft_oauth_smtp_policy_error(host, port, security) -> str | None:
+    """SMTP counterpart of microsoft_oauth_imap_policy_error."""
+    if _normalized_mail_host(host) not in MICROSOFT_OAUTH_SMTP_HOSTS:
+        return "Microsoft OAuth SMTP requires smtp.office365.com or smtp-mail.outlook.com"
+    try:
+        port = int(port or 0)
+    except (TypeError, ValueError):
+        port = -1
+    if not _microsoft_oauth_smtp_transport_allowed(port, security):
+        return "Microsoft OAuth SMTP requires STARTTLS on port 587"
+    return None
+
+
+def microsoft_oauth_tenant() -> str:
+    """Azure AD tenant for the OAuth endpoints.
+
+    'common' (work/school + personal), 'organizations' (work/school only),
+    'consumers' (personal only), or a specific tenant GUID.
+    """
+    return os.environ.get("MICROSOFT_OAUTH_TENANT", "").strip() or "common"
+
+
+def microsoft_oauth_configured() -> bool:
+    return bool(os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip())
+
+
+def _microsoft_token_endpoint() -> str:
+    return (
+        "https://login.microsoftonline.com/"
+        f"{microsoft_oauth_tenant()}/oauth2/v2.0/token"
+    )
+
+
+def _refresh_microsoft_token(account_id: str) -> str | None:
+    """Exchange the stored refresh token for a new access token and persist it.
+
+    The v2 endpoint rotates refresh tokens; when the response carries a new
+    one it replaces the stored token so the grant chain never expires out
+    from under a long-lived account row.
+    """
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    client_id = os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip()
+    if not client_id:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or row.oauth_provider != "microsoft" or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        resp = httpx.post(
+            _microsoft_token_endpoint(),
+            data={
+                "client_id": client_id,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+                "scope": MICROSOFT_OAUTH_SCOPES,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        if data.get("refresh_token"):
+            row.oauth_refresh_token = _enc(data["refresh_token"])
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        db.commit()
+        return access_token
+    except Exception:
+        logger.warning(f"Microsoft token refresh failed for account {account_id}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_microsoft_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Microsoft access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_microsoft_token(account_id)
+
+
 def _smtp_security_mode(cfg: dict) -> str:
     raw = str(cfg.get("smtp_security") or "").strip().lower()
     if raw in {"ssl", "starttls", "none"}:
@@ -259,10 +413,17 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     password = cfg.get("smtp_password") or ""
 
     def _auth_smtp(smtp):
-        if cfg.get("oauth_provider") == "google":
+        oauth_provider = cfg.get("oauth_provider")
+        if oauth_provider == "google":
             token = _get_valid_google_token(cfg.get("account_id"), cfg)
             if not token:
                 raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+            smtp.ehlo()
+            smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
+        elif oauth_provider == "microsoft":
+            token = _get_valid_microsoft_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Microsoft OAuth token unavailable — reconnect the account")
             smtp.ehlo()
             smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
         elif user and password:
@@ -270,6 +431,10 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
 
     security = _smtp_security_mode(cfg)
     block_private = _mail_private_blocked(cfg.get("owner"))
+    if cfg.get("oauth_provider") == "microsoft":
+        policy_error = microsoft_oauth_smtp_policy_error(host, port, security)
+        if policy_error:
+            raise OAuthTransportPolicyError(policy_error)
 
     if security == "ssl":
         with _PolicySMTP_SSL(host, port, timeout=timeout, block_private=block_private) as smtp:
@@ -309,9 +474,9 @@ def _friendly_email_auth_error(protocol: str, host: str, error: object) -> str:
     if microsoft_basic_auth_failure:
         return (
             "Microsoft no longer accepts normal mailbox passwords for "
-            "Outlook/Office 365 IMAP/SMTP in most accounts. Odysseus "
-            "does not support Microsoft OAuth/Graph mail yet, so Outlook "
-            "accounts cannot be added with this password form."
+            "Outlook/Office 365 IMAP/SMTP in most accounts. Choose "
+            "Microsoft as the provider and use \"Sign in with Microsoft\" "
+            "instead of a password."
         )
     return raw[:200]
 
@@ -1363,6 +1528,12 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
     # The last branch is critical: previously this fell into IMAP4_SSL
     # for any non-STARTTLS port, which would fail the TLS handshake on
     # plain local servers (Dovecot on 31143, etc.).
+    if cfg.get("oauth_provider") == "microsoft":
+        policy_error = microsoft_oauth_imap_policy_error(
+            cfg["imap_host"], cfg.get("imap_port"), cfg.get("imap_starttls"),
+        )
+        if policy_error:
+            raise OAuthTransportPolicyError(policy_error)
     conn = _open_imap_connection(
         cfg["imap_host"],
         cfg["imap_port"],
@@ -1375,6 +1546,11 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
             token = _get_valid_google_token(cfg.get("account_id"), cfg)
             if not token:
                 raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        elif cfg.get("oauth_provider") == "microsoft":
+            token = _get_valid_microsoft_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Microsoft OAuth token unavailable — reconnect the account in Settings → Integrations")
             conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
         else:
             conn.login(cfg["imap_user"], cfg["imap_password"])
