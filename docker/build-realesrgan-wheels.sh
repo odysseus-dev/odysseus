@@ -14,6 +14,12 @@
 # no fixed release, so we patch get_version() to exec into an explicit namespace
 # dict (works on every Python) and build wheels from the patched source.
 #
+# basicsr also declares `torch` in setup_requires. With setuptools' legacy
+# installer that triggers a ~2GB PyTorch download (and network timeouts) while
+# building the wheel, even though torch is not needed at build time. We remove
+# ONLY torch from setup_requires and build with --no-build-isolation, so the
+# remaining build requirements (cython, numpy) must be preinstalled below.
+#
 # Usage: build-realesrgan-wheels.sh [OUTPUT_DIR]   (default: /wheels)
 set -euo pipefail
 
@@ -23,6 +29,13 @@ mkdir -p "$OUT"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
+
+# Install build requirements before wheel generation.
+# Deliberately unpinned: the builder stage runs Python 3.14, and the old
+# setuptools<70 / cython<3.0 lines predate 3.14 support.
+# numpy/cython are needed here because we build with --no-build-isolation,
+# so nothing else will supply the packages left in setup_requires.
+pip install --no-cache-dir --upgrade setuptools wheel cython numpy
 
 # Pinned to the versions Real-ESRGAN 0.3.0 resolves to.
 SPECS="basicsr==1.4.2 gfpgan==1.3.8 facexlib==0.3.0"
@@ -48,23 +61,36 @@ PY
   tar xzf "${name}.tar.gz"
 done
 
-echo ">> patching get_version()"
+echo ">> patching get_version() and removing torch from setup_requires"
 python - <<'PY'
-import pathlib
+import pathlib, re
+
 old_exec = "exec(compile(f.read(), version_file, 'exec'))"
 new_exec = "_ver_ns = {}\n        exec(compile(f.read(), version_file, 'exec'), _ver_ns)"
 old_ret = "return locals()['__version__']"
 new_ret = "return _ver_ns['__version__']"
+
+
+def drop_torch(match):
+    """Rewrite setup_requires=[...] keeping everything except torch."""
+    items = re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
+    kept = [i for i in items if not re.match(r"\s*torch\b", i, re.I)]
+    return "setup_requires=" + repr(kept)
+
+
 patched = 0
 for setup in pathlib.Path(".").glob("*/setup.py"):
     s = setup.read_text()
     if old_exec in s and old_ret in s:
-        setup.write_text(s.replace(old_exec, new_exec).replace(old_ret, new_ret))
+        s = s.replace(old_exec, new_exec).replace(old_ret, new_ret)
+        # Drop only torch (avoids the huge download); keep cython/numpy etc.
+        s = re.sub(r"setup_requires\s*=\s*\[([^\]]*)\]", drop_torch, s)
+        setup.write_text(s)
         print("   patched", setup)
         patched += 1
 assert patched == 3, f"expected to patch 3 setup.py files, patched {patched}"
 PY
 
 echo ">> building wheels into ${OUT}"
-pip wheel --no-deps -w "$OUT" ./basicsr-* ./gfpgan-* ./facexlib-*
+pip wheel --no-build-isolation --no-deps -w "$OUT" ./basicsr-* ./gfpgan-* ./facexlib-*
 ls -l "$OUT"
