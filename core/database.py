@@ -353,7 +353,7 @@ class Document(TimestampMixin, Base):
 
 
 class DocumentVersion(Base):
-    """Immutable snapshot of a document at a point in time."""
+    """A document checkpoint or a coalescible editor autosave."""
     __tablename__ = "document_versions"
 
     id             = Column(String, primary_key=True, index=True)
@@ -362,6 +362,7 @@ class DocumentVersion(Base):
     content        = Column(Text, nullable=False)
     summary        = Column(String, nullable=True)     # Edit description
     source         = Column(String, default="ai")      # "ai" or "user"
+    is_autosave    = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at     = Column(DateTime, default=utcnow_naive)
 
     document = relationship("Document", back_populates="versions")
@@ -1059,6 +1060,20 @@ def _migrate_add_session_generation_settings_columns():
     finally:
         if conn is not None:
             conn.close()
+
+def _migrate_add_document_version_autosave_column():
+    """Keep legacy versions protected; only new autosaves may coalesce."""
+    try:
+        with engine.begin() as conn:
+            columns = {column["name"] for column in inspect(conn).get_columns("document_versions")}
+            if "is_autosave" not in columns:
+                conn.execute(text(
+                    "ALTER TABLE document_versions ADD COLUMN "
+                    "is_autosave BOOLEAN NOT NULL DEFAULT FALSE"
+                ))
+    except Exception as e:
+        logger.warning("document_versions.is_autosave migration failed: %s", e)
+
 
 def _migrate_add_document_archived_column():
     """Add `archived` to documents (soft-archive flag). Guarded + idempotent."""
@@ -2400,6 +2415,7 @@ def init_db():
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
+    _migrate_add_document_version_autosave_column()
     _migrate_add_last_message_at_column()
     _migrate_add_memory_extraction_enabled_column()
     _migrate_add_memory_injection_enabled_column()
