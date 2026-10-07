@@ -1083,10 +1083,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             fixed_titles = 0
             deleted = 0
 
-            # Same junk-detection logic as the scheduled tidy_documents
-            # action (src/document_actions.py). Keep these two in sync.
-            import re as _re
-            from src.document_actions import _JUNK_TITLES
+            from src.document_actions import _has_document_content
 
             to_delete = []
             now = datetime.now(timezone.utc)
@@ -1101,7 +1098,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
                 content = (doc.current_content or "").strip()
                 title_raw = (doc.title or "").strip()
-                title = title_raw.lower()
                 is_fresh_empty = (
                     not content
                     and created is not None
@@ -1110,38 +1106,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 if is_fresh_empty:
                     continue
 
-                # Strip markdown noise to get a "real" character count
-                stripped = _re.sub(r"^#{1,6}\s+", "", content, flags=_re.MULTILINE)
-                stripped = _re.sub(r"[*_`>\-=]+", "", stripped)
-                stripped = _re.sub(r"\s+", " ", stripped).strip()
-                real_len = len(stripped)
-
-                # Detect email-scaffold stubs: "To: \nSubject: \n---\n" style
-                # bodies with nothing typed in. Stub = every meaningful line
-                # is a header label (To:/From:/Subject:/...) with no real
-                # value (blank, "empty", "(empty)", "-", "none", "n/a").
-                _is_email_stub = False
-                _HEADER_RE = _re.compile(r"^(to|from|cc|bcc|subject|reply-to):\s*(.*)$", _re.I)
-                _PLACEHOLDER_VALS = {"", "empty", "(empty)", "-", "—", "none", "n/a", "na", "tbd"}
-                if title in ("new email", "new mail", "new message") or doc.language == "email":
-                    body_lines = [ln.strip() for ln in content.split("\n")
-                                  if ln.strip() and ln.strip() != "---"]
-                    def _is_filler(ln):
-                        m = _HEADER_RE.match(ln)
-                        if not m:
-                            return False
-                        val = (m.group(2) or "").strip().lower()
-                        return val in _PLACEHOLDER_VALS
-                    has_real_body = any(not _is_filler(ln) for ln in body_lines)
-                    if body_lines and not has_real_body:
-                        _is_email_stub = True
-
-                # Hard-delete obviously empty / junk documents
-                if not content or content in ("", "# Untitled"):
-                    to_delete.append(doc); deleted += 1; continue
-                if _is_email_stub:
-                    to_delete.append(doc); deleted += 1; continue
-                if title in _JUNK_TITLES:
+                # An uninformative title is not consent to delete saved text.
+                if not _has_document_content(doc):
                     to_delete.append(doc); deleted += 1; continue
 
                 # Fix empty or placeholder titles on survivors
@@ -1159,13 +1125,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 db.query(Document)
                 .outerjoin(DbSession, Document.session_id == DbSession.id)
                 .filter(Document.is_active == False)
+                .filter((Document.archived == False) | (Document.archived.is_(None)))
                 .filter((Document.current_content == None) | (Document.current_content == ""))
             )
             inactive_q = _owner_session_filter(inactive_q, user)
             inactive_docs = inactive_q.all()
             for doc in inactive_docs:
-                db.delete(doc)
-            deleted += len(inactive_docs)
+                if not _has_document_content(doc):
+                    db.delete(doc)
+                    deleted += 1
 
             db.commit()
             return {
@@ -1183,7 +1151,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- POST /api/documents/ai-tidy — AI-powered cleanup of junk/test documents ----
     @router.post("/api/documents/ai-tidy")
     async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
-        """Use AI to judge if documents are junk/test/accidental, then delete them.
+        """Use AI to judge if documents are junk/test/accidental, then archive them.
         Caches verdicts so previously-reviewed docs are skipped."""
         from src.task_endpoint import resolve_task_endpoint
         from src.endpoint_resolver import resolve_endpoint
@@ -1211,7 +1179,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # Only review docs that haven't been reviewed yet
             to_review = [d for d in docs if not d.tidy_verdict]
             if not to_review:
-                return {"deleted": 0, "reviewed": 0, "message": "All documents already reviewed"}
+                return {"deleted": 0, "archived": 0, "reviewed": 0, "message": "All documents already reviewed"}
 
             # Build a batch prompt — review up to 30 at a time
             batch = to_review[:30]
@@ -1255,7 +1223,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 verdict = str(verdicts[i] or "").lower().strip()
                 if verdict == "junk":
                     doc.tidy_verdict = "junk"
-                    db.delete(doc)
+                    # A classifier verdict must not erase content or history.
+                    doc.archived = True
                     deleted += 1
                 else:
                     doc.tidy_verdict = "keep"
@@ -1263,10 +1232,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             db.commit()
             return {
+                # The existing Library UI uses this field for removed cards.
                 "deleted": deleted,
+                "archived": deleted,
                 "reviewed": reviewed,
                 "remaining": len(to_review) - len(batch),
-                "message": f"Reviewed {reviewed}, removed {deleted} junk document{'s' if deleted != 1 else ''}",
+                "message": f"Reviewed {reviewed}, archived {deleted} document{'s' if deleted != 1 else ''}",
             }
         except HTTPException:
             raise
