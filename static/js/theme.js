@@ -9,23 +9,36 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 
 export const THEMES = {
-  dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
-  light:      { bg:'#f3f5f7', fg:'#26313a', panel:'#ffffff', border:'#cbd3da', red:'#b34d5c' },
-  midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
-  // Spicy / fun themes
-  cyberpunk:  { bg:'#10121a', fg:'#9bdde0', panel:'#171a26', border:'#514b78', red:'#d45aa8' },
-  retrowave:  { bg:'#1a1a2e', fg:'#e94560', panel:'#16213e', border:'#533483', red:'#e94560' },
-  forest:     { bg:'#1b2a1b', fg:'#a8d5a2', panel:'#142414', border:'#3d6b3d', red:'#7cb871' },
-  ocean:      { bg:'#0b1a2c', fg:'#64d2ff', panel:'#091422', border:'#1e5074', red:'#4facfe' },
-  ume:        { bg:'#271d2b', fg:'#f1d8e9', panel:'#1d1721', border:'#66475f', red:'#d98bb7' },
-  terminal:   { bg:'#0b1110', fg:'#b8e6c1', panel:'#080d0c', border:'#28553a', red:'#6bd38b' },
-  organs:     { bg:'#0a0406', fg:'#efe1c8', panel:'#15080a', border:'#3a1519', red:'#c83240' },
-  gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494',
+  // Default pair: neutral greys, hairline borders, Odysseus coral as the one accent.
+  dark:       { bg:'#131418', fg:'#ececef', panel:'#18191d', border:'#2a2b31', red:'#e06c75',
+                advanced: { inputBg: '#1e1f24', inputBorder: '#2f3036', userBubbleBg: '#1e1f24',
+                            aiBubbleBg: '#131418', bubbleBorder: '#2a2b31', sidebarBg: '#18191d',
+                            brandColor: '#e06c75', brandMixTo: '#f08a92', hamburgerColor: '#9d9ea7',
+                            codeBg: '#0f1013', codeFg: '#ececef' } },
+  light:      { bg:'#f4f4f6', fg:'#18191d', panel:'#fbfbfc', border:'#dcdde2', red:'#d65a65',
+                advanced: { inputBg: '#fefefe', inputBorder: '#d4d5da', userBubbleBg: '#fefefe',
+                            aiBubbleBg: '#f4f4f6', bubbleBorder: '#dcdde2', sidebarBg: '#fbfbfc',
+                            brandColor: '#d65a65', brandMixTo: '#d65a65', hamburgerColor: '#5b5d66',
+                            codeBg: '#ececf0', codeFg: '#18191d' } },
+  // Previous defaults, kept for anyone who prefers them.
+  classic:    { bg:'#282c34', fg:'#9cdef2', panel:'#21252b', border:'#3a4450', red:'#e06c75' },
+  sand:       { bg:'#f2ede5', fg:'#332d27', panel:'#faf7f2', border:'#ddd5c9', red:'#a95a36' },
+  midnight:   { bg:'#0d1117', fg:'#d1d7e0', panel:'#151b23', border:'#2a313c', red:'#f0605a' },
+  // Character themes: each keeps its signature hue in the background tint and
+  // accent, with readable tinted-white (or deep) text instead of neon text.
+  cyberpunk:  { bg:'#0c0b14', fg:'#c8f6fb', panel:'#13111f', border:'#2f2552', red:'#d946ef' },
+  retrowave:  { bg:'#1a1830', fg:'#f4e6f0', panel:'#211e3b', border:'#3a2e5e', red:'#f0507a' },
+  forest:     { bg:'#141c16', fg:'#dae7d4', panel:'#19231b', border:'#2b3b2e', red:'#5fa863' },
+  ocean:      { bg:'#0b1622', fg:'#d5ebfa', panel:'#0f1c2b', border:'#1f3447', red:'#3d97e0' },
+  ume:        { bg:'#221726', fg:'#f4e3ee', panel:'#2a1d2f', border:'#43304a', red:'#e0719e' },
+  terminal:   { bg:'#070a08', fg:'#a6f2b6', panel:'#0c110d', border:'#1b2e20', red:'#22a14f' },
+  organs:     { bg:'#0e0709', fg:'#efe3cf', panel:'#170b0e', border:'#3a1a1f', red:'#d03a48' },
+  gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#383838', red:'#949494',
                 advanced: { sendBtnBg: '#949494', sendBtnHover: '#7f7f7f',
                             userBubbleBg: '#2f2f2f', aiBubbleBg: '#171717',
                             inputBg: '#2f2f2f', brandColor: '#ffffff', brandMixTo: '#ffffff' } },
-  claude:     { bg:'#1f1e1b', fg:'#f5f1e8', panel:'#2b2926', border:'#514b43', red:'#d97757' },
-  cute:       { bg:'#fff4f7', fg:'#63394d', panel:'#fffafd', border:'#edc7d5', red:'#d65f88' },
+  claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#3f3f3b', red:'#c6613f' },
+  cute:       { bg:'#fff4f7', fg:'#4a2735', panel:'#fffafb', border:'#f2d3de', red:'#d93a73' },
   eclipse:    { bg:'#17191c', fg:'#e8e4dc', panel:'#0f1113', border:'#3c4248', red:'#46c2b3' },
   porcelain:  { bg:'#edf0f2', fg:'#252a30', panel:'#ffffff', border:'#c7cdd2', red:'#3478c9' },
   arcade:     { bg:'#15131d', fg:'#f4e85c', panel:'#0b1720', border:'#305f68', red:'#ff4f91' },
@@ -57,7 +70,8 @@ const MAX_CUSTOM_THEMES = 8;
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
   dark:       'none',
-  light:      'dots',
+  light:      'none',
+  sand:       'dots',
   midnight:   'rain',
   cyberpunk:  'synapse',
   retrowave:  'embers',
@@ -295,6 +309,10 @@ export function applyColors(colors) {
   s.setProperty('--panel', colors.panel);
   s.setProperty('--border', colors.border);
   if (colors.red) s.setProperty('--red', colors.red);
+  // Native controls (select popups, date pickers, scrollbars) follow the theme.
+  s.colorScheme = hexToHSL(colors.bg)[2] < 50 ? 'dark' : 'light';
+  // Lets CSS give light themes stronger text tiers (see refresh.css).
+  document.documentElement.dataset.scheme = s.colorScheme;
 
   // Keep the mobile browser toolbar / status bar matched to the theme bg
   // (same as the early head-script does on first paint).
@@ -700,7 +718,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : (THEME_DISPLAY_NAMES[name] || name))}
+      ${name === 'classic' ? 'original' : (name === 'gpt' ? 'GPT' : (THEME_DISPLAY_NAMES[name] || name))}
     </div>
   `).join('');
 

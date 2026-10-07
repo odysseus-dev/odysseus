@@ -6,7 +6,7 @@
   <title>Odysseus Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
-  <meta name="theme-color" content="#282c34">
+  <meta name="theme-color" content="#131418">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
@@ -58,6 +58,7 @@
         }
         var fH=h2hsl(c.fg),bH=h2hsl(c.bg),rH=h2hsl(c.red||'#e06c75');
         var dk=bH[2]<50;
+        document.documentElement.dataset.scheme = dk ? 'dark' : 'light';
         s.setProperty('--hl-bg', hsl2h(bH[0],bH[1],dk?Math.max(bH[2]-4,0):Math.min(bH[2]+4,100)));
         s.setProperty('--hl-fg', c.fg);
         s.setProperty('--hl-keyword', hsl2h((rH[0]+280)%360,Math.min(rH[1]+10,80),dk?70:45));
@@ -247,32 +248,35 @@
        real request is discarded and the font fetched a second time. -->
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/02-compare.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/04-memory.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/05-documents.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/07-documents.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/08-skills.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/14-email.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/15-notes.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/17-research.css?v=20260929csssplit">
+  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/14-email.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/17-research.css?v=20261007redesign">
   <!-- Panel stylesheets split out of style.css for maintainability. They are
        eager and their order is load-bearing: the cascade is the concatenation of
        these files in this order, so they must stay in this order here and in the
        PRECACHE list in sw.js. None of them is lazy-loaded. -->
-  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20260929csssplit">
-  <link rel="modulepreload" href="/static/app.js?v=20260929csssplit">
+  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261007redesign">
+  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261007redesign">
+  <!-- Shared styling layer derived from the theme tokens. Loads last so it
+       overrides the cascade above. -->
+  <link rel="stylesheet" href="/static/css/refresh.css?v=20261007redesign">
+  <link rel="modulepreload" href="/static/app.js?v=20261007redesign">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -280,8 +284,8 @@
 </head>
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
-  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
-    <div id="loader-wave" style="color:color-mix(in srgb, #9cdef2 62%, var(--brand-color,var(--red,#e06c75)));font-family:monospace;font-size:11px;opacity:.5;position:relative;padding-top:10px;line-height:1;white-space:pre">▁▂▃</div>
+  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#131418);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
+    <div id="loader-wave" style="color:color-mix(in srgb, #ececef 62%, var(--brand-color,var(--red,#e06c75)));font-family:monospace;font-size:11px;opacity:.5;position:relative;padding-top:10px;line-height:1;white-space:pre">▁▂▃</div>
   </div>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -870,9 +874,9 @@
         </div>
       </div>
 
-      <div class="section" id="tools-section">
+      <div class="section" id="workspace-section">
         <div class="section-header-flex">
-          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tools</span>
+          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Workspace</span>
         </div>
         <div class="list-item" id="tool-calendar-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -885,35 +889,6 @@
           </svg>
           <span class="grow">Calendar</span>
         </div>
-        <div class="list-item" id="tool-compare-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/><path d="M10 8h4"/><path d="M10 16h4"/></svg>
-          <span class="grow">Compare</span>
-        </div>
-        <div class="list-item" id="tool-cookbook-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M12 7v14"/>
-            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
-          </svg>
-          <span class="grow">Cookbook</span>
-          <span id="cookbook-bg-status" style="display:none;font-size:9px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
-          <span class="cookbook-notif-dot" id="cookbook-notif-dot" style="display:none;margin-left:6px;margin-right:4px;position:relative;top:-1px;left:0px;"></span>
-        </div>
-        <div class="list-item" id="tool-research-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:0.5;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-          <span class="grow">Deep Research</span>
-        </div>
-        <div class="list-item" id="tool-gallery-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <path d="M21 15l-5-5L5 21"/>
-          </svg>
-          <span class="grow">Gallery</span>
-        </div>
         <div class="list-item" id="tool-library-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;">
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/>
@@ -923,16 +898,6 @@
             <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span class="list-item-plus-label">document</span>
           </button>
-        </div>
-        <div class="list-item" id="tool-memory-btn">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            style="flex-shrink:0;opacity:0.5;">
-            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
-          </svg>
-          <span class="grow">Memory</span>
         </div>
         <div class="list-item" id="tool-notes-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -969,18 +934,50 @@
           <span class="grow">Tasks</span>
           <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
+      </div>
 
-        <div class="list-item" id="tool-theme-btn">
+      <div class="section" id="tools-section">
+        <div class="section-header-flex">
+          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>AI tools</span>
+        </div>
+        <div class="list-item" id="tool-compare-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/><path d="M10 8h4"/><path d="M10 16h4"/></svg>
+          <span class="grow">Compare</span>
+        </div>
+        <div class="list-item" id="tool-cookbook-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <path d="M12 7v14"/>
+            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
+          </svg>
+          <span class="grow">Cookbook</span>
+          <span id="cookbook-bg-status" style="display:none;font-size:9px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
+          <span class="cookbook-notif-dot" id="cookbook-notif-dot" style="display:none;margin-left:6px;margin-right:4px;position:relative;top:-1px;left:0px;"></span>
+        </div>
+        <div class="list-item" id="tool-research-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:0.5;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          <span class="grow">Deep Research</span>
+        </div>
+        <div class="list-item" id="tool-gallery-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             style="flex-shrink:0;opacity:0.5;">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/>
-            <circle cx="8" cy="9" r="1.5" fill="currentColor"/>
-            <circle cx="15" cy="14" r="1.5" fill="currentColor"/>
-            <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
           </svg>
-          <span class="grow">Theme</span>
+          <span class="grow">Gallery</span>
+        </div>
+        <div class="list-item" id="tool-memory-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+            <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+          </svg>
+          <span class="grow">Memory</span>
         </div>
       </div>
     </div>
@@ -990,6 +987,7 @@
         <span class="user-bar-name" id="user-bar-name">User</span>
       </div>
       <div class="user-bar-actions">
+        <button type="button" class="user-bar-btn" id="tool-theme-btn" title="Theme" aria-label="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></button>
         <button type="button" class="user-bar-btn" id="user-bar-settings" title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
@@ -1019,6 +1017,12 @@
         </svg>
         <span class="incognito-label">Nobody</span>
       </button>
+      <div class="welcome-starters" id="welcome-starters">
+        <button type="button" class="welcome-starter" data-prompt="Help me plan my week: "><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x='3' y='4' width='18' height='18' rx='2'/><path d='M16 2v4M8 2v4M3 10h18'/></svg>Plan my week</button>
+        <button type="button" class="welcome-starter" data-prompt="Draft an email to "><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x='2' y='4' width='20' height='16' rx='2'/><path d='m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7'/></svg>Draft an email</button>
+        <button type="button" class="welcome-starter" data-prompt="Explain this code:&#10;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d='m16 18 6-6-6-6M8 6l-6 6 6 6'/></svg>Explain code</button>
+        <button type="button" class="welcome-starter" data-prompt="Research and summarize: "><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>Research a topic</button>
+      </div>
       <div id="welcome-setup" style="display:none"></div>
     </div>
     <script nonce="{{CSP_NONCE}}">
@@ -1045,6 +1049,16 @@
         if (d.build || d.version) window._appVersion = d.build || d.version;
       }).catch(function(){});
     })();
+    </script>
+    <script nonce="{{CSP_NONCE}}">
+    // Starter prompts prefill the composer; the user finishes the sentence.
+    document.getElementById('welcome-starters').addEventListener('click', function(e){
+      var b = e.target.closest('[data-prompt]'), ta = document.getElementById('message');
+      if (!b || !ta) return;
+      ta.value = b.getAttribute('data-prompt');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
     </script>
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
 
@@ -2255,7 +2269,7 @@
 
           <!-- ── Local card ─────────────────────────────────────────── -->
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add Local Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Add Local Models <span class="heading-hint">(Endpoint)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
@@ -2300,7 +2314,7 @@
 
           <!-- ── API card ───────────────────────────────────────────── -->
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="12" r="8"/><path d="M19 5v6"/><path d="M16 8h6"/><path d="M7 12h8"/></svg>Add API Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoint)</span>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="12" r="8"/><path d="M19 5v6"/><path d="M16 8h6"/><path d="M7 12h8"/></svg>Add API Models <span class="heading-hint">(Endpoint)</span>
               <span style="flex:1"></span>
               <button class="admin-btn-sm" id="adm-epApiTestBtn" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
@@ -2667,7 +2681,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20260929csssplit"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20261007redesign"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>

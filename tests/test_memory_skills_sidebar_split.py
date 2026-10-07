@@ -9,18 +9,23 @@ MEMORY_JS = (ROOT / "static" / "js" / "memory.js").read_text(encoding="utf-8")
 CHAT_STREAM_JS = (ROOT / "static" / "js" / "chatStream.js").read_text(encoding="utf-8")
 INIT_JS = (ROOT / "static" / "js" / "init.js").read_text(encoding="utf-8")
 
-TOOL_ORDER = [
-    "tool-calendar-btn",
-    "tool-compare-btn",
-    "tool-cookbook-btn",
-    "tool-research-btn",
-    "tool-gallery-btn",
-    "tool-library-btn",
-    "tool-memory-btn",
-    "tool-notes-btn",
-    "tool-skills-btn",
-    "tool-tasks-btn",
-    "tool-theme-btn",
+# Sidebar tools are grouped; each group is alphabetical. Theme lives in the
+# user bar next to Settings.
+SIDEBAR_GROUPS = [
+    ("workspace-section", [
+        "tool-calendar-btn",
+        "tool-library-btn",
+        "tool-notes-btn",
+        "tool-skills-btn",
+        "tool-tasks-btn",
+    ]),
+    ("tools-section", [
+        "tool-compare-btn",
+        "tool-cookbook-btn",
+        "tool-research-btn",
+        "tool-gallery-btn",
+        "tool-memory-btn",
+    ]),
 ]
 
 RAIL_ORDER = [
@@ -94,8 +99,15 @@ def test_memory_and_skills_modal_sections_are_scoped_by_launcher():
 
 
 def test_sidebar_tools_and_icon_rail_are_alphabetically_ordered():
-    tool_positions = [INDEX.index(f'id="{tool_id}"') for tool_id in TOOL_ORDER]
-    assert tool_positions == sorted(tool_positions)
+    group_end = 0
+    for section_id, tool_ids in SIDEBAR_GROUPS:
+        section_start = INDEX.index(f'id="{section_id}"')
+        assert section_start > group_end
+        tool_positions = [INDEX.index(f'id="{tool_id}"') for tool_id in tool_ids]
+        assert tool_positions == sorted(tool_positions)
+        assert tool_positions[0] > section_start
+        group_end = tool_positions[-1]
+    assert INDEX.index('class="user-bar-actions"') < INDEX.index('id="tool-theme-btn"')
 
     rail_positions = [INDEX.index(f'id="{rail_id}"') for rail_id in RAIL_ORDER]
     assert rail_positions == sorted(rail_positions)

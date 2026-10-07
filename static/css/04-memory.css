@@ -612,7 +612,7 @@ textarea.memory-add-input {
    Matches the .memory-desc treatment (same color + 11px size) so it
    visually belongs to the section description, not the switch. */
 .admin-toggle-state {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   font-weight: normal;
   letter-spacing: 0.02em;
@@ -744,7 +744,7 @@ textarea.memory-add-input {
   gap: 5px;
   cursor: pointer;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   padding: 4px 8px;
   border-radius: 4px;
   user-select: none;
@@ -757,7 +757,7 @@ textarea.memory-add-input {
 
 #memory-selected-count {
   color: color-mix(in srgb, var(--fg) 50%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   flex: 1;
 }
 
@@ -1054,7 +1054,7 @@ textarea.memory-add-input {
   border: 1px solid var(--red);
   border-radius: 4px;
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   padding: 2px 8px;
   cursor: pointer;
   flex-shrink: 0;
@@ -1189,7 +1189,7 @@ textarea.memory-add-input {
 
 /* Research-preview sub-sections — used by the research-tab expand pattern. */
 .doclib-research-section-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1280,7 +1280,7 @@ textarea.memory-add-input {
   background: none;
   border: 1px solid var(--border);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   height: 22px;
   padding: 0 8px;
   display: inline-flex;
@@ -1519,7 +1519,7 @@ textarea.memory-add-input {
   }
 }
 .email-filter-group {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -1611,7 +1611,7 @@ textarea.memory-add-input {
 .memory-item-source,
 .memory-item-time,
 .memory-item-uses {
-  font-size: 9px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 35%, transparent);
 }
 .memory-item-uses {

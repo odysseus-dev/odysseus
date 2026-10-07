@@ -72,7 +72,7 @@
 }
 /* Section headers */
 .admin-priv-section {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   opacity: 0.35;
@@ -120,7 +120,7 @@
 /* All/None links */
 .priv-models-all,
 .priv-models-none {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   color: var(--fg);
   text-decoration: none;
@@ -156,14 +156,14 @@
   margin-bottom: 6px;
 }
 .mcp-tools-panel .mcp-tools-header span:first-child {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   opacity: 0.35;
   font-weight: 600;
 }
 .mcp-tools-panel .mcp-tools-header a {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   color: var(--fg);
   text-decoration: none;
@@ -341,7 +341,7 @@
 .adm-ep-section-head {
   display: flex;
   align-items: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -509,7 +509,7 @@ span[id$="-logo"] svg:not([width]) {
   font-size: 11px; cursor: grab; user-select: none;
 }
 .search-fb-chip.dragging { opacity: 0.4; }
-.search-fb-grip { opacity: 0.35; font-size: 10px; line-height: 1; cursor: grab; }
+.search-fb-grip { opacity: 0.35; font-size: 11px; line-height: 1; cursor: grab; }
 .search-fb-logo {
   width: 12px; height: 12px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -727,7 +727,7 @@ span[id$="-logo"] svg:not([width]) {
 .admin-ep-name { color: var(--fg); font-weight: 500; }
 .admin-ep-detail {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -835,7 +835,7 @@ span[id$="-logo"] svg:not([width]) {
   margin-bottom: 6px;
 }
 .admin-rag-section-label {
-  font-size: 10px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -860,7 +860,7 @@ span[id$="-logo"] svg:not([width]) {
 }
 .admin-rag-item-meta {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
-  font-size: 10px;
+  font-size: 11px;
   margin: 0 6px;
   flex-shrink: 0;
 }
@@ -971,7 +971,7 @@ span[id$="-logo"] svg:not([width]) {
 .doclib-chip {
   padding: 2px 10px;
   border-radius: 12px;
-  font-size: 10px;
+  font-size: 11px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg-muted);
@@ -1188,7 +1188,7 @@ span[id$="-logo"] svg:not([width]) {
     background: var(--accent-primary, var(--red));
     color: #fff;
     font-family: inherit;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
     line-height: 1;
     cursor: pointer;

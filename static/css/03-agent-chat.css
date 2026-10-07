@@ -37,7 +37,7 @@
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 0.7rem;
+  font-size: 12px;
   color: var(--color-error, #f44);
   opacity: 0.8;
   transition: opacity 0.5s ease;
@@ -443,7 +443,7 @@ button.hamburger {
   background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   font-family: inherit;
-  font-size: 10.2px;
+  font-size: 11px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -716,7 +716,7 @@ button.hamburger {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1;
   z-index: 3;
   transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
@@ -839,7 +839,7 @@ button.hamburger {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1;
     z-index: 3;
     opacity: 1;
@@ -848,7 +848,7 @@ button.hamburger {
   .thumb button {
     height: 28px;
     min-width: 28px;
-    font-size: 15px;
+    font-size: 16px;
   }
 }
 .thumb span {
@@ -2681,7 +2681,7 @@ details a:hover {
 
 .preset-temp-hints {
   display: flex;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--color-muted);
   margin-top: -4px;
   margin-bottom: 10px;

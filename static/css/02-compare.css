@@ -45,7 +45,7 @@
     .theme-adv-section.hidden { display: none; }
     .theme-adv-group { margin-bottom: 8px; }
     .theme-adv-group-label {
-      font-size: 10px; color: var(--fg); opacity: 0.5;
+      font-size: 11px; color: var(--fg); opacity: 0.5;
       text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
     }
     .theme-adv-clear-btn {
@@ -587,7 +587,7 @@
     }
     .cmp-eval-menu.hidden { display: none; }
     .cmp-eval-group-label {
-      font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
       opacity: 0.45; font-weight: 600;
       padding: 6px 8px 2px;
     }
@@ -640,7 +640,7 @@
     .cmp-eval-expected-label {
       opacity: 0.6;
       text-transform: uppercase;
-      font-size: 9px;
+      font-size: 11px;
       letter-spacing: 0.5px;
       font-weight: 600;
     }
@@ -722,7 +722,7 @@
     .compare-probe-action-btn {
       display: inline-flex; align-items: center; gap: 5px;
       min-height: 25px; padding: 3px 8px; background: transparent; color: var(--fg); border: 1px solid var(--border);
-      border-radius: 5px; cursor: pointer; font-size: 10px; font-family: inherit;
+      border-radius: 5px; cursor: pointer; font-size: 11px; font-family: inherit;
       opacity: 0.78; transition: opacity 0.15s, border-color 0.15s, background 0.15s; white-space: nowrap; flex-shrink: 0;
     }
     .compare-probe-action-btn svg,
@@ -1136,7 +1136,7 @@
     /* Pane title as clickable model-swap button */
     .pane-title-btn {
       background: none; border: none; cursor: pointer;
-      font-size: 10px; font-weight: 400; font-family: inherit;
+      font-size: 11px; font-weight: 400; font-family: inherit;
       color: var(--fg); padding: 0;
       text-align: left; display: flex; align-items: center; gap: 4px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1260,7 +1260,7 @@
     .pane-model-item:focus-visible { background: color-mix(in srgb, var(--red) 10%, transparent); outline: none; }
     .pane-model-item.current { color: var(--red); font-weight: 600; }
     .pane-timer {
-      font-size: 10px; font-weight: 400; opacity: 0.45; font-variant-numeric: tabular-nums;
+      font-size: 11px; font-weight: 400; opacity: 0.45; font-variant-numeric: tabular-nums;
       white-space: nowrap; padding-right: 4px;
     }
     .pane-summary {
@@ -1348,7 +1348,7 @@
       margin-bottom: 0;
     }
     .compare-section-label {
-      font-size: 9px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.6px;
       opacity: 0.5;
@@ -1491,7 +1491,7 @@
     /* Compare toggle buttons — icon + label stacked */
     .compare-toggle-label {
       display: block;
-      font-size: 9px;
+      font-size: 11px;
       line-height: 1;
       margin-top: 2px;
       font-weight: 500;
@@ -1596,7 +1596,7 @@
       .compare-header-bar button { padding: 3px 5px !important; }
       .compare-header-bar #compare-check-btn > span,
       .compare-header-bar #compare-add-btn > span {
-        font-size: 10px; margin-left: 2px;
+        font-size: 11px; margin-left: 2px;
       }
       /* Compare mobile: keep the close X visible — it's the only way out
          now that the hamburger is hidden during compare mode. */
