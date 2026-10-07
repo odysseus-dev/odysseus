@@ -879,9 +879,11 @@ span[id$="-logo"] svg:not([width]) {
   border-radius: 8px;
 }
 
-/* Selects in admin cards */
+/* Selects in admin cards. background-color, not the `background` shorthand:
+   the shorthand also resets background-image, which wiped the custom caret
+   off .memory-sort-select and select.settings-select inside every card. */
 .admin-card select {
-  background: var(--bg);
+  background-color: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--fg);
