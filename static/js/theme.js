@@ -5,6 +5,7 @@ import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { initColorPickers, attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 import { hexToRgb } from './color/hex.js';
+import { runBgEffect, bgChance, bgCount, bgFade } from './bgEffectClock.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
 
@@ -1648,23 +1649,22 @@ function _initSynapse() {
     }
   }
 
-  function draw() {
+  function draw(k) {
     if (!document.body.classList.contains('bg-pattern-synapse') || document.body.classList.contains('memory-disabled')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
 
     // Spawn
-    if (pulses.length < MAX_PULSES && Math.random() < 0.12) spawnPulse();
+    for (let n = bgCount(0.12, k); n > 0 && pulses.length < MAX_PULSES; n--) spawnPulse();
 
     // Draw pulses as small bright dots with a short trail
     for (let i = pulses.length - 1; i >= 0; i--) {
       const p = pulses[i];
-      const speedMult = _getEffectSpeed();
+      const speedMult = _getEffectSpeed() * k;
       p.x += p.dx * speedMult; p.y += p.dy * speedMult;
 
       // Off screen — remove
@@ -1694,7 +1694,7 @@ function _initSynapse() {
 
     ctx.globalAlpha = 1;
   }
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 // ── Rain — thin vertical streaks falling ──
@@ -1733,22 +1733,21 @@ function _initRain() {
     drops.push({ x: Math.random() * W, y: -len, len, speed, alpha: 0.32 + Math.random() * 0.28 });
   }
 
-  function draw() {
+  function draw(k) {
     if (!document.body.classList.contains('bg-pattern-rain')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     // Intensity also controls rain speed + spawn rate (feels slower/lighter when dim)
     const intenCss = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity'));
     const inten = isNaN(intenCss) ? 1 : intenCss;
-    const speedMult = (0.35 + inten * 0.65) * _getEffectSpeed();
+    const speedMult = (0.35 + inten * 0.65) * _getEffectSpeed() * k;
     const sizeMult = _getEffectSize();
 
-    if (drops.length < MAX_DROPS * inten && Math.random() < 0.6 * inten) spawn();
+    for (let n = bgCount(0.6 * inten, k); n > 0 && drops.length < MAX_DROPS * inten; n--) spawn();
 
     for (let i = drops.length - 1; i >= 0; i--) {
       const d = drops[i];
@@ -1769,7 +1768,7 @@ function _initRain() {
     }
     ctx.globalAlpha = 1;
   }
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 // ── Constellations — static dots that slowly form/dissolve connecting lines ──
@@ -1819,14 +1818,13 @@ function _initConstellations() {
   }
 
   let t = 0;
-  function draw() {
+  function draw(k) {
     if (!document.body.classList.contains('bg-pattern-constellations')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
-    const speedMult = _getEffectSpeed();
+    const speedMult = _getEffectSpeed() * k;
     t += 0.01 * speedMult;
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
@@ -1867,7 +1865,7 @@ function _initConstellations() {
     }
     ctx.globalAlpha = 1;
   }
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 // ── Noise helper for Perlin effects ──
@@ -1958,23 +1956,22 @@ function _initStarfieldDepth() {
   };
   resize();
   window.addEventListener('resize', resize);
-  const getBgFade = () => {
+  const getBgFade = (k) => {
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     const { r, g, b } = hexToRgb(bg) || { r: 0, g: 0, b: 0 };
-    return `rgba(${r},${g},${b},0.72)`;
+    return `rgba(${r},${g},${b},${bgFade(0.72, k)})`;
   };
-  const draw = () => {
+  const draw = (k) => {
     if (!canvas.isConnected || !document.body.classList.contains('bg-pattern-starfield-depth')) {
       window.removeEventListener('resize', resize); canvas.remove(); return;
     }
-    requestAnimationFrame(draw);
-    ctx.fillStyle = getBgFade();
+    ctx.fillStyle = getBgFade(k);
     ctx.fillRect(0, 0, W, H);
     const color = getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-color').trim()
       || getComputedStyle(document.documentElement).getPropertyValue('--fg').trim();
     const size = _getEffectSize();
     for (const star of stars) {
-      star.y += (0.12 + star.z * 0.8) * size * _getEffectSpeed();
+      star.y += (0.12 + star.z * 0.8) * size * _getEffectSpeed() * k;
       if (star.y > H + 4) { star.y = -4; star.x = Math.random() * W; }
       ctx.fillStyle = color;
       ctx.globalAlpha = (0.1 + star.z * 0.4) * (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity')) || 1);
@@ -1982,7 +1979,7 @@ function _initStarfieldDepth() {
     }
     ctx.globalAlpha = 1;
   };
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 // ── ASCII Fireflies — an animated scene sampled to a monochrome glyph grid ──
@@ -2090,14 +2087,13 @@ function _initPetals() {
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
   function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
-  function draw() {
+  function draw(k) {
     if (!document.body.classList.contains('bg-pattern-petals')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     const sz = _getEffectSize();
     petals.forEach(p => {
-      const speedMult = _getEffectSpeed();
+      const speedMult = _getEffectSpeed() * k;
       p.y += p.vy * speedMult; p.rot += p.vr * speedMult; p.drift += p.driftSpeed * speedMult;
       p.x += Math.sin(p.drift) * p.wobble * speedMult;
       if (p.y > H + 15) Object.assign(p, makePetal());
@@ -2112,7 +2108,7 @@ function _initPetals() {
     });
     ctx.globalAlpha = 1;
   }
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 // ── Sparkles — twinkling star-shaped sparkles ──
@@ -2153,14 +2149,13 @@ function _initSparkles() {
     ctx.fill();
     ctx.restore();
   }
-  function draw() {
+  function draw(k) {
     if (!document.body.classList.contains('bg-pattern-sparkles')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     const sizeMult = _getEffectSize();
     sparkles.forEach(s => {
-      s.phase += s.speed * _getEffectSpeed();
+      s.phase += s.speed * _getEffectSpeed() * k;
       const twinkle = Math.sin(s.phase);
       const alpha = Math.max(0, twinkle) * 0.25 * s.life;
       const scale = 0.5 + Math.max(0, twinkle) * 0.5;
@@ -2170,7 +2165,7 @@ function _initSparkles() {
     });
     ctx.globalAlpha = 1;
   }
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 // ── Embers — warm particles rising with glow and occasional spark bursts ──
@@ -2219,22 +2214,21 @@ function _initEmbers() {
     const { r, g, b } = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
     return `rgba(${r},${g},${b},${a})`;
   }
-  function draw() {
+  function draw(k) {
     if (!document.body.classList.contains('bg-pattern-embers')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
     // Fade previous frame (destination-out keeps canvas transparent where no embers)
     ctx.globalCompositeOperation = 'destination-out';
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillStyle = `rgba(0,0,0,${bgFade(0.18, k)})`;
     ctx.fillRect(0, 0, W, H);
     ctx.globalCompositeOperation = 'lighter';
     const color = getColor();
     for (let i = embers.length - 1; i >= 0; i--) {
       const e = embers[i];
-      const speedMult = _getEffectSpeed();
+      const speedMult = _getEffectSpeed() * k;
       e.wobble += 0.03 * speedMult;
       e.x += (e.vx + Math.sin(e.wobble) * 0.5) * speedMult;
       e.y += e.vy * speedMult;
@@ -2244,7 +2238,7 @@ function _initEmbers() {
         if (embers.length < 70) embers.push(makeEmber());
         continue;
       }
-      if (!e.spark && Math.random() < 0.003) e.spark = true;
+      if (!e.spark && bgChance(0.003, k)) e.spark = true;
       const lifeRatio = e.life / e.maxLife;
       const fade = Math.min(1, Math.min(lifeRatio * 4, (1 - lifeRatio) * 3));
       const sz = _getEffectSize();
@@ -2262,7 +2256,7 @@ function _initEmbers() {
       ctx.fill();
       e.spark = false;
     }
-    if (Math.random() < 0.015) {
+    if (bgChance(0.015, k)) {
       const bx = Math.random() * W;
       for (let i = 0; i < 5; i++) {
         const e = makeEmber();
@@ -2274,7 +2268,7 @@ function _initEmbers() {
     }
     ctx.globalCompositeOperation = 'source-over';
   }
-  draw();
+  runBgEffect(canvas, draw);
 }
 
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
