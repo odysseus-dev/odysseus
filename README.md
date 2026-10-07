@@ -1,4 +1,6 @@
-<h1 align="center">Odysseus</h1>
+<p align="center">
+  <img src="assets/branding/odysseus-wordmark.png" alt="Odysseus" width="238">
+</p>
 
 <p align="center">
   A self-hosted AI workspace for chat, agents, research, documents, email, notes, calendar, and local model workflows.
@@ -13,6 +15,10 @@
 
 <p align="center">
   <a href="https://repology.org/project/odysseus-ai/versions"><img src="https://repology.org/badge/vertical-allrepos/odysseus-ai.svg" alt="Packaging status"></a>
+</p>
+
+<p align="center">
+  <img src="assets/branding/odysseus-browser.jpg" alt="Odysseus interface">
 </p>
 
 ---
@@ -53,7 +59,7 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 
 ## Demo
 
-The [Odysseus landing page](https://odysseus-dev.github.io/odysseus/) gives a text-only overview of each feature. Its source lives under [`website/`](website/).
+A full hover-to-play tour lives on the [Odysseus landing page](https://odysseus-dev.github.io/odysseus/). Its source lives under [`website/`](website/).
 
 ## Contributing
 
