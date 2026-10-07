@@ -1230,6 +1230,7 @@ export function openPanel() {
       <label class="memory-bulk-check-all"><input type="checkbox" id="notes-select-all" /> All</label>
       <span id="notes-selected-count">0 Selected</span>
       <span style="flex:1"></span>
+      <button id="notes-send-agent" class="memory-toolbar-btn" disabled><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>Send to Agent</button>
       <button id="notes-bulk-archive" class="memory-toolbar-btn" disabled>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8"/><path d="M10 12h4"/></svg>Archive
       </button>
@@ -1379,6 +1380,16 @@ export function openPanel() {
     _renderNotes();
     _updateBulkBar();
   });
+  document.getElementById('notes-send-agent').addEventListener('click', async () => {
+    const ids = [..._selectedIds];
+    if (!ids.length) return;
+    window.dispatchEvent(new CustomEvent('odysseus:notes-context-selected', {
+      detail: {
+        noteIds: ids,
+      },
+    }));
+    _exitSelectMode();
+  })
   document.getElementById('notes-bulk-archive').addEventListener('click', async () => {
     const ids = [..._selectedIds];
     if (!ids.length) return;
@@ -1511,10 +1522,12 @@ function _exitSelectMode() {
 function _updateBulkBar() {
   const count = _selectedIds.size;
   const countEl = document.getElementById('notes-selected-count');
+  const sendAgentBtn = document.getElementById('notes-send-agent');
   const archiveBtn = document.getElementById('notes-bulk-archive');
   const deleteBtn = document.getElementById('notes-bulk-delete');
   const allEl = document.getElementById('notes-select-all');
   if (countEl) countEl.textContent = `${count} Selected`;
+  if (sendAgentBtn) sendAgentBtn.disabled = count === 0;
   if (archiveBtn) archiveBtn.disabled = count === 0;
   if (deleteBtn) deleteBtn.disabled = count === 0;
   if (allEl) allEl.checked = _notes.length > 0 && _notes.every(n => _selectedIds.has(n.id));

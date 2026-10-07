@@ -58,7 +58,7 @@ from src.auth_helpers import (
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
-from core.database import Session as DBSession, ChatMessage as DBChatMessage
+from core.database import Session as DBSession, ChatMessage as DBChatMessage, Note
 from core.database import Document as DBDocument, ModelEndpoint
 from core.log_safety import redact_url
 from routes.research_routes import _resolve_research_endpoint
@@ -2153,6 +2153,44 @@ def _set_user_time_from_request(request: Request) -> None:
     except Exception:
         pass
 
+def _format_selected_notes_context(notes) -> str:
+    """Format selected Notes/Todos as reference context for the model."""
+    sections = []
+
+    for index, note in enumerate(notes, start=1):
+        lines = [
+            f"--- Selected Note {index} ---",
+            f"Title: {note.title or '(untitled)'}",
+            f"Type: {note.note_type or 'note'}",
+        ]
+
+        if note.content:
+            lines.extend([
+                "Content:",
+                str(note.content),
+            ])
+
+        if note.items:
+            try:
+                items = json.loads(note.items)
+            except (TypeError, json.JSONDecodeError):
+                items = []
+
+            if isinstance(items, list):
+                lines.append("Items:")
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+
+                    status = "done" if item.get("done") else "pending"
+                    text = str(item.get("text") or "").strip()
+
+                    if text:
+                        lines.append(f"- [{status}] {text}")
+
+        sections.append("\n".join(lines))
+
+    return "\n\n".join(sections)
 
 def _resolve_prompt_thinking_mode(explicit_mode, preset_id, preset_manager):
     """Use an explicit request override, then fall back to the active preset."""
@@ -2423,6 +2461,12 @@ def setup_chat_routes(
         form_data = await request.form()
         message = form_data.get("message")
         session = form_data.get("session")
+        selected_note_ids = []
+        try:
+            selected_note_ids = json.loads(form_data.get("selected_note_ids") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("Ignoring invalid selected_note_ids")
+
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")
         use_research = form_data.get("use_research")
@@ -2730,6 +2774,22 @@ def setup_chat_routes(
                 current_rejected=workspace_rejected,
             )
             owner = effective_user(request)
+            selected_notes = []
+            if selected_note_ids:
+                notes_db = SessionLocal()
+                try:
+                    selected_notes = (
+                        notes_db.query(Note)
+                        .filter(
+                            Note.id.in_(selected_note_ids),
+                            Note.owner == owner,
+                        )
+                        .all()
+                    )
+                finally:
+                    notes_db.close()
+            selected_notes_context = _format_selected_notes_context(selected_notes)
+
             if tool_approval_id:
                 _reject_delegated_tool_approval(request)
                 from src.agent_runtime.authority import require_user_approval_request
@@ -3001,6 +3061,7 @@ def setup_chat_routes(
             sess, request, chat_handler, chat_processor,
             message=message,
             session_id=session,
+            selected_notes_context=selected_notes_context,
             preset_id=preset_id,
             att_ids=att_ids,
             use_web=use_web,

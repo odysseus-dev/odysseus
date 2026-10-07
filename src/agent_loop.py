@@ -6933,6 +6933,7 @@ _AGENT_RULES = """\
 - If the user asks for multiple specific emails and you call `read_email` more than once, your final answer MUST include every successfully read email, clearly separated and linked by UID. Do not answer with only the last email you read.
 - Multiple email accounts: if tool output says "Other accounts" or the user asks "my Gmail?", "other inbox?", "work mail?", "custom domain mail?", or names any mailbox/account, DO NOT answer from memory. Call `list_email_accounts` if needed, then call `list_emails`/`read_email`/`bulk_email` with the exact `account` value for that mailbox. Account names are user-defined labels; if the user typo-matches a known account, use the closest listed account instead of claiming it does not exist. NEVER use `app_api` or `/api/email/accounts` to discover email accounts; that route is owner-filtered in tool context and can falsely return empty.
 - User identity facts/preferences ("my name is <name>", "I live in <place>", "I prefer concise replies", "call me <name>") → use `manage_memory` with action=add. NEVER use `manage_contact` for facts about the user unless the user explicitly says to create/update a contact and provides contact details such as an email or phone.
+- When the prompt contains "Selected notes and todos", treat that content as already-provided reference context. Use it directly when it answers the request; do not call `manage_notes` to list/search/view the same notes, and do not ask for permission merely to use the selected context. Call `manage_notes` only when the user requests a note change or the selected context is insufficient and a fresh lookup is needed.
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate.
 - "Do X every morning / daily / on a schedule / automatically" (e.g. "summarize my inbox every morning") → this is a request to CREATE A SCHEDULED TASK, not to do X once right now. Call `manage_tasks` with action=create (prompt = what to do, schedule + cron/time). Do NOT just perform the action inline this turn — the user wants it to recur. After creating, return a clickable `[Task name](#task-<id>)` link and tell them it'll run on schedule and show in the Tasks panel. If you also want to show a sample of this run, do that AFTER creating the task, not instead of it.
 - There is NO generic sleep / auto-wakeup / resume-after-this-turn primitive. Background jobs and subagent-style work should return a job/task id and notify the session automatically when finished; do not sleep or poll for their progress. If the user explicitly asks you to retry or do something later, call `manage_tasks` with action=create, `task_type=llm`, `schedule=once`, and a self-contained prompt. NEVER claim you will wake up, retry later, or handle something later unless a `manage_tasks` create call succeeds.
@@ -7041,6 +7042,7 @@ _AGENT_RULES = """\
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
+- When the prompt contains "Selected notes and todos", treat that content as already-provided reference context. Use it directly when it answers the request; do not call `manage_notes` to list/search/view the same notes, and do not ask for permission merely to use the selected context. Call `manage_notes` only when the user requests a note change or the selected context is insufficient and a fresh lookup is needed.
 """
 
 _API_AGENT_RULES = """\
@@ -7099,7 +7101,7 @@ _DOMAIN_RULES = {
 - After a successful serve, verify with `list_served_models`; if an external server is running but invisible, use `adopt_served_model`.""",
     "notes_calendar_tasks": """\
 ## Notes/calendar/tasks rules
-- Notes/todos/reminders use `manage_notes`, not memory.
+- Notes/todos/reminders use `manage_notes`, not memory. However, when the prompt contains "Selected notes and todos", those notes are already available as reference context: use them directly and do not list/search/view them again or ask permission to use them. Use `manage_notes` only for a requested change or when a fresh lookup is genuinely needed.
 - Calendar create/update/delete should call `manage_calendar` with `action=list_calendars` first.
 - Recurring/automatic/scheduled requests create a `manage_tasks` task; do not just perform the action once.""",
     "memory": """\
