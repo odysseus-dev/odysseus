@@ -2255,9 +2255,11 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
                 runner_lines.append('  fi')
                 runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
-                runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
+                runner_lines.append('  echo "Native llama-server not found — installing it (one-time: a prebuilt release where available, else a source build)..."')
                 runner_lines.append('  mkdir -p ~/bin')
-                runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                # The llama.cpp checkout is cloned only on the source-build
+                # paths (macOS below, and the Linux fallback once no prebuilt
+                # matched), so a slow or wedged clone cannot block a prebuilt.
                 # Build with the right accelerator: Metal on macOS (llama.cpp
                 # enables it automatically, no flag), CUDA on Linux when present,
                 # else a plain CPU build. nproc is Linux-only — fall back to
@@ -2266,6 +2268,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
                 runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
                 runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
+                runner_lines.append('    [ -d ~/llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/llama.cpp')
                 # Start from a clean cache: a prior failed configure (e.g. a CUDA
                 # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
                 # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is

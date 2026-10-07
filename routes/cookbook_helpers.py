@@ -857,46 +857,160 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     # every OS-package dep from the launch path. Sets _odysseus_have_prebuilt=1
     # on success; the existing build-tier if/elif chain below is gated on
     # that variable so we never compile twice or shadow the prebuilt symlink.
+    #
+    # llama.cpp publishes binaries only on prereleases (bNNNN tags), which
+    # /releases/latest skips, so scan the recent release list instead. Linux
+    # assets are .tar.gz, and the CUDA build ships libcudart/libcublas in a
+    # separate cudart-* archive: unpack it beside llama-server (whose RUNPATH
+    # is $ORIGIN) so a container with only the NVIDIA driver can still offload.
+    # The unpacked build is cached under ~/.local (a persisted volume in
+    # Docker) so a container recreate does not re-download hundreds of MB.
+    #
+    # Every candidate is smoke-tested before it is linked: the release is
+    # built against a recent glibc/libstdc++, so on older distros (RHEL 8/9,
+    # Debian 11, Ubuntu 20.04) or musl the source build must still run.
     runner_lines.append('    _odysseus_have_prebuilt=""')
     runner_lines.append('    _odysseus_arch="$(uname -m)"')
     runner_lines.append('    _odysseus_prebuilt_url=""')
-    runner_lines.append('    if command -v curl >/dev/null 2>&1 && [ "$_odysseus_arch" = "x86_64" ]; then')
-    runner_lines.append('      _odysseus_pat=""')
-    runner_lines.append('      _odysseus_has_nv_inline() { command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU "; }')
+    runner_lines.append('    _odysseus_cudart_url=""')
+    runner_lines.append('    _odysseus_variant=""')
+    runner_lines.append('    _odysseus_prebuilt_root="$HOME/.local/share/odysseus/llama-cpp-prebuilt"')
+    runner_lines.append('    _odysseus_timeout() { if command -v timeout >/dev/null 2>&1; then timeout "$@"; else shift; "$@"; fi; }')
+    runner_lines.append('    _odysseus_extract_archive() {')
+    runner_lines.append('      case "$1" in')
+    runner_lines.append('        *.tar.gz|*.tgz)')
+    runner_lines.append('          if command -v tar >/dev/null 2>&1; then tar -xzf "$1" -C "$2"; else python3 -c "import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; fi ;;')
+    runner_lines.append('        *)')
+    runner_lines.append('          if command -v unzip >/dev/null 2>&1; then unzip -qq -o "$1" -d "$2"; elif command -v bsdtar >/dev/null 2>&1; then bsdtar -xf "$1" -C "$2"; else python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; fi ;;')
+    runner_lines.append('      esac')
+    runner_lines.append('    }')
+    runner_lines.append('    if [ "$_odysseus_arch" != "x86_64" ]; then')
+    runner_lines.append('      echo "[odysseus] No prebuilt llama-server for this host (arch=$_odysseus_arch) — will build from source."')
+    # A native ROCm toolchain builds a HIP llama-server below; a prebuilt
+    # would downgrade that host to Vulkan or CPU.
+    runner_lines.append('    elif command -v hipconfig >/dev/null 2>&1 || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]; then')
+    runner_lines.append('      echo "[odysseus] ROCm/HIP toolchain found — skipping the prebuilt so llama-server is built natively with HIP."')
+    runner_lines.append('    else')
+    runner_lines.append('      _odysseus_has_nv_inline() {')
+    runner_lines.append('        command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L 2>/dev/null | grep -q "GPU " && return 0')
+    runner_lines.append('        ls /dev/nvidia[0-9]* >/dev/null 2>&1 && return 0')
+    runner_lines.append('        lspci 2>/dev/null | grep -iE \'VGA|3D|Display\' | grep -iq nvidia')
+    runner_lines.append('      }')
     runner_lines.append('      _odysseus_has_vk_inline() { ldconfig -p 2>/dev/null | grep -q "libvulkan\\.so" || command -v vulkaninfo >/dev/null 2>&1 || [ -e /usr/lib/x86_64-linux-gnu/libvulkan.so.1 ]; }')
     runner_lines.append('      _odysseus_has_vkdev_inline() { ls /dev/dri/renderD* >/dev/null 2>&1 || (lspci 2>/dev/null | grep -Ei \'VGA|3D|Display\' | grep -Eiq \'AMD|ATI|Radeon\'); }')
+    # CUDA 12.x builds run on any driver >= 525; 13.x needs >= 580, so it is
+    # only the fallback when a release stops shipping a 12.x build.
     runner_lines.append('      if _odysseus_has_nv_inline; then')
-    runner_lines.append('        _odysseus_pat="ubuntu.*cuda"')
+    runner_lines.append('        _odysseus_variant="cuda"')
+    runner_lines.append('        _odysseus_pat="-bin-ubuntu-cuda-12[.0-9]+-x64[.]tar[.]gz$"')
+    runner_lines.append('        _odysseus_pat_fallback="-bin-ubuntu-cuda-[.0-9]+-x64[.]tar[.]gz$"')
     runner_lines.append('      elif _odysseus_has_vkdev_inline && _odysseus_has_vk_inline; then')
-    runner_lines.append('        _odysseus_pat="ubuntu.*vulkan"')
+    runner_lines.append('        _odysseus_variant="vulkan"')
+    runner_lines.append('        _odysseus_pat="-bin-ubuntu-vulkan-x64[.](tar[.]gz|zip)$"')
+    runner_lines.append('        _odysseus_pat_fallback="$_odysseus_pat"')
     runner_lines.append('      else')
-    runner_lines.append('        _odysseus_pat="ubuntu-x64\\\\.zip"')
+    runner_lines.append('        _odysseus_variant="cpu"')
+    runner_lines.append('        _odysseus_pat="-bin-ubuntu-x64[.](tar[.]gz|zip)$"')
+    runner_lines.append('        _odysseus_pat_fallback="$_odysseus_pat"')
     runner_lines.append('      fi')
-    runner_lines.append('      _odysseus_prebuilt_url="$(curl -fsSL --max-time 15 https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4 | grep -iE "$_odysseus_pat" | grep -iv "arm\\|aarch64" | head -1)"')
+    runner_lines.append('      _odysseus_prebuilt_dir="$_odysseus_prebuilt_root/$_odysseus_variant"')
+    runner_lines.append('      if [ -f "$_odysseus_prebuilt_dir/.complete" ]; then')
+    runner_lines.append('        _odysseus_extracted="$(find "$_odysseus_prebuilt_dir" -type f -name llama-server 2>/dev/null | head -1)"')
+    runner_lines.append('        if [ -n "$_odysseus_extracted" ] && _odysseus_timeout 30 "$_odysseus_extracted" --version >/dev/null 2>&1; then')
+    runner_lines.append('          mkdir -p ~/bin && ln -sf "$_odysseus_extracted" ~/bin/llama-server')
+    runner_lines.append('          rm -f ~/.config/odysseus-llama-cpp-env')
+    runner_lines.append('          _odysseus_have_prebuilt=1')
+    runner_lines.append('          echo "[odysseus] Reusing cached prebuilt llama-server: $_odysseus_extracted"')
+    runner_lines.append('        fi')
+    runner_lines.append('      fi')
+    runner_lines.append('      if [ -z "$_odysseus_have_prebuilt" ] && command -v curl >/dev/null 2>&1; then')
+    runner_lines.append('        _odysseus_assets="$(curl -fsSL --max-time 30 \'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=5\' 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4)"')
+    runner_lines.append('        if [ -z "$_odysseus_assets" ]; then')
+    runner_lines.append('          echo "[odysseus] Could not list llama.cpp releases from GitHub (offline or rate-limited) — will build from source."')
+    runner_lines.append('        else')
+    runner_lines.append('          _odysseus_candidates="$(printf \'%s\\n\' "$_odysseus_assets" | grep -v \'/cudart-\' | grep -E -- "$_odysseus_pat")"')
+    runner_lines.append('          [ -z "$_odysseus_candidates" ] && _odysseus_candidates="$(printf \'%s\\n\' "$_odysseus_assets" | grep -v \'/cudart-\' | grep -E -- "$_odysseus_pat_fallback")"')
+    runner_lines.append('          if [ "$_odysseus_variant" = "cuda" ]; then')
+    # Prefer the newest build whose CUDA runtime archive is published too;
+    # a release that is still uploading may list one without the other.
+    runner_lines.append('            while IFS= read -r _odysseus_cand; do')
+    runner_lines.append('              [ -n "$_odysseus_cand" ] || continue')
+    runner_lines.append('              _odysseus_rt="${_odysseus_cand%/*}/cudart-${_odysseus_cand##*/}"')
+    runner_lines.append('              if printf \'%s\\n\' "$_odysseus_assets" | grep -qxF -- "$_odysseus_rt"; then')
+    runner_lines.append('                _odysseus_prebuilt_url="$_odysseus_cand"; _odysseus_cudart_url="$_odysseus_rt"; break')
+    runner_lines.append('              fi')
+    runner_lines.append('            done <<< "$_odysseus_candidates"')
+    runner_lines.append('          fi')
+    runner_lines.append('          [ -z "$_odysseus_prebuilt_url" ] && _odysseus_prebuilt_url="$(printf \'%s\\n\' "$_odysseus_candidates" | head -1)"')
+    runner_lines.append('          [ -z "$_odysseus_prebuilt_url" ] && echo "[odysseus] No matching prebuilt llama-server in recent llama.cpp releases — will build from source."')
+    runner_lines.append('        fi')
+    runner_lines.append('      fi')
     runner_lines.append('    fi')
-    # Accept any of unzip / bsdtar / python3 -m zipfile as the extractor.
-    # python3 is essentially always present on modern Linux, so this lets
-    # the prebuilt path work on minimal Ubuntu installs that lack `unzip`.
-    runner_lines.append('    if [ -n "$_odysseus_prebuilt_url" ] && (command -v unzip >/dev/null 2>&1 || command -v bsdtar >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1); then')
+    runner_lines.append('    if [ -n "$_odysseus_prebuilt_url" ]; then')
     runner_lines.append('      echo "[odysseus] Found prebuilt llama-server: $_odysseus_prebuilt_url"')
-    runner_lines.append('      mkdir -p ~/bin "$HOME/.cache/odysseus/llama-cpp-prebuilt" && cd "$HOME/.cache/odysseus/llama-cpp-prebuilt"')
-    runner_lines.append('      rm -f llama-cpp.zip')
-    runner_lines.append('      if curl -fsSL --max-time 120 "$_odysseus_prebuilt_url" -o llama-cpp.zip && [ -s llama-cpp.zip ]; then')
-    runner_lines.append('        rm -rf build && mkdir -p build')
-    runner_lines.append('        if command -v unzip >/dev/null 2>&1; then unzip -qq -o llama-cpp.zip -d build; elif command -v bsdtar >/dev/null 2>&1; then bsdtar -xf llama-cpp.zip -C build; else python3 -c "import zipfile; zipfile.ZipFile(\\"llama-cpp.zip\\").extractall(\\"build\\")"; fi')
-    runner_lines.append('        _odysseus_extracted="$(find build -type f -name llama-server 2>/dev/null | head -1)"')
+    runner_lines.append('      [ -n "$_odysseus_cudart_url" ] && echo "[odysseus] Fetching its CUDA runtime too: $_odysseus_cudart_url"')
+    runner_lines.append('      mkdir -p "$_odysseus_prebuilt_root" ~/bin')
+    runner_lines.append('      _odysseus_staging="$(mktemp -d "$_odysseus_prebuilt_root/.staging.XXXXXX" 2>/dev/null)"')
+    runner_lines.append('      _odysseus_extracted=""')
+    runner_lines.append('      _odysseus_cuda_ok=""')
+    runner_lines.append('      if [ -n "$_odysseus_staging" ] && [ -d "$_odysseus_staging" ]; then')
+    runner_lines.append('        mkdir -p "$_odysseus_staging/out" "$_odysseus_staging/rt"')
+    runner_lines.append('        _odysseus_archive="$_odysseus_staging/${_odysseus_prebuilt_url##*/}"')
+    runner_lines.append('        if curl -fsSL --connect-timeout 20 --speed-limit 10240 --speed-time 60 "$_odysseus_prebuilt_url" -o "$_odysseus_archive" && [ -s "$_odysseus_archive" ] && _odysseus_extract_archive "$_odysseus_archive" "$_odysseus_staging/out"; then')
+    runner_lines.append('          _odysseus_extracted="$(find "$_odysseus_staging/out" -type f -name llama-server 2>/dev/null | head -1)"')
+    runner_lines.append('        fi')
+    runner_lines.append('        rm -f "$_odysseus_archive"')
     runner_lines.append('        if [ -n "$_odysseus_extracted" ]; then')
     runner_lines.append('          chmod +x "$_odysseus_extracted"')
+    runner_lines.append('          if ! _odysseus_timeout 30 "$_odysseus_extracted" --version >/dev/null 2>&1; then')
+    runner_lines.append('            echo "[odysseus] Prebuilt llama-server does not run on this host (likely an older glibc/libstdc++, or musl) — will build from source."')
+    runner_lines.append('            _odysseus_extracted=""')
+    runner_lines.append('          fi')
+    runner_lines.append('        fi')
+    runner_lines.append('        if [ -n "$_odysseus_extracted" ] && [ "$_odysseus_variant" = "cuda" ]; then')
+    runner_lines.append('          if [ -n "$_odysseus_cudart_url" ]; then')
+    runner_lines.append('            _odysseus_archive="$_odysseus_staging/${_odysseus_cudart_url##*/}"')
+    runner_lines.append('            if curl -fsSL --connect-timeout 20 --speed-limit 10240 --speed-time 60 "$_odysseus_cudart_url" -o "$_odysseus_archive" && _odysseus_extract_archive "$_odysseus_archive" "$_odysseus_staging/rt"; then')
+    runner_lines.append('              rm -f "$_odysseus_archive"')
+    runner_lines.append('              find "$_odysseus_staging/rt" -name \'lib*.so*\' -exec mv -f -t "$(dirname "$_odysseus_extracted")" {} + || echo "[odysseus] WARNING: could not move the CUDA runtime libraries beside llama-server."')
+    runner_lines.append('            fi')
+    runner_lines.append('            rm -f "$_odysseus_archive"')
+    runner_lines.append('          fi')
+    # Confirm the CUDA backend really loads; without its runtime libraries
+    # llama-server silently falls back to CPU.
+    runner_lines.append('          if _odysseus_timeout 60 "$_odysseus_extracted" --list-devices 2>/dev/null | grep -Eq \'CUDA[0-9]+:\'; then')
+    runner_lines.append('            _odysseus_cuda_ok=1')
+    runner_lines.append('          elif command -v nvcc >/dev/null 2>&1; then')
+    runner_lines.append('            echo "[odysseus] Prebuilt CUDA backend did not load; nvcc is available, so building llama-server from source instead."')
+    runner_lines.append('            _odysseus_extracted=""')
+    runner_lines.append('          else')
+    runner_lines.append('            echo "[odysseus] WARNING: the prebuilt CUDA backend did not load (CUDA runtime missing or failed to download) — llama-server will run on CPU. Retry with Cookbook -> Rebuild llama.cpp engine."')
+    runner_lines.append('          fi')
+    runner_lines.append('        fi')
+    runner_lines.append('        if [ -n "$_odysseus_extracted" ]; then')
+    runner_lines.append('          _odysseus_relpath="${_odysseus_extracted#"$_odysseus_staging/out/"}"')
+    runner_lines.append('          rm -rf "$_odysseus_prebuilt_dir" 2>/dev/null')
+    runner_lines.append('          if mv -T "$_odysseus_staging/out" "$_odysseus_prebuilt_dir" 2>/dev/null; then')
+    runner_lines.append('            _odysseus_extracted="$_odysseus_prebuilt_dir/$_odysseus_relpath"')
+    runner_lines.append('            if [ "$_odysseus_variant" != "cuda" ] || [ -n "$_odysseus_cuda_ok" ]; then echo "$_odysseus_prebuilt_url" > "$_odysseus_prebuilt_dir/.complete"; fi')
+    runner_lines.append('          elif [ -f "$_odysseus_prebuilt_dir/.complete" ]; then')
+    # A concurrent serve launch committed the same variant first; use it.
+    runner_lines.append('            _odysseus_extracted="$(find "$_odysseus_prebuilt_dir" -type f -name llama-server 2>/dev/null | head -1)"')
+    runner_lines.append('          else')
+    runner_lines.append('            _odysseus_extracted=""')
+    runner_lines.append('          fi')
+    runner_lines.append('        fi')
+    runner_lines.append('        if [ -n "$_odysseus_extracted" ]; then')
     runner_lines.append('          ln -sf "$_odysseus_extracted" ~/bin/llama-server')
-    runner_lines.append('          _odysseus_libdir="$(dirname "$_odysseus_extracted")"')
-    runner_lines.append('          mkdir -p ~/.config && echo "export LD_LIBRARY_PATH=\\"$_odysseus_libdir:\\${LD_LIBRARY_PATH:-}\\"" > ~/.config/odysseus-llama-cpp-env')
+    # RUNPATH=$ORIGIN already finds the bundled libs; a stale LD_LIBRARY_PATH
+    # from an older install would take precedence over it.
+    runner_lines.append('          rm -f ~/.config/odysseus-llama-cpp-env')
     runner_lines.append('          _odysseus_have_prebuilt=1')
     runner_lines.append('          echo "[odysseus] Prebuilt llama-server installed at $_odysseus_extracted"')
     runner_lines.append('        fi')
+    runner_lines.append('        rm -rf "$_odysseus_staging"')
     runner_lines.append('      fi')
-    runner_lines.append('      [ -z "$_odysseus_have_prebuilt" ] && echo "[odysseus] Prebuilt download/extract failed — falling back to from-source build."')
-    runner_lines.append('    elif [ -z "$_odysseus_prebuilt_url" ]; then')
-    runner_lines.append('      echo "[odysseus] No matching prebuilt llama-server for this host (arch=$_odysseus_arch) — will build from source."')
+    runner_lines.append('      [ -z "$_odysseus_have_prebuilt" ] && echo "[odysseus] Prebuilt install failed — falling back to from-source build."')
     runner_lines.append('    fi')
     runner_lines.append('  if [ -z "$_odysseus_have_prebuilt" ]; then')
     # Detect pip-installed nvcc (from vLLM/nvidia CUDA wheels) and put it on PATH
@@ -965,7 +1079,14 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      echo "Alternative: install a native llama-server on PATH, then relaunch."')
     runner_lines.append('      ODYSSEUS_PREFLIGHT_EXIT=127')
     runner_lines.append('    fi')
-    runner_lines.append('    cd ~/llama.cpp')
+    runner_lines.append('    [ -d ~/llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/llama.cpp')
+    # Never run the `rm -rf build` / cmake steps below from an arbitrary cwd:
+    # without a checkout, park in an empty temp dir so they fail harmlessly.
+    runner_lines.append('    if ! cd ~/llama.cpp 2>/dev/null; then')
+    runner_lines.append('      echo "ERROR: llama.cpp source checkout is missing (git clone failed) — cannot build llama-server from source."')
+    runner_lines.append('      ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('      cd "$(mktemp -d)" || cd /tmp')
+    runner_lines.append('    fi')
     runner_lines.append('    _odysseus_has_vulkan() {')
     runner_lines.append('      ldconfig -p 2>/dev/null | grep -q \'libvulkan\\.so\' && return 0')
     runner_lines.append('      [ -e /usr/lib/libvulkan.so.1 ] && return 0')
@@ -1033,8 +1154,9 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
 def _llama_cpp_rebuild_cmd(update_source: bool = False) -> str:
     """Shell command that clears the Cookbook-managed llama.cpp build.
 
-    Removes the cached ``llama-server`` symlink and the ``~/llama.cpp/build*``
-    directory so the next llama.cpp serve recompiles from source, picking up a
+    Removes the cached ``llama-server`` symlink, the ``~/llama.cpp/build*``
+    directory, and the cached prebuilt download so the next llama.cpp serve
+    reinstalls (prebuilt first, else a source build), picking up a
     CUDA or HIP toolchain if one is now available. The serve bootstrap only
     builds when ``llama-server`` is missing from PATH, so without this an
     existing CPU-only build is reused forever. When ``update_source`` is true,
@@ -1056,10 +1178,13 @@ def _llama_cpp_rebuild_cmd(update_source: bool = False) -> str:
         'mkdir -p "$HOME/bin" && '
         f'{update_cmd}'
         'rm -f "$HOME/bin/llama-server" && '
-        'rm -rf "$HOME/llama.cpp/build" "$HOME/llama.cpp/build-vulkan" && '
+        'rm -rf "$HOME/llama.cpp/build" "$HOME/llama.cpp/build-vulkan" '
+        '"$HOME/.local/share/odysseus/llama-cpp-prebuilt" "$HOME/.cache/odysseus/llama-cpp-prebuilt" && '
+        'rm -f "$HOME/.config/odysseus-llama-cpp-env" && '
         'echo "[odysseus] Cleared the cached llama.cpp build. '
-        'Re-launch the serve task to rebuild llama-server from source '
-        '(Vulkan, HIP, or CUDA will be used if a matching toolchain is now available)."'
+        'Re-launch the serve task to reinstall llama-server from a fresh prebuilt '
+        'release or a source build (Vulkan, HIP, or CUDA will be used if a matching '
+        'toolchain is now available)."'
     )
 
 
