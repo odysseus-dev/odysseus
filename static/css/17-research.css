@@ -2934,7 +2934,7 @@ body.theme-frosted .modal {
   overflow: hidden;
 }
 #research-pane #research-past-list .research-job-card.research-job-failed:not(.doclib-card-expanded) {
-  height: 67px;
+  height: auto;
   min-height: 67px;
 }
 #research-pane #research-past-list .research-job-header {
@@ -3148,7 +3148,7 @@ body.theme-frosted .modal {
     padding-right: 8px;
   }
   #research-pane #research-past-list .research-job-card.research-job-failed:not(.doclib-card-expanded) {
-    height: 77px;
+    height: auto;
     min-height: 77px;
   }
   #research-pane #research-past-list .research-job-header {

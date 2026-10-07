@@ -50,6 +50,10 @@ class RateLimitError(SearchEngineError):
     """Raised when the remote service returns a rate-limit (HTTP 429)."""
 
 
+class ProviderUnavailableError(SearchEngineError):
+    """Search returned no results because the provider reported a failure."""
+
+
 # ----------------------------------------------------------------------
 # Analytics helpers
 # ----------------------------------------------------------------------

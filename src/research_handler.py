@@ -44,6 +44,24 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, n))
 
 
+def _research_failure_fields(data: dict) -> dict:
+    """Read failure metadata, including the explicit legacy search error."""
+    stage = data.get("failure_stage") or ""
+    message = data.get("failure_message") or ""
+    stage = stage[:40] if isinstance(stage, str) else ""
+    message = message[:1600] if isinstance(message, str) else ""
+    if not stage and not message and not data.get("sources"):
+        report = data.get("raw_report") or data.get("result") or ""
+        if isinstance(report, str):
+            match = re.search(
+                r"(?m)^\*\*Search unavailable\*\*\s*[—-]\s*([^\n]+)", report,
+            )
+            if match:
+                stage = "search"
+                message = match.group(1).strip()[:1600]
+    return {"failure_stage": stage, "failure_message": message}
+
+
 def _format_probe_failure(model: str, exc: Exception) -> str:
     """Turn a failed research model probe into a user-facing message."""
     detail = getattr(exc, "detail", None)
@@ -316,6 +334,8 @@ class ResearchHandler:
             "status": "running",
             "progress": {},
             "result": None,
+            "failure_stage": "",
+            "failure_message": "",
             "started_at": time.time(),
             "category": category,
             "mode": "research",
@@ -431,6 +451,7 @@ class ResearchHandler:
                 "progress": entry["progress"],
                 "query": entry["query"],
                 "started_at": entry["started_at"],
+                **_research_failure_fields(entry),
                 "category": (
                     getattr(entry.get("researcher"), "category", None)
                     or entry.get("category")
@@ -463,6 +484,7 @@ class ResearchHandler:
                     "progress": {},
                     "query": data.get("query", ""),
                     "started_at": data.get("started_at", 0),
+                    **_research_failure_fields(data),
                     "category": data.get("category") or "",
                     "mode": data.get("mode") or "research",
                 }
@@ -781,6 +803,7 @@ class ResearchHandler:
                 "completed_at": time.time(),
                 # SECURITY: stamp owner so route handlers can filter by user.
                 "owner": entry.get("owner", ""),
+                **_research_failure_fields(entry),
             }
             path.write_text(json.dumps(data), encoding="utf-8")
             logger.info(f"Research result saved to {path}")
@@ -1072,7 +1095,12 @@ class ResearchHandler:
             elapsed = time.time() - start_time
 
             stats = researcher.get_stats()
-            logger.info("IterResearch completed successfully")
+            failure_stage = getattr(researcher, "failure_stage", "")
+            failure_message = getattr(researcher, "failure_message", "")
+            if failure_message:
+                logger.warning("IterResearch finished without evidence (%s): %s", failure_stage, failure_message)
+            else:
+                logger.info("IterResearch completed successfully")
             for key, value in stats.items():
                 logger.info(f"  {key}: {value}")
 
@@ -1080,6 +1108,8 @@ class ResearchHandler:
             if _task_entry is not None:
                 _task_entry["raw_report"] = strip_thinking(report)
                 _task_entry["stats"] = stats
+                _task_entry["failure_stage"] = failure_stage
+                _task_entry["failure_message"] = failure_message
                 # Auto classification happens inside DeepResearcher. Keep the
                 # resolved format on the task so it survives every UI path.
                 _task_entry["category"] = researcher.category or category

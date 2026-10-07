@@ -111,11 +111,18 @@ for _mod in [
 from src.agent_loop import _empty_response_fallback  # noqa: E402
 
 
+@pytest.fixture
+def fallback_text_parser(monkeypatch):
+    # The visible-text guard now calls the tool parser. This module stubs the
+    # tool package, so make its raw-prose path return text, not a MagicMock.
+    monkeypatch.setattr("src.agent_loop.strip_tool_blocks", lambda text: text)
+
+
 # ---------------------------------------------------------------------------
 # 4. Reasoning-only round: generic error is suppressed
 # ---------------------------------------------------------------------------
 
-def test_stream_agent_reasoning_only_does_not_emit_error():
+def test_stream_agent_reasoning_only_does_not_emit_error(fallback_text_parser):
     final_response, chunk = _empty_response_fallback(
         full_response="",
         round_reasoning="I reasoned carefully",
@@ -130,7 +137,7 @@ def test_stream_agent_reasoning_only_does_not_emit_error():
 # 5. Reasoning tokens are NOT re-emitted as a normal answer delta
 # ---------------------------------------------------------------------------
 
-def test_stream_agent_reasoning_not_duplicated_as_normal_delta():
+def test_stream_agent_reasoning_not_duplicated_as_normal_delta(fallback_text_parser):
     reasoning_text = "my internal reasoning"
     _, chunk = _empty_response_fallback(
         full_response="",

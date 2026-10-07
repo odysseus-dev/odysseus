@@ -78,11 +78,13 @@ def test_provider_keeps_news_date_window_across_empty_fallbacks(monkeypatch):
         return Response()
     monkeypatch.setattr(providers, '_get_search_instance', lambda: 'http://searx.test')
     monkeypatch.setattr(providers, '_get_search_settings', lambda: {})
+    monkeypatch.setattr(providers, '_GENERAL_ENGINES', 'fixture')
     monkeypatch.setattr(providers.httpx, 'get', get)
     providers.searxng_search_api('AI news today', time_filter='day')
     assert len(calls) >= 2
     assert calls[0]['categories'] == 'news'
-    assert calls[1]['categories'] == 'general'
+    assert calls[1]['engines'] == 'fixture'
+    assert 'categories' not in calls[1]
     assert all(call['time_range'] == 'day' for call in calls)
 
 

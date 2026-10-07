@@ -11,7 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT, WEB_FETCH_USER_AGENT
-from .analytics import RateLimitError, error_logger
+from .analytics import ProviderUnavailableError, RateLimitError, error_logger
 from .query import build_enhanced_query
 
 logger = logging.getLogger(__name__)
@@ -234,24 +234,78 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
         # set returns 0 on this instance — see _GENERAL_ENGINES).
         if categories == "general" and _GENERAL_ENGINES:
             params["engines"] = _GENERAL_ENGINES
+            # SearXNG unions category engines with explicit engines. Omitting
+            # categories makes this a real engine selection rather than also
+            # invoking the default engines that may be CAPTCHA-blocked.
+            params.pop("categories", None)
     if engines:
-        params["categories"] = "general"
         params["engines"] = engines
+        params.pop("categories", None)
     try:
-        def _parse_results(results):
-            return [
-                {
-                    "title": r.get("title", ""),
-                    "url": r.get("url", ""),
-                    "snippet": r.get("content", ""),
+        engine_errors = []
+
+        def _parse_results(results, infoboxes=None):
+            buckets = {}
+
+            def _add(row, url, title, snippet, fallback_engine=""):
+                if not isinstance(url, str) or not url:
+                    return
+                engine = row.get("engine")
+                if not isinstance(engine, str) or not engine:
+                    engines = row.get("engines")
+                    engine = engines[0] if isinstance(engines, list) and engines else ""
+                if not isinstance(engine, str) or not engine:
+                    engine = fallback_engine
+                buckets.setdefault(engine, []).append({
+                    "title": title, "url": url, "snippet": snippet,
                     "provider": "searxng",
-                    "engines": r.get("engines", []),
-                    "published_date": r.get("publishedDate"),
+                    "engines": row.get("engines") or ([engine] if engine else []),
+                    "published_date": row.get("publishedDate"),
                     "query": query,
-                }
-                for r in results[:count]
-                if r.get("url")
-            ]
+                })
+
+            for row in results or []:
+                if isinstance(row, dict):
+                    _add(row, row.get("url"), row.get("title", ""), row.get("content", ""))
+            for box in infoboxes or []:
+                if not isinstance(box, dict):
+                    continue
+                links = box.get("urls")
+                if not isinstance(links, list) or not links:
+                    links = [{"url": box.get("url") or box.get("id")}]
+                for link in links:
+                    if not isinstance(link, dict):
+                        continue
+                    url = link.get("url")
+                    if not isinstance(url, str):
+                        continue
+                    try:
+                        parsed_url = urlparse(url)
+                    except ValueError:
+                        continue
+                    if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
+                        continue
+                    title = box.get("infobox") or box.get("title") or link.get("title") or url
+                    _add(box, url, title, box.get("content", ""), "infobox")
+
+            # SearXNG can return entire engine groups consecutively. Taking
+            # the first count rows would hide every later engine's sources.
+            # One bucket without metadata retains the original result order.
+            parsed, seen = [], set()
+            active = [iter(rows) for rows in buckets.values()]
+            while active and len(parsed) < count:
+                following = []
+                for rows in active:
+                    for row in rows:
+                        if row["url"] not in seen:
+                            seen.add(row["url"])
+                            parsed.append(row)
+                            following.append(rows)
+                            break
+                    if len(parsed) >= count:
+                        break
+                active = following
+            return parsed
 
         def _run(search_params):
             response = httpx.get(
@@ -262,7 +316,17 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             )
             response.raise_for_status()
             data = response.json()
-            return _parse_results(data.get("results", [])), data
+            parsed = _parse_results(data.get("results", []), data.get("infoboxes", []))
+            if not parsed:
+                for error in data.get("unresponsive_engines", []) or []:
+                    if not isinstance(error, (list, tuple)) or len(error) < 2:
+                        continue
+                    engine = " ".join(str(error[0]).split())[:80]
+                    reason = " ".join(str(error[1]).split())[:180]
+                    detail = f"{engine}: {reason}"
+                    if detail not in engine_errors:
+                        engine_errors.append(detail)
+            return parsed, data
 
         active_params = params
         parsed, data = _run(active_params)
@@ -273,6 +337,7 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             fallback = {**active_params, "categories": "general"}
             if _GENERAL_ENGINES:
                 fallback["engines"] = _GENERAL_ENGINES
+                fallback.pop("categories", None)
             logger.info(
                 "SearXNG news search returned 0 results for %r; retrying general engines",
                 query,
@@ -291,6 +356,7 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
         if not parsed and active_params.get("engines"):
             fallback = dict(active_params)
             fallback.pop("engines", None)
+            fallback["categories"] = categories
             logger.info(
                 "SearXNG pinned engines returned 0 results for %r; retrying default engines",
                 query,
@@ -301,7 +367,14 @@ def searxng_search_api(query: str, count: Optional[int] = None, categories: str 
             unresponsive = data.get("unresponsive_engines") if isinstance(data, dict) else None
             if unresponsive:
                 logger.info(f"SearXNG unresponsive engines for {query!r}: {unresponsive}")
+            if engine_errors:
+                raise ProviderUnavailableError(
+                    "SearXNG returned no results; engine errors: "
+                    + "; ".join(engine_errors[:6])
+                )
         return parsed
+    except ProviderUnavailableError:
+        raise
     except Exception as e:
         logger.warning(f"SearXNG JSON API search failed: {e}")
         html_results = searxng_search(query, max_results=count, search_params=active_params)
@@ -482,7 +555,19 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
                     "snippet": snippet_el.get_text(" ", strip=True) if snippet_el else "",
                 })
             logger.info(f"DuckDuckGo HTML search returned {len(parsed)} results")
+            if not parsed:
+                challenge = soup.select_one("#challenge-form, #anomaly-form, .anomaly-modal")
+                if challenge is not None:
+                    raise ProviderUnavailableError(
+                        "DuckDuckGo requires a CAPTCHA or bot verification"
+                    )
+                if response.status_code == 202:
+                    raise ProviderUnavailableError(
+                        "DuckDuckGo returned HTTP 202 instead of search results"
+                    )
             return parsed
+        except ProviderUnavailableError:
+            raise
         except Exception as e:
             logger.warning(f"DuckDuckGo HTML search failed: {e}")
             return []
@@ -518,6 +603,8 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
             })
         logger.info(f"DuckDuckGo search returned {len(results)} results")
         return results or _html_fallback()
+    except ProviderUnavailableError:
+        raise
     except Exception as e:
         logger.warning(f"DuckDuckGo search failed: {e}")
         return _html_fallback()

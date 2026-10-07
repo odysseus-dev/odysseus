@@ -17,6 +17,7 @@ from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.owner_identity import REQUEST_SENTINEL_OWNERS
 from src.constants import DEEP_RESEARCH_DIR
+from src.research_handler import _research_failure_fields
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -335,6 +336,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         source_coverage = research_handler.get_source_coverage(session_id)
         navigation_trace = research_handler.get_navigation_trace(session_id)
         action_trace = research_handler.get_action_trace(session_id)
+        task = research_handler._active_tasks.get(session_id)
+        failure_data = task or {}
         category = research_handler.get_category(session_id)
         mode = research_handler.get_mode(session_id)
         research_handler.clear_result(session_id)
@@ -349,6 +352,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             "action_trace": action_trace,
             "category": category,
             "mode": mode,
+            **_research_failure_fields(failure_data),
         }
 
     def _assert_owns_research(session_id: str, user: str) -> None:
@@ -446,6 +450,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "completed_at": d.get("completed_at", 0),
                     "archived": bool(d.get("archived")),
                     "thumbnail": _research_thumbnail(d),
+                    **_research_failure_fields(d),
                 })
             except Exception:
                 continue
@@ -476,7 +481,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         # SECURITY: 404 (not 403) so we don't leak that the report exists.
         if data.get("owner") != user:
             raise HTTPException(404, "Research not found")
-        return data
+        return {**data, **_research_failure_fields(data)}
 
     @router.post("/api/research/{session_id}/archive")
     async def research_archive(session_id: str, request: Request, archived: bool = Query(True)):
@@ -689,8 +694,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     last_payload = payload
                     yield f"data: {json.dumps(payload)}\n\n"
                 if st != "running":
-                    final = {'status': st, 'final': True}
                     task = research_handler._active_tasks.get(session_id, {})
+                    final = {'status': st, 'final': True, **_research_failure_fields(task)}
                     if st == "error" and task.get("result"):
                         final['error'] = str(task["result"])[:500]
                     yield f"data: {json.dumps(final)}\n\n"
@@ -724,6 +729,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "navigation_trace": d.get("navigation_trace", []),
                     "action_trace": d.get("action_trace", []),
                     "category": d.get("category") or "",
+                    **_research_failure_fields(d),
                 }
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
@@ -733,6 +739,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         source_coverage = research_handler.get_source_coverage(session_id)
         navigation_trace = research_handler.get_navigation_trace(session_id)
         action_trace = research_handler.get_action_trace(session_id)
+        task = research_handler._active_tasks.get(session_id)
+        failure_data = task or {}
+        if task is None and owned_disk_path is not None:
+            failure_data = json.loads(owned_disk_path.read_text(encoding="utf-8"))
         return {
             "result": result,
             "sources": sources,
@@ -744,6 +754,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             "action_trace": action_trace,
             "category": research_handler.get_category(session_id),
             "mode": research_handler.get_mode(session_id),
+            **_research_failure_fields(failure_data),
         }
 
     @router.post("/api/research/spinoff/{session_id}")

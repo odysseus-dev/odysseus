@@ -82,9 +82,14 @@ def test_temporal_developments_select_news_not_reference_search(monkeypatch, que
     monkeypatch.setattr(providers, '_get_search_instance', lambda: 'http://searx.test')
     monkeypatch.setattr(providers, '_get_search_settings', lambda: {})
     monkeypatch.setattr(providers, '_get_provider_key', lambda name: '')
+    monkeypatch.setattr(providers, '_GENERAL_ENGINES', 'fixture')
     monkeypatch.setattr(providers.httpx, 'get', get)
     providers.searxng_search_api(query, time_filter='week')
-    assert seen[0]['categories'] == category
+    if category == 'general':
+        assert seen[0]['engines'] == 'fixture'
+        assert 'categories' not in seen[0]
+    else:
+        assert seen[0]['categories'] == category
     assert seen[0]['time_range'] == 'week'
 
 
@@ -190,7 +195,7 @@ def test_service_searxng_latest_release_uses_general_search(monkeypatch, query, 
     )
 
     assert results
-    assert seen["params"]["categories"] == "general"
+    assert "categories" not in seen["params"]
     assert seen["params"]["engines"] == providers._GENERAL_ENGINES
     assert seen['params'].get('time_range') == expected_time
 

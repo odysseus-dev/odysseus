@@ -18,14 +18,13 @@ from typing import Callable, Dict, List, Optional, Set
 from src.research_utils import strip_thinking, is_low_quality
 from src.research_navigator import ResearchAction, ResearchNavigator, ResearchPage, assess_source, parse_research_actions
 
-from src.goal_based_extractor import EXTRACTOR_SYSTEM
 from src.prompt_security import untrusted_context_message
 
 logger = logging.getLogger(__name__)
 
 
 def current_date_context() -> str:
-    """Preamble that grounds query-generation/planning LLMs in the real current
+    """Preamble that grounds research LLMs in the real current
     date. Without it the model falls back to its training-cutoff year and emits
     queries like "best Python tutorials 2025" when the year is actually 2026.
     System TZ-local so it matches what the user sees. Portable strftime only."""
@@ -35,6 +34,9 @@ def current_date_context() -> str:
         f"When a search query needs a year or refers to 'latest'/'current'/"
         f"'this year', use {now.strftime('%Y')} or relative wording — never a "
         f"year inferred from training data.\n\n"
+        "Assess source publication dates relative to today's date, not your "
+        "training cutoff. A recent publication year alone does not show that "
+        "a source is future-dated or fabricated.\n\n"
     )
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,11 @@ You are a research assistant planning web searches.
 
 Generate {num_queries} focused search queries that will help answer the question.
 {round_instruction}
+Use concise keyword queries of about 3-8 content words, not full sentences.
+Preserve essential technical names and search a different sub-topic in each query.
+Prioritize explicitly named sources with a dedicated query using the exact project or paper name.
+Do not add a year unless the question explicitly needs a date or current information.
+Do not introduce unrequested hardware, platforms, or other assumptions.
 
 Return ONLY a JSON array of query strings, nothing else.
 Example: ["query one", "query two", "query three"]
@@ -92,6 +99,11 @@ Round: {round_num}
 
 Return ONLY a JSON array containing {num_queries} short search-query strings.
 Use the question's exact topic. Do not explain your answer.
+Use concise keyword queries of about 3-8 content words, not full sentences.
+Preserve essential technical names and search a different sub-topic in each query.
+Prioritize explicitly named sources with a dedicated query using the exact project or paper name.
+Do not add a year unless the question explicitly needs a date or current information.
+Do not introduce unrequested hardware, platforms, or other assumptions.
 Example: ["topic latest news", "topic official sources"]
 """
 
@@ -128,6 +140,11 @@ Available actions:
 - private_browser: actual browser tool alias; Research only supports read/open/snapshot with a URL. Args: {{"action": "read", "url": "https://..."}}
 
 Rules:
+- For web_search, use concise keyword queries of about 3-8 content words, not full sentences.
+- Preserve essential technical names and search a different sub-topic in each query.
+- Prioritize explicitly named sources with a dedicated query using the exact project or paper name.
+- Do not add a year unless the question explicitly needs a date or current information.
+- Do not introduce unrequested hardware, platforms, or other assumptions.
 - If the user's latest wording is a meta request like "search this" or "can you search", infer the real topic from the original question, research plan, and report; never use the meta request itself as the search query.
 - Prefer web_search for open questions or when you need discovery.
 - Prefer web_fetch for official/source URLs you already know.
@@ -165,7 +182,14 @@ You are updating an evolving research report.
 Integrate the new findings into the existing report. Produce an updated, well-organized \
 report that answers the original question as completely as possible given all evidence so far. \
 Remove redundancy, resolve contradictions, and maintain logical flow. \
-Keep source URLs as inline citations where relevant. Prefer claims supported by primary/official \
+Keep source URLs as inline citations where relevant.
+Use only claims supported by the collected source evidence. Preserve each source's
+scope and distinguish a demonstrated configuration from a general requirement.
+Do not invent hardware minimums, software requirements, training times, or universal
+recommendations. Label inferences and unknowns explicitly. A library used in one
+example is not mandatory for all workflows. One failed synthetic-data experiment
+does not establish that all synthetic data should be avoided.
+Prefer claims supported by primary/official \
 sources, call out weak or missing evidence plainly, and avoid overconfident conclusions when the \
 navigation trace shows failed searches, failed fetches, or thin source diversity.
 
@@ -174,6 +198,9 @@ Write only the updated report — no preamble or meta-commentary.
 
 STOP_PROMPT = """\
 You are deciding whether a research report is comprehensive enough.
+This step evaluates coverage and support in the provided report. It does not
+verify whether a cited source exists: that requires fetching the source, and
+cannot be inferred from a title or publication year unfamiliar to you.
 
 **Original question:** {question}
 
@@ -195,8 +222,16 @@ comprehensively?  Consider:
 - Is the evidence sufficient and from multiple sources?
 - Does the evidence include primary/official sources where they should exist?
 
+Use the authoritative current date supplied with this request. Assess coverage
+and supported claims, rather than whether a source is familiar from your training
+data. A publication newer than your training cutoff can be valid. Do not claim
+that a source is future-dated or nonexistent solely because its year is recent;
+compare its actual date with the supplied current date.
+
 If rounds completed is well below the target, prefer continuing unless the \
 report is already exhaustive.
+Explain a concrete coverage gap or why the evidence covers the question. Do not
+replace that assessment with an unsupported claim that cited sources do not exist.
 
 Reply with ONLY "YES" or "NO" followed by a brief one-sentence reason.
 Example: "YES — The report covers all major aspects with evidence from multiple sources."
@@ -233,8 +268,44 @@ Requirements:
 - Add a brief executive summary at the top
 - End with a clear conclusion that directly answers the question
 - Write in an engaging, informative style — not dry or robotic
+- Ground factual claims and recommendations in the cited evidence; preserve the scope of each source
+- Distinguish examples from requirements, sequential device handoffs from simultaneous multi-device training, and inference from training
+- Do not invent hardware minimums, software versions, training times, or mandatory libraries; state when these are unknown
+- Label estimates and inferences explicitly, and do not generalize one experiment into a universal recommendation
+- Evidence takes priority over length or format: omit unsupported details instead of filling gaps
 """
 
+RESEARCH_EXTRACTOR_PROMPT = """\
+Extract source-grounded information from the supplied webpage for this research goal:
+{goal}
+
+First decide whether the page directly provides useful evidence for any part of
+the goal. Shared words, unrelated scientific uses of a term, and imagined
+analogies do not establish relevance. Use only information in this page; do not
+fill gaps from your own knowledge or infer hardware requirements from an example.
+Preserve qualifications and distinguish sequential hardware use from simultaneous
+training. Keep evidence concise, quoting the relevant source passages.
+
+Return a JSON object with "relevant" (a boolean), "rational", "evidence", and
+"summary". For an unrelated page, set "relevant": false and both "evidence"
+and "summary" to empty strings. For a relevant page, set "relevant": true and
+provide nonempty source evidence and a concise summary explaining how it answers
+the goal. Do not turn an explanation of irrelevance into a finding.
+"""
+
+_RESEARCH_IRRELEVANCE_MARKERS = (
+    "completely irrelevant to the research goal",
+    "completely irrelevant to the user's goal",
+    "irrelevant to the specified research goal",
+    "cannot be used to answer the research goal",
+    "zero overlap with the topic",
+)
+
+
+def _unusable_research_text(text: str) -> bool:
+    return is_low_quality(text) or any(
+        marker in text.lower() for marker in _RESEARCH_IRRELEVANCE_MARKERS
+    )
 
 _META_SEARCH_QUERIES = {
     "search",
@@ -319,7 +390,7 @@ CATEGORY_PROMPTS = {
 - Each step should have a clear heading and detailed instructions
 - Use blockquotes (> ) for tips and warnings: > **Tip:** ... or > **Warning:** ...
 - End with ## Common Mistakes section
-- Add estimated time and difficulty level near the top""",
+- Add estimated time and difficulty only when supported by the evidence; otherwise state that they depend on the workload""",
 
     "factcheck": """IMPORTANT FORMAT OVERRIDE — this is a FACT-CHECK report:
 - Start with ## The Claim restating what's being checked
@@ -397,6 +468,9 @@ class DeepResearcher:
         self.findings: List[Dict] = []
         self.evolving_report: str = ""
         self.research_plan: str = ""
+        self.failure_stage: str = ""
+        self.failure_message: str = ""
+        self._search_errors: List[str] = []
         self.action_trace: List[Dict[str, object]] = []
         self.navigation_trace: List[Dict[str, object]] = []
         self.navigator = ResearchNavigator(
@@ -526,6 +600,11 @@ class DeepResearcher:
                 self._record_action_plan(round_num, actions, source="query_fallback")
             if not actions:
                 logger.warning(f"Round {round_num}: no queries generated, stopping")
+                if not findings:
+                    self._set_failure(
+                        "query_generation",
+                        "Research could not generate search queries. Check the research model and try again.",
+                    )
                 break
 
             self._emit(phase="searching", round=round_num, queries=len(queries),
@@ -548,15 +627,9 @@ class DeepResearcher:
                 consecutive_empty_rounds += 1
                 logger.info(f"Round {round_num}: no new findings ({consecutive_empty_rounds} consecutive empty)")
                 if consecutive_empty_rounds >= self.max_empty_rounds:
-                    logger.warning(f"Search appears to be down — {self.max_empty_rounds} consecutive rounds with no results")
-                    err_detail = getattr(self, '_last_search_error', 'unknown error')
-                    self._emit(phase="error", message=f"Search engine unavailable: {err_detail}")
+                    logger.warning(f"Research gathered no new evidence in {self.max_empty_rounds} consecutive rounds")
                     if not findings:
-                        return (
-                            f"**Search unavailable** — Web search failed after "
-                            f"{round_num} rounds. Error: {err_detail}\n\n"
-                            "Please check your search provider settings and ensure the service is running."
-                        )
+                        return self._no_evidence_report()
                     break
 
             # SYNTHESIZE
@@ -602,7 +675,7 @@ class DeepResearcher:
                     "finding(s) as a fallback", len(findings)
                 )
                 return self._fallback_report(question, findings)
-            return "No information could be gathered for this question."
+            return self._no_evidence_report()
 
         self.evolving_report = report  # preserve pre-synthesis report
         if self.fast_fact_mode:
@@ -625,17 +698,21 @@ class DeepResearcher:
     # LLM helper
     # ------------------------------------------------------------------
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
-                   max_tokens: int = 4096, timeout: int = 60) -> str:
-        """Call the LLM asynchronously and strip thinking tags."""
+                   max_tokens: int = 4096, timeout: int = 60,
+                   enable_thinking: Optional[bool] = None) -> str:
+        """Ground every research call in the current date and require final text."""
         from src.llm_core import llm_call_async
+        thinking_options = {"enable_thinking": enable_thinking} if enable_thinking is not None else {}
         response = await llm_call_async(
             url=self.llm_endpoint,
             model=self.llm_model,
-            messages=messages,
+            messages=[{"role": "system", "content": current_date_context()}] + messages,
             temperature=temperature,
             max_tokens=max_tokens,
             headers=self.llm_headers,
             timeout=timeout,
+            require_complete_response=True,
+            **thinking_options,
         )
         return strip_thinking(response)
 
@@ -651,6 +728,7 @@ class DeepResearcher:
                 temperature=0.3,
                 max_tokens=1024,
                 timeout=getattr(self, "planning_timeout", 90),
+                enable_thinking=False,
             )
             # Try to parse as JSON for structured plan
             parsed = self._parse_json_object(response)
@@ -697,6 +775,7 @@ class DeepResearcher:
             result = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0, max_tokens=20, timeout=15,
+                enable_thinking=False,
             )
             cat = (result or "").strip().lower()
             # Clean one-word answer first.
@@ -757,6 +836,7 @@ class DeepResearcher:
                 temperature=0.5,
                 max_tokens=512 if getattr(self, "simple_research_mode", False) else 4096,
                 timeout=getattr(self, "query_timeout", 120),
+                enable_thinking=False,
             )
             queries = self._parse_json_array(response)
             # Deduplicate
@@ -835,6 +915,7 @@ class DeepResearcher:
                 temperature=0.25,
                 max_tokens=1536,
                 timeout=getattr(self, "query_timeout", 120),
+                enable_thinking=False,
             )
         except Exception as e:
             logger.warning("Research action planning failed: %s", e)
@@ -1179,9 +1260,31 @@ class DeepResearcher:
                     raw_search_hits.append(r)
 
         search_limit = self.max_urls_per_round * max(1, len(queries))
-        for r in self._prioritize_search_results(
-            raw_search_hits, limit=search_limit, question=question
-        ):
+        ranked = self._prioritize_search_results(
+            raw_search_hits, limit=len(raw_search_hits), question=question
+        )
+        # Retain the source-quality and topical filters, then share bounded
+        # extraction capacity across the planner's different search topics.
+        query_urls = [
+            {str(r.get("url") or "").strip() for r in result if isinstance(r, dict)}
+            if isinstance(result, list) else set()
+            for result in search_results
+        ]
+        buckets = [iter([r for r in ranked if r["url"] in urls]) for urls in query_urls]
+        selected, selected_urls = [], set()
+        while buckets and len(selected) < search_limit:
+            following = []
+            for bucket in buckets:
+                for result in bucket:
+                    if result["url"] not in selected_urls:
+                        selected.append(result)
+                        selected_urls.add(result["url"])
+                        following.append(bucket)
+                        break
+                if len(selected) >= search_limit:
+                    break
+            buckets = following
+        for r in selected:
             url = str(r.get("url") or "").strip()
             if not url or url in self.urls_fetched:
                 continue
@@ -1256,6 +1359,7 @@ class DeepResearcher:
             if not results and navigator.last_search_error:
                 self._last_search_error = navigator.last_search_error
                 error = navigator.last_search_error
+                self._remember_search_error(error)
             self._record_navigation(
                 "web_search",
                 query=query,
@@ -1265,6 +1369,8 @@ class DeepResearcher:
             )
             return results
         except Exception as e:
+            self._last_search_error = str(e)
+            self._remember_search_error(self._last_search_error)
             self._record_navigation("web_search", query=query, status="error", error=str(e))
             raise
 
@@ -1342,12 +1448,13 @@ class DeepResearcher:
             try:
                 response = await self._llm(
                     [
-                        {"role": "user", "content": EXTRACTOR_SYSTEM.format(goal=question)},
+                        {"role": "user", "content": RESEARCH_EXTRACTOR_PROMPT.format(goal=question)},
                         untrusted_context_message("webpage", content),
                     ],
                     temperature=0.2,
                     max_tokens=2048,
                     timeout=self.extraction_timeout,
+                    enable_thinking=False,
                 )
             except Exception as e:
                 logger.warning(f"LLM extraction failed for {url}: {e}")
@@ -1362,7 +1469,29 @@ class DeepResearcher:
                 return None
 
             parsed = self._parse_json_object(response)
-            if parsed:
+            if parsed is not None:
+                if (not isinstance(parsed, dict)
+                        or ("relevant" in parsed and not isinstance(parsed["relevant"], bool))
+                        or parsed.get("relevant") is False):
+                    logger.info(f"Skipping irrelevant extraction from {url}")
+                    self._record_navigation(requested_tool, url=url, title=title or page.title,
+                                            status="irrelevant", retrieval=page.retrieval)
+                    return None
+                summary = parsed.get("summary", "")
+                evidence = parsed.get("evidence", "")
+                if (not isinstance(summary, str) or not summary.strip()
+                        or not isinstance(evidence, str) or not evidence.strip()
+                        or _unusable_research_text(summary)):
+                    logger.info(f"Skipping empty or low-quality extraction from {url}")
+                    self._record_navigation(requested_tool, url=url, title=title or page.title,
+                                            status="low_quality", retrieval=page.retrieval)
+                    if page.retrieval != "browser" and not tried_browser_after_weak_extract:
+                        tried_browser_after_weak_extract = True
+                        browser_page = await self._browser_fallback(url, title, page)
+                        if browser_page and browser_page.success and browser_page.content:
+                            page = browser_page
+                            continue
+                    return None
                 parsed["url"] = url
                 parsed["title"] = title or page.title
                 parsed["og_image"] = page.og_image
@@ -1384,25 +1513,6 @@ class DeepResearcher:
                     source_score=assessment.score,
                     source_reason=assessment.reason,
                 )
-                # Skip findings where the LLM says the page is useless
-                if is_low_quality(parsed.get("summary", "")):
-                    logger.info(f"Skipping low-quality extraction from {url}")
-                    self._record_navigation(
-                        "browser_read" if page.retrieval == "browser" else requested_tool,
-                        url=url,
-                        title=parsed["title"],
-                        status="low_quality",
-                        retrieval=page.retrieval,
-                        source_kind=assessment.kind,
-                        source_score=assessment.score,
-                    )
-                    if page.retrieval != "browser" and not tried_browser_after_weak_extract:
-                        tried_browser_after_weak_extract = True
-                        browser_page = await self._browser_fallback(url, title, page)
-                        if browser_page and browser_page.success and browser_page.content:
-                            page = browser_page
-                            continue
-                    return None
                 self._record_navigation(
                     "browser_read" if page.retrieval == "browser" else requested_tool,
                     url=url,
@@ -1414,6 +1524,10 @@ class DeepResearcher:
                 )
                 return parsed
             # If JSON parsing fails, treat entire response as evidence
+            if not response.strip() or _unusable_research_text(response):
+                self._record_navigation(requested_tool, url=url, title=title or page.title,
+                                        status="low_quality", retrieval=page.retrieval)
+                return None
             assessment = assess_source(
                 url,
                 title=title or page.title,
@@ -1737,7 +1851,7 @@ class DeepResearcher:
     async def _should_stop(self, question: str, report: str,
                            round_num: int) -> bool:
         """Let the LLM decide whether the report is comprehensive enough."""
-        prompt = STOP_PROMPT.format(
+        prompt = current_date_context() + STOP_PROMPT.format(
             question=question,
             report=report,
             source_state=self._source_state_summary(),
@@ -1751,6 +1865,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=128,
+                enable_thinking=False,
             )
             # Reasoning models prepend a <think>...</think> block — strip it
             # before checking for YES/NO, otherwise the answer always looks
@@ -1803,7 +1918,9 @@ class DeepResearcher:
                             "- Include specific data, numbers, and comparisons from the evidence\n"
                             "- Explain context and significance — don't just list facts\n"
                             "- Use ## headings and ### subheadings\n"
-                            "- Target at least 1000 words\n"
+                            "- Ground every added claim in the collected evidence; do not invent requirements, estimates, or recommendations to reach a word count\n"
+                            "- Clearly label unknowns and inferences\n"
+                            "- Target at least 1000 words only if the evidence supports that detail\n"
                             "Write the full expanded report now."
                         },
                     ],
@@ -1822,6 +1939,44 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _no_evidence_report(self) -> str:
+        """Preserve the failure stage at any exit without gathered evidence."""
+        if self.failure_message:
+            return f"**Research failed** — {self.failure_message}"
+        if self.urls_fetched:
+            self._set_failure(
+                "extraction",
+                "Research found pages, but none could be read or produced useful evidence. "
+                "Check page access and the research model output.",
+            )
+            return f"**No usable evidence** — {self.failure_message}"
+        errors = self._search_errors or [getattr(self, "_last_search_error", "")]
+        detail = "; ".join(error for error in errors if error)[:1200]
+        rounds = self.round_count
+        message = f"Web search returned no pages after {rounds} {'round' if rounds == 1 else 'rounds'}."
+        if detail:
+            message += " " + detail
+        self._set_failure("search", message)
+        return (
+            f"**Search unavailable** — {self.failure_message}\n\n"
+            "Check the search provider settings or try a working search engine."
+        )
+
+    def _remember_search_error(self, detail: str):
+        errors = getattr(self, "_search_errors", None)
+        if errors is None:
+            errors = self._search_errors = []
+        if detail and detail not in errors and len(errors) < 8:
+            errors.append(detail[:1200])
+
+    def _set_failure(self, stage: str, message: str):
+        self.failure_stage = stage
+        self.failure_message = message[:1600]
+        self._emit(
+            phase="error", message=self.failure_message,
+            failure_stage=self.failure_stage, failure_message=self.failure_message,
+        )
+
     def _emit(self, **kwargs):
         """Send a progress event via the callback, if one is registered."""
         if self._progress:

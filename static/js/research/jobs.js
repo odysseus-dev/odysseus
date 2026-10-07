@@ -156,6 +156,8 @@ async function _syncLibrary(options = {}) {
             sourceCount: item.source_count || existing.sourceCount || 0,
             thumbnail: item.thumbnail || existing.thumbnail || '',
             category: item.category || existing.category || '',
+            failure_stage: item.failure_stage || '',
+            failure_message: item.failure_message || '',
             mode: item.mode || existing.mode || 'research',
             _fromLibrary: true,
           };
@@ -175,6 +177,8 @@ async function _syncLibrary(options = {}) {
           sourceCount: item.source_count || 0,
           thumbnail: item.thumbnail || '',
           category: item.category || '',
+          failure_stage: item.failure_stage || '',
+          failure_message: item.failure_message || '',
           mode: item.mode || 'research',
           errorMsg: null, avgDuration: null, modelName: null,
           settings: { max_rounds: item.rounds || 8 },
@@ -378,6 +382,8 @@ function _connectStream(job) {
       if (d.model && !job.modelName) job.modelName = d.model;
       if (d.final) {
         if (d.error) job.errorMsg = d.error;
+        job.failure_stage = d.failure_stage || '';
+        job.failure_message = d.failure_message || '';
         _finishJob(job, d.status === 'done' ? 'done' : d.status === 'cancelled' ? 'cancelled' : 'error');
         if (d.status === 'done') _fetchResult(job);
         return;
@@ -407,6 +413,8 @@ async function _pollFallback(job) {
     if (d.mode) job.mode = d.mode;
     if (d.avg_duration) job.avgDuration = d.avg_duration;
     if (d.status !== 'running') {
+      job.failure_stage = d.failure_stage || '';
+      job.failure_message = d.failure_message || '';
       _finishJob(job, d.status === 'done' ? 'done' : 'error');
       if (d.status === 'done') _fetchResult(job);
       return;
@@ -443,6 +451,8 @@ async function _fetchResult(job) {
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
+    job.failure_stage = d.failure_stage || '';
+    job.failure_message = d.failure_message || '';
     job.analyzed_urls = d.analyzed_urls;
     job.source_state = d.source_state;
     job.source_coverage = d.source_coverage || {};

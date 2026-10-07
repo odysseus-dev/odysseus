@@ -63,6 +63,67 @@ async def test_search_and_extract_tracks_all_urls_selected_for_analysis():
 
 
 @pytest.mark.asyncio
+async def test_url_limit_balances_queries_within_the_existing_round_cap():
+    researcher = _ControlledResearcher(max_urls_per_round=3)
+    researcher._start_time = time.time()
+
+    findings = await researcher._search_and_extract(["a", "b", "c", "d"], "question")
+
+    assert len(findings) == 12
+    assert len(researcher.urls_fetched) == 12
+    assert [finding["title"] for finding in findings] == [
+        f"{query}-{index}" for index in range(3) for query in ("a", "b", "c", "d")
+    ]
+    assert [{"url": item["url"], "title": item["title"]} for item in researcher.analyzed_urls[:4]] == [
+        {"url": f"https://example.test/{query}/0", "title": f"{query}-0"}
+        for query in ("a", "b", "c", "d")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_url_limit_counts_only_new_unique_urls_across_queries():
+    researcher = _ControlledResearcher(max_urls_per_round=1)
+    researcher._start_time = time.time()
+    researcher.urls_fetched.add("https://example.test/already-read")
+
+    async def search(query):
+        urls = {
+            "a": ["already-read", "shared", "shared", ""],
+            "b": ["shared", "second", "third", "extra"],
+            "c": ["later"],
+        }[query]
+        return [{"url": f"https://example.test/{url}" if url else "", "title": url} for url in urls]
+
+    researcher._search = search
+
+    findings = await researcher._search_and_extract(["a", "b", "c"], "question")
+
+    assert [finding["title"] for finding in findings] == ["shared", "second", "later"]
+    assert [item["title"] for item in researcher.analyzed_urls] == ["shared", "second", "later"]
+    assert "https://example.test/extra" not in researcher.urls_fetched
+    assert "https://example.test/third" not in researcher.urls_fetched
+
+
+@pytest.mark.asyncio
+async def test_balanced_selection_reuses_capacity_from_empty_or_failed_queries():
+    researcher = _ControlledResearcher(max_urls_per_round=1)
+    researcher._start_time = time.time()
+
+    async def search(query):
+        if query == "empty":
+            return []
+        if query == "failed":
+            raise RuntimeError("fixture search failure")
+        return [{"url": f"https://example.test/useful/{i}", "title": str(i)} for i in range(6)]
+
+    researcher._search = search
+    findings = await researcher._search_and_extract(["empty", "failed", "useful"], "question")
+
+    assert [finding["title"] for finding in findings] == ["0", "1", "2"]
+    assert len(researcher.urls_fetched) == 3
+
+
+@pytest.mark.asyncio
 async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
     captured = {}
 
@@ -83,7 +144,7 @@ async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
 
     researcher.navigator.fetch = fake_fetch
 
-    async def fake_llm(messages, temperature=0.3, max_tokens=4096, timeout=60):
+    async def fake_llm(messages, temperature=0.3, max_tokens=4096, timeout=60, enable_thinking=None):
         captured["timeout"] = timeout
         return json.dumps({
             "rational": "relevant",
@@ -119,7 +180,7 @@ async def test_planning_and_query_generation_use_configured_timeouts():
     )
     captured = []
 
-    async def fake_llm(messages, temperature=0.3, max_tokens=4096, timeout=60):
+    async def fake_llm(messages, temperature=0.3, max_tokens=4096, timeout=60, enable_thinking=None):
         captured.append(timeout)
         if max_tokens == 1024:
             return json.dumps({

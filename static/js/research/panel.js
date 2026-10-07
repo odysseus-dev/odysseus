@@ -1230,16 +1230,24 @@ function _buildJobCard(job) {
     // Library-loaded jobs have sources=null but pre-set sourceCount; fresh jobs
     // populate sources directly. Prefer the pre-set count if present.
     const srcCount = job.sources?.length ?? job.sourceCount ?? 0;
-    // 0 sources = the research couldn't gather/extract anything — flag it.
+    // Preserve the stage reported by the backend: no pages and no extracted
+    // findings require different remedies. Older reports have no stage.
     const explainOnly = job.mode === 'explain' || job.settings?.max_rounds === -1;
     const failed = srcCount === 0 && !explainOnly;
     if (failed) card.classList.add('research-job-failed');
-    // "visual" describes how this report is presented, not its research
-    // category. Keeping it beside every title made History noisy, so omit
-    // only that label while retaining meaningful category/failure badges.
-    const doneBadge = '';
+    const failureLabel = job.failure_stage === 'search' ? 'search failed'
+      : job.failure_stage === 'extraction' ? 'extraction failed'
+        : job.failure_stage ? 'research failed' : 'no results';
+    const doneBadge = failed
+      ? `<span class="research-cat-badge research-cat-failed">${_cancelIcon} ${failureLabel}</span>`
+      : '';
+    const failureMessage = job.failure_message || (job.failure_stage === 'search'
+      ? 'Search returned no usable pages. Check the search provider in Settings and retry.'
+      : job.failure_stage === 'extraction'
+        ? 'Pages were found, but no research findings could be extracted. Check the research model and retry.'
+        : "Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.");
     const failNote = failed
-      ? `<div class="research-job-failnote">Couldn't extract, try again or change Settings.</div>`
+      ? `<div class="research-job-failnote">${_esc(failureMessage)}</div>`
       : '';
     const thumbSource = (job.sources || []).find(s => s && (s.image || s.og_image));
     const thumbUrl = job.thumbnail || thumbSource?.image || thumbSource?.og_image || '';
@@ -1634,6 +1642,8 @@ async function _ensureResult(job) {
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
+    job.failure_stage = d.failure_stage || '';
+    job.failure_message = d.failure_message || '';
     job.analyzed_urls = d.analyzed_urls;
     job.source_state = d.source_state;
     job.source_coverage = d.source_coverage || {};
