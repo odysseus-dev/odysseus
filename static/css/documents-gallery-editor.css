@@ -339,6 +339,13 @@ mark.doc-find-mark {
     height: 100%;
     min-height: 0;
   }
+  /* The container now fills the body exactly, so its inline 2px top margin
+     (spacing for the grid view) would push it 2px past the body and add a
+     second, outer scrollbar beside the inspector's own. !important is needed
+     to beat the inline style. */
+  .gallery-images-container:has(> #gallery-detail[style*="flex"]) {
+    margin-top: 0 !important;
+  }
 }
 .gallery-detail-image:hover .gallery-detail-rotate { opacity: 0.85; }
 .gallery-detail-nav-disabled {
