@@ -5420,7 +5420,12 @@ import { invalidateSettings } from './appConfig.js';
             const item = document.createElement('div');
             item.className = 'rag-source-item';
             const _esc = uiModule.esc;
-            item.innerHTML = `<strong>${_esc(src.filename)}</strong> <span class="rag-similarity">${(src.similarity * 100).toFixed(1)}%</span><div class="rag-snippet">${_esc(src.snippet)}</div>`;
+            // Provenance chips (project/org) render only when tagged (#5666).
+            // String() guards a non-string tag from a persisted record: esc()
+            // calls .replace, so a number would throw and hide the whole box.
+            const _tags = [src.project, src.org].filter(Boolean)
+              .map(t => `<span class="rag-source-tag">${_esc(String(t))}</span>`).join('');
+            item.innerHTML = `<strong>${_esc(src.filename)}</strong> <span class="rag-similarity">${(src.similarity * 100).toFixed(1)}%</span>${_tags}<div class="rag-snippet">${_esc(src.snippet)}</div>`;
             details.appendChild(item);
           });
           holder.querySelector('.body').appendChild(details);
