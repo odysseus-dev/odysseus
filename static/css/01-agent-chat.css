@@ -3400,6 +3400,10 @@ body.bg-pattern-ascii-fireflies {
       width: 100%;
       margin: 0;
     }
+    .chat-context-threshold-slider.preset-range::-webkit-slider-thumb {
+      /* Center the 18px preset thumb on its 6px WebKit track. */
+      margin-top: -6px;
+    }
     .chat-context-compact-btn {
       display: inline-flex;
       align-items: center;
