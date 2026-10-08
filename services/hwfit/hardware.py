@@ -600,27 +600,32 @@ def _detect_windows():
             } 
         }
         catch {}
-        if (-not $r.gpu_name) { 
-            $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1
+        if (-not $r.gpu_name) {
             $GPUDriverKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*"
-            $GPUDeviceID = $wmiGpu.PNPDeviceID.Split('&')[0..1] -join '&'
-            $VRAMfromRegistry = Get-ItemProperty -Path $GPUDriverKey |
-            Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
-            # Sometimes there happen to be multiple driver classes for the same gpu.
-            Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
-            if ($wmiGpu) { 
+            $driverKeys = Get-ItemProperty -Path $GPUDriverKey -ErrorAction SilentlyContinue
+            # Pick the adapter with the most VRAM, not the first one listed: on
+            # desktops with an iGPU + discrete card the iGPU often comes first.
+            $wmiGpu = $null
+            $bestVram = 0
+            foreach ($gpu in (Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 })) {
+                $GPUDeviceID = $gpu.PNPDeviceID.Split('&')[0..1] -join '&'
+                $VRAMfromRegistry = $driverKeys |
+                Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
+                # Sometimes there happen to be multiple driver classes for the same gpu.
+                Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
+                # AdapterRAM is a uint32 (caps at 4 GB); the registry value is exact.
+                # Edge case: driver is broken, otherwise $gpu.AdapterRAM is redundant
+                $vram = if ($VRAMfromRegistry -ge $gpu.AdapterRAM) { [double]$VRAMfromRegistry } else { [double]$gpu.AdapterRAM }
+                if ($vram -gt $bestVram) { $bestVram = $vram; $wmiGpu = $gpu }
+            }
+            if ($wmiGpu) {
                 $r.gpu_name = $wmiGpu.Name
-                # Edge case: driver is broken, otherwise $wmiGpu.AdapterRAM is redundant
-                if ($VRAMfromRegistry -ge $wmiGpu.AdapterRAM) {
-                    $r.gpu_vram_gb = [math]::Round($VRAMfromRegistry / 1073741824, 1)
-                }
-                else {
-                    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1)
-                }
+                $r.gpu_vram_gb = [math]::Round($bestVram / 1073741824, 1)
                 $r.gpu_count = 1
-                # WMI doesn't tell us CUDA/ROCm
-                $r.gpu_backend = 'cpu_x86';
-            } 
+                # WMI doesn't tell us CUDA/ROCm. AMD on Windows runs llama.cpp
+                # via Vulkan (same label the Linux path uses without ROCm).
+                $r.gpu_backend = if ($wmiGpu.PNPDeviceID -like 'PCI\\VEN_1002*') { 'vulkan' } else { 'cpu_x86' }
+            }
         }
         $r | ConvertTo-Json -Compress
     """
