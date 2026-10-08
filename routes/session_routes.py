@@ -1305,7 +1305,7 @@ def setup_session_routes(
     def auto_sort_sessions(request: Request, skip_llm: bool = False):
         """Use AI to categorize all sessions into folders.
 
-        Phase 1 deletes empty/throwaway sessions and Phase 2 asks the LLM
+        Phase 1 deletes empty/Incognito sessions and Phase 2 asks the LLM
         to assign folders. When `skip_llm=true` the endpoint returns
         after Phase 1 — used by the "Tidy (no AI)" UI affordance so
         users can clean junk without spending tokens.
@@ -1315,21 +1315,11 @@ def setup_session_routes(
         single_user_mode = not user and _auth_disabled()
         user_sessions = session_manager.get_sessions_for_user(user)
 
-        # Delete empty and throwaway sessions before sorting
+        # Saved conversations are never disposable based on their title or prompt.
         from core.database import ChatMessage as DbMsg
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
-        # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
-        _THROWAWAY_NAMES = {
-            "test", "testing", "asdf", "asd", "hello", "hi", "hey",
-            "yo", "sup", "hola", "hii", "hiii", "heyo",
-            "foo", "bar", "baz", "tmp", "temp", "scratch", "untitled",
-            "new chat", "delete", "remove", "junk", "trash", "xxx",
-            "abc", "qwerty", "blah", "stuff", "whatever", "idk",
-            "ok", "lol", "bruh", "hmm", "hm", "meh",
-        }
-        _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
             rows_q = db.query(DbSession).filter(DbSession.archived == False)
             if user:
@@ -1338,15 +1328,11 @@ def setup_session_routes(
                 rows_q = rows_q.filter(DbSession.owner == user)
             rows = rows_q.limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
-            # Precompute per-session message counts in TWO aggregate queries
+            # Precompute per-session message counts in one aggregate query
             # instead of 1–3 queries PER session — with many chats the per-row
             # loop was doing thousands of round-trips and blowing the timeout.
             from sqlalchemy import func as _sa_func
             _counts = dict(db.query(DbMsg.session_id, _sa_func.count(DbMsg.id)).group_by(DbMsg.session_id).all())
-            _asst_counts = dict(
-                db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
-                .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
-            )
             cleanup_now = utcnow_naive()
             for row in rows:
                 # Never delete important sessions
@@ -1356,9 +1342,10 @@ def setup_session_routes(
                 if (row.name or "").strip() == "Incognito":
                     should_delete = True
                     deleted_throwaway += 1
-                    db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
+                    else:
+                        db.delete(row)
                     continue
                 if is_session_recently_active(row, now=cleanup_now):
                     continue
@@ -1367,31 +1354,11 @@ def setup_session_routes(
                 if msg_count == 0:
                     should_delete = True
                     deleted_empty += 1
-                elif msg_count <= _THROWAWAY_MAX_MESSAGES:
-                    name = (row.name or "").strip().lower()
-                    # Check first user message content (AI renames sessions, so
-                    # "hi" becomes "Casual Greeting Exchange" — name alone won't match)
-                    first_msg = db.query(DbMsg.content).filter(
-                        DbMsg.session_id == row.id, DbMsg.role == "user"
-                    ).order_by(DbMsg.timestamp).first()
-                    first_text = (first_msg[0] or "").strip().lower() if first_msg else ""
-                    # Count assistant messages — if user sent something but AI never replied, it's dead
-                    assistant_count = _asst_counts.get(row.id, 0)
-                    if name in _THROWAWAY_NAMES or name.startswith("chat:") or first_text in _THROWAWAY_NAMES:
-                        should_delete = True
-                        deleted_throwaway += 1
-                    # Single user message with no AI response = dead session
-                    elif msg_count == 1 and assistant_count == 0:
-                        should_delete = True
-                        deleted_throwaway += 1
-                    # Short phrase (1-3 words) with no real AI conversation (<=2 msgs)
-                    elif msg_count <= 2 and first_text and len(first_text.split()) <= 3 and len(first_text) <= 40:
-                        should_delete = True
-                        deleted_throwaway += 1
                 if should_delete:
-                    db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
+                    else:
+                        db.delete(row)
             if deleted_empty or deleted_throwaway:
                 db.commit()
                 logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
