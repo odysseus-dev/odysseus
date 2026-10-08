@@ -2666,7 +2666,7 @@ mark.doc-find-mark.current {
        render it as a narrow side pane ("sidebar") on a phone. */
     position: fixed !important;
     inset: 0 !important;
-    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    top: env(safe-area-inset-top, 0px) !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
     max-width: 100% !important;
     width: 100% !important;
     flex: none !important;
