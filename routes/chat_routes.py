@@ -81,6 +81,7 @@ from src.tool_policy import (
     WEB_TOOL_NAMES,
     build_effective_tool_policy,
     is_web_search_explicitly_denied,
+    tools_denied_without_web,
     web_intent_may_enable_for_turn,
     web_search_enabled_for_turn,
 )
@@ -3302,7 +3303,7 @@ def setup_chat_routes(
             _search_enabled = True
             allow_web_search = "true"
         if is_web_search_explicitly_denied(allow_web_search) or not _search_enabled:
-            disabled_tools.update(WEB_TOOL_NAMES)
+            disabled_tools.update(tools_denied_without_web(research_requested=do_research))
             if not _explicit_browser_intent:
                 disabled_tools.add("youtube_tool")
             if not (_explicit_browser_intent or _local_browser_render_intent):
