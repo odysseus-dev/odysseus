@@ -800,6 +800,34 @@ def to_http_exception(exc: Exception) -> HTTPException:
     return HTTPException(502, "ChatGPT Subscription request failed.")
 
 
+# Content-part types that carry an image, across the formats that reach here:
+# Odysseus builds OpenAI chat-completions style ("image_url"), while some
+# producers already emit Responses-style ("input_image") or a bare "image".
+_IMAGE_PART_TYPES = ("image_url", "input_image", "image")
+
+
+def _responses_image_url(part: dict) -> Optional[str]:
+    """Extract a usable image URL from a content part, or None.
+
+    The Responses API wants ``image_url`` as a bare string. The chat-completions
+    format that build_user_content produces wraps it as ``{"url": ...}``; passing
+    that object through is rejected with
+    ``Invalid type for 'input[N].content[M].image_url': expected an image URL,
+    but got an object instead.``
+    """
+    raw = part.get("image_url")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if isinstance(raw, dict):
+        url = raw.get("url")
+        if isinstance(url, str) and url.strip():
+            return url.strip()
+    img = part.get("image")
+    if isinstance(img, str) and img.strip():
+        return img.strip()
+    return None
+
+
 def build_responses_input(messages: list[dict]) -> list[dict]:
     input_items: list[dict] = []
     for msg in messages or []:
@@ -807,10 +835,30 @@ def build_responses_input(messages: list[dict]) -> list[dict]:
         if role == "tool":
             role = "user"
         content = msg.get("content")
+        images: list[str] = []
         if isinstance(content, list):
-            text = "\n".join(str(part.get("text") or part.get("content") or "") for part in content if isinstance(part, dict))
+            texts: list[str] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                # Image parts carry no "text"/"content" key, so folding them
+                # into the text join silently discarded the attachment and the
+                # model answered "No image was provided". Convert them instead.
+                if part.get("type") in _IMAGE_PART_TYPES:
+                    url = _responses_image_url(part)
+                    if url:
+                        images.append(url)
+                    continue
+                texts.append(str(part.get("text") or part.get("content") or ""))
+            text = "\n".join(texts)
         else:
             text = "" if content is None else str(content)
         input_type = "output_text" if role == "assistant" else "input_text"
-        input_items.append({"role": role, "content": [{"type": input_type, "text": text}]})
+        parts: list[dict] = [{"type": input_type, "text": text}]
+        # Only an input turn may carry an image; an assistant turn's content has
+        # to stay output_text, so drop images there rather than send a shape the
+        # API rejects.
+        if images and input_type == "input_text":
+            parts.extend({"type": "input_image", "image_url": url} for url in images)
+        input_items.append({"role": role, "content": parts})
     return input_items
