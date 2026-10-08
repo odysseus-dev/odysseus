@@ -6,6 +6,8 @@ FP8 safetensors repos — must be filtered out on Windows so the Cookbook does
 not recommend models the user cannot actually serve.
 """
 
+import os
+
 import pytest
 
 from services.hwfit.fit import rank_models
@@ -125,3 +127,88 @@ def test_probe_remote_platform_detects_darwin(monkeypatch):
 
     monkeypatch.setattr(hardware, "_run", fake_run)
     assert hardware._probe_remote_platform() == "linux"
+
+
+def _ps_objects(items):
+    def lit(v):
+        return f"'{v}'" if isinstance(v, str) else str(v)
+    return ", ".join(
+        "[pscustomobject]@{" + "; ".join(f"'{k}' = {lit(v)}" for k, v in item.items()) + "}"
+        for item in items
+    )
+
+
+def _run_local_windows_probe(monkeypatch, adapters, registry):
+    """Run the real local Windows probe script against faked WMI/registry data.
+
+    PowerShell resolves functions before cmdlets, so defining Get-CimInstance,
+    Get-ItemProperty and nvidia-smi ahead of the script swaps in fixtures while
+    the GPU-selection logic itself runs unmodified.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    from services.hwfit import hardware
+
+    ps_exe = shutil.which("pwsh") or shutil.which("powershell")
+    if not ps_exe:
+        pytest.skip("PowerShell not available")
+
+    captured = []
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_run", lambda cmd: captured.append(cmd))
+    hardware._detect_windows()
+    script = captured[0][-1]
+
+    fakes = f"""
+        function nvidia-smi {{ $global:LASTEXITCODE = 1 }}
+        function Get-CimInstance {{
+            param([string]$ClassName)
+            switch ($ClassName) {{
+                'Win32_OperatingSystem' {{ [pscustomobject]@{{ TotalVisibleMemorySize = 33554432; FreePhysicalMemory = 16777216 }} }}
+                'Win32_Processor' {{ [pscustomobject]@{{ Name = 'Test CPU'; NumberOfLogicalProcessors = 12; AddressWidth = 64 }} }}
+                'Win32_VideoController' {{ @({_ps_objects(adapters)}) }}
+            }}
+        }}
+        function Get-ItemProperty {{ param([string]$Path) @({_ps_objects(registry)}) }}
+    """
+    out = subprocess.run(
+        [ps_exe, "-NoProfile", "-NonInteractive", "-Command", fakes + script],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+_VIRTUAL_DISPLAY = {"Name": "Virtual Desktop Monitor", "AdapterRAM": 0,
+                    "PNPDeviceID": r"ROOT\DISPLAY\0000"}
+_AMD_IGPU = {"Name": "AMD Radeon(TM) Graphics", "AdapterRAM": 536870912,
+             "PNPDeviceID": r"PCI\VEN_1002&DEV_164E&SUBSYS_00000000&REV_C1\4&1"}
+# AdapterRAM is a uint32, so a 16 GB card reports just under 4 GB there.
+_RX_9070 = {"Name": "AMD Radeon RX 9070", "AdapterRAM": 4293918720,
+            "PNPDeviceID": r"PCI\VEN_1002&DEV_7550&SUBSYS_00000000&REV_C0\4&2"}
+_AMD_REGISTRY = [
+    {"MatchingDeviceId": r"pci\ven_1002&dev_164e", "HardwareInformation.qwMemorySize": 536870912},
+    {"MatchingDeviceId": r"pci\ven_1002&dev_7550", "HardwareInformation.qwMemorySize": 17095983104},
+]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="runs the local PowerShell probe")
+def test_windows_probe_picks_discrete_gpu_over_igpu_listed_first(monkeypatch):
+    """Desktops with an iGPU + discrete card often list the iGPU first; the
+    probe must report the adapter with the most VRAM."""
+    d = _run_local_windows_probe(monkeypatch, [_VIRTUAL_DISPLAY, _AMD_IGPU, _RX_9070], _AMD_REGISTRY)
+    assert d["gpu_name"] == "AMD Radeon RX 9070"
+    assert d["gpu_vram_gb"] == 15.9
+    assert d["gpu_backend"] == "vulkan"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="runs the local PowerShell probe")
+def test_windows_probe_non_amd_gpu_keeps_cpu_backend(monkeypatch):
+    intel = {"Name": "Intel(R) UHD Graphics", "AdapterRAM": 1073741824,
+             "PNPDeviceID": r"PCI\VEN_8086&DEV_A780&SUBSYS_00000000&REV_04\3&1"}
+    d = _run_local_windows_probe(monkeypatch, [intel], [])
+    assert d["gpu_name"] == "Intel(R) UHD Graphics"
+    assert d["gpu_vram_gb"] == 1.0
+    assert d["gpu_backend"] == "cpu_x86"
