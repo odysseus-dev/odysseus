@@ -15,6 +15,7 @@ import {
   unbindExpandedCardDismiss,
 } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
+import { includeText } from './cookbookGguf.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
@@ -1485,7 +1486,7 @@ function _rerenderCachedModels() {
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
-      const _preferredGgufInclude = String(sv('_preferredGgufInclude', '') || '').replace(/\*/g, '').toLowerCase();
+      const _preferredGgufInclude = includeText(sv('_preferredGgufInclude', '')).toLowerCase();
       const _preferredGguf = _preferredGgufInclude
         ? (_ggufChoices.find(f => String(f.rel_path || '').toLowerCase().includes(_preferredGgufInclude))
           || _ggufChoices.find(f => String(f.name || '').toLowerCase().includes(_preferredGgufInclude)))
