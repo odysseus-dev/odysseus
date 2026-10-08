@@ -461,9 +461,9 @@ def test_hwfit_network_actions_have_bounded_requests():
     assert "function _fetchHwfitWithTimeout(input, init = {}, timeoutMs = 20000)" in source
     assert "setTimeout(() => controller.abort(), timeoutMs)" in source
     assert "_fetchHwfitWithTimeout(endpoint, { signal: _requestController.signal }, 30000)" in source
-    assert "const _cacheFetchToken = _tk;" in source
-    assert "_fetchHwfitWithTimeout(`/api/model/cached?${_cacheParams}`" in source
-    assert "if (_cacheFetchToken !== _hwfitFetchToken) return;" in source
+    assert "const fetchToken = ++_cachedModelIdsFetchToken;" in source
+    assert "_fetchHwfitWithTimeout(`/api/model/cached?${params}`" in source
+    assert "fetchToken !== _cachedModelIdsFetchToken" in source
     assert "_fetchHwfitWithTimeout('/api/model/serve'" in source
     assert "_fetchHwfitWithTimeout('/api/cookbook/test-ssh'" in source
     assert "await fetch(" not in source
