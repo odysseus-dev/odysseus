@@ -37,6 +37,14 @@ def _apply_owner_filter(query, DbSession, owner: Optional[str]):
     return query.filter(DbSession.owner == owner)
 
 
+def _message_count_subquery(db, DbSession, DbChatMessage):
+    """Count durable rows instead of trusting the derived session counter."""
+    from sqlalchemy import func
+    return db.query(func.count(DbChatMessage.id)).filter(
+        DbChatMessage.session_id == DbSession.id
+    ).correlate(DbSession).scalar_subquery()
+
+
 async def archive_inactive_sessions(session_manager, owner: Optional[str] = None) -> int:
     """
     Archive sessions that haven't been accessed in the configured number of days.
@@ -105,20 +113,20 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
             DbSession.archived == True,
             DbSession.last_accessed < cutoff_date,
             DbSession.is_important == False,
-            DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP
         )
         base_query = _apply_owner_filter(base_query, DbSession, owner)
-
-        candidate_sessions = base_query.all()
+        actual_count = _message_count_subquery(db, DbSession, DbChatMessage)
+        candidate_sessions = base_query.add_columns(actual_count).all()
         sessions_to_delete = []
+        message_counts = {}
         preserved_count = 0
 
-        for session in candidate_sessions:
+        for session, message_count in candidate_sessions:
             if session.id in recent_session_ids:
                 preserved_count += 1
                 continue
 
-            if session.message_count >= CleanupConfig.MIN_MESSAGES_TO_KEEP:
+            if message_count >= CleanupConfig.MIN_MESSAGES_TO_KEEP:
                 preserved_count += 1
                 continue
 
@@ -128,20 +136,29 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
                 continue
 
             sessions_to_delete.append(session)
-
-        for session in sessions_to_delete:
-            message_count = db.query(DbChatMessage).filter(
-                DbChatMessage.session_id == session.id
-            ).count()
-            space_freed += message_count * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+            message_counts[session.id] = message_count
 
         session_ids = [session.id for session in sessions_to_delete]
         if session_ids:
-            db.query(DbSession).filter(DbSession.id.in_(session_ids)).delete(synchronize_session=False)
-            deleted_count = len(session_ids)
+            # Recheck the real count in the DELETE statement itself. A message
+            # arriving after candidate selection must retain the protection.
+            deletion = db.query(DbSession).filter(
+                DbSession.id.in_(session_ids),
+                DbSession.archived == True,
+                DbSession.last_accessed < cutoff_date,
+                DbSession.is_important == False,
+                actual_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
+            )
+            deletion = _apply_owner_filter(deletion, DbSession, owner)
+            deleted_count = deletion.delete(synchronize_session=False)
+            surviving_ids = {row[0] for row in db.query(DbSession.id).filter(
+                DbSession.id.in_(session_ids)
+            ).all()}
+            deleted_ids = set(session_ids) - surviving_ids
+            space_freed = sum(message_counts[sid] for sid in deleted_ids) * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
             db.commit()
 
-            for session_id in session_ids:
+            for session_id in deleted_ids:
                 if session_id in session_manager.sessions:
                     del session_manager.sessions[session_id]
 
@@ -176,7 +193,7 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
     estimated_space_freed = 0
     preserved_sessions = []
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.database import SessionLocal, Session as DbSession, ChatMessage as DbChatMessage
     db = SessionLocal()
     try:
         archive_q = db.query(DbSession).filter(
@@ -184,14 +201,15 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
             DbSession.archived == False
         )
         archive_q = _apply_owner_filter(archive_q, DbSession, owner)
-        archive_candidates = archive_q.all()
+        actual_count = _message_count_subquery(db, DbSession, DbChatMessage)
+        archive_candidates = archive_q.add_columns(actual_count).all()
 
-        for session in archive_candidates:
+        for session, message_count in archive_candidates:
             sessions_to_archive.append({
                 "id": session.id,
                 "name": session.name,
                 "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                "message_count": session.message_count
+                "message_count": message_count
             })
 
         recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
@@ -203,30 +221,29 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
             DbSession.archived == True,
             DbSession.last_accessed < cutoff_delete,
             DbSession.is_important == False,
-            DbSession.message_count < CleanupConfig.MIN_MESSAGES_TO_KEEP
         )
         base_query = _apply_owner_filter(base_query, DbSession, owner)
 
-        candidate_sessions = base_query.all()
+        candidate_sessions = base_query.add_columns(actual_count).all()
 
-        for session in candidate_sessions:
+        for session, message_count in candidate_sessions:
             if session.id in recent_session_ids:
                 preserved_sessions.append({
                     "id": session.id,
                     "name": session.name,
                     "reason": f"part of last {CleanupConfig.PRESERVE_RECENT_COUNT} sessions",
                     "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                    "message_count": session.message_count
+                    "message_count": message_count
                 })
                 continue
 
-            if session.message_count >= CleanupConfig.MIN_MESSAGES_TO_KEEP:
+            if message_count >= CleanupConfig.MIN_MESSAGES_TO_KEEP:
                 preserved_sessions.append({
                     "id": session.id,
                     "name": session.name,
                     "reason": f"has {CleanupConfig.MIN_MESSAGES_TO_KEEP}+ messages",
                     "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                    "message_count": session.message_count
+                    "message_count": message_count
                 })
                 continue
 
@@ -238,18 +255,18 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
                     "name": session.name,
                     "reason": f"contains keyword: {matching_keywords[0]}",
                     "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                    "message_count": session.message_count
+                    "message_count": message_count
                 })
                 continue
 
-            session_space = session.message_count * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+            session_space = message_count * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
             estimated_space_freed += session_space
 
             sessions_to_delete.append({
                 "id": session.id,
                 "name": session.name,
                 "last_accessed": session.last_accessed.isoformat() if session.last_accessed else "Unknown",
-                "message_count": session.message_count,
+                "message_count": message_count,
                 "estimated_size_kb": round(session_space / 1024, 2)
             })
 
