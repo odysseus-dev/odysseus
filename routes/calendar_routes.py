@@ -6,6 +6,7 @@ import re
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
@@ -36,6 +37,19 @@ def _ics_naive_dtstart(dt):
     if isinstance(dt, date):
         return datetime(dt.year, dt.month, dt.day)
     return dt
+
+
+def _source_tzid(dt) -> str | None:
+    """IANA zone name of an imported tz-aware DTSTART, or None for naive/UTC values."""
+    tz = getattr(dt, "tzinfo", None) if isinstance(dt, datetime) else None
+    name = getattr(tz, "key", None) or getattr(tz, "zone", None)
+    if not name or name.upper() in {"UTC", "ETC/UTC"}:
+        return None
+    try:
+        ZoneInfo(name)
+    except Exception:
+        return None
+    return name
 
 
 def _ensure_positive_duration(start_dt, end_dt, all_day):
@@ -820,6 +834,19 @@ def _occurrence_exdate_key(uid: str, ev: CalendarEvent) -> str:
     return suffix[:16]
 
 
+def _source_zone(ev: CalendarEvent):
+    """Zone to expand a UTC-stored recurring event in, when its source TZID is known."""
+    tzid = getattr(ev, "tzid", None)
+    if not tzid or not getattr(ev, "is_utc", False) or ev.all_day:
+        return None
+    try:
+        zone = ZoneInfo(tzid)
+        rrulestr(ev.rrule, dtstart=ev.dtstart.replace(tzinfo=timezone.utc).astimezone(zone))
+    except Exception:
+        return None
+    return zone
+
+
 def _expand_rrule(
     ev: CalendarEvent, start: datetime, end: datetime, db=None, owner: str | None = None
 ) -> List[dict]:
@@ -846,8 +873,13 @@ def _expand_rrule(
         return [d]
 
     # Parse the rrule, applying it to the base dtstart.
+    source_zone = _source_zone(ev)
+    dtstart = (
+        ev.dtstart.replace(tzinfo=timezone.utc).astimezone(source_zone)
+        if source_zone else ev.dtstart
+    )
     rrule_str = ev.rrule
-    if ev.dtstart is not None and getattr(ev.dtstart, "tzinfo", None) is None:
+    if dtstart is not None and getattr(dtstart, "tzinfo", None) is None:
         # Events are stored with a naive (UTC) dtstart, but standard .ics
         # exporters (Google/Apple/Outlook/Fastmail) write the bound as an
         # absolute UTC value, e.g. UNTIL=20240105T090000Z. dateutil refuses to
@@ -860,7 +892,7 @@ def _expand_rrule(
             r"(UNTIL=\d{8}(?:T\d{6})?)Z", r"\1", rrule_str, flags=_re.IGNORECASE
         )
     try:
-        rule = rrulestr(rrule_str, dtstart=ev.dtstart)
+        rule = rrulestr(rrule_str, dtstart=dtstart)
     except Exception as ex:
         logger.warning(
             "Failed to parse rrule=%r for event %s: %s", ev.rrule, ev.uid, ex
@@ -886,7 +918,10 @@ def _expand_rrule(
     base = _event_to_dict(ev, db=db, owner=owner)
     exdates = set(_recurrence_exdates(ev))
 
-    for occ_start in rule.xafter(expand_start, inc=True):
+    xafter_start = expand_start.replace(tzinfo=timezone.utc) if source_zone else expand_start
+    for occ_start in rule.xafter(xafter_start, inc=True):
+        if source_zone:
+            occ_start = occ_start.astimezone(timezone.utc).replace(tzinfo=None)
         if occ_start >= end:
             break
 
@@ -1709,6 +1744,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     all_day=all_day,
                     is_utc=row_is_utc,
                     rrule=(comp.get("rrule").to_ical().decode() if comp.get("rrule") else ""),
+                    tzid=None if all_day else _source_tzid(dt_val),
                 )
                 db.add(ev)
                 event_uids.append(uid_val)

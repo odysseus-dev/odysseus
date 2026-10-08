@@ -46,6 +46,7 @@ def _stub_sync_deps(monkeypatch):
     routes_mod = types.ModuleType("routes")
     cal_routes_mod = types.ModuleType("routes.calendar_routes")
     cal_routes_mod._ensure_positive_duration = lambda start, end, all_day: end
+    cal_routes_mod._source_tzid = lambda dt: None
     if "routes" not in sys.modules:
         monkeypatch.setitem(sys.modules, "routes", routes_mod)
     monkeypatch.setitem(sys.modules, "routes.calendar_routes", cal_routes_mod)
