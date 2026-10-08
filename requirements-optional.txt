@@ -1,7 +1,7 @@
 # Optional dependencies — install only if you use the corresponding feature.
 # Local OCR for screenshots, scans, labels, and coordinate-grounded text extraction.
 rapidocr==3.9.2
-onnxruntime>=1.20,<2
+onnxruntime>=1.30.0,<2
 # The app handles their absence gracefully (clear error message on first use).
 #
 # Note: chromadb-client + fastembed moved to requirements.txt — RAG, semantic
@@ -46,7 +46,7 @@ PyMuPDF
 # magika (onnxruntime), already a core dep via fastembed. We avoid the
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
-markitdown[docx,pptx,xlsx,xls]==0.1.6
+markitdown[docx,pptx,xlsx,xls]==0.1.8
 
 # Photoshop PSD opening / flattened previews / layer inspection.
 psd-tools
