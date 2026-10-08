@@ -28,6 +28,50 @@ def _load_builtin_mcp(monkeypatch):
     return module
 
 
+def test_find_npx_prefers_cmd_shim_on_windows(monkeypatch):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    monkeypatch.setattr(builtin_mcp, "IS_WINDOWS", True)
+    calls = []
+
+    def resolve(name):
+        calls.append(name)
+        return {
+            "npx": r"C:\Program Files\nodejs\npx",
+            "npx.cmd": r"C:\Program Files\nodejs\npx.cmd",
+        }.get(name)
+
+    monkeypatch.setattr(builtin_mcp, "which_tool", resolve)
+    monkeypatch.setattr(builtin_mcp.shutil, "which", resolve)
+
+    assert builtin_mcp._find_npx() == r"C:\Program Files\nodejs\npx.cmd"
+    assert calls == ["npx.cmd"]
+
+
+def test_find_npx_never_uses_extensionless_script_on_windows(monkeypatch):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    monkeypatch.setattr(builtin_mcp, "IS_WINDOWS", True)
+    monkeypatch.setattr(builtin_mcp.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        builtin_mcp, "which_tool",
+        lambda name: r"C:\Program Files\nodejs\npx" if name == "npx" else None,
+    )
+    monkeypatch.setattr(builtin_mcp.os.path, "isfile", lambda path: False)
+
+    assert builtin_mcp._find_npx() == "npx.cmd"
+
+
+def test_find_npx_unchanged_on_posix(monkeypatch):
+    builtin_mcp = _load_builtin_mcp(monkeypatch)
+    monkeypatch.setattr(builtin_mcp, "IS_WINDOWS", False)
+    monkeypatch.setattr(builtin_mcp, "which_tool", lambda name: "/usr/bin/npx")
+    monkeypatch.setattr(
+        builtin_mcp.shutil, "which",
+        lambda name: (_ for _ in ()).throw(AssertionError("unexpected lookup")),
+    )
+
+    assert builtin_mcp._find_npx() == "/usr/bin/npx"
+
+
 def test_npx_package_from_args_prefers_package_after_y_flag(monkeypatch):
     builtin_mcp = _load_builtin_mcp(monkeypatch)
 
@@ -129,6 +173,8 @@ def test_npx_cache_check_detects_scoped_package_in_npx_cache(monkeypatch, tmp_pa
 
 def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeypatch, tmp_path):
     builtin_mcp = _load_builtin_mcp(monkeypatch)
+    # Test the subprocess fallback regardless of the host's populated npm cache.
+    monkeypatch.setattr(builtin_mcp, "_is_package_in_npx_cache", lambda _: False)
 
     async def unsupported_exec(*args, **kwargs):
         raise NotImplementedError("subprocess transport unavailable")
@@ -164,6 +210,8 @@ def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeyp
 
 def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch, tmp_path):
     builtin_mcp = _load_builtin_mcp(monkeypatch)
+    # Test the subprocess timeout regardless of the host's populated npm cache.
+    monkeypatch.setattr(builtin_mcp, "_is_package_in_npx_cache", lambda _: False)
 
     async def unsupported_exec(*args, **kwargs):
         raise NotImplementedError("subprocess transport unavailable")
