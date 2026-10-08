@@ -4779,7 +4779,7 @@ def setup_email_routes():
                             trash_folder = "Trash"
                     except Exception:
                         pass
-                pending_expunge = False
+                pending_expunge = []
                 for uid in uids:
                     try:
                         if not _uid_exists(conn, uid):
@@ -4789,26 +4789,31 @@ def setup_email_routes():
                         if status != "OK":
                             copy_status, _ = conn.uid("COPY", _uid_bytes(uid), _q(trash_folder))
                             if copy_status != "OK":
-                                # Keep deletion reliable even when this IMAP
-                                # server has no writable Trash folder.
-                                store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
-                                if store_status != "OK":
-                                    failed_uids.append(uid)
-                                    continue
-                                pending_expunge = True
-                            else:
-                                store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
-                                if store_status != "OK":
-                                    failed_uids.append(uid)
-                                    continue
-                                pending_expunge = True
+                                # Bulk Delete means move to Trash. Never remove
+                                # the original without a recoverable Trash copy.
+                                failed_uids.append(uid)
+                                continue
+                            store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
+                            if store_status != "OK":
+                                failed_uids.append(uid)
+                                continue
+                            # Keep the local index until the server confirms
+                            # that the copied originals have been removed.
+                            pending_expunge.append(uid)
+                            continue
                         deleted_uids.append(uid)
                         _email_index_delete(owner, account_id, folder, uid)
                     except Exception:
                         failed_uids.append(uid)
                         logger.debug("Bulk email delete failed for uid=%s", uid, exc_info=True)
                 if pending_expunge:
-                    conn.expunge()
+                    expunge_status, _ = conn.expunge()
+                    if expunge_status == "OK":
+                        for uid in pending_expunge:
+                            deleted_uids.append(uid)
+                            _email_index_delete(owner, account_id, folder, uid)
+                    else:
+                        failed_uids.extend(pending_expunge)
             if deleted_uids:
                 _invalidate_list_cache(account_id, folder)
             return {"success": True, "deleted_uids": deleted_uids, "failed_uids": failed_uids}
