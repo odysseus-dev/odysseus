@@ -3933,6 +3933,10 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
     if (host) {
       const pf = _sshPrefix(_getPort(host));
       cmd = `ssh ${pf}${host} "powershell -Command \\"${cmd}\\""`;
+    } else {
+      // The shell route runs bare commands through Git Bash on Windows, which
+      // doesn't know Remove-Item; a leading `powershell` routes it correctly.
+      cmd = `powershell -NoProfile -Command "${cmd}"`;
     }
   } else {
     // $HOME expands inside double quotes; ~ would not, so normalize the
@@ -3972,6 +3976,11 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
       body: JSON.stringify({ command: cmd }),
     });
     if (!res.ok) { uiModule.showError(`Delete failed (${res.status})`); return; }
+    const out = await res.json().catch(() => null);
+    if (out && out.exit_code !== 0) {
+      uiModule.showError('Delete failed: ' + (String(out.stderr || '').trim() || `exit code ${out.exit_code}`));
+      return;
+    }
     if (deleteChoice.mode === 'files') {
       if (m && Array.isArray(m.gguf_files)) {
         const removed = new Set(deleteChoice.files.map(f => _safeGgufRelPath(f.rel_path)));
