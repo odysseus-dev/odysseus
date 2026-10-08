@@ -228,7 +228,7 @@ def _open_url_as_calendar(client, url: str):
     return client.calendar(url=target)
 
 
-def _build_dav_client(url: str, username: str, password: str):
+def _build_dav_client(url: str, username: str, password: str, auth_type: str | None = None):
     """Construct a CalDAV client with automatic redirects disabled.
 
     ``validate_caldav_url`` resolves and vets the *initial* host, but caldav's
@@ -245,13 +245,66 @@ def _build_dav_client(url: str, username: str, password: str):
     """
     import caldav
 
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    extra = {"auth_type": auth_type} if auth_type else {}
+    client = caldav.DAVClient(url=url, username=username, password=password, **extra)
     # Unconditional: a redirect-disable that only sometimes applies is not a
     # control. The session exists right after __init__ on every real client;
     # test_build_dav_client_disables_redirects asserts it against installed
     # caldav in CI.
     client.session.max_redirects = 0
     return client
+
+
+def _google_access_token(email_account_id: str, owner: str) -> str:
+    """Fresh OAuth access token from a linked Google email account, or "".
+
+    Google rejects Basic Auth (app passwords) on CalDAV (#4908), so accounts
+    linked to a Google-OAuth email account authenticate with its bearer token.
+    Ownership is re-checked here, not only at link time, because the link lives
+    in user-editable prefs.
+    """
+    from routes.calendar_routes import FALLBACK_OWNER
+    from routes.email_helpers import google_oauth_token
+
+    # Calendar rows use FALLBACK_OWNER in single-user mode; email rows use "".
+    return google_oauth_token(email_account_id, "" if owner == FALLBACK_OWNER else owner)
+
+
+def google_legacy_caldav_url(email: str) -> str:
+    """Legacy Google CalDAV principal, the endpoint that still accepts app passwords."""
+    return f"https://www.google.com/calendar/dav/{email}/user"
+
+
+def _gmail_app_password(email_account_id: str, owner: str) -> tuple[str, str] | None:
+    """(address, app password) from a linked Gmail app-password account, or None."""
+    from routes.calendar_routes import FALLBACK_OWNER
+    from routes.email_helpers import gmail_app_password
+
+    return gmail_app_password(email_account_id, "" if owner == FALLBACK_OWNER else owner)
+
+
+def caldav_credentials(acc: dict, owner: str) -> tuple[str, str, str, str | None]:
+    """Resolve a saved account to (url, username, secret, auth_type).
+
+    A `google_account_id` link authenticates with the linked email account:
+    its app password (Gmail set up without Google sign-in) or its OAuth token.
+    """
+    from src.secret_storage import decrypt
+
+    url = (acc.get("url") or "").strip()
+    user = (acc.get("username") or "").strip()
+    if acc.get("google_account_id"):
+        app_login = _gmail_app_password(acc["google_account_id"], owner)
+        if app_login:
+            email, password = app_login
+            return google_legacy_caldav_url(email), email, password, None
+        return url, user, _google_access_token(acc["google_account_id"], owner), "bearer"
+    pw = acc.get("password") or ""
+    try:
+        pw = decrypt(pw)
+    except Exception:
+        pass
+    return url, user, pw, None
 
 
 def _should_prune_window(seen_uids: set, parse_failed: bool) -> bool:
@@ -268,7 +321,8 @@ def _should_prune_window(seen_uids: set, parse_failed: bool) -> bool:
     return not parse_failed
 
 
-def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "") -> dict:
+def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "",
+                   auth_type: str | None = None) -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
     # Lazy imports so a missing `caldav` dep doesn't break app startup —
@@ -279,7 +333,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
-    client = _build_dav_client(url, username, password)
+    client = _build_dav_client(url, username, password, auth_type)
     try:
         # Discovery: try principal → calendars first; if the server doesn't
         # support discovery (or the URL points directly at a calendar), fall
@@ -617,8 +671,6 @@ def _load_caldav_accounts(owner: str) -> list:
 async def sync_caldav(owner: str) -> dict:
     """Pull CalDAV state into local DB for `owner` across all configured accounts.
     Returns aggregated counts + per-account errors."""
-    from src.secret_storage import decrypt
-
     accounts = _load_caldav_accounts(owner)
     if not accounts:
         return {
@@ -628,21 +680,20 @@ async def sync_caldav(owner: str) -> dict:
 
     totals: dict = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
     for acc in accounts:
-        url = (acc.get("url") or "").strip()
-        user = (acc.get("username") or "").strip()
-        pw = acc.get("password") or ""
         account_id = acc.get("id") or ""
-        label = acc.get("label") or url or account_id
         try:
-            pw = decrypt(pw)
+            url, user, pw, auth_type = await asyncio.to_thread(caldav_credentials, acc, owner)
         except Exception:
-            pass
+            logger.exception("CalDAV credential resolution failed for account %s", account_id)
+            url, user, pw, auth_type = (acc.get("url") or "").strip(), "", "", None
+        label = acc.get("label") or url or account_id
         if not (url and user and pw):
-            totals["errors"].append(f"{label}: missing URL, username, or password")
+            missing = "Google sign-in (reconnect with calendar access)" if auth_type == "bearer" else "URL, username, or password"
+            totals["errors"].append(f"{label}: missing {missing}")
             continue
         try:
             url = validate_caldav_url(url)
-            result = await asyncio.to_thread(_sync_blocking, owner, url, user, pw, account_id)
+            result = await asyncio.to_thread(_sync_blocking, owner, url, user, pw, account_id, auth_type)
         except ValueError as e:
             result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
         except Exception as e:

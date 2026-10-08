@@ -7143,7 +7143,7 @@ def setup_email_routes():
     # ── Google OAuth2 routes ──
 
     @router.get("/oauth/google/authorize")
-    async def google_oauth_authorize(account_id: str = Query(...), request: Request = None, owner: str = Depends(require_user)):
+    async def google_oauth_authorize(account_id: str = Query(...), calendar: bool = Query(False), contacts: bool = Query(False), request: Request = None, owner: str = Depends(require_user)):
         import urllib.parse
         _assert_owns_account(account_id, owner)
         client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
@@ -7154,12 +7154,21 @@ def setup_email_routes():
             or f"{request.url.scheme}://{request.headers.get('host', 'localhost:7000')}/api/email/oauth/google/callback"
         )
         state = make_oauth_state(account_id, owner)
+        # calendar=1 / contacts=1 add CalDAV / CardDAV access to the same
+        # grant (Google rejects app passwords there, #4908);
+        # include_granted_scopes keeps them on later mail-only reconnects.
+        scope = "https://mail.google.com/ email"
+        if calendar:
+            scope += " https://www.googleapis.com/auth/calendar"
+        if contacts:
+            scope += " https://www.googleapis.com/auth/carddav"
         params = urllib.parse.urlencode({
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "response_type": "code",
-            "scope": "https://mail.google.com/ email",
+            "scope": scope,
             "access_type": "offline",
+            "include_granted_scopes": "true",
             "prompt": "consent",
             "state": state,
         })

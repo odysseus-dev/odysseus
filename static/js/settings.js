@@ -3423,9 +3423,11 @@ async function initUnifiedIntegrations() {
         <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${isNew ? 'Add CalDAV Calendar' : 'Edit CalDAV Calendar'}</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">Label</label><input id="uf-caldav-label" class="settings-input" placeholder="e.g. Work, Personal"></div>
-          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="https://www.google.com/calendar/dav/you@gmail.com/user/"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-caldav-user" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-caldav-pass" class="settings-input" type="password" placeholder="${isNew ? '' : 'Leave blank to keep existing'}"></div>
+          <div class="settings-row"><label class="settings-label">Sign-in</label><select id="uf-caldav-auth" class="settings-input"><option value="">Username &amp; password</option></select></div>
+          <div class="settings-row" id="uf-caldav-google-row" style="display:none"><label class="settings-label"></label><a id="uf-caldav-grant" class="settings-input" style="border:none;color:var(--accent, var(--red))">Grant calendar access (once)</a></div>
+          <div class="settings-row uf-caldav-basic"><label class="settings-label">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="https://www.google.com/calendar/dav/you@gmail.com/user/"></div>
+          <div class="settings-row uf-caldav-basic"><label class="settings-label">Username</label><input id="uf-caldav-user" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row uf-caldav-basic"><label class="settings-label">Password</label><input id="uf-caldav-pass" class="settings-input" type="password" placeholder="${isNew ? '' : 'Leave blank to keep existing'}"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-caldav-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
             <button class="admin-btn-add" id="uf-caldav-test" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Test</button>
@@ -3434,6 +3436,33 @@ async function initUnifiedIntegrations() {
           </div>
         </div>
       </div>`;
+
+    // Google rejects app passwords on its v2 CalDAV endpoint (#4908), so
+    // Google-OAuth email accounts are reused as a bearer-token sign-in. Gmail
+    // accounts set up with an app password are reused as-is: the legacy
+    // endpoint still accepts it, so nothing has to be typed again.
+    const authSel = el('uf-caldav-auth');
+    const oauthIds = new Set();
+    try {
+      const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });
+      const d = await r.json();
+      (d.accounts || []).forEach(a => {
+        const who = a.imap_user || a.name;
+        if (a.oauth_provider === 'google') {
+          oauthIds.add(a.id);
+          authSel.add(new Option(`Google sign-in — ${who}`, a.id));
+        } else if ((a.imap_host || '').toLowerCase() === 'imap.gmail.com' && a.has_imap_password) {
+          authSel.add(new Option(`Gmail app password (${who})`, a.id));
+        }
+      });
+    } catch (_) {}
+    const _syncCalDavAuth = () => {
+      const gid = authSel.value;
+      formEl.querySelectorAll('.uf-caldav-basic').forEach(r => { r.style.display = gid ? 'none' : ''; });
+      el('uf-caldav-google-row').style.display = oauthIds.has(gid) ? '' : 'none';
+      el('uf-caldav-grant').href = gid ? `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(gid)}&calendar=1` : '#';
+    };
+    authSel.addEventListener('change', _syncCalDavAuth);
 
     if (!isNew) {
       try {
@@ -3444,14 +3473,17 @@ async function initUnifiedIntegrations() {
           el('uf-caldav-label').value = acc.label || '';
           el('uf-caldav-url').value = acc.url || '';
           el('uf-caldav-user').value = acc.username || '';
+          if (acc.google_account_id) authSel.value = acc.google_account_id;
         }
       } catch (_) {}
     }
+    if (!isNew) authSel.disabled = true;
+    _syncCalDavAuth();
 
     el('uf-caldav-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 
     const _runCalDavTest = async () => {
-      const body = {
+      const body = authSel.value && isNew ? { google_account_id: authSel.value } : {
         url: el('uf-caldav-url').value.trim(),
         username: el('uf-caldav-user').value.trim(),
         password: el('uf-caldav-pass').value,
@@ -3484,7 +3516,10 @@ async function initUnifiedIntegrations() {
         return;
       }
       try {
-        const payload = {
+        const payload = authSel.value ? {
+          label: el('uf-caldav-label').value.trim(),
+          google_account_id: authSel.value,
+        } : {
           label: el('uf-caldav-label').value.trim(),
           url: el('uf-caldav-url').value.trim(),
           username: el('uf-caldav-user').value.trim(),
@@ -3532,9 +3567,11 @@ async function initUnifiedIntegrations() {
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Contacts (CardDAV)</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
+          <div class="settings-row"><label class="settings-label">Sign-in</label><select id="uf-carddav-auth" class="settings-input"><option value="">Username &amp; password</option></select></div>
+          <div class="settings-row" id="uf-carddav-google-row" style="display:none"><label class="settings-label"></label><a id="uf-carddav-grant" class="settings-input" style="border:none;color:var(--accent, var(--red))">Grant contacts access (once)</a></div>
+          <div class="settings-row uf-carddav-basic"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
+          <div class="settings-row uf-carddav-basic"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
+          <div class="settings-row uf-carddav-basic"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
             <span id="uf-carddav-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
             <button class="admin-btn-add" id="uf-carddav-save" style="display:inline-flex;align-items:center;gap:5px;background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">
@@ -3567,21 +3604,49 @@ async function initUnifiedIntegrations() {
         <input type="text" id="cm-search" class="settings-input" placeholder="Search contacts (name, email, phone, address)" style="margin-top:6px;">
         <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">Loading…</div></div>
       </div>`;
+    // Reuse a Google email account's sign-in, same as the CalDAV form: its
+    // OAuth token, or the app password of a Gmail account set up with one.
+    const cdAuth = el('uf-carddav-auth');
+    const cdOauthIds = new Set();
+    try {
+      const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });
+      const d = await r.json();
+      (d.accounts || []).forEach(a => {
+        const who = a.imap_user || a.name;
+        if (a.oauth_provider === 'google') {
+          cdOauthIds.add(a.id);
+          cdAuth.add(new Option(`Google sign-in — ${who}`, a.id));
+        } else if ((a.imap_host || '').toLowerCase() === 'imap.gmail.com' && a.has_imap_password) {
+          cdAuth.add(new Option(`Gmail app password (${who})`, a.id));
+        }
+      });
+    } catch (_) {}
+    const _syncCardDavAuth = () => {
+      const gid = cdAuth.value;
+      formEl.querySelectorAll('.uf-carddav-basic').forEach(r => { r.style.display = gid ? 'none' : ''; });
+      el('uf-carddav-google-row').style.display = cdOauthIds.has(gid) ? '' : 'none';
+      el('uf-carddav-grant').href = gid ? `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(gid)}&contacts=1` : '#';
+    };
+    cdAuth.addEventListener('change', _syncCardDavAuth);
     try {
       const r = await fetch('/api/contacts/config', { credentials: 'same-origin' }); const d = await r.json();
       el('uf-carddav-url').value = d.url || ''; el('uf-carddav-user').value = d.username || '';
+      if (d.google_account_id) cdAuth.value = d.google_account_id;
       // Server masks the password as '***' when one is saved (or '' when
       // none). Surface that state via the input's placeholder so users
       // can tell their password is already on file without us echoing it.
       const passInput = el('uf-carddav-pass');
       if (passInput && d.password) passInput.placeholder = '(unchanged)';
     } catch (_) {}
+    _syncCardDavAuth();
     el('uf-carddav-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
     el('uf-carddav-save').addEventListener('click', async () => {
-      const body = { carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
-      if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
+      const body = cdAuth.value ? { carddav_google_account_id: cdAuth.value }
+        : { carddav_google_account_id: '', carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
+      if (!cdAuth.value && el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
       try {
-        await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const resp = await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!resp.ok) throw new Error();
         el('uf-carddav-msg').textContent = 'Saved';
         el('uf-carddav-msg').style.color = 'var(--green, #50fa7b)';
         // Refresh both the sub-panel (contacts manager) AND the
