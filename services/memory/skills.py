@@ -745,6 +745,7 @@ class SkillsManager:
         min_confidence: float = 0.0,
         available_toolsets: Optional[Iterable[str]] = None,
         platform: Optional[str] = None,
+        published_only: bool = False,
     ) -> List[Dict]:
         if skills is None:
             skills = self.load_all()
@@ -775,9 +776,15 @@ class SkillsManager:
                 if not skill.get("platforms") or platform in skill.get("platforms", [])
             ]
         # Prompt injection is fail-closed for user skills. Built-ins are
-        # shipped procedures; every other skill needs a passing audit and a
-        # confidence score at the user's current threshold.
-        if min_confidence > 0:
+        # shipped procedures. With Auto-approve OFF (published_only), the
+        # user's publish is the approval; otherwise a skill needs a passing
+        # audit and a confidence score at the user's current threshold.
+        if published_only:
+            skills = [
+                s for s in skills
+                if s.get("source") == "builtin" or s.get("status") == "published"
+            ]
+        elif min_confidence > 0:
             def _passes(s):
                 if s.get("source") == "builtin":
                     return True
