@@ -113,6 +113,17 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("notes", "set reminder request", rf"{_PLEASE}set\s+(?:a\s+)?reminder\b"),
         ("notes", "assistant reminder request", rf"{_ACTION_QUESTION}set\s+(?:a\s+)?reminder\b"),
 
+        # Read-only notes/todo lookups. These must be listed before the "ui"
+        # open/show panel row: otherwise "Show my notes" classifies as panel
+        # navigation and "What are my notes?" / "Read my notes" do not promote
+        # chat to agent mode at all, so manage_notes is never reachable.
+        # A possessive noun is required so definition questions ("What is a
+        # note?") stay plain chat, and "open" is deliberately not a read verb
+        # so "open my notes" keeps its panel meaning.
+        ("notes", "notes read request", r"\b(?:list|show|read|get|view|fetch|search|find|pull\s+up)\s+(?:me\s+)?(?:up\s+)?(?:all\s+)?(?:my\s+|the\s+|our\s+)?(?:notes?|todos?|to-dos?|checklists?|task\s+lists?)\b"),
+        ("notes", "notes read question", r"\b(?:what(?:['\u2019]?s|\s+is|\s+are)|which)\s+(?:all\s+)?(?:my\s+|the\s+|our\s+)(?:notes?|todos?|to-dos?|checklists?|task\s+lists?)\b"),
+        ("notes", "notes content question", r"\b(?:what|which)(?:['\u2019]?s)?\s+(?:\w+\s+){0,4}(?:in|on|inside|under)\s+(?:my\s+|the\s+|our\s+)?(?:notes?|todos?|to-dos?|checklists?)\b"),
+
         # Email actions.
         ("email", "assistant email action request", rf"{_ACTION_QUESTION}(?:send|write|reply|email|message|archive|delete|mark)\b.{{0,120}}\b(?:emails?|mail|messages?|inbox|unread|read)\b"),
         ("email", "send/write/reply email request", rf"{_PLEASE}(?:send|write|reply)\b.{{0,120}}\b(?:emails?|mail|messages?)\b"),
