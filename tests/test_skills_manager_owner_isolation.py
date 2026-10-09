@@ -32,7 +32,7 @@ import pytest
 
 # ── module-load stubbing (matches other tests in this repo) ──────────
 # Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
-for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative"):
+for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext"):
     if _mod not in sys.modules:
         try:
             __import__(_mod)
