@@ -101,6 +101,16 @@ def test_late_routed_dropdowns_use_top_portal_z(rel):
     assert "topPortalZ()" in src, f"{rel} must call topPortalZ() for its dropdown z"
 
 
+# The Ctrl+K search overlay kept the stylesheet's z-index: 300, so any tool
+# window raised by the bring-to-front counter covered it (#2353). Pin that
+# openSearch() takes its z from the live stack on every open.
+def test_search_overlay_raises_above_tool_windows():
+    src = (ROOT / "static/js/search-chat.js").read_text()
+    assert "import { topPortalZ } from './toolWindowZOrder.js';" in src
+    open_body = src.split("export function openSearch()", 1)[1].split("export function closeSearch()", 1)[0]
+    assert "overlay.style.zIndex = String(topPortalZ());" in open_body
+
+
 @pytest.mark.parametrize("rel", ["static/js/tasks.js", "static/js/skills.js", "app-css"])
 def test_no_hardcoded_portal_z_literals_remain(rel):
     # "app-css" is the whole cascade: a moved rule must not escape this check
