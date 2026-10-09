@@ -32,6 +32,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -2746,18 +2747,21 @@ def setup_email_routes():
 
     @router.get("/list")
     async def list_emails(
-        folder: str = Query("INBOX"),
-        limit: int = Query(50),
-        offset: int = Query(0),
-        filter: str = Query("all"),  # all, unread, unanswered
-        from_addr: str | None = Query(None, alias="from"),
-        account_id: str | None = Query(None),
-        has_attachments: int = Query(0),
-        date_from: str | None = Query(None),
-        date_to: str | None = Query(None),
-        cached_only: int = Query(0),
-        cache_bust: str | None = Query(None, alias="_"),
-        refresh: int = Query(0),
+        # Annotated keeps real Python defaults, so callers that invoke this
+        # function directly (e.g. routes/codex_routes.py) get None/0 rather
+        # than Query(...) objects for arguments they omit.
+        folder: Annotated[str, Query()] = "INBOX",
+        limit: Annotated[int, Query()] = 50,
+        offset: Annotated[int, Query()] = 0,
+        filter: Annotated[str, Query()] = "all",  # all, unread, unanswered
+        from_addr: Annotated[str | None, Query(alias="from")] = None,
+        account_id: Annotated[str | None, Query()] = None,
+        has_attachments: Annotated[int, Query()] = 0,
+        date_from: Annotated[str | None, Query()] = None,
+        date_to: Annotated[str | None, Query()] = None,
+        cached_only: Annotated[int, Query()] = 0,
+        cache_bust: Annotated[str | None, Query(alias="_")] = None,
+        refresh: Annotated[int, Query()] = 0,
         owner: str = Depends(require_owner),
     ):
         """List emails. Uses an 8s in-memory cache + offloads blocking IMAP
