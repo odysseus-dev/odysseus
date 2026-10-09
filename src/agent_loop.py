@@ -10323,9 +10323,10 @@ def _has_matching_skill_for_turn(
         ))))
         if max_items == 0:
             return False
+        published_only = not prefs.get("auto_approve_skills", True)
         min_confidence = (
-            2.0
-            if not prefs.get("auto_approve_skills", True)
+            0.0
+            if published_only
             else float(prefs.get(
                 "skill_min_confidence",
                 get_setting("skill_autosave_min_confidence", 0.85),
@@ -10342,6 +10343,7 @@ def _has_matching_skill_for_turn(
             threshold=0.25,
             max_items=max_items,
             min_confidence=min_confidence,
+            published_only=published_only,
         ))
     except Exception as exc:
         logger.debug("skill preflight failed (non-fatal): %s", exc)
@@ -14950,8 +14952,9 @@ def _build_system_prompt(
                 # confidence threshold. Approve OFF → published-only (no draft
                 # passes). Approve ON → drafts at/above the chosen confidence
                 # (0 = "All"). Falls back to the global default setting.
-                if not _prefs.get("auto_approve_skills", True):
-                    _skill_min_conf = 2.0  # nothing draft clears it → published only
+                _skill_published_only = not _prefs.get("auto_approve_skills", True)
+                if _skill_published_only:
+                    _skill_min_conf = 0.0  # published_only decides eligibility
                 else:
                     try:
                         _skill_min_conf = float(_prefs.get(
@@ -14974,6 +14977,7 @@ def _build_system_prompt(
                         max_items=_skill_max_injected,
                         min_confidence=_skill_min_conf,
                         available_toolsets=relevant_tools,
+                        published_only=_skill_published_only,
                     ) if _skill_max_injected > 0 else []
                 else:
                     # Explicit client activation chooses which eligible skill
