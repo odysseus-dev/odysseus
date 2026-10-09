@@ -2,6 +2,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
+import { topPortalZ } from './toolWindowZOrder.js';
 
 let API_BASE = '';
 let debounceTimer = null;
@@ -41,6 +42,9 @@ export function openSearch() {
   const openingHeight = window.innerHeight || document.documentElement.clientHeight;
   const openingTop = Math.max(56, Math.min(140, Math.round(openingHeight * 0.15)));
   overlay.style.setProperty('--search-overlay-top', `${openingTop}px`);
+  // Open tool windows are raised past the stylesheet's z-index: 300 by the
+  // bring-to-front counter, so derive the overlay's z from the live stack (#2353).
+  overlay.style.zIndex = String(topPortalZ());
   overlay.classList.remove('hidden');
   const input = el('search-input');
   if (input) {
