@@ -53,10 +53,11 @@ markitdown[docx,pptx,xlsx,xls]==0.1.6
 # detection, honeypot auto-ban, per-route size/content-type caps, and log-only
 # credential-into-corpus / prompt-injection signals. Wired in core/guard.py and
 # only imported when the flag is set, so the default install stays unchanged.
-# 8.0.2 is the floor: it resolves per-route config through Starlette's
+# 8.0.2 is the functional floor: it resolves per-route config through Starlette's
 # trailing-slash redirect, gives middleware-generated 403/429 pages an explicit
-# text/plain Content-Type, and floors guard-core>=4.1.0.
-fastapi-guard>=8.0.2
+# text/plain Content-Type, and floors guard-core>=4.1.0. 8.0.3 is the Guard-Core
+# org metadata release (PyPI URLs and links moved; no code changes).
+fastapi-guard>=8.0.3
 # guard-core >= 4.0.0 redacts authorization, proxy-authorization, cookie and
 # x-api-key (plus query-string and body secrets) as [REDACTED] on every guard
 # log line, event and hook payload, closing the leak where 3.17.0 wrote those
@@ -90,7 +91,18 @@ fastapi-guard>=8.0.2
 # params. Verified against 4.1.0 with fastapi-guard 8.0.2 (2026-09-26): the
 # perimeter suite passes and the active-mode probe matrix is unchanged.
 # >= 8.0.0 floors guard-core>=4.0.0; >= 8.0.2 floors guard-core>=4.1.0.
-guard-core>=4.1.0
+# 4.2.0 stamps the conformance corpus to the engine release (219 cases track 4.2.0).
+# 4.3.0 pins the pattern-safety chain behind a 94-case corpus and adds the opt-in
+# detection_pattern_validation_cache_path, so a host with degraded subprocess spawn
+# latency reuses prior cost verdicts at boot instead of re-timing every custom pattern
+# (the perimeter ships custom patterns via core/guard_deco, so that is our path too).
+# 4.3.1 fixes route-id ownership: factory-built endpoints get distinct RouteConfigs
+# and per-function behavioral counters, and a colliding id stamped by a different
+# decorator instance can no longer select a sibling's config - load-bearing for
+# core/guard_deco.py stacks. 4.3.2 is the Guard-Core org metadata release.
+# Verified against 4.3.2 with fastapi-guard 8.0.3 (2026-10-10): the full perimeter
+# suite (15 tests) passes unchanged.
+guard-core>=4.3.2
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.
