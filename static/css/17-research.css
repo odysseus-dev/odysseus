@@ -1439,7 +1439,7 @@ body.theme-frosted .modal {
   /* Bottom-sheet: 90dvh tall (a touch smaller than full-screen) anchored to the
      bottom, so there's a small gap at the top and it reads as a sheet. The body
      still scrolls within the bounded height. */
-  #research-overlay { align-items: flex-end !important; justify-content: stretch !important; }
+  #research-overlay { align-items: flex-end !important; justify-content: stretch !important; padding-bottom: 0 !important; }
   #research-pane {
     height: 90dvh !important;
     max-height: 90dvh !important;
@@ -1451,7 +1451,7 @@ body.theme-frosted .modal {
      browser's bottom toolbar / safe area and can always be scrolled into view
      (otherwise the form fits the viewport and there's no room to reach them). */
   #research-pane .research-pane-body {
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px) !important;
+    padding-bottom: calc(var(--safe-bottom) + 40px) !important;
     touch-action: pan-y;
     overscroll-behavior: contain;
   }

@@ -172,9 +172,8 @@
            position:fixed; height:100% = the layout viewport, whose bottom sits
            UNDER Firefox Android's bottom URL bar — so flex-end parked the sheet
            (and its footer / Start button) beneath the bar. dvh excludes the bar
-           so the footer lands above it. Extra safe-area pad for iOS home bar. */
-        height: 100dvh;
-        padding-bottom: env(safe-area-inset-bottom, 0px);
+           so the footer lands above it. */
+        height: var(--app-height);
       }
       /* Confirm dialog stays centered, not a bottom sheet */
       #styled-confirm-overlay {
@@ -204,7 +203,7 @@
         border-radius: 14px 14px 0 0;
         border: none;
         border-top: 1px solid var(--border);
-        padding: 6px 12px 12px;
+        padding: 6px 12px calc(12px + var(--safe-bottom));
         animation: sheet-enter 0.2s ease-out forwards;
         overflow-y: hidden !important;
       }
@@ -252,12 +251,12 @@
       #email-lib-modal .modal-content,
       #doclib-modal .doclib-modal-content {
         max-height: 90vh !important;
-        max-height: 90dvh !important;
+        max-height: calc(var(--app-height) * 0.9) !important;
         height: auto !important;
         /* Reserve the iOS home-indicator / bottom-bar strip so an expanded
            skill card's footer (Delete / Edit / Run) isn't hidden under it.
            dvh already excludes the URL bar; this handles the safe area. */
-        padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+        padding-bottom: var(--safe-bottom) !important;
       }
       /* Grab handle pill on the non-standard content classes too. Memory's
          desktop rule defines a radial-glow ::before later in the file —
@@ -305,7 +304,7 @@
            visible viewport on Chrome/Safari mobile (URL bar covered the
            action buttons row). */
         max-height: 90vh !important;
-        max-height: 90dvh !important;
+        max-height: calc(var(--app-height) * 0.9) !important;
         height: auto !important;
       }
       /* Anchor those modals to the top so the full height is usable */
@@ -314,8 +313,11 @@
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
-      #tasks-modal {
-        padding-top: 0 !important;
+      #tasks-modal,
+      #memory-modal,
+      #settings-modal {
+        padding-top: var(--sheet-top) !important;
+        padding-bottom: 0 !important;
         align-items: stretch !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the

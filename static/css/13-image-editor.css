@@ -4502,7 +4502,7 @@ button .spinner-whirlpool {
     left: 8px !important;
     right: 8px !important;
     top: auto !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+    bottom: calc(var(--safe-bottom) + 8px) !important;
     width: auto !important;
     min-width: 0 !important;
     max-width: calc(100vw - 16px) !important;
