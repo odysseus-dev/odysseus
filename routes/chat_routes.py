@@ -3775,6 +3775,19 @@ def setup_chat_routes(
             if ctx.preprocessed.attachment_meta:
                 yield f"data: {json.dumps({'type': 'attachments', 'data': ctx.preprocessed.attachment_meta})}\n\n"
 
+            # Give the page the saved user message's id. Only the reply's id
+            # was sent back, so a message sent in the open page had none and
+            # a later regenerate/edit of it could not cut the chat by id.
+            try:
+                _last_user_msg = next((m for m in reversed(getattr(sess, "history", None) or [])
+                                       if getattr(m, "role", None) == "user"), None)
+                _user_db_id = ((getattr(_last_user_msg, "metadata", None) or {}).get("_db_id")
+                               if _last_user_msg is not None else None)
+                if _user_db_id:
+                    yield f"data: {json.dumps({'type': 'user_message_saved', 'id': _user_db_id})}\n\n"
+            except Exception:
+                pass
+
             # Announce any docs auto-created during preprocess (e.g. fillable
             # PDF → editable markdown) so the editor pane switches to them
             # before the model starts streaming.
