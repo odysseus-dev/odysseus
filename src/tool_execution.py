@@ -1933,7 +1933,7 @@ async def _execute_tool_block_impl(
     """
     from src.tool_implementations import (
         do_search_chats, do_manage_tasks,
-        do_manage_skills, do_api_call, do_manage_notes,
+        do_manage_skills, do_api_call,
         do_manage_calendar,
         do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
         do_tail_serve_output,
@@ -2275,8 +2275,10 @@ async def _execute_tool_block_impl(
         result = await dispatched(_direct_fallback(tool, content, owner=owner)) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_notes":
+        # Registry-dispatched (agent_tools.productivity_tools); owner threaded via ctx.
         desc = "manage_notes"
-        result = await dispatched(do_manage_notes(content, owner=owner))
+        result = await dispatched(_direct_fallback(tool, content, owner=owner)) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "manage_calendar":
         desc = "manage_calendar"
         result = await dispatched(do_manage_calendar(content, owner=owner))
