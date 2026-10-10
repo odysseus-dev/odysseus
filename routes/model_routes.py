@@ -1441,11 +1441,38 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
         if not _has_explicit_pinned_models(ep):
             pinned = _legacy_visible_api_models(ep)
         return pinned, pinned
+    if str(getattr(ep, "id", "") or "").startswith("local-"):
+        # Cookbook local servers may report a Hugging Face cache snapshot path
+        # from /v1/models while the launch request pins the repo ID. They are
+        # the same model; expose the repo ID consistently in the picker.
+        cached = [_canonical_hf_cache_model_id(mid) for mid in _cached_model_ids(ep)]
+        canonical_pinned = [_canonical_hf_cache_model_id(mid) for mid in pinned]
+        hidden = [
+            _canonical_hf_cache_model_id(mid)
+            for mid in _normalize_model_ids(getattr(ep, "hidden_models", None))
+        ]
+        visible = _visible_models(cached, hidden, canonical_pinned)
+        visible_set = set(visible)
+        return visible, [mid for mid in canonical_pinned if mid in visible_set]
     return _visible_models(
         _cached_model_ids(ep),
         getattr(ep, "hidden_models", None),
         pinned,
     ), pinned
+
+
+def _canonical_hf_cache_model_id(model_id: str) -> str:
+    """Convert a Hugging Face cache snapshot path into its owner/repo ID."""
+    value = str(model_id or "").strip()
+    normalized = value.replace("\\", "/")
+    match = re.search(r"(?:^|/)models--([^/]+)/snapshots/", normalized)
+    if not match:
+        return value
+    encoded_repo = match.group(1)
+    owner, separator, repo = encoded_repo.partition("--")
+    if not separator or not owner or not repo:
+        return value
+    return f"{owner}/{repo}"
 
 
 def _chatgpt_endpoint_visible(ep: Any, request: Request) -> bool:

@@ -1903,16 +1903,10 @@ def setup_cookbook_routes() -> APIRouter:
                 existing.name = display_name
                 existing.endpoint_kind = "local"
                 existing.model_refresh_mode = "auto"
-                if pinned_models:
-                    try:
-                        existing_pinned = json.loads(existing.pinned_models or "[]")
-                    except Exception:
-                        existing_pinned = []
-                    merged_pinned = []
-                    for mid in [*existing_pinned, *pinned_models]:
-                        if mid and mid not in merged_pinned:
-                            merged_pinned.append(mid)
-                    existing.pinned_models = json.dumps(merged_pinned) if merged_pinned else None
+                # This endpoint represents the model from the current
+                # Cookbook launch. Keeping pins from previous launches leaves
+                # old model IDs in the picker when the port is reused.
+                existing.pinned_models = json.dumps(pinned_models) if pinned_models else None
                 if is_ollama_endpoint:
                     existing.endpoint_kind = "ollama"
                     if pinned_models:
@@ -1935,6 +1929,8 @@ def setup_cookbook_routes() -> APIRouter:
                         probed = _probe_endpoint(base_url, existing.api_key, timeout=5)
                         if probed:
                             existing.cached_models = _json2.dumps(probed)
+                            if pinned_models:
+                                existing.pinned_models = _json2.dumps(pinned_models)
                             db.commit()
                 except Exception as _pe:
                     logger.warning(f"Re-probe failed for {base_url}: {_pe!r}")
@@ -2003,6 +1999,8 @@ def setup_cookbook_routes() -> APIRouter:
                     probed = _probe_endpoint(base_url, None, timeout=5)
                     if probed:
                         ep.cached_models = _json2.dumps(probed)
+                        if pinned_models:
+                            ep.pinned_models = _json2.dumps(pinned_models)
                         db.commit()
                         logger.info(f"Auto-register: probed {len(probed)} models @ {base_url}")
             except Exception as _pe:
