@@ -587,6 +587,7 @@ class SkillsManager:
         *,
         active_toolsets: Optional[List[str]] = None,
         platform: Optional[str] = None,
+        local_model: Optional[bool] = None,
     ) -> List[Dict]:
         """Return the `[{name, description, category, status}]` list the
         agent sees in its system prompt.
@@ -615,6 +616,11 @@ class SkillsManager:
                     continue
             # Platform gating
             if platform and s.get("platforms") and platform not in s["platforms"]:
+                continue
+            # remote-only tag: hide from local/private-endpoint models. Big
+            # on-demand reference lookups overwhelm small local contexts.
+            # local_model=None (API listings, UI) never gates.
+            if local_model and "remote-only" in (s.get("tags") or []):
                 continue
             # requires_toolsets: hide unless every required toolset is active.
             # active_toolsets=None means the caller doesn't know the active

@@ -23,7 +23,7 @@ from src.llm_core import (
     _normalize_http_status,
     _normalize_usage_counts,
 )
-from src.model_context import estimate_tokens
+from src.model_context import estimate_tokens, is_local_endpoint
 from src.context_compactor import (
     apply_compaction_state,
     apply_compaction_state_for_session,
@@ -2236,6 +2236,7 @@ def _build_system_prompt(
     suppress_skills: bool = False,
     active_email: Optional[Dict[str, str]] = None,
     workspace: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -2263,6 +2264,7 @@ def _build_system_prompt(
             mcp_disabled_map=mcp_disabled_map, compact=compact, owner=owner,
             suppress_local_context=suppress_local_context,
             suppress_skills=suppress_skills,
+            endpoint_url=endpoint_url,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -2275,6 +2277,7 @@ def _build_system_prompt(
             owner=owner,
             suppress_local_context=suppress_local_context,
             suppress_skills=suppress_skills,
+            endpoint_url=endpoint_url,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -2855,6 +2858,7 @@ def _build_base_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     suppress_skills: bool = False,
+    endpoint_url: Optional[str] = None,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -2913,7 +2917,13 @@ def _build_base_prompt(
             from src.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
             active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
-            skill_idx = _sm.index_for(owner=owner, active_toolsets=active_tools)
+            skill_idx = _sm.index_for(
+                owner=owner,
+                active_toolsets=active_tools,
+                # Unknown endpoint (background callers without a URL) fails
+                # open — only confirmed local endpoints are gated.
+                local_model=bool(endpoint_url) and is_local_endpoint(endpoint_url),
+            )
             if skill_idx:
                 lines = ["## Available skills",
                          "Procedures the assistant should consult before doing domain work. "
@@ -4315,6 +4325,7 @@ async def stream_agent_loop(
             suppress_skills=_low_signal_turn,
             active_email=active_email,
             workspace=workspace,
+            endpoint_url=candidate_url,
         )
         if doc_mode and not plan_mode and not approved_plan and not guide_only:
             route_messages = _minimal_odysseus_doc_messages(
