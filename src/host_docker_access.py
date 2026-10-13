@@ -7,6 +7,11 @@ from collections.abc import Mapping
 
 HOST_DOCKER_ENV_VAR = "ODYSSEUS_ENABLE_HOST_DOCKER"
 HOST_DOCKER_SOCKET_PATH = "/var/run/docker.sock"
+DOCKERENV_PATH = "/.dockerenv"
+# Podman (and other OCI runtimes) create no /.dockerenv; they mark containers
+# with this file and container=podman instead.
+CONTAINERENV_PATH = "/run/.containerenv"
+CGROUP_PATH = "/proc/1/cgroup"
 
 HOST_DOCKER_ACCESS_HINT = (
     "Local Docker daemon access is disabled inside the Odysseus container; a "
@@ -19,13 +24,20 @@ HOST_DOCKER_ACCESS_HINT = (
 
 
 def running_in_container(
-    dockerenv_path: str = "/.dockerenv",
-    cgroup_path: str = "/proc/1/cgroup",
+    dockerenv_path: str | None = None,
+    cgroup_path: str | None = None,
+    *,
+    containerenv_path: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> bool:
-    if os.path.exists(dockerenv_path):
+    env = os.environ if environ is None else environ
+    if (os.path.exists(dockerenv_path or DOCKERENV_PATH)
+            or os.path.exists(containerenv_path or CONTAINERENV_PATH)
+            or env.get("container", "").strip().lower() == "podman"):
         return True
+    # On cgroup v2 hosts /proc/1/cgroup is just "0::/", so this only helps on v1.
     try:
-        with open(cgroup_path, "r", encoding="utf-8") as handle:
+        with open(cgroup_path or CGROUP_PATH, "r", encoding="utf-8") as handle:
             contents = handle.read()
     except OSError:
         return False
