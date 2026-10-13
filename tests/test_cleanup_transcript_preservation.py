@@ -157,3 +157,154 @@ def test_cleanup_rechecks_messages_at_the_delete_boundary(cleanup_api):
     with factory() as db:
         assert db.get(database.Session, "old-chat") is not None
         assert db.query(database.ChatMessage).filter_by(session_id="old-chat").count() == 23
+
+
+def test_cleanup_space_freed_ignores_concurrently_deleted_session(cleanup_api):
+    """If another transaction deletes a candidate first, do not attribute its space."""
+    client, factory, manager = cleanup_api
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with factory() as db:
+        for index in range(10):
+            db.add(database.Session(
+                id=f"recent-{index}", name="Recent", endpoint_url="", model="",
+                owner="alice", created_at=now - timedelta(hours=index),
+                last_accessed=now, message_count=1,
+            ))
+        db.add(database.Session(
+            id="chat-to-delete", name="Eligible 1", endpoint_url="", model="",
+            owner="alice", created_at=now - timedelta(days=50),
+            last_accessed=now - timedelta(days=30), archived=True,
+            is_important=False, message_count=3,
+        ))
+        db.add(database.Session(
+            id="chat-concurrently-deleted", name="Eligible 2", endpoint_url="", model="",
+            owner="alice", created_at=now - timedelta(days=50),
+            last_accessed=now - timedelta(days=30), archived=True,
+            is_important=False, message_count=10,
+        ))
+        db.commit()
+        db.add_all(database.ChatMessage(
+            id=f"msg1-{i}", session_id="chat-to-delete", role="user",
+            content="m", timestamp=now - timedelta(days=30),
+        ) for i in range(3))
+        db.add_all(database.ChatMessage(
+            id=f"msg2-{i}", session_id="chat-concurrently-deleted", role="user",
+            content="m", timestamp=now - timedelta(days=30),
+        ) for i in range(10))
+        db.commit()
+
+    manager.sessions["chat-to-delete"] = SimpleNamespace(message_count=3)
+    manager.sessions["chat-concurrently-deleted"] = SimpleNamespace(message_count=10)
+
+    engine = factory.kw["bind"]
+    injected = False
+
+    def delete_candidate(connection, cursor, statement, parameters, context, executemany):
+        nonlocal injected
+        if not injected and statement.lstrip().startswith("DELETE FROM sessions"):
+            injected = True
+            with factory() as other_db:
+                other_db.query(database.Session).filter_by(id="chat-concurrently-deleted").delete()
+                other_db.commit()
+
+    event.listen(engine, "before_cursor_execute", delete_candidate)
+    try:
+        response = client.post("/api/cleanup")
+    finally:
+        event.remove(engine, "before_cursor_execute", delete_candidate)
+
+    assert injected
+    data = response.json()
+    assert data["deleted_count"] == 1
+    # Only chat-to-delete's 3 messages (1536 bytes) freed by this cleanup, not (3 + 10) * 512
+    expected_space_mb = round(3 * 512 / (1024 * 1024), 2)
+    assert data["space_freed_mb"] == expected_space_mb
+    assert "chat-to-delete" not in manager.sessions
+    assert "chat-concurrently-deleted" not in manager.sessions
+    with factory() as db:
+        assert db.get(database.Session, "chat-to-delete") is None
+        assert db.get(database.Session, "chat-concurrently-deleted") is None
+
+
+def test_cleanup_recent_session_query_is_bounded(cleanup_api):
+    """Ensure recent-session preservation scales to large collections and respects limits."""
+    client, factory, manager = cleanup_api
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with factory() as db:
+        for index in range(25):
+            db.add(database.Session(
+                id=f"sess-{index:02d}", name=f"Session {index}", endpoint_url="", model="",
+                owner="alice", created_at=now - timedelta(hours=index),
+                last_accessed=now - timedelta(days=30), archived=True,
+                is_important=False, message_count=3,
+            ))
+            db.add_all(database.ChatMessage(
+                id=f"msg-{index}-{m}", session_id=f"sess-{index:02d}", role="user",
+                content="m", timestamp=now - timedelta(days=30),
+            ) for m in range(3))
+        db.commit()
+
+    preview = client.get("/api/cleanup/preview").json()
+    preserved_ids = {row["id"] for row in preview["preserved_sessions"]}
+    to_delete_ids = {row["id"] for row in preview["sessions_to_delete"]}
+
+    # Top 10 newest (sess-00 to sess-09) must be preserved
+    expected_preserved = {f"sess-{i:02d}" for i in range(10)}
+    expected_to_delete = {f"sess-{i:02d}" for i in range(10, 25)}
+    assert preserved_ids == expected_preserved
+    assert to_delete_ids == expected_to_delete
+
+    response = client.post("/api/cleanup")
+    assert response.json()["deleted_count"] == 15
+
+    with factory() as db:
+        surviving = {row[0] for row in db.query(database.Session.id).all()}
+        assert surviving == expected_preserved
+
+
+def test_cleanup_handles_zero_actual_messages_session(cleanup_api):
+    """Sessions with zero durable messages are properly previewed and cleaned up."""
+    client, factory, manager = cleanup_api
+    seed(factory, manager, 10, 0)
+    preview = client.get("/api/cleanup/preview").json()
+    row = next(r for r in preview["sessions_to_delete"] if r["id"] == "old-chat")
+    assert row["message_count"] == 0
+    assert row["estimated_size_kb"] == 0.0
+
+    response = client.post("/api/cleanup")
+    assert response.json()["deleted_count"] == 1
+    with factory() as db:
+        assert db.get(database.Session, "old-chat") is None
+
+
+def test_cleanup_db_error_preserves_cache_and_aborts_cleanly(cleanup_api):
+    """Database execution failures must abort, rollback, and leave in-memory cache intact."""
+    client, factory, manager = cleanup_api
+    seed(factory, manager, 3, 3)
+    engine = factory.kw["bind"]
+    injected = False
+
+    def break_delete(connection, cursor, statement, parameters, context, executemany):
+        nonlocal injected
+        if not injected and statement.lstrip().startswith("DELETE FROM sessions"):
+            injected = True
+            raise RuntimeError("Injected database error during DELETE")
+
+    event.listen(engine, "before_cursor_execute", break_delete)
+    try:
+        response = client.post("/api/cleanup")
+    finally:
+        event.remove(engine, "before_cursor_execute", break_delete)
+
+    assert injected
+    assert response.status_code == 200
+    assert response.json()["deleted_count"] == 0
+    assert response.json()["space_freed_mb"] == 0
+    # In-memory session was not prematurely evicted
+    assert "old-chat" in manager.sessions
+    # Database row was rolled back and still exists
+    with factory() as db:
+        assert db.get(database.Session, "old-chat") is not None
+        assert db.query(database.ChatMessage).filter_by(session_id="old-chat").count() == 3
+
+

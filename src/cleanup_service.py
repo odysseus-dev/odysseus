@@ -45,6 +45,13 @@ def _message_count_subquery(db, DbSession, DbChatMessage):
     ).correlate(DbSession).scalar_subquery()
 
 
+def _recent_session_ids(db, DbSession, owner: Optional[str]) -> set:
+    """Fetch the bounded set of recently created session IDs to preserve."""
+    recent_q = db.query(DbSession.id).order_by(DbSession.created_at.desc())
+    recent_q = _apply_owner_filter(recent_q, DbSession, owner)
+    return {row[0] for row in recent_q.limit(CleanupConfig.PRESERVE_RECENT_COUNT).all()}
+
+
 async def archive_inactive_sessions(session_manager, owner: Optional[str] = None) -> int:
     """
     Archive sessions that haven't been accessed in the configured number of days.
@@ -104,10 +111,7 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
     from src.database import SessionLocal, Session as DbSession, ChatMessage as DbChatMessage
     db = SessionLocal()
     try:
-        recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
-        recent_q = _apply_owner_filter(recent_q, DbSession, owner)
-        all_sessions = recent_q.all()
-        recent_session_ids = {session.id for session in all_sessions[:CleanupConfig.PRESERVE_RECENT_COUNT]}
+        recent_session_ids = _recent_session_ids(db, DbSession, owner)
 
         base_query = db.query(DbSession).filter(
             DbSession.archived == True,
@@ -142,23 +146,32 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
         if session_ids:
             # Recheck the real count in the DELETE statement itself. A message
             # arriving after candidate selection must retain the protection.
-            deletion = db.query(DbSession).filter(
+            # Using RETURNING accurately identifies rows deleted by this cleanup,
+            # avoiding misattributing space freed if another transaction independently
+            # deleted a candidate row.
+            from sqlalchemy import delete
+            stmt = delete(DbSession).filter(
                 DbSession.id.in_(session_ids),
                 DbSession.archived == True,
                 DbSession.last_accessed < cutoff_date,
                 DbSession.is_important == False,
                 actual_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
             )
-            deletion = _apply_owner_filter(deletion, DbSession, owner)
-            deleted_count = deletion.delete(synchronize_session=False)
+            stmt = _apply_owner_filter(stmt, DbSession, owner)
+            deleted_rows = db.execute(stmt.returning(DbSession.id)).scalars().all()
+            deleted_ids = set(deleted_rows)
+            deleted_count = len(deleted_ids)
+
             surviving_ids = {row[0] for row in db.query(DbSession.id).filter(
                 DbSession.id.in_(session_ids)
             ).all()}
-            deleted_ids = set(session_ids) - surviving_ids
+            unaccounted_ids = set(session_ids) - surviving_ids - deleted_ids
+
             space_freed = sum(message_counts[sid] for sid in deleted_ids) * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
             db.commit()
 
-            for session_id in deleted_ids:
+            cache_evict_ids = deleted_ids | unaccounted_ids
+            for session_id in cache_evict_ids:
                 if session_id in session_manager.sessions:
                     del session_manager.sessions[session_id]
 
@@ -212,10 +225,7 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
                 "message_count": message_count
             })
 
-        recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
-        recent_q = _apply_owner_filter(recent_q, DbSession, owner)
-        all_sessions = recent_q.all()
-        recent_session_ids = {session.id for session in all_sessions[:CleanupConfig.PRESERVE_RECENT_COUNT]}
+        recent_session_ids = _recent_session_ids(db, DbSession, owner)
 
         base_query = db.query(DbSession).filter(
             DbSession.archived == True,
