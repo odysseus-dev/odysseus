@@ -1,0 +1,1435 @@
+/* 06-admin-settings - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+.admin-slider::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--panel);
+  border-radius: 50%;
+  transition: transform 0.08s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.admin-switch input:checked + .admin-slider {
+  background: var(--red);
+}
+.admin-switch input:checked + .admin-slider::before {
+  transform: translateX(14px);
+}
+
+/* User rows */
+.admin-user-row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  transition: border-color 0.15s;
+}
+.admin-user-row:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+.admin-user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-user-name { font-size: 13px; font-weight: 500; }
+/* Privilege panel */
+.admin-priv-panel {
+  max-height: 600px;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
+.admin-priv-panel.hidden {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  border-top: none !important;
+}
+/* Privilege toggle rows */
+.admin-priv-panel [data-priv] {
+  accent-color: var(--accent, var(--red));
+}
+/* Section headers */
+.admin-priv-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.35;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.admin-priv-section:first-child {
+  margin-top: 0;
+}
+/* Model checkbox list */
+.priv-models-list {
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--bg);
+  scrollbar-width: thin;
+}
+.priv-models-list::-webkit-scrollbar {
+  width: 4px;
+}
+.priv-models-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.priv-models-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+.priv-models-list label:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.priv-models-list input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+  flex-shrink: 0;
+}
+/* All/None links */
+.priv-models-all,
+.priv-models-none {
+  font-size: 10px;
+  opacity: 0.5;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.priv-models-all:hover,
+.priv-models-none:hover {
+  opacity: 1;
+}
+
+/* MCP tool toggles panel */
+.mcp-tools-panel {
+  width: 100%;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  max-height: 600px;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
+.mcp-tools-panel.hidden {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+}
+.mcp-tools-panel .mcp-tools-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.mcp-tools-panel .mcp-tools-header span:first-child {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.35;
+  font-weight: 600;
+}
+.mcp-tools-panel .mcp-tools-header a {
+  font-size: 10px;
+  opacity: 0.5;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.mcp-tools-panel .mcp-tools-header a:hover {
+  opacity: 1;
+}
+.mcp-tools-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.mcp-tools-list::-webkit-scrollbar {
+  width: 4px;
+}
+.mcp-tools-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.mcp-tools-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  min-width: 0;
+}
+.mcp-tools-list label > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.mcp-tools-list label:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mcp-tools-list input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+  flex-shrink: 0;
+}
+/* Dot-style toggle (mirrors .note-check-dot) for the Add Models row,
+   replacing the native checkbox while keeping it for click handling. */
+.adm-cb-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.adm-check-dot {
+  /* Lock the dot to a fixed 12×12 box. The parent rule
+     `.mcp-tools-list label > span { flex: 1 }` was stretching this span
+     to fill the row when it didn't have its own flex override. */
+  flex: 0 0 12px !important;
+  width: 12px !important;
+  height: 12px;
+  min-width: 12px;
+  max-width: 12px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 35%, transparent);
+  position: relative;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 4px;
+  box-sizing: border-box;
+  width: 100%;
+}
+.adm-endpoint-select-label {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  margin-right: 5px;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  cursor: pointer;
+}
+.adm-model-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+.adm-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.adm-model-tools-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.adm-model-tools-label {
+  font-size: 10px;
+  opacity: 0.45;
+  flex-shrink: 0;
+  user-select: none;
+}
+.adm-model-tool-mode,
+.admin-tools-select {
+  height: 24px;
+  min-height: 24px;
+  line-height: 22px;
+  font-size: 11px;
+  padding: 0 18px 0 6px;
+  width: 124px;
+  max-width: 130px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background-color: var(--select-bg);
+  color: var(--select-fg);
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+@media (max-width: 480px) {
+  .adm-model-tool-mode,
+  .admin-tools-select {
+    width: 105px;
+    max-width: 110px;
+    font-size: 10px;
+    padding: 0 14px 0 4px;
+  }
+}
+.adm-model-row:hover .adm-check-dot {
+  border-color: var(--accent, var(--red));
+  transform: scale(1.15);
+}
+.adm-cb-hidden:checked + .adm-check-dot {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+}
+/* Added Models bulk selection uses the shared dot, without a check glyph. */
+.adm-endpoint-select-dot {
+  flex-basis: 11px !important;
+  width: 11px !important;
+  height: 11px;
+  min-width: 11px;
+  max-width: 11px;
+}
+/* Disabled endpoints — dim the row but keep the toggle/delete buttons
+   at full opacity so the user can re-enable or remove without squinting. */
+.admin-user-row.admin-ep-disabled { opacity: 0.55; }
+
+
+.admin-user-row.adm-ep-just-added {
+  border-radius: 8px;
+  animation: adm-ep-just-added-glow 2.2s ease-out;
+}
+.admin-user-row.admin-ep-disabled .admin-btn-sm,
+.admin-user-row.admin-ep-disabled .admin-btn-delete,
+.admin-user-row.admin-ep-disabled .admin-badge-off { opacity: 1; }
+/* Local / API subsection labels inside the Endpoints card */
+.adm-ep-section-head {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+/* Collapsible Add-Models subsections (API / Local) — the whole header row
+   acts as a toggle so a long cloud-API form can be tucked away when you
+   only want to paste a local URL. */
+.adm-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.8;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  margin-bottom: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.adm-section-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.adm-section-toggle .adm-section-caret { opacity: 0.6; }
+/* When expanded, square off the bottom so the header reads as attached to
+   the form it controls. */
+.adm-add-section:not(.collapsed) .adm-section-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-bottom: 0;
+}
+.adm-section-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+.adm-quickstart-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.72;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.adm-quickstart-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+}
+.adm-quickstart-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  padding: 6px 8px;
+}
+
+/* Custom provider picker (logo + name) replacing the native <select> */
+.adm-provider-picker { position: relative; margin-bottom: 6px; }
+.adm-provider-combo {
+  display: flex;
+  align-items: stretch;
+}
+.adm-provider-combo input {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-provider-btn {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; font-family: inherit; font-size: 12px;
+  cursor: pointer; text-align: left;
+}
+.adm-provider-combo .adm-provider-btn {
+  width: 128px;
+  flex-shrink: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  justify-content: space-between;
+}
+.adm-provider-btn:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--border)); }
+.adm-provider-current { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.adm-provider-logo {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; color: var(--fg); opacity: 0.85;
+}
+.adm-provider-logo svg { width: 14px; height: 14px; }
+/* Pull the settings-select 4px closer to its logo chip so the row
+   reads as logo+select instead of having an extra gap. */
+.adm-model-logo + .settings-select { margin-left: -4px; }
+/* Fallback rows: stretch the model select so the trash button on
+   the right aligns with the right edge of the Endpoint and Model
+   dropdowns above the fallback list. Without flex:1 the model
+   select shrinks to its content and the trash button rides up
+   tight to it. */
+.settings-fallback-row > .settings-select { flex: 1 1 0; min-width: 0; }
+/* Constrain logo SVGs in settings dropdown chips. Many provider
+   icons in providers.js declare only viewBox (no width/height),
+   so without this rule the browser falls back to 300x150 and
+   blows up the row. */
+.settings-fallback-row > span[style*="width:18px"] svg:not([width]),
+.settings-row > span[style*="width:18px"] svg:not([width]),
+span[id$="-logo"] svg:not([width]) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.adm-provider-logo:empty {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 50%;
+}
+.adm-provider-caret { flex-shrink: 0; transition: transform 0.15s; }
+.adm-provider-picker:has(.adm-provider-menu:not(.hidden)) .adm-provider-caret {
+  transform: rotate(180deg);
+}
+.adm-provider-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  max-height: 280px; overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+}
+.adm-provider-menu.hidden { display: none; }
+.adm-provider-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 4px;
+  font-size: 12px; cursor: pointer;
+}
+.adm-provider-item:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.adm-provider-item.active { background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+
+/* When the Appearance tab is open, the #settings-modal-opacity slider (in
+   the header) fades the modal so the user can see the rest of the UI react
+   as toggles flip. The fade is applied as a background color-mix in JS
+   (settings.js) rather than element opacity, so the controls/text stay
+   crisp — mirroring the Theme customizer's opacity slider. */
+
+/* Search provider fallback chain — chips + drag-reorder */
+.search-fallback-chain {
+  flex: 1; display: flex; align-items: center;
+  flex-wrap: wrap; gap: 6px; min-height: 28px;
+}
+.search-fb-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 4px 3px 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: 11px; cursor: grab; user-select: none;
+}
+.search-fb-chip.dragging { opacity: 0.4; }
+.search-fb-grip { opacity: 0.35; font-size: 10px; line-height: 1; cursor: grab; }
+.search-fb-logo {
+  width: 12px; height: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; opacity: 0.85;
+}
+.search-fb-logo svg { width: 12px; height: 12px; }
+.search-fb-remove {
+  background: none; border: none; color: var(--fg);
+  opacity: 0.45; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.search-fb-remove:hover { opacity: 1; color: var(--red); }
+.search-fb-add {
+  background: var(--bg); color: var(--fg);
+  border: 1px dashed var(--border); border-radius: 10px;
+  padding: 2px 6px; font-family: inherit; font-size: 11px;
+  outline: none; cursor: pointer;
+}
+.search-fb-add:focus,
+.search-fb-add:hover {
+  border-color: var(--accent, var(--red));
+  border-style: solid;
+}
+
+.mcp-tools-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  outline: none;
+}
+.mcp-tools-search:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+.mcp-tools-count {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* Badges */
+.admin-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  color: var(--red);
+  font-weight: 600;
+}
+.admin-badge-off {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+
+/* Buttons */
+.admin-btn-delete {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--color-error) 27%, transparent);
+  color: var(--color-error);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.admin-btn-delete:hover {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+}
+.admin-btn-add {
+  padding: 4px 10px;
+  border: 1px solid var(--accent, var(--red));
+  border-radius: 6px;
+  background: var(--accent, var(--red));
+  color: var(--bg);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+.admin-btn-add:hover {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+  opacity: 0.9;
+}
+.admin-btn-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.admin-btn-sm {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+}
+.admin-btn-sm:hover {
+  background: var(--border);
+  border-color: var(--red);
+}
+.admin-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--red);
+  border-radius: 50%;
+  animation: admin-spin 0.6s linear infinite;
+  vertical-align: -2px;
+  margin-right: 2px;
+}
+
+/* Forms */
+.admin-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.admin-add-form input {
+  flex: 1;
+  min-width: 120px;
+  padding: 5px 8px;
+  height: 32px;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+.admin-add-form input:focus { outline: none; border-color: var(--red); }
+.admin-switch-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  cursor: default;
+}
+
+.admin-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.admin-model-form input,
+.admin-model-form select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-model-form input:focus { outline: none; border-color: var(--red); }
+.admin-model-form-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;       /* let buttons drop to a new row on narrow widths
+                             instead of overflowing the modal */
+  align-items: center;
+}
+.admin-model-form-row input {
+  flex: 1 1 180px;       /* api-key input takes the long axis but allows
+                             dropping below the buttons at small widths */
+  min-width: 0;          /* don't refuse to shrink past content width */
+}
+.admin-model-form-row select {
+  flex: 0 0 auto;
+}
+.admin-model-form-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* On narrow screens, give buttons their own row + push the Add button
+   to the right so it remains the obvious primary action. */
+@media (max-width: 540px) {
+  .admin-model-form-row input { flex-basis: 100%; }
+  .admin-model-form-row .admin-btn-add { margin-left: auto; }
+}
+.adm-ep-inline-msg {
+  min-height: 16px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+/* Endpoint items */
+.admin-ep-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.admin-ep-info { flex: 1; overflow: hidden; }
+.admin-ep-name { color: var(--fg); font-weight: 500; }
+.admin-ep-detail {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: -4px;
+}
+
+/* Settings panel — tint each card's h2 title icon with the user's accent
+   colour. Direct-child selector (`> h2 > svg`) so SVGs nested inside
+   header buttons (Test, kebab, etc.) are untouched. Each title icon uses
+   stroke="currentColor", so setting color propagates; existing inline
+   opacity:0.6 stays so the tint reads soft. */
+/* Selected integration card — class beats inline borderColor reset */
+.intg-card.intg-card-active { border-color: var(--accent, var(--red)) !important; }
+
+/* Edge-dock resize handle: invisible at rest, accent stripe animates in
+   on hover. Inline background:transparent + transition come from
+   modalSnap.js; this rule paints the accent gradient on hover, beating
+   the inline style with !important. */
+.edge-dock-resize-handle-left:hover {
+  background: linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-right:hover {
+  background: linear-gradient(to left, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+
+[data-settings-panel] .admin-card > h2 > svg,
+#theme-popup .admin-card > h2 > svg,
+[data-settings-panel="added-models"] .adm-ep-section-head > svg {
+  color: var(--accent, var(--red));
+}
+.admin-ep-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Status messages */
+.admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
+.admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+.admin-empty {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 12px;
+  padding: 10px 0;
+  text-align: center;
+}
+/* Endpoint-list empty states ("No endpoints configured" / "None") get a
+   left-aligned, accent-colored treatment so they read as "this row is your
+   placeholder, click Add" rather than a centered "nothing here" grey blob. */
+#adm-epList-local .admin-empty,
+#adm-epList-api .admin-empty {
+  text-align: left;
+  padding: 8px 4px;
+  color: var(--accent-primary, var(--accent, var(--red)));
+}
+
+/* RAG upload zone */
+.admin-rag-upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-bottom: 8px;
+}
+.admin-rag-upload-zone:hover,
+.admin-rag-upload-zone.dragover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+}
+.admin-rag-upload-zone p {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.admin-rag-icon { font-size: 18px; }
+.admin-rag-dir-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.admin-rag-dir-row input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-rag-dir-row input:focus { outline: none; border-color: var(--red); }
+.admin-rag-dir-row button {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.admin-rag-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.admin-rag-section-label {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 4px;
+}
+.admin-rag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.admin-rag-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.admin-rag-item-meta {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 10px;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+.admin-rag-status {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  margin-top: 6px;
+}
+
+/* Token reveal */
+.admin-token-reveal {
+  margin-top: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--red) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--red) 25%, var(--border));
+  border-radius: 8px;
+}
+
+/* Selects in admin cards */
+.admin-card select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-card input {
+  font-family: inherit;
+  font-size: 12px;
+}
+.admin-card label {
+  font-size: 12px;
+}
+
+/* ---- Document Library ---- */
+
+.doclib-modal-content {
+  width: min(600px, 92vw);
+  max-height: 85vh;
+  font-size: 12px;
+  background: var(--bg);
+}
+/* Anchor doclib modal to top so only the bottom edge moves on resize */
+#doclib-modal {
+  align-items: flex-start;
+  padding-top: 8vh;
+}
+.doclib-modal-content .modal-header h4 {
+  font-size: 1rem;
+}
+/* The "open in new tab" email modal inherited the 1rem doclib header, which
+   read way bigger than the email subject in the regular (inline) reader. Pin
+   it smaller so the two views are consistent. */
+.email-reader-tab-modal .modal-header h4 {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* Match the sticky modal-header to the doclib modal-content body color
+   (var(--bg)) instead of the global var(--panel) default — otherwise the
+   header reads as a darker stripe above the email list. */
+.doclib-modal-content > .modal-header {
+  background: var(--bg);
+}
+.doclib-stats {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-bottom: 8px;
+}
+.doclib-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.doclib-search {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+#archive-select-btn { height: auto; padding: 5px 8px; }
+.doclib-search:focus {
+  border-color: var(--red);
+}
+.doclib-sort {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+.doclib-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.doclib-chip {
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.doclib-chip:hover {
+  border-color: var(--red);
+}
+.doclib-chip.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+/* Document library — language chip row */
+.doclib-lang-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 0;
+  max-height: 52px;
+  overflow-y: auto;
+}
+.doclib-lang-chips:empty { display: none; }
+/* Mobile: keep tag chips on ONE row and scroll horizontally instead of wrapping
+   into a tall multi-line block (Serve, library — anywhere .doclib-lang-chips is used). */
+@media (max-width: 768px) {
+  .doclib-lang-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-height: none;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .doclib-lang-chips::-webkit-scrollbar { display: none; }
+  .doclib-lang-chips > * { flex-shrink: 0; }
+}
+#doclib-tidy-btn, #doclib-select-btn, #doclib-chats-tidy-btn {
+  position: relative;
+  top: -3px;
+}
+/* Document library — list layout */
+.doclib-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 0;
+  position: relative;
+}
+
+/* Gallery grid domino-in cascade on open — same recipe as the document/email
+   libraries. Applied to #gallery-grid in gallery.js on the first render after
+   each open, removed after the longest delay so re-renders feel instant. */
+.gallery-just-opened > .gallery-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.gallery-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.gallery-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.gallery-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.gallery-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.gallery-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.gallery-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.gallery-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.gallery-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.gallery-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.gallery-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.gallery-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.gallery-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.gallery-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.gallery-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.gallery-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.gallery-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.gallery-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.gallery-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.gallery-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.gallery-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.gallery-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Tasks list domino-in cascade on open — mirrors gallery / doclib. Applied to
+   #tasks-list in tasks.js on the first render after each open, removed after
+   the longest delay so re-renders feel instant. */
+.tasks-just-opened > .task-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.tasks-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.tasks-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.tasks-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.tasks-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.tasks-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.tasks-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.tasks-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.tasks-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.tasks-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.tasks-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.tasks-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.tasks-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.tasks-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.tasks-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.tasks-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.tasks-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.tasks-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.tasks-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.tasks-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.tasks-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.tasks-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Document library cascade — same recipe as email library, applied per-tab
+   the first time content loads (chats / archive / research / documents).
+   Module-level Set in documentLibrary.js prevents re-firing on tab swaps
+   or filter/sort re-renders within the same page session. */
+.doclib-just-opened > .memory-item,
+.doclib-just-opened > .doclib-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.doclib-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.doclib-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.doclib-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.doclib-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.doclib-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.doclib-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.doclib-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.doclib-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.doclib-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.doclib-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.doclib-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.doclib-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.doclib-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.doclib-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.doclib-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.doclib-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.doclib-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.doclib-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.doclib-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.doclib-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.doclib-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Domino cascade on first open of the email library — mirrors the sidebar
+   .section-just-expanded recipe so list items spring in staggered. Class
+   is applied to #email-lib-grid in emailLibrary.js on the first render
+   only, then removed after the longest delay so re-renders feel instant. */
+.email-lib-just-opened :is(.doclib-card, .date-section-header) {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(1)  { animation-delay: 0.02s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(2)  { animation-delay: 0.04s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(3)  { animation-delay: 0.06s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(4)  { animation-delay: 0.08s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(5)  { animation-delay: 0.10s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(6)  { animation-delay: 0.12s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(7)  { animation-delay: 0.14s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(8)  { animation-delay: 0.16s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(9)  { animation-delay: 0.18s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(10) { animation-delay: 0.20s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(11) { animation-delay: 0.22s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(12) { animation-delay: 0.24s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(13) { animation-delay: 0.26s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(14) { animation-delay: 0.28s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(15) { animation-delay: 0.30s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(16) { animation-delay: 0.32s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(17) { animation-delay: 0.34s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(18) { animation-delay: 0.36s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(19) { animation-delay: 0.38s; }
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(20) { animation-delay: 0.40s; }
+/* Cap the cascade at 20 — beyond that they animate together so opening a
+   long inbox doesn't take forever to settle. */
+.email-lib-just-opened :is(.doclib-card, .date-section-header):nth-child(n+21) { animation-delay: 0.42s; }
+
+/* Inside the email library modal, the grid needs to grow with the modal —
+   but `flex: 1 1 0` collapses to 0 when the parent isn't height-constrained
+   (which is the non-fullscreen default). Use `auto` basis + a sensible
+   `min-height` floor so it shows ~400px naturally and absorbs more when
+   the modal is resized / fullscreened. */
+#email-lib-modal .doclib-grid {
+  max-height: none;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 400px;
+}
+
+/* ── Mobile compose FAB (email) ──
+   Replaces the top-right "New" button on phones with a round mail-icon button
+   bottom-right that collapses to a circle while the list scrolls and springs
+   back out to "New" when scrolling stops. Desktop is unchanged. */
+.email-lib-fab { display: none; }
+@media (max-width: 768px) {
+  /* The absolute FAB anchors to the email panel card. */
+  #email-lib-modal .admin-card { position: relative; }
+  /* Hide the toolbar "New" button — the FAB is the mobile entry point. */
+  #email-lib-compose-btn { display: none; }
+
+  #email-lib-modal .email-lib-fab {
+    --fab-size: 56px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    /* Hidden until the email list has rendered; JS adds .fab-revealed to pop
+       it in (scale-from-center). Avoids the button flashing at the top and
+       sliding down before _positionFab() places it. */
+    transform: scale(0);
+    opacity: 0;
+    transform-origin: center center;
+    position: absolute;
+    right: calc(16px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    height: var(--fab-size);
+    min-width: var(--fab-size);
+    padding: 0 20px 0 18px;
+    border: none;
+    border-radius: 999px;
+    background: var(--accent-primary, var(--red));
+    color: #fff;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0,0,0,.38), 0 2px 6px rgba(0,0,0,.28);
+    z-index: 30;
+    pointer-events: auto;
+    /* This (base) transition governs the EXPAND — slower + graceful. */
+    transition:
+      padding 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 240ms ease,
+      transform 140ms ease,
+      background 140ms ease;
+    will-change: padding, transform;
+  }
+  #email-lib-modal .email-lib-fab svg { flex: 0 0 auto; display: block; }
+  #email-lib-modal .email-lib-fab .email-lib-fab-label {
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 120px;
+    opacity: 1;
+    /* EXPAND timing — label eases out a touch after the width opens up. */
+    transition:
+      max-width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 300ms 60ms cubic-bezier(0.22, 1, 0.36, 1),
+      margin 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* Collapsed (while scrolling) → pure circle, icon only. We DON'T set an
+     explicit width: the container is auto-width and shrinks smoothly as the
+     padding + label max-width animate (min-width keeps it circular). Setting a
+     fixed width here made the collapse snap, since auto↔px width can't tween.
+     This (.collapsed) transition governs the COLLAPSE — kept snappy. */
+  #email-lib-modal .email-lib-fab.collapsed {
+    padding: 0;
+    justify-content: center;
+    transition:
+      padding 230ms cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 200ms ease,
+      transform 140ms ease;
+  }
+  #email-lib-modal .email-lib-fab.collapsed .email-lib-fab-label {
+    max-width: 0;
+    opacity: 0;
+    margin-left: -9px;
+    transition:
+      max-width 230ms cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 150ms cubic-bezier(0.4, 0, 0.2, 1),
+      margin 230ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  /* Entrance: circle-expand-from-middle pop, played once when revealed. No
+     `forwards` fill so the resting transform (scale 1) comes from this rule —
+     that keeps the :active press transform working afterwards. */
+  #email-lib-modal .email-lib-fab.fab-revealed {
+    transform: scale(1);
+    opacity: 1;
+    animation: emailFabPop 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  #email-lib-modal .email-lib-fab:active {
+    transform: scale(0.93);
+    filter: brightness(0.92);
+    box-shadow: 0 3px 10px rgba(0,0,0,.4);
+  }
+}
+@keyframes emailFabPop {
+  from { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.06); opacity: 1; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #email-lib-modal .email-lib-fab,
+  #email-lib-modal .email-lib-fab .email-lib-fab-label { transition-duration: 1ms; }
+  #email-lib-modal .email-lib-fab.fab-revealed { animation: none; }
+}
+/* When the modal-content has explicit height (fullscreen or user-resized),
+   drop the floor so the grid sizes purely from flex. */
+#email-lib-modal.email-lib-fullscreen .doclib-grid,
+#email-lib-modal .modal-content[style*="height"] .doclib-grid {
+  min-height: 0;
+}
+/* Document library: same fix as the email library (#74). When fullscreened
+   the modal-content gets an inline `height: 100vh`, but the inner
+   .doclib-grid stays capped at the 400px default so the list looks like a
+   tiny strip floating in a giant empty modal. Mirror the email recipe:
+   make the modal a flex column, give the body/admin-card claim of the
+   remaining height, and let the grid take the rest. Scoped to the
+   fullscreen class so windowed-mode layout is unchanged. */
+/* Inner flex chain that lets the chats/documents grid claim the full
+   remaining height of the modal. Applies in BOTH fullscreen AND
+   right-docked states — without the docked state included, dragging a
+   fullscreen doclib to the right snap zone breaks the flex layout
+   because exitFullscreen removes .doclib-fullscreen, and the grid
+   falls back to its base max-height: 400px showing only ~8 items.
+   The CSS variable :is() selector lets both states share one rule. */
+#doclib-modal.doclib-fullscreen .doclib-modal-content,
+#doclib-modal.modal-right-docked .doclib-modal-content,
+#doclib-modal.modal-left-docked .doclib-modal-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Fullscreen positioning — scoped to NOT apply when also right-docked.
+   Without this exclusion, dragging a fullscreen doclib to the right snap
+   zone keeps .doclib-fullscreen on the modal and these !important rules
+   override the dock's inline styles, leaving the modal stuck fullscreen
+   instead of becoming a side panel. */
+#doclib-modal.doclib-fullscreen:not(.modal-right-docked) .doclib-modal-content {
+  position: fixed !important;
+  top: 0 !important;
+  left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  border-radius: 0 !important;
+  transform: none !important;
+}
+#doclib-modal.doclib-fullscreen .modal-header,
+#doclib-modal.doclib-fullscreen .lib-tabs,
+#doclib-modal.modal-right-docked .modal-header,
+#doclib-modal.modal-right-docked .lib-tabs,
+#doclib-modal.modal-left-docked .modal-header,
+#doclib-modal.modal-left-docked .lib-tabs {
+  flex: 0 0 auto;
+}
+#doclib-modal.doclib-fullscreen .modal-body,
+#doclib-modal.modal-right-docked .modal-body,
+#doclib-modal.modal-left-docked .modal-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+#doclib-modal.doclib-fullscreen .admin-card,
+#doclib-modal.modal-right-docked .admin-card,
+#doclib-modal.modal-left-docked .admin-card {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#doclib-modal.doclib-fullscreen .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-right-docked .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
+  max-height: none;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* "Reply" docks the open email modal to the left as a sidebar so the doc
+   panel (which slides in from the right of the chat area) is visible
+   side-by-side. The .modal backdrop is already pointer-events:none for
+   email modals — only the content takes pointer events — so the chat /
+   doc panel underneath stays interactive. */
+.modal.email-snap-left {
+  align-items: stretch;
+  justify-content: flex-start;
+  left: 0 !important;
+  width: 100% !important;
+}
+.modal.email-snap-left .modal-content {
+  left: var(--email-doc-split-left-x, 0px) !important;
+  width: var(--email-doc-split-email-w, 420px) !important;
+  max-width: var(--email-doc-split-email-w, 420px) !important;
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 14px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+}
+@media (min-width: 769px) {
+  body.email-doc-split-active.doc-view #email-lib-modal,
+  body.email-doc-split-active.doc-view.email-front #email-lib-modal,
+  body.email-doc-split-active.doc-view .modal[id^="email-reader-"],
+  body.email-doc-split-active.doc-view.email-front .modal[id^="email-reader-"] {
+    z-index: 150 !important;
+  }
+  body.email-doc-split-active #email-lib-modal.email-snap-left,
+  body.email-doc-split-active #email-lib-modal.modal-left-docked {
+    left: var(--email-doc-split-left-x, 0px) !important;
+    width: var(--email-doc-split-email-w, 420px) !important;
+    overflow: hidden !important;
+    z-index: 155 !important;
+  }
+  body.email-doc-split-active #email-lib-modal.email-snap-left:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active #email-lib-modal.modal-left-docked:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].email-snap-left:not(.modal-dragging) .modal-content,
+  body.email-doc-split-active .modal[id^="email-reader-"].modal-left-docked:not(.modal-dragging) .modal-content {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    right: auto !important;
+    width: var(--email-doc-split-email-w, 420px) !important;
+    max-width: var(--email-doc-split-email-w, 420px) !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+  body.email-doc-split-active.doc-view .doc-divider {
+    display: none !important;
+  }
+  body.email-doc-split-active.doc-view .doc-editor-pane {
+    position: fixed !important;
+    left: var(--email-doc-split-right-x, 420px) !important;
+    right: var(--right-dock-w, 0px) !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    height: 100vh !important;
+    z-index: 260 !important;
+    margin-top: 0 !important;
+    transform: none !important;
+    border-left: none !important;
+  }
+}
+
+/* Edge docking. Docked panels are fixed to the viewport edge; the workspace
+   panes reserve room with margins so left + right docks can be active at the
+   same time without skewing the entire body box. */
+body.right-dock-active {
+  padding-right: 0;
+}
+body.left-dock-active {
+  padding-left: 0;
+}
+body.left-dock-active:not(.email-doc-split-active) .chat-container {
+  margin-left: var(--left-dock-w, 0px);
+}
+body.right-dock-active .chat-container,
+body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+  margin-right: var(--right-dock-w, 0px);
+}
+.modal.modal-right-docked {
+  align-items: stretch;
+  justify-content: flex-end;
+}
+.modal.modal-right-docked .modal-content {
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 14px rgba(0, 0, 0, 0.18);
+  border-radius: 0;
+}

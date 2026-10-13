@@ -12,9 +12,11 @@
  *   canvas: HTMLCanvasElement,
  *   _stagedAdj?: {params?: {inBlack?: number, inWhite?: number}}
  * }} layer                            Source layer.
+ * @param {'rgb'|'red'|'green'|'blue'} channel Channel to inspect. `rgb` uses luminance.
+ * @returns {{black: number, white: number, samples: number}}
  */
-export function drawHistogram(canvas, layer) {
-  if (!canvas) return;
+export function drawHistogram(canvas, layer, channel = 'rgb') {
+  if (!canvas) return { black: 0, white: 0, samples: 0 };
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, w, h);
@@ -33,11 +35,21 @@ export function drawHistogram(canvas, layer) {
   const img = tctx.getImageData(0, 0, sampleW, sampleH).data;
 
   const hist = new Uint32Array(256);
+  let samples = 0;
+  let black = 0;
+  let white = 0;
   for (let i = 0; i < img.length; i += 4) {
     if (img[i + 3] < 8) continue; // skip near-transparent
-    // Rec. 709 luminance — common choice for histograms in photo editors.
-    const Y = (0.2126 * img[i] + 0.7152 * img[i + 1] + 0.0722 * img[i + 2]) | 0;
-    hist[Math.min(255, Y)]++;
+    const value = channel === 'red' ? img[i]
+      : channel === 'green' ? img[i + 1]
+        : channel === 'blue' ? img[i + 2]
+          // Rec. 709 luminance — common choice for composite histograms.
+          : 0.2126 * img[i] + 0.7152 * img[i + 1] + 0.0722 * img[i + 2];
+    const bucket = Math.max(0, Math.min(255, value | 0));
+    hist[bucket]++;
+    samples++;
+    if (bucket === 0) black++;
+    if (bucket === 255) white++;
   }
   let peak = 1;
   for (let i = 0; i < 256; i++) if (hist[i] > peak) peak = hist[i];
@@ -64,4 +76,9 @@ export function drawHistogram(canvas, layer) {
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
     ctx.fillRect((p.inWhite / 256) * w, 0, 1, h);
   }
+  return {
+    black: samples ? black / samples * 100 : 0,
+    white: samples ? white / samples * 100 : 0,
+    samples,
+  };
 }

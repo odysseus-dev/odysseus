@@ -7,6 +7,7 @@ a ``... (truncated, N chars total)`` suffix so the frontend can show a
 truncation indicator in the tool bubble.
 """
 from src.tool_utils import _truncate, MAX_OUTPUT_CHARS
+from src.tool_execution import format_tool_result
 
 
 def test_short_output_unchanged():
@@ -41,3 +42,29 @@ def test_default_limit_matches_constant():
 
 def test_empty_string():
     assert _truncate("") == ""
+
+
+def test_external_bridge_result_is_bounded_before_model_replay():
+    text = "package output\n" * MAX_OUTPUT_CHARS
+
+    rendered = format_tool_result(
+        "bash: install dependencies",
+        {"output": text, "exit_code": 0},
+    )
+
+    assert len(rendered) < MAX_OUTPUT_CHARS + 100
+    assert "truncated" in rendered
+
+
+def test_format_tool_result_does_not_serialize_image_payloads_as_json():
+    rendered = format_tool_result(
+        "read media",
+        {
+            "output": "frames extracted",
+            "exit_code": 0,
+            "images": [{"mimeType": "image/png", "data": "base64-frame-data"}],
+        },
+    )
+
+    assert "frames extracted" in rendered
+    assert "base64-frame-data" not in rendered

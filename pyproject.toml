@@ -7,6 +7,7 @@ asyncio_mode = "auto"
 # tests/conftest.py, so unknown-mark warnings still flag genuine typos outside
 # the taxonomy. See tests/_taxonomy.py and tests/README.md.
 markers = [
+    "serial: live smoke tests mutate one externally launched application; use -n 0",
     "area_security: tests covering auth, owner-scope, SSRF, XSS, confinement, redaction",
     "area_routes: tests covering HTTP route / API behavior",
     "area_services: tests covering service-layer behavior (llm, cookbook, email, calendar, ...)",

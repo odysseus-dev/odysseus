@@ -3,7 +3,8 @@ import tempfile
 from services.stt.stt_service import STTService
 
 
-def test_stt_local_transcribe_leak_on_error():
+def test_stt_local_transcribe_leak_on_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     service = STTService()
 
     class MockWhisper:

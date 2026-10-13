@@ -389,12 +389,17 @@ class MemoryManager:
         identity_memories = []
         other_memories = []
         
-        # Separate identity memories from others
+        # Separate identity memories from others and sanitize content
         for memory in memories:
             memory_text = memory["text"].lower()
+            
+            # Sanitize memory content to prevent prompt injection
+            sanitized_text = _sanitize_memory_content(memory["text"])
+            memory["text"] = sanitized_text
+            
             # Check if this is an identity memory (contains name patterns or identity indicators)
             is_identity = any([
-                re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
+                re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', sanitized_text),
                 any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
             ])
             if is_identity:

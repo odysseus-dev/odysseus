@@ -382,7 +382,10 @@ class AuthManager:
             return dict(ADMIN_PRIVILEGES)
         # Merge stored privileges with defaults (in case new privileges were added)
         stored = user.get("privileges", {})
-        return {**DEFAULT_PRIVILEGES, **stored}
+        privileges = {**DEFAULT_PRIVILEGES, **stored}
+        # Ensure can_manage_memory is always True
+        privileges["can_manage_memory"] = True
+        return privileges
 
     def set_privileges(self, username: str, privileges: Dict[str, Any]) -> bool:
         """Update privileges for a user. Can't modify admin privileges."""
@@ -464,6 +467,19 @@ class AuthManager:
             self._save()
         logger.info("Set is_admin=%s for '%s' (by '%s')", is_admin, username, requesting_user)
         return SetAdminResult.OK
+
+    def reset_user_password(self, username: str, new_password: str, requesting_user: str) -> bool:
+        """Allow an admin to reset a non-admin account and revoke its sessions."""
+        username = username.strip().lower()
+        with self._config_lock:
+            target = self.users.get(username)
+            if not self.is_admin(requesting_user) or not target or target.get("is_admin"):
+                return False
+            self._config["users"][username]["password_hash"] = _hash_password(new_password)
+            self._save()
+            self.revoke_user_sessions(username)
+        logger.info("Password reset for '%s' by '%s'", username, requesting_user)
+        return True
 
     def change_password(self, username: str, current_password: str, new_password: str) -> bool:
         username = username.strip().lower()

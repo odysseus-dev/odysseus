@@ -31,6 +31,7 @@ safe for callers that pass both a parent package and a child module.
 """
 
 import sys
+import types
 from contextlib import contextmanager
 
 _ABSENT = object()
@@ -167,3 +168,33 @@ def preserve_import_state(*module_names):
         # Phase 2: restore all parent-package attributes.
         for name, (_, saved_attr) in saved.items():
             _restore_parent_attr(name, saved_attr)
+
+
+# Names under these prefixes are the ones a leaked stub actually breaks: a
+# later test doing ``import src.x`` or ``import core.x`` silently gets the
+# empty stub instead of the real module.
+_GUARDED_PREFIXES = ("src.", "core.")
+
+
+def bare_module_stubs():
+    """Return the ``src.*``/``core.*`` names currently bound to a bare stub.
+
+    A bare stub is a plain :class:`types.ModuleType` with no on-disk
+    ``__file__`` — the object ``types.ModuleType(name)`` produces. That is the
+    same "is this a fake?" test the ``clear_fake_*`` helpers above use, so a
+    module imported from disk is never reported.
+
+    ``MagicMock`` stand-ins are deliberately out of scope: they answer every
+    attribute, so they fail loudly at use rather than silently, and several
+    test modules install them on purpose.
+    """
+    found = set()
+    for name, mod in list(sys.modules.items()):
+        if not name.startswith(_GUARDED_PREFIXES):
+            continue
+        if type(mod) is not types.ModuleType:
+            continue
+        if getattr(mod, "__file__", None):
+            continue
+        found.add(name)
+    return found

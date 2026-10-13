@@ -148,6 +148,23 @@ export function initSidebarLayout(Storage, opts) {
   // Hamburger cycles: full sidebar → mini → off → full
   let _userToggledSidebar = false;
   let _wasAutoCollapsed = false;
+  let _wasMobileViewport = window.innerWidth < 768;
+
+  function _restoreDesktopSidebarSide() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    const wantRight = Storage.get(Storage.KEYS.SIDEBAR_SIDE) === 'right';
+    const changed = sidebar.classList.contains('right-side') !== wantRight;
+    sidebar.classList.toggle('right-side', wantRight);
+    if (iconRail) {
+      iconRail.classList.remove('mobile-mini');
+      iconRail.style.cssText = '';
+    }
+    if (changed && documentModule && documentModule.swapSide) {
+      try { documentModule.swapSide(); } catch (_) {}
+    }
+    syncRailSide();
+  }
 
   // Deliberate "open the sidebar" used by the mobile swipe gesture (wired at
   // module scope). It MUST set _userToggledSidebar so the auto-collapse
@@ -169,7 +186,11 @@ export function initSidebarLayout(Storage, opts) {
       const wantRight = side === 'right';
       if (sidebar.classList.contains('right-side') !== wantRight) {
         sidebar.classList.toggle('right-side', wantRight);
-        try { Storage.set(Storage.KEYS.SIDEBAR_SIDE, side); } catch (_) {}
+        // Swipe-selected sides are temporary on compact/mobile layouts. Do
+        // not overwrite the user's desktop sidebar preference.
+        if (window.innerWidth >= 768) {
+          try { Storage.set(Storage.KEYS.SIDEBAR_SIDE, side); } catch (_) {}
+        }
         if (documentModule && documentModule.swapSide) { try { documentModule.swapSide(); } catch (_) {} }
       }
     }
@@ -265,6 +286,10 @@ export function initSidebarLayout(Storage, opts) {
 
   function checkSidebarAutoCollapse() {
     if (_userToggledSidebar) return;
+    // Mobile uses a fixed overlay drawer.  Keyboard and orientation changes
+    // emit resize events there, but should not run the desktop width-based
+    // auto-collapse logic against an intentionally opened drawer.
+    if (window.innerWidth < 768) return;
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return;
     const isHidden = sidebar.classList.contains('hidden');
@@ -296,12 +321,23 @@ export function initSidebarLayout(Storage, opts) {
   }
 
   window.addEventListener('resize', () => {
-    _userToggledSidebar = false; // allow auto-collapse on actual resize
+    const isMobileViewport = window.innerWidth < 768;
+    if (_wasMobileViewport && !isMobileViewport) _restoreDesktopSidebarSide();
+    _wasMobileViewport = isMobileViewport;
+    if (!isMobileViewport) _userToggledSidebar = false; // allow auto-collapse on desktop resize
     requestAnimationFrame(checkSidebarAutoCollapse);
   });
-  // Also re-check when doc panel toggles
-  new MutationObserver(() => requestAnimationFrame(checkSidebarAutoCollapse))
-    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  // Re-check when the document split is opened or closed. Do not react to
+  // every body class mutation: floating tools (notably Research) add their
+  // own view class, and re-evaluating a narrow document split there caused a
+  // hide → restore → hide loop in the sidebar.
+  let _lastDocView = document.body.classList.contains('doc-view');
+  new MutationObserver(() => {
+    const docView = document.body.classList.contains('doc-view');
+    if (docView === _lastDocView) return;
+    _lastDocView = docView;
+    requestAnimationFrame(checkSidebarAutoCollapse);
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   // Auto-collapse on initial load if window is small
   if (window.innerWidth < AUTO_COLLAPSE_WIDTH) {

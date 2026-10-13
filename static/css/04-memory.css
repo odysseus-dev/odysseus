@@ -1,0 +1,1675 @@
+/* 04-memory - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+.memory-scope-btn:hover:not(.active) {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.memory-char-list {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.memory-char-chip {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin: 0;
+}
+.memory-char-chip.active {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: var(--red);
+  color: var(--red);
+}
+.memory-char-chip:hover:not(.active) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+/* Disabled state dims the form */
+#char-fields-wrap.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  filter: grayscale(0.5);
+  transition: opacity 0.2s, filter 0.2s;
+}
+#char-fields-wrap {
+  transition: opacity 0.2s, filter 0.2s;
+}
+
+/* Name combo: input + delete btn */
+.char-name-combo {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.char-name-combo input,
+.char-name-combo select {
+  flex: 1;
+}
+.char-template-select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.char-template-select:focus {
+  outline: none;
+  border-color: var(--red);
+}
+.char-action-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  margin: 0 !important;
+  white-space: nowrap;
+  /* Uniform width so the trailing button column matches between the select
+     row (+ New) and the name row (Reset) — that keeps the select and the
+     name input the same width, since both fields flex:1 into the leftover. */
+  min-width: 64px;
+  text-align: center;
+}
+.char-action-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+#char-delete-template-btn:hover {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+/* Character toggle row in preset modal */
+.preset-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.preset-sub-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.preset-mem-choice {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin: 0;
+}
+.preset-mem-choice.active {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: var(--red);
+  color: var(--red);
+}
+.preset-mem-choice:hover:not(.active) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+
+/* ===== MEMORY MODAL ===== */
+
+.memory-modal-content {
+  width: min(560px, 90vw);
+  max-height: 78vh;
+  font-size: 12px;
+  overflow: hidden;   /* clip both axes; the inner .memory-modal-body owns scrolling.
+                         (overflow-x alone promotes overflow-y to `auto` → a stray vertical scrollbar) */
+  /* Subtle synapse-pulse — a soft radial glow that breathes in/out.
+     Layered over the existing modal bg so it shows through without
+     overpowering content. */
+  position: relative;
+  isolation: isolate;
+}
+.memory-modal-content::before { content: none; }
+@media (prefers-reduced-motion: reduce) {
+  .memory-modal-content::before { animation: none; opacity: 0.4; }
+}
+.memory-modal-content .modal-header h4 {
+  font-size: 1rem;
+}
+
+.memory-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overflow-x: hidden;        /* Stop synapse-pulse pseudo-elements from triggering a sideways scrollbar */
+  overscroll-behavior: contain;
+  min-height: 0;
+  /* Fill the modal-content's height so the flex chain (tab-panel → admin-card
+     → list → expanded card) is bounded. Without this the chain grows to
+     content, so an expanded skill card pushed its footer off-screen; capping
+     the preview then left it floating too high. Bounding here lets the
+     preview flex to fill and the footer pin to the bottom naturally. */
+  flex: 1 1 auto;
+}
+.memory-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin: -4px -4px 0;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+#memory-modal [data-memory-scope].hidden {
+  display: none !important;
+}
+.memory-tab {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.5;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s, background 0.15s;
+}
+.memory-tab:hover {
+  opacity: 0.8;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.memory-tab.active {
+  opacity: 1;
+  color: var(--red);
+  border-bottom-color: var(--red);
+}
+.memory-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  /* overflow-y:auto makes the browser compute overflow-x to `auto` too, which
+     produced a stray horizontal scrollbar whenever a child was slightly too
+     wide (long unbroken memory text, or the skills two-column row). Clip X
+     explicitly — inner code blocks keep their own overflow-x:auto. */
+  overflow-x: hidden;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.memory-tab-panel.hidden { display: none; }
+/* Browse: bounded flex column so #memory-list gets remaining height (not 0px).
+   height:min(78vh,max-content) gives a definite cap when long, natural height
+   when short. flex-basis:auto (not 0) on the list avoids collapse in auto-sized
+   parents. Toolbar siblings are flex-shrink:0; only #memory-list grows. */
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) {
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  height: 78vh;
+  overflow: hidden;
+}
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) .modal-header,
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) .memory-tabs {
+  flex: 0 0 auto;
+}
+#memory-modal .memory-modal-content:has(
+  .memory-tab-panel[data-memory-panel="browse"]:not(.hidden)
+) .memory-modal-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] > .admin-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] > .admin-card > *:not(#memory-list):not(#memory-suggestions-body) {
+  flex: 0 0 auto;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] #memory-list:not(.hidden),
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] #memory-suggestions-body:not(.hidden) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="browse"] #memory-suggestions-body:not(.hidden) .memory-suggestions-header {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+#memory-modal .memory-tab-panel[data-memory-panel].hidden {
+  display: none;
+}
+/* Settings cards dim + mute when their toggle is OFF (matches the
+   .memory-toolbar-toggle "off" treatment elsewhere). */
+#memory-modal .memory-tab-panel[data-memory-panel="settings"] .admin-card {
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+}
+#memory-modal .memory-tab-panel[data-memory-panel="settings"] .admin-card:has(.admin-switch input:not(:checked)) {
+  opacity: 0.55;
+  border-color: color-mix(in srgb, var(--fg) 8%, transparent);
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+/* Skills tab — two-column layout: skills list (left, wider) + Add Skill
+   form (right, narrower). Collapses to a single column on narrow screens. */
+.memory-tab-panel[data-memory-panel="skills"] {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+}
+.memory-tab-panel[data-memory-panel="skills"] > .admin-card:first-of-type {
+  flex: 2 1 0;
+  min-width: 0;
+}
+/* The shared chip-scroll frame is a flex-growing row by default. In the
+   vertical Skills card it must stay content-sized so #skills-list keeps the
+   remaining height for the skill cards. */
+.memory-tab-panel[data-memory-panel="skills"] > .admin-card > .doclib-chip-scroll-frame {
+  flex: 0 0 auto;
+  min-height: 25px;
+}
+.memory-tab-panel[data-memory-panel="skills"] > .admin-card:nth-of-type(2) {
+  flex: 1 1 0;
+  margin-top: 0 !important;
+  min-width: 220px;
+}
+@media (max-width: 640px) {
+  .memory-tab-panel[data-memory-panel="skills"] { flex-direction: column; }
+  .memory-tab-panel[data-memory-panel="skills"] > .admin-card:nth-of-type(2) {
+    margin-top: 12px !important;
+  }
+}
+.memory-desc {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  /* 65% keeps this description text above WCAG AA 4.5:1 (50% was ~3.9:1). */
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+
+.memory-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  height: 32px;
+}
+
+/* Skill Import beside URL field — match input height; cancel modal-body button margin. */
+.memory-add-row .theme-io-btn {
+  flex: none;
+  height: 28px;
+  box-sizing: border-box;
+  margin-top: 0;
+  padding: 5px 10px;
+}
+
+.memory-add-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+/* Textareas need explicit vertical padding — inputs vertically center text
+   via line-height/height; textareas would otherwise pin text to the top. */
+textarea.memory-add-input {
+  height: auto;
+  padding: 6px 10px;
+  line-height: 1.4;
+}
+
+.memory-add-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+.memory-add-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 16px;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.memory-add-btn:hover {
+  background: var(--panel);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.memory-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 8px;
+}
+
+.memory-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+
+
+.memory-toolbar-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size: 11px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+
+
+.memory-toolbar-btn:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
+.memory-toolbar-btn.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+.email-note-actions .memory-toolbar-btn.active:hover {
+  color: var(--fg);
+}
+
+.memory-toolbar-btn.danger {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.memory-toolbar-btn.danger:hover {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.memory-toolbar-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  outline: none;
+}
+.memory-toolbar-btn.spinning {
+  border-color: transparent;
+  background: none;
+}
+.memory-toolbar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  height: 24px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  cursor: pointer;
+  padding: 0 4px;
+  user-select: none;
+  transition: all 0.15s;
+}
+.memory-toolbar-toggle:hover {
+  color: var(--fg);
+}
+.memory-toolbar-toggle .admin-switch {
+  vertical-align: middle;
+}
+.memory-toolbar-toggle:has(input:not(:checked)) {
+  opacity: 0.7;
+}
+
+/* Bulk action bar */
+.memory-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  margin-bottom: 2px;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+  font-size: 11px;
+}
+
+.memory-bulk-bar.hidden {
+  display: none;
+}
+
+/* Custom Memory sort picker — replaces the native <select> so each
+   option can carry its own SVG icon. Themed to match .email-filter-btn. */
+.memory-sort-picker {
+  position: relative;
+  top: 0;
+  flex-shrink: 0;
+}
+.memory-sort-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+.memory-sort-btn:hover { border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border)); }
+.memory-sort-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+.memory-sort-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.memory-sort-icon-cur {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.memory-sort-icon-cur svg { width: 13px; height: 13px; }
+.memory-sort-caret {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform 0.15s;
+}
+
+.memory-sort-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 140px;
+  z-index: 100;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+  padding: 4px;
+}
+.memory-sort-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+  box-sizing: border-box;
+}
+.memory-sort-item:hover,
+.memory-sort-item:focus-visible {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.memory-sort-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.memory-sort-item-icon svg { width: 13px; height: 13px; }
+.memory-sort-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Enabled/Disabled text label next to an admin toggle.
+   Matches the .memory-desc treatment (same color + 11px size) so it
+   visually belongs to the section description, not the switch. */
+.admin-toggle-state {
+  font-size: 10px;
+  line-height: 1.5;
+  font-weight: normal;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+}
+.admin-card > div:has(.admin-switch input) .admin-toggle-state::before {
+  content: "Disabled";
+}
+.admin-card > div:has(.admin-switch input:checked) .admin-toggle-state::before {
+  content: "Enabled";
+}
+/* Nudge the bulk-bar action buttons up 2px (and Memory's -2px left) to
+   align with the row baseline. Covers both the Memory bulk bar
+   (Cancel/Delete) and the Skills bulk bar (Cancel/Approve/Delete) — both
+   live inside #memory-modal. */
+#memory-modal .memory-bulk-bar #memory-bulk-cancel,
+#memory-modal .memory-bulk-bar #memory-bulk-delete {
+  position: relative;
+  top: -3px;
+  left: -2px;
+}
+#memory-modal .memory-bulk-bar #skills-bulk-cancel,
+#memory-modal .memory-bulk-bar #skills-bulk-publish,
+#memory-modal .memory-bulk-bar #skills-bulk-audit,
+#memory-modal .memory-bulk-bar #skills-bulk-delete-nonpassing,
+#memory-modal .memory-bulk-bar #skills-bulk-delete {
+  position: relative;
+  top: -2px;
+}
+#skills-bulk-bar #skills-bulk-delete-nonpassing {
+  margin-left: auto;
+}
+#skills-select-btn .memory-select-btn-icon {
+  position: relative;
+  top: -2px;
+}
+#doclib-research-bulk .memory-toolbar-btn {
+  position: relative;
+  top: 3px;
+  right: 16px;
+}
+/* Archive bulk buttons — nudge down 1px to match research. */
+#doclib-arc-bulk .memory-toolbar-btn {
+  position: relative;
+  top: 1px;
+}
+/* Same right-aligned layout for the other bulk bars — Chats, Documents,
+   Archive, Skills, Memories. Cancel's auto-margin pushes the action group
+   to the right; 8px of extra right padding seats it off the edge (matching
+   the research bar's 8px nudge). */
+#doclib-chats-bulk #doclib-chats-bulk-archive,
+#doclib-bulk-bar #doclib-bulk-archive,
+#doclib-arc-bulk #doclib-arc-bulk-restore,
+#email-lib-bulk #email-lib-bulk-actions,
+#tasks-bulk-bar #tasks-bulk-delete,
+#serve-bulk-bar #serve-bulk-delete,
+#gallery-bulk-bar #gallery-bulk-actions,
+#gallery-editor-drafts-bulk #gallery-editor-drafts-bulk-delete,
+#memory-modal .memory-bulk-bar #memory-bulk-delete,
+#memory-modal .memory-bulk-bar #skills-bulk-publish {
+  margin-left: auto;
+  position: relative;
+  top: -1px;
+}
+
+/* X-icon Cancel button used in every bulk-select bar (Esc target). The bare SVG
+   sits slightly too high vs. the adjacent text buttons — nudge it down 2px. */
+[id$="-bulk-cancel"] {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+[id$="-bulk-cancel"]:hover {
+  background: color-mix(in srgb, var(--red) 24%, transparent);
+  border-color: var(--red);
+  color: var(--red);
+}
+[id$="-bulk-cancel"] svg {
+  width: 12px;
+  height: 12px;
+  position: relative;
+  top: 2px;
+}
+#doclib-chats-bulk,
+#doclib-bulk-bar,
+#doclib-arc-bulk,
+#email-lib-bulk,
+#tasks-bulk-bar,
+#serve-bulk-bar,
+#gallery-bulk-bar,
+#gallery-editor-drafts-bulk,
+#memory-modal .memory-bulk-bar {
+  padding-right: 18px;
+}
+#email-lib-bulk-delete.email-bulk-loading,
+#email-lib-bulk-actions.email-bulk-loading,
+#tasks-bulk-delete.tasks-bulk-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0.9;
+  cursor: wait;
+}
+#email-lib-bulk-delete.email-bulk-loading .email-bulk-whirlpool,
+#email-lib-bulk-actions.email-bulk-loading .email-bulk-whirlpool,
+#tasks-bulk-delete.tasks-bulk-loading .tasks-bulk-whirlpool {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  position: relative;
+  top: -1px;
+}
+#email-lib-bulk-delete.email-bulk-loading .email-bulk-loading-label,
+#email-lib-bulk-actions.email-bulk-loading .email-bulk-loading-label,
+#tasks-bulk-delete.tasks-bulk-loading .tasks-bulk-loading-label {
+  position: relative;
+  top: 0;
+}
+/* Nudge the whole memory + skills bulk buttons (icon + label together) up. */
+#memory-modal #memory-bulk-bar .memory-toolbar-btn,
+#memory-modal #skills-bulk-bar .memory-toolbar-btn {
+  position: relative;
+  top: -2px;
+}
+
+.memory-bulk-check-all {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  user-select: none;
+  position: relative;
+  top: 0;
+}
+.memory-bulk-check-all:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+#memory-selected-count {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-size: 10px;
+  flex: 1;
+}
+
+/* Custom checkbox — toggle dot (shared by select-all and per-item) */
+.memory-select-cb,
+.memory-bulk-check-all input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 6px !important;
+  height: 6px !important;
+  min-width: 6px;
+  min-height: 6px;
+  max-width: 6px;
+  max-height: 6px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+  align-self: center;
+  position: relative;
+  box-sizing: content-box;
+  transition: all 0.15s;
+}
+
+.memory-select-cb:hover,
+.memory-bulk-check-all input:hover {
+  border-color: var(--red);
+}
+
+.memory-select-cb:checked,
+.memory-bulk-check-all input:checked {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.memory-count {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.memory-search-input {
+  height: 24px;
+  margin-top: 6px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.memory-search-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+.memory-list {
+  flex: 1;
+  min-height: 0;             /* Required so flex:1 inside a flex parent can shrink rather than push its parent past 85vh */
+  overflow-y: auto;
+  overflow-x: hidden;        /* Stop the synapse sweep from triggering a sideways scrollbar */
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.memory-item.task-paused {
+  opacity: 0.45 !important;
+  filter: saturate(0.55);
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--fg) 2%, transparent),
+    color-mix(in srgb, var(--fg) 2%, transparent) 8px,
+    color-mix(in srgb, var(--fg) 5%, transparent) 8px,
+    color-mix(in srgb, var(--fg) 5%, transparent) 16px
+  ) !important;
+}
+.task-status-badge {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 0;
+  height: 20px;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid transparent;
+  line-height: 1;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease, filter 0.12s ease;
+  user-select: none;
+}
+.task-state-badge > svg,
+.task-state-badge > .task-state-label {
+  pointer-events: none;
+}
+.task-state-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.task-state-label-mobile {
+  display: none;
+}
+.task-paused-badge {
+  color: var(--orange, #ffb86c);
+  background: color-mix(in srgb, var(--orange, #ffb86c) 22%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 35%, transparent);
+}
+.task-active-badge {
+  color: var(--green, #50fa7b);
+  background: color-mix(in srgb, var(--green, #50fa7b) 20%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
+}
+.task-run-now-badge {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 34%, transparent);
+}
+.task-card-run-btn {
+  appearance: none;
+  height: 20px;
+  min-height: 0;
+  box-sizing: border-box;
+  position: relative;
+  top: -6px;
+}
+.task-state-badge svg {
+  position: relative;
+  top: 0;
+}
+.task-status-badge:hover {
+  filter: brightness(1.08) saturate(1.15);
+}
+.task-paused-badge:hover {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 30%, transparent);
+  border-color: color-mix(in srgb, var(--orange, #ffb86c) 55%, transparent);
+}
+.task-active-badge:hover {
+  background: color-mix(in srgb, var(--green, #50fa7b) 28%, transparent);
+  border-color: color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
+}
+.task-run-now-badge:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 52%, transparent);
+}
+
+.task-builtin-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.task-builtin-badge.modified {
+  color: var(--orange, #ff9800);
+  border-color: color-mix(in srgb, var(--orange, #ff9800) 40%, transparent);
+  background: color-mix(in srgb, var(--orange, #ff9800) 12%, transparent);
+}
+.memory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  max-height: 200px;
+  flex-shrink: 0;        /* memory-list is a flex column; without this, items get squeezed to fit */
+  transition: all 0.15s;
+}
+
+.memory-item-title {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-item:hover,
+.doclib-card:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+/* Synapse pulse — a brief horizontal light sweep runs left → right across
+   each memory like a signal traversing a neural pathway. Per-item stagger
+   via nth-child + varied durations keeps the list shimmering rather than
+   pulsing in sync. */
+#memory-list .memory-item {
+  position: relative;
+  overflow: hidden;
+}
+#memory-list .memory-item::after {
+  /* Sweep highlight rides the border ring only — gradient-fill + mask cutout
+     keeps the bright pulse on the 1px stroke instead of washing the body. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    transparent calc(var(--sweep, -20%) - 8%),
+    color-mix(in srgb, var(--red) 85%, transparent) var(--sweep, -20%),
+    transparent calc(var(--sweep, -20%) + 8%),
+    transparent 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: memory-synapse-sweep 6.2s linear infinite;
+  animation-delay: 0.4s;
+}
+#memory-list .memory-item:nth-child(2n)::after { animation-duration: 7.4s; animation-delay: 1.6s; }
+#memory-list .memory-item:nth-child(3n)::after { animation-duration: 8.8s; animation-delay: 3.2s; }
+#memory-list .memory-item:nth-child(5n)::after { animation-duration: 9.3s; animation-delay: 4.7s; }
+#memory-list .memory-item:nth-child(7n)::after { animation-duration: 5.5s; animation-delay: 2.3s; }
+#memory-list .memory-item:hover::after { animation: none; opacity: 0; }
+@property --sweep {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: -20%;
+}
+@media (prefers-reduced-motion: reduce) {
+  #memory-list .memory-item::after { animation: none; opacity: 0; }
+}
+.memory-pinned:hover {
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+  border-color: var(--border);
+  border-left-color: var(--red);
+}
+
+.memory-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.memory-item-text {
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+  color: var(--fg);
+}
+
+.memory-item-edit-input {
+  flex: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--red);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 0;
+}
+
+
+/* Edit row: text input + category select side by side */
+.memory-edit-row {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.memory-edit-cat-select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 9px;
+  padding: 2px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+
+/* The Add-memory category select uses the same semantic control as inline
+   editing, but needs the full-size add-row dimensions. */
+.memory-add-row .memory-edit-cat-select {
+  height: 28px;
+  min-width: 92px;
+  box-sizing: border-box;
+  border-color: var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+
+.memory-item-editing {
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  background: color-mix(in srgb, var(--red) 3%, transparent);
+}
+
+.memory-menu-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--color-muted);
+  font-size: 18px;
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memory-item:hover .memory-menu-btn {
+  opacity: 1;
+}
+
+.memory-menu-btn:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.memory-item-dropdown {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: auto;
+  width: max-content;
+}
+
+.memory-item-dropdown .dropdown-item-compact {
+  padding: 6px 8px;
+  font-size: 11px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.memory-item-dropdown .dropdown-item-compact:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.memory-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.memory-item:hover .memory-item-actions {
+  opacity: 1;
+}
+
+/* Skill rows show actions at a dim opacity by default so view/run/delete are
+   always discoverable, then brighten on hover. */
+.memory-item.skill-row .memory-item-actions {
+  opacity: 0.35;
+  position: relative;
+  top: -1px;
+}
+.memory-item.skill-row:hover .memory-item-actions {
+  opacity: 1;
+}
+
+.memory-item-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--color-muted);
+  font-size: 11px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+}
+@media (max-width: 768px) {
+  /* Nudge the ••• menu button up on mobile so it visually aligns with the
+     title row rather than sitting a hair below it. */
+  .memory-item-actions .memory-item-btn { transform: translateY(-3px); }
+  /* Email rows sit on a slightly different baseline (extra meta row /
+     nav-arrows cluster), so pull the menu button back down 1px. */
+  #email-lib-modal .memory-item-actions .memory-item-btn { transform: translateY(-2px); }
+  /* Base rule above hides .memory-item-actions until hover. Mobile has no
+     hover → the ⋮ button in cookbook serve / library cards was invisible
+     and effectively unclickable. Force-show on mobile. */
+  .memory-item-actions { opacity: 0.7 !important; }
+  .memory-item-actions .memory-item-btn {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+  }
+}
+
+/* Research-preview sub-sections — used by the research-tab expand pattern. */
+.doclib-research-section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin: 8px 0 4px;
+}
+.doclib-research-sources ol {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.doclib-research-sources a {
+  color: var(--accent, var(--red));
+  text-decoration: none;
+}
+.doclib-research-sources a:hover { text-decoration: underline; }
+.doclib-research-summary {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.doclib-research-summary p { margin: 4px 0; }
+
+.memory-item-btn:hover {
+  color: var(--fg);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+
+.memory-item-btn.delete:hover {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.memory-item-btn.save {
+  color: var(--red);
+}
+
+.memory-item-btn.save:hover {
+  border-color: var(--red);
+}
+
+.memory-item-btn.pin {
+  padding: 1px 4px;
+  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.memory-item-btn.pin.active {
+  opacity: 1;
+}
+.memory-pin-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg);
+  opacity: 0.5;
+  transition: all 0.15s;
+}
+.memory-item-btn.pin.active .memory-pin-dot {
+  background: var(--red);
+  opacity: 1;
+}
+.memory-pinned {
+  border-left: 3px solid var(--red);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 4%, transparent);
+}
+.memory-pinned .memory-item-actions {
+  opacity: 1;
+}
+.memory-pinned .memory-item-actions .memory-item-btn:not(.pin) {
+  opacity: 0;
+}
+.memory-pinned:hover .memory-item-actions .memory-item-btn:not(.pin) {
+  opacity: 1;
+}
+
+/* Category filter chips */
+.memory-category-filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.memory-cat-chip {
+  background: none;
+  border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size: 10px;
+  height: 22px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  text-transform: lowercase;
+}
+
+.memory-cat-chip:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.memory-cat-chip.active {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+}
+
+@media (max-width: 768px) {
+  .memory-category-filters:has(.memory-cat-chip),
+  .gallery-tag-chips,
+  .gallery-album-chips,
+  .gallery-ai-tags {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    touch-action: pan-x;
+  }
+  .memory-category-filters:has(.memory-cat-chip)::-webkit-scrollbar,
+  .gallery-tag-chips::-webkit-scrollbar,
+  .gallery-album-chips::-webkit-scrollbar,
+  .gallery-ai-tags::-webkit-scrollbar {
+    display: none;
+  }
+  .memory-category-filters:has(.memory-cat-chip) .memory-cat-chip,
+  .gallery-tag-chips .gallery-chip,
+  .gallery-album-chips .gallery-chip,
+  .gallery-ai-tags .gallery-ai-chip {
+    flex: 0 0 auto;
+  }
+}
+
+/* Sort select — styled to match the .email-filter-btn look:
+   appearance reset + custom caret so the native chevron doesn't
+   collide with our icon/border treatment. */
+.memory-sort-select {
+  position: relative;
+  top: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  height: 24px;
+  padding: 0 22px 0 8px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 10px 10px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.memory-sort-select:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
+}
+.memory-sort-select:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+/* Memory sort wrapper: positions the SVG icon over the left
+   edge of the native <select>, mirroring the email filter btn. */
+.memory-sort-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  left: -2px;
+}
+.memory-sort-wrap .memory-sort-select {
+  padding-left: 26px;
+}
+.memory-sort-icon {
+  position: absolute;
+  left: 7px;
+  top: calc(50% + 1px);
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: var(--accent, var(--red));
+  pointer-events: none;
+  z-index: 1;
+}
+.memory-sort-icon svg { width: 13px; height: 13px; }
+
+.email-folder-picker {
+  position: relative;
+  top: 0;
+}
+.email-folder-picker-icon {
+  position: absolute;
+  left: 8px;
+  top: calc(50% + 3px);
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: var(--accent, var(--red));
+  pointer-events: none;
+  z-index: 1;
+}
+.email-folder-picker-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Custom email filter picker (All / Unread / Favorites / …). Replaces the
+   native <select> so options can carry SVG icons. The hidden source
+   <select id="email-lib-filter"> is the value store and dispatches
+   'change' on selection. */
+.email-filter-picker {
+  position: relative;
+  top: 3px;
+}
+/* Desktop nudge — sits 2px higher than the mobile default so it aligns
+   with the neighbouring memory-sort-select baseline. */
+@media (min-width: 769px) {
+  .email-filter-picker { top: 1px; }
+}
+.email-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  height: 24px;
+  padding: 0 8px 0 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+  position: relative;
+  top: -4px;
+}
+.email-filter-btn:hover { border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border)); }
+.email-filter-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent, var(--red));
+}
+.email-filter-current {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-filter-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.email-filter-icon svg { width: 13px; height: 13px; }
+.email-filter-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.email-filter-caret {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform 0.15s;
+}
+.email-filter-picker .email-filter-btn[aria-expanded="true"] .email-filter-caret {
+  transform: rotate(180deg);
+}
+
+.email-filter-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: auto;
+  z-index: 100;
+  width: max(100%, 190px);
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.email-filter-menu[hidden] { display: none; }
+.email-filter-menu-title {
+  padding: 5px 9px 4px;
+  color: var(--fg-muted, var(--fg));
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .email-filter-menu {
+    width: min(210px, calc(100vw - 24px));
+  }
+  .email-folder-menu {
+    width: min(230px, calc(100vw - 24px));
+  }
+}
+.email-filter-group {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  opacity: 0.55;
+  padding: 8px 9px 3px;
+}
+.email-filter-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg);
+  box-sizing: border-box;
+}
+.email-filter-item:hover,
+.email-filter-item:focus-visible {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.email-filter-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.email-filter-item-icon svg { width: 13px; height: 13px; }
+.email-filter-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Item metadata row */
+.memory-item-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Category badge on each item */
+.memory-cat-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--accent, var(--red));
+  text-transform: lowercase;
+}
+
+.memory-cat-identity {
+  background: color-mix(in srgb, var(--hl-function) 15%, transparent);
+  color: var(--hl-function);
+}
+.memory-cat-preference {
+  background: color-mix(in srgb, var(--hl-keyword) 15%, transparent);
+  color: var(--hl-keyword);
+}
+.memory-cat-contact {
+  background: color-mix(in srgb, #98c379 15%, transparent);
+  color: #98c379;
+}
+.memory-cat-project {
+  background: color-mix(in srgb, var(--hl-string) 15%, transparent);
+  color: var(--hl-string);
+}
+.memory-cat-goal {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
+}
+.memory-cat-task {
+  background: color-mix(in srgb, #d19a66 15%, transparent);
+  color: #d19a66;
+}
+.memory-cat-pinned {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
+}
+
+/* Source and time metadata */
+.memory-item-source,
+.memory-item-time,
+.memory-item-uses {
+  font-size: 9px;
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+.memory-item-uses {
+  font-family: monospace;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+
+/* Empty state */
+.memory-empty {
+  padding: 24px 16px;
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  text-align: center;
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Suggestions area */
+.memory-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Bound the import-review list to the modal like the sibling .memory-list,
+     so a long list scrolls internally instead of overflowing the
+     overflow:hidden .admin-card — which clipped lower entries and their
+     save/discard controls with no usable scroll area. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Small gutter so the scrollbar doesn't sit flush against the item cards. */
+  padding-right: 4px;
+}
+
+.memory-suggestions.hidden {
+  display: none;
+}
+
+.memory-suggestions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  /* Pin the title + save all/back controls to the top of the scrolling
+     review list so they stay reachable while the items scroll under them.
+     Opaque background masks items passing beneath. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+.memory-suggestions-actions,
+.memory-suggestion-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}

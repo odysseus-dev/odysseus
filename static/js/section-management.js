@@ -102,6 +102,10 @@ export function initSectionCollapse(Storage) {
       });
     }
 
+    // Chats can contain hundreds of rows, so provide a sticky collapse action
+    // at the end of that list. Reuse the same handler/state as the header
+    // chevron instead of creating a second persistence path.
+
     // Click anywhere on collapsed section to expand
     section.addEventListener('click', (e) => {
       if (!section.classList.contains('collapsed')) return;

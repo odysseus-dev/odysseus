@@ -7,6 +7,8 @@ from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 from starlette.requests import Request
 
+from src.path_confinement import is_inside
+
 logger = logging.getLogger(__name__)
 
 def read_if_exists(path: str) -> str:
@@ -51,11 +53,4 @@ def serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
 
 def inside_base_dir(base_dir: str, path: str) -> bool:
     """Check if path is inside base directory."""
-    if not isinstance(base_dir, str) or not isinstance(path, str):
-        return False
-    base = os.path.realpath(base_dir)
-    p = os.path.realpath(path)
-    try:
-        return os.path.commonpath([base, p]) == base
-    except Exception:
-        return False
+    return is_inside(base_dir, path)

@@ -15,6 +15,13 @@ reference; that file is the standard the refactor works toward.
 
 ## Running focused subsets (taxonomy markers)
 
+The shared static-server fixture binds an ephemeral loopback port and publishes
+`ODYSSEUS_TEST_STATIC_ORIGIN` to browser tests and their Node subprocesses.
+`ODYSSEUS_TEST_STATIC_PORT` can pin a port for an external client; leave it unset
+for parallel runs. An occupied explicit port is refused rather than reused. The
+server handles each connection on its own thread, so a speculative browser
+connection that never sends a request cannot stall the requests behind it.
+
 `tests/conftest.py` tags every test at collection time with two markers derived
 from its filename by `tests/_taxonomy.py`: an `area_*` marker (e.g.
 `area_security`) and a finer `sub_*` marker (e.g. `sub_owner_scope`). This adds
@@ -32,6 +39,8 @@ matches no area keyword falls back to `area_uncategorized` with its filename as
 the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
 `sub_*` names are registered before collection by `pytest_configure` in
 `tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
+
+The full suite does not come back clean on every machine. [KNOWN_FAILURES.md](KNOWN_FAILURES.md) lists which failures are expected, which are test bugs worth fixing, and the prerequisites a clean run needs; anything not on that list is a regression until shown otherwise.
 
 For common focused runs, use `tests/run_focus.py`. It validates area and
 sub-area names, accepts sub-areas with or without the `sub_` prefix, and passes
@@ -82,6 +91,76 @@ fast lane; the test stays runnable directly, e.g.:
 ./venv/bin/python -m pytest tests/test_auth_config_lock_concurrency.py
 ./venv/bin/python -m pytest -m slow
 ```
+
+## Parallel shards (`--shard N/M`)
+
+CI no longer runs the whole suite as one workload. The `python-tests` job is a
+four-way matrix, and each job runs one section:
+
+```bash
+./venv/bin/python -m pytest -q --shard 1/4
+```
+
+`tests/_shards.py` owns the partition and `tests/conftest.py` applies it. The
+unit of a shard is a **test file**, so tests that share module state stay
+together, and assignment is a total function of the file path - every file
+lands in exactly one shard, and the four shards together run every test exactly
+once. The partition is deliberately *not* built on the `area_*` markers: those
+do not partition the suite, because a file may carry a hand-applied `area_*`
+mark on top of the one derived from its filename.
+
+Sharding deselects; it does not narrow collection. Every test module is still
+imported, in the same order, in every shard, so the import-time stubbing in
+`conftest.py` behaves identically whether the suite runs whole or in sections.
+Only the deselected tests' call phase is skipped.
+
+Balance comes from the `slow` marker: a `slow` item is weighted far above an
+ordinary one, and files are packed heaviest-first into the lightest shard. The
+plan depends only on the collected file set, so every parallel job computes the
+same one from the same commit. As more tests earn a `slow` mark from duration
+evidence, the sections even out further - no duration table to keep current.
+
+`--shard 1/1` is a no-op, and a selector that is malformed or out of range ends
+the run with a usage error rather than quietly testing a subset. If you change
+the shard count, change `DEFAULT_SHARD_COUNT` and the `ci.yml` matrix together;
+`tests/test_shards.py` fails when they drift apart.
+
+## Local pytest workers
+
+Install the application environment and parallel test tooling with
+`python -m pip install -r requirements-dev.txt`. Parallelism is opt-in; ordinary
+pytest remains serial, and the four CI shards are unchanged.
+
+```bash
+python -m pytest -q -n 4 -p no:cacheprovider --max-worker-restart=0
+python -m pytest -q -n 0 -p no:cacheprovider  # full serial release oracle
+```
+
+See [the Wave 6 measurements](WAVE6_TEST_PERFORMANCE_REPORT.md) before choosing
+a worker count. `-n auto` uses physical cores through xdist's psutil extra; it
+still needs enough memory for each worker's collection and application imports.
+
+Before collection, `tests.helpers.worker_runtime` gives each process private
+data, attachment, embedding-cache, browser-runtime, and temporary directories.
+pytest's basetemp is the controller root's `pytest` directory, with xdist's
+`popen-gw<n>` beneath it, which keeps `tmp_path` Unix sockets inside the
+107-byte path limit. An explicit `--basetemp` still wins.
+An atomic random suffix separates concurrent invocations with the same worker
+label; paths inside the root have stable names. Function fixtures still own
+their databases and test-specific state. Normal teardown removes the root and
+restores the environment. A hard-killed standalone process can leave its owned
+root behind, but later runs allocate a fresh namespace and never adopt it.
+
+`APP_PORT` opts into tests against an externally launched smoke application.
+Run that suite with `-n 0` so its accounts, endpoints, and application data have
+one owner. Unset `APP_PORT` for ordinary unit/regression invocations. Selected
+live smoke tests are rejected under xdist with a collection failure; `-m
+"not serial"` may exclude them. The existing smoke skips when no application
+is launched remain visible in full-suite counts.
+
+Measurements disable pytest's advisory cache to keep concurrent invocations
+from sharing last-failed metadata. They also disable worker restart so crashes
+remain immediately visible. No test retries or default worker count are added.
 
 ## Order-sensitivity reporting (report-only)
 
@@ -137,6 +216,50 @@ The runner propagates pytest's exit code, so it composes with normal local
 workflows; "report-only" means it is not a CI gate, not that failures are
 swallowed.
 
+## CSS computed-style snapshot
+
+`tests/test_css_computed_style_snapshot.py` pins the rendered result of
+the shipped ordered stylesheet cascade, whose behavior depends on source order,
+by hashing `getComputedStyle` over a fixed element inventory across pages,
+viewports, themes and density modes. Any PR that moves CSS has to produce an
+identical digest or explain why it did not.
+
+```bash
+./venv/bin/python -m pytest tests/test_css_computed_style_snapshot.py
+./venv/bin/python scripts/css_snapshot.py --check            # standalone, no pytest
+./venv/bin/python scripts/css_snapshot.py --write-baseline   # re-record, deliberately
+```
+
+The inventory, the baseline and the capture live in `tests/css_snapshot/`;
+`tests/css_snapshot/README.md` documents what is covered, what is deliberately
+not, and how to find the property that moved when it fails. The run takes about
+21 seconds and skips when `npm ci` has not been run.
+
+## Release smoke suite
+
+`tests/smoke/` drives every advertised feature area once, end to end,
+against a real instance - the safety net the unit suite does not provide
+for a route move or a module split. One command boots the worktree and
+runs it:
+
+```bash
+scripts/odysseus-smoke              # boot, run every area, stop again
+scripts/odysseus-smoke --keep-up    # leave the instance running
+scripts/odysseus-smoke --areas      # the coverage table, without booting
+```
+
+It reads its target instance out of the environment (`APP_PORT` through
+`internal_api_base()`, plus the dev admin account), so under a plain
+`pytest` with nothing booted every scenario skips with the reason and
+the full suite stays green. Models are served by a deterministic
+loopback stub, never a live endpoint; email uses the repo's existing
+`ODYSSEUS_EMAIL_FIXTURE` path.
+
+The report is a per-area table that also prints the areas the suite
+deliberately does not cover, so it cannot be read as coverage of
+everything it omits. `tests/smoke/README.md` documents what is in each
+list and why.
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.
@@ -152,6 +275,22 @@ swallowed.
 The helpers below live under `tests/helpers/`. They exist to remove repeated
 boilerplate that already appeared across multiple tests. Reach for one only when
 your test matches its intended use; do not stretch a helper to cover a new case.
+
+### `tests.helpers.stylesheets.app_css`
+
+Use when a test asserts on a CSS rule.
+
+- Returns every app stylesheet concatenated in the order `static/index.html`
+  loads them, which is the order the cascade actually has.
+- App styles live across an ordered cascade; reading one fragment alone ties
+  the test to whichever file a rule sits in today, so it goes red
+  when a rule moves without the rendered page changing.
+- `stylesheet_paths()` and `stylesheet_urls()` are there when a test needs the
+  files or the request URLs rather than their contents.
+  `stylesheet_link_tags()` returns the `<link>` markup for a synthetic page
+  driven through Playwright, so it gets the whole shipped cascade.
+- All of them fail loudly if `index.html` links a stylesheet that is missing.
+- Not for vendored CSS under `static/lib/`, which they deliberately skip.
 
 ### `tests.helpers.cli_loader.load_script`
 

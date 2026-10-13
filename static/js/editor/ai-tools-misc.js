@@ -25,16 +25,18 @@
  *   renderLayerPanel:    () => void,
  *   spinnerModule:       object,
  *   uiModule:            object,
+ *   openAdjustmentLayer: (type: string, anchor: HTMLElement) => void,
  * }} deps
  *
  * @returns {{ addEmptyLayer: () => void }}
  */
 import { state } from './state.js';
+import { beginAIOperation, decodeAIImage } from './ai-operation.js';
 
 export function wireAIToolsMisc({
   apiBase, buildLayerBodyMask, buildSeamMask, applyImageTool,
   flatten, saveState, fitZoom, composite, createLayer, renderLayerPanel,
-  spinnerModule, uiModule,
+  spinnerModule, uiModule, openAdjustmentLayer,
 }) {
   // ── Harmonize sliders — Color match + Seam fix ──
   const harmColorPrev = document.getElementById('ge-harmonize-color-preview');
@@ -103,7 +105,7 @@ export function wireAIToolsMisc({
   document.getElementById('ge-upscale-ai')?.addEventListener('click', async () => {
     const btn = document.getElementById('ge-upscale-ai');
     const origHTML = btn.innerHTML;
-    btn.disabled = true;
+    const operation = beginAIOperation(btn, () => uiModule?.showToast('Upscale cancelled'));
     let upWp = null;
     try {
       upWp = spinnerModule.createWhirlpool(14);
@@ -118,6 +120,7 @@ export function wireAIToolsMisc({
       const flat = flatten();
       const imageB64 = flat.toDataURL('image/png').split(',')[1];
       const res = await fetch('/api/image/upscale-local', {
+        signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imageB64, scale: 2 }),
@@ -125,8 +128,9 @@ export function wireAIToolsMisc({
       if (!res.ok) throw new Error('Server returned ' + res.status);
       const data = await res.json();
       if (data.image) {
-        const img = new Image();
-        img.onload = () => {
+        const img = await decodeAIImage(data.image, operation.signal);
+        operation.signal.throwIfAborted();
+        {
           if (!state.editorOpen) return;
           saveState();
           const newW = img.width, newH = img.height;
@@ -143,17 +147,18 @@ export function wireAIToolsMisc({
           composite();
           renderLayerPanel();
           uiModule.showToast(`AI upscaled to ${newW}×${newH}`);
-        };
-        img.src = 'data:image/png;base64,' + data.image;
+        }
       } else {
         throw new Error(data.error || 'No image returned');
       }
     } catch (e) {
-      uiModule.showToast('AI upscale failed: ' + e.message);
+      if (!operation.signal.aborted) uiModule.showToast('AI upscale failed: ' + e.message);
+    } finally {
+      operation.finish();
+      try { upWp?.destroy(); } catch (_) {}
+      btn.disabled = false;
+      btn.innerHTML = origHTML;
     }
-    try { upWp?.destroy(); } catch (_) {}
-    btn.disabled = false;
-    btn.innerHTML = origHTML;
   });
 
   // ── Style transfer ──
@@ -165,7 +170,9 @@ export function wireAIToolsMisc({
     const prompt = document.getElementById('ge-style-prompt').value.trim();
     if (!prompt) { uiModule.showToast('Enter a style prompt'); return; }
     const strength = parseInt(document.getElementById('ge-style-strength').value) / 100;
-    btn.disabled = true; btn.textContent = 'Applying...';
+    const originalHTML = btn.innerHTML;
+    const operation = beginAIOperation(btn, () => uiModule?.showToast('Style transfer cancelled'));
+    btn.textContent = 'Applying...';
     try {
       const flat = flatten();
       const blob = await new Promise(r => flat.toBlob(r, 'image/png'));
@@ -173,12 +180,13 @@ export function wireAIToolsMisc({
       fd.append('image', blob, 'style.png');
       fd.append('prompt', prompt);
       fd.append('strength', String(strength));
-      const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd });
+      const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd, signal: operation.signal });
       if (!res.ok) throw new Error('Server returned ' + res.status);
       const data = await res.json();
       if (data.image) {
-        const img = new Image();
-        img.onload = () => {
+        const img = await decodeAIImage(data.image, operation.signal);
+        operation.signal.throwIfAborted();
+        {
           if (!state.editorOpen) return;
           saveState();
           const layer = createLayer('Styled: ' + prompt.substring(0, 20), state.imgWidth, state.imgHeight);
@@ -188,15 +196,17 @@ export function wireAIToolsMisc({
           composite();
           renderLayerPanel();
           uiModule.showToast('Style applied');
-        };
-        img.src = 'data:image/png;base64,' + data.image;
+        }
       } else {
         throw new Error(data.error || 'No image returned');
       }
     } catch (e) {
-      uiModule.showToast('Style transfer failed: ' + e.message);
+      if (!operation.signal.aborted) uiModule.showToast('Style transfer failed: ' + e.message);
+    } finally {
+      operation.finish();
+      btn.disabled = false;
+      btn.innerHTML = originalHTML;
     }
-    btn.disabled = false; btn.textContent = 'Apply Style';
   });
 
   // ── Add empty layer (used by the layer-panel header button + the
@@ -210,7 +220,52 @@ export function wireAIToolsMisc({
     renderLayerPanel();
     composite();
   }
-  document.getElementById('ge-add-layer')?.addEventListener('click', addEmptyLayer);
+  const addButton = document.getElementById('ge-add-layer');
+  addButton?.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelector('.ge-add-layer-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.className = 'ge-add-layer-menu ge-frosted';
+    menu.innerHTML = `
+      <button type="button" data-layer-kind="raster"><span class="ge-add-layer-symbol">+</span><span>Pixel Layer</span></button>
+      <span class="ge-add-layer-divider"></span>
+      <button type="button" data-adjustment-type="levels"><span class="ge-add-layer-symbol">▥</span><span>Levels</span></button>
+      <button type="button" data-adjustment-type="curves"><span class="ge-add-layer-symbol">⌁</span><span>Curves</span></button>
+      <button type="button" data-adjustment-type="exposure"><span class="ge-add-layer-symbol">☼</span><span>Exposure</span></button>
+      <button type="button" data-adjustment-type="white-balance"><span class="ge-add-layer-symbol">◑</span><span>White Balance</span></button>
+      <button type="button" data-adjustment-type="brightness-contrast"><span class="ge-add-layer-symbol">◐</span><span>Brightness / Contrast</span></button>
+      <button type="button" data-adjustment-type="hue-saturation"><span class="ge-add-layer-symbol">◉</span><span>Hue / Saturation</span></button>
+      <button type="button" data-adjustment-type="vibrance"><span class="ge-add-layer-symbol">⌁</span><span>Vibrance</span></button>
+      <button type="button" data-adjustment-type="black-white"><span class="ge-add-layer-symbol">◐</span><span>Black &amp; White</span></button>
+      <button type="button" data-adjustment-type="shadows-highlights"><span class="ge-add-layer-symbol">◐</span><span>Shadows / Highlights</span></button>
+      <button type="button" data-adjustment-type="color-balance"><span class="ge-add-layer-symbol">◒</span><span>Color Balance</span></button>
+      <button type="button" data-adjustment-type="selective-color"><span class="ge-add-layer-symbol">◎</span><span>Selective Color</span></button>
+      <button type="button" data-adjustment-type="gradient-map"><span class="ge-add-layer-symbol">▰</span><span>Gradient Map</span></button>
+    `;
+    document.body.appendChild(menu);
+    const rect = addButton.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menuRect.width - 8, rect.right - menuRect.width))}px`;
+    menu.style.top = `${Math.max(8, Math.min(window.innerHeight - menuRect.height - 8, rect.bottom + 5))}px`;
+    const close = () => {
+      menu.remove();
+      document.removeEventListener('pointerdown', away, true);
+    };
+    const away = pointerEvent => {
+      if (!menu.contains(pointerEvent.target) && pointerEvent.target !== addButton) close();
+    };
+    requestAnimationFrame(() => document.addEventListener('pointerdown', away, true));
+    menu.addEventListener('click', clickEvent => {
+      const button = clickEvent.target.closest('button');
+      if (!button) return;
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      if (button.dataset.layerKind === 'raster') addEmptyLayer();
+      else if (button.dataset.adjustmentType) openAdjustmentLayer?.(button.dataset.adjustmentType, addButton);
+      close();
+    });
+  });
 
   return { addEmptyLayer };
 }

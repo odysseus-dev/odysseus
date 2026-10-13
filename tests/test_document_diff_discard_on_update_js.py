@@ -19,9 +19,10 @@ browser-coupled and not importable in pytest.
 """
 
 from pathlib import Path
+from tests.helpers.document_source import document_source
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC_JS = (ROOT / "static/js/document.js").read_text()
+DOC_JS = document_source()
 
 GUARD = "if (_diffModeActive) exitDiffMode(true);"
 
@@ -49,14 +50,14 @@ STREAM_DOC_OPEN = _function_body(DOC_JS, "export function streamDocOpen(title, l
 def test_handle_doc_update_discards_pending_diff():
     # A new AI update on a different document must not leave a stale diff bound
     # to the old doc, or a later tab switch / Accept-All overwrites the wrong doc.
-    assert GUARD in HANDLE_DOC_UPDATE
+    assert "if (_diffModeActive) exitDiffMode(true, { persist: data.doc_id !== activeDocId });" in HANDLE_DOC_UPDATE
 
 
 def test_diff_discard_runs_before_active_doc_is_switched():
     # The discard must run while activeDocId still points at the previously
     # active doc, so exitDiffMode(true) restores and saves THAT doc — not the new
     # one. Any activeDocId reassignment inside handleDocUpdate must come after it.
-    guard_at = HANDLE_DOC_UPDATE.index(GUARD)
+    guard_at = HANDLE_DOC_UPDATE.index("if (_diffModeActive) exitDiffMode(true,")
     reassign_at = HANDLE_DOC_UPDATE.index("activeDocId = docId;")
     assert guard_at < reassign_at
 
@@ -74,4 +75,9 @@ def test_diff_discard_reuses_the_existing_idiom():
     # Sanity: this exact guard is the established pattern (switchToDoc,
     # enterDiffMode, handleDocUpdate, streamDocOpen, …) — the fix reuses it
     # rather than inventing a new mechanism.
-    assert DOC_JS.count(GUARD) >= 5
+    assert DOC_JS.count(GUARD) >= 4
+
+
+def test_same_document_update_does_not_save_stale_diff_over_new_server_content():
+    assert "persist: data.doc_id !== activeDocId" in HANDLE_DOC_UPDATE
+    assert "if (persist) saveDocument({ silent: true });" in DOC_JS

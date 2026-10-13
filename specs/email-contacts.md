@@ -8,7 +8,8 @@ This spec covers mail and contacts in:
 
 - app wiring in `app.py`;
 - `core.database.EmailAccount`;
-- `routes/email_routes.py`, `routes/email_helpers.py`, and `routes/email_pollers.py`;
+- canonical `routes/email/email_routes.py`, `routes/email/email_helpers.py`, and
+  `routes/email/email_pollers.py`, plus their shims at the old flat paths;
 - email threading in `src/email_thread_parser.py`;
 - email MCP tools in `mcp_servers/email_server.py`;
 - canonical contact/CardDAV routes in `routes/contacts/contacts_routes.py`,

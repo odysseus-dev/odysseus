@@ -19,6 +19,7 @@
  *
  * @param {{
  *   saveState:               (label: string) => void,
+ *   undo:                    () => void,
  *   strokeTo:                (x: number, y: number) => void,
  *   composite:               () => void,
  *   getActiveMaskLayer:      () => object | null,
@@ -31,20 +32,34 @@
  */
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
+import { isLayerPixelLocked, isLayerTransparencyLocked } from '../layer-groups.js';
 
-const STROKE_TOOLS = new Set(['brush', 'eraser', 'inpaint']);
+const STROKE_TOOLS = new Set(['brush', 'eraser', 'smudge', 'dodge', 'burn', 'inpaint']);
 
 function strokeLabel(tool) {
   if (tool === 'brush') return 'Brush stroke';
   if (tool === 'eraser') return 'Eraser stroke';
   if (tool === 'inpaint') return state.inpaintEraseStroke ? 'Erase mask' : 'Paint mask';
+  if (tool === 'smudge') return 'Smudge stroke';
+  if (tool === 'dodge') return 'Dodge stroke';
+  if (tool === 'burn') return 'Burn stroke';
   return 'Stroke';
 }
 
+function pointerPressure(e) {
+  if (e?.touches?.[0] && Number.isFinite(e.touches[0].force) && e.touches[0].force > 0) return e.touches[0].force;
+  return Number.isFinite(e?.pressure) && e.pressure > 0 ? e.pressure : 1;
+}
+
+function eventSample(e) {
+  const coords = canvasCoords(e, state.mainCanvas);
+  return { x: coords.x, y: coords.y, pressure: pointerPressure(e) };
+}
+
 export function createStrokeTool({
-  saveState, strokeTo, composite,
+  saveState, undo, beginStroke, strokeTo, endStroke, composite,
   getActiveMaskLayer, activeParentLayer, ensureActiveMaskLayer, createLayer,
-  renderLayerPanel, syncToolClearIndicators,
+  renderLayerPanel, syncToolClearIndicators, showToast,
 }) {
   return {
     /**
@@ -53,6 +68,22 @@ export function createStrokeTool({
      */
     tryBegin(e) {
       if (!STROKE_TOOLS.has(state.tool)) return false;
+      const parent = activeParentLayer();
+      const activeMask = state.quickMaskActive && state.wandMask
+        ? { mode: 'quick-selection', canvas: state.wandMask, ctx: state.wandMask.getContext('2d') }
+        : getActiveMaskLayer();
+      if (['brush', 'eraser', 'smudge', 'dodge', 'burn'].includes(state.tool) && !activeMask && parent?.kind === 'placed') {
+        showToast?.('Rasterize the placed layer before painting its pixels');
+        return true;
+      }
+      if (['brush', 'eraser', 'smudge', 'dodge', 'burn'].includes(state.tool) && !activeMask && isLayerPixelLocked(state, parent)) {
+        showToast?.('Unlock image pixels before painting');
+        return true;
+      }
+      if (state.tool === 'eraser' && !activeMask && isLayerTransparencyLocked(state, parent)) {
+        showToast?.('Unlock transparent pixels before erasing');
+        return true;
+      }
       // Capture the inpaint-erase flag for this stroke. Ctrl+Alt
       // pressed at pointerdown flips the persistent toggle for one
       // stroke only.
@@ -89,10 +120,7 @@ export function createStrokeTool({
       }
       saveState(strokeLabel(state.tool));
       state.drawing = true;
-      const coords = canvasCoords(e, state.mainCanvas);
-      state.lastX = coords.x;
-      state.lastY = coords.y;
-      strokeTo(coords.x, coords.y);
+      beginStroke(eventSample(e), state.tool);
       return true;
     },
 
@@ -103,20 +131,38 @@ export function createStrokeTool({
     tryContinue(e) {
       if (!state.drawing) return false;
       e.preventDefault();
-      const coords = canvasCoords(e, state.mainCanvas);
-      strokeTo(coords.x, coords.y);
+      const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+      const samples = events.length ? events : [e];
+      for (const sampleEvent of samples) strokeTo(eventSample(sampleEvent));
       return true;
     },
 
     /**
      * Wrap up an in-progress stroke. Returns true if there was one.
      */
-    tryEnd() {
+    tryEnd(e) {
       if (!state.drawing) return false;
       const wasDrawingInpaint = state.tool === 'inpaint';
       state.drawing = false;
+      endStroke(e ? eventSample(e) : null);
       composite();
+      // Strokes composite every frame while drawing, but the layer panel is
+      // intentionally not rebuilt at that frequency. Refresh once at the end
+      // so inline layer/group thumbnails reflect the completed edit.
+      renderLayerPanel();
       if (wasDrawingInpaint) syncToolClearIndicators();
+      return true;
+    },
+
+    cancel() {
+      if (!state.drawing) return false;
+      state.drawing = false;
+      state.cloneSourceSnapshot = null;
+      undo?.();
+      state.redoStack = [];
+      composite();
+      renderLayerPanel();
+      syncToolClearIndicators();
       return true;
     },
   };

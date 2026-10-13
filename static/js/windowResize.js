@@ -38,8 +38,45 @@ export function makeWindowResizable(content, options = {}) {
   const isLocked = options.isLocked || (() => false);
   const onResizeEnd = options.onResizeEnd || null;
   const storageKey = options.storageKey || null;
+  // Capture the authored window size before a persisted user resize is
+  // restored below. Position is intentionally not captured: reset means the
+  // overlay may center the window again, even if a previous drag left inline
+  // fixed coordinates on a reused modal element.
+  const defaultSize = {
+    width: content.style.width,
+    height: content.style.height,
+    maxWidth: content.style.maxWidth,
+    maxHeight: content.style.maxHeight,
+  };
 
   const _skip = () => (mobileSkip > 0 && window.innerWidth <= mobileSkip) || isLocked();
+
+  content._resetWindowGeometry = () => {
+    if (_skip()) return false;
+    if (storageKey) {
+      try { localStorage.removeItem(storageKey); } catch (_) {}
+    }
+    content.style.position = '';
+    content.style.inset = '';
+    content.style.left = '';
+    content.style.top = '';
+    content.style.right = '';
+    content.style.bottom = '';
+    content.style.margin = '';
+    content.style.transform = '';
+    content.style.width = defaultSize.width;
+    content.style.height = defaultSize.height;
+    content.style.maxWidth = defaultSize.maxWidth;
+    content.style.maxHeight = defaultSize.maxHeight;
+    content.style.cursor = '';
+    requestAnimationFrame(() => {
+      if (onResizeEnd) {
+        try { onResizeEnd({ rect: content.getBoundingClientRect(), reset: true }); } catch (_) {}
+      }
+      content.dispatchEvent(new CustomEvent('windowgeometryreset', { bubbles: true }));
+    });
+    return true;
+  };
 
   // Which borders is (cx,cy) within EDGE px of? Only counts when the pointer
   // is also within the window's span on the perpendicular axis, so the corners

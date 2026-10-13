@@ -19,6 +19,12 @@
  * + their labels + preview swatches.
  */
 import { state } from './state.js';
+import {
+  applyBrushPreset,
+  captureBrushPreset,
+  loadBrushPresets,
+  saveCustomBrushPresets,
+} from './brush-presets.js';
 
 /** Wire the three sliders for one stroke tool. */
 function wireToolSliders(prefix, fields) {
@@ -57,8 +63,75 @@ function wireToolSliders(prefix, fields) {
   });
 }
 
-export function wireStrokeToolSliders() {
+export function wireStrokeToolSliders({ onPresetApplied } = {}) {
   wireToolSliders('eraser', { opacity: 'eraserOpacity', flow: 'eraserFlow', softness: 'eraserSoftness' });
   wireToolSliders('brush',  { opacity: 'brushOpacity',  flow: 'brushFlow',  softness: 'brushSoftness'  });
   wireToolSliders('clone',  { opacity: 'cloneOpacity',  flow: 'cloneFlow',  softness: 'cloneSoftness'  });
+
+  const smudgeStrength = document.getElementById('ge-smudge-strength');
+  smudgeStrength?.addEventListener('input', (e) => {
+    state.smudgeStrength = parseInt(e.target.value, 10);
+    document.getElementById('ge-smudge-strength-label').textContent = `${state.smudgeStrength}%`;
+    const preview = document.getElementById('ge-smudge-preview-strength');
+    if (preview) preview.style.opacity = (state.smudgeStrength / 100).toFixed(2);
+  });
+
+  const spacing = document.getElementById('ge-brush-spacing');
+  const smoothing = document.getElementById('ge-brush-smoothing');
+  const blend = document.getElementById('ge-brush-blend');
+  spacing?.addEventListener('input', (e) => {
+    state.brushSpacing = parseInt(e.target.value, 10);
+    document.getElementById('ge-brush-spacing-label').textContent = `${state.brushSpacing}%`;
+  });
+  smoothing?.addEventListener('input', (e) => {
+    state.brushSmoothing = parseInt(e.target.value, 10);
+    document.getElementById('ge-brush-smoothing-label').textContent = `${state.brushSmoothing}%`;
+  });
+  blend?.addEventListener('change', (e) => { state.brushBlendMode = e.target.value; });
+  document.getElementById('ge-pressure-size')?.addEventListener('change', e => { state.pressureSize = e.target.checked; });
+  document.getElementById('ge-pressure-opacity')?.addEventListener('change', e => { state.pressureOpacity = e.target.checked; });
+  document.getElementById('ge-pressure-flow')?.addEventListener('change', e => { state.pressureFlow = e.target.checked; });
+  document.getElementById('ge-eyedropper-sample')?.addEventListener('change', e => { state.eyedropperSample = e.target.value; });
+
+  let presets = loadBrushPresets();
+  const presetSelect = document.getElementById('ge-brush-preset');
+  const renderPresets = (selectedId = '') => {
+    if (!presetSelect) return;
+    presetSelect.innerHTML = '<option value="">Brush presets</option>' + presets.map(preset =>
+      `<option value="${preset.id}">${preset.name}</option>`).join('');
+    presetSelect.value = selectedId;
+  };
+  const syncControls = () => {
+    if (spacing) spacing.value = String(state.brushSpacing);
+    if (smoothing) smoothing.value = String(state.brushSmoothing);
+    if (blend) blend.value = state.brushBlendMode;
+    if (smudgeStrength) smudgeStrength.value = String(state.smudgeStrength);
+    const smudgeLabel = document.getElementById('ge-smudge-strength-label');
+    if (smudgeLabel) smudgeLabel.textContent = `${state.smudgeStrength}%`;
+    document.getElementById('ge-brush-spacing-label').textContent = `${state.brushSpacing}%`;
+    document.getElementById('ge-brush-smoothing-label').textContent = `${state.brushSmoothing}%`;
+    onPresetApplied?.();
+  };
+  renderPresets();
+  presetSelect?.addEventListener('change', () => {
+    const preset = presets.find(item => item.id === presetSelect.value);
+    if (!preset) return;
+    applyBrushPreset(state, preset);
+    syncControls();
+  });
+  document.getElementById('ge-brush-preset-save')?.addEventListener('click', () => {
+    const name = window.prompt('Brush preset name');
+    if (!name?.trim()) return;
+    const preset = captureBrushPreset(state, name);
+    presets.push(preset);
+    saveCustomBrushPresets(presets);
+    renderPresets(preset.id);
+  });
+  document.getElementById('ge-brush-preset-delete')?.addEventListener('click', () => {
+    const preset = presets.find(item => item.id === presetSelect?.value);
+    if (!preset || preset.builtIn) return;
+    presets = presets.filter(item => item.id !== preset.id);
+    saveCustomBrushPresets(presets);
+    renderPresets();
+  });
 }

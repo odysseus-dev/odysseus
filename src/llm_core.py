@@ -10,17 +10,38 @@ import threading
 import re
 import os
 import math
+import ipaddress
 from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
+from src.model_profiles import is_odysseus_merged_tools_model
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-_LOCAL_MODEL_LOCK = asyncio.Lock()
-_LOCAL_MODEL_WAITING_FOREGROUND = 0
-_LOCAL_MODEL_CURRENT: Dict[str, object] = {}
+
+def _is_managed_stream_endpoint(url: str) -> bool:
+    """Whether a stream is served by a host we control closely enough to watchdog.
+
+    Endpoint records can be marked ``api`` for routing/auth purposes even when
+    the URL points at our private GPU service.  Those services must still get
+    the bounded first-event watchdog; otherwise an accepted HTTP request can
+    hang for the full stream timeout.  Public provider URLs retain their
+    historical behavior.
+    """
+    if is_local_endpoint(url):
+        return True
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+        address = ipaddress.ip_address(host)
+        return address.is_private or address in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:
+        return False
+
+_LOCAL_MODEL_LOCKS: Dict[str, asyncio.Lock] = {}
+_LOCAL_MODEL_WAITING_FOREGROUND: Dict[str, int] = {}
+_LOCAL_MODEL_CURRENT: Dict[str, Dict[str, object]] = {}
 
 
 def _normalize_usage_counts(input_value=0, output_value=0):
@@ -74,6 +95,14 @@ def _local_model_gate_enabled() -> bool:
     return os.getenv("ODYSSEUS_LOCAL_MODEL_GATE", "true").lower() not in {"0", "false", "no", "off"}
 
 
+def _local_model_gate_key(target_url: str) -> str:
+    """Identify one independently schedulable local inference endpoint."""
+    parsed = urlparse(str(target_url or ""))
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return f"{parsed.scheme.lower()}://{host}:{port}"
+
+
 def _gate_workload(workload: Optional[str]) -> str:
     return "background" if str(workload or "").lower() == "background" else "foreground"
 
@@ -91,12 +120,15 @@ async def _local_model_slot(target_url: str, model: str, workload: Optional[str]
         yield
         return
 
-    global _LOCAL_MODEL_WAITING_FOREGROUND
+    gate_key = _local_model_gate_key(target_url)
+    gate_lock = _LOCAL_MODEL_LOCKS.setdefault(gate_key, asyncio.Lock())
     kind = _gate_workload(workload)
     current_task = asyncio.current_task()
     if kind == "foreground":
-        _LOCAL_MODEL_WAITING_FOREGROUND += 1
-        current = dict(_LOCAL_MODEL_CURRENT)
+        _LOCAL_MODEL_WAITING_FOREGROUND[gate_key] = (
+            _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) + 1
+        )
+        current = dict(_LOCAL_MODEL_CURRENT.get(gate_key, {}))
         if current.get("workload") == "background":
             task = current.get("task")
             if isinstance(task, asyncio.Task) and not task.done():
@@ -112,38 +144,44 @@ async def _local_model_slot(target_url: str, model: str, workload: Optional[str]
             from src.interactive_gate import has_foreground_activity
         except Exception:
             has_foreground_activity = lambda: False  # type: ignore
-        while _LOCAL_MODEL_WAITING_FOREGROUND > 0 or has_foreground_activity():
+        while (
+            _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) > 0
+            or has_foreground_activity()
+        ):
             await asyncio.sleep(0.25)
 
     acquired = False
     try:
-        await _LOCAL_MODEL_LOCK.acquire()
+        await gate_lock.acquire()
         acquired = True
         if kind == "foreground":
-            _LOCAL_MODEL_WAITING_FOREGROUND = max(0, _LOCAL_MODEL_WAITING_FOREGROUND - 1)
-        _LOCAL_MODEL_CURRENT.clear()
-        _LOCAL_MODEL_CURRENT.update({
+            _LOCAL_MODEL_WAITING_FOREGROUND[gate_key] = max(
+                0, _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) - 1
+            )
+        _LOCAL_MODEL_CURRENT[gate_key] = {
             "task": current_task,
             "workload": kind,
             "url": target_url,
             "model": model,
             "started": time.time(),
-        })
+        }
         yield
     finally:
-        if kind == "foreground":
-            _LOCAL_MODEL_WAITING_FOREGROUND = max(0, _LOCAL_MODEL_WAITING_FOREGROUND - 1)
-        if acquired and _LOCAL_MODEL_LOCK.locked():
-            owner = _LOCAL_MODEL_CURRENT.get("task")
+        if kind == "foreground" and not acquired:
+            _LOCAL_MODEL_WAITING_FOREGROUND[gate_key] = max(
+                0, _LOCAL_MODEL_WAITING_FOREGROUND.get(gate_key, 0) - 1
+            )
+        if acquired and gate_lock.locked():
+            owner = _LOCAL_MODEL_CURRENT.get(gate_key, {}).get("task")
             if owner is current_task:
-                _LOCAL_MODEL_CURRENT.clear()
-            _LOCAL_MODEL_LOCK.release()
+                _LOCAL_MODEL_CURRENT.pop(gate_key, None)
+            gate_lock.release()
 
 class LLMConfig:
     """Configuration constants for LLM operations."""
     DEFAULT_TIMEOUT = 30
     DEFAULT_TEMPERATURE = 1.0
-    DEFAULT_MAX_TOKENS = 0
+    DEFAULT_MAX_TOKENS = 32768
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
     STREAM_TIMEOUT = 300
@@ -173,6 +211,27 @@ def _stream_timeout(read_timeout) -> httpx.Timeout:
     return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=30.0, pool=5.0)
 
 
+def _first_token_timeout(url: str, stream_timeout: int) -> float:
+    """Return a bounded first-event budget for local streaming endpoints.
+
+    A provider can accept a request with HTTP 200 and then never emit an SSE
+    event.  The normal read timeout is intentionally generous for slow tokens,
+    but that makes this particular failure look like a hung agent.  Keep the
+    watchdog local-only and configurable so hosted providers retain their
+    existing behavior.
+    """
+    raw = os.getenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = 0.0
+        return max(0.0, min(value, float(stream_timeout)))
+    if _is_managed_stream_endpoint(url):
+        return min(60.0, float(stream_timeout))
+    return 0.0
+
+
 # Cache for LLM responses
 def _cache_header_identity(headers) -> str:
     """Return a non-secret identity for credential-distinct request routes."""
@@ -194,7 +253,9 @@ def _cache_header_identity(headers) -> str:
 
 
 def _get_cache_key(url: str, model: str, messages: List[Dict],
-                   temperature: float, max_tokens: int, headers=None) -> str:
+                   temperature: float, max_tokens: int, headers=None,
+                   thinking_mode: Optional[str] = None,
+                   reasoning_effort: Optional[str] = None) -> str:
     """Generate a cache key partitioned by endpoint and credential identity."""
     hashable_messages = []
     for msg in messages:
@@ -207,6 +268,8 @@ def _get_cache_key(url: str, model: str, messages: List[Dict],
         'messages': hashable_messages,
         'temp': temperature,
         'max_tokens': max_tokens,
+        'thinking_mode': _normalize_thinking_mode(thinking_mode),
+        'reasoning_effort': str(reasoning_effort or "").strip().lower(),
         # Never put credentials in a cache key or loggable cache payload.  The
         # digest only prevents responses from one configured account/route
         # being returned under another route with the same URL and model.
@@ -265,8 +328,13 @@ _HARMONY_MARKERS = (
 _HARMONY_MAX_MARKER_LEN = max(len(marker) for marker in _HARMONY_MARKERS)
 
 _VISIBLE_CHAT_TEMPLATE_ARTIFACT_RE = re.compile(
-    r"(?:\|end\|)+\|?assistan(?:t)?\|?"
-    r"|\|assistan(?:t)?\|"
+    # Match legacy bare template fragments, but not Harmony's structured
+    # `<|end|>` token. Stripping the inner `|end|` from that token leaves a
+    # visible `<>` tail before the Harmony router can consume it.
+    r"<\|end\|>\s*assistan(?:t)?(?:\s*<\|message\|>)?"
+    r"|(?<!<)(?:\|end\|)+\|?assistan(?:t)?\|?"
+    r"|(?<!<)\|assistan(?:t)?\|"
+    r"|(?<!<)(?:\|end\|?)+(?!>)"
     r"|<\|im_start\|>\s*assistant"
     r"|<\|im_end\|>",
     re.IGNORECASE,
@@ -371,13 +439,17 @@ class _DegenerateStreamGuard:
         self.last_token = ""
         self.same_run = 0
         self.recent_tokens: List[str] = []
+        self.periodic_tokens: List[str] = []
         self.total_chars = 0
 
     def check(self, text: str) -> Optional[str]:
         if not text:
             return None
         self.total_chars += len(text)
-        tokens = [t.lower() for t in _DEGENERATE_WORD_RE.findall(text) if len(t) >= 2]
+        # Keep one-character tokens. Structured output often varies through
+        # numeric selectors or coordinates; dropping those tokens can make
+        # valid CSS/SVG rows look like an exact repeated phrase.
+        tokens = [t.lower() for t in _DEGENERATE_WORD_RE.findall(text)]
         if not tokens:
             return None
         for token in tokens:
@@ -387,8 +459,11 @@ class _DegenerateStreamGuard:
                 self.last_token = token
                 self.same_run = 1
             self.recent_tokens.append(token)
+            self.periodic_tokens.append(token)
         if len(self.recent_tokens) > 96:
             self.recent_tokens = self.recent_tokens[-96:]
+        if len(self.periodic_tokens) > 2048:
+            self.periodic_tokens = self.periodic_tokens[-2048:]
 
         reason = None
         if self.same_run >= 28 and self.total_chars >= 100:
@@ -398,18 +473,46 @@ class _DegenerateStreamGuard:
             count = self.recent_tokens.count(top)
             if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78:
                 reason = f"repeated '{top}' {count}/{len(self.recent_tokens)} recent tokens"
-        if not reason and len(self.recent_tokens) >= 80:
-            # Phrase loops are common on some local quantized MLX/MoE models:
-            # "Also be a software developer mode?" repeated forever will not
-            # trip the single-token guard above, but it is still a wedged
-            # generation. Require many repeats of the same 4-gram so normal
-            # prose/list formatting is not interrupted.
-            grams = [tuple(self.recent_tokens[i:i + 4]) for i in range(0, len(self.recent_tokens) - 3)]
-            if grams:
-                top_gram = max(set(grams), key=grams.count)
-                gram_count = grams.count(top_gram)
-                if gram_count >= 10:
-                    reason = f"repeated phrase '{' '.join(top_gram)}' {gram_count} times"
+        if not reason and len(self.recent_tokens) >= 48:
+            # Detect a periodic suffix instead of counting repeated n-grams.
+            # Reused property names are normal in CSS/SVG/JSON; a collapsed
+            # generation repeats nearly every token at a short fixed period.
+            recent = self.recent_tokens
+            for period in range(2, 13):
+                cycles = len(recent) // period
+                if cycles < 8:
+                    continue
+                comparisons = len(recent) - period
+                equal = sum(
+                    recent[index] == recent[index - period]
+                    for index in range(period, len(recent))
+                )
+                if comparisons and equal / comparisons >= 0.92:
+                    phrase = " ".join(recent[-period:])
+                    reason = f"repeated phrase '{phrase}' for {cycles} cycles"
+                    break
+
+        if not reason and len(self.periodic_tokens) >= 48:
+            # Catch verbatim repetition of a long paragraph/list. The short
+            # periodic guard above deliberately stops at 12 tokens, so a model
+            # can otherwise repeat a 30-100 token result until the provider's
+            # full read timeout. Anchor on the latest ten tokens, then require
+            # two *exactly* equal blocks; exactness keeps legitimate repeated
+            # structured rows with changing values out of this circuit breaker.
+            history = self.periodic_tokens
+            anchor_size = 10
+            current_anchor = len(history) - anchor_size
+            anchor = history[current_anchor:]
+            lower = max(0, current_anchor - 512)
+            for previous in range(current_anchor - anchor_size, lower - 1, -1):
+                if history[previous:previous + anchor_size] != anchor:
+                    continue
+                period = current_anchor - previous
+                if period < 24 or len(history) < period * 2:
+                    continue
+                if history[-2 * period:-period] == history[-period:]:
+                    reason = f"repeated an exact {period}-token block twice"
+                    break
 
         if not reason:
             return None
@@ -986,6 +1089,8 @@ def _detect_provider(url: str) -> str:
         return "groq"
     if _host_match(url, "nvidia.com"):
         return "nvidia"
+    if _is_kimi_code_url(url):
+        return "kimi-code"
     if _host_match(url, "moonshot.ai") or _host_match(url, "moonshot.cn"):
         return "moonshot"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
@@ -994,6 +1099,8 @@ def _detect_provider(url: str) -> str:
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
+    if _host_match(url, "featherless.ai"):
+        return "featherless"
     if _host_match(url, "cerebras.ai"):
         return "cerebras"
     if _host_match(url, "mistral.ai"):
@@ -1067,7 +1174,104 @@ def _is_local_minimax_mlx_request(url: str, model: str) -> bool:
         return False
 
 
+def _is_odysseus_qwen_native_model(model: str) -> bool:
+    """Recognize the supported local Qwen 3.6/3.8 27B MLX family."""
+    value = str(model or "").lower()
+    return bool(re.search(r"\bqwen3(?:\.?(?:6|8))-27b-(?:mlx|fp8)(?:\b|[-_/])", value))
+
+
+def _is_odysseus_qwen_tool_router_model(model: str) -> bool:
+    """Recognize local Qwen tool-router LoRAs trained for Odysseus tools."""
+    value = str(model or "").lower()
+    return (
+        "qwen38-tool-router" in value
+        or "qwen35-9b-tool-router" in value
+        or "qwen3.5-9b-tool-router" in value
+        or "odysseus-qwen3.5-9b" in value
+        or is_odysseus_merged_tools_model(value)
+        or "qwen35-email" in value
+        or "qwen3.5-email" in value
+        or "qwen35-calendar" in value
+        or "qwen3.5-calendar" in value
+    )
+
+
+def _normalize_thinking_mode(value: Optional[str]) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in {"on", "off"} else ""
+
+
+def _apply_local_qwen_thinking_mode(
+    payload: Dict,
+    url: str,
+    model: str,
+    thinking_mode: Optional[str],
+) -> None:
+    """Control Qwen chat-template reasoning for local OpenAI-compatible servers.
+
+    vLLM accepts this as ``chat_template_kwargs.enable_thinking``.  Keep it
+    scoped to local Qwen/Odysseus models so hosted providers do not receive an
+    unknown parameter, and so teacher/eval callers can opt in per request.
+    """
+
+    mode = _normalize_thinking_mode(thinking_mode)
+    if not mode:
+        return
+    if not is_local_endpoint(url):
+        return
+    if not (_supports_thinking(model) or _is_odysseus_qwen_tool_router_model(model)):
+        return
+    kwargs = payload.setdefault("chat_template_kwargs", {})
+    if not isinstance(kwargs, dict):
+        kwargs = {}
+        payload["chat_template_kwargs"] = kwargs
+    kwargs["enable_thinking"] = mode == "on"
+
+
+def _apply_hosted_thinking_mode(
+    payload: Dict,
+    provider: str,
+    model: str,
+    thinking_mode: Optional[str],
+) -> None:
+    """Translate the shared thinking switch for hosted APIs that support it."""
+    mode = _normalize_thinking_mode(thinking_mode)
+    model_id = str(model or "").lower()
+    if not mode:
+        return
+    if provider == "openrouter":
+        if mode == "off" and _openrouter_requires_reasoning(model_id):
+            payload.pop("reasoning", None)
+            return
+        payload["reasoning"] = {"enabled": True} if mode == "on" else {"effort": "none"}
+    elif provider in {"moonshot", "kimi-code"} and "kimi" in model_id:
+        payload["thinking"] = {"type": "enabled" if mode == "on" else "disabled"}
+
+
+def _openrouter_requires_reasoning(model: str) -> bool:
+    """Return whether OpenRouter exposes a model as reasoning-mandatory."""
+    model_id = str(model or "").strip().lower().split(":", 1)[0]
+    return model_id == "x-ai/grok-4.5" or model_id == "grok-4.5"
+
+
 def _apply_local_generation_stability(payload: Dict, url: str, model: str) -> None:
+    if _is_odysseus_qwen_tool_router_model(model) and is_local_endpoint(url):
+        payload["temperature"] = 0.0
+        payload["top_p"] = 1.0
+        payload.setdefault("stop", ["|end", "|end|", "<|end|>", "<|im_end|>", "<|endoftext|>", "</s>"])
+        # Preserve the caller's explicit output budget. File-writing calls put
+        # the complete body inside function arguments, so silently clamping an
+        # 8K agent budget to 1K truncates otherwise valid JSON after ``path``.
+        # Keep 1K only as the fallback when a caller supplied no budget.
+        if not payload.get("max_tokens") and not payload.get("max_completion_tokens"):
+            payload["max_tokens"] = 1024
+        return
+    if _is_odysseus_qwen_native_model(model) and is_local_endpoint(url):
+        payload["temperature"] = 0.0
+        payload["top_p"] = 1.0
+        payload["top_k"] = 0
+        payload["max_tokens"] = min(int(payload.get("max_tokens") or 1024), 1024)
+        return
     if not _is_local_minimax_mlx_request(url, model):
         return
     if "temperature" in payload:
@@ -1128,6 +1332,7 @@ def _provider_label(url: str) -> str:
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
+    if _host_match(url, "featherless.ai"): return "Featherless.ai"
     if _host_match(url, "cerebras.ai"):
         return "cerebras"
     if _host_match(url, "mistral.ai"): return "Mistral"
@@ -1235,6 +1440,29 @@ def _scrub_openai_chat_tool_reasoning(payload: Dict, target_url: str, model: str
     payload["reasoning_effort"] = "none"
 
 
+def _apply_deepseek_v4_reasoning_defaults(
+    payload: Dict,
+    target_url: str,
+    model: str,
+    thinking_mode: Optional[str] = None,
+) -> None:
+    """Apply DeepSeek V4 reasoning defaults without overriding an explicit toggle."""
+    if not _host_match(target_url, "deepseek.com"):
+        return
+    if not re.search(
+        r"(?:^|[/_-])deepseek-v4(?:[-_/]|$)",
+        str(model or ""),
+        re.IGNORECASE,
+    ):
+        return
+    if _normalize_thinking_mode(thinking_mode) == "off":
+        payload["thinking"] = {"type": "disabled"}
+        payload["reasoning_effort"] = "none"
+        return
+    payload.setdefault("thinking", {"type": "enabled"})
+    payload.setdefault("reasoning_effort", _DEEPSEEK_REASONING_EFFORT)
+
+
 def _normalize_chatgpt_subscription_url(url: str) -> str:
     base = (url or "").strip().rstrip("/")
     if base.endswith("/responses"):
@@ -1273,6 +1501,33 @@ def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
     return "You are a helpful AI assistant."
 
 
+# Provider-native agentic surfaces that must never be sent on the ChatGPT
+# Subscription route. ChatGPT provides model inference only; Odysseus is the
+# only agent (planning, tool selection/execution, filesystem, shell, browser,
+# MCP). Odysseus' own text tool protocol travels inside ``instructions``/``input``.
+CHATGPT_FORBIDDEN_PAYLOAD_KEYS = frozenset({
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "web_search",
+    "web_search_preview",
+    "file_search",
+    "computer",
+    "computer_use",
+    "computer_use_preview",
+    "shell",
+    "local_shell",
+    "code_interpreter",
+    "image_generation",
+    "mcp",
+    "function",
+    "functions",
+    "include",
+    "previous_response_id",
+    "background",
+})
+
+
 def _build_chatgpt_responses_payload(
     model: str,
     messages: List[Dict],
@@ -1280,9 +1535,19 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+    reasoning_effort: Optional[str] = None,
+    **_ignored,
 ) -> Dict:
+    """Build the ChatGPT/Codex Responses request: model inference only.
+
+    ``tools`` (and any other provider-native tool declaration) is accepted for
+    signature compatibility with the other transports and deliberately
+    discarded. See :data:`CHATGPT_FORBIDDEN_PAYLOAD_KEYS`.
+    """
     from src.chatgpt_subscription import build_responses_input
 
+    del tools, _ignored
     conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
     payload: Dict = {
         "model": model,
@@ -1296,7 +1561,29 @@ def _build_chatgpt_responses_payload(
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
-    return payload
+    if reasoning_effort and str(reasoning_effort).strip().lower() not in {"", "default"}:
+        payload["reasoning"] = {"effort": str(reasoning_effort).strip().lower()}
+    return _strip_chatgpt_native_tool_surfaces(payload)
+
+
+CHATGPT_ALLOWED_PAYLOAD_KEYS = frozenset({
+    "model", "instructions", "input", "stream", "store", "temperature", "reasoning",
+})
+
+
+def _strip_chatgpt_native_tool_surfaces(payload: Dict) -> Dict:
+    """Only explicitly approved inference fields may cross this boundary."""
+    return {key: value for key, value in payload.items() if key in CHATGPT_ALLOWED_PAYLOAD_KEYS}
+
+
+def _chatgpt_safe_error(message: str, headers: Dict) -> str:
+    """Upstream diagnostics must never echo the request bearer to the UI."""
+    result = str(message)
+    for key, value in (headers or {}).items():
+        if key.lower() in {"authorization", "x-api-key"} and value:
+            secret = str(value).removeprefix("Bearer ")
+            result = result.replace(str(value), "[redacted]").replace(secret, "[redacted]")
+    return result
 
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
@@ -1434,6 +1721,14 @@ def _anthropic_rejects_temperature(model: str) -> bool:
 # https://docs.mistral.ai/capabilities/reasoning/. Override via env var
 # ODYSSEUS_MISTRAL_REASONING_EFFORT (e.g. set to "medium" for cheaper chat).
 _MISTRAL_REASONING_EFFORT = os.getenv("ODYSSEUS_MISTRAL_REASONING_EFFORT", "high")
+
+# DeepSeek V4 defaults complex agent requests to maximum reasoning. Keep the
+# normal TUI/agent path explicit and overridable for operators who want max.
+_DEEPSEEK_REASONING_EFFORT = os.getenv(
+    "ODYSSEUS_DEEPSEEK_REASONING_EFFORT", "high"
+).strip().lower()
+if _DEEPSEEK_REASONING_EFFORT not in {"high", "max"}:
+    _DEEPSEEK_REASONING_EFFORT = "high"
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = (
@@ -1667,7 +1962,14 @@ def _is_untrusted_context_content(content) -> bool:
     return False
 
 
-_REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
+# Some providers reject consecutive user messages.  When Odysseus injects
+# reference/search context as a user-scoped untrusted block immediately before
+# the real user request, we need a minimal assistant turn between them.  This
+# must not be natural language: visible acknowledgements have leaked back as
+# final answers ("Reference context received.").  U+2063 is an invisible
+# separator, so even if a weak model parrots it, the user does not see a fake
+# answer.
+_REFERENCE_CONTEXT_BOUNDARY = "\u2063"
 
 
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
@@ -1968,7 +2270,8 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             thinking_mode: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -2000,6 +2303,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     provider = _detect_provider(url)
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
+        thinking_mode=thinking_mode,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2032,6 +2336,11 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         _apply_local_generation_stability(payload, target_url, model)
+        _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
+        _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
+        _apply_deepseek_v4_reasoning_defaults(
+            payload, target_url, model, thinking_mode
+        )
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
     try:
@@ -2273,6 +2582,8 @@ async def llm_call_async(
     workload: str = "foreground",
     availability_only_transport: bool = False,
     return_model_metadata: bool = False,
+    thinking_mode: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> str | tuple[str, str]:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2291,8 +2602,27 @@ async def llm_call_async(
     else:
         messages_copy = non_sys
 
+    # Non-streaming background callers historically inherited the 32k global
+    # default even when the selected local endpoint exposed a smaller context
+    # window.  Streaming requests already apply this bound; enforce the same
+    # invariant here before cache-key construction and payload creation.
+    if max_tokens and max_tokens > 0:
+        try:
+            from src.generation_budget import fit_output_token_budget
+
+            max_tokens = fit_output_token_budget(
+                max_tokens,
+                get_context_length(url, model),
+                messages_copy,
+            )
+        except Exception:
+            # Context discovery is best-effort. Preserve the established call
+            # path when endpoint metadata is unavailable.
+            pass
+
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
+        thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2316,6 +2646,8 @@ async def llm_call_async(
             headers=headers,
             timeout=timeout,
             workload=workload,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2393,12 +2725,21 @@ async def llm_call_async(
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+        if (
+            _is_ollama_openai_compat_url(url)
+            and _supports_thinking(model)
+            and not _is_odysseus_qwen_tool_router_model(model)
+        ):
             payload["think"] = False
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
+        _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
+        _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
+        _apply_deepseek_v4_reasoning_defaults(
+            payload, target_url, model, thinking_mode
+        )
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -2560,7 +2901,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     tool_choice_none: bool = False, workload: str = "foreground"):
+                     tool_choice_none: bool = False, workload: str = "foreground",
+                     thinking_mode: Optional[str] = None, reasoning_effort: Optional[str] = None):
     target_url = _stream_target_url(url)
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
@@ -2575,6 +2917,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tools=tools,
             session_id=session_id,
             tool_choice_none=tool_choice_none,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         ):
             yield chunk
 
@@ -2583,7 +2927,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                            tool_choice_none: bool = False):
+                            tool_choice_none: bool = False, thinking_mode: Optional[str] = None,
+                            reasoning_effort: Optional[str] = None,
+                            _retry_silent_local: bool = True):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -2625,7 +2971,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model, messages_copy, temperature, max_tokens, stream=True,
+            reasoning_effort=reasoning_effort,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2654,10 +3003,19 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
         # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
-        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+        if (
+            _is_ollama_openai_compat_url(url)
+            and _supports_thinking(model)
+            and not _is_odysseus_qwen_tool_router_model(model)
+        ):
             payload["think"] = False
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
+        _apply_local_qwen_thinking_mode(payload, target_url, model, thinking_mode)
+        _apply_hosted_thinking_mode(payload, provider, model, thinking_mode)
+        _apply_deepseek_v4_reasoning_defaults(
+            payload, target_url, model, thinking_mode
+        )
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
@@ -2669,6 +3027,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     # wider connect budget only affects first contact and stops a brief cold
     # connect blip (offshore/public endpoints) surfacing as a 503 on this stream
     # path, which -- unlike llm_call -- does not retry the connect.
+    _debug_llm_request_shape(payload, provider=provider, target_url=target_url)
     stream_timeout = _stream_timeout(timeout)
 
     if _is_host_dead(target_url):
@@ -2690,8 +3049,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
-                    friendly = _format_chatgpt_subscription_error(r.status_code, raw)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    friendly = _format_chatgpt_subscription_error(r.status_code, _chatgpt_safe_error(raw, h))
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     if not line:
@@ -2776,13 +3135,13 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             }
                         text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
                         status = _provider_stream_error_status(err, default=400)
-                        yield f'event: error\ndata: {json.dumps({"status": status, "text": text})}\n\n'
+                        yield f'event: error\ndata: {json.dumps({"status": status, "text": _chatgpt_safe_error(text, h)})}\n\n'
                         return
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
-            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            logger.warning("ChatGPT Subscription stream connect failed: %s%s", type(e).__name__, _tail)
             yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
         except httpx.ReadTimeout:
             yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
@@ -2795,8 +3154,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         except httpx.NetworkError:
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
         except Exception as e:
-            logger.error(f"ChatGPT Subscription stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
+            logger.error("ChatGPT Subscription stream error: %s", type(e).__name__)
+            yield f'event: error\ndata: {json.dumps({"error": "ChatGPT Subscription stream failed", "status": 502, "fallback_eligible": False})}\n\n'
         return
 
     # ── Native Ollama streaming ──
@@ -2812,7 +3171,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
                     friendly = _format_upstream_error(r.status_code, raw, target_url)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     if not line:
@@ -2837,7 +3196,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                 yield model_event
                     message = j.get("message") or {}
                     thinking = message.get("thinking") or ""
-                    if thinking:
+                    if thinking and _normalize_thinking_mode(thinking_mode) != "off":
                         yield _stream_delta_event(thinking, thinking=True)
                     content = message.get("content") or ""
                     if content:
@@ -2890,7 +3249,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
         except Exception as e:
             logger.error(f"Ollama stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": _stream_failure_message(e), "status": 502, "fallback_eligible": False})}\n\n'
         return
 
     # ── Anthropic streaming ──
@@ -2911,7 +3270,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
                     friendly = _format_upstream_error(r.status_code, raw, target_url)
-                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                     return
                 async for line in r.aiter_lines():
                     # SSE allows "data:value" with no space after the colon
@@ -3043,7 +3402,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
         except Exception as e:
             logger.error(f"Anthropic stream error: {e}")
-            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
+            yield f'event: error\ndata: {json.dumps({"error": _stream_failure_message(e), "status": 502, "fallback_eligible": False})}\n\n'
         return
 
     # ── OpenAI-compatible streaming ──
@@ -3053,6 +3412,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     # For thinking models: prepend <think> to first content delta so frontend
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
+    _thinking_disabled = _normalize_thinking_mode(thinking_mode) == "off"
     _first_content_sent = False
     _in_think_tag = False        # True while consuming <think>…</think> content
     _think_open_stripped = False  # opening <think> tag already removed
@@ -3060,6 +3420,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     _harmony_active = False       # sticky: gpt-oss harmony <|channel|> stream detected
     _actual_model = ""
     _actual_model_announced = False
+    _response_id_announced = ""
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -3073,7 +3434,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         events = []
         for part, is_thinking in parts:
             if is_thinking:
-                events.append(_stream_delta_event(part, thinking=True))
+                if not _thinking_disabled:
+                    events.append(_stream_delta_event(part, thinking=True))
                 continue
             # Some thinking backends start normal content with a stray closing
             # tag. Repair only that shape; do not wrap every first token for
@@ -3092,13 +3454,35 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             if r.status_code != 200:
                 raw = (await r.aread()).decode(errors="replace")
                 friendly = _format_upstream_error(r.status_code, raw, target_url)
-                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly})}\n\n'
                 return
 
-            async for line in r.aiter_lines():
+            first_token_budget = _first_token_timeout(target_url, timeout)
+            stream_received_event = False
+            first_token_deadline = (
+                time.monotonic() + first_token_budget
+                if first_token_budget > 0
+                else None
+            )
+            line_iterator = r.aiter_lines().__aiter__()
+            while True:
+                try:
+                    if not stream_received_event and first_token_budget > 0:
+                        remaining = (first_token_deadline or time.monotonic()) - time.monotonic()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError
+                        line = await asyncio.wait_for(
+                            line_iterator.__anext__(),
+                            timeout=remaining,
+                        )
+                    else:
+                        line = await line_iterator.__anext__()
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise httpx.ReadTimeout("upstream emitted no first stream event") from exc
                 if not line:
                     continue
-
                 # SSE allows "data:value" with no space after the colon; gating
                 # on "data: " silently dropped content + usage from providers
                 # that omit it.
@@ -3117,12 +3501,83 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                         if data.strip():
                             if data.startswith("{"):
                                 j = json.loads(data)
+                                # Empty choice frames are commonly used as
+                                # heartbeats by local gateways. Count only a
+                                # real response/error/usage frame as the
+                                # provider's first event.
+                                choices = j.get("choices") or []
+                                def _choice_has_meaningful_output(choice):
+                                    if not isinstance(choice, dict):
+                                        return False
+                                    if choice.get("finish_reason") is not None:
+                                        return True
+
+                                    def _meaningful(value):
+                                        # Gate on usable content, not merely a
+                                        # present field. Some local gateways
+                                        # emit whitespace heartbeats as
+                                        # ``content``; treating those as the
+                                        # first event disables the watchdog
+                                        # and can leave the request waiting
+                                        # for the full stream timeout.
+                                        if isinstance(value, str):
+                                            return bool(value.strip())
+                                        if isinstance(value, (list, tuple, dict)):
+                                            return bool(value)
+                                        return value is not None
+
+                                    for field in ("delta", "message"):
+                                        value = choice.get(field) or {}
+                                        if not isinstance(value, dict):
+                                            continue
+                                        if any(_meaningful(value.get(key)) for key in (
+                                            "content",
+                                            "tool_calls",
+                                            "reasoning_content",
+                                            "reasoning",
+                                            "thinking",
+                                        )):
+                                            return True
+                                    # A role-only message is a normal stream
+                                    # preamble, not usable output. Treating it
+                                    # as meaningful disables the local
+                                    # first-event watchdog and can leave a
+                                    # request waiting for the full read timeout.
+                                    return False
+
+                                has_meaningful_choice = any(
+                                    _choice_has_meaningful_output(choice)
+                                    for choice in choices
+                                )
+                                if os.getenv("ODYSSEUS_DEBUG_LLM_SHAPE", "").strip().lower() in {"1", "true", "yes", "on"}:
+                                    first_choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+                                    first_delta = first_choice.get("delta") or {}
+                                    first_message = first_choice.get("message") or {}
+                                    logger.info(
+                                        "[llm-first-token-frame] choices=%s meaningful=%s usage=%s error=%s choice_keys=%s delta_keys=%s message_keys=%s content_chars=%s tool_calls=%s finish=%s",
+                                        len(choices), has_meaningful_choice, bool(j.get("usage")), bool(j.get("error")),
+                                        sorted(first_choice), sorted(first_delta) if isinstance(first_delta, dict) else [],
+                                        sorted(first_message) if isinstance(first_message, dict) else [],
+                                        len(str(first_delta.get("content") or "")) if isinstance(first_delta, dict) else 0,
+                                        len(first_delta.get("tool_calls") or []) if isinstance(first_delta, dict) else 0,
+                                        first_choice.get("finish_reason"),
+                                    )
+                                if has_meaningful_choice or j.get("error"):
+                                    stream_received_event = True
                                 if j.get("error"):
                                     err = j.get("error")
                                     status = _provider_stream_error_status(err, default=400)
                                     text = err.get("message") if isinstance(err, dict) else str(err)
                                     yield f'event: error\ndata: {json.dumps({"error": text or "Upstream request failed", "status": status})}\n\n'
                                     return
+                                response_id = j.get("id")
+                                if (
+                                    isinstance(response_id, str)
+                                    and response_id.strip()
+                                    and response_id.strip() != _response_id_announced
+                                ):
+                                    _response_id_announced = response_id.strip()
+                                    yield f'data: {json.dumps({"type": "model_response_ref", "response_id": _response_id_announced, "model": str(j.get("model") or model)})}\n\n'
                                 chunk_model = j.get("model")
                                 if isinstance(chunk_model, str) and chunk_model.strip():
                                     _actual_model = chunk_model.strip()
@@ -3163,6 +3618,16 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     )
                                     if _usage_data is None:
                                         continue
+                                    # OpenRouter reports the actual USD cost of the
+                                    # turn in usage.cost — pass it through so the
+                                    # backend can persist real spend (estimator is
+                                    # the fallback, never the primary).
+                                    try:
+                                        _cost = float(u.get("cost") or 0.0)
+                                    except (TypeError, ValueError):
+                                        _cost = 0.0
+                                    if _cost > 0:
+                                        _usage_data["cost_usd"] = _cost
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
                                     # excluding prefill/network. Pass it through so the UI shows the
@@ -3197,7 +3662,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             if thinking_part:
                                                 reasoning = (reasoning + thinking_part) if reasoning else thinking_part
                                             content = text_part
-                                        if reasoning:
+                                        # DeepSeek may return reasoning_content even when the
+                                        # caller requests thinking=off, and its API requires that
+                                        # exact field on subsequent tool rounds. Preserve it in the
+                                        # reasoning channel for protocol continuity; consumers keep
+                                        # reasoning out of the visible final answer.
+                                        if reasoning and (
+                                            _normalize_thinking_mode(thinking_mode) != "off"
+                                            or "deepseek" in str(model or "").lower()
+                                        ):
                                             _degenerate = degenerate_guard.check(reasoning)
                                             if _degenerate:
                                                 yield _degenerate
@@ -3244,7 +3717,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                                             _think_open_stripped = True
                                                         regular_part = content[close_idx + len("</think>"):]
                                                         _in_think_tag = False
-                                                        if think_part:
+                                                        if think_part and not _thinking_disabled:
                                                             yield f'data: {json.dumps({"delta": think_part, "thinking": True})}\n\n'
                                                         if regular_part:
                                                             _first_content_sent = True
@@ -3257,7 +3730,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                                             if tag_end != -1:
                                                                 content = stripped[tag_end + 1:]
                                                             _think_open_stripped = True
-                                                        if content:
+                                                        if content and not _thinking_disabled:
                                                             yield f'data: {json.dumps({"delta": content, "thinking": True})}\n\n'
                                                 else:
                                                     # Some thinking backends start normal content with a
@@ -3328,10 +3801,16 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             yield event
                             else:
                                 if data.strip():
+                                    stream_received_event = True
                                     for event in _format_routed_content(_harmony_router.feed(data)):
                                         yield event
-                    except Exception as e:
-                        logger.error(f"Error parsing stream data: {e}")
+                    except Exception:
+                        # A malformed provider chunk must remain visible in
+                        # diagnostics.  Swallowing this exception makes a
+                        # valid model response look like an empty completion
+                        # and prevents the fallback layer from identifying the
+                        # adapter defect.
+                        logger.exception("Error parsing stream data")
                         continue
 
             # End of stream (no explicit [DONE] received)
@@ -3347,7 +3826,41 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
         logger.warning(f"Stream connect to {target_url} failed: {e}{_tail}")
         yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
-    except httpx.ReadTimeout:
+    except httpx.ReadTimeout as exc:
+        # Some self-hosted OpenAI-compatible servers accept a multimodal
+        # follow-up but never emit its first SSE event.  Retry once without
+        # llama.cpp/LM Studio cache affinity: the conversation is still sent
+        # in full, while a stale KV slot cannot poison the retry.  Limit this
+        # to a silent first-event timeout; never replay a stream after output
+        # has already reached the caller.
+        if (
+            _retry_silent_local
+            and not locals().get("stream_received_event", True)
+            and locals().get("first_token_budget", 0) > 0
+            and _is_managed_stream_endpoint(target_url)
+        ):
+            logger.warning(
+                "Local stream emitted no first event; retrying once without cache affinity: %s",
+                _host_key(target_url),
+            )
+            async for retry_chunk in _stream_llm_inner(
+                url,
+                model,
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                headers=headers,
+                timeout=timeout,
+                prompt_type=prompt_type,
+                tools=tools,
+                session_id=None,
+                tool_choice_none=tool_choice_none,
+                thinking_mode=thinking_mode,
+                _retry_silent_local=False,
+            ):
+                yield retry_chunk
+            return
+        logger.warning("LLM stream read timeout: %s", exc)
         yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
     except httpx.PoolTimeout:
         yield f'event: error\ndata: {json.dumps({"error": "Connection pool timeout", "status": 504})}\n\n'
@@ -3359,7 +3872,17 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502, "fallback_eligible": False})}\n\n'
     except Exception as e:
         logger.error(f"Stream error: {e}")
-        yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502, "fallback_eligible": False})}\n\n'
+        yield f'event: error\ndata: {json.dumps({"error": _stream_failure_message(e), "status": 502, "fallback_eligible": False})}\n\n'
+
+
+def _stream_failure_message(error: BaseException) -> str:
+    """Client-facing text for an unexpected streaming failure.
+
+    The raw exception can carry request URLs, local paths or provider internals;
+    callers log it server-side and stream only this generic message, like the
+    named transport failures above it.
+    """
+    return f"Model stream failed ({type(error).__name__})"
 
 
 def _summarize_stream_error(err_chunk: Optional[str]) -> str:
@@ -3410,6 +3933,375 @@ def _stream_error_fallback_override(err_chunk: Optional[str]) -> Optional[bool]:
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
     return None
+
+
+def _stream_error_text(err_chunk: Optional[str]) -> str:
+    """Collect provider error fields used by context-window recovery."""
+
+    if not err_chunk:
+        return ""
+    parts = []
+    try:
+        for line in err_chunk.splitlines():
+            if not line.startswith("data: "):
+                continue
+            payload = json.loads(line[6:])
+            if not isinstance(payload, dict):
+                continue
+            for key in ("text", "error", "raw", "message", "detail"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    parts.append(value)
+                elif isinstance(value, dict):
+                    parts.append(json.dumps(value, ensure_ascii=False))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return err_chunk
+    return "\n".join(parts) or err_chunk
+
+
+def _is_degenerate_stream_error(err_chunk: Optional[str]) -> bool:
+    text = _stream_error_text(err_chunk).lower()
+    return "stopped generation:" in text and "started repeating tokens" in text
+
+
+def _debug_llm_request_shape(payload: Dict, *, provider: str, target_url: str) -> None:
+    """Log a redacted request fingerprint when explicitly enabled.
+
+    This is intentionally structural: prompt text, image data, headers, and
+    credentials are never logged.
+    """
+    if os.getenv("ODYSSEUS_DEBUG_LLM_SHAPE", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    messages = payload.get("messages") or []
+    shapes = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else []
+        images = [b for b in blocks if isinstance(b, dict) and b.get("type") == "image_url"]
+        image_chars = 0
+        for block in images:
+            url = ((block.get("image_url") or {}).get("url") or "")
+            if isinstance(url, str) and "," in url:
+                image_chars += len(url.split(",", 1)[1])
+        shapes.append({
+            "role": message.get("role"),
+            "content_type": type(content).__name__,
+            "text_chars": len(content) if isinstance(content, str) else sum(
+                len(str(b.get("text") or "")) for b in blocks if isinstance(b, dict)
+            ),
+            "blocks": [b.get("type") for b in blocks if isinstance(b, dict)],
+            "image_count": len(images),
+            "image_base64_chars": image_chars,
+            "tool_calls": len(message.get("tool_calls") or []),
+        })
+    logger.info(
+        "[llm-shape] provider=%s target=%s messages=%s tools=%s top_keys=%s shapes=%s",
+        provider, _host_key(target_url), len(messages), len(payload.get("tools") or []),
+        sorted(str(key) for key in payload if key not in {"messages", "tools"}), shapes,
+    )
+
+
+def _native_tool_transport_rejected(err_chunk: Optional[str]) -> bool:
+    """Return True when a provider rejects the request's tool-call transport."""
+
+    text = _stream_error_text(err_chunk).lower()
+    if not text:
+        return False
+    explicit_markers = (
+        "enable-auto-tool-choice",
+        "tool-call-parser",
+        "tool_call_parser",
+        "tool choice is not supported",
+        "tool_choice is not supported",
+        "tools are not supported",
+        "function calling is not supported",
+        "function_calling is not supported",
+    )
+    return any(marker in text for marker in explicit_markers)
+
+
+async def _stream_candidate_with_context_recovery(
+    url: str,
+    model: str,
+    messages: List[Dict],
+    headers: Optional[Dict],
+    kwargs: Dict,
+    capability_recovery_factory=None,
+    retry_degenerate_stream_once: bool = False,
+    retry_transient_precontent: bool = False,
+):
+    """Retry recoverable pre-content request-shape rejections once per kind."""
+
+    from src.generation_budget import (
+        context_safety_margin,
+        estimate_multimodal_image_tokens,
+        estimate_tool_schema_tokens,
+        plan_context_recovery,
+    )
+
+    candidate_messages = messages
+    candidate_kwargs = dict(kwargs)
+    context_recovery_attempts = 0
+    recovery_context_limit: Optional[int] = None
+    capability_recovery_attempted = False
+    degenerate_recovery_attempted = False
+    availability_recovery_attempted = False
+
+    while True:
+        emitted = False
+        pending = []
+        retry = False
+        hold_attempt = retry_degenerate_stream_once and not degenerate_recovery_attempted
+        held_output = []
+        candidate_stream = stream_llm(
+            url,
+            model,
+            candidate_messages,
+            headers=headers,
+            **candidate_kwargs,
+        )
+        try:
+            async for chunk in candidate_stream:
+                if (
+                    hold_attempt
+                    and chunk.startswith("event: error")
+                    and _is_degenerate_stream_error(chunk)
+                ):
+                    degenerate_recovery_attempted = True
+                    retry = True
+                    held_output.clear()
+                    pending.clear()
+                    candidate_messages = [
+                        *candidate_messages,
+                        {
+                            "role": "system",
+                            "content": (
+                                "The previous generation entered a repetition loop. "
+                                "Retry the requested action concisely, avoid repeated "
+                                "phrases, and emit a tool call as soon as one is needed."
+                            ),
+                        },
+                    ]
+                    logger.warning(
+                        "[degenerate-recovery] retrying model=%s after repeated output",
+                        model,
+                    )
+                    break
+                event_data = {}
+                is_done = chunk.startswith("data: [DONE]")
+                if chunk.startswith("data: ") and not is_done:
+                    try:
+                        event_data = json.loads(chunk[6:])
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
+                substantive = (
+                    isinstance(event_data.get("delta"), str)
+                    and bool(event_data["delta"].strip())
+                ) or (
+                    event_data.get("type") == "tool_calls"
+                    and bool(event_data.get("calls"))
+                )
+
+                if (
+                    chunk.startswith("event: error")
+                    and not emitted
+                    and recovery_context_limit is not None
+                    and context_recovery_attempts < 2
+                    and _stream_error_status(chunk) in {502, 503, 504}
+                ):
+                    # Some OpenAI-compatible servers close the retry stream
+                    # while rebuilding a context-rejected request, surfacing a
+                    # transport error rather than a second structured 400.
+                    # We have already proved this request overflowed, so one
+                    # final, bounded recovery is safer than treating that
+                    # protocol wrapper as an unrelated endpoint failure. Drop
+                    # inline pixels (tool text/provenance remains) and trim
+                    # text more deeply; never loop this path indefinitely.
+                    from src.context_compactor import (
+                        prune_multimodal_images,
+                        trim_for_context,
+                    )
+
+                    context_recovery_attempts += 1
+                    candidate_messages = prune_multimodal_images(
+                        candidate_messages,
+                        max_images=0,
+                    )
+                    tool_tokens = estimate_tool_schema_tokens(candidate_kwargs.get("tools"))
+                    message_context = max(
+                        1,
+                        recovery_context_limit
+                        - tool_tokens
+                        - estimate_multimodal_image_tokens(candidate_messages),
+                    )
+                    candidate_messages = trim_for_context(
+                        candidate_messages,
+                        max(1, int(message_context * 0.5)),
+                        reserve_tokens=(
+                            int(candidate_kwargs.get("max_tokens") or 1)
+                            + context_safety_margin(recovery_context_limit)
+                        ),
+                    )
+                    logger.warning(
+                        "[context-recovery] retrying model=%s after post-overflow transport "
+                        "error with no inline images attempt=%s",
+                        model,
+                        context_recovery_attempts,
+                    )
+                    retry = True
+                    break
+
+                if (
+                    chunk.startswith("event: error")
+                    and not emitted
+                    and retry_transient_precontent
+                    and not availability_recovery_attempted
+                    and _stream_error_status(chunk) in {502, 503, 504, 529}
+                    and _stream_error_fallback_override(chunk) is not False
+                ):
+                    availability_recovery_attempted = True
+                    logger.warning(
+                        "[availability-recovery] retrying model=%s after pre-content HTTP %s",
+                        model,
+                        _stream_error_status(chunk),
+                    )
+                    await asyncio.sleep(LLMConfig.RETRY_DELAY)
+                    retry = True
+                    break
+
+                if (
+                    chunk.startswith("event: error")
+                    and not emitted
+                    and context_recovery_attempts < 2
+                ):
+                    failed_max = candidate_kwargs.get("max_tokens", LLMConfig.DEFAULT_MAX_TOKENS)
+                    plan = plan_context_recovery(
+                        _stream_error_text(chunk),
+                        failed_max,
+                        candidate_messages,
+                        candidate_kwargs.get("tools"),
+                    )
+                    if plan is not None:
+                        context_recovery_attempts += 1
+                        recovery_context_limit = plan.context_limit
+                        candidate_kwargs["max_tokens"] = plan.max_tokens
+                        if plan.context_limit:
+                            from src.context_compactor import (
+                                prune_multimodal_images,
+                                trim_for_context,
+                            )
+
+                            tool_tokens = estimate_tool_schema_tokens(candidate_kwargs.get("tools"))
+                            if context_recovery_attempts > 1:
+                                # Provider tokenizers can exceed our estimate
+                                # substantially for media/tool-heavy prompts.
+                                # A second overflow gets one bounded visual
+                                # prune and a deeper text trim.
+                                candidate_messages = prune_multimodal_images(
+                                    candidate_messages,
+                                    max_images=4,
+                                )
+                            # ``trim_for_context`` estimates text history. The
+                            # provider adds VL patch tokens later, so carry the
+                            # same visual reserve used by proactive output
+                            # budgeting into every recovery trim. Otherwise a
+                            # request rejected for context can be retried with
+                            # its text shortened but its image cost unchanged.
+                            message_context = max(
+                                1,
+                                plan.context_limit
+                                - tool_tokens
+                                - estimate_multimodal_image_tokens(candidate_messages),
+                            )
+                            if context_recovery_attempts > 1:
+                                message_context = max(1, int(message_context * 0.7))
+                            candidate_messages = trim_for_context(
+                                candidate_messages,
+                                message_context,
+                                reserve_tokens=(
+                                    plan.max_tokens
+                                    + context_safety_margin(plan.context_limit)
+                                ),
+                            )
+                        logger.warning(
+                            "[context-recovery] retrying model=%s max_tokens=%s -> %s "
+                            "context=%s observed_input=%s attempt=%s",
+                            model,
+                            failed_max,
+                            plan.max_tokens,
+                            plan.context_limit,
+                            plan.observed_input_tokens,
+                            context_recovery_attempts,
+                        )
+                        retry = True
+                        break
+
+                if (
+                    chunk.startswith("event: error")
+                    and not emitted
+                    and not capability_recovery_attempted
+                    and candidate_kwargs.get("tools")
+                    and capability_recovery_factory is not None
+                    and _native_tool_transport_rejected(chunk)
+                ):
+                    capability_recovery_attempted = True
+                    recovered = capability_recovery_factory(chunk)
+                    if hasattr(recovered, "__await__"):
+                        recovered = await recovered
+                    if recovered:
+                        candidate_messages = recovered.get("messages", candidate_messages)
+                        candidate_kwargs = {
+                            **candidate_kwargs,
+                            **(recovered.get("kwargs") or {}),
+                        }
+                        logger.warning(
+                            "[tool-capability] provider rejected native tools for model=%s; "
+                            "retrying with textual tool transport",
+                            model,
+                        )
+                        retry = True
+                        break
+
+                if substantive and not emitted:
+                    if hold_attempt:
+                        held_output.extend(pending)
+                    else:
+                        for buffered in pending:
+                            yield buffered
+                    pending.clear()
+                    emitted = True
+
+                if substantive or emitted or chunk.startswith("event: error"):
+                    if hold_attempt:
+                        held_output.append(chunk)
+                    else:
+                        yield chunk
+                else:
+                    pending.append(chunk)
+        finally:
+            close_candidate = getattr(candidate_stream, "aclose", None)
+            if callable(close_candidate):
+                try:
+                    await close_candidate()
+                except Exception as close_error:
+                    logger.warning(
+                        "[context-recovery] failed to close model=%s stream: %s",
+                        model,
+                        type(close_error).__name__,
+                    )
+
+        if retry:
+            continue
+        if hold_attempt:
+            held_output.extend(pending)
+            for buffered in held_output:
+                yield buffered
+        else:
+            for buffered in pending:
+                yield buffered
+        return
 
 
 def _request_factory_error_chunk(error: Exception, status: Optional[int]) -> str:
@@ -3527,7 +4419,14 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
     fallback_statuses = kwargs.pop("fallback_statuses", None)
     fallback_on_empty = bool(kwargs.pop("fallback_on_empty", True))
     candidate_request_factory = kwargs.pop("candidate_request_factory", None)
+    candidate_capability_recovery_factory = kwargs.pop(
+        "candidate_capability_recovery_factory",
+        None,
+    )
     candidate_route_descriptors = kwargs.pop("candidate_route_descriptors", None)
+    retry_degenerate_stream_once = bool(
+        kwargs.pop("retry_degenerate_stream_once", False)
+    )
     eligible_statuses = None if fallback_statuses is None else frozenset(fallback_statuses)
 
     raw_candidates = list(candidates or [])
@@ -3589,12 +4488,52 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     continue
                 yield error_chunk
                 return
-        candidate_stream = stream_llm(
+        try:
+            requested_max_tokens = int(
+                candidate_kwargs.get("max_tokens", LLMConfig.DEFAULT_MAX_TOKENS) or 0
+            )
+        except (TypeError, ValueError):
+            requested_max_tokens = 0
+        if requested_max_tokens > 0:
+            try:
+                from src.generation_budget import fit_output_token_budget
+
+                bounded_max_tokens = fit_output_token_budget(
+                    requested_max_tokens,
+                    get_context_length(url, model),
+                    candidate_messages,
+                    candidate_kwargs.get("tools"),
+                )
+            except Exception:
+                bounded_max_tokens = requested_max_tokens
+            if 0 < bounded_max_tokens < requested_max_tokens:
+                candidate_kwargs = {
+                    **candidate_kwargs,
+                    "max_tokens": bounded_max_tokens,
+                }
+
+        candidate_stream = _stream_candidate_with_context_recovery(
             url,
             model,
             candidate_messages,
             headers=headers,
-            **candidate_kwargs,
+            kwargs=candidate_kwargs,
+            capability_recovery_factory=(
+                (
+                    lambda error_chunk, _i=i, _url=url, _model=model, _headers=headers:
+                    candidate_capability_recovery_factory(
+                        _i,
+                        _url,
+                        _model,
+                        _headers,
+                        error_chunk,
+                    )
+                )
+                if candidate_capability_recovery_factory is not None
+                else None
+            ),
+            retry_degenerate_stream_once=retry_degenerate_stream_once,
+            retry_transient_precontent=len(cands) == 1,
         )
         try:
             async for chunk in candidate_stream:

@@ -7,9 +7,17 @@ it silently inherits a run-long gate bypass.
 
 from pathlib import Path
 
+import pytest
+
+import src.tool_capabilities as tool_capabilities
 from src.tool_approval_scopes import ToolApprovalScope
 from src.tool_approvals import ToolApprovalStore
 from src.tool_capabilities import ToolRunSecurityContext, capabilities_for_action
+
+
+@pytest.fixture(autouse=True)
+def _enable_approval_gate_for_legacy_gate_tests(monkeypatch):
+    monkeypatch.setattr(tool_capabilities, "TOOL_APPROVAL_GATE_ENABLED", True)
 
 
 def _pending(store: ToolApprovalStore, *, session_id=""):

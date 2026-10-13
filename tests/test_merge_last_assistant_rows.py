@@ -9,7 +9,7 @@ deletion mirror the in-memory rule.
 """
 from types import SimpleNamespace
 
-from routes.history_routes import _merge_continue_rows_to_delete
+from routes.history_routes import _has_immediate_continue_marker, _merge_continue_rows_to_delete
 
 
 def _m(role, content=""):
@@ -39,3 +39,15 @@ def test_plain_user_between_not_deleted():
     a1, usr, a2 = _m("assistant", "a1"), _m("user", "a real follow-up question"), _m("assistant", "a2")
     rows = _merge_continue_rows_to_delete([a1, usr, a2], a1, a2)
     assert rows == [a2] and usr not in rows
+
+
+def test_merge_requires_immediate_continue_marker():
+    a1, plain, a2 = _m("assistant", "calendar answer"), _m("user", "delete it"), _m("assistant", "search answer")
+    assert not _has_immediate_continue_marker([a1, plain, a2], 0, 2)
+
+
+def test_merge_allows_only_interrupted_continue_marker():
+    a1, cont, a2 = (_m("assistant", "partial"),
+                    _m("user", "Your previous response was interrupted. Continue."),
+                    _m("assistant", "rest"))
+    assert _has_immediate_continue_marker([a1, cont, a2], 0, 2)

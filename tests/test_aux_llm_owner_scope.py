@@ -49,8 +49,9 @@ def test_scheduler_fallbacks_and_research_headers_are_owner_scoped():
     assert "owner=task.owner or None" in src
     assert "headers_from_resolver = False" in src
     assert "headers_from_resolver = True" in src
-    assert "from src.auth_helpers import owner_filter" in src
-    assert "owner_filter(ep_q, ModelEndpoint, task.owner or None)" in src
+    assert "resolve_owner_registered_endpoint(db2, endpoint_url, task.owner or None)" in src
+    assert "resolve_owner_registered_endpoint(db, endpoint_url, task.owner or None)" in src
+    assert src.count("resolve_endpoint_runtime(ep, owner=task.owner or None)") == 2
 
 
 def test_research_routes_fallbacks_are_owner_scoped():

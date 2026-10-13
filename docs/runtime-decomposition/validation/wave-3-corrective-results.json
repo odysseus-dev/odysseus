@@ -1,0 +1,131 @@
+{
+  "starting_sha": "4d4f1d681c6c053df4bb193b18d0f841a89f92f4",
+  "starting_tree": "e842ba808aa36bd306832d140e527fc56537d115",
+  "branch": "feature/runtime-resource-authority",
+  "full_suite_metrics": {
+    "passed": 12358,
+    "failed": 43,
+    "skipped": 62,
+    "xfailed": 2,
+    "seconds": 447.52
+  },
+  "wave_3_introduced_failures_eliminated": 28,
+  "wave_3_introduced_failures_remaining": 0,
+  "pre_wave_3_baseline_failures_remaining": 43,
+  "migrated_test_groups": {
+    "tests/test_agent_bash_tmux_env.py": {
+      "nodes": [
+        "test_direct_bash_subprocess_has_closed_stdin",
+        "test_bash_rejects_unicode_ffmpeg_drawtext_without_explicit_font",
+        "test_bash_allows_unicode_ffmpeg_drawtext_with_explicit_fontfile"
+      ],
+      "classification": "A",
+      "resolution": "Bound through authorized_handler with sealed launch reservation"
+    },
+    "tests/test_agent_bash_windows.py": {
+      "nodes": [
+        "test_windows_bash_tool_passes_ctx_env_through_to_the_child",
+        "test_bash_tool_returns_install_hint_when_git_bash_is_missing",
+        "test_windows_bash_does_not_use_a_stray_tmux_executable"
+      ],
+      "classification": "A",
+      "resolution": "Bound through authorized_handler with sealed launch reservation"
+    },
+    "tests/test_agent_external_tool_schemas.py": {
+      "nodes": [
+        "test_known_native_tool_reaches_scoped_bridge_without_redeclared_schema"
+      ],
+      "classification": "A",
+      "resolution": "Sealed bridge external backend resources on RequestAuthority"
+    },
+    "tests/test_client_tool_routing.py": {
+      "nodes": [
+        "test_no_bridge_falls_back_to_backend_execution",
+        "test_host_shell_requires_bridge_context"
+      ],
+      "classification": "C / B",
+      "resolution": "Replaced legacy _call_mcp_tool patch with _direct_fallback (C); asserted fail-closed unresolved backend identity (B)"
+    },
+    "tests/test_edit_file.py": {
+      "nodes": [
+        "test_edit_file_blocked_at_execution_for_non_admin"
+      ],
+      "classification": "A",
+      "resolution": "Executed inside sealed FilesystemRoot and workspace"
+    },
+    "tests/test_failed_call_correction.py": {
+      "nodes": [
+        "test_corrected_ids_execute_after_repeated_ambiguous_title_failures[2]",
+        "test_corrected_ids_execute_after_repeated_ambiguous_title_failures[3]"
+      ],
+      "classification": "B",
+      "resolution": "Asserted fail-closed terminal denial on ambiguous note selector without database mutation"
+    },
+    "tests/test_preview_execution_evidence.py": {
+      "nodes": [
+        "test_failed_shell_retains_exit_status_and_both_streams_for_followup"
+      ],
+      "classification": "A",
+      "resolution": "Executed under launch_authority with explicit session binding"
+    },
+    "tests/test_review_regressions.py": {
+      "nodes": [
+        "test_host_shell_uses_tui_bridge_context",
+        "test_host_shell_forwards_detach_and_job_polling",
+        "test_host_shell_rejects_non_local_bridge_url_before_http",
+        "test_public_agent_policy_blocks_sensitive_tools",
+        "test_disabled_qualified_email_tool_blocks_bare_alias",
+        "test_tool_policy_qualified_email_block_covers_bare_alias",
+        "test_bare_email_dispatch_rejects_non_object_json_args",
+        "test_bare_email_dispatch_rejects_invalid_json_body",
+        "test_write_file_inline_json_args",
+        "test_plan_mode_blocks_mutating_email_aliases_without_mcp_inventory",
+        "test_bare_email_dispatch_empty_content_calls_with_empty_args",
+        "test_email_mcp_non_object_args_fail_before_dispatch",
+        "test_email_mcp_dispatch_includes_hidden_owner",
+        "test_bare_email_mcp_dispatch_includes_hidden_owner"
+      ],
+      "classification": "A / B",
+      "resolution": "Added surface: odysseus-tui to bridge context; implemented resource_identity on _FakeMcpManager; sealed workspace for write_file; asserted fail-closed on invalid bridge URL"
+    },
+    "tests/test_tool_approvals.py": {
+      "nodes": [
+        "test_dispatcher_rejects_approved_document_action_without_target"
+      ],
+      "classification": "D",
+      "resolution": "Eliminated database contamination in tests/test_scheduler_restart_doublefire.py via monkeypatch.setattr"
+    }
+  },
+  "critical_fixes": {
+    "P1-A": {
+      "description": "Unhandled stale/exited ProcessResource during child-authority intersection",
+      "location": "src/agent_runtime/process_resources.py::intersect_observed",
+      "resolution": "Safely catch ResourceIdentityError; exclude stale observations from child authority without crashing",
+      "test_coverage": "tests/test_stale_process_intersection.py (9 passed, all 6 invariants verified)"
+    },
+    "P2-A": {
+      "description": "Browser daemon cleanup bypassed when record.session is invalidated by cancellation",
+      "location": "src/agent_tools/web_tools.py::shutdown_private_browser_sessions",
+      "resolution": "Guard cleanup by socket dir existence rather than active session capability",
+      "test_coverage": "tests/test_private_browser_tool.py::test_shutdown_cleans_up_invalidated_registered_browser_session (passed)"
+    },
+    "P2-B": {
+      "description": "Subprocess environment inheritance exposed host secrets and provider tokens",
+      "location": "src/tool_execution.py::_agent_subprocess_env and src/agent_tools/subprocess_tools.py::_owned_spec",
+      "resolution": "Restricted subprocess environment to explicit allowlist (_SAFE_SUBPROCESS_VARS) with credential regex scrubbing (_SENSITIVE_PATTERN)",
+      "test_coverage": "Verified across bash, python, and containment test suites (32 passed)"
+    },
+    "Remote_SSH_Refusal": {
+      "description": "Deterministic fail-closed refusal of unscoped remote scheduled SSH",
+      "location": "src/builtin_actions.py::_run_subprocess",
+      "contract": "Maintained fail-closed: 'Remote scheduled workload requires an exact external backend binding.'",
+      "test_coverage": "tests/test_scheduled_remote_ssh_refusal.py (2 passed)"
+    },
+    "Scheduler_Contamination": {
+      "description": "test_scheduler_restart_doublefire.py polluted global database engine/SessionLocal",
+      "location": "tests/test_scheduler_restart_doublefire.py::_setup_isolated_db",
+      "resolution": "Used monkeypatch.setattr for all database module attributes so pytest restores real engine/SessionLocal on teardown",
+      "test_coverage": "Verified bidirectional ordering with tests/test_tool_approvals.py (passed)"
+    }
+  }
+}

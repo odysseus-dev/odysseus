@@ -25,6 +25,8 @@ import os
 import time
 from typing import Dict, Iterable, List, Optional
 
+from src.path_confinement import confine
+
 from .skill_format import Skill, slugify
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,25 @@ def _to_float(x, default: float = 0.0) -> float:
         return float(x)
     except (TypeError, ValueError):
         return default
+
+
+def _approval_policy(owner: Optional[str]) -> tuple[bool, float]:
+    """Read the user's automatic skill-approval gate without breaking retrieval."""
+    try:
+        from routes.prefs_routes import _load_for_user
+        prefs = _load_for_user(owner) or {}
+    except Exception:
+        prefs = {}
+    try:
+        from src.settings import get_setting
+        default_minimum = float(get_setting("skill_autosave_min_confidence", 0.85))
+    except Exception:
+        default_minimum = 0.85
+    try:
+        minimum = float(prefs.get("skill_min_confidence", default_minimum))
+    except (TypeError, ValueError):
+        minimum = default_minimum
+    return bool(prefs.get("auto_approve_skills", True)), max(0.0, min(1.0, minimum))
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +141,11 @@ class SkillsManager:
 
     def set_audit(self, name: str, verdict: str, by_teacher: bool = False,
                   worker_model: str = "", teacher_model: str = "",
-                  owner: Optional[str] = None) -> None:
+                  owner: Optional[str] = None, saved_turns: Optional[int] = None,
+                  saved_tool_calls: Optional[int] = None,
+                  baseline_verdict: Optional[str] = None,
+                  usefulness: Optional[float] = None,
+                  audit_summary: Optional[str] = None) -> None:
         """Record the last test/audit result for a skill in the usage sidecar
         (so it surfaces in load() without touching SKILL.md). Drives the
         'verified' check + teacher mark on the card."""
@@ -129,11 +154,34 @@ class SkillsManager:
         key = self._usage_key(name, owner)
         e = usage.setdefault(key, {"uses": 0, "last_used": None})
         e["audit_verdict"] = verdict
+        # Replace, rather than retain, the explanation from a previous run.
+        e["audit_summary"] = str(audit_summary or "")[:2000]
+        # Version 2 fixes audit-arm isolation and separates functional success
+        # from baseline utility. Legacy inconclusive results are not evidence
+        # under that protocol and should be eligible for a clean re-audit.
+        e["audit_version"] = 2
         e["audit_by_teacher"] = bool(by_teacher)
         if worker_model:
             e["audit_worker_model"] = worker_model
         if teacher_model:
             e["audit_teacher_model"] = teacher_model
+        if saved_turns is not None:
+            try:
+                e["saved_turns"] = int(saved_turns)
+            except (TypeError, ValueError):
+                e.pop("saved_turns", None)
+        if saved_tool_calls is not None:
+            try:
+                e["saved_tool_calls"] = int(saved_tool_calls)
+            except (TypeError, ValueError):
+                e.pop("saved_tool_calls", None)
+        if baseline_verdict is not None:
+            e["baseline_verdict"] = str(baseline_verdict or "unknown")
+        if usefulness is not None:
+            try:
+                e["usefulness"] = float(usefulness)
+            except (TypeError, ValueError):
+                e.pop("usefulness", None)
         e["audited_at"] = _t.time()
         self._save_usage(usage)
 
@@ -180,6 +228,10 @@ class SkillsManager:
         sk.path = path
         return path
 
+    def sync_builtin_skill(self, skill: Skill) -> str:
+        """Persist a trusted built-in skill during startup synchronization."""
+        return self._write_skill(skill)
+
     def backfill_owner(self, primary_owner: str, valid_owners: Optional[set[str]] = None) -> int:
         """Assign legacy/unclaimed skill files to the primary owner.
 
@@ -196,6 +248,8 @@ class SkillsManager:
         for path in self._iter_skill_files():
             sk = self._read_skill(path)
             if not sk:
+                continue
+            if sk.source == "builtin":
                 continue
             owner = (sk.owner or "").strip()
             if owner == primary_owner:
@@ -227,11 +281,24 @@ class SkillsManager:
             u = self._usage_entry(usage, sk.name, sk.owner)
             d["uses"] = int(u.get("uses", 0))
             d["last_used"] = u.get("last_used")
-            d["audit_verdict"] = u.get("audit_verdict")
+            audit_verdict = u.get("audit_verdict")
+            try:
+                audit_version = int(u.get("audit_version") or 0)
+            except (TypeError, ValueError):
+                audit_version = 0
+            if audit_verdict == "inconclusive" and audit_version < 2:
+                audit_verdict = None
+            d["audit_verdict"] = audit_verdict
+            d["audit_summary"] = u.get("audit_summary", "") if audit_verdict else ""
+            d["audit_version"] = audit_version
             d["audit_by_teacher"] = bool(u.get("audit_by_teacher"))
             d["audit_worker_model"] = u.get("audit_worker_model")
             d["audit_teacher_model"] = u.get("audit_teacher_model")
-            d["audited_at"] = u.get("audited_at")
+            d["audited_at"] = u.get("audited_at") if audit_verdict else None
+            d["saved_turns"] = u.get("saved_turns")
+            d["saved_tool_calls"] = u.get("saved_tool_calls")
+            d["baseline_verdict"] = u.get("baseline_verdict")
+            d["usefulness"] = u.get("usefulness")
             d["necessity"] = u.get("necessity")
             out.append(d)
             seen_names.add(sk.name)
@@ -284,7 +351,11 @@ class SkillsManager:
         # leaked legacy / un-stamped skills to every authenticated user.
         # Hide them now; the owner needs to be backfilled on disk if those
         # skills should be visible to a specific user.
-        return [s for s in entries if s.get("owner") == owner]
+        return [
+            s for s in entries
+            if s.get("owner") == owner
+            or (s.get("source") == "builtin" and not s.get("owner"))
+        ]
 
     # ----------------------------------------------------------------------
     # CRUD — disk-backed
@@ -546,7 +617,15 @@ class SkillsManager:
             sk = self._read_skill(path)
             if not sk or sk.name != name:
                 continue
-            if (sk.owner or "") != (owner or ""):
+            # Built-in skills are shared, ownerless procedures. ``load``
+            # exposes them to every owner, so direct progressive-disclosure
+            # reads must apply the same visibility rule as the index/list
+            # path. Previously a built-in appeared in `list` but `view`
+            # returned not-found for authenticated users.
+            if not (
+                (sk.owner or "") == (owner or "")
+                or (sk.source == "builtin" and not (sk.owner or ""))
+            ):
                 continue
             try:
                 with open(path, encoding="utf-8") as f:
@@ -562,11 +641,19 @@ class SkillsManager:
             sk = self._read_skill(path)
             if not sk or sk.name != name:
                 continue
-            if (sk.owner or "") != (owner or ""):
+            if not (
+                (sk.owner or "") == (owner or "")
+                or (sk.source == "builtin" and not (sk.owner or ""))
+            ):
                 continue
-            base = os.path.realpath(os.path.dirname(path))
-            target = os.path.realpath(os.path.join(base, ref_path))
-            if os.path.commonpath([base, target]) != base or target == os.path.dirname(path):
+            # allow_root=False refuses the skill directory itself. The old
+            # guard compared a realpath-ed target against a raw dirname, so on
+            # a host where the skills tree is reached through a symlink (macOS
+            # /tmp -> /private/tmp) the two sides never matched and the guard
+            # could not fire.
+            try:
+                target = confine(os.path.dirname(path), ref_path, allow_root=False)
+            except (ValueError, OSError):
                 return None
             if not os.path.isfile(target):
                 return None
@@ -591,18 +678,12 @@ class SkillsManager:
         """Return the `[{name, description, category, status}]` list the
         agent sees in its system prompt.
 
-        Includes:
-          - All published skills.
-          - Drafts written by the teacher-escalation loop
-            (`source == "teacher-escalation"`). The whole point of
-            the teacher loop is for the student to find the new
-            procedure on the very next turn — waiting for a manual
-            publish click defeats the loop.
-
-        Excludes user-created drafts (status=draft, source != teacher-
-        escalation) — those are work-in-progress and pollute the
-        prompt with half-finished procedures.
+        Includes built-ins plus user skills that have passed their audit and
+        meet the owner's current automatic-approval threshold. A persistent
+        ``published`` flag is not sufficient: a changed threshold or a legacy
+        record must not make an unaudited skill eligible for prompt injection.
         """
+        auto_approve, min_confidence = _approval_policy(owner)
         out = []
         for s in self.load(owner=owner):
             status = s.get("status")
@@ -613,6 +694,19 @@ class SkillsManager:
                     pass  # let it through
                 else:
                     continue
+            # A stale published record must not remain injectable after an
+            # audit has recorded a failure. Inconclusive is not a failure.
+            audit_verdict = str(s.get("audit_verdict") or "").lower()
+            if audit_verdict in {"needs_work", "fail"}:
+                continue
+            if s.get("source") != "builtin" and auto_approve:
+                if status != "published" or audit_verdict != "pass":
+                    continue
+                if _to_float(s.get("confidence"), 0.0) < min_confidence:
+                    continue
+            necessity = s.get("necessity") or {}
+            if isinstance(necessity, dict) and necessity.get("necessary") is False:
+                continue
             # Platform gating
             if platform and s.get("platforms") and platform not in s["platforms"]:
                 continue
@@ -649,6 +743,8 @@ class SkillsManager:
         threshold: float = 0.3,
         max_items: int = 5,
         min_confidence: float = 0.0,
+        available_toolsets: Optional[Iterable[str]] = None,
+        platform: Optional[str] = None,
     ) -> List[Dict]:
         if skills is None:
             skills = self.load_all()
@@ -660,37 +756,62 @@ class SkillsManager:
         # without a manual publish click. The UI flags teacher-written
         # entries with a 🎓 badge so users can demote / delete bad
         # ones when they spot them.
-        skills = [s for s in skills if s.get("status") in ("published", "draft")]
-        # Confidence gate (used by prompt-injection, NOT by search): a DRAFT
-        # skill must clear the bar to be injected. Published skills are already
-        # vetted, so they always qualify. Missing confidence = treat as 1.0
-        # (legacy skills shouldn't silently vanish). 0 disables the gate.
+        skills = [
+            s for s in skills
+            if s.get("status") in ("published", "draft")
+            and str(s.get("audit_verdict") or "").lower()
+            not in {"needs_work", "fail", "skipped"}
+        ]
+        available = set(available_toolsets) if available_toolsets is not None else None
+        if available is not None:
+            skills = [
+                skill for skill in skills
+                if all(tool in available for tool in (skill.get("requires_toolsets") or []))
+                and not any(tool in available for tool in (skill.get("fallback_for_toolsets") or []))
+            ]
+        if platform:
+            skills = [
+                skill for skill in skills
+                if not skill.get("platforms") or platform in skill.get("platforms", [])
+            ]
+        # Prompt injection is fail-closed for user skills. Built-ins are
+        # shipped procedures; every other skill needs a passing audit and a
+        # confidence score at the user's current threshold.
         if min_confidence > 0:
             def _passes(s):
-                if s.get("status") == "published":
+                if s.get("source") == "builtin":
                     return True
-                # Teacher-escalation drafts are auto-written from a (possibly
-                # untrusted) trace and injected as authoritative guidance, so they
-                # must EARN injection with an explicit, parseable confidence that
-                # clears the bar — fail closed on a missing/garbage value instead
-                # of treating it as 1.0. Hand-authored legacy drafts keep the
-                # lenient "unset → keep" behavior so they don't silently vanish.
-                if s.get("source") == "teacher-escalation":
-                    c = s.get("confidence")
-                    if c is None:
-                        return False
-                    return _to_float(c, 0.0) >= min_confidence  # unparseable → fail closed
-                c = s.get("confidence")
-                if c is None:
-                    return True  # unset → don't filter (legacy)
-                return _to_float(c, 1.0) >= min_confidence  # unparseable → pass
+                return (
+                    s.get("status") == "published"
+                    and str(s.get("audit_verdict") or "").lower() == "pass"
+                    and _to_float(s.get("confidence"), 0.0) >= min_confidence
+                )
             skills = [s for s in skills if _passes(s)]
         if not skills:
             return []
 
         query_tokens = _tokenize(query)
+        semantic_scores: Dict[int, float] = {}
+        semantic_enabled = str(
+            os.environ.get("ODYSSEUS_SKILL_SEMANTIC_RETRIEVAL", "1")
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        if semantic_enabled:
+            try:
+                from src.skill_index import semantic_skill_scores
+
+                semantic_scores = semantic_skill_scores(query, skills)
+            except Exception as exc:
+                logger.debug("Semantic skill retrieval unavailable: %s", exc)
+        try:
+            semantic_threshold = float(
+                os.environ.get("ODYSSEUS_SKILL_SEMANTIC_THRESHOLD", "0.4")
+            )
+        except (TypeError, ValueError):
+            semantic_threshold = 0.4
+        semantic_threshold = max(-1.0, min(1.0, semantic_threshold))
+
         scored = []
-        for sk in skills:
+        for position, sk in enumerate(skills):
             text = " ".join([
                 sk.get("name", ""),
                 sk.get("description", ""),
@@ -698,19 +819,22 @@ class SkillsManager:
                 " ".join(sk.get("tags", []) or []),
                 " ".join(sk.get("procedure", []) or []),
             ])
-            score = _jaccard(query_tokens, _tokenize(text))
+            lexical_score = _jaccard(query_tokens, _tokenize(text))
             for tag in sk.get("tags", []) or []:
                 # Match tags as whole tokens, not substrings: `tag in query`
                 # boosted e.g. a "ai" tag for any query containing "email".
                 tag_tokens = _tokenize(tag)
                 if tag_tokens and tag_tokens <= query_tokens:
-                    score = max(score, 0.3) * 1.3
+                    lexical_score = max(lexical_score, 0.3) * 1.3
             if query.lower() in (sk.get("description") or "").lower():
-                score = max(score, 0.6)
+                lexical_score = max(lexical_score, 0.6)
+            semantic_score = semantic_scores.get(position, -1.0)
+            if lexical_score < threshold and semantic_score < semantic_threshold:
+                continue
+            score = max(lexical_score, semantic_score)
             score *= 1.0 + _to_float(sk.get("confidence"), 0.5) * 0.1
             if sk.get("uses", 0) > 0:
                 score *= 1.05
-            if score >= threshold:
-                scored.append((score, sk))
+            scored.append((score, sk))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [sk for _, sk in scored[:max_items]]

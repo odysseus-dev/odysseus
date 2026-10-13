@@ -15,7 +15,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_DECISION,
@@ -25,6 +25,14 @@ from src.tool_approval_scopes import (
     scope_for_decision,
 )
 from src.tool_capabilities import ToolCapabilities, capabilities_for_action
+from src.agent_runtime.authority import RequestAuthority
+
+if TYPE_CHECKING:
+    from src.agent_runtime.resource_binding import BoundFilesystemOperation
+    from src.agent_runtime.remote_resources import BoundBackendOperation
+    from src.agent_runtime.owned_resources import BoundOwnedOperation
+    from src.agent_runtime.process_resources import BoundProcessOperation
+    from src.browser_identity import BoundBrowserOperation
 
 
 DEFAULT_APPROVAL_TTL_SECONDS = 10 * 60
@@ -117,6 +125,12 @@ def _binding_payload(
     continuation_query: Any,
     effects: tuple[str, ...],
     result_integrity: str,
+    request_authority: RequestAuthority | None = None,
+    resource_operation=None,
+    backend_operation=None,
+    owned_operation=None,
+    process_operation=None,
+    browser_operation=None,
 ) -> dict[str, Any]:
     return {
         "owner": _normalized_owner(owner),
@@ -137,6 +151,12 @@ def _binding_payload(
         "continuation_query": _normalized_continuation_query(continuation_query),
         "effects": list(effects),
         "result_integrity": str(result_integrity),
+        "request_authority": request_authority.to_dict() if request_authority is not None else None,
+        "resource_operation": resource_operation.to_dict() if resource_operation is not None else None,
+        "backend_operation": backend_operation.to_dict() if backend_operation is not None else None,
+        "owned_operation": owned_operation.to_dict() if owned_operation is not None else None,
+        "process_operation": process_operation.to_dict() if process_operation is not None else None,
+        "browser_operation": browser_operation.to_dict() if browser_operation is not None else None,
     }
 
 
@@ -162,6 +182,16 @@ class PendingToolApproval:
     # exposed in the browser payload.
     selected_tools: tuple[str, ...] = ()
     continuation_query: str = ""
+    # The originating user request is internal continuation context only; it
+    # is never displayed or treated as authorization for the sealed action.
+    request_text: str = ""
+    request_authority: RequestAuthority | None = None
+    # Server-resolved targets at proposal time; never read from the approval UI.
+    resource_operation: BoundFilesystemOperation | None = None
+    backend_operation: BoundBackendOperation | None = None
+    owned_operation: BoundOwnedOperation | None = None
+    process_operation: BoundProcessOperation | None = None
+    browser_operation: BoundBrowserOperation | None = None
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
         return {
@@ -270,6 +300,12 @@ class ExactToolApproval:
             continuation_query=self.pending.continuation_query,
             effects=effects,
             result_integrity=result_integrity,
+            request_authority=self.pending.request_authority,
+            resource_operation=self.pending.resource_operation,
+            backend_operation=self.pending.backend_operation,
+            owned_operation=self.pending.owned_operation,
+            process_operation=self.pending.process_operation,
+            browser_operation=self.pending.browser_operation,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -352,8 +388,67 @@ class ToolApprovalStore:
         continuation_query: Any = None,
         external_untrusted_context_seen: bool,
         capabilities: ToolCapabilities,
+        request_text: Any = "",
+        request_authority: RequestAuthority | None = None,
+        client_runtime_context: dict | None = None,
     ) -> PendingToolApproval:
+        if request_authority is not None and not isinstance(request_authority, RequestAuthority):
+            raise TypeError("Approval authority must be server-owned RequestAuthority")
         now = time.time()
+        from src.agent_runtime.authority import ExactOperation
+        from src.agent_runtime.resource_binding import NATIVE_FILESYSTEM_TOOLS, resolve_filesystem_operation
+        from src.agent_runtime.resources import FilesystemRoot
+        resource_operation = None
+        backend_operation = None
+        owned_operation = None
+        process_operation = None
+        browser_operation = None
+        from src.agent_runtime.remote_resources import BoundBackendOperation, resolve_backend
+        from src.agent_runtime.owned_resources import needs_owned_binding, resolve_owned_operation
+        from src.agent_runtime.resources import NativeBackendResource
+        try:
+            operation = ExactOperation.normalize(tool_name, content)
+            backend = resolve_backend(operation.transport_tool, context=client_runtime_context, content=operation.input, owner=_normalized_owner(owner))
+            if request_authority is not None and request_authority.inherited:
+                if not request_authority.permits(operation) or backend not in request_authority.backend_resources:
+                    raise ValueError("Child approval exceeds originating authority")
+            backend_operation = BoundBackendOperation(backend,
+                request_authority.request_id if request_authority is not None else "",
+                _normalized_owner(owner), str(session_id or ""), operation.transport_tool, operation.input)
+            from src.agent_runtime.process_resources import needs_process_binding, resolve_process_operation
+            if request_authority is not None and needs_process_binding(operation, backend):
+                process_operation = resolve_process_operation(request_authority, operation, backend)
+            from src.browser_identity import native_browser, resolve_browser_operation
+            if native_browser(operation, backend):
+                if request_authority is None:
+                    raise ValueError("Browser approval requires originating resource authority")
+                browser_operation = resolve_browser_operation(request_authority, operation)
+            if isinstance(backend, NativeBackendResource) and needs_owned_binding(operation):
+                resolved_owned = resolve_owned_operation(operation, owner=_normalized_owner(owner),
+                    thread_id=str(session_id or ""), request_id=backend_operation.request_id,
+                    document_id=document_id)
+                if request_authority is not None and request_authority.inherited:
+                    if not all(any(scope.permits(r) for scope in request_authority.owned_scopes) for r in resolved_owned.resources):
+                        raise ValueError("Child approval exceeds originating record scope")
+                owned_operation = resolved_owned
+                if owned_operation.document_id:
+                    document_id = owned_operation.document_id
+                    document_version = owned_operation.document_version
+                    document_digest = owned_operation.document_digest
+        except (ValueError, TypeError, OSError, RuntimeError, AttributeError):
+            pass  # Unresolved proposals are never reconstructed at execution.
+        if tool_name in NATIVE_FILESYSTEM_TOOLS and backend_operation is not None and isinstance(backend_operation.resource, NativeBackendResource):
+            try:
+                roots = request_authority.resource_roots if request_authority is not None else ()
+                if not roots and workspace and (request_authority is None or not request_authority.inherited):
+                    roots = (FilesystemRoot.seal(workspace, owner=_normalized_owner(owner)),)
+                resource_operation = resolve_filesystem_operation(
+                    ExactOperation.normalize(tool_name, content), roots=roots, workspace=workspace or "",
+                    request_id=request_authority.request_id if request_authority is not None else "")
+            except (ValueError, TypeError, OSError, RuntimeError):
+                # An unresolved proposal may be displayed, but it cannot execute
+                # after approval by reconstructing its targets at claim time.
+                pass
         effects = tuple(sorted(effect.value for effect in capabilities.effects))
         result_integrity = capabilities.result_integrity.value
         payload = _binding_payload(
@@ -371,6 +466,12 @@ class ToolApprovalStore:
             continuation_query=continuation_query,
             effects=effects,
             result_integrity=result_integrity,
+            request_authority=request_authority,
+            resource_operation=resource_operation,
+            backend_operation=backend_operation,
+            owned_operation=owned_operation,
+            process_operation=process_operation,
+            browser_operation=browser_operation,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -393,6 +494,13 @@ class ToolApprovalStore:
             expires_at=now + self._ttl_seconds,
             selected_tools=tuple(payload["selected_tools"]),
             continuation_query=payload["continuation_query"],
+            request_text=str(request_text or ""),
+            request_authority=request_authority,
+            resource_operation=resource_operation,
+            backend_operation=backend_operation,
+            owned_operation=owned_operation,
+            process_operation=process_operation,
+            browser_operation=browser_operation,
         )
         with self._lock:
             self._purge_expired_locked(now)

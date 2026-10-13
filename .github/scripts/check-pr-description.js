@@ -8,6 +8,9 @@ module.exports = async ({ github, context, core }) => {
   const MARKER = '<!-- pr-description-check-bot -->';
   const owner  = context.repo.owner;
   const repo   = context.repo.repo;
+  const isMaintainerPreview =
+    owner === 'pewdiepie-archdaemon'
+    && repo === 'odysseus-maintainer-preview';
 
   // Strip HTML comments so placeholder text does not count as content.
   function strip(text) {
@@ -28,13 +31,30 @@ module.exports = async ({ github, context, core }) => {
     descriptionProblems.push('**Summary** is empty or too short — describe what changed and why.');
   }
 
-  // 2. Linked Issue must reference a real issue. Accept a bare #NNN, a closing
-  //    keyword + #NNN, or a full issue URL (e.g. .../issues/123) — the strict
-  //    keyword-prefixed form previously false-flagged correctly-linked PRs.
+  // 2. Public contributor PRs must reference a real issue. The private
+  //    maintainer-preview repository may explicitly opt out for fast maintainer
+  //    integration work while still requiring the section to state that intent.
   const linkedSection = section('Linked Issue');
   const hasIssueRef = /#\d+\b/.test(linkedSection) || /\/issues\/\d+/.test(linkedSection);
-  if (!linkedSection || !hasIssueRef) {
-    descriptionProblems.push('**Linked Issue** — add a reference like `Fixes #NNN`, a bare `#NNN`, or a link to the issue.');
+  const hasMaintainerNA = /^N\/A\b/i.test(linkedSection);
+
+  if (!linkedSection) {
+    descriptionProblems.push(
+      '**Linked Issue** — fill this section. Public PRs require an issue reference; ' +
+      'maintainer-preview PRs may use `N/A — maintainer integration work`.'
+    );
+  } else if (isMaintainerPreview) {
+    if (!hasIssueRef && !hasMaintainerNA) {
+      descriptionProblems.push(
+        '**Linked Issue** — use an issue reference or `N/A — maintainer integration work` ' +
+        'in the private maintainer-preview repository.'
+      );
+    }
+  } else if (!hasIssueRef) {
+    descriptionProblems.push(
+      '**Linked Issue** — add a reference like `Fixes #NNN`, a bare `#NNN`, ' +
+      'or a link to the issue.'
+    );
   }
 
   // 3. At least one Type of Change box must be checked.

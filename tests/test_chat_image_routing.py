@@ -5,7 +5,15 @@ for mod_name in ["src.endpoint_resolver", "src.database", "core.database"]:
         sys.modules.pop(mod_name, None)
 
 import json
+import ast
+import asyncio
+import inspect
+import time
 from types import SimpleNamespace
+
+import pytest
+
+from src.tool_policy import build_effective_tool_policy
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
 
@@ -95,3 +103,64 @@ def test_matching_image_endpoint_routes_selected_image_model(monkeypatch):
     monkeypatch.setattr(chat_routes, "SessionLocal", lambda: db)
 
     assert chat_routes._is_image_generation_session(_session(model="sdxl-local"))
+
+
+def test_image_model_bypasses_text_agent_inventory_only():
+    tree = ast.parse(inspect.getsource(chat_routes))
+    guard = next(node.test for node in ast.walk(tree)
+                 if isinstance(node, ast.If)
+                 and ast.unparse(node.test).startswith('_use_turn_contract and chat_mode'))
+    expression = compile(ast.Expression(guard), '<route guard>', 'eval')
+    for image_session in (True, False):
+        assert eval(expression, dict(_use_turn_contract=True, chat_mode='agent',
+                                     image_generation_session=image_session)) is not image_session
+
+
+@pytest.mark.parametrize('editing', [False, True])
+@pytest.mark.parametrize('restriction', ['none', 'generate_image', 'edit_image', 'guide', 'admin'])
+def test_direct_image_dispatch_preserves_permissions(monkeypatch, editing, restriction):
+    # Execute the actual route branch with fake providers, avoiding paid calls
+    # and unrelated chat-context/database setup.
+    tree = ast.parse(inspect.getsource(chat_routes))
+    branch = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.If)
+                  and ast.unparse(node.test) == 'image_generation_session'
+                  and any(isinstance(child, ast.Yield) for child in ast.walk(node)))
+    function = ast.AsyncFunctionDef(
+        name='dispatch', args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[],
+                                          kw_defaults=[], defaults=[]),
+        body=branch.body, decorator_list=[],
+    )
+    module = ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[]))
+    calls = []
+
+    async def provider(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {'results': 'Generated', 'image_url': '/test-image.png'}
+
+    from src import ai_interaction, settings
+    monkeypatch.setattr(ai_interaction, 'do_generate_image', provider)
+    monkeypatch.setattr(ai_interaction, 'do_edit_image', provider)
+    monkeypatch.setattr(settings, 'get_setting', lambda *args: restriction != 'admin')
+    policy = build_effective_tool_policy(
+        disabled_tools={restriction} if restriction.endswith('_image') else set(),
+        last_user_message='Do not use tools' if restriction == 'guide' else 'A thumbnail',
+    )
+    namespace = dict(
+        tool_policy=policy, chat_handler=None, att_ids=[], _user='test',
+        _first_image_attachment=lambda *args, **kwargs: {'path': '/test.png'} if editing else None,
+        message='A thumbnail', session='test-session', sess=_session(model='gpt-5-image'),
+        incognito=True, _active_streams={'test-session': object()},
+        asyncio=asyncio, time=time, json=json, Dict=dict, Any=object,
+    )
+    exec(compile(module, '<image route>', 'exec'), namespace)
+
+    async def collect():
+        return [event async for event in namespace['dispatch']()]
+
+    events = asyncio.run(collect())
+    blocked = restriction in {'generate_image', 'guide', 'admin'} or (editing and restriction == 'edit_image')
+    assert bool(calls) is not blocked
+    assert any('generated_image' in event for event in events) is not blocked
+    assert events[-1] == 'data: [DONE]\n\n'
+    assert not namespace['_active_streams']

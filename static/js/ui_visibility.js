@@ -24,7 +24,8 @@ export const UI_VIS_MAP = {
   'tool-research':       '#tool-research-btn, #rail-research',
   'tool-gallery':        '#tool-gallery-btn, #rail-gallery',
   'tool-library':        '#tool-library-btn, #rail-archive',
-  'tool-memory':         '#tool-memory-btn, #rail-memory',
+  'tool-memory':         '#sidebar-memory-btn, #rail-memory',
+  'tool-skills':         '#sidebar-skills-btn',
   'tool-notes':          '#tool-notes-btn, #rail-notes',
   'tool-tasks':          '#tool-tasks-btn, #rail-tasks',
   'tool-theme':          '#tool-theme-btn, #rail-theme',
@@ -67,6 +68,8 @@ export const resolveVisibility = (state = {}) => {
   for (const [key, selector] of Object.entries(UI_VIS_MAP)) {
     let visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
     if (!toolsOn && key.startsWith('tool-')) visible = false;
+    // Always show skills button regardless of user preferences (sidebar version)
+    if (key === 'tool-skills') visible = true;
     out[selector] = visible;
   }
   return out;

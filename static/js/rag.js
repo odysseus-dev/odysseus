@@ -4,7 +4,7 @@
  * RAG (Retrieval Augmented Generation) management
  */
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 
 let API_BASE = '';

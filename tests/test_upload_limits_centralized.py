@@ -86,7 +86,7 @@ def test_routes_import_from_upload_limits_not_local_defs():
         ],
         "routes/memory/memory_routes.py": ['int(os.getenv("ODYSSEUS_MEMORY_IMPORT_MAX_BYTES"'],
         "routes/personal_routes.py": ['os.getenv("ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES"'],
-        "routes/email_routes.py": ["EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024"],
+        "routes/email/email_routes.py": ["EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024"],
         "routes/stt_routes.py": ["STT_MAX_AUDIO_BYTES = 25 * 1024 * 1024"],
         "routes/calendar_routes.py": ["_ICS_MAX_BYTES = 10 * 1024 * 1024"],
     }
@@ -100,7 +100,7 @@ def test_routes_import_from_upload_limits_not_local_defs():
         "routes/gallery/gallery_routes.py": "GALLERY_UPLOAD_MAX_BYTES",
         "routes/memory/memory_routes.py": "MEMORY_IMPORT_MAX_BYTES",
         "routes/personal_routes.py": "PERSONAL_UPLOAD_MAX_BYTES",
-        "routes/email_routes.py": "EMAIL_COMPOSE_UPLOAD_MAX_BYTES",
+        "routes/email/email_routes.py": "EMAIL_COMPOSE_UPLOAD_MAX_BYTES",
         "routes/stt_routes.py": "STT_MAX_AUDIO_BYTES",
         "routes/calendar_routes.py": "ICS_MAX_BYTES",
     }

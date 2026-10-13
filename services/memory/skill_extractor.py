@@ -28,6 +28,10 @@ SKILL_EXTRACT_PROMPT = (
     "(personal errands, a specific person/place/date, casual conversation).\n"
     "- A pure question/answer or explanation with no transferable method.\n"
     "- The agent failed, gave up, or the approach is not worth repeating.\n\n"
+    "- Routine use of an existing tool, or a generic checklist with no new discovery.\n"
+    "Prefer a specific successful workaround, an unexpected pitfall, or a verified "
+    "sequence that would save rediscovery. Preserve exact useful commands and "
+    "verification steps, but replace private identifiers and credentials with placeholders.\n\n"
     "When (and only when) a genuine reusable procedure exists, return a JSON "
     "object with:\n"
     '- "title": short name (under 10 words)\n'
@@ -259,19 +263,9 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] '%s' already exists — dropped as duplicate", title)
             return None
 
-        # Auto-publish gate: if the user has `auto_approve_skills` on, the
-        # newly-extracted skill is created `published` immediately rather
-        # than waiting for the next audit batch. The audit still runs later
-        # and can demote it back to `draft` (or delete) on failure. Default
-        # ON matches the UI label "Auto-approve skills".
+        # Automatic approval happens only after the audit has passed. A new
+        # extraction begins as a draft so it cannot enter chat context early.
         _initial_status = "draft"
-        try:
-            from routes.prefs_routes import _load_for_user as _load_prefs
-            _prefs = _load_prefs(owner) or {}
-            if _prefs.get("auto_approve_skills", True):
-                _initial_status = "published"
-        except Exception:
-            pass
 
         entry = skills_manager.add_skill(
             title=title,

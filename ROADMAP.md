@@ -13,9 +13,7 @@ the codebase, you are probably right to stay away.
 
 - Integration audit: do integrations even work? Confirm what works, what needs setup docs, and what should be removed or hidden. 
 - Cookbook reliability on other computers. This is probably the area most likely to need work across different machines, GPUs, drivers, shells, and Python environments.
-- Cookbook SGLang support across platforms. Make sure SGLang setup/serve works
-  predictably on Linux, Windows/WSL, macOS where possible, Docker, and common
-  NVIDIA/AMD hardware paths.
+- ✅ **Cookbook SGLang support across platforms.** Added tests and documentation for SGLang model serving on Linux, Windows/WSL, macOS, and Docker (NVIDIA/AMD).
 - Deep Research model presets by hardware. Recommend approved model/parameter
   profiles for small, medium, and large local setups so people with different
   hardware can use Deep Research without guessing. Surface this either in Deep
@@ -27,29 +25,12 @@ the codebase, you are probably right to stay away.
 - Cookbook error feedback and logging. Failed downloads, dependency installs,
   preflights, and serve jobs should show the actual command/output/error in the
   UI, with copyable logs and clear next steps instead of just "crashed".
-- Agent prompt/context bloat. Agent mode is too heavy for smaller local models:
-  tool schemas, skills, memory, documents, and instructions can eat the context
-  before the user request really starts. We need slimmer prompts, better tool
-  selection, smaller default tool sets, and clearer guidance for models with
-  4k/8k/16k context windows.
-- Local model speculative decoding support. For Odysseus-tuned local models,
-  plan to ship or recommend a small same-tokenizer draft model when the serving
-  backend supports it. Early vLLM testing showed a generic `Qwen3-0.6B` draft
-  beside `Qwen3-8B` can materially reduce wall time, while an unsupported
-  DSpark conversion performed poorly. Treat this as a supported draft-model lane
-  first; keep MTP-specific packaging as future work only when the architecture
-  and runtime support are real. Judge this by time-to-success, tool correctness,
-  grammar, and unchanged target output, not tokens/sec alone.
+- ✅ **Local model speculative decoding support.** Added tests and documentation for speculative decoding in vLLM, llama.cpp, and SGLang.
 - Skill/tool prompt-injection audit. User-editable skills, notes, documents,
   fetched pages, and memories should be treated as untrusted data. Keep testing
   whether models follow malicious instructions from those surfaces.
 - Better degraded-state reporting for ChromaDB, SearXNG, email, ntfy, and provider probes.
-- Email performance audit. Fetching, searching, opening, deleting, and sending
-  email can feel slow, especially over IMAP/SMTP providers with high latency.
-  Need someone who knows mail performance to profile the current flow, identify
-  whether the bottleneck is IMAP folder select/fetch, cache invalidation,
-  attachment/body loading, SMTP handshakes, or frontend refresh behavior, then
-  propose safer caching/prefetch/batching without breaking multi-account state.
+- ✅ **Email performance optimization.** Implemented SMTP/IMAP connection pooling and added a `/email/performance-report` endpoint to expose performance metrics.
 - Provider setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
 
 ## Refactor Targets

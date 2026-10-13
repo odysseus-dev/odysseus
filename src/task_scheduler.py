@@ -1,9 +1,11 @@
 """Background scheduler for ScheduledTask execution."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,17 @@ from src.task_action_policy import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_sft_fixture_owner(owner: str | None) -> bool:
+    """Synthetic SFT accounts may manage tasks but must never auto-fire them."""
+    return str(owner or "").strip().lower().startswith("sft_")
+
+
+def _background_owner_filter(column):
+    """SQL predicate matching real/ownerless accounts, excluding SFT fixtures."""
+    from sqlalchemy import or_
+    return or_(column.is_(None), ~column.like("sft\\_%", escape="\\"))
 
 
 def _utcnow() -> datetime:
@@ -259,7 +272,7 @@ HOUSEKEEPING_DEFAULTS = {
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
-    "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
+    "audit_skills":          {"name": "Skills Audit",             "trigger_type": "schedule", "schedule": "daily", "scheduled_time": "02:00", "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
@@ -352,7 +365,7 @@ class TaskScheduler:
         # coroutine; trigger_task() can be called from request handlers; the
         # event bus fires from background tasks. Without this lock long-running
         # tasks could be double-dispatched.
-        self._executing_lock = asyncio.Lock()
+        self._executing_lock = threading.RLock()
         self._pending_notifications = []  # completed task notifications
         self._task_defer_counts = {}
         # Strict serial execution — exactly one task runs at a time. Anything
@@ -362,6 +375,24 @@ class TaskScheduler:
         self._run_semaphore = asyncio.Semaphore(1)
         self._concurrency_cap = 1
         self._task_handles = {}
+
+    @contextlib.asynccontextmanager
+    async def _executing_guard(self):
+        # This scheduler can be touched by request handlers, event-bus tasks,
+        # and the background scheduler loop. An asyncio.Lock is bound to the
+        # first event loop that awaits it, which breaks after app reloads or
+        # loop changes. The guarded sections only mutate in-memory sets/maps
+        # and do not await, so a process-local reentrant lock is sufficient and
+        # loop-agnostic.
+        lock = self._executing_lock
+        if hasattr(lock, "__aenter__"):
+            # Compatibility for tests or old in-memory scheduler instances that
+            # predate the RLock migration.
+            async with lock:
+                yield
+            return
+        with lock:
+            yield
 
     def _set_run_progress(self, run_id: str, message: str):
         """Persist short live progress text for Activity while a run is active."""
@@ -409,20 +440,70 @@ class TaskScheduler:
             logger.debug("Task abort marker failed for %s", task_id, exc_info=True)
             return False
 
+    def _finish_cancelled_run(self, task_id: str, run_id: str, message: str, foreground: bool):
+        """Persist running-task cancellation using a worker-owned DB session."""
+        from core.database import SessionLocal, ScheduledTask, TaskRun
+        with SessionLocal() as db:
+            run = db.query(TaskRun).filter(TaskRun.id == run_id).first()
+            if run:
+                run.status = 'aborted'
+                run.error = message
+                run.result = run.result or message
+                run.finished_at = _utcnow()
+            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+            if task:
+                task.last_run = _utcnow()
+                if foreground:
+                    task.next_run = _utcnow() + timedelta(minutes=15)
+                elif (task.trigger_type or 'schedule') == 'schedule':
+                    task.next_run = compute_next_run(
+                        task.schedule, task.scheduled_time, task.scheduled_day,
+                        task.scheduled_date, after=_utcnow(),
+                        cron_expression=task.cron_expression,
+                        tz_name=_resolve_task_timezone(db, task),
+                    )
+                else:
+                    task.next_run = None
+            db.commit()
+
     def add_notification(self, task_name: str, status: str, task_id: str = None, owner: str = None, body: str = None):
         """Store a notification about a completed task run. Tagged with the
         task's owner so `pop_notifications` can return only that user's
         notifications and prevent cross-tenant drain. `body` is the result
         text — populated when output_target='notification' so the client can
         show a rich browser Notification, not just a toast."""
-        self._pending_notifications.append({
+        timestamp = _utcnow()
+        notification = {
             "task_name": task_name,
             "status": status,
             "task_id": task_id,
             "owner": owner,
             "body": (body[:500] + "…") if body and len(body) > 500 else body,
-            "timestamp": _utcnow().isoformat() + "Z",
-        })
+            "timestamp": timestamp.isoformat() + "Z",
+        }
+        self._pending_notifications.append(notification)
+        # Keep a durable copy because the live notifications endpoint consumes
+        # its queue after delivering the toast/browser notification.
+        try:
+            from core.database import SessionLocal, NotificationLog
+            db = SessionLocal()
+            try:
+                db.add(NotificationLog(
+                    id=uuid.uuid4().hex,
+                    owner=owner,
+                    task_name=task_name or "Untitled task",
+                    task_id=task_id,
+                    status=status or "success",
+                    body=notification["body"],
+                    timestamp=timestamp,
+                ))
+                db.commit()
+            finally:
+                db.close()
+        except Exception:
+            # A database write must never prevent the live notification from
+            # reaching the user or interrupt task completion.
+            logger.warning("Could not persist task notification", exc_info=True)
         # Cap at 50 to avoid unbounded growth
         if len(self._pending_notifications) > 50:
             self._pending_notifications = self._pending_notifications[-50:]
@@ -493,6 +574,7 @@ class TaskScheduler:
                     _ST.status == "active",
                     _ST.next_run.isnot(None),
                     _ST.next_run < now,
+                    _background_owner_filter(_ST.owner),
                 ).all()
                 if overdue:
                     for t in overdue:
@@ -569,6 +651,7 @@ class TaskScheduler:
                     ScheduledTask.status == "active",
                     ScheduledTask.trigger_type == "schedule",
                     ScheduledTask.next_run.isnot(None),
+                    _background_owner_filter(ScheduledTask.owner),
                 ).all()
                 buckets: Dict[str, list] = {}
                 for r in rows:
@@ -654,7 +737,7 @@ class TaskScheduler:
         try:
             owners = set()
             for r in db.query(ScheduledTask.owner).distinct().all():
-                if r[0]:
+                if r[0] and not _is_sft_fixture_owner(r[0]):
                     owners.add(r[0])
             note_q = db.query(Note.owner).filter(
                 Note.due_date.isnot(None),
@@ -662,7 +745,7 @@ class TaskScheduler:
                 Note.archived == False,  # noqa: E712
             ).distinct()
             for r in note_q.all():
-                if r[0]:
+                if r[0] and not _is_sft_fixture_owner(r[0]):
                     owners.add(r[0])
             return sorted(owners)
         except Exception:
@@ -688,6 +771,7 @@ class TaskScheduler:
                     next_run = _db.query(_ST.next_run).filter(
                         _ST.status == "active",
                         _ST.next_run.isnot(None),
+                        _background_owner_filter(_ST.owner),
                     ).order_by(_ST.next_run.asc()).first()
                     if next_run and next_run[0]:
                         delta = (next_run[0] - _utcnow()).total_seconds()
@@ -709,13 +793,14 @@ class TaskScheduler:
                 foreground_active = has_foreground_activity()
             except Exception:
                 foreground_active = False
-            async with self._executing_lock:
+            async with self._executing_guard():
                 # Snapshot under the lock so we don't race with mid-iteration adds.
                 executing_snapshot = set(self._executing)
                 # Scheduled tasks and deferred event tasks both use next_run.
                 due = db.query(ScheduledTask).filter(
                     ScheduledTask.status == "active",
                     ScheduledTask.next_run <= now,
+                    _background_owner_filter(ScheduledTask.owner),
                     ScheduledTask.id.notin_(executing_snapshot) if executing_snapshot else True,
                 ).all()
                 to_dispatch = []
@@ -780,15 +865,17 @@ class TaskScheduler:
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
             # _execute_task_locked never runs and cannot update the Activity row.
-            self._mark_run_aborted(task_id, run_id)
-            self._defer_immediately_due_task(task_id, delay=timedelta(minutes=15))
+            await asyncio.to_thread(self._mark_run_aborted, task_id, run_id)
+            await asyncio.to_thread(
+                self._defer_immediately_due_task, task_id, delay=timedelta(minutes=15),
+            )
             raise
         finally:
             handle = self._task_handles.get(task_id)
             if handle is current:
                 self._task_handles.pop(task_id, None)
             if release_executing:
-                async with self._executing_lock:
+                async with self._executing_guard():
                     self._executing.discard(task_id)
 
     def _defer_immediately_due_task(self, task_id: str, *, delay: timedelta):
@@ -913,7 +1000,7 @@ class TaskScheduler:
                         if has_foreground_activity():
                             foreground_cancel["hit"] = True
                             logger.info("Task '%s' interrupted because Odysseus became active", task.name)
-                            if current_task:
+                            if current_task and not current_task.cancelling():
                                 current_task.cancel()
                             return
 
@@ -963,26 +1050,13 @@ class TaskScheduler:
                     else "Stopped by user"
                 )
                 logger.info("Task '%s' %s", task.name, msg)
-                run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
-                if run_obj:
-                    run_obj.status = "aborted"
-                    run_obj.error = msg
-                    run_obj.result = run_obj.result or msg
-                    run_obj.finished_at = _utcnow()
-                task.last_run = _utcnow()
-                if foreground_cancel.get("hit"):
-                    task.next_run = _utcnow() + timedelta(minutes=15)
-                elif (task.trigger_type or "schedule") == "schedule":
-                    task.next_run = compute_next_run(
-                        task.schedule, task.scheduled_time,
-                        task.scheduled_day, task.scheduled_date,
-                        after=_utcnow(),
-                        cron_expression=task.cron_expression,
-                        tz_name=_resolve_task_timezone(db, task),
-                    )
-                else:
-                    task.next_run = None
-                db.commit()
+                # Release the loop-owned transaction before the worker writes.
+                # Do not move a live ORM session/objects across threads.
+                db.close()
+                await asyncio.to_thread(
+                    self._finish_cancelled_run, task_id, run_id, msg,
+                    bool(foreground_cancel.get('hit')),
+                )
                 return
             except TaskNoop as noop:
                 # Action reported "nothing to do". Mark the run as `skipped`
@@ -1170,7 +1244,7 @@ class TaskScheduler:
             if handle is asyncio.current_task():
                 self._task_handles.pop(task_id, None)
             if release_executing:
-                async with self._executing_lock:
+                async with self._executing_guard():
                     self._executing.discard(task_id)
 
 
@@ -1242,6 +1316,17 @@ class TaskScheduler:
     async def _execute_action(self, task, run_id: str | None = None) -> tuple:
         """Execute a built-in action (no LLM needed)."""
         from src.builtin_actions import BUILTIN_ACTIONS
+        from src.agent_runtime.authority import (
+            bind_request_authority, restore_task_authority, task_operation,
+        )
+        authority = restore_task_authority(
+            getattr(task, "request_authority_json", None), task.prompt, task.task_type,
+            task.action, owner=task.owner)
+        from src.settings import get_setting
+        authority = authority.restrict(disabled_tools=get_setting("disabled_tools", []) or ())
+        operation = task_operation(task.task_type, task.action, task.prompt)
+        if operation is None or not authority.permits(operation):
+            return "Scheduled action has no matching server request authority.", False
 
         action_fn = BUILTIN_ACTIONS.get(task.action)
         if not action_fn:
@@ -1262,7 +1347,16 @@ class TaskScheduler:
             # through as `command` so action_cookbook_serve can json.loads it.
             elif task.action == "cookbook_serve" and task.prompt:
                 kwargs["command"] = task.prompt
-            result, success = await action_fn(**kwargs)
+            # Model-backed actions normally use the shared Utility/Default
+            # chain. A task-level choice is an explicit override and must be
+            # available to actions such as Skills Audit as well.
+            if getattr(task, "model", None):
+                kwargs["model"] = task.model
+                kwargs["endpoint_url"] = getattr(task, "endpoint_url", None)
+            with bind_request_authority(authority):
+                result, success = await action_fn(**kwargs)
+            if getattr(task, "model", None):
+                self._last_run_model = task.model
             return result, success
         except TaskNoop:
             # Bubble up so _execute_task_locked can drop the run row silently.
@@ -1863,6 +1957,7 @@ class TaskScheduler:
                               datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
+        from src.agent_runtime.authority import restore_task_authority
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
@@ -1874,26 +1969,26 @@ class TaskScheduler:
             messages.append(datetime_context_msg)
         messages.append({"role": "user", "content": user_content})
 
-        # Resolve headers from the endpoint's API key
+        # Recover the registered runtime URL and credentials for this chat route.
         headers = {}
         try:
-            from core.database import SessionLocal, ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
-            from src.auth_helpers import owner_filter
+            from core.database import SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url, build_headers, resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
             db2 = SessionLocal()
             try:
-                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
-                eps = ep_q.all()
-                for ep in eps:
-                    if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
-                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
-                        break
+                ep = resolve_owner_registered_endpoint(db2, endpoint_url, task.owner or None)
+                base, api_key = resolve_endpoint_runtime(ep, owner=task.owner or None)
+                endpoint_url = build_chat_url(base)
+                headers = build_headers(api_key, base)
             finally:
                 db2.close()
         except Exception:
             pass
         full_text = ""
+        final_text_replaced = False
         tool_results = []
         approval_pause = None
 
@@ -1915,62 +2010,81 @@ class TaskScheduler:
             )[1:]
         except Exception:
             _task_fallbacks = []
-        async for event_str in stream_agent_loop(
-            endpoint_url=endpoint_url,
-            model=model,
-            messages=messages,
-            max_rounds=_task_max_rounds,
-            session_id=session_id,
-            owner=task.owner,
-            headers=headers,
-            disabled_tools=disabled_tools,
-            relevant_tools=relevant_tools,
-            fallbacks=_task_fallbacks,
-            workload="background",
-        ):
-            if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
-                try:
-                    data = json.loads(event_str[6:])
-                    # Capture text from all event types, not just delta
-                    if "delta" in data:
-                        if data.get("thinking"):
-                            continue
-                        full_text += data["delta"]
-                    elif data.get("type") == "tool_output":
-                        # Tool results — capture summary so we have SOMETHING even
-                        # if the model never produces a final text response
-                        tool_summary = data.get("stdout") or data.get("output") or data.get("result") or ""
-                        if isinstance(tool_summary, str) and tool_summary.strip():
-                            tool_results.append(f"[{data.get('tool', '?')}] {tool_summary[:500]}")
-                        approval = data.get("ask_user")
-                        if (
-                            isinstance(approval, dict)
-                            and approval.get("kind") == "tool_approval"
-                        ):
-                            approval_pause = {
-                                "tool": data.get("tool") or "tool",
-                                "approval_id": approval.get("approval_id"),
-                            }
-                            # Scheduled tasks have no interactive surface that
-                            # can safely resume a one-use grant. Retire the
-                            # record immediately instead of leaving it pending
-                            # and report an explicit manual-action boundary.
-                            try:
-                                from src.tool_approvals import tool_approval_store
-                                tool_approval_store.consume(
-                                    approval_pause["approval_id"],
-                                    decision="deny",
-                                    owner=task.owner,
-                                    session_id=session_id,
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "Could not retire scheduled-task approval",
-                                    exc_info=True,
-                                )
-                            break
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        # Close the stream in this task on every exit, including the
+        # approval-pause break, so the agent run's context state unwinds here.
+        request_authority = restore_task_authority(
+            getattr(task, "request_authority_json", None), task.prompt,
+            getattr(task, "task_type", "llm"), getattr(task, "action", None),
+            owner=task.owner, session_id=session_id)
+        async with contextlib.aclosing(stream_agent_loop(
+                endpoint_url=endpoint_url,
+                model=model,
+                messages=messages,
+                max_rounds=_task_max_rounds,
+                session_id=session_id,
+                owner=task.owner,
+                workspace=request_authority.workspace or None,
+                headers=headers,
+                disabled_tools=disabled_tools,
+                relevant_tools=relevant_tools,
+                fallbacks=_task_fallbacks,
+                workload="background",
+                request_authority=request_authority,
+        )) as agent_stream:
+            async for event_str in agent_stream:
+                if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
+                    try:
+                        data = json.loads(event_str[6:])
+                        # Capture text from all event types, not just delta
+                        if "delta" in data:
+                            if data.get("thinking"):
+                                continue
+                            if final_text_replaced:
+                                # A later answer supersedes the replacement,
+                                # as the completion gate treats it.
+                                full_text = ""
+                                final_text_replaced = False
+                            full_text += data["delta"]
+                        elif data.get("type") == "final_response":
+                            # The completion gate may present its sanitized
+                            # answer as one replacement instead of deltas.
+                            full_text = str(data.get("content") or "")
+                            final_text_replaced = True
+                        elif data.get("type") == "tool_output":
+                            # Tool results — capture summary so we have SOMETHING even
+                            # if the model never produces a final text response
+                            tool_summary = data.get("stdout") or data.get("output") or data.get("result") or ""
+                            if isinstance(tool_summary, str) and tool_summary.strip():
+                                tool_results.append(f"[{data.get('tool', '?')}] {tool_summary[:500]}")
+                            approval = data.get("ask_user")
+                            if (
+                                isinstance(approval, dict)
+                                and approval.get("kind") == "tool_approval"
+                            ):
+                                approval_pause = {
+                                    "tool": data.get("tool") or "tool",
+                                    "approval_id": approval.get("approval_id"),
+                                }
+                                # Scheduled tasks have no interactive surface that
+                                # can safely resume a one-use grant. Retire the
+                                # record immediately instead of leaving it pending
+                                # and report an explicit manual-action boundary.
+                                try:
+                                    from src.tool_approvals import tool_approval_store
+                                    tool_approval_store.consume(
+                                        approval_pause["approval_id"],
+                                        decision="deny",
+                                        owner=task.owner,
+                                        session_id=session_id,
+                                    )
+                                except Exception:
+                                    logger.debug(
+                                        "Could not retire scheduled-task approval",
+                                        exc_info=True,
+                                    )
+                                break
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
         if approval_pause is not None:
             return (
@@ -2013,6 +2127,14 @@ class TaskScheduler:
 
     async def _execute_research_task(self, task, db) -> str:
         """Execute a deep research task using DeepResearcher."""
+        from src.agent_runtime.authority import bind_request_authority, restore_task_authority, task_operation
+        from src.settings import get_setting
+        authority = restore_task_authority(
+            getattr(task, "request_authority_json", None), task.prompt, task.task_type,
+            getattr(task, "action", None), owner=task.owner)
+        authority = authority.restrict(disabled_tools=get_setting("disabled_tools", []) or ())
+        if not authority.permits(task_operation(task.task_type, getattr(task, "action", None), task.prompt)):
+            raise PermissionError("Scheduled research has no matching server request authority.")
         from core.database import Session as DbSession, ChatMessage
         from src.deep_research import DeepResearcher
         from src.research_handler import RESEARCH_DATA_DIR, ResearchHandler
@@ -2047,26 +2169,23 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured for research")
-        endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model for the run record (see _execute_task_locked).
         self._last_run_model = model
 
-        # Resolve headers
+        # Authorize the selected URL before normalization can collapse service paths.
         try:
-            from core.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
-            from src.auth_helpers import owner_filter
-            db2 = db
+            from src.endpoint_resolver import (
+                build_chat_url, build_headers, resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
             if not headers_from_resolver:
-                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
-                eps = ep_q.all()
-                for ep in eps:
-                    if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
-                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
-                        break
+                ep = resolve_owner_registered_endpoint(db, endpoint_url, task.owner or None)
+                base, api_key = resolve_endpoint_runtime(ep, owner=task.owner or None)
+                endpoint_url = build_chat_url(base)
+                headers = build_headers(api_key, base)
         except Exception:
             pass
+        endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         max_tokens = int(get_setting("research_max_tokens", 8192))
         extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
@@ -2084,7 +2203,8 @@ class TaskScheduler:
         )
 
         started_ts = time.time()
-        report = await researcher.research(task.prompt)
+        with bind_request_authority(authority):
+            report = await researcher.research(task.prompt)
         completed_ts = time.time()
         try:
             stats = researcher.get_stats() or {}
@@ -2150,7 +2270,7 @@ class TaskScheduler:
         """Run a chained task. Acquires _executing membership the same way
         run_task_now does so an overlapping scheduler tick can't double-dispatch
         the same task while the chain run is in flight."""
-        async with self._executing_lock:
+        async with self._executing_guard():
             if task_id in self._executing:
                 return  # already in flight (manual trigger, scheduler tick, or another chain)
             self._executing.add(task_id)
@@ -2266,7 +2386,7 @@ class TaskScheduler:
         if force:
             asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
             return True
-        async with self._executing_lock:
+        async with self._executing_guard():
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
@@ -2278,14 +2398,17 @@ class TaskScheduler:
         handle = self._task_handles.get(task_id)
         stopped = False
         if handle and not handle.done():
-            handle.cancel()
+            # A second cancel interrupts the first cancellation's async DB
+            # cleanup, potentially leaving an overdue task immediately due.
+            if not handle.cancelling():
+                handle.cancel()
             stopped = True
-        async with self._executing_lock:
+        async with self._executing_guard():
             if task_id in self._executing:
                 self._executing.discard(task_id)
                 stopped = True
 
-        stopped = self._mark_run_aborted(task_id) or stopped
+        stopped = await asyncio.to_thread(self._mark_run_aborted, task_id) or stopped
         return stopped
 
     async def stop_background_tasks_for_foreground(self, *, reason: str = "Odysseus became active") -> int:
@@ -2296,15 +2419,20 @@ class TaskScheduler:
         Manual force-runs can be restarted by the user; automatic jobs will be
         deferred by their cancellation path instead of stealing the app.
         """
-        async with self._executing_lock:
+        async with self._executing_guard():
             task_ids = list(self._executing)
         stopped = 0
         for task_id in task_ids:
             handle = self._task_handles.get(task_id)
             if handle and not handle.done():
-                handle.cancel()
+                if not handle.cancelling():
+                    handle.cancel()
                 stopped += 1
-            if self._mark_run_aborted(task_id):
+        # Cancel every handle before waiting on persistence. A contended SQLite
+        # writer must not stall the foreground request's event loop, or delay
+        # cancellation of the remaining background work.
+        for task_id in task_ids:
+            if await asyncio.to_thread(self._mark_run_aborted, task_id):
                 stopped += 1
         if stopped:
             logger.info("Stopped %d background scheduler task(s): %s", stopped, reason)
@@ -2431,6 +2559,34 @@ class TaskScheduler:
                             tz_name=_resolve_task_timezone(db, task),
                         )
                         normalized = True
+                if desired_trigger == "schedule" and (
+                    (task.trigger_type or "schedule") != "schedule"
+                    or task.trigger_event is not None
+                    or task.trigger_count is not None
+                    or task.schedule != defs.get("schedule")
+                    or task.scheduled_time != defs.get("scheduled_time")
+                    or task.scheduled_date is not None
+                    or task.cron_expression != defs.get("cron_expression")
+                ):
+                    # Migrate older event-based housekeeping tasks to their
+                    # current scheduled definition. Keep the user's status;
+                    # only replace the trigger configuration.
+                    task.trigger_type = "schedule"
+                    task.trigger_event = None
+                    task.trigger_count = None
+                    task.trigger_counter = 0
+                    task.schedule = defs.get("schedule")
+                    task.scheduled_time = defs.get("scheduled_time")
+                    task.scheduled_day = None
+                    task.scheduled_date = None
+                    task.cron_expression = defs.get("cron_expression")
+                    task.next_run = compute_next_run(
+                        task.schedule, task.scheduled_time,
+                        task.scheduled_day, task.scheduled_date,
+                        after=_utcnow(), cron_expression=task.cron_expression,
+                        tz_name=_resolve_task_timezone(db, task),
+                    )
+                    normalized = True
                 if desired_trigger == "event" and (
                     (task.trigger_type or "schedule") != "event"
                     or task.trigger_event != defs.get("trigger_event")
@@ -2471,6 +2627,7 @@ class TaskScheduler:
                 if (task.output_target or "session") == "session":
                     task.output_target = defs.get("output_target", "none")
             seeded = []
+            from src.agent_runtime.authority import seal_task_authority
             for action, defs in HOUSEKEEPING_DEFAULTS.items():
                 if action in existing_actions:
                     continue
@@ -2488,6 +2645,7 @@ class TaskScheduler:
                     name=defs["name"],
                     task_type="action",
                     action=action,
+                    request_authority_json=seal_task_authority(None, "action", action, owner=owner),
                     trigger_type=trigger_type,
                     trigger_event=defs.get("trigger_event"),
                     trigger_count=defs.get("trigger_count"),

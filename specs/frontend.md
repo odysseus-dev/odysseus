@@ -20,7 +20,7 @@ This spec covers the current browser app in:
 
 `/backgrounds` currently targets `static/backgrounds.html`; if that route remains, the file must exist or the route should be removed.
 
-`static/manifest.json` and `static/index.html` reference PWA icon files under `static/icons/`; the current 192px, 512px, and maskable icon files exist and should stay aligned with those references.
+`static/manifest.json`, `static/index.html`, and `static/login.html` reference first-party PWA icon files under `static/icons/` (192px, 512px, and maskable). At runtime, route-specific manifests can also be generated as Blob URLs when supported, and per-route favicon links use generated inline SVG.
 
 ## Current Call Sites Include
 
@@ -81,7 +81,7 @@ Storage/secrets policy:
 - other static assets use cache-first with background refresh;
 - `CACHE_NAME` bumps and `PRECACHE` updates must accompany cache policy or shell asset changes.
 
-`static/manifest.json` owns default PWA metadata. Route-specific manifests can be generated as Blob URLs when supported. Current default icon references must match real files under `static/icons/`.
+`static/manifest.json` owns default PWA metadata, referencing the restored icons under `static/icons/`. Route-specific manifests can be generated as Blob URLs when supported; dynamic icons use the route's generated inline SVG, while the default manifest uses the static icons.
 
 KaTeX and Mermaid are self-hosted and lazy-loaded through memoized, retry-after-failure promises in `static/js/markdown.js`; math placeholders preserve source until KaTeX arrives, detached PDF export renders its own container, and Mermaid fetches only when a diagram exists. Pyodide remains a jsDelivr-loaded optional runtime, so offline/PWA behavior is not fully self-contained.
 
@@ -96,6 +96,8 @@ Current major frontend areas include:
 - document editor/library in `static/js/document.js` and `static/js/documentLibrary.js`;
 - image editor integration in `static/js/galleryEditor.js` plus leaves under `static/js/editor/`;
 - gallery, email inbox/library, calendar, research panel/jobs/synapse, notes/tasks, assistant, memory/skills, Cookbook/HW Fit, workspace picker, provider device flow, composer ArrowUp recall, theme, modal/window utilities, storage, and accessibility helpers.
+
+`static/js/emailLibrary/` is the one JS package with module-graph coverage: `tests/test_email_library_module_graph_js.py` pins the wrapper's public surface against the entry module's exports, evaluates every module on its own in a browser so an import cycle cannot hide a temporal-dead-zone read, and requires each module to be in the `sw.js` precache. Assertions about its source go through `tests/helpers/js_modules.py`, which reads the whole package, for the same reason `tests/helpers/stylesheets.py` reads the whole cascade.
 
 Coordinator ownership:
 
@@ -136,6 +138,8 @@ The Settings finder and navigation are registry-backed, hide admin-only destinat
 
 Existing frontend coverage is a mix of Node-executed helper tests, `.mjs` tests, static DOM/CSS/source-shape tests, browser exploration specs, and app/static tests. Many tests are useful source-shape regressions but do not replace browser/module-graph execution.
 
+`tests/test_css_computed_style_snapshot.py` pins `getComputedStyle` for a fixed element inventory across pages, viewports, themes and density modes, so a `static/style.css` restructuring that changes which declaration wins fails a test instead of shipping; see `tests/css_snapshot/README.md` for what it does and does not cover.
+
 Recent focused coverage includes model-key matching under Node, document-library counters, chat resend/delete/mobile Enter/ArrowUp, scoped approval continuation and compare routing, route provenance, live-thinking throttling, startup shell/history hydration, shared app-config caching/invalidation, settings registry/navigation/finder/lifecycle, lazy panel loading/offline editor precache, vendored lazy KaTeX/Mermaid rendering, email read dedup/prewarm, Markdown restoration, malformed keybinds, currency-safe inline math, notes/calendar/modal/manifest/admin-log behavior, Markdown XSS helpers, and CardDAV unchanged-password handling.
 
 Missing coverage includes:
@@ -143,7 +147,7 @@ Missing coverage includes:
 - SPA route/static auth and no-cache headers;
 - CSP header contents and nonce injection for `/` and `/login`;
 - service-worker API/non-GET bypass and cache strategy;
-- service-worker precache versus `index.html` script/module tags, including query strings;
+- service-worker precache versus `index.html` script/module tags, including query strings (stylesheet links and their `?v=` strings are covered by `tests/test_static_stylesheet_manifest.py`; script and module tags are not);
 - ongoing manifest/icon reference drift;
 - module graph/load-order validation;
 - degraded vendor-library/browser API behavior, including Pyodide's remaining CDN path.
@@ -151,8 +155,8 @@ Missing coverage includes:
 ## Current Gaps
 
 - `static/style.css` and large coordinators remain high-risk owners: `static/js/document.js`, `static/js/settings.js`, `static/js/chat.js`, and `static/app.js`.
-- There is no build-time type checking, module graph validation, script-order validation, or service-worker precache validation.
+- There is no build-time type checking, module graph validation, or script-order validation. Service-worker precache validation exists for stylesheets, and for the `static/js/emailLibrary/` package only.
 - Frontend state is mostly module/global/localStorage driven, so cross-session and cross-user behavior needs explicit care.
 - `window.*` compatibility bridges remain widespread.
 - PWA/static-serving behavior may deserve a separate spec if service worker, manifests, route-specific icons, and cache policy keep growing.
-- A static asset/route manifest regression should verify files referenced by `index.html`, `manifest.json`, `sw.js`, and app-owned HTML routes actually exist.
+- The static asset/route manifest regression covers stylesheets referenced by app-owned HTML and `sw.js`; scripts, modules and `manifest.json` icon references are still unverified.

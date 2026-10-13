@@ -158,7 +158,10 @@ _STATIC_IMPORT = re.compile(
 def _editor_module_graph() -> set[str]:
     """Every module statically reachable from galleryEditor.js, as '<path>[?query]'."""
     seen: set[str] = set()
-    stack = ["galleryEditor.js"]
+    panels = (_JS_DIR / "panels.js").read_text(encoding="utf-8")
+    entry = re.search(r"import\(['\"]\./(galleryEditor\.js(?:\?[^'\"]+)?)['\"]\)", panels)
+    assert entry, "panels.js must lazily import galleryEditor.js"
+    stack = [entry.group(1)]
     while stack:
         current = stack.pop()
         if current in seen:

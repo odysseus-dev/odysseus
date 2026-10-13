@@ -2,7 +2,7 @@
 """odysseus-mail — Unix-style command-line wrapper around the email
 backend that powers the web UI.
 
-Calls the same helpers `routes/email_helpers.py` exports, so a request
+Calls the same helpers `routes/email/email_helpers.py` exports, so a request
 issued from the shell hits IMAP/SMTP through the same connection pool
 and the same parsing pipeline as the HTTP routes. State is shared via
 `data/app.db` and `data/.app_key` (passwords decrypt automatically).

@@ -15,6 +15,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from tests.helpers.document_source import document_source
 
 _REPO = Path(__file__).resolve().parent.parent
 _HAS_NODE = shutil.which("node") is not None
@@ -102,7 +103,7 @@ globalThis.document = {
 globalThis.MutationObserver = class { observe() {} };
 
 let source = fs.readFileSync('./static/js/markdown.js', 'utf8');
-source = source.replace(/import uiModule from ['"]\.\/ui\.js['"];/, '');
+source = source.replace(/import uiModule from ['"]\.\/ui\.js(?:[?#][^'"]*)?['"];?/, '');
 source = source.replace(
   /import \{ splitTableRow \} from ['"]\.\/markdown\/tableRow\.js['"];/,
   `function splitTableRow(row) {
@@ -367,7 +368,7 @@ def test_detached_container_math_typesets_with_the_real_renderer(node_available)
 
     mdToHtml defers math to a document-scoped flush, which cannot reach a
     detached node, so the export has to typeset its own container before
-    handing it to html2pdf. This is that container: pending spans in, real
+    handing it to browser printing. This is that container: pending spans in, real
     KaTeX markup out, no .katex-error and nothing left pending.
     """
     out = _run_node(
@@ -399,9 +400,9 @@ def test_detached_container_math_typesets_with_the_real_renderer(node_available)
     assert "ody-math-pending" not in out["written"]
 
 
-def test_pdf_export_typesets_its_container_before_html2pdf():
+def test_pdf_export_typesets_its_container_before_print():
     """Ordering in a call site, so pin the call site. No node needed."""
-    source = (_REPO / "static/js/document.js").read_text(encoding="utf-8")
+    source = document_source()
     match = re.search(r"\n  async function exportAsPdf\(\) \{(.*?)\n  \}\n", source, re.S)
     assert match, "exportAsPdf not found"
     body = match.group(1)
@@ -409,7 +410,7 @@ def test_pdf_export_typesets_its_container_before_html2pdf():
     render = "await markdownModule.renderMath(container);"
     assert render in body, "the export never typesets its detached container"
     assert body.index("container.innerHTML = html;") < body.index(render)
-    assert body.index(render) < body.index("window.html2pdf()")
+    assert body.index(render) < body.index("frame.contentWindow.print()")
 
 
 def test_md_to_html_renders_inline_once_katex_is_loaded(node_available):

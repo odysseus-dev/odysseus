@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from pathlib import Path
 
 from src.constants import GENERATED_IMAGES_DIR
+from src.path_confinement import confine
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,10 @@ def _generated_image_path_for_cleanup(filename: str) -> Path | None:
     name = Path(filename).name
     if name != filename or name in {".", ".."}:
         return None
-    root = Path(GENERATED_IMAGES_DIR).resolve()
-    path = (root / name).resolve()
     try:
-        if os.path.commonpath([str(root), str(path)]) != str(root):
-            return None
-    except Exception:
+        return Path(confine(GENERATED_IMAGES_DIR, name, allow_root=False))
+    except (ValueError, OSError):
         return None
-    return path
 
 
 def _image_filename_from_url(url: str) -> str:
@@ -81,24 +77,44 @@ def session_image_refs(db, session_id: str) -> tuple[set[str], set[str]]:
     return image_ids, filenames
 
 
+def session_gallery_images(db, session_id: str):
+    """Gallery images belonging to this chat, including legacy tool records."""
+    _, GalleryImage, _ = _database_models()
+    image_ids, filenames = session_image_refs(db, session_id)
+    query = db.query(GalleryImage).filter(GalleryImage.session_id == session_id)
+    if image_ids or filenames:
+        from sqlalchemy import or_
+
+        clauses = [GalleryImage.session_id == session_id]
+        if image_ids:
+            clauses.append(GalleryImage.id.in_(list(image_ids)))
+        if filenames:
+            clauses.append(GalleryImage.filename.in_(list(filenames)))
+        query = db.query(GalleryImage).filter(or_(*clauses))
+    from core.database import Session
+    owner_row = db.query(Session.owner).filter(Session.id == session_id).first()
+    if owner_row is not None:
+        query = query.filter(GalleryImage.owner == owner_row[0])
+    # A reference to an image belonging to another chat is not ownership.
+    from sqlalchemy import or_
+    return query.filter(or_(GalleryImage.session_id == session_id, GalleryImage.session_id.is_(None)))
+
+
+def preserve_session_images(session_id: str, db) -> None:
+    """Detach gallery images before removing the chat; keep files and albums."""
+    _, GalleryImage, _ = _database_models()
+    db.query(GalleryImage).filter(GalleryImage.session_id == session_id).update(
+        {GalleryImage.session_id: None}, synchronize_session=False
+    )
+
+
 def cleanup_session_images(session_id: str, db=None) -> int:
     """Soft-delete Gallery rows and unlink generated files owned by a chat."""
     _, GalleryImage, SessionLocal = _database_models()
     owns_db = db is None
     db = db or SessionLocal()
     try:
-        image_ids, filenames = session_image_refs(db, session_id)
-        query = db.query(GalleryImage).filter(GalleryImage.session_id == session_id)
-        if image_ids or filenames:
-            from sqlalchemy import or_
-
-            clauses = [GalleryImage.session_id == session_id]
-            if image_ids:
-                clauses.append(GalleryImage.id.in_(list(image_ids)))
-            if filenames:
-                clauses.append(GalleryImage.filename.in_(list(filenames)))
-            query = db.query(GalleryImage).filter(or_(*clauses))
-
+        query = session_gallery_images(db, session_id)
         images = query.all()
         removed = 0
         for img in images:

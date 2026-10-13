@@ -2,15 +2,21 @@
  * Tasks Module — scheduled recurring LLM prompts.
  */
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
-import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import {
+  bindMenuDismiss,
+  dismissOrRemove,
+  bindExpandedCardDismiss,
+  unbindExpandedCardDismiss,
+} from './escMenuStack.js';
 import { getSettings, invalidateSettings } from './appConfig.js';
+import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from './actionMenuOrder.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -23,6 +29,7 @@ let _clockInterval = null;
 let _taskFailurePending = false;
 let _taskCompletionPending = false;
 let _taskBulkDeleting = false;
+let _pendingFocusAction = null;
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -42,7 +49,7 @@ function _setTaskCompletionPending(active) {
 
 async function _fetchTasks() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks`, { credentials: 'same-origin' });
+    const res = await fetch(`${API_BASE}/api/tasks?include_last_run=true`, { credentials: 'same-origin' });
     const data = await res.json();
     _tasks = data.tasks || [];
   } catch (e) {
@@ -472,7 +479,7 @@ function _taskIcon(task) {
   if (!path) {
     path = task.task_type === 'action' ? _TASK_ICONS._action_default : _TASK_ICONS._llm_default;
   }
-  return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;flex-shrink:0;position:relative;top:-4px;">${path}</svg>`;
+  return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;flex-shrink:0;">${path}</svg>`;
 }
 
 const _MODEL_BACKED_ACTIONS = new Set([
@@ -674,6 +681,16 @@ function _taskEnterSelect() {
   _taskUpdateBulkCount();
   _renderList();
 }
+function _taskEnterSelectWith(taskId) {
+  _taskSelectMode = true;
+  _taskSelected.clear();
+  _taskSelected.add(taskId);
+  document.getElementById('tasks-bulk-bar')?.classList.remove('hidden');
+  const selectButton = document.getElementById('tasks-select-btn');
+  if (selectButton) { selectButton.classList.add('active'); selectButton.textContent = 'Cancel'; }
+  _taskUpdateBulkCount();
+  _renderList();
+}
 function _taskExitSelect() {
   _taskSelectMode = false; _taskSelected.clear();
   document.getElementById('tasks-bulk-bar')?.classList.add('hidden');
@@ -765,24 +782,66 @@ function _renderTaskChips() {
   if (!bar) return;
   const counts = {};
   for (const t of _tasks) { const c = _categoryFor(t); counts[c] = (counts[c] || 0) + 1; }
+  const _taskStatus = (t) => String(t?.status || '').toLowerCase();
+  const activeCount = _tasks.filter(t => _taskStatus(t) === 'active').length;
+  const pausedCount = _tasks.filter(t => _taskStatus(t) === 'paused').length;
   const cats = Object.keys(counts).sort((a, b) => {
     const ia = _CATEGORY_ORDER.indexOf(a), ib = _CATEGORY_ORDER.indexOf(b);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
   if (_taskFilter && !counts[_taskFilter]) _taskFilter = null;
+  if (_taskStatusFilter && !({ active: activeCount, paused: pausedCount })[_taskStatusFilter]) _taskStatusFilter = null;
   bar.innerHTML = '';
-  bar.style.display = cats.length > 1 ? 'flex' : 'none';
+  bar.style.display = _tasks.length ? 'flex' : 'none';
   // Exact library style: .memory-cat-chip, an "all (N)" chip, then one per
   // category with its count. Clicking "all" clears the filter.
-  const mkChip = (label, value, active) => {
+  const mkChip = (label, value, active, kind = 'category') => {
     const b = document.createElement('button');
-    b.className = 'memory-cat-chip' + (active ? ' active' : '');
+    b.className = 'memory-cat-chip task-filter-chip' + (kind === 'status' ? ' task-status-filter-chip' : '') + (active ? ' active' : '');
     b.textContent = label;
-    b.addEventListener('click', () => { _taskFilter = value; _renderList(); });
+    b.addEventListener('click', () => {
+      if (kind === 'status') {
+        _taskStatusFilter = _taskStatusFilter === value ? null : value;
+        _taskFilter = null;
+      } else {
+        _taskFilter = value;
+        _taskStatusFilter = null;
+      }
+      _renderList();
+    });
     bar.appendChild(b);
   };
-  mkChip(`all (${_tasks.length})`, null, !_taskFilter);
+  mkChip(`all (${_tasks.length})`, null, !_taskFilter && !_taskStatusFilter);
+  mkChip(`active (${activeCount})`, 'active', _taskStatusFilter === 'active', 'status');
+  mkChip(`paused (${pausedCount})`, 'paused', _taskStatusFilter === 'paused', 'status');
   for (const c of cats) mkChip(`${c} (${counts[c]})`, c, _taskFilter === c);
+}
+
+function _renderCompletedTaskStatusShortcuts() {
+  const bar = document.getElementById('tasks-completed-status-chips');
+  if (!bar) return;
+  const statusOf = (t) => String(t?.status || '').toLowerCase();
+  const activeCount = _tasks.filter(t => statusOf(t) === 'active').length;
+  const pausedCount = _tasks.filter(t => statusOf(t) === 'paused').length;
+  if (!_tasks.length) {
+    bar.innerHTML = '';
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  const mkShortcut = (label, value) => {
+    const b = document.createElement('button');
+    b.className = 'memory-cat-chip task-filter-chip task-status-filter-chip';
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      _taskStatusFilter = value;
+      _switchTab('tasks');
+    });
+    bar.appendChild(b);
+  };
+  bar.innerHTML = '';
+  mkShortcut(`active (${activeCount})`, 'active');
+  mkShortcut(`paused (${pausedCount})`, 'paused');
 }
 
 const _TASK_CACHE_LABELS = {
@@ -826,6 +885,7 @@ function _renderList() {
   // list (the tag chips replace the old per-category collapsible headers).
   const q = _taskSearch.trim().toLowerCase();
   const visible = _tasks.filter(t => {
+    if (_taskStatusFilter && String(t.status || '').toLowerCase() !== _taskStatusFilter) return false;
     if (_taskFilter && _categoryFor(t) !== _taskFilter) return false;
     if (q && !(`${t.name} ${t.prompt || ''} ${t.action || ''}`.toLowerCase().includes(q))) return false;
     return true;
@@ -858,14 +918,14 @@ function _renderList() {
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
     const statusBadge = task.status === 'paused'
-      ? `<button type="button" class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="Paused - click to resume" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">paused</span></button>`
+      ? `<button type="button" class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="Paused - click to resume" aria-label="Paused - click to resume"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">paused</span></button>`
       : task.status === 'active'
-        ? `<button type="button" class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="Active - click to pause" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">active</span></button>`
+        ? `<button type="button" class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="Active - click to pause" aria-label="Active - click to pause"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">active</span></button>`
         : '';
     const builtinBadge = task.is_builtin
       ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? 'Built-in task — edited from its default' : 'Built-in task'}">built-in${task.is_modified ? ' · edited' : ''}</span>`
       : '';
-    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${_taskAiMark(task)}${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
+    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${_taskAiMark(task)}${builtinBadge}<span style="flex:1;"></span>${statusBadge}<span class="doclib-card-chevron" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>`;
 
     // ... menu button (hover to show)
     const actionsWrap = document.createElement('div');
@@ -873,8 +933,6 @@ function _renderList() {
     const menuBtn = document.createElement('button');
     menuBtn.className = 'memory-item-btn';
     menuBtn.title = 'Actions';
-    menuBtn.style.position = 'relative';
-    menuBtn.style.top = '4px';
     menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -892,6 +950,11 @@ function _renderList() {
       if (_taskClearCacheLabel(task)) {
         items.push({ label: 'Clear cache', icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>', action: () => _doClearTaskCache(task.id, _taskClearCacheLabel(task)) });
       }
+      items.push({
+        label: 'Select',
+        icon: SELECT_MENU_ICON.replace(/^<svg[^>]*>|<\/svg>$/g, ''),
+        action: () => _taskEnterSelectWith(task.id),
+      });
       items.push({ label: 'Delete', icon: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', action: () => _doDelete(task.id), danger: true });
       _showTaskDropdown(menuBtn, items);
     });
@@ -900,7 +963,7 @@ function _renderList() {
 
     // Content area
     const content = document.createElement('div');
-    content.style.cssText = 'flex:1;min-width:0;position:relative;top:1px;';
+    content.style.cssText = 'flex:1;min-width:0;';
 
     content.appendChild(titleRow);
 
@@ -926,6 +989,7 @@ function _renderList() {
     // Expandable detail (revealed on click) — like the library doc/chat cards:
     // extra meta + last-run result + description.
     const detail = document.createElement('div');
+    detail.className = 'task-card-detail';
     detail.style.cssText = 'display:none;margin-top:7px;padding:8px 0 2px;border-top:1px solid var(--border);position:relative;';
     const detailActions = document.createElement('div');
     detailActions.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:7px;';
@@ -939,6 +1003,25 @@ function _renderList() {
         _doRunNow(task.id);
       });
       detailActions.appendChild(runBtn);
+
+      // A manually-triggered run can remain queued behind the interactive
+      // model stream. Offer the existing force-run backend path directly in
+      // the expanded task card so the user does not have to find the run in
+      // Activity first.
+      const waitingForIdle = /waiting\s+for\s+.*?to\s+be\s+idle|queued/i.test(
+        String(task.last_run_result || '')
+      );
+      if (waitingForIdle) {
+        const forceRunBtn = document.createElement('button');
+        forceRunBtn.className = 'memory-toolbar-btn task-detail-force-run-btn';
+        forceRunBtn.title = 'Run anyway, even while Odysseus is busy';
+        forceRunBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:4px;"><polygon points="6 4 20 12 6 20 6 4"/></svg>Run anyway';
+        forceRunBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _doRunNow(task.id, true);
+        });
+        detailActions.appendChild(forceRunBtn);
+      }
     }
     const editBtn = document.createElement('button');
     editBtn.className = 'memory-toolbar-btn task-detail-edit-btn';
@@ -1018,6 +1101,15 @@ function _renderList() {
       const open = detail.style.display === 'none';
       detail.style.display = open ? '' : 'none';
       card.classList.toggle('expanded', open);
+      if (open) {
+        bindExpandedCardDismiss(card, () => {
+          unbindExpandedCardDismiss(card);
+          detail.style.display = 'none';
+          card.classList.remove('expanded');
+        }, 'expanded');
+      } else {
+        unbindExpandedCardDismiss(card);
+      }
     });
 
     // Long-press (mobile) opens the ⋮ actions menu.
@@ -1091,20 +1183,25 @@ function _showTaskDropdown(anchor, items) {
     else dismissOrRemove(d);
   });
   const dd = document.createElement('div');
-  dd.className = 'task-dropdown';
+  dd.className = 'dropdown session-dropdown-menu task-dropdown';
   dd._anchor = anchor;
-  dd.style.cssText = `position:fixed;z-index:${topPortalZ()};background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;`;
-  items.forEach(item => {
+  dd.style.cssText = `position:fixed;display:block;z-index:${topPortalZ()};`;
+  let addedActionDivider = false;
+  orderActionMenuItems(items).forEach((item, index, orderedItems) => {
+    if (!addedActionDivider && index > 0 && actionMenuRank(item) >= 700) {
+      const divider = document.createElement('div');
+      divider.className = 'dropdown-divider';
+      dd.appendChild(divider);
+      addedActionDivider = true;
+    }
     const btn = document.createElement('button');
-    btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border:none;background:none;color:var(--fg);font-size:11px;font-family:inherit;cursor:pointer;border-radius:4px;transition:background 0.1s;';
-    if (item.danger) btn.style.color = 'var(--color-error)';
+    btn.className = 'dropdown-item-compact' + (item.danger ? ' dropdown-item-danger' : '');
+    btn.style.cssText = 'width:100%;border:none;background:none;font-family:inherit;text-align:left;';
     if (item.icon) {
       btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6;flex-shrink:0;">${item.icon}</svg><span>${item.label}</span>`;
     } else {
       btn.textContent = item.label;
     }
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = 'none'; });
     btn.addEventListener('click', (e) => { e.stopPropagation(); close(); item.action(); });
     dd.appendChild(btn);
   });
@@ -1247,9 +1344,9 @@ function _showForm(existing, initTaskType, initTriggerType) {
       </select>
       <div id="task-form-output-extra"></div>
 
-      <label class="task-form-label">Model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — overrides session default)</span></label>
+      <label class="task-form-label">Run with model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — uses Utility by default)</span></label>
       <select id="task-form-model" class="task-form-input">
-        <option value="">Use session default</option>
+        <option value="">Use Utility default</option>
       </select>
 
       <label class="task-form-label">Chain</label>
@@ -1584,7 +1681,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
   // Populate model dropdown from /api/models. Value is "endpoint_url::model"
   // so a single field encodes both the model name and which endpoint to call.
-  // Blank value (option 0) = inherit session default.
+  // Blank value (option 0) = inherit the background-task Utility/Default chain.
   fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
     .then(r => r.json())
     .then(data => {
@@ -1976,26 +2073,26 @@ async function _doToggleAll() {
 }
 
 function _syncPauseAllButton() {
-  const btn = document.getElementById('tasks-pause-all-btn');
-  if (!btn) return;
-  const pauseIco = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
-  const playIco = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><polygon points="6 4 20 12 6 20 6 4"/></svg>';
+  const toggle = document.getElementById('tasks-pause-all-btn');
+  const input = toggle?.querySelector('input');
+  if (!toggle || !input) return;
   const hasActive = _tasks.some(t => t.status === 'active');
   const hasPaused = _tasks.some(t => t.status === 'paused');
   if (hasActive) {
-    btn.innerHTML = pauseIco + 'Pause all';
-    btn.title = 'Pause every active task';
-    btn.style.opacity = '1';
-    btn.disabled = false;
+    input.checked = false;
+    input.disabled = false;
+    toggle.title = 'Pause every active task';
+    toggle.setAttribute('aria-label', 'Pause every active task');
   } else if (hasPaused) {
-    btn.innerHTML = playIco + 'Resume all';
-    btn.title = 'Resume every paused task';
-    btn.style.opacity = '1';
-    btn.disabled = false;
+    input.checked = true;
+    input.disabled = false;
+    toggle.title = 'Resume every paused task';
+    toggle.setAttribute('aria-label', 'Resume every paused task');
   } else {
-    btn.innerHTML = pauseIco + 'Pause all';
-    btn.style.opacity = '0.4';
-    btn.disabled = true;
+    input.checked = false;
+    input.disabled = true;
+    toggle.title = 'No active or paused tasks';
+    toggle.setAttribute('aria-label', 'No active or paused tasks');
   }
 }
 
@@ -2063,10 +2160,12 @@ async function _renderCompletedView() {
         <button class="memory-toolbar-btn" id="tasks-completed-refresh" title="Refresh" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
       </div>
       <p class="memory-desc">Completed assistant/research outputs you can open in chat.</p>
+      <div id="tasks-completed-status-chips" class="tasks-activity-filters" style="display:none;gap:5px;flex-wrap:wrap;margin:0 0 8px;position:relative;top:-2px;"></div>
       <div id="tasks-completed-list" class="memory-list tasks-activity-list tasks-completed-list" style="flex:1;overflow:auto;font-size:13px;min-height:0;"></div>
     </div>
   `;
   document.getElementById('tasks-completed-refresh')?.addEventListener('click', _renderCompletedView);
+  _renderCompletedTaskStatusShortcuts();
   const list = document.getElementById('tasks-completed-list');
   list?.appendChild(spinnerModule.createLoadingRow('Loading…'));
   try {
@@ -2079,9 +2178,15 @@ async function _renderCompletedView() {
     _syncCompletedTabCount(finished.length);
     if (!list) return;
     if (finished.length === 0) {
+      if (_completedFallbackToTasksOnce) {
+        _completedFallbackToTasksOnce = false;
+        _switchTab('tasks');
+        return;
+      }
       list.innerHTML = '<div class="doclib-empty task-completed-empty">No completed task outputs yet.</div>';
       return;
     }
+    _completedFallbackToTasksOnce = false;
     list.innerHTML = finished.map(_renderCompletedPreviewEntry).join('');
     if (_completedHasMore) {
       list.insertAdjacentHTML('beforeend', `
@@ -2256,6 +2361,7 @@ let _activityLimit = 40;
 let _activityHasMore = false;
 let _completedLimit = 40;
 let _completedHasMore = false;
+let _completedFallbackToTasksOnce = false;
 
 function _syncCompletedTabCount(count) {
   const el = document.getElementById('tasks-completed-tab-count');
@@ -2367,14 +2473,26 @@ function _wireActivityRows(list) {
   // counter). No-op when there's nothing to tick.
   _startActivityTimers(list);
   list.querySelectorAll('.task-log-row').forEach(row => {
+    const toggleRow = () => {
+      const open = !row.classList.contains('expanded');
+      row.classList.toggle('expanded', open);
+      if (open) {
+        bindExpandedCardDismiss(row, () => {
+          unbindExpandedCardDismiss(row);
+          row.classList.remove('expanded');
+        }, 'expanded');
+      } else {
+        unbindExpandedCardDismiss(row);
+      }
+    };
     // Click anywhere on the row to toggle expand.
     // Buttons inside still get their own handlers via stopPropagation.
     if (!row.classList.contains('is-skipped')) {
-      row.addEventListener('click', () => row.classList.toggle('expanded'));
+      row.addEventListener('click', toggleRow);
     }
     row.querySelector('.task-log-row-toggle')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      row.classList.toggle('expanded');
+      toggleRow();
     });
     row.querySelector('.task-log-open-chat')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2454,6 +2572,12 @@ function _renderCompletedPreviewEntry(entry) {
   }
   const title = _escHtml(entry.taskName || 'Task');
   const time = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
+  const reportButton = entry.researchId
+    ? `<button class="doclib-chat-open-btn task-completed-report-btn" type="button" title="Open the visual research report">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Visual Report
+          </button>`
+    : '';
   return `
     <div class="memory-item doclib-chat-row task-completed-preview-row" data-entry-idx="${entryIdx}">
       <div class="doclib-chat-header task-completed-preview-head">
@@ -2472,6 +2596,7 @@ function _renderCompletedPreviewEntry(entry) {
           </div>
         </div>
         <div class="doclib-chat-preview-actions">
+          ${reportButton}
           <button class="doclib-chat-copy-btn task-completed-copy-btn" type="button">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             Copy
@@ -2487,6 +2612,17 @@ function _renderCompletedPreviewEntry(entry) {
 }
 
 function _wireCompletedPreviewRows(list) {
+  list.querySelectorAll('.task-completed-report-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const row = btn.closest('.task-completed-preview-row');
+      const idx = parseInt(row?.dataset.entryIdx || '-1', 10);
+      const entry = _activityEntries[idx];
+      if (entry?.researchId) {
+        window.open(`${API_BASE}/api/research/report/${encodeURIComponent(entry.researchId)}`, '_blank');
+      }
+    });
+  });
   list.querySelectorAll('.task-completed-open-chat').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2749,7 +2885,17 @@ function _renderActivityEntry(entry, opts = {}) {
   if (hasResult && entry.taskId) {
     actionBtn += `<button class="task-log-run-again" type="button" title="Run this task again">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-         Run again
+       Run again
+       </button>`;
+  }
+  // Keep the bypass action in the same visible action strip as the other
+  // task controls. It is specifically for queued runs waiting on the model
+  // idle gate; completed rows retain the normal "Run again" action.
+  const waitingForIdle = /waiting\s+for\s+.*?to\s+be\s+idle/i.test(String(entry.result || ''));
+  if (entry.taskId && (_isRunning && entry.status === 'queued' || waitingForIdle)) {
+      actionBtn += `<button class="task-log-run-again task-log-force-run task-log-force-run-action" type="button" title="Run anyway, even while Odysseus is busy">
+         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+         Run anyway
        </button>`;
   }
   // Running rows replace the relative-time on the right with "Running NN" + a
@@ -2764,9 +2910,8 @@ function _renderActivityEntry(entry, opts = {}) {
     const stale = !isQueued && (Date.now() - startMs) > 30 * 60 * 1000;
     const label = isQueued ? 'Queued' : stale ? 'Still running' : 'Running';
     const elapsedInit = isQueued ? '' : `<span class="task-log-running-elapsed" data-since="${startMs}">${_fmtElapsed(Date.now() - startMs)}</span>`;
-    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>Start now</span></button>` : '';
     const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="Stop this task"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
-    rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${forceBtn}${stopBtn}</span>`;
+    rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${stopBtn}</span>`;
   } else {
     rightHtml = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
   }
@@ -2820,6 +2965,7 @@ function _escHtml(s) {
 // Tasks list view state — search query + active category tag + select mode.
 let _taskSearch = '';
 let _taskFilter = null;
+let _taskStatusFilter = 'active';
 let _taskSort = 'recent';
 let _taskSelectMode = false;
 const _taskSelected = new Set();
@@ -2869,6 +3015,61 @@ async function _aiDraftTask(inputEl, btnEl) {
   }
 }
 
+const _TASK_SORT_ICONS = {
+  recent: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>',
+  name: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"></path></svg>',
+  status: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h4"></path></svg>',
+};
+
+function _enhanceTaskSortSelect(select) {
+  if (!select || select.dataset.enhanced === 'true') return;
+  select.dataset.enhanced = 'true';
+  const picker = document.createElement('div');
+  picker.className = 'email-filter-picker library-sort-picker tasks-sort-picker';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'email-filter-btn library-sort-btn';
+  button.setAttribute('aria-haspopup', 'listbox');
+  button.setAttribute('aria-expanded', 'false');
+  const menu = document.createElement('div');
+  menu.className = 'email-filter-menu library-sort-menu';
+  menu.setAttribute('role', 'listbox');
+  menu.hidden = true;
+  const icon = value => _TASK_SORT_ICONS[value] || _TASK_SORT_ICONS.recent;
+  const render = () => {
+    const selected = select.options[select.selectedIndex] || select.options[0];
+    button.innerHTML = `<span class="email-filter-current"><span class="email-filter-icon">${icon(selected?.value)}</span><span class="email-filter-label"></span></span><svg class="email-filter-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+    button.querySelector('.email-filter-label').textContent = selected?.textContent || 'Recent';
+    menu.replaceChildren(...Array.from(select.options, option => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'email-filter-item library-sort-item';
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(option.value === select.value));
+      item.innerHTML = `<span class="email-filter-item-icon">${icon(option.value)}</span><span class="email-filter-item-label"></span>`;
+      item.querySelector('.email-filter-item-label').textContent = option.textContent;
+      item.addEventListener('click', () => {
+        select.value = option.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        menu.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+        render();
+      });
+      return item;
+    }));
+  };
+  button.addEventListener('click', () => {
+    const open = menu.hidden;
+    menu.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+  });
+  select.addEventListener('change', render);
+  select.parentNode.insertBefore(picker, select);
+  picker.append(select, button, menu);
+  select.style.display = 'none';
+  render();
+}
+
 function _renderMainView() {
   const modal = document.getElementById('tasks-modal');
   if (!modal) return;
@@ -2876,12 +3077,15 @@ function _renderMainView() {
   if (!body) return;
 
   body.innerHTML = `
-    <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;top:-2px;">
+    <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;top:0;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;position:relative;top:-4px;">Ongoing Tasks <span id="tasks-head-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
-        <button class="memory-toolbar-btn" id="tasks-pause-all-btn" title="Pause all active tasks" style="margin-left:auto;">Pause all</button>
+        <h2 style="margin:0;padding:0;line-height:1;position:relative;top:0;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent,var(--red));" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M9 16l2 2 4-4"></path></svg>Ongoing Tasks <span id="tasks-head-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+        <label class="admin-switch tasks-pause-all-toggle" id="tasks-pause-all-btn" title="Pause every active task" aria-label="Pause every active task" style="margin-left:auto;">
+          <input type="checkbox" id="tasks-pause-all-toggle" aria-label="Pause every active task">
+          <span class="admin-slider"></span>
+        </label>
       </div>
-      <p class="memory-desc" style="position:relative;top:-4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
+      <p class="memory-desc" style="position:relative;top:4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
       <div class="memory-toolbar">
         <div class="memory-category-filters" style="display:flex;align-items:center;gap:6px;">
           <select class="memory-sort-select" id="tasks-sort" aria-label="Sort tasks" title="Sort tasks" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
@@ -2889,7 +3093,7 @@ function _renderMainView() {
             <option value="name">A–Z</option>
             <option value="status">Status</option>
           </select>
-          <button class="memory-toolbar-btn" id="tasks-select-btn" title="Select tasks" style="position:relative;top:-7px;">Select</button>
+          <button class="memory-toolbar-btn" id="tasks-select-btn" title="Select tasks" style="position:relative;top:1px;">Select</button>
         </div>
         <input type="text" id="tasks-search" placeholder="Search tasks…" class="memory-search-input" value="${_esc(_taskSearch)}" style="position:relative;top:-4px;" />
       </div>
@@ -2899,8 +3103,8 @@ function _renderMainView() {
         <button id="tasks-bulk-delete" class="memory-toolbar-btn danger" style="position:relative;top:-2px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
         <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
-      <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:-4px;"></div>
-      <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:-4px;"></div>
+      <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:0;"></div>
+      <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:4px;"></div>
     </div>
   `;
 
@@ -2909,13 +3113,22 @@ function _renderMainView() {
 
   const sortEl = document.getElementById('tasks-sort');
   if (sortEl) { sortEl.value = _taskSort; sortEl.addEventListener('change', () => { _taskSort = sortEl.value; _renderList(); }); }
+  _enhanceTaskSortSelect(sortEl);
 
   const selectBtn = document.getElementById('tasks-select-btn');
   if (selectBtn) {
     selectBtn.classList.toggle('active', _taskSelectMode);
     selectBtn.addEventListener('click', () => _taskSelectMode ? _taskExitSelect() : _taskEnterSelect());
   }
-  document.getElementById('tasks-pause-all-btn')?.addEventListener('click', () => _doToggleAll());
+  document.getElementById('tasks-pause-all-toggle')?.addEventListener('change', async () => {
+    const input = document.getElementById('tasks-pause-all-toggle');
+    if (!input) return;
+    input.disabled = true;
+    await _doToggleAll();
+    // A cancelled confirmation does not rebuild the header, so restore the
+    // switch to the actual task state in that case.
+    if (document.getElementById('tasks-pause-all-toggle') === input) _syncPauseAllButton();
+  });
   document.getElementById('tasks-select-all')?.addEventListener('change', _taskToggleSelectAll);
   document.getElementById('tasks-bulk-cancel')?.addEventListener('click', _taskExitSelect);
   document.getElementById('tasks-bulk-delete')?.addEventListener('click', _taskBulkDelete);
@@ -2938,6 +3151,7 @@ export function openTasks(focusId, opts) {
   const o = opts || {};
   const openActivityForFailure = _taskFailurePending && !focusId && o.filter === undefined;
   const openCompletedForNotification = _taskCompletionPending && !focusId && o.filter === undefined;
+  const openCompletedByDefault = !focusId && o.filter === undefined && !openActivityForFailure;
   _setTaskFailurePending(false);
   _setTaskCompletionPending(false);
   if (_open) {
@@ -2946,10 +3160,16 @@ export function openTasks(focusId, opts) {
     else if (openCompletedForNotification) _switchTab('completed');
     if (o.filter !== undefined) { _taskFilter = o.filter; _renderList(); }
     if (focusId) _focusTask(focusId);
+    if (o.focusAction !== undefined) {
+      const target = _tasks.find(t => t && t.action === o.focusAction);
+      if (target) _focusTask(target.id, { expand: true });
+      else _pendingFocusAction = o.focusAction;
+    }
     return;
   }
   if (o.filter !== undefined) _taskFilter = o.filter;
   _pendingFocusTaskId = focusId || null;
+  _pendingFocusAction = o.focusAction || null;
   _open = true;
   _tasksCascadeNext = true;
   _viewingRuns = null;
@@ -3054,14 +3274,21 @@ export function openTasks(focusId, opts) {
   // of an empty modal-body that fills in after the fetch resolves — that delay
   // was visible as a "flicker" right after opening.
   _activeTab = 'tasks';
-  _switchTab(openActivityForFailure ? 'activity' : openCompletedForNotification ? 'completed' : 'tasks');
+  _completedFallbackToTasksOnce = openCompletedByDefault && !openCompletedForNotification;
+  _switchTab(openActivityForFailure ? 'activity' : openCompletedByDefault ? 'completed' : 'tasks');
   _fetchTasks().then(() => {
     // Re-render so the list swaps the Loading row for real cards.
-    _renderList();
+    if (_activeTab === 'completed') _renderCompletedTaskStatusShortcuts();
+    else _renderList();
     _syncPauseAllButton();
     if (_pendingFocusTaskId) {
       _focusTask(_pendingFocusTaskId);
       _pendingFocusTaskId = null;
+    }
+    if (_pendingFocusAction) {
+      const target = _tasks.find(t => t && t.action === _pendingFocusAction);
+      if (target) _focusTask(target.id, { expand: true });
+      _pendingFocusAction = null;
     }
     _runFirstOpenOnboarding();
   });
@@ -3071,7 +3298,7 @@ let _pendingFocusTaskId = null;
 
 // Scroll to + briefly highlight a task card by id. Used by the chat
 // anchor-link delegate ([Name](#task-<id>)).
-function _focusTask(taskId) {
+function _focusTask(taskId, { expand = false } = {}) {
   if (!taskId) return;
   // Find the task card with this id and scroll-into-view + flash it. Backend
   // task IDs are UUIDs so the unescaped selector is safe in practice; if that
@@ -3079,6 +3306,18 @@ function _focusTask(taskId) {
   setTimeout(() => {
     const card = document.querySelector(`.task-card[data-id="${taskId}"], [data-id="${taskId}"]`);
     if (!card) return;
+    if (expand) {
+      const detail = card.querySelector('.task-card-detail');
+      if (detail) {
+        detail.style.display = '';
+        card.classList.add('expanded');
+        bindExpandedCardDismiss(card, () => {
+          unbindExpandedCardDismiss(card);
+          detail.style.display = 'none';
+          card.classList.remove('expanded');
+        }, 'expanded');
+      }
+    }
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     card.classList.add('task-card-flash');
     setTimeout(() => card.classList.remove('task-card-flash'), 2000);

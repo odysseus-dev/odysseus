@@ -1,18 +1,43 @@
-# services/__init__.py
-"""
-Service layer — plug-in capabilities for the chat core.
+"""Service-layer exports with lazy loading.
 
-Each service:
-- Does one thing well
-- Exposes a clean async interface
-- Can run in-process or as a standalone HTTP service
+Importing one service, such as ``services.hwfit``, must not initialize every
+other service. The eager exports previously imported search, document,
+research, memory, and shell stacks during any ``services.*`` import, making
+Cookbook hardware/model discovery needlessly slow on a cold process.
 """
 
-from .search import SearchService, SearchResult, SearchResponse
-from .docs import DocsService, DocChunk, IndexResult
-from .research import ResearchService, ResearchResult, ResearchSource
-from .memory import MemoryService, Memory, MemorySearchResult
-from .shell import ShellService, ShellResult
+from importlib import import_module
+
+_LAZY_EXPORTS = {
+    "SearchService": ("search", "SearchService"),
+    "SearchResult": ("search", "SearchResult"),
+    "SearchResponse": ("search", "SearchResponse"),
+    "DocsService": ("docs", "DocsService"),
+    "DocChunk": ("docs", "DocChunk"),
+    "IndexResult": ("docs", "IndexResult"),
+    "ResearchService": ("research", "ResearchService"),
+    "ResearchResult": ("research", "ResearchResult"),
+    "ResearchSource": ("research", "ResearchSource"),
+    "MemoryService": ("memory", "MemoryService"),
+    "Memory": ("memory", "Memory"),
+    "MemorySearchResult": ("memory", "MemorySearchResult"),
+    "ShellService": ("shell", "ShellService"),
+    "ShellResult": ("shell", "ShellResult"),
+}
+
+
+def __getattr__(name):
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute = target
+    value = getattr(import_module(f"{__name__}.{module_name}"), attribute)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
 
 __all__ = [
     # Search

@@ -151,14 +151,18 @@ Runtime behavior:
 HW Fit model scoring depends on bundled `services/hwfit/data/hf_models.json`,
 bundled `services/hwfit/data/mlx_community_models.json`, runtime dynamic caches
 under `DATA_DIR/hwfit/`, catalog normalization, and assumptions about model
-formats and quantization. `scripts/add_hwfit_models.py` updates the static HF
-catalog.
+formats and quantization. The two bundled lists are intentionally empty.
+`scripts/add_hwfit_models.py`, `scripts/backfill_model_release_dates.py`, and
+`scripts/import_from_vllm_recipes.py` maintain user data at
+`DATA_DIR/hwfit/hf_models.json`; they do not populate repository snapshots.
 
 Hugging Face latest lookup and HW Fit dynamic refresh use external Hub metadata
 and can degrade to empty, unknown-size, partial, or malformed-result behavior.
 `refresh_catalog=1` refreshes API-backed collection caches for MLX community
 and selected HF organization collections, with a 24-hour freshness guard and
-bundled JSON fallbacks when the network/cache is unavailable. HW Fit tolerates
+an empty offline state when no runtime catalog/cache is available. Use the
+Cookbook Rescan control while online to populate recommendations.
+See [catalog data policy](../services/hwfit/data/README.md). HW Fit tolerates
 non-numeric `gpu_count` values from callers. Model normalization also treats
 non-string `parameter_count` and quantization fields as unknown rather than
 calling string methods and aborting the ranking pass. Catalog drift and dynamic

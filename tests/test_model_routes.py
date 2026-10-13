@@ -1912,6 +1912,24 @@ def test_background_refresh_deduplicates_same_base_url(monkeypatch):
     assert json.loads(ep2.cached_models) == ["live-model"]
 
 
+def test_picker_refresh_waits_for_discovered_models(monkeypatch):
+    ep = _route_ep("local", "http://127.0.0.1:8000/v1", endpoint_kind="local")
+    db = _RouteDb([ep])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["new-model"])
+
+    result = _route_endpoint(router, "/api/models")(
+        _route_request(), refresh=True, wait_refresh=True
+    )
+
+    assert result["items"][0]["models"] == ["new-model"]
+
+
 def test_background_refresh_failure_keeps_existing_cached_models(monkeypatch):
     ep = _route_ep(
         "local",

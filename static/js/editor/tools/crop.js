@@ -17,11 +17,30 @@
 import { state } from '../state.js';
 import { canvasCoords } from '../canvas-coords.js';
 import { drawCheckerboard } from '../checkerboard.js';
+import { createDirectManipulationSession } from '../direct-manipulation-session.js';
 
-export function createCropTool({ composite, showCropApply }) {
+export function createCropTool({ composite, showCropApply, snapFrame }) {
+  const gesture = createDirectManipulationSession({
+    name: 'crop',
+    getContext: () => ({ canvas: state.mainCanvas, tool: state.tool }),
+    isContextCurrent: context => context.canvas === state.mainCanvas && state.tool === 'crop',
+    onCancel: (data, reason) => {
+      state.cropping = false;
+      state.cropMoving = false;
+      state.cropStart = null;
+      state.cropEnd = null;
+      state.cropMoveStart = null;
+      state.cropAspectLock = null;
+      state.activeSnapGuides = null;
+      state.cropRect = data?.previousRect ? { ...data.previousRect } : null;
+      composite();
+      if (state.cropRect && reason !== 'tool-switch') showCropApply();
+    },
+  });
   return {
     begin(e) {
       const coords = canvasCoords(e, state.mainCanvas);
+      const previousRect = state.cropRect ? { ...state.cropRect } : null;
       // Click inside an existing crop rect → switch to move-mode so
       // the user can reposition without redrawing.
       if (state.cropRect &&
@@ -29,6 +48,7 @@ export function createCropTool({ composite, showCropApply }) {
           coords.y >= state.cropRect.y && coords.y <= state.cropRect.y + state.cropRect.h) {
         state.cropMoving = true;
         state.cropMoveStart = { x: coords.x, y: coords.y, rx: state.cropRect.x, ry: state.cropRect.y };
+        gesture.begin(e, { mode: 'move', previousRect }, { captureTarget: e.currentTarget });
         return;
       }
       state.cropping = true;
@@ -39,9 +59,11 @@ export function createCropTool({ composite, showCropApply }) {
       // Tear down the size panel while the user is drawing a new rect.
       const old = state.container?.querySelector('.ge-crop-apply');
       if (old) old.remove();
+      gesture.begin(e, { mode: 'draw', previousRect }, { captureTarget: e.currentTarget });
     },
 
     drag(e) {
+      if (!gesture.update(e)) return;
       // Move-mode: drag the existing rect around the canvas.
       if (state.cropMoving && state.cropRect && state.cropMoveStart) {
         e.preventDefault();
@@ -50,6 +72,22 @@ export function createCropTool({ composite, showCropApply }) {
         const dy = c.y - state.cropMoveStart.y;
         let nx = state.cropMoveStart.rx + dx;
         let ny = state.cropMoveStart.ry + dy;
+        const modifier = e.ctrlKey || e.metaKey;
+        const snapping = state.snapEnabled ? !modifier : modifier;
+        if (snapping && snapFrame) {
+          const snapped = snapFrame({
+            centerX: state.cropMoveStart.rx + state.cropRect.w / 2,
+            centerY: state.cropMoveStart.ry + state.cropRect.h / 2,
+            width: state.cropRect.w,
+            height: state.cropRect.h,
+            rotation: 0,
+          }, { x: nx + state.cropRect.w / 2, y: ny + state.cropRect.h / 2 });
+          nx = snapped.centerX - state.cropRect.w / 2;
+          ny = snapped.centerY - state.cropRect.h / 2;
+          state.activeSnapGuides = snapped.guides || null;
+        } else {
+          state.activeSnapGuides = null;
+        }
         // Clamp to canvas bounds so the rect stays fully visible.
         nx = Math.max(0, Math.min(nx, state.mainCanvas.width - state.cropRect.w));
         ny = Math.max(0, Math.min(ny, state.mainCanvas.height - state.cropRect.h));
@@ -119,7 +157,9 @@ export function createCropTool({ composite, showCropApply }) {
       state.cropRect = { x, y, w, h };
     },
 
-    end() {
+    end(e) {
+      if (!gesture.commit(e)) return;
+      state.activeSnapGuides = null;
       // Move-mode wrap-up: refresh the floating panel so Apply follows
       // the rect to its new spot.
       if (state.cropMoving) {
@@ -132,6 +172,9 @@ export function createCropTool({ composite, showCropApply }) {
       if (state.cropRect && state.cropRect.w > 5 && state.cropRect.h > 5) {
         showCropApply();
       }
+    },
+    cancel(reason) {
+      return gesture.cancel(reason);
     },
   };
 }

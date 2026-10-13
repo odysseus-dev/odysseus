@@ -118,6 +118,17 @@ class Session:
     owner: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
+    memory_extraction_enabled: bool = True
+    memory_injection_enabled: bool = True
+    skill_injection_enabled: bool = True
+    thinking_mode: str = "off"
+    temperature_override: Optional[float] = None
+    max_tokens_override: Optional[int] = None
+    cwd: Optional[str] = None
+    # Registered ModelEndpoint id this session is bound to (None = legacy /
+    # URL-matched). Lets two endpoints that share a provider URL but not
+    # credentials stay distinguishable.
+    endpoint_id: Optional[str] = None
 
     def __post_init__(self):
         if self.headers is None:
@@ -165,6 +176,24 @@ class Session:
             for msg in self.history
             if (msg.metadata or {}).get("source") != "slash"
         ]
+        from src.background_tool_jobs import background_result_context
+        messages = [part for message in messages for part in (
+            *background_result_context(message.get('metadata')), message,
+        )]
+        # Resume an interrupted thinking-only response from its actual model
+        # reasoning channel. Restrict this to the latest assistant message so
+        # old traces do not accumulate in context or cause reasoning loops.
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message.get("role") != "assistant":
+                continue
+            metadata = message.get("metadata") or {}
+            thinking = str(metadata.get("thinking") or "").strip()
+            if metadata.get("stopped") and thinking:
+                resumed = dict(message)
+                resumed["reasoning_content"] = thinking
+                messages[index] = resumed
+            break
         if not _history_grants_chat_session_approval(self.history, self.id):
             return messages
 

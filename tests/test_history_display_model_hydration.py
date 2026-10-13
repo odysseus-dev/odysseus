@@ -123,6 +123,10 @@ def test_paginated_history_reads_only_count_and_requested_page(monkeypatch):
         "content-4",
         "content-5",
     ]
+    assert [message["metadata"]["_db_id"] for message in payload["history"]] == [
+        "message-4",
+        "message-5",
+    ]
     assert payload["total"] == 6
     assert payload["offset"] == 4
     assert payload["has_more_before"] is True

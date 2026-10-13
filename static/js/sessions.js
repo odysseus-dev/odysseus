@@ -2,12 +2,14 @@
 // This module handles all session-related operations
 
 import Storage from './storage.js';
-import uiModule, { autoResize, styledPrompt } from './ui.js';
-import chatRenderer from './chatRenderer.js?v=20260815toolapproval4';
+import uiModule, { autoResize, styledPrompt } from './ui.js?v=20260916largetoolscroll1';
+import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
 import { providerLogo } from './providers.js';
-import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260722ctxheader1';
-import themeModule from './theme.js';
+import { initModelPicker, updateModelPicker } from './modelPicker.js?v=20260909routeidentity1';
+import themeModule from './theme.js?v=20260911organsrain1';
 import spinnerModule from './spinner.js';
+import { actionMenuRank, orderActionMenuItems, SELECT_MENU_ICON } from './actionMenuOrder.js';
+import { registerEscapeLayer, bindMenuDismiss } from './escMenuStack.js';
 
 const API_BASE = window.location.origin;
 
@@ -33,6 +35,9 @@ const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key 
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
 let _historyPager = null;
+const _serverStreamChecksInFlight = new Set();
+const _serverStreamAbsentUntil = new Map();
+const SERVER_STREAM_ABSENT_TTL_MS = 30000;
 
 function _shouldPreserveStartupComposer(msgInput) {
   if (!msgInput || !msgInput.value) return false;
@@ -48,6 +53,57 @@ function _clearComposerUnlessStartupTyped(msgInput) {
     return;
   }
   msgInput.value = '';
+}
+
+function _forceExitIncognitoUi() {
+  const chk = document.getElementById('incognito-toggle');
+  const wasIncognito = !!(chk && chk.checked);
+  if (chk) chk.checked = false;
+
+  const indicator = document.getElementById('incognito-indicator');
+  if (indicator) indicator.style.display = 'none';
+
+  const btn = document.getElementById('incognito-btn');
+  if (btn) {
+    btn.classList.remove('active');
+    btn.title = 'Enable Nobody mode — no memory or skill injection, no history saved';
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span class="incognito-label">Nobody</span>';
+  }
+
+  const welcomeName = document.querySelector('.welcome-name');
+  if (welcomeName && welcomeName.dataset.originalHtml) {
+    welcomeName.innerHTML = welcomeName.dataset.originalHtml;
+    delete welcomeName.dataset.originalHtml;
+  }
+
+  const welcomeSub = document.getElementById('welcome-sub');
+  if (welcomeSub && welcomeSub.dataset.originalText) {
+    welcomeSub.textContent = welcomeSub.dataset.originalText;
+    delete welcomeSub.dataset.originalText;
+    welcomeSub.style.display = '';
+  }
+
+  const tip = document.getElementById('welcome-tip');
+  if (tip && Object.prototype.hasOwnProperty.call(tip.dataset, 'originalTip')) {
+    tip.textContent = tip.dataset.originalTip;
+    delete tip.dataset.originalTip;
+    tip.classList.remove('nobody-session-note');
+    tip.style.opacity = '';
+    tip.style.marginTop = '';
+  }
+
+  if (wasIncognito) {
+    const toggleState = Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {};
+    const restoreMode = toggleState.nobody_prev_mode || toggleState.mode || 'agent';
+    delete toggleState.nobody_prev_mode;
+    ['web_agent', 'bash_agent', 'web_chat', 'bash_chat'].forEach(k => {
+      if (toggleState[k] === false) delete toggleState[k];
+    });
+    Storage.setJSON(Storage.KEYS.TOGGLES, toggleState);
+    if (typeof window.__odysseusSetChatMode === 'function') {
+      window.__odysseusSetChatMode(restoreMode === 'chat' ? 'chat' : 'agent');
+    }
+  }
 }
 
 function _paintSessionLoading(chatHistory, label = 'Loading chat') {
@@ -268,15 +324,25 @@ async function _cleanupIncognitoSessions() {
   const keep = ids.filter(sid => sid === currentSessionId);
   sessionStorage.setItem(_INCOGNITO_SESSIONS_KEY, JSON.stringify(keep));
   await Promise.all(toDelete.map(sid =>
-    fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' }).catch(() => {})
+    fetch(_sessionDeletionUrl(sid), { method: 'DELETE' }).catch(() => {})
   ));
 }
 
 // Research indicator tracking
 const _researchingSessions = new Set();
 const _streamingSessions = new Set();   // Background chat streams (not polled against research API)
-const _completedSessions = new Set();   // Sessions with completed background streams
+const _COMPLETED_SESSIONS_KEY = 'odysseus-completed-chat-sessions-v1';
+const _completedSessions = new Set((() => {
+  try {
+    const ids = JSON.parse(localStorage.getItem(_COMPLETED_SESSIONS_KEY) || '[]');
+    return Array.isArray(ids) ? ids.map(String) : [];
+  } catch (_) { return []; }
+})());
 let _researchPollTimer = null;
+
+function _persistCompletedSessions() {
+  try { localStorage.setItem(_COMPLETED_SESSIONS_KEY, JSON.stringify([..._completedSessions])); } catch (_) {}
+}
 
 // Session list keyboard navigation state
 let _sessionListFocused = false;
@@ -369,11 +435,37 @@ function getFolderNames() {
 async function moveToFolder(sessionId, folderName) {
   const fd = new FormData();
   fd.append('folder', folderName || '');
-  await fetch(`${API_BASE}/api/session/${sessionId}`, { method: 'PATCH', body: fd });
+  await fetch(`${API_BASE}/api/session/${encodeURIComponent(sessionId)}`, { method: 'PATCH', body: fd });
   // Update local data
   const s = sessions.find(x => x.id === sessionId);
   if (s) s.folder = folderName || null;
   renderSessionList();
+}
+
+// Let a chat be dropped directly on a folder/tag. The existing menu action is
+// still available, but drag-and-drop is faster when organizing several chats.
+function wireFolderDropTarget(header, folderName) {
+  header.addEventListener('dragover', (e) => {
+    const types = Array.from(e.dataTransfer?.types || []);
+    if (!types.includes('application/x-odysseus-session')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    header.classList.add('drag-over');
+  });
+  header.addEventListener('dragleave', (e) => {
+    if (!header.contains(e.relatedTarget)) header.classList.remove('drag-over');
+  });
+  header.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    header.classList.remove('drag-over');
+    const sessionId = e.dataTransfer.getData('application/x-odysseus-session');
+    if (!sessionId) return;
+    const session = sessions.find(s => String(s.id) === String(sessionId));
+    if (!session || (session.folder || '') === (folderName || '')) return;
+    await moveToFolder(sessionId, folderName);
+    uiModule.showToast(folderName ? `Moved to ${folderName}` : 'Removed from folder');
+  });
 }
 
 /** Build the "Move to folder" submenu for a session dropdown. */
@@ -448,6 +540,11 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
     if (sub.style.display === 'block') {
       sub.style.display = 'none';
     } else {
+      sub._escapeUnregister?.();
+      sub._escapeUnregister = registerEscapeLayer(
+        () => { sub.style.display = 'none'; },
+        () => sub.isConnected && sub.style.display === 'block',
+      );
       const rect = moveItem.getBoundingClientRect();
       const isMobile = window.innerWidth <= 768;
       sub.style.top = '-9999px';
@@ -493,6 +590,9 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
 function createSessionItem(s) {
   const div = document.createElement('div');
   div.className = 'list-item session-item';
+  // Native desktop drag moves a chat onto a folder/tag. The dedicated handle
+  // continues to control manual ordering in Rearrange mode.
+  div.draggable = true;
   div.setAttribute('role', 'option');
   div.setAttribute('tabindex', '-1');
   div.setAttribute('data-session-id', s.id);
@@ -562,6 +662,20 @@ function createSessionItem(s) {
   }
   div.appendChild(icon);
 
+  div.addEventListener('dragstart', (e) => {
+    if (document.body.classList.contains('rearrange-mode')) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-odysseus-session', s.id);
+    div.classList.add('dragging-to-folder');
+  });
+  div.addEventListener('dragend', () => {
+    div.classList.remove('dragging-to-folder');
+    document.querySelectorAll('.session-folder-header.drag-over').forEach(h => h.classList.remove('drag-over'));
+  });
+
   const span = document.createElement('span');
   span.className = 'grow';
   let chatTitle = s.name || '';
@@ -612,11 +726,77 @@ function createSessionItem(s) {
   // On mobile, suppress click if user was scrolling (touchmove detected)
   // Long press on mobile shows context menu
   let _touchMoved = false;
+  let _touchStartX = 0;
+  let _touchStartY = 0;
   let _longPressTimer = null;
   let _longPressed = false;
+  let _folderDragPointer = null;
+  let _folderDragMoved = false;
+  let _folderDragTarget = null;
+
+  // Pointer-based fallback for moving chats onto folder/tag headers. Native
+  // HTML5 drag events are unreliable when the sidebar also handles scrolling
+  // and row clicks, especially in Firefox.
+  const _clearFolderDragTarget = () => {
+    if (_folderDragTarget) _folderDragTarget.classList.remove('drag-over');
+    _folderDragTarget = null;
+  };
+  const _finishFolderPointerDrag = async (e) => {
+    if (!_folderDragPointer || e.pointerId !== _folderDragPointer) return;
+    const target = _folderDragTarget;
+    const moved = _folderDragMoved;
+    _folderDragPointer = null;
+    _folderDragMoved = false;
+    _clearFolderDragTarget();
+    document.removeEventListener('pointermove', _moveFolderPointer);
+    document.removeEventListener('pointerup', _finishFolderPointerDrag);
+    document.removeEventListener('pointercancel', _finishFolderPointerDrag);
+    if (!moved || !target) return;
+    const folderName = target.dataset.folderName || '';
+    if ((s.folder || '') === folderName) return;
+    await moveToFolder(s.id, folderName);
+    uiModule.showToast(folderName ? `Moved to ${folderName}` : 'Removed from folder');
+  };
+  const _moveFolderPointer = (e) => {
+    if (!_folderDragPointer || e.pointerId !== _folderDragPointer) return;
+    const dx = e.clientX - _folderDragStartX;
+    const dy = e.clientY - _folderDragStartY;
+    if (!_folderDragMoved && Math.hypot(dx, dy) < 10) return;
+    _folderDragMoved = true;
+    e.preventDefault();
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const target = under?.closest('.session-folder-header');
+    if (target && document.getElementById('session-list')?.contains(target)) {
+      if (_folderDragTarget !== target) {
+        _clearFolderDragTarget();
+        _folderDragTarget = target;
+      }
+      target.classList.add('drag-over');
+    } else {
+      _clearFolderDragTarget();
+    }
+  };
+  let _folderDragStartX = 0;
+  let _folderDragStartY = 0;
+  div.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' || e.target.closest('button, input, select, a, .item-drag-handle')) return;
+    if (document.body.classList.contains('rearrange-mode')) return;
+    _folderDragPointer = e.pointerId;
+    _folderDragMoved = false;
+    _folderDragStartX = e.clientX;
+    _folderDragStartY = e.clientY;
+    document.addEventListener('pointermove', _moveFolderPointer, { passive: false });
+    document.addEventListener('pointerup', _finishFolderPointerDrag);
+    document.addEventListener('pointercancel', _finishFolderPointerDrag);
+  });
   div.addEventListener('touchstart', (e) => {
     _touchMoved = false;
     _longPressed = false;
+    const touch = e.touches && e.touches[0];
+    if (touch) {
+      _touchStartX = touch.clientX;
+      _touchStartY = touch.clientY;
+    }
     if (window.innerWidth > 768) return;
     _longPressTimer = setTimeout(() => {
       _longPressed = true;
@@ -634,6 +814,11 @@ function createSessionItem(s) {
         dd.style.right = 'auto';
         dd.style.display = 'block';
         dd.style.zIndex = '1000';
+        dd._escapeUnregister?.();
+        dd._escapeUnregister = registerEscapeLayer(
+          () => { dd.style.display = 'none'; },
+          () => dd.isConnected && dd.style.display === 'block',
+        );
         // Clamp to viewport
         requestAnimationFrame(() => {
           const mr = dd.getBoundingClientRect();
@@ -646,8 +831,13 @@ function createSessionItem(s) {
       }
     }, 500);
   }, { passive: true });
-  div.addEventListener('touchmove', () => {
-    _touchMoved = true;
+  div.addEventListener('touchmove', (e) => {
+    const touch = e.touches && e.touches[0];
+    // Browsers can emit a tiny touchmove during an ordinary tap. Only treat
+    // a meaningful displacement as scrolling so taps still open the chat.
+    if (touch && (Math.abs(touch.clientX - _touchStartX) > 8 || Math.abs(touch.clientY - _touchStartY) > 8)) {
+      _touchMoved = true;
+    }
     if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
   }, { passive: true });
   div.addEventListener('touchend', () => {
@@ -763,7 +953,7 @@ function createSessionItem(s) {
   if (!isOpenClaw) {
     const selectMoreItem = document.createElement('div');
     selectMoreItem.className = 'dropdown-item-compact';
-    selectMoreItem.innerHTML = _icon('<span style="font-size:16px;line-height:1;">●</span>') + '<span>Select</span>';
+    selectMoreItem.innerHTML = _icon(SELECT_MENU_ICON) + '<span>Select</span>';
     selectMoreItem.addEventListener('click', (e) => {
       e.stopPropagation();
       dropdown.style.display = 'none';
@@ -805,6 +995,19 @@ function createSessionItem(s) {
   });
   dropdown.appendChild(cancelItem);
 
+  // Normalize common actions after all conditional items have been created.
+  // Product-specific session actions retain their authored order.
+  _sep.remove();
+  const orderedSessionItems = orderActionMenuItems(
+    Array.from(dropdown.children).map(node => ({
+      node,
+      label: node.querySelector(':scope > span:not(.dropdown-icon):not(.dropdown-shortcut)')?.textContent || node.textContent,
+    })),
+  );
+  orderedSessionItems.forEach(item => dropdown.appendChild(item.node));
+  const archiveBoundary = orderedSessionItems.find(item => actionMenuRank(item) >= 700);
+  if (archiveBoundary) dropdown.insertBefore(_sep, archiveBoundary.node);
+
   // Add event listeners
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -816,6 +1019,7 @@ function createSessionItem(s) {
     if (dropdown.style.display === 'block') {
       dropdown.style.display = 'none';
     } else {
+      registerDropdownEscape();
       // Position the dropdown using viewport coords
       const rect = menuBtn.getBoundingClientRect();
       dropdown.style.left = '';
@@ -825,10 +1029,10 @@ function createSessionItem(s) {
       dropdown.style.display = 'block';
       const ddRect = dropdown.getBoundingClientRect();
       // Flip above if not enough room below
-      if (rect.bottom + 2 + ddRect.height > window.innerHeight) {
-        dropdown.style.top = Math.max(2, rect.top - ddRect.height - 2) + 'px';
+      if (rect.bottom + 4 + ddRect.height > window.innerHeight) {
+        dropdown.style.top = Math.max(4, rect.top - ddRect.height - 4) + 'px';
       } else {
-        dropdown.style.top = rect.bottom + 2 + 'px';
+        dropdown.style.top = rect.bottom + 4 + 'px';
       }
     }
   });
@@ -876,7 +1080,7 @@ function createSessionItem(s) {
       return;
     }
     dropdown.style.display = 'none';
-    if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+    if (!await _confirmSessionDeletion([s.id])) {
       _forceSidebarOpen();
       return;
     }
@@ -890,7 +1094,7 @@ function createSessionItem(s) {
     _skipAutoSelect = true;
     // Clean up persistent chat mapping
     try {
-      const pm = await import('./presets.js');
+      const pm = await import('./presets.js?v=20260908personaname1');
       if (pm.removePersistentChat) pm.removePersistentChat(s.id);
     } catch (e) {}
     // On mobile, close sidebar if we deleted the active session so user sees welcome screen
@@ -904,7 +1108,7 @@ function createSessionItem(s) {
     }
     // Await API deletion, then reload the authoritative list from the server
     try {
-      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+      await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
     } catch (e) { /* network error — session may still exist server-side */ }
     await loadSessions();
   });
@@ -937,6 +1141,14 @@ function createSessionItem(s) {
   dropdown.addEventListener('click', (e) => {
     e.stopPropagation();
   });
+
+  const registerDropdownEscape = () => {
+    dropdown._escapeUnregister?.();
+    dropdown._escapeUnregister = registerEscapeLayer(
+      () => { dropdown.style.display = 'none'; },
+      () => dropdown.isConnected && dropdown.style.display === 'block',
+    );
+  };
 
   div.appendChild(span);
 
@@ -1066,6 +1278,12 @@ function _appendFavoriteSessionItems(frag, items) {
   }
 }
 
+function _isUnsavedCompareSession(s) {
+  const name = String((s && s.name) || '').trim();
+  const folder = String((s && s.folder) || '').trim();
+  return name.startsWith('[CMP] ') && !folder.startsWith('Compare:');
+}
+
 let _renderRAF = null;
 export function renderSessionList() {
   // Debounce rapid re-renders within the same frame
@@ -1080,7 +1298,7 @@ function _renderSessionListImpl() {
 
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
-  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isUnsavedCompareSession(s) && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
 
   if (savedOrder) {
     try {
@@ -1133,8 +1351,6 @@ function _renderSessionListImpl() {
 
     const limit = _showAllSessions ? allFlat.length : SIDEBAR_MAX_VISIBLE;
     const visible = allFlat.slice(0, limit);
-    const activeIdx = allFlat.findIndex(s => s.id === currentSessionId);
-    if (!_showAllSessions && activeIdx >= limit) visible.push(allFlat[activeIdx]);
 
     const visibleFavorites = visible.filter(s => s.is_important);
     const visibleRegular = visible.filter(s => !s.is_important);
@@ -1145,7 +1361,7 @@ function _renderSessionListImpl() {
       const remaining = allFlat.length - SIDEBAR_MAX_VISIBLE;
       const toggleBtn = document.createElement('button');
       toggleBtn.className = 'session-show-more-btn';
-      toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+      toggleBtn.textContent = _showAllSessions ? 'Show less' : 'Show all';
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         _showAllSessions = !_showAllSessions;
@@ -1235,10 +1451,10 @@ function _renderSessionListImpl() {
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const count = folders[folderName].length;
-      if (!await uiModule.styledConfirm(`Delete folder "${folderName}" and all ${count} session(s) inside it?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmSessionDeletion(folders[folderName].map(s => s.id), `Delete folder "${folderName}" and all ${count} chats inside it?`)) return;
       for (const s of folders[folderName]) {
         try {
-          await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+          await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
           _deselectCurrentSession(s.id);
         } catch (err) {
           console.error('Failed to delete session:', s.id, err);
@@ -1247,6 +1463,7 @@ function _renderSessionListImpl() {
       await loadSessions();
     });
     header.appendChild(deleteBtn);
+    wireFolderDropTarget(header, folderName);
 
     let _folderTouchMoved = false;
     header.addEventListener('touchstart', () => { _folderTouchMoved = false; }, { passive: true });
@@ -1286,19 +1503,13 @@ function _renderSessionListImpl() {
       const folderLimit = folderExpanded ? folderSessions.length : FOLDER_MAX_VISIBLE;
       const visibleFolder = folderSessions.slice(0, folderLimit);
 
-      // Always include active session even if beyond limit
-      const activeInFolder = folderSessions.findIndex(s => s.id === currentSessionId);
-      if (!folderExpanded && activeInFolder >= folderLimit) {
-        visibleFolder.push(folderSessions[activeInFolder]);
-      }
-
       _appendSessionItemsWithDateHeaders(content, visibleFolder);
 
       if (folderSessions.length > FOLDER_MAX_VISIBLE) {
         const rem = folderSessions.length - FOLDER_MAX_VISIBLE;
         const moreBtn = document.createElement('button');
         moreBtn.className = 'session-show-more-btn';
-        moreBtn.textContent = folderExpanded ? 'Show less' : `Show ${rem} more`;
+        moreBtn.textContent = folderExpanded ? 'Show less' : 'Show all';
         moreBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           _expandedFolders[folderName] = !folderExpanded;
@@ -1315,14 +1526,8 @@ function _renderSessionListImpl() {
 
   // Render unfiled sessions below folders (capped unless expanded)
   const hasFolders = orderedFolderNames.length > 0;
-  const activeInUnfiled = unfiled.findIndex(s => s.id === currentSessionId);
   const limit = _showAllSessions ? unfiled.length : SIDEBAR_MAX_VISIBLE;
   const visibleUnfiled = unfiled.slice(0, limit);
-
-  // If active session is beyond the limit, include it
-  if (!_showAllSessions && activeInUnfiled >= limit) {
-    visibleUnfiled.push(unfiled[activeInUnfiled]);
-  }
 
   // Wrap in "Unsorted" folder if real folders exist
   let unfiledTarget = _frag;
@@ -1358,10 +1563,10 @@ function _renderSessionListImpl() {
     deleteBtn.title = 'Delete all unsorted sessions';
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!await uiModule.styledConfirm(`Delete all ${unfiled.length} unsorted session(s)?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmSessionDeletion(unfiled.map(s => s.id), `Delete all ${unfiled.length} unsorted chats?`)) return;
       for (const s of unfiled) {
         try {
-          await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+          await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
           _deselectCurrentSession(s.id);
         } catch (err) {
           console.error('Failed to delete session:', s.id, err);
@@ -1370,6 +1575,7 @@ function _renderSessionListImpl() {
       await loadSessions();
     });
     unsortedHeader.appendChild(deleteBtn);
+    wireFolderDropTarget(unsortedHeader, '');
 
     unsortedHeader.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1400,7 +1606,7 @@ function _renderSessionListImpl() {
     const remaining = unfiled.length - SIDEBAR_MAX_VISIBLE;
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'session-show-more-btn';
-    toggleBtn.textContent = _showAllSessions ? 'Show less' : `Show ${remaining} more`;
+    toggleBtn.textContent = _showAllSessions ? 'Show less' : 'Show all';
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       _showAllSessions = !_showAllSessions;
@@ -1636,11 +1842,11 @@ function _initBulkSelect() {
     deleteBtn.addEventListener('click', async () => {
       if (_selectedIds.size === 0) return;
       const count = _selectedIds.size;
-      if (!await uiModule.styledConfirm(`Delete ${count} session(s)? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmSessionDeletion([..._selectedIds], `Delete ${count} chats? This cannot be undone.`)) return;
       const deletedIds = [];
       for (const sid of _selectedIds) {
         try {
-          const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+          const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
           if (res.ok) deletedIds.push(sid);
         } catch (_) {}
       }
@@ -1702,18 +1908,19 @@ export async function loadSessions() {
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
-    if (sessions.length === 0) {
+    const visibleSessions = sessions.filter(s => !s.archived && !_isUnsavedCompareSession(s));
+    if (visibleSessions.length === 0) {
       sessionsSection.classList.add('hidden');
     } else {
       sessionsSection.classList.remove('hidden');
     }
 
-    const activeSessions = sessions.filter(s => !s.archived);
+    const activeSessions = sessions.filter(s => !s.archived && !_isUnsavedCompareSession(s));
     // "Transient" sessions = the singleton Assistant chat + any task-output
     // session. Treat them as not-restorable so coming back to the app lands
     // on the user's last actual conversation, not whichever check-in task
     // most recently appended a message.
-    const _isTransient = (s) => !!s && (s.folder === 'Assistant' || s.folder === 'Tasks');
+    const _isTransient = (s) => !!s && (s.folder === 'Assistant' || s.folder === 'Tasks' || _isUnsavedCompareSession(s));
     const _realSessions = activeSessions.filter(s => !_isTransient(s));
     let hashId = window.location.hash.replace('#', '');
     if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId) || /^open=notes&note=/.test(hashId)) {
@@ -1838,8 +2045,10 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     window.compareModule.deactivate(true);
     return; // deactivate does a page reload
   }
+  let navToken = 0;
   try {
-    const navToken = ++_sessionNavToken;
+    navToken = ++_sessionNavToken;
+    window.__odysseusSessionRenderPendingId = id;
     const prevSessionId = currentSessionId;
     // Selecting a real persisted chat cancels any deferred "New Chat" model
     // pick. Otherwise the next send can materialize that pending chat instead
@@ -1871,9 +2080,10 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
         history.replaceState(null, '', '#' + id);
       }
     }
+    _forceExitIncognitoUi();
     // Restore character preset for persistent chats
     try {
-      const presetsModule = window.presetsModule || (await import('./presets.js')).default;
+      const presetsModule = window.presetsModule || (await import('./presets.js?v=20260908personaname1')).default;
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
@@ -1908,8 +2118,11 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     }
     const msgInput = document.getElementById('message');
     if (msgInput) {
-      msgInput.disabled = false;
       _clearComposerUnlessStartupTyped(msgInput);
+      // Do not accept a send while the authoritative history fetch can still
+      // repaint this pane. A fast first send used to append optimistically and
+      // then disappear when the in-flight session render cleared the DOM.
+      msgInput.disabled = true;
       msgInput.style.height = '';
       msgInput.style.overflow = '';
       autoResize(msgInput);
@@ -2144,6 +2357,12 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     }
     uiModule.showError('Failed to load session: ' + error.message);
   } finally {
+    if (navToken === _sessionNavToken && currentSessionId === id) {
+      const msgInput = document.getElementById('message');
+      if (msgInput) msgInput.disabled = false;
+      window.__odysseusSessionRenderPendingId = '';
+      window.__odysseusSessionReadyId = id;
+    }
     // Memory warmup must not block chat switching. The memories panel can load
     // on demand; this is only a delayed cache refresh when the foreground chat
     // is idle.
@@ -2198,6 +2417,7 @@ async function _getPreferredDefaultChat() {
 
 export function createDirectChat(url, modelId, endpointId, opts = {}) {
   const incomingSource = opts.source || 'manual';
+  const keepDocument = !!opts.keepDocument;
   if (
     _pendingChat &&
     _pendingChat.modelId &&
@@ -2232,17 +2452,18 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
     el.classList.remove('active-session', 'active');
   });
 
-  // Close document panel — new chat has no docs
-  if (window.documentModule && window.documentModule.isPanelOpen()) {
+  // Close document panel unless the New Chat flow explicitly carries the
+  // current document into the new session.
+  if (!keepDocument && window.documentModule && window.documentModule.isPanelOpen()) {
     window.documentModule.closePanel();
   }
   const docBtn = document.getElementById('overflow-doc-btn');
   if (docBtn) {
-    docBtn.classList.remove('active', 'has-docs');
+    if (!keepDocument) docBtn.classList.remove('active', 'has-docs');
     docBtn.style.display = ''; // show in overflow menu again
   }
   const docInd = document.getElementById('doc-indicator-btn');
-  if (docInd) docInd.classList.remove('visible', 'active');
+  if (docInd && !keepDocument) docInd.classList.remove('visible', 'active');
 
   // Clear chat area and show welcome
   const box = document.getElementById('chat-history');
@@ -2416,6 +2637,44 @@ export function setCurrentSessionId(id) {
   }
 }
 
+const _sessionImageDeletionChoices = new Map();
+
+async function _confirmSessionDeletion(ids, message = 'Delete this chat?') {
+  const uniqueIds = [...new Set(ids)];
+  uniqueIds.forEach(id => _sessionImageDeletionChoices.delete(String(id)));
+  let counts;
+  try {
+    counts = await Promise.all(uniqueIds.map(async id => {
+      const response = await fetch(`${API_BASE}/api/session/${encodeURIComponent(id)}/deletion-info`);
+      if (!response.ok) throw new Error('Unable to check attached images');
+      const info = await response.json();
+      if (!Number.isInteger(info.image_count) || info.image_count < 0) throw new Error('Invalid image count');
+      return info.image_count;
+    }));
+  } catch (_) {
+    uiModule.showError('Could not check this chat’s images. Nothing was deleted. Please try again.');
+    return false;
+  }
+  const hasImages = counts.some(count => count > 0);
+  const answer = await uiModule.styledConfirm(
+    hasImages
+      ? `${message} ${uniqueIds.length === 1 ? 'This chat has' : 'These chats have'} images in Gallery. Delete those images as well? Keeping them also keeps them in their albums.`
+      : message,
+    hasImages
+      ? { title: 'Delete chat', confirmText: 'Delete chat only', alternateText: 'Delete chat and images', danger: true }
+      : { confirmText: 'Delete', danger: true },
+  );
+  if (!answer) return false;
+  uniqueIds.forEach(id => _sessionImageDeletionChoices.set(String(id), answer === 'alternate'));
+  return true;
+}
+
+function _sessionDeletionUrl(id) {
+  const deleteImages = _sessionImageDeletionChoices.get(String(id)) === true;
+  _sessionImageDeletionChoices.delete(String(id));
+  return `${API_BASE}/api/session/${encodeURIComponent(id)}?delete_images=${deleteImages}`;
+}
+
 export async function deleteCurrentSessionFromTopMenu() {
   const sid = currentSessionId;
   if (!sid) {
@@ -2427,7 +2686,7 @@ export async function deleteCurrentSessionFromTopMenu() {
     uiModule.showToast('Unfavorite before deleting');
     return false;
   }
-  if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+  if (!await _confirmSessionDeletion([sid])) {
     return false;
   }
   if (window.chatModule && window.chatModule.abortCurrentRequest) {
@@ -2437,11 +2696,11 @@ export async function deleteCurrentSessionFromTopMenu() {
   _removeSessionFromLocalState(sid);
   _skipAutoSelect = true;
   try {
-    const pm = await import('./presets.js');
+    const pm = await import('./presets.js?v=20260908personaname1');
     if (pm.removePersistentChat) pm.removePersistentChat(sid);
   } catch (e) {}
   try {
-    const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+    const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     uiModule.showToast('Session deleted');
   } catch (e) {
@@ -2481,11 +2740,11 @@ async function _onSessionListKeydown(e) {
       uiModule.showToast('Unfavorite before deleting');
       return;
     }
-    const ok = await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true });
+    const ok = await _confirmSessionDeletion([s.id]);
     if (!ok) return;
     _sessionListFocused = true;
     (async () => {
-      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+      await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' });
       _deselectCurrentSession(s.id);
       await loadSessions();
     })();
@@ -2558,6 +2817,14 @@ function _updateResearchDots() {
     star.classList.toggle('notify', isCompleted);
     if (listItem) listItem.classList.toggle('stream-complete', isCompleted);
 
+    if (listItem) {
+      let state = listItem.querySelector('.session-run-state');
+      if (state) {
+        if (state._whirlpool) state._whirlpool.destroy();
+        state.remove();
+      }
+    }
+
     if (isRunning || isCompleted) {
       star.style.opacity = '1';
     } else {
@@ -2608,6 +2875,7 @@ export function clearResearching(sessionId) {
 }
 
 export function markStreaming(sessionId) {
+  _serverStreamAbsentUntil.delete(sessionId);
   _streamingSessions.add(sessionId);
   _updateResearchDots();
   _updateRailNotifs();
@@ -2630,16 +2898,18 @@ function _clearRunningState(sessionId) {
   }
 }
 
-export function markStreamComplete(sessionId) {
+export function markStreamComplete(sessionId, { force = false } = {}) {
   _researchingSessions.delete(sessionId);
   _streamingSessions.delete(sessionId);
-  // Don't pulse if user is already viewing this session — they can see the response
-  if (currentSessionId === sessionId) {
+  // A selected chat can still be away in a hidden tab. In that case completion
+  // must remain visible in the sidebar when the user returns.
+  if (!force && currentSessionId === sessionId && document.visibilityState === 'visible') {
     _updateResearchDots();
     _updateRailNotifs();
     return;
   }
   _completedSessions.add(sessionId);
+  _persistCompletedSessions();
   _updateResearchDots();
   _updateRailNotifs();
   // Show notification dot on Chats section if collapsed
@@ -2692,6 +2962,9 @@ function _updateRailNotifs() {
  * and poll until done, then reload the session.
  */
 async function _checkServerStream(sessionId) {
+  if (!sessionId || _serverStreamChecksInFlight.has(sessionId)) return;
+  if ((_serverStreamAbsentUntil.get(sessionId) || 0) > Date.now()) return;
+  _serverStreamChecksInFlight.add(sessionId);
   try {
     // Skip if research is running — it has its own progress UI
     if (_researchingSessions.has(sessionId)) return;
@@ -2701,14 +2974,19 @@ async function _checkServerStream(sessionId) {
 
     const res = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);
     if (!res.ok) {
+      if (res.status === 404) {
+        _serverStreamAbsentUntil.set(sessionId, Date.now() + SERVER_STREAM_ABSENT_TTL_MS);
+      }
       _clearRunningState(sessionId);
       return; // 404 = no active stream
     }
     const info = await res.json();
     if (info.status !== 'streaming') {
+      _serverStreamAbsentUntil.set(sessionId, Date.now() + SERVER_STREAM_ABSENT_TTL_MS);
       _clearRunningState(sessionId);
       return;
     }
+    _serverStreamAbsentUntil.delete(sessionId);
 
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
@@ -2775,11 +3053,14 @@ async function _checkServerStream(sessionId) {
     }, 1500);
   } catch (_) {
     // No stream active — nothing to do
+  } finally {
+    _serverStreamChecksInFlight.delete(sessionId);
   }
 }
 
 export function clearStreamComplete(sessionId) {
   _completedSessions.delete(sessionId);
+  _persistCompletedSessions();
   // Direct DOM cleanup in case _updateResearchDots misses it
   var item = document.querySelector(`.list-item[data-session-id="${sessionId}"]`);
   if (item) item.classList.remove('stream-complete');
@@ -2824,13 +3105,6 @@ function _initDropdownDismiss() {
       }
     }).observe(_sb, { attributes: true, attributeFilter: ['class'] });
   }
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    // Esc must dismiss both the parent dropdown AND the Move-to-folder
-    // submenu in one keypress — previously only the dropdown closed and
-    // the submenu was left orphaned on screen.
-    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
-  });
 }
 
 // ──────────────────────────────────────────────
@@ -2868,14 +3142,18 @@ function _showDropdown(anchorEl, items) {
   dd.style.top = '-9999px';
   dd.style.display = 'block';
   const ddRect = dd.getBoundingClientRect();
-  if (rect.bottom + 2 + ddRect.height > window.innerHeight) {
-    dd.style.top = Math.max(2, rect.top - ddRect.height - 2) + 'px';
+  if (rect.bottom + 4 + ddRect.height > window.innerHeight) {
+    dd.style.top = Math.max(4, rect.top - ddRect.height - 4) + 'px';
   } else {
-    dd.style.top = (rect.bottom + 2) + 'px';
+    dd.style.top = (rect.bottom + 4) + 'px';
   }
 
-  function close() { dd.remove(); }
-  // Existing _initDropdownDismiss handles click-away + Escape for .session-dropdown-menu
+  const close = () => {
+    unregister();
+    unregister = () => {};
+    dd.remove();
+  };
+  let unregister = bindMenuDismiss(dd, close, e => dd.contains(e.target) || e.target === anchorEl);
   return close;
 }
 
@@ -2962,9 +3240,9 @@ async function _arcRestore(sid) {
 }
 
 async function _arcDelete(sid) {
-  if (!await window.styledConfirm('Delete this session permanently?', { confirmText: 'Delete', danger: true })) return;
+  if (!await _confirmSessionDeletion([sid], 'Delete this chat permanently?')) return;
   try {
-    const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+    const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed');
     await _animateSessionRowsRemoving([sid], '#archive-grid .archive-row[data-session-id]');
     _arcRemove(sid);
@@ -2997,12 +3275,12 @@ async function _arcBulkRestore() {
 async function _arcBulkDelete() {
   const ids = [..._arc.selected];
   if (!ids.length) return;
-  const ok = await uiModule.styledConfirm(`Delete ${ids.length} session${ids.length > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true });
+  const ok = await _confirmSessionDeletion(ids, `Delete ${ids.length} chats permanently?`);
   if (!ok) return;
   const deletedIds = [];
   for (const sid of ids) {
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+      const res = await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
       if (res.ok) {
         deletedIds.push(sid);
         _arcRemove(sid);
@@ -3276,6 +3554,8 @@ export function openLibrary(defaultTab) {
   document.getElementById('lib-select-btn').addEventListener('click', () => {
     _lib.selectMode = !_lib.selectMode;
     _lib.selected.clear();
+    document.getElementById('lib-select-btn').classList.toggle('active', _lib.selectMode);
+    document.getElementById('lib-select-btn').textContent = _lib.selectMode ? 'Cancel' : 'Select';
     document.getElementById('lib-bulk-bar').classList.toggle('hidden', !_lib.selectMode);
     _renderLibGrid();
   });
@@ -3300,6 +3580,8 @@ export function openLibrary(defaultTab) {
     }
     _lib.selected.clear();
     _lib.selectMode = false;
+    document.getElementById('lib-select-btn').classList.remove('active');
+    document.getElementById('lib-select-btn').textContent = 'Select';
     document.getElementById('lib-bulk-bar').classList.add('hidden');
     await loadSessions();
     _renderLibGrid();
@@ -3307,9 +3589,12 @@ export function openLibrary(defaultTab) {
 
   // Bulk delete
   document.getElementById('lib-bulk-delete').addEventListener('click', async () => {
-    if (!await uiModule.styledConfirm(`Delete ${_lib.selected.size} items?`, { confirmText: 'Delete', danger: true })) return;
+    const confirmed = (_lib.tab === 'chats' || _lib.tab === 'archive')
+      ? await _confirmSessionDeletion([..._lib.selected], `Delete ${_lib.selected.size} chats?`)
+      : await uiModule.styledConfirm(`Delete ${_lib.selected.size} items?`, { confirmText: 'Delete', danger: true });
+    if (!confirmed) return;
     if (_lib.tab === 'chats' || _lib.tab === 'archive') {
-      for (const sid of _lib.selected) await fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' });
+      for (const sid of _lib.selected) await fetch(_sessionDeletionUrl(sid), { method: 'DELETE' });
     } else if (_lib.tab === 'documents') {
       for (const did of _lib.selected) await fetch(`${API_BASE}/api/document/${did}`, { method: 'DELETE' });
     } else if (_lib.tab === 'research') {
@@ -3317,6 +3602,8 @@ export function openLibrary(defaultTab) {
     }
     _lib.selected.clear();
     _lib.selectMode = false;
+    document.getElementById('lib-select-btn').classList.remove('active');
+    document.getElementById('lib-select-btn').textContent = 'Select';
     document.getElementById('lib-bulk-bar').classList.add('hidden');
     await loadSessions();
     _renderLibGrid();
@@ -3372,7 +3659,7 @@ function _renderLibChats(grid) {
       _showDropdown(e.currentTarget, [
         { label: 'Open', action: () => { closeLibrary(); selectSession(s.id); } },
         { label: 'Archive', action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }); await loadSessions(); _renderLibGrid(); } },
-        { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); await loadSessions(); _renderLibGrid(); }, danger: true },
+        { label: 'Delete', action: async () => { if (!await _confirmSessionDeletion([s.id])) return; await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' }); await loadSessions(); _renderLibGrid(); }, danger: true },
       ]);
     });
     grid.appendChild(card);
@@ -3402,7 +3689,7 @@ async function _renderLibArchive(grid) {
         e.stopPropagation();
         _showDropdown(e.currentTarget, [
           { label: 'Restore', action: async () => { await fetch(`${API_BASE}/api/session/${s.id}/restore`, { method: 'POST' }); await loadSessions(); _renderLibGrid(); } },
-          { label: 'Delete', action: async () => { if (!await uiModule.styledConfirm('Delete?', { confirmText: 'Delete', danger: true })) return; await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
+          { label: 'Delete', action: async () => { if (!await _confirmSessionDeletion([s.id])) return; await fetch(_sessionDeletionUrl(s.id), { method: 'DELETE' }); _renderLibGrid(); }, danger: true },
         ]);
       });
       grid.appendChild(card);

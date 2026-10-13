@@ -1,7 +1,8 @@
 // Odysseus UI — Initialization Scripts
-// ES6 module — extracted from index.html inline scripts
+// ES6 module
 
 import Storage from './storage.js';
+import { _bringToFront } from './modalManager.js';
 
 function markComposerUserEdited() {
   const msgInput = document.getElementById('message');
@@ -9,7 +10,20 @@ function markComposerUserEdited() {
   msgInput.dataset.startupPreserveBound = '1';
   msgInput.addEventListener('input', () => {
     window.__odysseusComposerUserEdited = !!msgInput.value;
+    syncComposerModelPicker(msgInput);
   });
+  syncComposerModelPicker(msgInput);
+}
+
+// Keep the model picker while the composer is empty or short. Once the user
+// has enough text for the picker to compete with the input area, hide only
+// the picker so the prompt gets the full row width instead of being clipped.
+function syncComposerModelPicker(msgInput) {
+  const wrap = document.getElementById('model-picker-wrap');
+  if (!wrap || !msgInput) return;
+  const lineHeight = parseFloat(getComputedStyle(msgInput).lineHeight) || 21;
+  const typedEnough = msgInput.value.trim().length >= 64 || msgInput.scrollHeight > lineHeight * 2.2;
+  wrap.classList.toggle('picker-auto-hidden', typedEnough);
 }
 
 function clearFreshComposerRestore() {
@@ -38,6 +52,45 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
 // wipe localStorage + sessionStorage so the new account doesn't inherit
 // the previous user's last session id, last-used model, draft chat input,
 // or cached lists. The settings-tab Logout button already wipes on
+// Sidebar button handlers — defined outside async block so they always attach
+const openMemoryModal = () => {
+  const memoryModal = document.getElementById('memory-modal');
+  if (memoryModal) {
+    memoryModal.classList.remove('hidden');
+    memoryModal.querySelector('.memory-tab[data-memory-tab="browse"]')?.click();
+    _bringToFront(memoryModal);
+  }
+};
+
+const openSkillsModal = () => {
+  const memoryModal = document.getElementById('memory-modal');
+  if (memoryModal) {
+    memoryModal.classList.remove('hidden');
+    memoryModal.querySelector('.memory-tab[data-memory-tab="skills"]')?.click();
+    _bringToFront(memoryModal);
+  }
+};
+
+// Attach sidebar button event listeners immediately (outside async auth block)
+const memoryBtn = document.getElementById('sidebar-memory-btn');
+const skillsBtn = document.getElementById('sidebar-skills-btn');
+
+memoryBtn?.addEventListener('click', openMemoryModal);
+memoryBtn?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    openMemoryModal();
+  }
+});
+
+skillsBtn?.addEventListener('click', openSkillsModal);
+skillsBtn?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    openSkillsModal();
+  }
+});
+
 // explicit logout; this catches the cases where a different user signs
 // in without the previous one logging out cleanly.
 (async () => {
@@ -77,8 +130,11 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
       hideOn('#overflow-doc-btn, #tool-doc-btn', privs.can_use_documents);
       // Research — sidebar tool + the in-input deep-research toggle.
       hideOn('#tool-research-btn, #research-toggle-btn', privs.can_use_research);
-      // Memory & skills (rail/tool button only — UI/API entry).
-      hideOn('#tool-memory-btn', privs.can_manage_memory);
+      // Memory & skills (sidebar buttons).
+      hideOn('#sidebar-memory-btn, #rail-memory', privs.can_manage_memory);
+      // Ensure Skills button is always visible
+      document.getElementById('sidebar-skills-btn')?.style.removeProperty('display');
+
       // Agent mode toggle — force chat mode by hiding the Agent toggle button.
       if (privs.can_use_agent === false) {
         const _agent = document.getElementById('mode-agent-btn');
@@ -86,6 +142,35 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
         if (_agent) _agent.style.display = 'none';
         if (_chat) { _chat.classList.add('active'); _chat.click?.(); }
       }
+      
+      // Expose a function to refresh privileges
+      window.refreshPrivileges = async () => {
+        try {
+          const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+          const data = await res.json().catch(() => ({}));
+          const newPrivs = (data && data.privileges) || {};
+          
+          // Re-apply privilege gates
+          hideOn('#overflow-doc-btn, #tool-doc-btn', newPrivs.can_use_documents);
+          hideOn('#tool-research-btn, #research-toggle-btn', newPrivs.can_use_research);
+          hideOn('#sidebar-memory-btn, #rail-memory', newPrivs.can_manage_memory);
+          
+          if (newPrivs.can_use_agent === false) {
+            const _agent = document.getElementById('mode-agent-btn');
+            const _chat = document.getElementById('mode-chat-btn');
+            if (_agent) _agent.style.display = 'none';
+            if (_chat) { _chat.classList.add('active'); _chat.click?.(); }
+          } else {
+            const _agent = document.getElementById('mode-agent-btn');
+            if (_agent) _agent.style.display = '';
+          }
+          
+          return newPrivs;
+        } catch (e) {
+          console.error('Failed to refresh privileges:', e);
+          return null;
+        }
+      };
     } catch (_) { /* DOM not ready or unexpected shape — UI gates are non-fatal */ }
   } catch (_) { /* anonymous / loopback mode — nothing to do */ }
 })();
@@ -372,29 +457,6 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
     });
   }
 
-  // Fade welcome screen when mobile keyboard opens (input focus/blur)
-  if ('ontouchstart' in window) {
-    document.addEventListener('DOMContentLoaded', function() {
-      var _msgInput = document.getElementById('message');
-      if (!_msgInput) return;
-      _msgInput.addEventListener('focus', function() {
-        var welcome = document.getElementById('welcome-screen');
-        if (welcome && !welcome.classList.contains('hidden')) {
-          welcome.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-          welcome.style.opacity = '0';
-          welcome.style.transform = 'translate(-50%, -50%) scale(0.92)';
-        }
-      });
-      _msgInput.addEventListener('blur', function() {
-        var welcome = document.getElementById('welcome-screen');
-        if (welcome && !welcome.classList.contains('hidden')) {
-          welcome.style.transition = 'opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
-          welcome.style.opacity = '';
-          welcome.style.transform = '';
-        }
-      });
-    });
-  }
 }
 
 /* ── Release welcome-screen entrance animations once the page is settled ──
@@ -419,3 +481,5 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
   else window.addEventListener('load', release);
   setTimeout(release, 1200);  // hard fallback — never leave the splash hidden
 })();
+
+// Event listeners for Memory & Skills sidebar buttons are handled in the privilege check block above

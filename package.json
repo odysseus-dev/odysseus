@@ -1,9 +1,18 @@
 {
+  "name": "odysseus",
+  "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/odysseus-dev/odysseus.git"
   },
+  "scripts": {
+    "test:photo-editor": "playwright test --config tests/e2e/playwright.config.js",
+    "test:photo-editor:install": "playwright install chromium firefox webkit",
+    "test:photo-editor:firefox": "PHOTO_EDITOR_E2E_BROWSER=firefox playwright test --config tests/e2e/playwright.config.js",
+    "test:photo-editor:webkit": "PHOTO_EDITOR_E2E_BROWSER=webkit playwright test --config tests/e2e/playwright.config.js"
+  },
   "devDependencies": {
-    "@antithesishq/bombadil": "^0.7.0"
+    "@antithesishq/bombadil": "^0.7.0",
+    "@playwright/test": "^1.62.1"
   }
 }

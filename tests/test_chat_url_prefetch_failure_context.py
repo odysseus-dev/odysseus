@@ -156,10 +156,10 @@ def test_successful_url_prefetch_keeps_existing_content_shape(monkeypatch):
     monkeypatch.setattr(
         chat_processor,
         "fetch_webpage_content",
-        lambda url: {"success": True, "content": "page body"},
+        lambda url: {"success": True, "title": "Example report", "content": "page body"},
     )
 
-    preface, _, _ = _processor().build_context_preface(
+    preface, _, web_sources = _processor().build_context_preface(
         message="Read https://example.test/page",
         session=SimpleNamespace(endpoint_url="", model="", headers={}),
         use_web=False,
@@ -175,3 +175,8 @@ def test_successful_url_prefetch_keeps_existing_content_shape(monkeypatch):
     )
     assert page["metadata"]["trusted"] is False
     assert "page body" in page["content"]
+    assert web_sources == [{
+        "url": "https://example.test/page",
+        "title": "Example report",
+        "acquisition": "automatic_url_fetch",
+    }]
