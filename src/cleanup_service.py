@@ -52,6 +52,26 @@ def _recent_session_ids(db, DbSession, owner: Optional[str]) -> set:
     return {row[0] for row in recent_q.limit(CleanupConfig.PRESERVE_RECENT_COUNT).all()}
 
 
+def _supports_delete_returning(db) -> bool:
+    """Check if the current database backend and runtime version support DELETE ... RETURNING."""
+    dialect = getattr(db.get_bind(), "dialect", None)
+    if dialect is None:
+        return False
+    if dialect.name == "postgresql":
+        return True
+    if dialect.name == "sqlite":
+        # SQLite added RETURNING support in 3.35.0 (March 2021).
+        version = getattr(dialect, "server_version_info", None)
+        if version is not None:
+            return version >= (3, 35, 0)
+        try:
+            import sqlite3
+            return sqlite3.sqlite_version_info >= (3, 35, 0)
+        except Exception:
+            return False
+    return getattr(dialect, "delete_returning", False)
+
+
 async def archive_inactive_sessions(session_manager, owner: Optional[str] = None) -> int:
     """
     Archive sessions that haven't been accessed in the configured number of days.
@@ -158,16 +178,30 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
                 actual_count < CleanupConfig.MIN_MESSAGES_TO_KEEP,
             )
             stmt = _apply_owner_filter(stmt, DbSession, owner)
-            deleted_rows = db.execute(stmt.returning(DbSession.id)).scalars().all()
-            deleted_ids = set(deleted_rows)
-            deleted_count = len(deleted_ids)
-
-            surviving_ids = {row[0] for row in db.query(DbSession.id).filter(
-                DbSession.id.in_(session_ids)
-            ).all()}
-            unaccounted_ids = set(session_ids) - surviving_ids - deleted_ids
-
-            space_freed = sum(message_counts[sid] for sid in deleted_ids) * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+            if _supports_delete_returning(db):
+                deleted_rows = db.execute(stmt.returning(DbSession.id)).scalars().all()
+                deleted_ids = set(deleted_rows)
+                deleted_count = len(deleted_ids)
+                surviving_ids = {row[0] for row in db.query(DbSession.id).filter(
+                    DbSession.id.in_(session_ids)
+                ).all()}
+                unaccounted_ids = set(session_ids) - surviving_ids - deleted_ids
+                space_freed = sum(message_counts[sid] for sid in deleted_ids) * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+            else:
+                # Portable fallback for legacy SQLite (< 3.35.0) which lacks RETURNING syntax.
+                res = db.execute(stmt)
+                deleted_count = res.rowcount or 0
+                surviving_ids = {row[0] for row in db.query(DbSession.id).filter(
+                    DbSession.id.in_(session_ids)
+                ).all()}
+                deleted_ids = set(session_ids) - surviving_ids
+                unaccounted_ids = set()
+                if deleted_count == 0:
+                    space_freed = 0
+                elif len(deleted_ids) <= deleted_count:
+                    space_freed = sum(message_counts[sid] for sid in deleted_ids) * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
+                else:
+                    space_freed = sum(message_counts[sid] for sid in sorted(deleted_ids)[:deleted_count]) * CleanupConfig.ESTIMATED_MESSAGE_SIZE_BYTES
             db.commit()
 
             cache_evict_ids = deleted_ids | unaccounted_ids

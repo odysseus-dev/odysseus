@@ -308,3 +308,70 @@ def test_cleanup_db_error_preserves_cache_and_aborts_cleanly(cleanup_api):
         assert db.query(database.ChatMessage).filter_by(session_id="old-chat").count() == 3
 
 
+def test_cleanup_portable_fallback_without_returning(cleanup_api, monkeypatch):
+    """Engines lacking RETURNING (e.g. SQLite < 3.35.0) safely clean up without syntax errors."""
+    import src.cleanup_service as cleanup_service
+    monkeypatch.setattr(cleanup_service, "_supports_delete_returning", lambda db: False)
+
+    client, factory, manager = cleanup_api
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with factory() as db:
+        for index in range(10):
+            db.add(database.Session(
+                id=f"recent-{index}", name="Recent", endpoint_url="", model="",
+                owner="alice", created_at=now - timedelta(hours=index),
+                last_accessed=now, message_count=1,
+            ))
+        db.add(database.Session(
+            id="chat-to-delete", name="Eligible 1", endpoint_url="", model="",
+            owner="alice", created_at=now - timedelta(days=50),
+            last_accessed=now - timedelta(days=30), archived=True,
+            is_important=False, message_count=3,
+        ))
+        db.add(database.Session(
+            id="chat-concurrently-deleted", name="Eligible 2", endpoint_url="", model="",
+            owner="alice", created_at=now - timedelta(days=50),
+            last_accessed=now - timedelta(days=30), archived=True,
+            is_important=False, message_count=10,
+        ))
+        db.commit()
+        db.add_all(database.ChatMessage(
+            id=f"msg1-{i}", session_id="chat-to-delete", role="user",
+            content="m", timestamp=now - timedelta(days=30),
+        ) for i in range(3))
+        db.add_all(database.ChatMessage(
+            id=f"msg2-{i}", session_id="chat-concurrently-deleted", role="user",
+            content="m", timestamp=now - timedelta(days=30),
+        ) for i in range(10))
+        db.commit()
+
+    manager.sessions["chat-to-delete"] = SimpleNamespace(message_count=3)
+    manager.sessions["chat-concurrently-deleted"] = SimpleNamespace(message_count=10)
+
+    engine = factory.kw["bind"]
+    injected = False
+
+    def delete_candidate(connection, cursor, statement, parameters, context, executemany):
+        nonlocal injected
+        if not injected and statement.lstrip().startswith("DELETE FROM sessions"):
+            injected = True
+            with factory() as other_db:
+                other_db.query(database.Session).filter_by(id="chat-concurrently-deleted").delete()
+                other_db.commit()
+
+    event.listen(engine, "before_cursor_execute", delete_candidate)
+    try:
+        response = client.post("/api/cleanup")
+    finally:
+        event.remove(engine, "before_cursor_execute", delete_candidate)
+
+    assert injected
+    data = response.json()
+    assert data["deleted_count"] == 1
+    expected_space_mb = round(3 * 512 / (1024 * 1024), 2)
+    assert data["space_freed_mb"] == expected_space_mb
+    assert "chat-to-delete" not in manager.sessions
+    assert "chat-concurrently-deleted" not in manager.sessions
+    with factory() as db:
+        assert db.get(database.Session, "chat-to-delete") is None
+        assert db.get(database.Session, "chat-concurrently-deleted") is None
