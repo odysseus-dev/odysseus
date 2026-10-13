@@ -351,6 +351,9 @@ let _sessionListFocused = false;
 function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
   currentSessionId = null;
+  window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+    detail: { sessionId: null },
+  }));
   uiModule.el('chat-history').innerHTML = '';
   uiModule.el('current-meta').textContent = 'Odysseus Chat';
   Storage.remove('lastSessionId');
@@ -2448,6 +2451,9 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   _skipAutoSelect = true;
   _suppressNextSessionLoading = true;
   currentSessionId = null;
+  window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+    detail: { sessionId: null },
+  }));
   try { window.__odysseusLastSelectedSessionId = ''; } catch (_) {}
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
@@ -2558,6 +2564,9 @@ export async function materializePendingSession() {
     }
     _pendingChat = null;
     currentSessionId = payload.id;
+    window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+      detail: { sessionId: payload.id, materialized: true },
+    }));
     if (!isIncognito) {
       Storage.set('lastSessionId', payload.id);
       history.replaceState(null, '', '#' + payload.id);

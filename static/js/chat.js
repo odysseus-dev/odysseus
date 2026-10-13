@@ -66,6 +66,7 @@ import { invalidateSettings } from './appConfig.js';
   let _contextHeaderPopupCleanup = null;
   let _pendingToolApproval = null;
   const _selectedNoteIdsBySession = new Map();
+  let _pendingSelectedNoteIds = [];
   let _lastPrivateBrowserUrl = '';
   function _isPrivateBrowserTool(tool) {
     const name = String(tool || '').toLowerCase();
@@ -243,32 +244,41 @@ import { invalidateSettings } from './appConfig.js';
 
   window.addEventListener('odysseus:notes-context-selected', (event) => {
     const noteIds = event.detail?.noteIds;
-
     if (!Array.isArray(noteIds) || noteIds.length === 0) return;
 
     const sessionId = sessionModule.getCurrentSessionId?.();
-
-    if (!sessionId) {
-      console.warn('Cannot attach Notes context: no active chat session');
+    if (!sessionId && !sessionModule.hasPendingChat?.()) {
+      console.warn('Cannot attach Notes context: no active or pending chat');
       return;
     }
 
-    _selectedNoteIdsBySession.set(sessionId, noteIds);
+    if (sessionId) {
+      _selectedNoteIdsBySession.set(sessionId, [...noteIds]);
+    } else {
+      _pendingSelectedNoteIds = [...noteIds];
+    }
+    if (event.detail) event.detail.accepted = true;
     _renderSelectedNotesIndicator(noteIds);
   });
-  
+
   window.addEventListener('odysseus:session-changed', (event) => {
     const sessionId = event.detail?.sessionId;
-    const noteIds = _selectedNoteIdsBySession.get(sessionId) || [];
-    _renderSelectedNotesIndicator(noteIds);
+    if (sessionId && event.detail?.materialized && _pendingSelectedNoteIds.length) {
+      _selectedNoteIdsBySession.set(sessionId, _pendingSelectedNoteIds);
+    }
+    _pendingSelectedNoteIds = [];
+    _renderSelectedNotesIndicator(
+      sessionId ? (_selectedNoteIdsBySession.get(sessionId) || []) : []
+    );
   });
 
   document.getElementById('selected-notes-context-btn')?.addEventListener('click', () => {
     const sessionId = sessionModule.getCurrentSessionId?.();
-
-    if (!sessionId) return;
-
-    _selectedNoteIdsBySession.delete(sessionId);
+    if (sessionId) {
+      _selectedNoteIdsBySession.delete(sessionId);
+    } else {
+      _pendingSelectedNoteIds = [];
+    }
     _renderSelectedNotesIndicator([]);
   });
 

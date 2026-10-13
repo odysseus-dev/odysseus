@@ -2153,6 +2153,30 @@ def _set_user_time_from_request(request: Request) -> None:
     except Exception:
         pass
 
+def _parse_selected_note_ids(raw) -> list[str]:
+    """Validate user-selected Note IDs before passing them to SQLAlchemy."""
+    if raw is None or raw == "":
+        return []
+    if not isinstance(raw, str) or len(raw) > 8192:
+        raise HTTPException(400, "Invalid selected_note_ids payload")
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Invalid selected_note_ids JSON") from exc
+    if (
+        not isinstance(parsed, list)
+        or len(parsed) > 50
+        or any(
+            not isinstance(note_id, str)
+            or not note_id.strip()
+            or len(note_id) > 128
+            for note_id in parsed
+        )
+    ):
+        raise HTTPException(400, "selected_note_ids must be an array of up to 50 non-empty string IDs")
+    return list(dict.fromkeys(parsed))
+
+
 def _format_selected_notes_context(notes) -> str:
     """Format selected Notes/Todos as reference context for the model."""
     sections = []
@@ -2461,11 +2485,7 @@ def setup_chat_routes(
         form_data = await request.form()
         message = form_data.get("message")
         session = form_data.get("session")
-        selected_note_ids = []
-        try:
-            selected_note_ids = json.loads(form_data.get("selected_note_ids") or "[]")
-        except (TypeError, json.JSONDecodeError):
-            logger.warning("Ignoring invalid selected_note_ids")
+        selected_note_ids = _parse_selected_note_ids(form_data.get("selected_note_ids"))
 
         attachments = form_data.get("attachments")
         use_web = form_data.get("use_web")

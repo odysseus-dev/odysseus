@@ -1383,11 +1383,12 @@ export function openPanel() {
   document.getElementById('notes-send-agent').addEventListener('click', async () => {
     const ids = [..._selectedIds];
     if (!ids.length) return;
-    window.dispatchEvent(new CustomEvent('odysseus:notes-context-selected', {
-      detail: {
-        noteIds: ids,
-      },
-    }));
+    const detail = { noteIds: ids, accepted: false };
+    window.dispatchEvent(new CustomEvent('odysseus:notes-context-selected', { detail }));
+    if (!detail.accepted) {
+      uiModule.showToast('Choose a chat or model before attaching notes');
+      return;
+    }
     _exitSelectMode();
   })
   document.getElementById('notes-bulk-archive').addEventListener('click', async () => {
