@@ -1062,7 +1062,15 @@ def _migrate_add_session_generation_settings_columns():
             conn.close()
 
 def _migrate_add_document_version_autosave_column():
-    """Keep legacy versions protected; only new autosaves may coalesce."""
+    """Keep legacy versions protected; only new autosaves may coalesce.
+
+    This migration is load-bearing for document-edit correctness: without the
+    ``is_autosave`` column every PUT /api/document/{id} will raise an
+    OperationalError and return HTTP 500.  Starting without a usable column
+    is worse than refusing to start, so failure propagates to the caller
+    (``init_db``) which lets the process exit with a visible traceback rather
+    than silently entering a broken state.
+    """
     try:
         with engine.begin() as conn:
             columns = {column["name"] for column in inspect(conn).get_columns("document_versions")}
@@ -1071,8 +1079,13 @@ def _migrate_add_document_version_autosave_column():
                     "ALTER TABLE document_versions ADD COLUMN "
                     "is_autosave BOOLEAN NOT NULL DEFAULT FALSE"
                 ))
-    except Exception as e:
-        logger.warning("document_versions.is_autosave migration failed: %s", e)
+    except Exception:
+        logger.exception(
+            "Failed to add document_versions.is_autosave column. "
+            "Document editing will be unavailable until this schema migration "
+            "succeeds. Check database permissions and disk space, then restart."
+        )
+        raise
 
 
 def _migrate_add_document_archived_column():
