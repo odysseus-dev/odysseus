@@ -183,7 +183,7 @@ def test_history_and_chat_routes_support_reasoning_effort():
     """Verify history and chat routes support reasoning_effort and thinking_mode persistence."""
     hist_src = (ROOT / "routes/history/history_routes.py").read_text(encoding="utf-8")
     assert "reasoning_effort" in hist_src
-    assert 'mode = f"effort:{clean_effort}"' in hist_src
+    assert 'return f"effort:{effort}" if effort else "off"' in hist_src
 
     chat_src = (ROOT / "routes/chat_routes.py").read_text(encoding="utf-8")
     assert "validate_reasoning_effort(sess.model, reasoning_effort)" in chat_src

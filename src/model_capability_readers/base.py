@@ -25,6 +25,7 @@ VENDOR_ANTHROPIC = "anthropic"
 VENDOR_OLLAMA = "ollama"
 VENDOR_LMSTUDIO = "lmstudio"
 VENDOR_LLAMACPP = "llamacpp"
+VENDOR_LLAMASWAP = "llamaswap"
 VENDOR_VLLM = "vllm"
 VENDOR_SGLANG = "sglang"
 VENDOR_HUGGINGFACE = "huggingface"
@@ -281,6 +282,8 @@ def detect_vendor(base_url: Any = "", endpoint_kind: Any = "") -> str:
         "lm_studio": VENDOR_LMSTUDIO,
         "llamacpp": VENDOR_LLAMACPP,
         "llama_cpp": VENDOR_LLAMACPP,
+        "llamaswap": VENDOR_LLAMASWAP,
+        "llama_swap": VENDOR_LLAMASWAP,
         "vllm": VENDOR_VLLM,
         "sglang": VENDOR_SGLANG,
         "huggingface": VENDOR_HUGGINGFACE,

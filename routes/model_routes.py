@@ -38,6 +38,7 @@ except ModuleNotFoundError:
 from core.middleware import require_admin
 from src.constants import COOKBOOK_STATE_FILE
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src import model_capability_cache
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
@@ -1065,6 +1066,9 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         r = httpx_get_kimi_aware(url, headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
         data = r.json()
+        # The picker keys by the unresolved base URL, the probe by the resolved one.
+        for _key_base in {base, _normalize_base(base_url)}:
+            model_capability_cache.record_models_payload(_key_base, data)
         # OpenAI format: {"data": [{"id": "model-name"}]}
         models = _openai_model_ids(data)
         # Ollama format: {"models": [{"name": "model-name"}]}
@@ -1566,7 +1570,11 @@ def setup_model_routes(model_discovery):
             )
             if now - last_failure < _failure_delay(fails, empty_local=empty_local):
                 return False, info
-        if cached and not force:
+        # Probe each endpoint once per process even when its cached list is
+        # fresh: the capability cache is in-memory, so without this its
+        # records (e.g. llama-swap effort levels) stay empty until the
+        # refresh interval elapses.
+        if cached and not force and state.get("last_success"):
             interval = _endpoint_refresh_interval(ep, category)
             last_good = float(state.get("last_success") or 0.0) or _ts(getattr(ep, "updated_at", None)) or _ts(getattr(ep, "created_at", None))
             if last_good and now - last_good < interval:
@@ -1708,6 +1716,12 @@ def setup_model_routes(model_discovery):
                     meta = get_chatgpt_model_metadata(mid)
                     if meta:
                         models_metadata[mid] = meta
+                for mid in list(curated) + list(extra):
+                    if mid in models_metadata:
+                        continue
+                    levels = model_capability_cache.reasoning_effort_levels(mid, base)
+                    if levels:
+                        models_metadata[mid] = {"supported_reasoning_levels": list(levels)}
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -3054,5 +3068,6 @@ def setup_model_routes(model_discovery):
         return {"ok": True, "disabled": body.disabled}
 
     router._should_refresh_endpoint = _should_refresh_endpoint
+    router.warm_model_caches = _refresh_caches_bg
     router._search_endpoint_catalog = search_endpoint_catalog
     return router
