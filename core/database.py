@@ -458,6 +458,37 @@ class EmailAccount(TimestampMixin, Base):
     from_address   = Column(String, default="")
     display_name   = Column(String, nullable=True)   # "Hriday Ranka" — used in From: header
 
+    # Outgoing signature — the block appended to messages sent from this
+    # account. Plain text (markdown is rendered into the HTML part by the
+    # same path that renders the body), delimited on the wire by RFC 3676's
+    # "-- " line so receiving clients can fold it.
+    #
+    # Deliberately NOT encrypted, unlike the passwords above and the
+    # handwritten Signature model: this text is sent to every recipient by
+    # design, so encrypting it at rest would protect nothing while making it
+    # unreadable to an operator inspecting the database.
+    signature         = Column(Text, nullable=True)
+    # server_default, not just default: `default=` is applied by the ORM, so a
+    # raw-SQL INSERT that does not name this column — the legacy seed
+    # migration below is one — would hit the NOT NULL constraint. The DEFAULT
+    # lives in the table so every writer gets it, which also matches what the
+    # ALTER TABLE migration installs on an existing database.
+    signature_enabled = Column(
+        Boolean, default=True, server_default=text("1"), nullable=False,
+    )
+
+    # A logo or scanned sign-off shown under the signature text. Stored
+    # base64 (no `data:` prefix) with its media type beside it, and sent as
+    # an inline MIME part referenced by Content-ID rather than a remote URL:
+    # Outlook and Gmail block remote images by default, so a hosted logo
+    # reaches most recipients as an empty box, and fetching one tells the
+    # host when the message was opened.
+    #
+    # Not encrypted, for the same reason the text above is not — it goes to
+    # every recipient by design.
+    signature_image      = Column(Text, nullable=True)
+    signature_image_mime = Column(String, nullable=True)   # image/png | image/jpeg | image/gif
+
     # OAuth2 (Google / Google Workspace). Tokens stored encrypted via secret_storage.
     oauth_provider      = Column(String, nullable=True)   # "google" or None
     oauth_access_token  = Column(String, nullable=True)   # encrypted
@@ -1378,6 +1409,50 @@ def _migrate_add_pinned_models_column():
         except Exception:
             pass
 
+def _migrate_add_email_signature_columns():
+    """Add the outgoing-signature columns to an existing email_accounts table.
+
+    `signature_enabled` defaults to 1 so an account that later gets a
+    signature starts using it, but `signature` itself stays NULL — an
+    existing install keeps sending exactly what it sent before until someone
+    actually writes one. The image columns are added the same way, and each
+    column is checked on its own so an install that already ran the earlier
+    version of this migration picks up only what it is missing.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return
+        if "signature" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN signature TEXT")
+        if "signature_enabled" not in columns:
+            conn.execute(
+                "ALTER TABLE email_accounts ADD COLUMN signature_enabled "
+                "BOOLEAN DEFAULT 1 NOT NULL"
+            )
+        if "signature_image" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN signature_image TEXT")
+        if "signature_image_mime" not in columns:
+            conn.execute(
+                "ALTER TABLE email_accounts ADD COLUMN signature_image_mime TEXT"
+            )
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"email signature migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_notes_sort_order():
     """Add sort_order, image_url, repeat columns to notes if they don't exist."""
     import sqlite3
@@ -1409,6 +1484,54 @@ def _migrate_add_notes_sort_order():
             conn.close()
         except Exception:
             pass
+
+def _migrate_add_notes_todo_sync_columns():
+    """Add the Microsoft To Do sync columns to an existing notes table.
+
+    Every column is nullable with no default, so a pre-existing note reads
+    back as a purely local one — which is what it is — and the pull will not
+    treat it as a row it owns.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    wanted = (
+        ("origin", "TEXT"),
+        ("remote_id", "TEXT"),
+        ("remote_etag", "TEXT"),
+        ("remote_list_id", "TEXT"),
+        ("todo_account_id", "TEXT"),
+        ("todo_sync_pending", "TEXT"),
+    )
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(notes)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns:
+            return
+        for name, sql_type in wanted:
+            if name not in columns:
+                conn.execute(f"ALTER TABLE notes ADD COLUMN {name} {sql_type}")
+        # Lookups the sync runs on every pass: "my rows for this account" and
+        # "this remote id". Without them each pull table-scans the notes.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_notes_remote_id ON notes (remote_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_notes_todo_account_id ON notes (todo_account_id)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_notes_origin ON notes (origin)")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"notes To Do sync migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 def _migrate_add_mode_column():
     """Add mode column to sessions table if it doesn't exist."""
@@ -2091,6 +2214,19 @@ class Note(TimestampMixin, Base):
     # The note shows a clickable tag that opens this session for review.
     agent_session_id  = Column(String, nullable=True)
 
+    # ── Microsoft To Do sync ──────────────────────────────────────────────
+    # A todo note is the local half of a Graph `todoTask`. The list it lives
+    # in maps to the note's label, the checklist items to the task's
+    # `checklistItems`, and `archived` to the task's completed status.
+    # "mstodo" once the row came from (or reached) Graph; NULL for a purely
+    # local note, which the pull must therefore never prune.
+    origin            = Column(String, nullable=True, index=True)
+    remote_id         = Column(String, nullable=True, index=True)  # todoTask id
+    remote_etag       = Column(String, nullable=True)              # @odata.etag
+    remote_list_id    = Column(String, nullable=True)              # todoTaskList id
+    todo_account_id   = Column(String, nullable=True, index=True)  # msgraph account uuid
+    todo_sync_pending = Column(String, nullable=True)              # create | update | delete
+
 
 class CalendarCal(TimestampMixin, Base):
     """A calendar (e.g. 'Personal', 'TimeTree')."""
@@ -2176,6 +2312,21 @@ class CalendarDeletedEvent(TimestampMixin, Base):
     remote_etag = Column(String, nullable=True)
     caldav_base_url = Column(String, nullable=True)
     summary = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+
+class MsTodoDeletedNote(TimestampMixin, Base):
+    """Hidden Microsoft To Do delete tombstone, kept until the remote delete
+    lands. The note row is gone by then, so the remote ids the push needs
+    have nowhere else to live."""
+    __tablename__ = "mstodo_deleted_notes"
+
+    id = Column(String, primary_key=True, index=True)   # the deleted note's id
+    owner = Column(String, nullable=True, index=True)
+    remote_id = Column(String, nullable=True)
+    remote_list_id = Column(String, nullable=True)
+    account_id = Column(String, nullable=True)
+    title = Column(String, nullable=True)
     last_error = Column(Text, nullable=True)
 
 
@@ -2391,6 +2542,8 @@ def init_db():
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
+    _migrate_add_notes_todo_sync_columns()
+    _migrate_add_email_signature_columns()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()

@@ -91,7 +91,7 @@ async def test_test_connection_oauth_account_uses_xoauth2_for_imap_and_smtp():
          mock.patch("routes.email_routes._open_imap_connection", return_value=mock_imap_conn), \
          mock.patch("routes.email_routes._PolicySMTP", return_value=mock_smtp_conn), \
          mock.patch("routes.email_routes._PolicySMTP_SSL", return_value=mock_smtp_conn), \
-         mock.patch("routes.email_routes._get_valid_google_token", return_value="ya29.live") as token_getter:
+         mock.patch("routes.email_routes._get_valid_oauth_token", return_value="ya29.live") as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 
     assert result["ok"] is True
@@ -189,7 +189,7 @@ async def test_test_connection_rejects_non_google_hosts_before_oauth_auth():
          mock.patch("routes.email_routes._open_imap_connection") as open_imap, \
          mock.patch("routes.email_routes._PolicySMTP") as open_smtp, \
          mock.patch("routes.email_routes._PolicySMTP_SSL") as open_smtp_ssl, \
-         mock.patch("routes.email_routes._get_valid_google_token") as token_getter:
+         mock.patch("routes.email_routes._get_valid_oauth_token") as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 
     assert result["ok"] is False
@@ -240,7 +240,7 @@ async def test_test_connection_rejects_insecure_oauth_transports_before_auth():
          mock.patch("routes.email_routes._open_imap_connection") as open_imap, \
          mock.patch("routes.email_routes._PolicySMTP") as open_smtp, \
          mock.patch("routes.email_routes._PolicySMTP_SSL") as open_smtp_ssl, \
-         mock.patch("routes.email_routes._get_valid_google_token") as token_getter:
+         mock.patch("routes.email_routes._get_valid_oauth_token") as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 
     assert result["ok"] is False
@@ -274,7 +274,7 @@ async def test_test_connection_does_not_accept_inline_oauth_state():
             }
 
     with mock.patch("routes.email_routes._open_imap_connection") as open_imap, \
-         mock.patch("routes.email_routes._get_valid_google_token") as token_getter:
+         mock.patch("routes.email_routes._get_valid_oauth_token") as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 
     assert result["ok"] is False
@@ -342,7 +342,7 @@ async def test_test_connection_verifies_imap_tls_before_loading_oauth_token(
              "routes.email_helpers._PolicyIMAP4_SSL",
              side_effect=ssl.SSLCertVerificationError("untrusted certificate"),
          ) as imap_ssl_cls, mock.patch(
-             "routes.email_routes._get_valid_google_token"
+             "routes.email_routes._get_valid_oauth_token"
          ) as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 
@@ -418,7 +418,7 @@ async def test_test_connection_verifies_smtp_tls_before_loading_oauth_token(
              "routes.email_routes._PolicySMTP_SSL",
              side_effect=ssl.SSLCertVerificationError("untrusted certificate"),
          ) as smtp_ssl_cls, mock.patch(
-             "routes.email_routes._get_valid_google_token"
+             "routes.email_routes._get_valid_oauth_token"
          ) as token_getter:
         result = await test_conn(req=_FakeReq(), owner="alice")
 

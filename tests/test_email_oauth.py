@@ -305,14 +305,18 @@ async def test_callback_missing_code_returns_generic_error():
 
 
 @pytest.mark.asyncio
-async def test_callback_provider_error_returns_generic_error():
-    """An `error` from Google → generic error redirect, no raw provider text."""
+async def test_callback_provider_error_surfaces_only_the_oauth_code():
+    """An `error` from Google → generic reason plus the bounded OAuth2 code.
+
+    The code itself (`access_denied`) is a fixed-vocabulary protocol token, and
+    surfacing it is what makes the failure actionable. Anything outside that
+    shape is dropped — see the injection tests below."""
     callback = _callback_endpoint()
     resp = await callback(code=None, state=None, error="access_denied", request=_FakeRequest())
 
     loc = _location(resp)
     assert "email_oauth_error=google_error" in loc
-    assert "access_denied" not in loc, "raw provider error must not leak into redirect"
+    assert "email_oauth_code=access_denied" in loc
 
 
 @pytest.mark.asyncio
@@ -630,7 +634,7 @@ async def test_callback_rejects_reconnect_without_a_fresh_refresh_token():
             request=_FakeRequest(),
         )
 
-    assert "email_oauth_error=token_exchange_failed" in _location(resp)
+    assert "email_oauth_error=missing_refresh_token" in _location(resp)
     userinfo_get.assert_not_called()
     verify_db = Factory()
     row = verify_db.query(EmailAccount).filter(

@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.7.0",
-    "@playwright/test": "^1.62.1"
+    "@playwright/test": "^1.63.0",
+    "playwright": "^1.63.0"
   }
 }

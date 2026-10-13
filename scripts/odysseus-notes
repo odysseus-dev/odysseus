@@ -126,6 +126,19 @@ def cmd_delete(args):
         if not n:
             fail(f"no note with id {args.id!r}")
         snap = _serialize(n)
+        # A task synced with Microsoft To Do needs a tombstone before the row
+        # goes away, or the next pull sees it upstream and recreates the note.
+        if getattr(n, "remote_id", None) and getattr(n, "remote_list_id", None):
+            from core.database import MsTodoDeletedNote
+
+            db.merge(MsTodoDeletedNote(
+                id=n.id,
+                owner=n.owner,
+                remote_id=n.remote_id,
+                remote_list_id=n.remote_list_id,
+                account_id=n.todo_account_id,
+                title=n.title,
+            ))
         db.delete(n)
         db.commit()
         emit({"ok": True, "deleted": snap}, args)
