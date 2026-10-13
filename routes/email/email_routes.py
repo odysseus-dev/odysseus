@@ -81,6 +81,7 @@ _SERVER_OWNED_OAUTH_FIELDS = {
     "oauth_refresh_token",
     "oauth_token_expiry",
 }
+_CACHE_HOOKS: dict = {"invalidate_list": None}
 
 
 def _normalized_mail_host(value) -> str:
@@ -1831,6 +1832,12 @@ def setup_email_routes():
         delete, move) so the UI doesn't show stale read/unread counts for up to
         the 8s TTL after a manual flag change. With no args, clears everything.
         """
+        hook = _CACHE_HOOKS.get("invalidate_list")
+        if hook:
+            try:
+                hook(account_id, folder)
+            except Exception:
+                pass
         if account_id is None and folder is None:
             _LIST_CACHE.clear()
             return
@@ -4764,6 +4771,7 @@ def setup_email_routes():
             return {"success": False, "error": "No email UIDs provided", "deleted_uids": [], "failed_uids": []}
         deleted_uids = []
         failed_uids = []
+        trash_folder = None
         try:
             with _imap(account_id, owner=owner) as conn:
                 select_status, _ = conn.select(_q(folder), readonly=False)
@@ -4807,19 +4815,71 @@ def setup_email_routes():
                         failed_uids.append(uid)
                         logger.debug("Bulk email delete failed for uid=%s", uid, exc_info=True)
                 if pending_expunge:
-                    expunge_status, _ = conn.expunge()
-                    if expunge_status == "OK":
+                    expunge_ok = False
+                    # 1. Attempt selective RFC 4315 UID EXPUNGE so unrelated messages
+                    # carrying \Deleted in the selected mailbox are never expunged.
+                    try:
+                        uid_set_bytes = _uid_bytes(",".join(pending_expunge))
+                        uid_exp_status, _ = conn.uid("EXPUNGE", uid_set_bytes)
+                        if uid_exp_status == "OK":
+                            expunge_ok = True
+                    except Exception:
+                        pass
+
+                    # 2. If selective UID EXPUNGE is unavailable, verify whether any
+                    # unrelated messages in the selected mailbox currently have \Deleted.
+                    if not expunge_ok:
+                        safe_to_expunge = False
+                        try:
+                            srch_status, srch_data = conn.uid("SEARCH", None, "DELETED")
+                            if srch_status == "OK":
+                                on_server = set()
+                                if srch_data and srch_data[0]:
+                                    on_server = {
+                                        u.decode() if isinstance(u, bytes) else str(u)
+                                        for u in srch_data[0].split()
+                                    }
+                                unrelated = on_server - set(pending_expunge)
+                                if not unrelated:
+                                    safe_to_expunge = True
+                        except Exception:
+                            safe_to_expunge = False
+
+                        if safe_to_expunge:
+                            expunge_status, _ = conn.expunge()
+                            if expunge_status == "OK":
+                                expunge_ok = True
+
+                    if expunge_ok:
                         for uid in pending_expunge:
                             deleted_uids.append(uid)
                             _email_index_delete(owner, account_id, folder, uid)
                     else:
+                        # Prioritize preservation over cleanup: unflag \Deleted from our
+                        # copied messages so future EXPUNGE operations do not destroy them.
+                        for uid in pending_expunge:
+                            try:
+                                conn.uid("STORE", _uid_bytes(uid), "-FLAGS", "\\Deleted")
+                            except Exception:
+                                pass
                         failed_uids.extend(pending_expunge)
-            if deleted_uids:
-                _invalidate_list_cache(account_id, folder)
+            if not deleted_uids:
+                return {"success": False, "error": "Failed to delete requested emails", "deleted_uids": [], "failed_uids": failed_uids}
             return {"success": True, "deleted_uids": deleted_uids, "failed_uids": failed_uids}
         except Exception as e:
             logger.error(f"Failed to bulk delete emails: {e}")
-            return {"success": False, "error": "Mail operation failed", "deleted_uids": deleted_uids, "failed_uids": [u for u in uids if u not in deleted_uids]}
+            failed_all = [u for u in uids if u not in deleted_uids]
+            return {
+                "success": bool(deleted_uids),
+                "error": "Mail operation failed" if not deleted_uids else "Mail operation partially failed",
+                "deleted_uids": deleted_uids,
+                "failed_uids": failed_all,
+            }
+        finally:
+            if deleted_uids:
+                _invalidate_list_cache(account_id, folder)
+                if trash_folder:
+                    _invalidate_list_cache(account_id, trash_folder)
 
     @router.delete("/odysseus/reminders")
     async def delete_odysseus_reminder_emails(

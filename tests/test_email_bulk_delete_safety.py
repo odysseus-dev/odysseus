@@ -19,18 +19,21 @@ class Mailbox:
         self.copy_status = {}
         self.store_status = {}
         self.expunge_status = "OK"
+        self.uid_expunge_status = None
         self.select_status = "OK"
 
     def select(self, folder, readonly=False):
         return self.select_status, [b"3"]
 
     def uid(self, command, raw_uid, *args):
-        uid = raw_uid.decode() if isinstance(raw_uid, bytes) else raw_uid
+        uid = raw_uid.decode() if isinstance(raw_uid, bytes) else (str(raw_uid) if raw_uid is not None else "")
         self.calls.append((command, uid))
         if command == "FETCH":
             return "OK", [f"1 (UID {uid})".encode()] if uid in self.inbox else []
         if command == "SEARCH":
-            searched_uid = args[-1].split()[-1]
+            if args and "DELETED" in args:
+                return "OK", [b" ".join(u.encode() for u in sorted(self.deleted))]
+            searched_uid = args[-1].split()[-1] if args else ""
             return "OK", [searched_uid.encode() if searched_uid in self.inbox else b""]
         if command == "MOVE":
             status = self.move_status.get(uid, "NO") if isinstance(self.move_status, dict) else self.move_status
@@ -46,7 +49,19 @@ class Mailbox:
         if command == "STORE":
             status = self.store_status.get(uid, "OK")
             if status == "OK":
-                self.deleted.add(uid)
+                if args and args[0] == "-FLAGS":
+                    self.deleted.discard(uid)
+                else:
+                    self.deleted.add(uid)
+            return status, []
+        if command == "EXPUNGE":
+            status = self.uid_expunge_status if self.uid_expunge_status is not None else self.expunge_status
+            if isinstance(status, Exception):
+                raise status
+            if status == "OK":
+                expunged = {u for u in uid.split(",") if u in self.deleted}
+                self.inbox.difference_update(expunged)
+                self.deleted.difference_update(expunged)
             return status, []
         raise AssertionError(f"Unexpected IMAP command: {command}")
 
@@ -66,6 +81,7 @@ def bulk_delete(monkeypatch):
 
     mailbox = Mailbox()
     index_delete = Mock()
+    invalidate_cache = Mock()
 
     @contextmanager
     def imap(account_id=None, owner=""):
@@ -78,6 +94,7 @@ def bulk_delete(monkeypatch):
     monkeypatch.setattr(routes, "_resolve_mail_folder", lambda *args: "Trash")
     monkeypatch.setattr(routes, "_list_imap_folders", lambda conn: ({}, ["INBOX", "Trash"]))
     monkeypatch.setattr(routes, "_email_index_delete", index_delete)
+    monkeypatch.setitem(routes._CACHE_HOOKS, "invalidate_list", invalidate_cache)
     app = FastAPI()
     app.include_router(routes.setup_email_routes())
     app.dependency_overrides[routes.require_owner] = lambda: "alice"
@@ -88,7 +105,13 @@ def bulk_delete(monkeypatch):
             assert response.status_code == 200
             return response.json()
 
-        yield SimpleNamespace(mailbox=mailbox, delete=delete, index_delete=index_delete)
+        yield SimpleNamespace(
+            mailbox=mailbox,
+            delete=delete,
+            index_delete=index_delete,
+            invalidate_cache=invalidate_cache,
+            routes=routes,
+        )
 
 
 @pytest.mark.parametrize("copy_status", ["NO", "BAD"])
@@ -163,7 +186,7 @@ def test_copy_fallback_expunge_runs_once_for_the_batch(bulk_delete):
     assert result["failed_uids"] == []
     assert bulk_delete.mailbox.inbox == {"103"}
     assert bulk_delete.mailbox.trash == {"101", "102"}
-    assert bulk_delete.mailbox.calls.count(("EXPUNGE", None)) == 1
+    assert sum(1 for command, _ in bulk_delete.mailbox.calls if command == "EXPUNGE") == 1
     assert bulk_delete.index_delete.call_count == 2
 
 
@@ -210,3 +233,127 @@ def test_duplicate_and_invalid_uids_do_not_repeat_mail_operations(bulk_delete):
     assert result["failed_uids"] == []
     assert bulk_delete.mailbox.calls.count(("COPY", "101")) == 1
     bulk_delete.index_delete.assert_called_once_with("alice", None, "INBOX", "101")
+
+
+def test_bulk_delete_invalidates_source_and_trash_caches(bulk_delete):
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    bulk_delete.invalidate_cache.assert_any_call(None, "INBOX")
+    bulk_delete.invalidate_cache.assert_any_call(None, "Trash")
+
+
+def test_partial_failure_with_exception_invalidates_caches(bulk_delete):
+    bulk_delete.mailbox.move_status = {"101": "OK"}
+    bulk_delete.mailbox.uid_expunge_status = RuntimeError("Socket reset during expunge")
+    bulk_delete.mailbox.expunge_status = RuntimeError("Socket reset during expunge")
+
+    result = bulk_delete.delete(["101", "102"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    assert result["failed_uids"] == ["102"]
+    assert result["error"] == "Mail operation partially failed"
+    bulk_delete.invalidate_cache.assert_any_call(None, "INBOX")
+    bulk_delete.invalidate_cache.assert_any_call(None, "Trash")
+
+
+def test_total_failure_returns_success_false(bulk_delete):
+    bulk_delete.mailbox.copy_status["101"] = "NO"
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["error"] == "Failed to delete requested emails"
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+
+
+def test_uid_expunge_preserves_unrelated_deleted_message(bulk_delete):
+    # Unrelated message 999 is already marked \Deleted before bulk delete
+    bulk_delete.mailbox.inbox.add("999")
+    bulk_delete.mailbox.deleted.add("999")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    # 101 was expunged, 999 remains in inbox and remains marked deleted
+    assert "101" not in bulk_delete.mailbox.inbox
+    assert "999" in bulk_delete.mailbox.inbox
+    assert bulk_delete.mailbox.deleted == {"999"}
+    assert ("EXPUNGE", "101") in bulk_delete.mailbox.calls
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+
+
+def test_fallback_refuses_mailbox_expunge_when_unrelated_deleted_message_present(bulk_delete):
+    # Server does not support UIDPLUS
+    bulk_delete.mailbox.uid_expunge_status = "BAD"
+    bulk_delete.mailbox.inbox.add("999")
+    bulk_delete.mailbox.deleted.add("999")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+    # Both 101 and 999 preserved; 101 was unflagged, 999 still has \Deleted
+    assert "101" in bulk_delete.mailbox.inbox
+    assert "999" in bulk_delete.mailbox.inbox
+    assert bulk_delete.mailbox.deleted == {"999"}
+    # Mailbox-wide EXPUNGE was never called
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_not_called()
+
+
+def test_fallback_allows_mailbox_expunge_when_no_unrelated_deleted_messages(bulk_delete):
+    # Server does not support UIDPLUS, but no other deleted messages exist
+    bulk_delete.mailbox.uid_expunge_status = "BAD"
+    assert bulk_delete.mailbox.deleted == set()
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    assert "101" not in bulk_delete.mailbox.inbox
+    assert ("EXPUNGE", None) in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_called_once_with("alice", None, "INBOX", "101")
+
+
+def test_disconnect_after_copy_before_store_preserves_message(bulk_delete):
+    # COPY succeeds, but STORE raises a disconnect
+    bulk_delete.mailbox.store_status["101"] = ConnectionResetError("Disconnected")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+    assert "101" in bulk_delete.mailbox.inbox
+    assert "101" in bulk_delete.mailbox.trash
+    assert bulk_delete.mailbox.deleted == set()
+    bulk_delete.index_delete.assert_not_called()
+
+
+def test_lost_acknowledgement_retains_local_index_and_permits_safe_retry(bulk_delete):
+    # Server succeeds in moving, but connection drops during acknowledgement
+    bulk_delete.mailbox.uid_expunge_status = OSError("Connection dropped")
+    bulk_delete.mailbox.expunge_status = OSError("Connection dropped")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+    bulk_delete.index_delete.assert_not_called()
+
+    # Retry when server is reconnected and 101 was already moved (absent from source)
+    bulk_delete.mailbox.inbox.discard("101")
+    bulk_delete.mailbox.uid_expunge_status = "OK"
+    bulk_delete.mailbox.expunge_status = "OK"
+
+    retry_result = bulk_delete.delete(["101"])
+    assert retry_result["deleted_uids"] == []
+    assert retry_result["failed_uids"] == ["101"]
+    bulk_delete.index_delete.assert_not_called()
