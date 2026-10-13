@@ -33,6 +33,7 @@
  * @returns {(endpoint: string, extraPayload: object, layerName: string, btn: HTMLButtonElement, opts?: { busyLabel?: string }) => Promise<void>}
  */
 import { state } from './state.js';
+import { beginAIOperation, decodeAIImage } from './ai-operation.js';
 
 const KNOWN_DEPS = ['realesrgan', 'rembg'];
 
@@ -45,7 +46,7 @@ export function createApplyImageTool({
   return async function applyImageTool(endpoint, extraPayload, layerName, btn, opts) {
     const origHTML = btn.innerHTML;
     const origWidth = btn.offsetWidth;  // lock width so the button doesn't jump
-    btn.disabled = true;
+    const operation = beginAIOperation(btn, () => uiModule?.showToast('Cancelled'));
     btn.classList.add('ge-btn-processing');
     btn.style.minWidth = origWidth + 'px';
     // Swap label for a "<verbing>…" text + whirlpool while the
@@ -67,18 +68,19 @@ export function createApplyImageTool({
     // Tool-specific model picker — pulled from the per-tool select
     // (harmonize/style) if available, otherwise the global
     // fallback. Derived from the endpoint URL.
-    if (!extraPayload._endpoint) {
-      const m = /\/api\/image\/([\w-]+)/.exec(endpoint || '');
-      const type = m ? m[1].replace('upscale-ai', 'upscale').replace('remove-bg', 'rembg') : null;
-      const sel = getSelectedAIEndpoint(type);
-      if (sel.endpoint) extraPayload._endpoint = sel.endpoint;
-      if (sel.model && !extraPayload._model) extraPayload._model = sel.model;
-    }
     try {
+      if (!extraPayload._endpoint) {
+        const m = /\/api\/image\/([\w-]+)/.exec(endpoint || '');
+        const type = m ? m[1].replace('upscale-ai', 'upscale').replace('remove-bg', 'rembg') : null;
+        const sel = getSelectedAIEndpoint(type);
+        if (sel.endpoint) extraPayload._endpoint = sel.endpoint;
+        if (sel.model && !extraPayload._model) extraPayload._model = sel.model;
+      }
       const flatCanvas = flatten();
       const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
       const body = { image: imageB64, ...extraPayload };
       const res = await fetch(endpoint, {
+        signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -91,9 +93,10 @@ export function createApplyImageTool({
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       if (!data.image) throw new Error('No image returned');
-      const img = new Image();
-      img.onload = () => {
-        if (!state.editorOpen) return; // user closed mid-decode (v2 review HIGH-4)
+      const img = await decodeAIImage(data.image, operation.signal);
+      operation.signal.throwIfAborted();
+      if (!state.editorOpen) return; // user closed mid-decode (v2 review HIGH-4)
+      {
         saveState();
         const layer = createLayer(layerName, state.imgWidth, state.imgHeight);
         layer.ctx.drawImage(img, 0, 0);
@@ -102,10 +105,9 @@ export function createApplyImageTool({
         composite();
         renderLayerPanel();
         if (uiModule) uiModule.showToast(layerName + ' complete', 4500);
-      };
-      img.onerror = () => { if (uiModule) uiModule.showToast('Failed to load result', 6000); };
-      img.src = 'data:image/png;base64,' + data.image;
+      }
     } catch (e) {
+      if (operation.signal.aborted) return;
       // Detect known failure modes and surface an action-toast.
       const msg = (e?.message || '').toLowerCase();
       const needsImg2Img = (
@@ -137,6 +139,7 @@ export function createApplyImageTool({
         }
       }
     } finally {
+      operation.finish();
       btn.disabled = false;
       btn.classList.remove('ge-btn-processing');
       try { btnSpinner?.destroy(); } catch {}

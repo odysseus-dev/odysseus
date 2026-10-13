@@ -118,6 +118,17 @@ def _require_cookbook_scope(request: Request, allowed: set[str]) -> str:
     because cookbook surfaces expose host topology, task logs, tmux
     commands, and model-serving controls.
     """
+    # Internal transport/owner attribution is not a scoped external credential.
+    # In no-login mode, this wrapper must preserve the native local-operator
+    # boundary even though it invokes endpoint functions without dependencies.
+    from src.agent_runtime.authority import is_internal_tool_request
+    from src.auth_helpers import _auth_disabled
+    from core.middleware import INTERNAL_TOOL_HEADER
+    if is_internal_tool_request(request) or request.headers.get(INTERNAL_TOOL_HEADER):
+        raise HTTPException(403, "Internal Cookbook calls require a dedicated producer")
+    if _auth_disabled():
+        from routes.shell_routes import _require_admin
+        _require_admin(request)
     owner = _scope_owner(request, allowed)
     if not getattr(request.state, "api_token", False):
         require_admin(request)

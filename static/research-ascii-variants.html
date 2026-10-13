@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Research — ASCII studies</title>
+<style>
+:root { color-scheme:dark; --bg:#282c34; --fg:#d7dce5; --accent:#e5c07b; --border:#ffffff18; }
+* { box-sizing:border-box; }
+body { margin:0; padding:32px 22px; background:var(--bg); color:var(--fg); font:13px/1.5 system-ui,sans-serif; }
+main { max-width:1450px; margin:auto; }
+h1 { font-size:20px; font-weight:600; margin:0 0 6px; }
+p { color:#a4acba; margin:0 0 20px; }
+.controls { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin:20px 0; }
+button,select { font:inherit; color:var(--fg); border:1px solid var(--border); background:#22262e; border-radius:5px; padding:5px 10px; }
+button { cursor:pointer; } button:hover { background:#ffffff12; }
+label { display:flex; align-items:center; gap:8px; } input { accent-color:var(--accent); }
+.grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+article { border:1px solid var(--border); border-radius:9px; background:#22262e; overflow:hidden; min-width:0; }
+header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); }
+header strong { font-weight:550; } .number { color:var(--accent); margin-right:8px; }
+.stage { min-height:270px; padding:14px; display:grid; place-items:center; overflow:hidden; background:#20242b; }
+pre { margin:0; padding:0; color:var(--accent); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; line-height:.98; letter-spacing:0; white-space:pre; text-shadow:0 0 5px #e5c07b25; }
+.phase { color:var(--accent); font-size:11px; }
+footer { padding:10px 14px; display:flex; gap:10px; color:#a4acba; font-size:11px; border-top:1px solid var(--border); }
+footer .status { flex:1; } .description { padding:12px 14px; margin:0; font-size:12px; }
+.progress { height:2px; background:#ffffff08; } .fill { height:100%; background:var(--accent); width:0; }
+.hint { margin-top:18px; font-size:12px; }
+@media(max-width:1050px) { .grid { grid-template-columns:1fr; max-width:650px; } }
+</style>
+</head>
+<body><main>
+<h1>Live research / ASCII studies</h1>
+<p>Three directions, using the same animated scene → brightness → character rendering as ASCII Fireflies.</p>
+<div class="controls">
+<button id="pause" type="button">Pause</button><button id="restart" type="button">Restart</button>
+<label>Phase <select id="phase"><option value="auto">Auto cycle</option><option value="searching">Searching</option><option value="reading">Reading</option><option value="analyzing">Analyzing</option><option value="writing">Writing</option></select></label>
+<label>Motion <input id="speed" type="range" min="0.4" max="2" step="0.1" value="1"></label>
+</div>
+<div class="grid">
+<article data-scene="network"><header><strong><span class="number">01</span>Research network</strong><span class="phase"></span></header><div class="stage"><pre aria-hidden="true"></pre></div><div class="progress"><div class="fill"></div></div><footer><span class="status"></span><span class="round"></span><span class="sources"></span></footer><p class="description">A central question branches into research nodes. Packets travel outward to sources and return with findings.</p></article>
+<article data-scene="orbit"><header><strong><span class="number">02</span>Source orbits</strong><span class="phase"></span></header><div class="stage"><pre aria-hidden="true"></pre></div><div class="progress"><div class="fill"></div></div><footer><span class="status"></span><span class="round"></span><span class="sources"></span></footer><p class="description">Sources move around a quiet center. Bright trails orbit and spiral inward as evidence is gathered.</p></article>
+<article data-scene="streams"><header><strong><span class="number">03</span>Evidence streams</strong><span class="phase"></span></header><div class="stage"><pre aria-hidden="true"></pre></div><div class="progress"><div class="fill"></div></div><footer><span class="status"></span><span class="round"></span><span class="sources"></span></footer><p class="description">Separate search paths flow into a synthesis node, then emerge as an ordered report.</p></article>
+</div>
+<p class="hint">Preview data is simulated. Each design shows identical phases, rounds and source counts.</p>
+</main><script type="module" src="./research-ascii-variants.js"></script></body></html>

@@ -11,19 +11,31 @@ import time
 
 import pytest
 
-from src import bg_jobs
+from src import bg_jobs, containment, process_ownership
 from src.agent_tools.bg_job_tools import ManageBgJobsTool
+from tests.process_resource_helpers import seed_linkage, get, kill
 
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
+    from src.agent_runtime import process_resources
+    monkeypatch.setattr(process_resources, "_LAUNCH_DIR", tmp_path / "private" / "launches")
+    monkeypatch.setattr(containment, "_store_path", lambda: tmp_path / "private" / "receipts.json")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(bg_jobs, "_test_workspace", workspace, raising=False)
+    monkeypatch.setattr(containment, "reap_record", lambda *a: containment.ReleaseOutcome(dead=True, escalated=False))
     jobs_dir = tmp_path / "bg_jobs"
     jobs_dir.mkdir()
     monkeypatch.setattr(bg_jobs, "_STORE", tmp_path / "bg_jobs.json")
     monkeypatch.setattr(bg_jobs, "_JOBS_DIR", jobs_dir)
     monkeypatch.setattr(bg_jobs, "_pid_alive", lambda pid: True)
     killed: list = []
-    monkeypatch.setattr(bg_jobs, "_kill", lambda pid: killed.append(pid))
+    monkeypatch.setattr(process_ownership, "verify", lambda *args: process_ownership.OWNED)
+    def fake_kill(pid, **kwargs):
+        killed.append(pid)
+        return containment.ReleaseOutcome(dead=True, escalated=False)
+    monkeypatch.setattr(bg_jobs, "_kill", fake_kill)
     return {"dir": jobs_dir, "killed": killed}
 
 
@@ -39,6 +51,7 @@ def _seed(session_id="sess-a", status="running", job_id="job0001", output="", pi
     }
     if output:
         (bg_jobs._JOBS_DIR / f"{job_id}.log").write_text(output, encoding="utf-8")
+    seed_linkage(rec, bg_jobs._test_workspace)
     jobs = bg_jobs._load()
     jobs[job_id] = rec
     bg_jobs._save(jobs)
@@ -46,14 +59,24 @@ def _seed(session_id="sess-a", status="running", job_id="job0001", output="", pi
 
 
 def _run(args, session_id="sess-a"):
-    return asyncio.run(ManageBgJobsTool().execute(json.dumps(args), {"session_id": session_id, "owner": None}))
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant, ExactOperation, bind_request_authority
+    from src.agent_runtime.resources import NativeBackendResource
+    from src.agent_runtime.process_resources import resolve_process_operation, bind_process_operation
+    content = json.dumps(args)
+    authority = RequestAuthority("job-client-test", "", session_id, "", (OperationGrant("manage_bg_jobs"),))
+    try:
+        bound = resolve_process_operation(authority, ExactOperation.normalize("manage_bg_jobs", content), NativeBackendResource("manage_bg_jobs"))
+        with bind_request_authority(authority), bind_process_operation(bound):
+            return asyncio.run(ManageBgJobsTool().execute(content, {"session_id": session_id, "owner": None}))
+    except (ValueError, OSError) as e:
+        return {"error": str(e), "exit_code": 1}
 
 
 # ── bg_jobs.kill ────────────────────────────────────────────────────────────
 
 def test_kill_marks_killed_and_suppresses_followup(store):
     _seed(job_id="job0001", pid=4321)
-    rec = bg_jobs.kill("job0001")
+    rec = kill("job0001")
     assert rec["status"] == "failed"
     assert rec["killed"] is True
     assert rec["exit_code"] == -1
@@ -63,20 +86,20 @@ def test_kill_marks_killed_and_suppresses_followup(store):
 
 
 def test_kill_unknown_job_returns_none(store):
-    assert bg_jobs.kill("nope") is None
+    assert bg_jobs.kill("nope", expected=None) is None
 
 
 def test_kill_finished_job_is_noop(store):
     _seed(job_id="done01", status="done")
-    rec = bg_jobs.kill("done01")
+    rec = kill("done01")
     assert rec["status"] == "done"
     assert store["killed"] == []  # no signal sent to an already-finished job
 
 
 def test_result_text_reports_killed(store):
     rec = _seed(job_id="job0001")
-    bg_jobs.kill("job0001")
-    assert "killed" in bg_jobs.result_text(bg_jobs.get("job0001")).lower()
+    kill("job0001")
+    assert "killed" in bg_jobs.result_text(get("job0001")).lower()
 
 
 # ── manage_bg_jobs tool ─────────────────────────────────────────────────────
@@ -114,7 +137,7 @@ def test_kill_via_tool(store):
     out = _run({"action": "kill", "job_id": "job0001"})
     assert "Killed" in out["output"]
     assert store["killed"] == [999]
-    assert bg_jobs.get("job0001")["killed"] is True
+    assert get("job0001")["killed"] is True
 
 
 def test_kill_cross_session_denied(store):

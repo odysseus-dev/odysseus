@@ -10,17 +10,17 @@ window.cancelActiveTour = function cancelActiveTour() {
 };
 
 import Storage from './storage.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import modelsModule from './models.js';
-import chatRenderer from './chatRenderer.js';
+import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
 import spinnerModule from './spinner.js';
-import themeModule from './theme.js';
-import documentModule from './document.js?v=20260815approvalsave1';
+import themeModule from './theme.js?v=20260911organsrain1';
+import documentModule from './document.js?v=20260916docctx2';
 import workspaceModule from './workspace.js';
-import settingsModule from './settings.js';
+import settingsModule from './settings.js?v=20260912writingstyle3';
 import cookbookModule from './cookbook.js';
-import { EVAL_PROMPTS } from './compare/index.js';
+import { EVAL_PROMPTS } from './compare/index.js?v=20260909mobilepaneaddscroll1';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
 import { getSettings } from './appConfig.js';
 
@@ -1260,19 +1260,22 @@ async function _cmdWorkspace(args, ctx) {
   const rest = args.slice(1).join(' ').trim();
   const cur = workspaceModule.getWorkspace();
   if (!sub || sub === 'show' || sub === 'status' || sub === 'info') {
-    slashReply(cur ? `Workspace: <code>${uiModule.esc(cur)}</code>` : 'No workspace set. <code>/workspace pick</code> or <code>/workspace set /path</code>.');
+    slashReply(cur ? `Workspace: <code>${uiModule.esc(cur)}</code>` : 'No workspace set. Configure a backend default or use <code>/workspace &lt;path&gt;</code> / <code>/workspace pick</code>.');
     return true;
   }
-  if (sub === 'set' || sub === 'cd' || sub === 'use') {
-    if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
+  const setWorkspace = (path) => {
+    if (!path) { slashReply('Usage: <code>/workspace &lt;path&gt;</code>'); return true; }
     // Validate server-side before persisting so the pill never claims a
     // workspace the backend will refuse to bind (typo, file path, deleted
     // folder, sensitive dir, filesystem root).
-    workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
-      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
-      else slashReply(`Not a usable workspace folder on the Odysseus backend: <code>${uiModule.esc(rest)}</code>. If Odysseus is running in Docker, use the container path, usually <code>/app</code>, or use <code>/workspace pick</code>.`);
+    workspaceModule.vetAndSetWorkspace(path).then(({ ok, path: resolvedPath }) => {
+      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(resolvedPath)}</code>`);
+      else slashReply(`Not a usable workspace folder on the Odysseus backend: <code>${uiModule.esc(path)}</code>. If Odysseus is running in Docker, use the container path, usually <code>/app</code>, or use <code>/workspace pick</code>.`);
     });
     return true;
+  };
+  if (sub === 'set' || sub === 'cd' || sub === 'use') {
+    return setWorkspace(rest);
   }
   if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
     workspaceModule.clearWorkspace();
@@ -1283,8 +1286,8 @@ async function _cmdWorkspace(args, ctx) {
     workspaceModule.openWorkspaceBrowser();
     return true;
   }
-  slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
-  return true;
+  // Match the TUI's short form: /workspace /path (relative paths work too).
+  return setWorkspace(args.join(' ').trim());
 }
 
 async function _cmdToggleShow(args, ctx) {
@@ -1377,6 +1380,7 @@ async function _cmdOpen(args, ctx) {
       brain: ['tool-memory-btn', 'rail-memory'],
       memory: ['tool-memory-btn', 'rail-memory'],
       memories: ['tool-memory-btn', 'rail-memory'],
+      skills: ['tool-skills-btn', 'rail-skills'],
       research: ['tool-research-btn', 'rail-research'],
       compare: ['tool-compare-btn', 'rail-compare'],
       theme: ['tool-theme-btn', 'rail-theme'],
@@ -2740,7 +2744,7 @@ async function _cmdTourCompare(args, ctx) {
     { sel: '#compare-model-overlay .compare-parallel-toggle',
       text: '<b>Parallel</b> runs side by side, toggle to <b>Sequential</b> as well.' },
     { sel: '#compare-model-overlay .compare-dice-toggle',
-      text: '<b>Shuffle</b> picks the models in your entire list of endpoints. Combine with <b>Blind Mode</b> and you get the cleanest evaluation.' },
+      text: '<b>Shuffle</b> picks the models in your entire list of endpoints. Combine with <b>Blind Mode</b> for the cleanest comparison.' },
   ];
 
   for (let i = 0; i < phase1.length; i++) {
@@ -2809,7 +2813,7 @@ async function _cmdTourCompare(args, ctx) {
     { sel: '#compare-shuffle-btn',
       text: 'After adding, <b>Shuffle</b> to randomize the order again.' },
     { sel: '#cmp-eval-btn',
-      text: 'When you’re ready to test, feel free to use curated <b>evaluation prompts</b>.',
+      text: 'When you’re ready to test, use the curated <b>comparison prompts</b>.',
       advanceOnClick: true },
   ];
 
@@ -3951,7 +3955,7 @@ async function _cmdTourNotes(args, ctx) {
   return true;
 }
 
-// ── Tour: Brain ──
+// ── Tour: Memory ──
 async function _cmdTourBrain(args, ctx) {
   const _msgEl = document.getElementById('message');
   if (_msgEl) {
@@ -3993,7 +3997,7 @@ async function _cmdTourBrain(args, ctx) {
     }
   }
   if (!modal || modal.classList.contains('hidden')) {
-    slashReply('Could not open Brain. Try clicking the Brain tool first.');
+    slashReply('Could not open Memory. Try clicking the Memory tool first.');
     return true;
   }
 
@@ -4121,7 +4125,7 @@ async function _cmdTourBrain(args, ctx) {
   const _tab = (name) => document.querySelector(`.memory-tab[data-memory-tab="${name}"]`)?.click();
   const steps = [
     { sel: '#memory-modal .memory-modal-content',
-      text: '<b>Brain</b> is where your memories are. You can edit them, or add new ones under <b>Add</b>. Wow.',
+      text: '<b>Memory</b> is where your memories are. You can edit them, or add new ones under <b>Add</b>. Wow.',
       before: () => _tab('browse'),
       placement: 'center-above' },
     { sel: '#memory-tidy-btn',
@@ -4148,7 +4152,7 @@ async function _cmdTourBrain(args, ctx) {
   }
 
   _clear();
-  await typewriterReply('That’s Brain — memories, skills, tidy, and settings in one place.');
+  await typewriterReply('That’s Memory — memories, skills, tidy, and settings in one place.');
   return true;
 }
 
@@ -5031,16 +5035,22 @@ function _clearSetupCommandInput() {
   }
 }
 
-async function _setupProviderDeviceFlow(providerKey) {
+async function _setupProviderDeviceFlow(providerKey, options = {}) {
   _clearSetupGuideMessages();
   const config = PROVIDER_DEVICE_FLOWS[providerKey];
   if (!config) {
     await _setupReply('Provider not recognised.');
     return;
   }
-  await _setupReply(`Starting ${config.label} sign-in...`);
+  // `/setup chatgpt-subscription codex00` labels the new account so several
+  // ChatGPT subscriptions stay distinguishable. The label is cosmetic only.
+  const accountLabel = providerKey === 'chatgpt-subscription' ? String(options.label || '').trim().slice(0, 40) : '';
+  const formData = new FormData();
+  if (accountLabel) formData.append('label', accountLabel);
+  await _setupReply(`Starting ${config.label} sign-in${accountLabel ? ` for "${accountLabel}"` : ''}...`);
   try {
     const result = await runProviderDeviceFlow(providerKey, {
+      formData,
       onStart: async ({ start, authUrl }) => {
         const place = providerKey === 'copilot' ? 'GitHub' : 'OpenAI';
         const action = providerKey === 'copilot' ? 'approve the request' : 'enter the code';
@@ -5063,7 +5073,8 @@ async function _setupProviderDeviceFlow(providerKey) {
     });
     if (result.status === 'authorized') {
       const n = ((result.endpoint && result.endpoint.models) || []).length;
-      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      const connectedName = (result.endpoint && result.endpoint.name) || config.label;
+      await _setupReply(`Connected ${connectedName} - ${n} model${n !== 1 ? 's' : ''} available.`);
       if (modelsModule) modelsModule.refreshModels(true);
       return;
     }
@@ -5087,7 +5098,7 @@ async function _cmdSetup(args, ctx) {
   const topicArgs = args.slice(1);
   const deviceAuthProvider = _setupDeviceAuthProviderFromInput(topic);
   if (deviceAuthProvider) {
-    await _setupProviderDeviceFlow(deviceAuthProvider);
+    await _setupProviderDeviceFlow(deviceAuthProvider, { label: topicArgs.join(' ') });
     return true;
   }
   const provider = _setupProviderFromInput(topic);
@@ -5212,7 +5223,6 @@ async function _cmdShortcuts(args, ctx) {
   // Try to load user keybinds from settings
   let keybinds = {
     search: 'ctrl+k',
-    toggle_sidebar: 'ctrl+b',
     new_session: 'ctrl+alt+n',
     star_session: 'ctrl+alt+s',
     delete_session: 'ctrl+alt+d',
@@ -5237,7 +5247,6 @@ async function _cmdShortcuts(args, ctx) {
 
   const entries = [
     [formatCombo(keybinds.search), 'Search conversations'],
-    [formatCombo(keybinds.toggle_sidebar), 'Toggle sidebar'],
     [formatCombo(keybinds.new_session), 'New session'],
     [formatCombo(keybinds.star_session), 'Star / unstar session'],
     [formatCombo(keybinds.delete_session), 'Delete session'],
@@ -5711,7 +5720,7 @@ async function _cmdHelp(args, ctx) {
       categories[cat].push(`  ${usage.padEnd(21)}${desc}`);
     }
   }
-  const order = ['Getting started', 'Tours', 'Chats', 'Settings', 'Memory', 'Productivity', 'AI Tools'];
+  const order = ['Getting started', 'Tours', 'Chats', 'Settings', 'Memory', 'Skills', 'Productivity', 'AI Tools'];
   let lines = [];
   for (const cat of order) {
     if (categories[cat] && categories[cat].length) {
@@ -5810,14 +5819,14 @@ const COMMANDS = {
   },
   skills: {
     alias: ['skill'],
-    category: 'Memory',
+    category: 'Skills',
     help: 'List, search, inspect, or run skills',
     handler: _cmdSkills,
     usage: '/skills list | search query | view name | use name request',
   },
   'reload-skills': {
     alias: ['reload_skills'],
-    category: 'Memory',
+    category: 'Skills',
     help: 'Refresh the slash skill catalog',
     handler: _cmdReloadSkills,
     usage: '/reload-skills',
@@ -5941,7 +5950,7 @@ const COMMANDS = {
   'tour-brain': {
     alias: ['brain-tour', 'tour-memory', 'memory-tour'],
     category: 'Tours',
-    help: 'Brain tour: memories, tidy, skills, settings',
+    help: 'Memory tour: memories, tidy, skills, settings',
     handler: _cmdTourBrain,
     usage: '/tour-brain'
   },
@@ -6019,7 +6028,7 @@ const COMMANDS = {
   brain: {
     alias: ['memories'],
     category: 'Tools',
-    help: 'Open Brain',
+    help: 'Open Memory',
     handler: (args, ctx) => _cmdToolPanel('brain', args, ctx),
     usage: '/brain'
   },

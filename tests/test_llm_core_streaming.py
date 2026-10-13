@@ -45,6 +45,54 @@ class _FakeClient:
         return _FakeStreamCtx(self._lines)
 
 
+class _DelayedResp(_FakeResp):
+    def __init__(self, lines, delay):
+        super().__init__(lines)
+        self._delay = delay
+
+    async def aiter_lines(self):
+        await asyncio.sleep(self._delay)
+        async for line in super().aiter_lines():
+            yield line
+
+
+class _RoleOnlyThenStallResp(_FakeResp):
+    """Emit a provider preamble, then stall before substantive output."""
+
+    async def aiter_lines(self):
+        yield _sse({"role": "assistant"})
+        await asyncio.sleep(1)
+
+
+class _WhitespaceThenStallResp(_FakeResp):
+    """Emit whitespace content, then stall before substantive output."""
+
+    async def aiter_lines(self):
+        yield _sse({"content": " \n\t"})
+        await asyncio.sleep(1)
+
+
+class _SequenceStreamCtx:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class _SequenceClient:
+    def __init__(self, responses):
+        self._responses = iter(responses)
+        self.payloads = []
+
+    def stream(self, method, url, **kw):
+        self.payloads.append(kw.get("json") or {})
+        return _SequenceStreamCtx(next(self._responses))
+
+
 def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
     """Run stream_llm against a canned SSE line list; return parsed events."""
     monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines))
@@ -75,6 +123,136 @@ def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
 
 def _sse(delta):
     return "data: " + json.dumps({"choices": [{"delta": delta}]})
+
+
+def test_response_reference_is_emitted_once(monkeypatch):
+    lines = [
+        "data: " + json.dumps({
+            "id": "response-neutral-1",
+            "model": "provider-model",
+            "choices": [{"delta": {"content": "ready"}}],
+        }),
+        "data: " + json.dumps({
+            "id": "response-neutral-1",
+            "model": "provider-model",
+            "choices": [{"delta": {"content": "."}}],
+        }),
+        "data: [DONE]",
+    ]
+
+    events = _drive(monkeypatch, lines, model="requested-model")
+    references = [event for event in events if event.get("type") == "model_response_ref"]
+
+    assert references == [{
+        "type": "model_response_ref",
+        "response_id": "response-neutral-1",
+        "model": "provider-model",
+    }]
+
+
+def test_silent_local_first_event_retries_without_cache_affinity(monkeypatch):
+    # A local server can accept the request and then stall before its first
+    # SSE event. The retry must be limited to that silent-first-event case and
+    # must remove the local session affinity fields from the second request.
+    lines = [_sse({"content": "recovered"}), "data: [DONE]"]
+    client = _SequenceClient([
+        _DelayedResp([], 0.05),
+        _FakeResp(lines),
+    ])
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: client)
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "is_local_endpoint", lambda u: True)
+    monkeypatch.setenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT", "0.01")
+
+    async def run():
+        chunks = []
+        async for chunk in llm_core.stream_llm(
+            "http://127.0.0.1:18403/v1",
+            "local-model",
+            [{"role": "user", "content": "hi"}],
+            session_id="session-1",
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run())
+    assert any("recovered" in chunk for chunk in chunks)
+    assert client.payloads[0]["session_id"] == "session-1"
+    assert "session_id" not in client.payloads[1]
+
+
+def test_role_only_message_does_not_disable_silent_local_watchdog(monkeypatch):
+    # Providers may send a role-only preamble before generation. It must not
+    # count as the first usable event; otherwise a subsequent silent stream
+    # waits for the much longer ordinary read timeout.
+    lines = [_sse({"content": "recovered"}), "data: [DONE]"]
+    client = _SequenceClient([
+        _RoleOnlyThenStallResp([]),
+        _FakeResp(lines),
+    ])
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: client)
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "is_local_endpoint", lambda u: True)
+    monkeypatch.setenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT", "0.01")
+
+    async def run():
+        chunks = []
+        async for chunk in llm_core.stream_llm(
+            "http://127.0.0.1:18403/v1",
+            "local-model",
+            [{"role": "user", "content": "hi"}],
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run())
+    assert any("recovered" in chunk for chunk in chunks)
+    assert len(client.payloads) == 2
+
+
+def test_whitespace_content_does_not_disable_silent_local_watchdog(monkeypatch):
+    # Whitespace-only deltas are another common gateway heartbeat shape. They
+    # must not turn a silent follow-up into a full five-minute read timeout.
+    lines = [_sse({"content": "recovered"}), "data: [DONE]"]
+    client = _SequenceClient([
+        _WhitespaceThenStallResp([]),
+        _FakeResp(lines),
+    ])
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: client)
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "is_local_endpoint", lambda u: True)
+    monkeypatch.setenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT", "0.01")
+
+    async def run():
+        chunks = []
+        async for chunk in llm_core.stream_llm(
+            "http://127.0.0.1:18403/v1",
+            "local-model",
+            [{"role": "user", "content": "hi"}],
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run())
+    assert any("recovered" in chunk for chunk in chunks)
+    assert len(client.payloads) == 2
+
+
+def test_private_gpu_endpoint_gets_first_event_watchdog_even_if_api_classified(monkeypatch):
+    # Endpoint metadata may call a self-hosted GPU URL an API/proxy because it
+    # has an auth record. The private address still identifies a managed
+    # service, so it must not be allowed to hang for the full read timeout.
+    monkeypatch.setattr(llm_core, "is_local_endpoint", lambda u: False)
+    monkeypatch.delenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT", raising=False)
+
+    assert llm_core._first_token_timeout("http://100.118.44.115:18403/v1", 300) == 60
+    assert llm_core._first_token_timeout("https://api.openai.com/v1", 300) == 0
 
 
 def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):

@@ -115,6 +115,16 @@ def test_body_under_cap_is_untouched(monkeypatch, no_cache):
     assert r["fetched_bytes"] == len(b"hello world")
 
 
+def test_atom_xml_api_response_is_preserved_as_readable_evidence(monkeypatch, no_cache):
+    body = b"<?xml version='1.0'?><feed><entry><title>Daily paper</title></entry></feed>"
+    _patch_stream(monkeypatch, _FakeStream(body, content_type="application/atom+xml"))
+
+    result = content_mod.fetch_webpage_content("https://example.com/api/feed")
+
+    assert result["success"] is True
+    assert "<title>Daily paper</title>" in result["content"]
+
+
 def test_body_over_soft_cap_truncates_with_flags(monkeypatch, no_cache):
     body = b"x" * (WEB_FETCH_SOFT_MAX_BYTES + 50_000)
     _patch_stream(monkeypatch, _FakeStream(body, content_length=len(body)))
@@ -168,13 +178,79 @@ def test_truncated_pdf_is_an_error_not_garbage(monkeypatch, no_cache):
     _patch_stream(monkeypatch, _FakeStream(body, content_type="application/pdf"))
     r = content_mod.fetch_webpage_content("https://example.com/big.pdf")
     assert r["success"] is False
-    assert "TooLarge" in r["error"]
+    assert r["content"] == ""
+    assert r["error"]
 
 
-def test_fetch_requests_identity_encoding(monkeypatch, no_cache):
-    # Compressed responses can decode to far more than Content-Length, so the
-    # streamed cap and the hard-cap preflight are only honest when we refuse
-    # transfer compression. Pin that the fetch advertises identity, not gzip.
+def test_pdf_fetch_falls_back_to_pypdf_when_pdfminer_missing(monkeypatch, no_cache):
+    class _FakePage:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class _FakeReader:
+        def __init__(self, _stream):
+            self.pages = [_FakePage("Setagaya burnable garbage rules")]
+
+    monkeypatch.setattr(content_mod, "pdf_extract_text", None)
+    monkeypatch.setattr(content_mod, "PdfReader", _FakeReader)
+    _patch_stream(monkeypatch, _FakeStream(b"%PDF-1.4 fake", content_type="application/pdf"))
+
+    r = content_mod.fetch_webpage_content("https://example.com/rules.pdf")
+
+    assert r["success"] is True
+    assert "Setagaya burnable garbage rules" in r["content"]
+
+
+def test_pdf_truncated_by_decoded_soft_cap_retries_full_budget(monkeypatch, no_cache):
+    class _FakePage:
+        def extract_text(self):
+            return "decoded pdf text"
+
+    class _FakeReader:
+        def __init__(self, _stream):
+            self.pages = [_FakePage()]
+
+    calls = []
+
+    def fake_get_public_url(url, headers, timeout, max_redirects=5, max_bytes=None):
+        calls.append(max_bytes)
+        if len(calls) == 1:
+            return content_mod._CappedFetch(
+                200,
+                {"Content-Type": "application/pdf", "content-length": "965256"},
+                b"%PDF partial",
+                True,
+                965256,
+                "utf-8",
+                url,
+            )
+        return content_mod._CappedFetch(
+            200,
+            {"Content-Type": "application/pdf", "content-length": "965256"},
+            b"%PDF full",
+            False,
+            965256,
+            "utf-8",
+            url,
+        )
+
+    monkeypatch.setattr(content_mod, "_get_public_url", fake_get_public_url)
+    monkeypatch.setattr(content_mod, "pdf_extract_text", None)
+    monkeypatch.setattr(content_mod, "PdfReader", _FakeReader)
+
+    r = content_mod.fetch_webpage_content("https://example.com/compressed.pdf")
+
+    assert r["success"] is True
+    assert r["content"] == "[Page 1]\ndecoded pdf text"
+    assert calls == [WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES]
+
+
+def test_fetch_does_not_force_identity_encoding(monkeypatch, no_cache):
+    # iter_bytes() is capped after decoding, so valid compressed pages should
+    # not be rejected merely because a server ignores identity.
     seen = {}
 
     @contextmanager
@@ -184,20 +260,19 @@ def test_fetch_requests_identity_encoding(monkeypatch, no_cache):
     monkeypatch.setattr(content_mod.httpx, "stream", fake_stream)
 
     content_mod.fetch_webpage_content("https://example.com/a.txt")
-    assert seen["headers"].get("Accept-Encoding") == "identity"
+    assert "Accept-Encoding" not in seen["headers"]
 
 
-def test_rejects_compressed_response_that_ignored_identity(monkeypatch, no_cache):
-    # We request Accept-Encoding: identity, but a server can ignore it and send
-    # gzip anyway. httpx would decode it, so a tiny compressed body could balloon
-    # past the cap in one decoded chunk. Refuse before reading the body.
+def test_accepts_compressed_response_and_caps_decoded_body(monkeypatch, no_cache):
+    # Content-Length describes compressed wire bytes; the decoded stream still
+    # obeys the normal soft cap.
     fake = _FakeStream(b"x" * 5000, content_length=40)
     fake.headers["content-encoding"] = "gzip"
     _patch_stream(monkeypatch, fake)
     r = content_mod.fetch_webpage_content("https://example.com/a.txt")
-    assert r["success"] is False
-    assert "Content-Encoding" in r["error"] or "compressed" in r["error"]
-    assert fake.body_reads == 0  # refused before decoding any body
+    assert r["success"] is True
+    assert r["content"] == "x" * 5000
+    assert fake.body_reads == 1
 
 
 def test_oversized_title_does_not_hide_partial_notice(monkeypatch):

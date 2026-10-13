@@ -16,6 +16,20 @@ from src.upload_handler import reserve_upload_references
 logger = logging.getLogger(__name__)
 
 
+def _search_tokens(value: str) -> list[str]:
+    """Normalize lightweight singular/plural variants without fuzzy matching."""
+    tokens = []
+    for token in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+        if token in {"the", "a", "an", "note", "notes", "checklist", "list", "todo", "todos"}:
+            continue
+        if len(token) > 4 and token.endswith("ies"):
+            token = token[:-3] + "y"
+        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            token = token[:-1]
+        tokens.append(token)
+    return tokens
+
+
 async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
@@ -37,9 +51,36 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         "save": "add",
         "remind": "add",
         "remove": "delete",
-        "remove_item": "toggle_item",
     }
     action = _NOTE_ACTION_ALIASES.get(action, action)
+    if action == "add" and any(args.get(key) for key in ("id", "note_id", "noteId")):
+        return {
+            "error": 'Nothing saved. add creates a new note and cannot take an existing note ID. '
+                     'To fill or change that note, retry with action="update", id set to the existing '
+                     'note ID, and checklist_items plus note_type="checklist" for a to-do list. '
+                     'Do not create another note.',
+            "exit_code": 1,
+        }
+    if action == "remove_item":
+        return {
+            "error": "To remove a checklist item, use update with id and the complete remaining checklist_items, preserving their done states. No item was changed.",
+            "exit_code": 1,
+        }
+    list_search_query = str(
+        args.get("search")
+        or args.get("query")
+        or args.get("text")
+        or args.get("title")
+        or args.get("content")
+        or ""
+    ).strip()
+    if action == "list" and list_search_query:
+        action = "search"
+        args.setdefault("query", list_search_query)
+    from src.agent_runtime.owned_resources import active_owned_operation
+    bound = active_owned_operation()
+    if bound is not None:
+        bound.validate()
     db = SessionLocal()
 
     def _norm_note_title(value: str) -> str:
@@ -55,23 +96,100 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             return True
         return getattr(note, "owner", None) == owner_value
 
+    def _is_calendar_reminder_note(note) -> bool:
+        return getattr(note, "source", None) == "calendar" and getattr(note, "label", None) == "calendar"
+
     def _note_by_prefix(note_id: str):
         if not note_id:
             return None
-        q = db.query(Note).filter(Note.id.startswith(note_id))
+        q = db.query(Note).filter(Note.id == note_id if bound is not None else Note.id.startswith(note_id))
         if owner:
             q = q.filter(Note.owner == owner)
         return q.first()
 
-    def _format_note_list(notes) -> str:
+    def _note_id_arg() -> str:
+        return str(args.get("id") or args.get("note_id") or args.get("noteId") or "").strip()
+
+    def _norm_note_text(value) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip())
+
+    def _norm_note_items(value) -> list[dict]:
+        if value in (None, ""):
+            return []
+        raw = value
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return [{"text": _norm_note_text(raw), "done": False}]
+        if not isinstance(raw, list):
+            return [{"text": _norm_note_text(raw), "done": False}]
+        items = []
+        for item in raw:
+            if isinstance(item, dict):
+                text = _norm_note_text(item.get("text") or item.get("label") or item.get("title") or "")
+                done = bool(item.get("done") or item.get("checked") or item.get("complete"))
+            else:
+                text = _norm_note_text(item)
+                done = False
+            if text:
+                items.append({"text": text, "done": done})
+        return items
+
+    def _existing_exact_note(
+        *,
+        title: str,
+        content_value,
+        items_value,
+        note_type: str,
+        label,
+        due_date,
+        color,
+        pinned,
+    ):
+        q = db.query(Note).filter(Note.archived == False)  # noqa: E712
+        if owner is not None:
+            q = q.filter(Note.owner == owner)
+        target_title = _norm_note_title(title)
+        target_content = _norm_note_text(content_value)
+        target_items = _norm_note_items(items_value)
+        target_label = label or None
+        target_due = due_date or None
+        target_color = color or None
+        target_pinned = bool(pinned)
+        for existing in q.limit(50).all():
+            if _norm_note_title(existing.title or "") != target_title:
+                continue
+            if (existing.note_type or "note") != (note_type or "note"):
+                continue
+            if (existing.label or None) != target_label:
+                continue
+            if (existing.due_date or None) != target_due:
+                continue
+            if (existing.color or None) != target_color:
+                continue
+            if bool(existing.pinned) != target_pinned:
+                continue
+            if _norm_note_text(existing.content) != target_content:
+                continue
+            if _norm_note_items(existing.items) != target_items:
+                continue
+            return existing
+        return None
+
+    def _format_note_list(notes, *, full_content: bool = False) -> str:
         lines = []
         for n in notes:
             pin = " [PINNED]" if n.pinned else ""
             typ = " [checklist]" if n.note_type == "checklist" else ""
             lbl = f" #{n.label}" if n.label else ""
             title = n.title or "(untitled)"
-            lines.append(f"- [{n.id[:8]}] **{title}**{pin}{typ}{lbl}")
-            if n.note_type == "checklist" and n.items:
+            lines.append(f"- [{n.id}] **{title}**{pin}{typ}{lbl}")
+            # Search/list is a locator operation. Keep the body behind view so
+            # a model cannot satisfy an explicit read request without the
+            # required second call, and so large checklists do not flood the
+            # next model context.
+            if full_content and n.note_type == "checklist" and n.items:
                 try:
                     items = json.loads(n.items)
                     for i, item in enumerate(items):
@@ -79,9 +197,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                         lines.append(f"  [{mark}] {i}: {item.get('text', '')}")
                 except (json.JSONDecodeError, TypeError):
                     pass
-            elif n.content:
-                snippet = n.content[:80].replace("\n", " ")
-                lines.append(f"  {snippet}")
+            elif full_content and n.content:
+                lines.append(f"  {n.content}")
         return "\n".join(lines)
 
     try:
@@ -95,6 +212,17 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             show_archived = args.get("archived", False)
             q = q.filter(Note.archived == show_archived)
             notes = q.order_by(Note.pinned.desc(), Note.updated_at.desc()).all()
+            if bool(args.get("pinned")):
+                notes = [n for n in notes if bool(getattr(n, "pinned", False))]
+            if bool(args.get("reminders") or args.get("due_only") or args.get("has_due_date")):
+                notes = [n for n in notes if bool(getattr(n, "due_date", None))]
+            include_calendar_reminders = bool(
+                args.get("include_calendar_reminders")
+                or str(args.get("source") or "").strip().lower() == "calendar"
+                or str(args.get("label") or "").strip().lower() == "calendar-reminders"
+            )
+            if not include_calendar_reminders:
+                notes = [n for n in notes if not _is_calendar_reminder_note(n)]
             if action in ("search", "find"):
                 query = str(
                     args.get("query")
@@ -104,13 +232,17 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     or ""
                 ).strip().lower()
                 if query:
+                    query_terms = _search_tokens(query)
                     filtered = []
                     for n in notes:
                         haystack = " ".join(
                             str(part or "")
                             for part in (n.title, n.content, n.label, n.items)
                         ).lower()
-                        if query in haystack:
+                        haystack_terms = set(_search_tokens(haystack))
+                        if query in haystack or (
+                            query_terms and all(term in haystack_terms for term in query_terms)
+                        ):
                             filtered.append(n)
                     notes = filtered
             if not notes:
@@ -118,13 +250,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             return {"results": _format_note_list(notes), "exit_code": 0}
 
         elif action == "view":
-            note_id = args.get("id", "")
+            note_id = _note_id_arg()
             note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
-            return {"results": _format_note_list([note]), "exit_code": 0}
+            return {"results": _format_note_list([note], full_content=True), "exit_code": 0}
 
         elif action == "add":
             # Accept the various field names models emit: `text` is the most
@@ -147,6 +279,29 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 items_raw = args.get("items")
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
+            if not title and note_type in {"checklist", "todo", "goal"}:
+                from src.user_time import now_user_local
+                title = f"To-do - {now_user_local().date().isoformat()}"
+            if note_type in {"checklist", "todo", "goal"} and not isinstance(items_raw, list):
+                return {
+                    "error": 'Nothing saved. Checklist creation requires checklist_items as an array of '
+                             '{"text":"task including any stated time","done":false}. '
+                             'Put each task in its own item, not in title. Use a short title only; '
+                             'do not include explanations or timezone calculations. Retry with the structured items. '
+                             'Use [] only when the user explicitly requested an empty checklist.',
+                    "exit_code": 1,
+                }
+            if items_raw is not None and (
+                not isinstance(items_raw, list)
+                or any(not isinstance(item, dict)
+                       or not isinstance(item.get("text"), str)
+                       or not item["text"].strip()
+                       or not isinstance(item.get("done", False), bool)
+                       for item in items_raw)
+            ):
+                return {"error": 'Nothing saved. checklist_items must be an array of objects with '
+                                 'nonempty text and an optional boolean done. Retry with corrected items.',
+                        "exit_code": 1}
             # Accept natural-language due_date ("tomorrow at 1pm") in
             # addition to ISO. Use the user-tz-aware parser so the LLM's
             # naive times ("today at 9pm") are anchored to the USER's clock,
@@ -167,7 +322,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 if looks_like_reminder:
                     temporal = re.search(
                         r"\b(?:today|tonight|tomorrow|tmrw|yesterday)\b(?:\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?"
-                        r"|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:today|tonight|tomorrow|tmrw|yesterday)\b"
+                        r"|\b\d{1,2}(?::\d{2})?(?:\s*(?:am|pm))?\s+(?:today|tonight|tomorrow|tmrw|yesterday)\b"
                         r"|\bin\s+\d+\s*(?:hour|hr|minute|min|day)s?\b",
                         lower_combined,
                     )
@@ -200,6 +355,25 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                             "duplicate": True,
                             "exit_code": 0,
                         }
+            duplicate = _existing_exact_note(
+                title=title,
+                content_value=content_raw,
+                items_value=items_raw,
+                note_type=note_type,
+                label=args.get("label"),
+                due_date=due_iso,
+                color=args.get("color"),
+                pinned=args.get("pinned", False),
+            )
+            if duplicate:
+                return {
+                    "response": f"Note already exists: \"{duplicate.title or title or '(untitled)'}\" (id: {duplicate.id[:8]})",
+                    "note_id": duplicate.id,
+                    "note_title": duplicate.title or title or "",
+                    "open_url": f"/#open=notes&note={duplicate.id}",
+                    "duplicate": True,
+                    "exit_code": 0,
+                }
             missing_id = reserve_upload_references(
                 get_upload_handler(),
                 owner,
@@ -243,10 +417,33 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             }
 
         elif action == "update":
-            note_id = args.get("id", "")
+            note_id = _note_id_arg()
             note = _note_by_prefix(note_id)
+            if not note and bound is None:
+                title_query = str(
+                    args.get("title")
+                    or args.get("query")
+                    or args.get("text")
+                    or ""
+                ).strip()
+                if title_query:
+                    q = db.query(Note)
+                    if owner:
+                        q = q.filter(Note.owner == owner)
+                    candidates = [
+                        n for n in q.filter(Note.archived == False).all()
+                        if _norm_note_title(n.title) == _norm_note_title(title_query)
+                    ]
+                    if len(candidates) == 1:
+                        note = candidates[0]
+                    elif len(candidates) > 1:
+                        return {
+                            "error": f"Multiple notes titled '{title_query}' found; pass an id.",
+                            "exit_code": 1,
+                        }
             if not note:
-                return {"error": f"Note '{note_id}' not found", "exit_code": 1}
+                target = note_id or args.get("title") or args.get("query") or args.get("text") or ""
+                return {"error": f"Note '{target}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             missing_id = reserve_upload_references(
@@ -289,23 +486,54 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             if "archived" in args:
                 note.archived = args["archived"]
             db.commit()
-            return {"response": f"Note updated: \"{note.title or '(untitled)'}\"", "exit_code": 0}
+            return {"response": f"Note updated: \"{note.title or '(untitled)'}\"",
+                    "note_id": note.id, "note_title": note.title or "",
+                    "open_url": f"/#open=notes&note={note.id}", "exit_code": 0}
 
         elif action == "delete":
-            note_id = args.get("id", "")
+            note_id = _note_id_arg()
             note = _note_by_prefix(note_id)
+            if not note and bound is None:
+                title_query = str(
+                    args.get("title")
+                    or args.get("query")
+                    or args.get("text")
+                    or ""
+                ).strip()
+                if title_query:
+                    q = db.query(Note)
+                    if owner:
+                        q = q.filter(Note.owner == owner)
+                    candidates = [
+                        n for n in q.filter(Note.archived == False).all()
+                        if _norm_note_title(n.title) == _norm_note_title(title_query)
+                    ]
+                    if len(candidates) == 1:
+                        note = candidates[0]
+                    elif len(candidates) > 1:
+                        return {
+                            "error": f"Multiple notes titled '{title_query}' found; pass an id.",
+                            "exit_code": 1,
+                        }
             if not note:
-                return {"error": f"Note '{note_id}' not found", "exit_code": 1}
+                target = note_id or args.get("title") or args.get("query") or args.get("text") or ""
+                return {"error": f"Note '{target}' not found", "exit_code": 1}
             if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             title = note.title
+            from src.tool_routing_experiment import note_fixture_scope
+            fixture_scope = note_fixture_scope.get()
+            if fixture_scope is not None and note.id not in fixture_scope:
+                return {"error": "Target is outside the disposable test fixtures; no change made.", "exit_code": 1}
             db.delete(note)
             db.commit()
             return {"response": f"Deleted note: \"{title or '(untitled)'}\"", "exit_code": 0}
 
         elif action == "toggle_item":
-            note_id = args.get("id", "")
-            index = args.get("index", 0)
+            note_id = _note_id_arg()
+            index = args.get("index")
+            if not isinstance(index, int) or isinstance(index, bool):
+                return {"error": "toggle_item requires an explicit integer index (0-based). Use view to inspect item indices if unknown; no change made.", "exit_code": 1}
             note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
@@ -316,7 +544,9 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             items = json.loads(note.items)
             if index < 0 or index >= len(items):
                 return {"error": f"Item index {index} out of range (0-{len(items)-1})", "exit_code": 1}
-            items[index]["done"] = not items[index].get("done", False)
+            if "done" in args and not isinstance(args["done"], bool):
+                return {"error": "done must be a boolean (true or false)", "exit_code": 1}
+            items[index]["done"] = args["done"] if "done" in args else not items[index].get("done", False)
             note.items = json.dumps(items)
             flag_modified(note, "items")
             db.commit()

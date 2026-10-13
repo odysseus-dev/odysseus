@@ -3,13 +3,13 @@
 // What Fits? + Saved presets, inline action panels
 // ============================================
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
 import { RECIPE_BACKENDS, recipesForBackend, pickRecipe, recipeCommands, RECIPE_DEFAULT_VARIANT } from './cookbook-deps-recipes.js';
-import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
+import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState, _cancelHwfitRequests } from './cookbook-hwfit.js';
 
 // Sub-modules
 import {
@@ -30,7 +30,7 @@ import {
 
 import {
   initServe,
-  _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
+  _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel, _cancelCachedModelScan,
 } from './cookbookServe.js';
 
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -39,20 +39,14 @@ import { topPortalZ } from './toolWindowZOrder.js';
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
 const SERVE_STATE_KEY = 'cookbook-serve-state';
+let _dependenciesFetchId = 0;
+let _dependenciesRequestController = null;
+let _dependenciesModelHint = '';
 
-// Global, once: tag chip rows (.doclib-lang-chips) scroll horizontally on mobile.
-// Stop their touch events (capture phase, before any ancestor sees them) so a
-// sideways tag scroll never triggers a swipe-to-change-tab / swipe-dismiss
-// gesture in ANY modal (cookbook, document library, etc.). We don't preventDefault,
-// so the browser's native horizontal scroll of the chips still works.
-if (typeof window !== 'undefined' && !window._tagScrollGuardWired) {
-  window._tagScrollGuardWired = true;
-  ['touchstart', 'touchmove'].forEach(evt => {
-    document.addEventListener(evt, (e) => {
-      const t = e.target;
-      if (t && t.closest && t.closest('.doclib-lang-chips')) e.stopPropagation();
-    }, true);
-  });
+function _fetchCookbookUiWithTimeout(input, init = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // Radio-style check marking which model directory is a server's download target.
@@ -1071,24 +1065,11 @@ export function _persistEnvState() {
 async function _fetchDependencies() {
   const list = document.getElementById('cookbook-deps-list');
   if (!list) return;
-  // Use the shared whirlpool spinner so the user sees the request is in
-  // flight (the package list takes a few seconds to enumerate on slow links).
-  list.innerHTML = '';
-  let _spin = null;
-  try {
-    const sp = (await import('./spinner.js')).default;
-    _spin = sp.createWhirlpool(22);
-    _spin.element.classList.add('cookbook-section-loading-wp');
-    _spin.element.style.cssText = 'margin:24px auto 0;display:block;width:22px;height:22px;';
-    list.appendChild(_spin.element);
-    const label = document.createElement('div');
-    label.className = 'hwfit-loading';
-    label.textContent = 'Loading packages…';
-    label.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;margin-top:6px;';
-    list.appendChild(label);
-  } catch {
-    list.innerHTML = '<div class="hwfit-loading">Loading packages...</div>';
-  }
+  const fetchId = ++_dependenciesFetchId;
+  _dependenciesRequestController?.abort();
+  const depController = new AbortController();
+  _dependenciesRequestController = depController;
+  const depTimer = setTimeout(() => depController.abort(), 20000);
   try {
     // Resolve the target server from the deps dropdown so remote-target
     // packages are checked on THAT server's venv (not just the local host).
@@ -1115,24 +1096,55 @@ async function _fetchDependencies() {
     if (_depBackend && _hwfitCache?._scannedHost === _depHost) {
       _pkgParams.set('backend', _depBackend);
     }
-    if (_cachedModelIds && _cachedModelIds.size) {
-      const _hint = Array.from(_cachedModelIds)
-        .filter(id => /krea/i.test(String(id || '')))
-        .slice(0, 20)
-        .join(',');
+    if (_dependenciesModelHint || (_cachedModelIds && _cachedModelIds.size)) {
+      const _hintIds = [
+        _dependenciesModelHint,
+        ...(_cachedModelIds ? Array.from(_cachedModelIds) : []),
+      ].filter((id, index, ids) => id && ids.indexOf(id) === index).slice(0, 20);
+      const _hint = _hintIds.join(',');
       if (_hint) _pkgParams.set('model_hint', _hint);
     }
-    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
+    const scanSig = _pkgParams.toString() || 'local';
+    const preserveRows = !!list.querySelector('.cookbook-dep-row')
+      && list.dataset.cookbookDepsScanSig === scanSig;
+    list.querySelectorAll('.cookbook-deps-loading').forEach(el => el.remove());
+    const loading = document.createElement('div');
+    loading.className = 'cookbook-deps-loading';
+    loading.style.cssText = preserveRows
+      ? 'display:flex;align-items:center;justify-content:center;gap:6px;padding:7px 0;color:var(--fg-muted);font-size:11px;'
+      : 'display:flex;flex-direction:column;align-items:center;gap:6px;padding:24px 0;color:var(--fg-muted);font-size:11px;';
+    try {
+      const sp = (await import('./spinner.js')).default;
+      const spin = sp.createWhirlpool(preserveRows ? 16 : 22);
+      spin.element.classList.add('cookbook-section-loading-wp');
+      spin.element.style.cssText = `display:block;width:${preserveRows ? 16 : 22}px;height:${preserveRows ? 16 : 22}px;`;
+      loading.appendChild(spin.element);
+    } catch {}
+    const loadingLabel = document.createElement('span');
+    loadingLabel.textContent = preserveRows ? 'Refreshing packages…' : 'Loading packages…';
+    loading.appendChild(loadingLabel);
+    if (preserveRows) {
+      list.prepend(loading);
+    } else {
+      list.replaceChildren(loading);
+    }
+    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''), {
+      credentials: 'same-origin',
+      signal: depController.signal,
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ''}`);
     const data = await resp.json();
+    if (fetchId !== _dependenciesFetchId) return;
+    list.dataset.cookbookDepsScanSig = scanSig;
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
-    const _systemInstallable = new Set(['tmux']);
+    const _systemInstallable = new Set(['tmux', 'libreoffice']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
-      if (pkg.installed && pkg.pip_update_available === false && pkg.name !== 'llama_cpp') {
+      if (pkg.installed && pkg.pip_update_available === false && !['llama_cpp', 'vllm', 'sglang'].includes(pkg.name)) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
         return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
       }
@@ -1155,12 +1167,12 @@ async function _fetchDependencies() {
     // icon (the name alone is fine for librosa, hf_transfer, etc.).
     const _DEP_GLYPHS = {
       vllm: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
-      sglang: '<span aria-hidden="true" style="display:block;width:13px;height:13px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+      sglang: '',
       mlx_lm: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"/><path d="M16 6v12"/><path d="M20 6v12"/></svg>',
       mflux: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
       boogu_image_mlx: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 17c2.5-4 4.5-4 7 0"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="9" r="1"/></svg>',
       llama_cpp: '<svg width="13" height="13" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"/><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"/></svg>',
-      ollama: '<img src="/static/icons/ollama-mark-crop.png" alt="" aria-hidden="true" width="13" height="13" style="display:block;width:13px;height:13px;object-fit:contain;" />',
+      ollama: '',
       diffusers: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
       krea_diffusers: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5"/><path d="M4 12h4"/><path d="M12 5l-7 7 7 7"/><path d="M14 19l3-14 3 14"/><path d="M15.3 13h3.4"/></svg>',
       sam_mask: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7c3-3 13-3 16 0"/><path d="M4 17c3 3 13 3 16 0"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3"/></svg>',
@@ -1176,18 +1188,10 @@ async function _fetchDependencies() {
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
-      // Inline rebuild/reinstall tag. Styled as a .cookbook-dep-tag so it
-      // matches the LLM category tag's pill look, and lives to the LEFT of the
-      // category tag. llama_cpp uses the /api/cookbook/rebuild-engine flow
-      // (clear cached binary so next serve recompiles); vllm/sglang use the
-      // diagnosis-style `_launchServeTask` with `pip install --force-reinstall`
-      // so the user can watch the pip install in the Running tab.
-      let _rebuildBtn = '';
-      if (pkg.name === 'vllm' && pkg.installed) {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
-      } else if (pkg.name === 'sglang' && pkg.installed) {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
-      }
+      // Reinstall actions live in the Installed dropdown, alongside Update.
+      // Keeping them in one menu avoids a second action pill changing the row
+      // layout on narrow screens.
+      const _rebuildBtn = '';
       // For backends with a recipe catalog (vllm / sglang / llama_cpp),
       // append a caret button that toggles a per-row recipe panel below.
       const hasRecipe = RECIPE_BACKENDS.has(pkg.name);
@@ -1204,7 +1208,7 @@ async function _fetchDependencies() {
       // instead of forcing them out to a shell to apt/pacman/dnf.
       const _bdm = Array.isArray(pkg.build_deps_missing) ? pkg.build_deps_missing : [];
       const _buildDepsBtn = _bdm.length
-        ? `<button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-install-sysdeps" data-dep-sysdeps="${esc(_bdm.join(','))}" data-dep-target="${isLocal ? 'local' : 'remote'}" title="Install ${esc(_bdm.join(', '))} via the OS package manager on this target (requires passwordless sudo or root).">Install build deps</button>`
+        ? `<button type="button" class="cookbook-dep-tag cookbook-dep-install cookbook-dep-install-sysdeps cookbook-dep-build-deps" data-dep-sysdeps="${esc(_bdm.join(','))}" data-dep-target="${isLocal ? 'local' : 'remote'}" title="Install ${esc(_bdm.join(', '))} via the OS package manager on this target (requires passwordless sudo or root).">Install build deps</button>`
         : '';
       // Partial-state row (replaces the cryptic yellow "Partial ▾" tag).
       // Renders inline as a yellow banner with two clear actions: one-tap
@@ -1303,11 +1307,15 @@ async function _fetchDependencies() {
       `<div class="cookbook-dep-section"><span class="cookbook-dep-section-title">${title}</span><span class="cookbook-dep-section-note">${note}</span></div>`;
     const _section = (title, note, items) =>
       items.length ? _sectionHeader(title, note) + _rowsHtml(items) : '';
+    // Keep the dependency panel predictable as new runtime packages are added.
+    // This is presentation order only; the API remains free to return packages
+    // in probe order and unknown categories still render at the end.
+    const _depCategoryOrder = ['System', 'Tools', 'LLM', 'Image', 'Audio', 'Other'];
     const _pkgOrder = {
       System: ['tmux', 'docker'],
-      Tools: ['hf_transfer'],
-      LLM: ['llama_cpp', 'sglang', 'vllm', 'mlx_lm'],
-      Image: ['diffusers', 'krea_diffusers', 'transformers', 'sam_mask', 'mflux', 'boogu_image_mlx', 'mlx_vlm'],
+      Tools: ['hf_transfer', 'playwright', 'office_docs', 'pymupdf', 'libreoffice'],
+      LLM: ['llama_cpp', 'sglang', 'vllm', 'mlx_lm', 'APFEL'],
+      Image: ['diffusers', 'krea_diffusers', 'mflux', 'boogu_image_mlx', 'mlx_lama_swift', 'mlx_ddcolor_swift', 'mlx_vlm', 'transformers', 'sam_mask', 'rembg', 'realesrgan', 'psd_tools'],
     };
     const _sortDeps = (items, category) => {
       const order = _pkgOrder[category] || [];
@@ -1319,6 +1327,10 @@ async function _fetchDependencies() {
         return ar - br || String(a.name || '').localeCompare(String(b.name || ''));
       });
     };
+    const _orderedDepCategories = (byCat) => [
+      ..._depCategoryOrder,
+      ...Array.from(byCat.keys()).filter(cat => !_depCategoryOrder.includes(cat)).sort((a, b) => String(a).localeCompare(String(b))),
+    ];
     const _serverDepsHtml = (items) => {
       const byCat = new Map();
       for (const item of items) {
@@ -1327,14 +1339,14 @@ async function _fetchDependencies() {
         byCat.get(cat).push(item);
       }
       const parts = [];
-      const order = ['System', 'Tools', 'Image', 'LLM', 'Audio', 'Other'];
+      const order = _orderedDepCategories(byCat);
       for (const cat of order) {
         const catItems = _sortDeps(byCat.get(cat) || [], cat);
         if (!catItems.length) continue;
         if (cat === 'Image') {
-          const mlxNames = new Set(['mflux', 'boogu_image_mlx', 'mlx_vlm']);
-          const general = catItems.filter(p => !mlxNames.has(p.name));
-          const mlx = catItems.filter(p => mlxNames.has(p.name));
+          const isMlxImageRuntime = (p) => p.name === 'mflux' || p.name === 'boogu_image_mlx' || String(p.name || '').startsWith('mlx_');
+          const general = catItems.filter(p => !isMlxImageRuntime(p));
+          const mlx = catItems.filter(isMlxImageRuntime);
           parts.push(_sectionHeader('Image', 'Diffusers and shared image tooling.'));
           if (general.length) parts.push(_rowsHtml(general));
           if (mlx.length) {
@@ -1367,7 +1379,7 @@ async function _fetchDependencies() {
         byCat.get(cat).push(item);
       }
       const parts = [_sectionHeader('Odysseus app', 'Run inside the Odysseus app itself.')];
-      const order = ['System', 'Tools', 'Image', 'LLM', 'Audio', 'Other'];
+      const order = _orderedDepCategories(byCat);
       for (const cat of order) {
         const catItems = _sortDeps(byCat.get(cat) || [], cat);
         if (!catItems.length) continue;
@@ -1470,7 +1482,7 @@ async function _fetchDependencies() {
           env_prefix: envPrefix || undefined,
           platform: targetPlatform || undefined,
         };
-        const res = await fetch('/api/model/serve', {
+        const res = await _fetchCookbookUiWithTimeout('/api/model/serve', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(reqBody),
@@ -1546,7 +1558,7 @@ async function _fetchDependencies() {
             ssh_port: _getPort(_envState.remoteHost) || undefined,
             platform: _envState.platform || undefined,
           };
-          const res = await fetch('/api/model/serve', {
+          const res = await _fetchCookbookUiWithTimeout('/api/model/serve', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(reqBody),
@@ -1607,7 +1619,7 @@ async function _fetchDependencies() {
             const _p = _getPort(_envState.remoteHost);
             if (_p) body.ssh_port = _p;
           }
-          const res = await fetch('/api/cookbook/install-system-deps', {
+          const res = await _fetchCookbookUiWithTimeout('/api/cookbook/install-system-deps', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -1757,7 +1769,7 @@ async function _fetchDependencies() {
           platform: _envState.platform || undefined,
         };
         try {
-          const res = await fetch('/api/model/serve', {
+          const res = await _fetchCookbookUiWithTimeout('/api/model/serve', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(reqBody),
@@ -1793,7 +1805,7 @@ async function _fetchDependencies() {
         statusEl.textContent = updateSource ? 'Updating...' : 'Clearing...';
       }
       try {
-        const res = await fetch('/api/cookbook/rebuild-engine', {
+        const res = await _fetchCookbookUiWithTimeout('/api/cookbook/rebuild-engine', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1873,6 +1885,14 @@ async function _fetchDependencies() {
         });
         dropdown.appendChild(source);
       }
+      if (rowPkgName === 'vllm' || rowPkgName === 'sglang') {
+        const reinstall = document.createElement('div');
+        reinstall.className = 'dropdown-item-compact cookbook-dep-reinstall';
+        reinstall.dataset.reinstallPkg = rowPkgName;
+        reinstall.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Reinstall</span>`;
+        reinstall.title = `Force-reinstall ${rowPkgName} without dependencies.`;
+        dropdown.appendChild(reinstall);
+      }
       document.body.appendChild(dropdown);
       const close = bindMenuDismiss(dropdown, () => { dropdown.remove(); }, (ev) =>
         !dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target));
@@ -1888,7 +1908,11 @@ async function _fetchDependencies() {
       });
     });
   } catch (err) {
+    if (fetchId !== _dependenciesFetchId) return;
     list.innerHTML = `<div class="hwfit-loading">Error loading packages: ${esc(err.message)}</div>`;
+  } finally {
+    clearTimeout(depTimer);
+    if (_dependenciesRequestController === depController) _dependenciesRequestController = null;
   }
 }
 
@@ -1938,10 +1962,15 @@ async function _refreshScanDownloadTarget() {
   const btn = document.getElementById('hwfit-hw-refresh-btn');
   if (btn && btn.disabled) return;
   const selectedVal = document.getElementById('hwfit-server-select')?.value || _currentServerValue();
+  const originalHtml = btn?.innerHTML || '';
+  let completed = false;
   if (btn) {
     btn.disabled = true;
     btn.style.opacity = '0.55';
     btn.style.cursor = 'wait';
+    const wp = spinnerModule.createWhirlpool(13);
+    btn.innerHTML = '';
+    btn.appendChild(wp.element);
   }
   try {
     if (selectedVal) _applyServerSelection(selectedVal);
@@ -1958,6 +1987,17 @@ async function _refreshScanDownloadTarget() {
       _hwfitFetch(true),
       _fetchCachedModels(true),
     ]);
+    completed = true;
+    if (btn) {
+      btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+      btn.style.color = 'var(--green, #50fa7b)';
+      setTimeout(() => {
+        if (btn.isConnected) {
+          btn.innerHTML = originalHtml;
+          btn.style.color = '';
+        }
+      }, 900);
+    }
     if (uiModule?.showToast) uiModule.showToast('Refreshed selected server');
   } catch (e) {
     console.warn('[cookbook] scan/download refresh failed', e);
@@ -1967,6 +2007,7 @@ async function _refreshScanDownloadTarget() {
       btn.disabled = false;
       btn.style.opacity = '';
       btn.style.cursor = '';
+      if (!completed) btn.innerHTML = originalHtml;
     }
   }
 }
@@ -2138,13 +2179,26 @@ function _wireTabEvents(body) {
   if (scanBtn) {
     scanBtn.addEventListener('click', async () => {
       if (scanBtn.disabled) return;
+      const originalHtml = scanBtn.innerHTML;
       scanBtn.disabled = true;
       scanBtn.classList.add('spinning');
+      const wp = spinnerModule.createWhirlpool(13);
+      scanBtn.innerHTML = '';
+      scanBtn.appendChild(wp.element);
       try {
         await _fetchCachedModels(true);
+        scanBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        scanBtn.style.color = 'var(--green, #50fa7b)';
+        setTimeout(() => {
+          if (scanBtn.isConnected) {
+            scanBtn.innerHTML = originalHtml;
+            scanBtn.style.color = '';
+          }
+        }, 900);
       } finally {
         scanBtn.disabled = false;
         scanBtn.classList.remove('spinning');
+        if (!scanBtn.querySelector('polyline')) scanBtn.innerHTML = originalHtml;
       }
     });
   }
@@ -2169,10 +2223,30 @@ function _wireTabEvents(body) {
       setAdvancedOpen(hwAdvancedPanel.classList.contains('hidden'));
     });
     hwAdvancedPanel.addEventListener('click', (ev) => ev.stopPropagation());
-    document.addEventListener('click', () => setAdvancedOpen(false));
-    document.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') setAdvancedOpen(false);
-    });
+    // _renderRecipes() replaces this DOM on every Cookbook reopen/sync. Keep
+    // dismissal delegated and installed once; otherwise each render leaves a
+    // document listener holding the old detached panel alive.
+    if (!document._cookbookAdvancedDismissWired) {
+      document._cookbookAdvancedDismissWired = true;
+      document.addEventListener('click', (ev) => {
+        if (ev.target?.closest?.('#hwfit-advanced-btn, #hwfit-advanced-panel')) return;
+        const currentPanel = document.getElementById('hwfit-advanced-panel');
+        const currentBtn = document.getElementById('hwfit-advanced-btn');
+        if (!currentPanel || !currentBtn) return;
+        currentPanel.classList.add('hidden');
+        currentBtn.classList.remove('active');
+        currentBtn.setAttribute('aria-expanded', 'false');
+      });
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        const currentPanel = document.getElementById('hwfit-advanced-panel');
+        const currentBtn = document.getElementById('hwfit-advanced-btn');
+        if (!currentPanel || !currentBtn) return;
+        currentPanel.classList.add('hidden');
+        currentBtn.classList.remove('active');
+        currentBtn.setAttribute('aria-expanded', 'false');
+      });
+    }
   }
 
   const editDirsLink = document.querySelector('.cookbook-serve-dir-edit');
@@ -2269,6 +2343,17 @@ function _wireTabEvents(body) {
         dot.style.display = active ? '' : 'none';
         dot.classList.remove('selected');
       });
+      // In Launch/What-Fits, the same control can read Cancel while a model
+      // row is expanded. Cancel must close that row too, not only selection.
+      if (!active) {
+        const modal = document.getElementById('cookbook-modal');
+        const activeRow = modal?.querySelector('.hwfit-row-active');
+        const activePanel = activeRow?.nextElementSibling?.classList.contains('hwfit-action-panel')
+          ? activeRow.nextElementSibling : activeRow?.parentElement?.querySelector('.hwfit-action-panel');
+        activePanel?._cleanupServePanel?.();
+        activePanel?.remove();
+        activeRow?.classList.remove('hwfit-row-active');
+      }
       _updateBulkCount();
     });
 
@@ -2400,7 +2485,7 @@ function _wireTabEvents(body) {
       dlGgufQuant.dataset.repo = repo;
       dlGgufNote.textContent = '';
       try {
-        const res = await fetch(`/api/cookbook/hf-gguf-files?repo_id=${encodeURIComponent(repo)}`, { credentials: 'same-origin' });
+        const res = await _fetchCookbookUiWithTimeout(`/api/cookbook/hf-gguf-files?repo_id=${encodeURIComponent(repo)}`, { credentials: 'same-origin' }, 30000);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'scan failed');
@@ -2584,7 +2669,7 @@ function _wireTabEvents(body) {
       // Toggle via class so CSS transition animates the height/opacity
       // — display:none was an instant on/off and felt jarring.
       dlFoldBody.classList.toggle('is-folded', folded);
-      dlFoldChevron.textContent = folded ? '▸' : '▾';
+      dlFoldChevron.style.transform = folded ? 'rotate(-90deg)' : 'rotate(0deg)';
       dlFold.classList.toggle('is-folded', folded);
       if (persist) {
         try { localStorage.setItem('cookbook_dl_tab_folded_v1', folded ? '1' : '0'); } catch {}
@@ -2594,17 +2679,24 @@ function _wireTabEvents(body) {
       const folded = dlFoldBody.classList.contains('is-folded');
       _setFolded(!folded);
     });
-    // Auto-fold on any downward scroll inside the cookbook modal. Do not
-    // auto-expand on upward/top scroll — once the user collapses Download,
-    // it should stay collapsed until the header is clicked again.
+    // Auto-fold on downward scroll, and restore the section when the primary
+    // Cookbook scroller reaches its top again. Desktop scrolls on the body;
+    // mobile scrolls on the modal content.
     const _maybeFold = () => {
       if (dlFoldBody.classList.contains('is-folded')) return;
       _setFolded(true, /* persist */ false);
     };
+    const _maybeUnfoldAtTop = () => {
+      if (!dlFoldBody.classList.contains('is-folded')) return;
+      _setFolded(false, /* persist */ false);
+    };
     // Capture phase so scrolls on nested scrollers (.hwfit-list,
     // .cookbook-body, .modal-content) all hit us.
     const _modal = dlFold.closest('#cookbook-modal') || document;
+    const _body = _modal.querySelector?.('.cookbook-body');
+    const _content = _modal.querySelector?.('.modal-content');
     const _lastY = new WeakMap();
+    const _isPrimaryScroller = (tgt) => tgt === _body || tgt === _content || tgt === _modal;
     _modal.addEventListener('scroll', (e) => {
       const tgt = e.target;
       if (!tgt || typeof tgt.scrollTop !== 'number') return;
@@ -2614,16 +2706,41 @@ function _wireTabEvents(body) {
       if (dlFoldBody.contains && (tgt === dlFoldBody || dlFoldBody.contains(tgt))) return;
       const y = tgt.scrollTop;
       const prev = _lastY.get(tgt) || 0;
-      if (y > prev) _maybeFold();
+      const isPrimaryScroller = _isPrimaryScroller(tgt);
+      // Ignore small layout/bounce movements. Folding is a navigation aid, so
+      // it should only react after the user has actually started scrolling.
+      if (y > prev + 12 && isPrimaryScroller) _maybeFold();
       _lastY.set(tgt, y);
     }, true);
+    // Collapsing the body can clamp the primary scroll host to 0 without
+    // dispatching a second scroll event. Catch the user's upward gesture at
+    // that boundary so a folded section still reopens as intended.
+    const _mainScrollAtTop = () => [_body, _content].some((host) => (
+      host && host.scrollHeight > host.clientHeight + 1 && host.scrollTop <= 1
+    ));
+    _modal.addEventListener('wheel', (e) => {
+      // Reopen only on a deliberate extra upward gesture while already at the
+      // top; reaching scrollTop=0 alone is too sensitive on mobile/trackpads.
+      if (e.deltaY < -8 && _mainScrollAtTop()) _maybeUnfoldAtTop();
+    }, { capture: true, passive: true });
+    let _touchStartY = null;
+    _modal.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) _touchStartY = e.touches[0].clientY;
+    }, { capture: true, passive: true });
+    _modal.addEventListener('touchend', (e) => {
+      const endY = e.changedTouches[0]?.clientY;
+      const pulledDown = Number.isFinite(_touchStartY) && Number.isFinite(endY) && endY - _touchStartY > 24;
+      _touchStartY = null;
+      if (pulledDown && _mainScrollAtTop()) _maybeUnfoldAtTop();
+    }, { capture: true, passive: true });
   }
-  const hfToggle = document.getElementById('cookbook-hf-latest-toggle');
-  const hfArrow = document.getElementById('cookbook-hf-latest-arrow');
   const hfList = document.getElementById('cookbook-hf-latest-list');
-  const hfRefresh = document.getElementById('cookbook-hf-latest-refresh');
-  if (hfToggle && hfList) {
+  if (hfList) {
     let _loaded = false;
+    const officialOnly = document.getElementById('cookbook-hf-official-only');
+    if (officialOnly) {
+      try { officialOnly.checked = localStorage.getItem('cookbook_hf_official_only_v1') === '1'; } catch {}
+    }
     // Per-server VRAM cache so we don't re-probe on every expand
     const _hwCache = {};
     function _hfModelLooksAwqLike(m) {
@@ -2654,7 +2771,7 @@ function _wireTabEvents(body) {
         if (host) qp.set('host', host);
         if (sshPort) qp.set('ssh_port', sshPort);
         if (platform) qp.set('platform', platform);
-        const r = await fetch(`/api/hwfit/system?${qp}`);
+        const r = await _fetchCookbookUiWithTimeout(`/api/hwfit/system?${qp}`, {}, 20000);
         if (r.ok) {
           const sys = await r.json();
           const hw = { vram: sys?.gpu_vram_gb || 0, backend: String(sys?.backend || '').toLowerCase() };
@@ -2666,6 +2783,10 @@ function _wireTabEvents(body) {
       return _hwCache[cacheKey];
     }
     async function _loadLatest() {
+      const useCase = document.getElementById('hwfit-usecase')?.value || 'general';
+      const useCaseLabel = { general: 'Standard', multimodal: 'Vision', image_gen: 'Image' }[useCase] || 'Standard';
+      const latestTitle = document.getElementById('cookbook-hf-latest-title');
+      if (latestTitle) latestTitle.textContent = `Trending · ${useCaseLabel}`;
       // Match the Dependencies loader: whirlpool spinner + text label so the
       // user gets immediate feedback while the scan runs.
       hfList.innerHTML = '';
@@ -2688,7 +2809,17 @@ function _wireTabEvents(body) {
       try {
         let lastErr = '';
         const _fetchLatest = async (v) => {
-          const res = await fetch(`/api/cookbook/hf-latest?vram_gb=${v}&limit=10`);
+          // Trending is intentionally broad; the other picker modes retain
+          // their pipeline-specific HF filtering.
+          const pipeline = useCase === 'image_gen'
+            ? 'text-to-image'
+            : useCase === 'multimodal' ? 'image-text-to-text'
+              : useCase === 'general' ? 'text-generation' : '';
+          const params = new URLSearchParams({ vram_gb: String(v), limit: '20' });
+          if (pipeline) params.set('pipeline', pipeline);
+          if (officialOnly?.checked) params.set('official_only', 'true');
+          const res = await _fetchCookbookUiWithTimeout(`/api/cookbook/hf-latest?${params}`, {}, 30000);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           if (data.error) lastErr = data.error;   // HF API timeout/rate-limit etc.
           return data.models || [];
@@ -2716,14 +2847,19 @@ function _wireTabEvents(body) {
           if (m.downloads) meta.push(`${m.downloads.toLocaleString()} downloads`);
           const date = m.createdAt ? new Date(m.createdAt).toISOString().slice(0, 10) : '';
           if (date) meta.push(date);
-          html += `<div class="doclib-card memory-item cookbook-hf-latest-card" data-repo="${esc(m.repo_id)}" style="cursor:pointer;">`;
-          html += `<div style="flex:1;min-width:0;">`;
-          html += `<div class="memory-item-title">${esc(shortName)} <a href="https://huggingface.co/${esc(m.repo_id)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF \u2197</a></div>`;
-          html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${meta.join(' \u00b7 ')}</div>`;
-          html += `</div>`;
+          html += `<div class="hwfit-row cookbook-hf-latest-card" data-repo="${esc(m.repo_id)}" style="cursor:pointer;">`;
+          html += `<span class="hwfit-col hwfit-fit" style="color:var(--accent,var(--red));">Trending</span>`;
+          html += `<span class="hwfit-col hwfit-name">${esc(shortName)} <a href="https://huggingface.co/${esc(m.repo_id)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF \u2197</a></span>`;
+          html += `<span class="hwfit-col hwfit-c-vram">${m.needed_vram_gb ? `~${m.needed_vram_gb}G` : '?'}</span>`;
+          html += `<span class="hwfit-col hwfit-c-params">?</span><span class="hwfit-col hwfit-c-quant">?</span>`;
+          html += `<span class="hwfit-col hwfit-c-ctx">—</span><span class="hwfit-col hwfit-c-speed">—</span>`;
+          html += `<span class="hwfit-col hwfit-c-score">${m.downloads ? m.downloads.toLocaleString() : '?'}</span><span class="hwfit-col hwfit-c-mode">${esc(meta[0] || '')}</span>`;
           html += `</div>`;
         }
         hfList.innerHTML = html;
+        hfList.classList.remove('cookbook-model-list-fade');
+        void hfList.offsetWidth;
+        hfList.classList.add('cookbook-model-list-fade');
         // Wire card clicks → fill download input
         hfList.querySelectorAll('.cookbook-hf-latest-card').forEach(card => {
           card.addEventListener('click', (e) => {
@@ -2738,23 +2874,14 @@ function _wireTabEvents(body) {
         hfList.innerHTML = '<div class="hwfit-loading">Failed to load</div>';
       }
     }
-    hfToggle.addEventListener('click', () => {
-      const isOpen = hfList.style.display !== 'none';
-      hfList.style.display = isOpen ? 'none' : 'flex';
-      if (hfArrow) hfArrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
-      if (!isOpen && !_loaded) {
+    officialOnly?.addEventListener('change', (e) => {
+      e.stopPropagation();
+      try { localStorage.setItem('cookbook_hf_official_only_v1', e.target.checked ? '1' : '0'); } catch {}
+      if (document.getElementById('hwfit-usecase')?.value === 'trending') {
         _loaded = true;
         _loadLatest();
-      }
-    });
-    if (hfRefresh) hfRefresh.addEventListener('click', (e) => {
-      e.stopPropagation();
-      _loaded = true;
-      _loadLatest();
-      // If list is hidden, open it
-      if (hfList.style.display === 'none') {
-        hfList.style.display = 'flex';
-        if (hfArrow) hfArrow.style.transform = 'rotate(90deg)';
+      } else {
+        _hwfitFetch();
       }
     });
     // Re-fetch when a server dropdown changes — different server = different
@@ -2767,6 +2894,15 @@ function _wireTabEvents(body) {
     };
     document.getElementById('hwfit-dl-server')?.addEventListener('change', _onServerChange);
     document.getElementById('hwfit-server-select')?.addEventListener('change', _onServerChange);
+    document.getElementById('hwfit-usecase')?.addEventListener('change', () => {
+      const useCase = document.getElementById('hwfit-usecase')?.value || 'general';
+      const regularList = document.getElementById('hwfit-list');
+      const isTrending = useCase === 'trending';
+      if (regularList) regularList.style.display = isTrending ? 'none' : '';
+      hfList.style.display = isTrending ? 'flex' : 'none';
+      _loaded = false;
+      if (isTrending) { _loaded = true; _loadLatest(); }
+    });
   }
 
   // Browse Ollama library popup removed — Engine = Ollama in the
@@ -2781,7 +2917,8 @@ function _wireTabEvents(body) {
     async function _loadOllama(refresh = false) {
       olList.innerHTML = '<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">Loading…</div>';
       try {
-        const res = await fetch(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`);
+        const res = await _fetchCookbookUiWithTimeout(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`, {}, 30000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const models = data.models || [];
         if (!models.length) {
@@ -2894,8 +3031,8 @@ function _wireTabEvents(body) {
 // forceRemote renders an editable remote entry even before a host is typed
 // (a new server's host is empty, which would otherwise read as "Local").
 export function _serverDefaultHtml(active) {
-  const check = active ? '<span class="hwfit-hf-check cookbook-srv-default-check" title="Default server" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>' : '';
-  return `${check}<span class="cookbook-srv-default-label">default</span>`;
+  const icon = active ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF;
+  return `<span class="cookbook-srv-default-icon" aria-hidden="true">${icon}</span><span class="cookbook-srv-default-label">default</span>`;
 }
 
 export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
@@ -2937,7 +3074,7 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   html += `</span>`;
   html += `<div class="cookbook-server-row">`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-name" value="${esc(s.name || (isLocal ? 'Local' : ''))}" placeholder="Name (optional)" style="width:92px;flex-shrink:0;" />`;
-  html += `<span class="cookbook-srv-color-wrap has-color" title="Server color"><select class="hwfit-sf cookbook-srv-color" aria-hidden="true" tabindex="-1">${colorOpts}</select><button type="button" class="hwfit-sf cookbook-srv-color-btn" aria-haspopup="listbox" aria-expanded="false"><span class="cookbook-srv-color-dot" aria-hidden="true"></span><span class="cookbook-srv-color-label">${esc(selectedColorLabel)}</span><svg class="cookbook-srv-color-caret" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button><div class="cookbook-srv-color-menu hidden" role="listbox">${colorMenu}</div></span>`;
+  html += `<span class="cookbook-srv-color-wrap has-color" title="Change server color (currently ${esc(selectedColorLabel)})"><select class="hwfit-sf cookbook-srv-color" aria-hidden="true" tabindex="-1">${colorOpts}</select><button type="button" class="hwfit-sf cookbook-srv-color-btn" title="Change server color (currently ${esc(selectedColorLabel)})" aria-label="Change server color (currently ${esc(selectedColorLabel)})" aria-haspopup="listbox" aria-expanded="false"><span class="cookbook-srv-color-dot" aria-hidden="true"></span></button><div class="cookbook-srv-color-menu hidden" role="listbox">${colorMenu}</div></span>`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-host" value="${isLocal ? '' : esc(s.host || '')}" placeholder="e.g. user@ip" style="width:184px;flex-shrink:0;box-sizing:border-box;" ${isLocal ? 'readonly' : ''} />`;
   html += `<input type="text" class="hwfit-sf cookbook-srv-port" value="${esc(s.port || '')}" placeholder="Port" title="SSH port (default 22)" style="width:48px;flex-shrink:0;" ${isLocal ? 'readonly' : ''} />`;
   html += `<select class="hwfit-sf cookbook-srv-env">${envOpts}</select>`;
@@ -2958,14 +3095,15 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
     html += `<span class="cookbook-modeldir-tag${isDefault ? ' cookbook-modeldir-default' : ''}${isTarget ? ' cookbook-modeldir-target' : ''}" data-dir-idx="${j}" data-dir="${esc(modelDirs[j])}">${dlBtn} ${esc(modelDirs[j])}${rmBtn}</span>`;
   }
   html += `<button class="cookbook-modeldir-add" title="Add model directory">+ Add</button>`;
+  html += `</div>`;
   const _btnBaseStyle = 'position:relative;top:-2px;height:22px;box-sizing:border-box;display:inline-flex;align-items:center;';
-  const _btnPushStyle = `margin-left:auto;${_btnBaseStyle}`;
+  html += `<div class="cookbook-server-bottom-actions">`;
   if (isNew) {
     // A brand-new server: Save (confirm) sits where Delete would be; Cancel is
     // top-right in the title. Save confirms with a checkmark (auto-saves on edit too).
-    html += `<button class="cookbook-server-save-btn" title="Save this server" style="${_btnPushStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
+    html += `<button class="cookbook-server-save-btn" title="Save this server" style="${_btnBaseStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
   } else if (!isLocal) {
-    html += `<button class="cookbook-server-rm cookbook-server-rm-btn" title="Delete this server" style="${_btnPushStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>Delete</button>`;
+    html += `<button class="cookbook-server-rm cookbook-server-rm-btn" title="Delete this server" style="${_btnBaseStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>Delete</button>`;
     html += `<button class="cookbook-server-save-btn" title="Save server changes" style="${_btnBaseStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
   }
   html += `</div>`;
@@ -2994,7 +3132,7 @@ function _renderRecipes() {
 
   // Tabs
   html += '<div class="cookbook-tabs">';
-  html += '<button class="cookbook-tab" data-backend="Serve"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:3px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Launch</button>';
+  html += '<button class="cookbook-tab" data-backend="Serve"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;"><path d="M12 22c4.4 0 8-3.1 8-7.2 0-3.8-2.5-6.8-5.3-9.8.1 2.2-.5 3.8-1.8 5.2.1-3.5-1.2-6.1-3-8.2.1 4-5.9 7.4-5.9 12.8C4 18.9 7.6 22 12 22Z"></path></svg>Launch</button>';
   html += '<button class="cookbook-tab active" data-backend="Search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="7 14 12 19 17 14"/><line x1="12" y1="19" x2="12" y2="5"/><line x1="5" y1="21" x2="19" y2="21"/></svg>Download</button>';
   html += '<button class="cookbook-tab" data-backend="Dependencies"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Dependencies</button>';
   html += '<button class="cookbook-tab" data-backend="Settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>';
@@ -3008,7 +3146,7 @@ function _renderRecipes() {
   // State persisted to localStorage so the fold survives reloads.
   const _dlTabFolded = (() => { try { return localStorage.getItem('cookbook_dl_tab_folded_v1') === '1'; } catch { return false; } })();
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">';
-  html += `<h2 id="cookbook-dl-tab-fold" class="${_dlTabFolded ? 'is-folded' : ''}" style="margin:0;padding:0;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;flex:1;">Direct Download<span id="cookbook-dl-tab-chevron" style="display:inline-block;transition:transform 0.15s;font-size:1.1em;margin-left:8px;opacity:0.85;">${_dlTabFolded ? '▸' : '▾'}</span></h2>`;
+  html += `<h2 id="cookbook-dl-tab-fold" class="${_dlTabFolded ? 'is-folded' : ''}" style="margin:0;padding:0;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;flex:1;">Direct Download<svg id="cookbook-dl-tab-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;transition:transform 0.15s;margin-left:8px;opacity:0.85;transform:rotate(${_dlTabFolded ? '-90deg' : '0deg'});"><polyline points="6 9 12 15 18 9"></polyline></svg></h2>`;
   html += '</div>';
   html += `<div id="cookbook-dl-tab-fold-body" class="${_dlTabFolded ? 'is-folded' : ''}">`;
   html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Download from <a href="https://huggingface.co/models" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:1px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>HuggingFace</a> by pasting model link, or download directly in the Scan section below.</p>';
@@ -3063,20 +3201,6 @@ function _renderRecipes() {
   // but that duplicated the Engine filter (which already has Ollama). The
   // standalone UI is gone — to find Ollama models, set Engine = Ollama in
   // the Scan / Download section below.
-  // Latest HF models that fit — collapsible card list
-  html += `<div style="margin-top:5px;position:relative;top:-11px;">`;
-  html += `<div style="display:flex;gap:4px;align-items:center;">`;
-  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:28px;font-size:11px;display:flex;align-items:center;gap:6px;border-radius:5px;">`;
-  // Trending-up icon (accent) so the section reads as "what's hot".
-  html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;pointer-events:none;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`;
-  html += `<span style="pointer-events:none;flex:1;">Trending models that fit your hardware</span>`;
-  // Chevron moved to the RIGHT \u2014 collapsed = pointing right, expanded
-  // = rotated 90deg into a down chevron (handled by existing toggle CSS).
-  html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;opacity:0.6;font-size:11px;">\u25B8</span>`;
-  html += `</button>`;
-  html += `</div>`;
-  html += `<div id="cookbook-hf-latest-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;overscroll-behavior:contain;flex-direction:column;gap:4px;"></div>`;
-  html += `</div>`;
   html += `</div>`;  // /#cookbook-dl-tab-fold-body (whole Download card body)
 
   // Search section
@@ -3100,7 +3224,8 @@ function _renderRecipes() {
   html += '<select class="cookbook-field-input hwfit-usecase" id="hwfit-usecase" style="display:none;height:28px;">';
   html += '<option value="general" selected>Standard</option>';
   html += '<option value="multimodal">Vision</option>';
-  html += '<option value="image_gen">Image</option></select>';
+  html += '<option value="image_gen">Image</option>';
+  html += '<option value="trending">Trending</option></select>';
   html += '<button type="button" class="cookbook-field-input hwfit-usecase-btn" data-hwfit-usecase-btn aria-haspopup="listbox" aria-expanded="false" title="Model type">';
   html += '<span class="hwfit-usecase-btn-icon" data-hwfit-usecase-icon aria-hidden="true"></span>';
   html += '<span class="hwfit-usecase-btn-label" data-hwfit-usecase-label>Standard</span>';
@@ -3109,9 +3234,10 @@ function _renderRecipes() {
   html += '<div class="hwfit-usecase-menu" data-hwfit-usecase-menu role="listbox" hidden></div>';
   html += '</span>';
   html += '<div class="hwfit-gpu-toggles" id="hwfit-gpu-toggles"></div>';
-  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>EDIT</button>';
+  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span>EDIT</span></button>';
   html += '<button type="button" class="hwfit-gpu-btn hwfit-advanced-btn" id="hwfit-advanced-btn" title="Scan settings" aria-label="Scan settings" aria-expanded="false" style="flex-shrink:0;position:relative;top:-3px;left:-3px;width:26px;height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 4.3l.06.06A1.65 1.65 0 0 0 8.92 4a1.65 1.65 0 0 0 1-1.51V2a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>';
   html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-refresh-btn" id="hwfit-hw-refresh-btn" title="Refresh selected server hardware and cached models" aria-label="Refresh selected server hardware and cached models" style="flex-shrink:0;position:relative;top:-3px;left:-5px;width:26px;height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"/><path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14"/></svg></button>';
+  html += '<label class="cookbook-official-filter" title="Show only models from recognized first-party provider namespaces" style="margin-left:auto;"><span>Official only</span><span class="toggle"><input type="checkbox" id="cookbook-hf-official-only" aria-label="Show official models only" /><span class="slider"></span></span></label>';
   // Sort state — the clickable column headers read/write this (pewds' original
   // sort paradigm). Newest is reachable by clicking the Model column header.
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
@@ -3164,11 +3290,13 @@ function _renderRecipes() {
   html += '<label>VRAM per GPU<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>';
   html += '<label>Total RAM<input class="hwfit-manual-ram" type="text" inputmode="decimal" placeholder="32 GB"></label>';
   html += '<select class="hwfit-manual-backend"><option value="cuda">CUDA</option><option value="rocm">ROCm</option></select>';
-  html += '<button type="button" class="hwfit-hw-manual-save">✓ Apply</button>';
-  html += '<button type="button" class="hwfit-hw-manual-clear">× Clear</button>';
+  html += '<button type="button" class="hwfit-hw-manual-save"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Apply</span></button>';
+  html += '<button type="button" class="hwfit-hw-manual-clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Clear</span></button>';
   html += '</div>';
   html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">Detected hardware</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
   html += '<div class="hwfit-list" id="hwfit-list"></div>';
+  // Trending reuses this result area when selected in the model-type picker.
+  html += '<div id="cookbook-hf-latest-list" style="display:none;margin-top:4px;flex-direction:column;gap:4px;"></div>';
   // Footer: link to the public discussion where users can request additions
   // to the curated model list. Sits below the list so it reads as a callout
   // after browsing, not a header.
@@ -3186,7 +3314,7 @@ function _renderRecipes() {
   html += '<div class="cookbook-group hidden" data-backend-group="Serve">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Serve <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
+  html += '<h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;color:var(--accent, var(--red));"><path d="M12 22c4.4 0 8-3.1 8-7.2 0-3.8-2.5-6.8-5.3-9.8.1 2.2-.5 3.8-1.8 5.2.1-3.5-1.2-6.1-3-8.2.1 4-5.9 7.4-5.9 12.8C4 18.9 7.6 22 12 22Z"></path></svg>Launch <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
   html += '</div>';
   const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
   const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => _normalizeCookbookModelDir(d)).filter(Boolean);
@@ -3196,9 +3324,10 @@ function _renderRecipes() {
   html += '</div>';
   html += '<div style="display:flex;gap:4px;align-items:center;margin-top:4px;">';
   html += '<select class="memory-sort-select" id="hwfit-cache-server" style="height:24px;">' + _buildServerOpts(true) + '</select>';
-  html += '<select class="memory-sort-select" id="serve-sort" style="height:24px;">';
+  html += '<span class="cookbook-sort-select-wrap" title="Sort cached models"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="14" y2="12"></line><line x1="4" y1="18" x2="9" y2="18"></line></svg>';
+  html += '<select class="memory-sort-select" id="serve-sort" style="height:24px;padding-left:24px;">';
   html += '<option value="name">Name</option><option value="size-desc">Size \u2193</option><option value="size-asc">Size \u2191</option><option value="recent">Recent</option>';
-  html += '</select>';
+  html += '</select></span>';
   html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-cache-scan" title="Refresh cached models on selected server" aria-label="Refresh cached models on selected server"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10"/><path d="M3.51 15a9 9 0 0 0 14.85 3.36L23 14"/></svg></button>';
   html += '</div>';
   html += '<div class="memory-toolbar" style="margin-top:8px;">';
@@ -3281,6 +3410,17 @@ function _renderRecipes() {
 
   html += '</div></div>';
 
+  // Server rows are rebuilt on every render; release picker listeners before
+  // replacing them so detached rows do not stay reachable through `document`.
+  body.querySelectorAll('.cookbook-server-entry').forEach(entry => {
+    entry._cleanupColorPicker?.();
+  });
+  body.querySelectorAll('.hwfit-usecase-wrap').forEach(wrap => {
+    wrap._cleanupUsecasePicker?.();
+  });
+  body.querySelectorAll('.hwfit-engine-wrap').forEach(wrap => {
+    wrap._cleanupEnginePicker?.();
+  });
   body.innerHTML = html;
   _wireTabEvents(body);
 
@@ -3296,22 +3436,41 @@ import * as Modals from './modalManager.js';
 let _rendered = false;
 
 let _closeGen = 0;
+let _cookbookOpenGeneration = 0;
 
 // ESC while a Serve card is expanded should collapse just that card, not
 // close the whole Cookbook modal. Capture-phase so we run before the
 // modal manager's global ESC-to-close handler and can stop it.
 if (typeof window !== 'undefined' && !window._cookbookServeEscBound) {
   window._cookbookServeEscBound = true;
-  document.addEventListener('keydown', (e) => {
+  window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     const modal = document.getElementById('cookbook-modal');
     if (!modal || modal.classList.contains('hidden')) return;
+    // Serve bulk selection owns Escape while active. Exit selection first;
+    // only a second Escape should close the Cookbook modal.
+    const selectBtn = modal.querySelector('#hwfit-cache-select');
+    if (selectBtn?.classList.contains('active')) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      selectBtn.classList.remove('active');
+      selectBtn.textContent = 'Select';
+      modal.querySelector('#serve-bulk-bar')?.classList.add('hidden');
+      modal.querySelectorAll('.serve-select-cb').forEach((dot) => {
+        dot.style.display = 'none';
+        dot.classList.remove('selected');
+      });
+      return;
+    }
     // Layer 1: a model row in the scan/download list is highlighted —
     // deselect it before doing anything else.
     const activeRow = modal.querySelector('.hwfit-row-active');
     if (activeRow) {
       e.stopImmediatePropagation();
       e.preventDefault();
+      const activePanel = activeRow.parentElement?.querySelector('.hwfit-action-panel');
+      activePanel?._cleanupServePanel?.();
+      activePanel?.remove();
       activeRow.classList.remove('hwfit-row-active');
       return;
     }
@@ -3320,7 +3479,9 @@ if (typeof window !== 'undefined' && !window._cookbookServeEscBound) {
     e.stopImmediatePropagation();
     e.preventDefault();
     // Collapse the card (mirror the toggle-close path in cookbookServe.js).
-    expanded.querySelector('.hwfit-serve-panel')?.remove();
+    const expandedPanel = expanded.querySelector('.hwfit-serve-panel');
+    expandedPanel?._cleanupServePanel?.();
+    expandedPanel?.remove();
     expanded.classList.remove('doclib-card-expanded');
     expanded.style.flexDirection = '';
     expanded.style.alignItems = '';
@@ -3332,6 +3493,7 @@ if (typeof window !== 'undefined' && !window._cookbookServeEscBound) {
 export async function open(opts) {
   const modal = document.getElementById('cookbook-modal');
   if (!modal) return;
+  _dependenciesModelHint = String(opts?.dependencyModel || '').trim();
   // Run any post-open intent (switch tab, prefill search, etc) after the
   // current render pass so the target elements exist.
   const _applyIntent = () => {
@@ -3348,6 +3510,20 @@ export async function open(opts) {
       const s = document.getElementById('serve-search');
       if (s) { s.value = opts.serveSearch; s.dispatchEvent(new Event('input', { bubbles: true })); }
     }
+    const focusSelector = opts.focusSession
+      ? `[data-session-id="${CSS.escape(String(opts.focusSession))}"]`
+      : opts.focusRepo
+        ? `[data-repo="${CSS.escape(String(opts.focusRepo))}"]`
+        : '';
+    if (focusSelector) {
+      setTimeout(() => {
+        const row = modal.querySelector(focusSelector);
+        if (!row) return;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('cookbook-chat-target');
+        setTimeout(() => row.classList.remove('cookbook-chat-target'), 1800);
+      }, 80);
+    }
   };
   // If minimized, restore in place — preserve all state
   if (Modals.isMinimized('cookbook-modal')) {
@@ -3363,6 +3539,7 @@ export async function open(opts) {
   }
   _setCookbookOpening(true);
   try {
+  const _openGeneration = ++_cookbookOpenGeneration;
   // Invalidate any pending close() animation handlers so they won't re-hide us
   _closeGen++;
   // Clear any leftover inline styles from a previous swipe-dismiss or close animation
@@ -3382,47 +3559,45 @@ export async function open(opts) {
     restoreFn: () => { _renderRunningTab(); },
   });
   _wireCookbookDrag(modal);
-  await _syncFromServer();
-  // `_syncFromServer` lives in cookbookRunning.js and populates *its* _envState
-  // (a different object reference than this module's), then mirrors the merged
-  // state to localStorage. So ALWAYS hydrate our _envState from that mirror —
-  // on a successful sync it holds the freshly-fetched servers; on failure it
-  // holds the last-known state. Gating this on `!synced` left the render's
-  // _envState empty whenever sync succeeded → "servers don't show".
-  try { Object.assign(_envState, _readStoredEnvState()); } catch {}
-  // Honour a user-set default server: always land on it when Cookbook opens, so
-  // every dropdown (scan/download/serve/cache/deps) starts on the same machine.
-  if (_envState.defaultServer) {
-    const _dk = _envState.defaultServer;
-    if (_dk === 'local') {
-      _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
-    } else {
-      const _ds = (_envState.servers || []).find(s => s.host === _dk);
-      if (_ds) { _envState.remoteHost = _ds.host; _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
+  const _hydrateLocalCookbookState = () => {
+    // _syncFromServer() owns a separate state object and mirrors it to
+    // localStorage. Hydrating from that mirror keeps the first paint usable
+    // even when the network request is still pending.
+    try { Object.assign(_envState, _readStoredEnvState()); } catch {}
+    if (_envState.defaultServer) {
+      const _dk = _envState.defaultServer;
+      if (_dk === 'local') {
+        _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
+      } else {
+        const _ds = (_envState.servers || []).find(s => s.host === _dk);
+        if (_ds) { _envState.remoteHost = _ds.host; _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
+      }
     }
-  }
-  // Re-render on every open AFTER sync so the freshly-fetched state (servers,
-  // HF token, presets) is always reflected. Gating this to once-per-page used
-  // to freeze a stale/empty servers list whenever the first sync raced or
-  // returned before hydration — and since close/reopen doesn't reset the page,
-  // only a full reload recovered it. Re-rendering is cheap and the in-progress
-  // Running tab is rendered separately just below.
-  // Guard the render passes: a single broken task card must not throw out of
-  // open() and leave the modal stuck hidden (it has no catch, so the panel
-  // would silently never appear). Show the window regardless; log and move on.
-  try { _renderRecipes(); } catch (e) { console.error('[cookbook] renderRecipes failed', e); }
-  _rendered = true;
-  _clearCookbookNotif();
-  try { _renderRunningTab(); } catch (e) { console.error('[cookbook] renderRunningTab failed', e); }
-  // Self-heal: revive any download tasks whose tmux session is still alive
-  // but were persisted as done/error (covers the "restarted server while a
-  // big multi-shard download was in flight" case — the task survived in
-  // tmux, the cookbook just lost track of it).
-  try { _selfHealStaleTasks({ oneShot: true }); } catch {}
+  };
+  const _renderCookbookShell = () => {
+    try { _renderRecipes(); } catch (e) { console.error('[cookbook] renderRecipes failed', e); }
+    _rendered = true;
+    _clearCookbookNotif();
+    try { _renderRunningTab(); } catch (e) { console.error('[cookbook] renderRunningTab failed', e); }
+  };
+  const _cookbookStateSignature = () => {
+    let presets = '', serveState = '', favorites = '';
+    try {
+      presets = localStorage.getItem(STORAGE_KEY) || '';
+      serveState = localStorage.getItem(SERVE_STATE_KEY) || '';
+      favorites = localStorage.getItem(SERVE_FAVORITES_KEY) || '';
+    } catch {}
+    return JSON.stringify([_envStateForStorage(), presets, serveState, favorites]);
+  };
+
+  // Paint immediately from the last known state. The authoritative state sync
+  // continues below and reconciles the shell after it completes.
+  _hydrateLocalCookbookState();
+  _renderCookbookShell();
+  const _initialStateSignature = _cookbookStateSignature();
+  const _stateSync = _syncFromServer();
+
   if (_content) {
-    // Put the panel in its entering state before it becomes visible. On
-    // mobile, showing first and adding the class a frame later can paint the
-    // sheet at its final position, which makes the slide-up look like a snap.
     _content.classList.add('cookbook-modal-entering');
   }
   modal.classList.remove('hidden');
@@ -3433,6 +3608,34 @@ export async function open(opts) {
     }, { once: true });
   }
   setTimeout(_applyIntent, 0);
+
+  // Reconcile once the server responds, but never replace a form while the
+  // user is actively typing in it. Running/Serve have their own state-sync
+  // listeners; the full shell refresh handles server/settings changes in the
+  // other tabs when no field is being edited.
+  _stateSync.then((synced) => {
+    if (!synced || modal.classList.contains('hidden') || _openGeneration !== _cookbookOpenGeneration) return;
+    const activeTab = modal.querySelector('.cookbook-tab.active')?.dataset?.backend || '';
+    const active = document.activeElement;
+    if (active?.closest?.('.cookbook-settings-stack, input, textarea, select, [contenteditable="true"]')) return;
+    _hydrateLocalCookbookState();
+    if (_cookbookStateSignature() === _initialStateSignature) return;
+    // _syncFromServer dispatches cookbook:state-synced before its promise
+    // resolves; that listener already performs the targeted Running/Serve
+    // refresh. Avoid rendering those tabs a second time here.
+    if (activeTab === 'Running' || activeTab === 'Serve') return;
+    _renderCookbookShell();
+    const tab = modal.querySelector(`.cookbook-tab[data-backend="${CSS.escape(activeTab)}"]`);
+    if (tab && !tab.classList.contains('active')) tab.click();
+    setTimeout(_applyIntent, 0);
+  }).catch((e) => console.warn('[cookbook] background state sync failed', e));
+
+  _rendered = true;
+  // Self-heal: revive any download tasks whose tmux session is still alive
+  // but were persisted as done/error (covers the "restarted server while a
+  // big multi-shard download was in flight" case — the task survived in
+  // tmux, the cookbook just lost track of it).
+  try { _selfHealStaleTasks({ oneShot: true }); } catch {}
   } finally {
     _setCookbookOpening(false);
   }
@@ -3460,6 +3663,11 @@ function _wireCookbookDrag(modal) {
 }
 
 function _doClose() {
+  _dependenciesFetchId++;
+  _dependenciesRequestController?.abort();
+  _dependenciesRequestController = null;
+  _cancelHwfitRequests();
+  _cancelCachedModelScan();
   const modal = document.getElementById('cookbook-modal');
   if (!modal) return;
   const content = modal.querySelector('.modal-content');

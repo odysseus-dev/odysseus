@@ -6,8 +6,14 @@ FP8 safetensors repos — must be filtered out on Windows so the Cookbook does
 not recommend models the user cannot actually serve.
 """
 
+import pytest
+
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
+from tests.hwfit_publication_fixtures import publication_catalog  # noqa: F401
+
+# Rank authored inputs rather than publication catalog snapshots.
+pytestmark = pytest.mark.usefixtures("publication_catalog")
 
 
 def _windows_system(ram_gb=32.0, vram_gb=16.0):
@@ -49,7 +55,7 @@ def test_only_gguf_models_recommended_on_windows():
 
 def test_safetensors_models_still_recommended_on_cuda():
     """Regression guard: the GGUF-only rule must not leak onto CUDA."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 
@@ -63,7 +69,7 @@ def test_awq_model_hidden_on_windows():
 def test_awq_model_visible_on_cuda():
     """The same AWQ model should still be visible on CUDA where vLLM can
     serve it."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="Qwen/Qwen2.5-3B-Instruct-AWQ", limit=10)}
     assert "Qwen/Qwen2.5-3B-Instruct-AWQ" in names
 
 

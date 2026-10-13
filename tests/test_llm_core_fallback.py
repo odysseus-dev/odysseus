@@ -136,6 +136,28 @@ def test_done_only_primary_invokes_fallback(monkeypatch):
     assert fallback_idx < model_idx < answer_idx
 
 
+def test_fallback_discards_failed_candidate_response_reference(monkeypatch):
+    def per_model(model):
+        if model == "primary":
+            return [
+                'data: {"type": "model_response_ref", "response_id": "response-primary"}\n\n',
+                "data: [DONE]\n\n",
+            ]
+        return [
+            'data: {"type": "model_response_ref", "response_id": "response-backup"}\n\n',
+            'data: {"delta": "backup answer"}\n\n',
+            "data: [DONE]\n\n",
+        ]
+
+    chunks = _run_fallback(monkeypatch, per_model)
+
+    assert not any("response-primary" in chunk for chunk in chunks)
+    reference_idx = next(i for i, chunk in enumerate(chunks) if "response-backup" in chunk)
+    fallback_idx = next(i for i, chunk in enumerate(chunks) if '"type": "fallback"' in chunk)
+    answer_idx = next(i for i, chunk in enumerate(chunks) if '"delta": "backup answer"' in chunk)
+    assert fallback_idx < reference_idx < answer_idx
+
+
 def test_usage_then_done_primary_invokes_fallback_and_discards_usage(monkeypatch):
     calls = []
 
@@ -1029,6 +1051,125 @@ def test_degenerate_stream_error_is_not_availability_evidence():
     assert json.loads(chunk.split("data: ", 1)[1])["fallback_eligible"] is False
 
 
+def test_degenerate_stream_guard_allows_repeated_structured_properties():
+    guard = llm_core._DegenerateStreamGuard("structured-output-model")
+    css = "\n".join(
+        f".line-{index} {{ stroke: #00933c; stroke-width: 8; fill: none; }}"
+        for index in range(1, 21)
+    )
+
+    assert guard.check(css) is None
+
+
+def test_degenerate_stream_guard_still_stops_a_multiword_phrase_loop():
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+
+    chunk = guard.check("also be a software developer mode " * 30)
+
+    assert chunk is not None
+    assert "repeated" in chunk
+
+
+def test_degenerate_stream_guard_stops_an_exact_long_block_loop():
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+    block = " ".join(f"memory_item_{index}" for index in range(40)) + " "
+
+    assert guard.check(block) is None
+    chunk = guard.check(block)
+
+    assert chunk is not None
+    assert "exact 40-token block" in chunk
+
+
+def test_degenerate_stream_guard_allows_long_rows_with_changing_values():
+    guard = llm_core._DegenerateStreamGuard("structured-output-model")
+    rows = " ".join(
+        f"record field alpha beta gamma delta epsilon value_{index}"
+        for index in range(80)
+    )
+
+    assert guard.check(rows) is None
+
+
+def test_terminal_stream_retries_degenerate_generation_before_emitting(monkeypatch):
+    calls = 0
+    requests = []
+
+    async def fake_stream(_url, _model, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        requests.append(messages)
+        if calls == 1:
+            yield 'data: {"delta": "repeated partial"}\n\n'
+            yield (
+                'event: error\ndata: {"status": 502, "error": '
+                '"Stopped generation: model started repeating tokens"}\n\n'
+            )
+            return
+        yield 'data: {"delta": "recovered"}\n\n'
+        yield 'data: [DONE]\n\n'
+
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+
+    async def run():
+        return [
+            chunk
+            async for chunk in llm_core._stream_candidate_with_context_recovery(
+                "https://model.invalid/v1",
+                "policy-model",
+                [{"role": "user", "content": "work"}],
+                headers={},
+                kwargs={},
+                retry_degenerate_stream_once=True,
+            )
+        ]
+
+    chunks = asyncio.run(run())
+
+    assert calls == 2
+    assert len(requests[0]) == 1
+    assert "previous generation entered a repetition loop" in requests[1][-1]["content"]
+    assert not any("repeated partial" in chunk for chunk in chunks)
+    assert any("recovered" in chunk for chunk in chunks)
+    assert not any(chunk.startswith("event: error") for chunk in chunks)
+
+
+def test_single_route_retries_transient_precontent_failure(monkeypatch):
+    calls = 0
+
+    async def no_wait(_delay):
+        return None
+
+    async def fake_stream(_url, _model, _messages, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield 'event: error\ndata: {"status": 503, "error": "temporarily unreachable"}\n\n'
+            return
+        yield 'data: {"delta": "recovered"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+    monkeypatch.setattr(llm_core.asyncio, "sleep", no_wait)
+
+    async def run():
+        return [
+            chunk
+            async for chunk in llm_core.stream_llm_with_fallback(
+                [("https://model.invalid/v1", "policy-model", {})],
+                [{"role": "user", "content": "work"}],
+                fallback_statuses={502, 503, 504},
+                fallback_on_empty=False,
+            )
+        ]
+
+    chunks = asyncio.run(run())
+
+    assert calls == 2
+    assert any("recovered" in chunk for chunk in chunks)
+    assert not any(chunk.startswith("event: error") for chunk in chunks)
+
+
 @pytest.mark.parametrize(
     ("error", "expected_status"),
     [
@@ -1491,3 +1632,52 @@ def test_summarize_stream_error():
     assert "400" in llm_core._summarize_stream_error('event: error\ndata: {"status": 400, "text": "nope"}\n\n')
     assert llm_core._summarize_stream_error(None) == "primary model failed"
     assert llm_core._summarize_stream_error("garbage") == "primary model failed"
+
+
+def test_native_tool_rejection_rebuilds_and_retries_same_candidate(monkeypatch):
+    requests = []
+    recoveries = []
+
+    async def fake_stream(url, model, messages, **kwargs):
+        requests.append({"messages": messages, "tools": kwargs.get("tools")})
+        if len(requests) == 1:
+            yield (
+                'event: error\ndata: {"status": 400, "text": '
+                '"\\\"auto\\\" tool choice requires --enable-auto-tool-choice '
+                'and --tool-call-parser to be set"}\n\n'
+            )
+            return
+        yield 'data: {"delta": "```bash\\nprintf ok\\n```"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    async def recover(index, url, model, headers, error_chunk):
+        recoveries.append((index, url, model, error_chunk))
+        return {
+            "messages": [{"role": "system", "content": "Use fenced tools."}],
+            "kwargs": {"tools": None},
+        }
+
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+
+    async def run():
+        return [
+            chunk
+            async for chunk in llm_core.stream_llm_with_fallback(
+                [("http://local.example/v1", "qwen3", {})],
+                [{"role": "user", "content": "act"}],
+                tools=[{"type": "function", "function": {"name": "bash"}}],
+                candidate_capability_recovery_factory=recover,
+            )
+        ]
+
+    chunks = asyncio.run(run())
+
+    assert len(recoveries) == 1
+    assert len(requests) == 2
+    assert requests[0]["tools"]
+    assert requests[1] == {
+        "messages": [{"role": "system", "content": "Use fenced tools."}],
+        "tools": None,
+    }
+    assert not any(chunk.startswith("event: error") for chunk in chunks)
+    assert any("```bash" in chunk for chunk in chunks)

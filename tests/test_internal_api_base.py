@@ -15,8 +15,8 @@ def _base(monkeypatch, **env):
     return cc.internal_api_base()
 
 
-def test_default_is_legacy_7000(monkeypatch):
-    assert _base(monkeypatch) == "http://127.0.0.1:7000"
+def test_default_matches_app_bind_port(monkeypatch):
+    assert _base(monkeypatch) == "http://127.0.0.1:7011"
 
 
 def test_app_port_is_honored(monkeypatch):

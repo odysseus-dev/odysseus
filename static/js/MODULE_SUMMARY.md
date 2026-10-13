@@ -137,7 +137,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | Module | Responsibility |
 |---|---|
 | **`gallery.js`** / **`galleryEditor.js`** | Gallery/image library and canvas editor entry points. |
-| **`emailInbox.js`** / **`emailLibrary.js`** | Email inbox reader and library modal. Sub-modules handle signatures, reply recipients, state, and signature folding. |
+| **`emailInbox.js`** / **`emailLibrary/`** | Email inbox reader and library modal. `emailLibrary.js` is a re-export wrapper; `emailLibrary/index.js` owns the panel, list and cards, with `settingsPage.js`, `unsubscribe.js`, `reader.js`, `menus.js`, `bodyRender.js`, `attachments.js` and `aiReply.js` alongside it plus the `utils.js` / `signatureFold.js` / `replyRecipients.js` / `state.js` leaves. |
 | **`calendar.js`** / **`calendar/utils.js`** / **`calendar/reminders.js`** | Calendar views, event forms, reminders. |
 | **`tasks.js`** | Scheduled task/recurring LLM job UI. |
 | **`notes.js`** | Notes and todo panel, reminders, pinboard. |

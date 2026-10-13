@@ -132,6 +132,7 @@ DEFAULT_SETTINGS = {
     # `compute_input_token_budget`.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
+    "auto_compact_threshold_percent": 85,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
@@ -145,6 +146,7 @@ DEFAULT_SETTINGS = {
     # Email replies use email_writing_style instead because greetings,
     # signatures, and mailbox identity rules are medium-specific.
     "document_writing_style": "",
+    "email_writing_style": "",
     # Legacy ordered fallback chain for the default chat model. Values remain
     # stored for compatibility and rollback reference, but model routing no
     # longer reads this key.
@@ -158,6 +160,10 @@ DEFAULT_SETTINGS = {
     # Ordered fallback chain for the Utility model (summarization, naming,
     # tidy actions, etc.).
     "utility_model_fallbacks": [],
+    # Opt-in reasoning effort for utility/background LLM calls. Empty keeps the
+    # provider default; a value is sent only to utility-chain candidates whose
+    # model advertises that level.
+    "utility_reasoning_effort": "",
     "teacher_model": "",
     "teacher_enabled": False,
     "teacher_tier2_enabled": False,
@@ -195,7 +201,6 @@ DEFAULT_SETTINGS = {
     # Keyboard shortcuts (action: key combination)
     "keybinds": {
         "search": "ctrl+k",
-        "toggle_sidebar": "ctrl+b",
         "new_session": "ctrl+alt+n",
         "star_session": "ctrl+alt+s",
         "delete_session": "ctrl+alt+d",
@@ -289,6 +294,7 @@ _PER_USER_KEYS = {
     # got injected into the chat composer on first open.
     "default_endpoint_id", "default_model",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
+    "utility_reasoning_effort",
     "research_endpoint_id", "research_model",
 }
 

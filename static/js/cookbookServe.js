@@ -4,11 +4,16 @@
 // command building, preset slots, launch logic
 // ============================================
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { modelColor } from './chatRenderer.js';
-import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { modelColor } from './chatRenderer.js?v=20260914metricssummary1';
+import {
+  bindMenuDismiss,
+  dismissOrRemove,
+  bindExpandedCardDismiss,
+  unbindExpandedCardDismiss,
+} from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
 import { topPortalZ } from './toolWindowZOrder.js';
@@ -41,6 +46,21 @@ let _launchServeTask;
 let _retryDownload;
 let _nextAvailablePort;
 
+function _fetchCookbookWithTimeout(input, init = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = init.signal;
+  const abortFromParent = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) controller.abort();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  });
+}
+
 // Storage keys
 const SERVE_STATE_KEY = 'cookbook-serve-state';
 const SERVE_FAVORITES_KEY = 'cookbook-serve-favorite-models';
@@ -48,6 +68,15 @@ const SERVE_FAVORITES_KEY = 'cookbook-serve-favorite-models';
 let _cachedAllModels = [];
 const _CACHED_MODELS_SCAN_KEY = 'cookbook_cached_models_scan_v3_ltx_video';
 const _CACHED_MODELS_SCAN_TTL = 6 * 3600 * 1000;
+let _cachedModelsFetchId = 0;
+let _cachedModelsRequestController = null;
+
+function _syncServeStats() {
+  const stats = document.getElementById('serve-stats');
+  if (!stats) return;
+  const count = _cachedAllModels.length;
+  stats.textContent = `${count} model${count === 1 ? '' : 's'}`;
+}
 
 function _normalizeCookbookModelDir(dir) {
   const d = String(dir || '').replaceAll('✕', '').replaceAll('✖', '').trim();
@@ -833,7 +862,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
     if (target.venv) params.set('venv', target.venv);
   }
   if (repo) params.set('model_hint', repo);
-  const res = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''), { credentials: 'same-origin' });
+  const res = await _fetchCookbookWithTimeout('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''), { credentials: 'same-origin' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   const pkg = (data.packages || []).find(p => p.name === packageName);
@@ -860,7 +889,7 @@ function _filterCachedList() {
   const list = document.getElementById('hwfit-cached-list');
   const tagContainer = document.getElementById('serve-tags');
   if (!list) return;
-  const activeTag = tagContainer?.querySelector('.memory-cat-chip.active')?.dataset.serveTag || '';
+  const activeTag = tagContainer?.querySelector('[data-serve-tag].active')?.dataset.serveTag || '';
   const searchVal = (document.getElementById('serve-search')?.value || '').toLowerCase().trim();
   const isFamily = activeTag.startsWith('fam:');
   const familyVal = isFamily ? activeTag.slice(4) : '';
@@ -1105,7 +1134,7 @@ function _rerenderCachedModels() {
   const allModels = _cachedAllModels;
   const _h = (text) => `<span class="hwfit-hint" title="${text}">?</span>`;
 
-  const activeTag = tagContainer?.querySelector('.memory-cat-chip.active')?.dataset.serveTag || '';
+  const activeTag = tagContainer?.querySelector('[data-serve-tag].active')?.dataset.serveTag || '';
   const searchVal = (document.getElementById('serve-search')?.value || '').toLowerCase().trim();
 
   const sortVal = document.getElementById('serve-sort')?.value || 'name';
@@ -1148,21 +1177,24 @@ function _rerenderCachedModels() {
     html += `<div class="doclib-card memory-item${_isFavorite ? ' memory-pinned cookbook-serve-favorite-model' : ''}" data-repo="${esc(m.repo_id)}" data-tag="${m._tag || ''}" data-family="${m._family || ''}" style="cursor:pointer;">`;
     html += `<span class="serve-select-cb memory-select-dot" style="display:${isSelectMode ? 'inline-block' : 'none'};cursor:pointer;"></span>`;
     html += `<div style="flex:1;min-width:0;">`;
-    const _mc = modelColor(m.repo_id) || '';
+    // Keep a provider family visually consistent across its variants. Unknown
+    // local models retain their own stable color so they remain distinguishable.
+    const _mc = modelColor(m._family || m.repo_id) || '';
     const _runningPill = _isActivelyServing(m.repo_id)
       ? ` <span class="cookbook-serve-running-pill is-clickable" title="This model is currently being served — click to open in Running" data-repo="${esc(m.repo_id)}" role="button" tabindex="0">running</span>`
       : '';
     const _downloadingPill = _isDownloading
       ? ` <span class="cookbook-serve-downloading-pill${_isDlActive ? '' : ' is-stalled'}" title="${_isDlActive ? 'Download in progress' : 'Download stalled — retry to resume'}">${_isDlActive ? 'downloading' : 'stalled'}</span>`
       : '';
-    const _favoritePill = _isFavorite ? ' <span class="memory-cat-badge memory-cat-pinned cookbook-serve-fav-badge">pinned</span>' : '';
-    html += `<div class="memory-item-title cookbook-serve-title"${_mc ? ` style="color:${_mc}"` : ''}><span class="cookbook-serve-title-name">${modelLogo(m.repo_id)}${esc(shortName)}</span>${_favoritePill}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}${_downloadingPill}</div>`;
+    const _favoritePill = _isFavorite ? ' <span class="memory-cat-badge memory-cat-pinned cookbook-serve-fav-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>' : '';
+    html += `<div class="memory-item-title cookbook-serve-title"${_mc ? ` style="color:${_mc}"` : ''}><span class="cookbook-serve-title-name">${modelLogo(m.repo_id)}${esc(shortName)}</span>${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_favoritePill}${_runningPill}${_downloadingPill}</div>`;
     html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>`;
     html += `</div>`;
     const _bk = _detectBackend(m).backend;
     const _bkIco = _bk === 'llamacpp' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 3C5.5 5 5 8 5 11v7c0 1.5 1 3 3 3h1v-4h6v4h1c2 0 3-1.5 3-3v-7c0-3-.5-6-2-8l-1 3c-.5-2-1.5-4-3-5-.5 2-1 3-1.5 3S11 3.5 10.5 2L7 3z" fill="currentColor"/><circle cx="9" cy="11" r="1.5" fill="var(--bg,#1a1a2e)"/><circle cx="15" cy="11" r="1.5" fill="var(--bg,#1a1a2e)"/></svg>'
       : _bk === 'diffusers' ? '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zM6 9c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm6 4c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm4-8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" fill="currentColor"/></svg>'
       : '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 4l8 16 8-16h-4l-4 8-4-8z" fill="currentColor"/></svg>';
+    html += `<span class="doclib-card-chevron" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>`;
     html += `<span class="cookbook-card-backend" data-detected="${_bk}">${_bkIco}</span>`;
     html += `<div class="memory-item-actions"><button type="button" class="memory-item-btn hwfit-cached-menu-btn" title="Actions" aria-label="Model actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button></div>`;
     html += `</div>`;
@@ -1172,9 +1204,9 @@ function _rerenderCachedModels() {
 
   // Wire tag chips
   if (tagContainer) {
-    tagContainer.querySelectorAll('.memory-cat-chip').forEach(chip => {
+    tagContainer.querySelectorAll('[data-serve-tag]').forEach(chip => {
       chip.addEventListener('click', () => {
-        tagContainer.querySelectorAll('.memory-cat-chip').forEach(c => c.classList.remove('active'));
+        tagContainer.querySelectorAll('[data-serve-tag]').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         _filterCachedList();
       });
@@ -1187,13 +1219,21 @@ function _rerenderCachedModels() {
     const menuBtn = item.querySelector('.hwfit-cached-menu-btn');
     if (!menuBtn || item.dataset.lpWired === '1') return;
     item.dataset.lpWired = '1';
-    let _t = null;
     let _y = 0;
-    const _cancel = () => { if (_t) { clearTimeout(_t); _t = null; } };
+    const _cancel = () => {
+      if (item._longPressTimer) {
+        clearTimeout(item._longPressTimer);
+        item._longPressTimer = null;
+      }
+    };
     item.addEventListener('touchstart', (e) => {
       if (e.target.closest('button, a, input, textarea, .hwfit-cached-dropdown')) return;
       _y = e.touches?.[0]?.clientY ?? 0;
-      _t = setTimeout(() => { _t = null; try { menuBtn.click(); } catch {} }, 500);
+      _cancel();
+      item._longPressTimer = setTimeout(() => {
+        item._longPressTimer = null;
+        try { menuBtn.click(); } catch {}
+      }, 500);
     }, { passive: true });
     item.addEventListener('touchmove', (e) => {
       const y = e.touches?.[0]?.clientY ?? 0;
@@ -1357,9 +1397,11 @@ function _rerenderCachedModels() {
 
       // Toggle — close if already open
       if (item.classList.contains('doclib-card-expanded')) {
+        unbindExpandedCardDismiss(item);
         const existingPanel = item.querySelector('.hwfit-serve-panel');
-        existingPanel?._cleanupRuntimeReadiness?.();
+        existingPanel?._cleanupServePanel?.();
         existingPanel?.remove();
+        item.querySelector('.doclib-card-collapse-chevron')?.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';
         item.style.alignItems = '';
@@ -1371,9 +1413,11 @@ function _rerenderCachedModels() {
 
       // Collapse any other expanded
       list.querySelectorAll('.doclib-card-expanded').forEach(c => {
+        unbindExpandedCardDismiss(c);
         const openPanel = c.querySelector('.hwfit-serve-panel');
-        openPanel?._cleanupRuntimeReadiness?.();
+        openPanel?._cleanupServePanel?.();
         openPanel?.remove();
+        c.querySelector('.doclib-card-collapse-chevron')?.remove();
         c.classList.remove('doclib-card-expanded');
         c.style.flexDirection = '';
         c.style.alignItems = '';
@@ -1454,10 +1498,9 @@ function _rerenderCachedModels() {
       const _ggufOptions = _ggufChoices.map(f =>
         `<option value="${esc(f.rel_path)}"${f.rel_path === _defaultGguf ? ' selected' : ''}>${esc(_ggufFileLabel(f))}</option>`
       ).join('');
-      const _minimaxM3Snapshot = '/home/pewds/.cache/huggingface/hub/models--cyankiwi--MiniMax-M3-AWQ-INT4/snapshots/4082acbbec1236d21828d55b6bb0fe02ade4ab5b';
-      const _defaultServeModel = _isMiniMaxM3 ? _minimaxM3Snapshot : (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
+      const _defaultServeModel = (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
       const _savedModelPath = String(svm('model_path', _defaultServeModel) || '').trim();
-      const _modelPathValue = _isMiniMaxM3 && (!_savedModelPath || _savedModelPath === repo) ? _minimaxM3Snapshot : _savedModelPath;
+      const _modelPathValue = _savedModelPath || _defaultServeModel;
       const _defaultServedModelName = _isMiniMaxM3 ? repo : '';
       // Build save slots
       const _allPresets = _loadPresets();
@@ -1815,7 +1858,7 @@ function _rerenderCachedModels() {
       // creates a ScheduledTask (action=cookbook_serve), so the schedule
       // ends up in the existing Tasks UI for edit/delete/pause.
       panelHtml += `<span class="hwfit-serve-launch-group">`;
-      panelHtml += `<button class="cookbook-btn hwfit-serve-launch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Launch</button>`;
+      panelHtml += `<button class="cookbook-btn hwfit-serve-launch"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:4px;flex-shrink:0;"><path d="M12 22c4.4 0 8-3.1 8-7.2 0-3.8-2.5-6.8-5.3-9.8.1 2.2-.5 3.8-1.8 5.2.1-3.5-1.2-6.1-3-8.2.1 4-5.9 7.4-5.9 12.8C4 18.9 7.6 22 12 22Z"></path></svg>Launch</button>`;
       // Chevron points DOWN because the schedule form opens beneath the
       // panel — the arrow signals the direction of motion, not menu state.
       panelHtml += `<button class="cookbook-btn hwfit-serve-schedule-arrow" type="button" aria-haspopup="menu" aria-label="More launch actions" title="More launch actions"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>`;
@@ -1824,8 +1867,23 @@ function _rerenderCachedModels() {
       panelHtml += `</div>`;
 
       item.classList.add('doclib-card-expanded');
+      bindExpandedCardDismiss(item, () => {
+        unbindExpandedCardDismiss(item);
+        const openPanel = item.querySelector('.hwfit-serve-panel');
+        openPanel?._cleanupServePanel?.();
+        openPanel?.remove();
+        item.querySelector('.doclib-card-collapse-chevron')?.remove();
+        item.classList.remove('doclib-card-expanded');
+        item.style.flexDirection = '';
+        item.style.alignItems = '';
+        item.style.maxHeight = '';
+        list.style.minHeight = '';
+        list.style.maxHeight = '';
+      });
       item.style.flexDirection = 'column';
       item.style.alignItems = 'stretch';
+      item.querySelector('.doclib-card-collapse-chevron')?.remove();
+      item.querySelector('.cookbook-serve-title')?.insertAdjacentHTML('beforeend', '<button type="button" class="doclib-card-collapse-chevron" aria-label="Collapse launch configuration" title="Collapse launch configuration"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 15 12 9 18 15"/></svg></button>');
       item.insertAdjacentHTML('beforeend', panelHtml);
       const panel = item.querySelector('.hwfit-serve-panel');
       // Scroll the serve panel into view within its nearest scrollable ancestor
@@ -1990,7 +2048,7 @@ function _rerenderCachedModels() {
           const _sp = (_serverByVal?.(target.serverKey || host) || (_es.servers || []).find(s => s.host === host) || {}).port;
           if (_sp) params.set('ssh_port', _sp);
         }
-        const res = await fetch(`/api/hwfit/profiles?${params}`);
+        const res = await _fetchCookbookWithTimeout(`/api/hwfit/profiles?${params}`, {}, 30000);
         const data = await res.json();
         const ctxMax = Number(data && data.model_ctx_max) || 0;
         const weightsGb = Number(data && data.model_weights_gb) || 0;
@@ -2091,9 +2149,12 @@ function _rerenderCachedModels() {
       // RAM-spillover, with a plain-language health/speed hint. Lets you tell at
       // a glance whether the chosen config fits VRAM (fast) or is paging into
       // system RAM over PCIe (slow). AMD sysfs reports gtt_used_mb for spillover.
+      let _vramMonitorInFlight = false;
       async function _refreshVramMonitor() {
         const el = panel.querySelector('.hwfit-vram-readout');
         if (!el || !document.body.contains(el)) return false;  // panel closed → stop
+        if (_vramMonitorInFlight) return true;
+        _vramMonitorInFlight = true;
         try {
           const host = (_es.remoteHost || '').trim();
           const params = new URLSearchParams();
@@ -2102,7 +2163,8 @@ function _rerenderCachedModels() {
             const _sp = (_es.servers || []).find(s => s.host === host)?.port;
             if (_sp) params.set('ssh_port', _sp);
           }
-          const res = await fetch('/api/cookbook/gpus' + (params.toString() ? '?' + params : ''));
+          const res = await _fetchCookbookWithTimeout('/api/cookbook/gpus' + (params.toString() ? '?' + params : ''), {}, 10000);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           const gpus = Array.isArray(data) ? data : (data.gpus || []);
           if (!gpus.length) { el.textContent = 'no GPU detected'; el.style.color = ''; return true; }
@@ -2131,6 +2193,8 @@ function _rerenderCachedModels() {
           el.textContent = 'unavailable';
           el.style.color = '';
           return true;
+        } finally {
+          _vramMonitorInFlight = false;
         }
       }
       _refreshVramMonitor();
@@ -2146,11 +2210,11 @@ function _rerenderCachedModels() {
       // custom picker so the dropdown lists "[V] vLLM", "[⚡] SGLang", etc.
       const _BACKEND_GLYPHS = {
         vllm:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
-        sglang: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+        sglang: '',
         mlx: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"/><path d="M16 6v12"/><path d="M20 6v12"/></svg>',
         mlx_image: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="M21 15l-5-5L5 20"/><path d="M17.5 4v4M15.5 6h4"/></svg>',
         llamacpp: '<svg width="14" height="14" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"/><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"/></svg>',
-        ollama: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;"></span>',
+        ollama: '',
         diffusers: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
       };
 
@@ -2163,13 +2227,14 @@ function _rerenderCachedModels() {
       const _backendMenu = panel.querySelector('[data-backend-menu]');
       const _backendBtnLabel = panel.querySelector('[data-backend-label]');
       const _backendBtnIconSlot = _backendBtn?.querySelector('[data-backend-icon-slot]');
+      let _cleanupBackendDismiss = () => {};
 
       function _setBackendBtnState(v) {
         if (!_backendBtn) return;
         const opt = _backendSource?.querySelector(`option[value="${CSS.escape(v)}"]`);
         const label = opt ? opt.textContent : v;
         if (_backendBtnLabel) _backendBtnLabel.textContent = label;
-        if (_backendBtnIconSlot) _backendBtnIconSlot.innerHTML = _BACKEND_GLYPHS[v] || _BACKEND_GLYPHS.vllm;
+        if (_backendBtnIconSlot) _backendBtnIconSlot.innerHTML = _BACKEND_GLYPHS[v] ?? _BACKEND_GLYPHS.vllm;
       }
 
       function _renderBackendMenu() {
@@ -2177,7 +2242,7 @@ function _rerenderCachedModels() {
         const items = Array.from(_backendSource.options).map(o => ({ value: o.value, label: o.textContent }));
         _backendMenu.innerHTML = items.map(it => `
           <button type="button" role="option" class="hwfit-backend-item" data-value="${it.value}" style="all:unset;display:flex;align-items:center;gap:8px;width:100%;padding:6px 9px;border-radius:5px;font-size:12px;cursor:pointer;color:var(--fg);box-sizing:border-box;">
-            <span class="hwfit-backend-item-icon" style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--accent, var(--red));flex-shrink:0;">${_BACKEND_GLYPHS[it.value] || _BACKEND_GLYPHS.vllm}</span>
+            <span class="hwfit-backend-item-icon" style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--accent, var(--red));flex-shrink:0;">${_BACKEND_GLYPHS[it.value] ?? _BACKEND_GLYPHS.vllm}</span>
             <span class="hwfit-backend-item-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.label}</span>
           </button>
         `).join('');
@@ -2216,15 +2281,21 @@ function _rerenderCachedModels() {
           if (_backendMenu.hidden) _openBackendMenu();
           else _closeBackendMenu();
         });
-        document.addEventListener('click', (ev) => {
+        const _onBackendOutsideClick = (ev) => {
           if (!_backendMenu.hidden && !_backendPicker?.contains(ev.target)) _closeBackendMenu();
-        });
-        document.addEventListener('keydown', (ev) => {
+        };
+        const _onBackendEscape = (ev) => {
           if (ev.key === 'Escape' && !_backendMenu.hidden) {
             ev.stopPropagation();
             _closeBackendMenu();
           }
-        }, { capture: true });
+        };
+        document.addEventListener('click', _onBackendOutsideClick);
+        document.addEventListener('keydown', _onBackendEscape, { capture: true });
+        _cleanupBackendDismiss = () => {
+          document.removeEventListener('click', _onBackendOutsideClick);
+          document.removeEventListener('keydown', _onBackendEscape, { capture: true });
+        };
       }
       _renderBackendMenu();
       _setBackendBtnState(_backendSource?.value || defaultBackend);
@@ -2556,7 +2627,7 @@ function _rerenderCachedModels() {
           if (p.favorite) {
             const badge = document.createElement('span');
             badge.className = 'memory-cat-badge memory-cat-pinned cookbook-saved-fav-badge';
-            badge.textContent = 'pinned';
+            badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
             it.appendChild(badge);
           }
           if (p.confirmedWorking) {
@@ -2823,10 +2894,23 @@ function _rerenderCachedModels() {
             panel._gpuProbe.popup.remove();
             panel._gpuProbe.popup = null;
           }
+          // The outside-click listener is installed on the next tick so the
+          // opening click cannot immediately dismiss the popup. Keep its
+          // cleanup with the popup; otherwise every open/close cycle leaves a
+          // document listener behind.
+          if (panel._gpuProbe.outsideAttachTimer) {
+            clearTimeout(panel._gpuProbe.outsideAttachTimer);
+            panel._gpuProbe.outsideAttachTimer = null;
+          }
+          if (panel._gpuProbe.outsideHandler) {
+            document.removeEventListener('mousedown', panel._gpuProbe.outsideHandler, true);
+            panel._gpuProbe.outsideHandler = null;
+          }
         };
+        panel._closeProbePopup = _closeProbePopup;
 
         const _doKill = async (pid, sig, hostVal) => {
-          const res = await fetch('/api/cookbook/kill-pid', {
+          const res = await _fetchCookbookWithTimeout('/api/cookbook/kill-pid', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pid, signal: sig, host: hostVal || null }),
@@ -2915,13 +2999,14 @@ function _rerenderCachedModels() {
           });
 
           // Click outside closes the popup
-          setTimeout(() => {
+          panel._gpuProbe.outsideAttachTimer = setTimeout(() => {
+            panel._gpuProbe.outsideAttachTimer = null;
             const outside = (ev) => {
               if (!popup.contains(ev.target) && ev.target !== anchorBtn) {
                 _closeProbePopup();
-                document.removeEventListener('mousedown', outside, true);
               }
             };
+            panel._gpuProbe.outsideHandler = outside;
             document.addEventListener('mousedown', outside, true);
           }, 0);
         };
@@ -2933,7 +3018,7 @@ function _rerenderCachedModels() {
           const params = new URLSearchParams();
           if (remoteHost) params.set('host', remoteHost);
           const url = '/api/cookbook/gpus' + (params.toString() ? '?' + params.toString() : '');
-          const res = await fetch(url, { credentials: 'same-origin' });
+          const res = await _fetchCookbookWithTimeout(url, { credentials: 'same-origin' }, 10000);
           let data;
           try { data = await res.json(); } catch (_) { data = {}; }
           if (!res.ok) {
@@ -3049,7 +3134,7 @@ function _rerenderCachedModels() {
                 // First pass: SIGTERM
                 const hostVal = panel._gpuProbe.host;
                 const results = await Promise.all(pids.map(p =>
-                  fetch('/api/cookbook/kill-pid', {
+                  _fetchCookbookWithTimeout('/api/cookbook/kill-pid', {
                     method: 'POST', credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pid: p.pid, signal: 'TERM', host: hostVal || null }),
@@ -3073,7 +3158,7 @@ function _rerenderCachedModels() {
                 }
                 if (!await window.styledConfirm(`${survivors.length} process(es) survived SIGTERM:\n\n${survivors.map(p => p.pid + ' (' + p.name + ')').join(', ')}\n\nForce-kill with SIGKILL?`, { confirmText: 'SIGKILL', danger: true })) return;
                 const killResults = await Promise.all(survivors.map(p =>
-                  fetch('/api/cookbook/kill-pid', {
+                  _fetchCookbookWithTimeout('/api/cookbook/kill-pid', {
                     method: 'POST', credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pid: p.pid, signal: 'KILL', host: hostVal || null }),
@@ -3245,38 +3330,56 @@ function _rerenderCachedModels() {
       // tapping the row to toggle it shut). Mobile users wanted an explicit
       // "back out" affordance next to Launch.
       const _collapsePanel = () => {
-        panel._cleanupRuntimeReadiness?.();
-        panel.remove();
-        item.classList.remove('doclib-card-expanded');
-        item.style.flexDirection = '';
-        item.style.alignItems = '';
-        if (list) { list.style.minHeight = ''; list.style.maxHeight = ''; }
+        try {
+          panel._cleanupServePanel?.();
+        } catch (err) {
+          console.warn('Serve panel cleanup failed:', err);
+        } finally {
+          panel.remove();
+          item.querySelector('.doclib-card-collapse-chevron')?.remove();
+          item.classList.remove('doclib-card-expanded');
+          item.style.flexDirection = '';
+          item.style.alignItems = '';
+          item.style.maxHeight = '';
+          if (list) { list.style.minHeight = ''; list.style.maxHeight = ''; }
+        }
       };
       panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
         _collapsePanel();
       });
-      // Esc anywhere on the page closes the open serve panel. Skips when
-      // the user is typing in a field — they want Esc to deselect / blur
-      // those, not collapse the form they're configuring.
+      item.querySelector('.doclib-card-collapse-chevron')?.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        _collapsePanel();
+      });
+      // Esc anywhere on the page closes the open serve panel. This mirrors
+      // the global Cookbook handler and keeps the launch expansion easy to
+      // dismiss even when a form control currently has focus.
       const _onEscClose = (ev) => {
         if (ev.key !== 'Escape') return;
         if (!panel.isConnected) {
           document.removeEventListener('keydown', _onEscClose, true);
           return;
         }
-        const t = ev.target;
-        const inField = t && (
-          t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
-        );
-        if (inField) return;
         // Skip when one of the dropdown/menu popovers is open — the
         // popovers handle their own Esc and use stopPropagation, so any
         // Esc that bubbles here means nothing else claimed it.
         ev.stopPropagation();
         _collapsePanel();
       };
+      // Listen on the panel itself as well as the document. The panel-level
+      // capture listener runs before controls or nested menus can consume
+      // Escape, so the expanded launch card always has a reliable close path.
+      panel.addEventListener('keydown', _onEscClose, true);
       document.addEventListener('keydown', _onEscClose, true);
+      panel._cleanupServePanel = () => {
+        clearInterval(_vramTimer);
+        panel._closeProbePopup?.();
+        _cleanupBackendDismiss?.();
+        panel.removeEventListener('keydown', _onEscClose, true);
+        document.removeEventListener('keydown', _onEscClose, true);
+        panel._cleanupRuntimeReadiness?.();
+      };
 
       // Launch button
       panel.querySelector('.hwfit-serve-launch').addEventListener('click', async (ev) => {
@@ -3395,7 +3498,7 @@ function _rerenderCachedModels() {
                     if (_btn) {
                       _btn.click();
                     } else if (_runningMod._tmuxGracefulKill) {
-                      await fetch('/api/shell/exec', {
+                      await _fetchCookbookWithTimeout('/api/shell/exec', {
                         method: 'POST', credentials: 'same-origin',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ command: _runningMod._tmuxGracefulKill(t) }),
@@ -3455,7 +3558,7 @@ function _rerenderCachedModels() {
                 const _sp = (_serverByVal?.(launchTarget.serverKey || _gh) || {}).port;
                 if (_sp) _gp.set('ssh_port', _sp);
               }
-              const _gr = await fetch('/api/cookbook/gpus' + (_gp.toString() ? '?' + _gp : ''), { credentials: 'same-origin' });
+              const _gr = await _fetchCookbookWithTimeout('/api/cookbook/gpus' + (_gp.toString() ? '?' + _gp : ''), { credentials: 'same-origin' }, 10000);
               if (_gr.ok) {
                 const _gd = await _gr.json();
                 _hwGpus = Array.isArray(_gd) ? _gd : (_gd.gpus || []);
@@ -3567,7 +3670,7 @@ function _rerenderCachedModels() {
               _probeParams.set('host', _probeHost);
               if (launchTarget.port) _probeParams.set('ssh_port', launchTarget.port);
             }
-            const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
+            const _probeRes = await _fetchCookbookWithTimeout('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' }, 10000);
             const _probeData = await _probeRes.json();
             const _probeGpus = Array.isArray(_probeData) ? _probeData : (_probeData.gpus || []);
             if (!_probeGpus.length) {
@@ -3603,7 +3706,7 @@ function _rerenderCachedModels() {
             const _cmd = _portHost
               ? `ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_sshPrefix(launchTarget.port)}${_portHost} ${JSON.stringify(_checkInner)}`
               : _checkInner;
-            const _res = await fetch('/api/shell/exec', {
+            const _res = await _fetchCookbookWithTimeout('/api/shell/exec', {
               method: 'POST', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ command: _cmd }),
@@ -3863,7 +3966,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
     itemEl.appendChild(ov);
   }
   try {
-    const res = await fetch('/api/shell/exec', {
+    const res = await _fetchCookbookWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: cmd }),
@@ -3891,6 +3994,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
       if (itemEl.parentElement) itemEl.remove();
       // Drop from the in-memory list so a re-render/filter doesn't resurrect it.
       _cachedAllModels = _cachedAllModels.filter(x => x.repo_id !== repo);
+      _syncServeStats();
     }
   } catch (e) {
     uiModule.showError('Delete failed: ' + (e && e.message ? e.message : e));
@@ -4028,9 +4132,29 @@ export async function openServePanelForRepo(repo, fields) {
   return false;
 }
 
+function _playCachedModelDomino(list) {
+  if (!list || !list.querySelector('.doclib-card')) return;
+  list.classList.remove('cookbook-serve-models-just-loaded');
+  void list.offsetWidth;
+  list.classList.add('cookbook-serve-models-just-loaded');
+  clearTimeout(list._serveModelDominoTimer);
+  list._serveModelDominoTimer = setTimeout(() => {
+    list.classList.remove('cookbook-serve-models-just-loaded');
+    list._serveModelDominoTimer = null;
+  }, 950);
+}
+
 // ── Fetch cached models from server ──
 
 function _renderCachedModelsData(list, data, host) {
+  // A scan rebuild replaces these cards. Cancel pending mobile long-presses
+  // before their DOM nodes are discarded, so detached cards cannot open menus.
+  list.querySelectorAll('.memory-item').forEach(item => {
+    if (item._longPressTimer) {
+      clearTimeout(item._longPressTimer);
+      item._longPressTimer = null;
+    }
+  });
   // CHANGELOG: 'ready' already excludes partial downloads;
   // show every complete model regardless of size/backend.
   const ready = (data.models || []).filter(m => m.status === 'ready');
@@ -4038,6 +4162,7 @@ function _renderCachedModelsData(list, data, host) {
   const downloading = (data.models || []).filter(m => m.status === 'downloading');
   const allModels = [...ready, ...downloading];
   _cachedAllModels = allModels;
+  _syncServeStats();
 
   if (!allModels.length) {
     if (!host) {
@@ -4089,45 +4214,49 @@ function _renderCachedModelsData(list, data, host) {
   const tagContainer = document.getElementById('serve-tags');
   if (tagContainer) {
     const tagOrder = ['llm', 'image', 'lora', 'embedding', 'tts', 'stt', 'other'];
-    let tagHtml = `<button class="memory-cat-chip active" data-serve-tag="">All (${allModels.length})</button>`;
+    let tagHtml = `<button class="skills-summary-chip active" data-serve-tag=""><span>All</span><strong>${allModels.length}</strong></button>`;
     for (const t of tagOrder) {
       if (!_tagMap[t]) continue;
-      tagHtml += `<button class="memory-cat-chip" data-serve-tag="${t}">${t} (${_tagMap[t]})</button>`;
+      tagHtml += `<button class="skills-summary-chip" data-serve-tag="${esc(t)}"><span>${esc(t)}</span><strong>${_tagMap[t]}</strong></button>`;
     }
     const sortedFamilies = Object.entries(_familyMap).sort((a, b) => b[1] - a[1]);
     if (sortedFamilies.length) {
       for (const [fam, count] of sortedFamilies) {
         const logo = providerLogo(fam);
         const logoHtml = logo ? `<span style="width:12px;height:12px;display:inline-flex;align-items:center;vertical-align:-2px;margin-right:2px;opacity:0.6;">${logo}</span>` : '';
-        tagHtml += `<button class="memory-cat-chip" data-serve-tag="fam:${fam}">${logoHtml}${fam} (${count})</button>`;
+        tagHtml += `<button class="skills-summary-chip" data-serve-tag="fam:${esc(fam)}"><span class="cookbook-serve-tag-label">${logoHtml}${esc(fam)}</span><strong>${count}</strong></button>`;
       }
     }
     tagContainer.innerHTML = tagHtml;
   }
 
   _rerenderCachedModels();
+  _playCachedModelDomino(list);
 }
 
-export async function _fetchCachedModels(fresh = false, opts = {}) {
+async function _fetchCachedModelsImpl(fresh = false, opts = {}) {
   const list = document.getElementById('hwfit-cached-list');
   if (!list) return;
+  const fetchId = ++_cachedModelsFetchId;
+  _cachedModelsRequestController?.abort();
+  const _requestController = new AbortController();
+  _cachedModelsRequestController = _requestController;
   const allowNetwork = fresh || opts.allowNetwork !== false;
 
-  list.innerHTML = '';
   const _dlWp = spinnerModule.createWhirlpool(22);
   _dlWp.element.classList.add('cookbook-section-loading-wp');
   _dlWp.element.style.width = '22px';
   _dlWp.element.style.height = '22px';
   const _dlWrap = document.createElement('div');
-  _dlWrap.className = 'hwfit-loading';
+  _dlWrap.className = 'hwfit-loading cookbook-cached-scan-loading';
   _dlWrap.style.cssText = 'flex-direction:column;gap:6px;';
   _dlWrap.appendChild(_dlWp.element);
   const _dlLabel = document.createElement('div');
   _dlLabel.textContent = 'Scanning cached models…';
   _dlLabel.style.cssText = 'opacity:0.5;font-size:11px;';
   _dlWrap.appendChild(_dlLabel);
-  list.appendChild(_dlWrap);
-
+  let scanSig = '';
+  let preserveRows = false;
   try {
     let host = _envState.remoteHost || '';
     let selectedServer = null;
@@ -4180,26 +4309,49 @@ export async function _fetchCachedModels(fresh = false, opts = {}) {
     if (host) { qp.set('host', host); const _sp4 = _getPort(host); if (_sp4) qp.set('ssh_port', _sp4); const _plat = _getPlatform(host); if (_plat) qp.set('platform', _plat); }
     if (modelDirs.length) qp.set('model_dir', modelDirs.join(','));
     const params = qp.toString() ? `?${qp}` : '';
-    const scanSig = params || 'local';
+    scanSig = params || 'local';
+    const hasModelRows = !!list.querySelector('.memory-item[data-repo]');
+    preserveRows = hasModelRows && list.dataset.cookbookScanSig === scanSig;
+    if (!preserveRows) list.innerHTML = '';
+    else list.querySelector('.cookbook-cached-scan-loading')?.remove();
+    _dlWrap.classList.toggle('cookbook-cached-scan-loading-inline', preserveRows);
+    if (preserveRows) {
+      _dlWrap.style.cssText = 'flex-direction:row;align-items:center;justify-content:center;gap:6px;padding:8px 0;';
+      _dlWp.element.style.width = '16px';
+      _dlWp.element.style.height = '16px';
+      _dlLabel.textContent = 'Refreshing cached models…';
+    }
+    list.appendChild(_dlWrap);
     const cached = fresh ? null : _readCachedModelScan(scanSig);
     if (cached) {
+      if (fetchId !== _cachedModelsFetchId) {
+        _dlWp.destroy();
+        _dlWrap.remove();
+        return;
+      }
       _dlWp.destroy();
+      list.dataset.cookbookScanSig = scanSig;
       _renderCachedModelsData(list, cached, host);
       return;
     }
     if (!allowNetwork) {
+      if (fetchId !== _cachedModelsFetchId) {
+        _dlWp.destroy();
+        _dlWrap.remove();
+        return;
+      }
       _dlWp.destroy();
       const wp = spinnerModule.createWhirlpool(22);
       list.innerHTML = '<div class="hwfit-loading serve-empty-auto-scan" style="flex-direction:column;gap:8px;text-align:center;"><div class="serve-empty-auto-wp"></div><div>No cached model scan yet</div><div style="font-size:11px;opacity:0.55;max-width:420px;line-height:1.4;">Scanning this server\'s model cache…</div></div>';
       list.querySelector('.serve-empty-auto-wp')?.appendChild(wp.element);
       setTimeout(() => {
-        if (list.querySelector('.serve-empty-auto-scan')) _fetchCachedModels(true);
+        if (fetchId === _cachedModelsFetchId && list.querySelector('.serve-empty-auto-scan')) _fetchCachedModels(true);
       }, 60);
       const tagContainer = document.getElementById('serve-tags');
       if (tagContainer) tagContainer.innerHTML = '';
       return;
     }
-    const res = await fetch(`/api/model/cached${params}`);
+    const res = await _fetchCookbookWithTimeout(`/api/model/cached${params}`, { credentials: 'same-origin', signal: _requestController.signal }, 30000);
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       let msg = '';
@@ -4213,17 +4365,64 @@ export async function _fetchCachedModels(fresh = false, opts = {}) {
       throw new Error(`HTTP ${res.status} ${res.statusText}${msg ? `: ${msg}` : ''}`);
     }
     const data = await res.json();
+    if (fetchId !== _cachedModelsFetchId) {
+      _dlWp.destroy();
+      _dlWrap.remove();
+      return;
+    }
     if (data && data.error) throw new Error(data.error);
     _writeCachedModelScan(scanSig, data);
     _dlWp.destroy();
+    list.dataset.cookbookScanSig = scanSig;
     _renderCachedModelsData(list, data, host);
   } catch (e) {
     _dlWp.destroy();
+    _dlWrap.remove();
+    if (fetchId !== _cachedModelsFetchId) return;
+    if (preserveRows) {
+      list.querySelector('.cookbook-cached-scan-error')?.remove();
+      list.insertAdjacentHTML('beforeend', `<div class="cookbook-cached-scan-error" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:7px 0;color:var(--color-warning,#f0ad4e);font-size:11px;"><span>Refresh failed: ${esc(e.message)}</span><button type="button" class="hwfit-gpu-btn cookbook-cached-scan-retry" style="height:24px;padding:2px 8px;">Retry</button></div>`);
+      list.querySelector('.cookbook-cached-scan-retry')?.addEventListener('click', () => {
+        _fetchCachedModels(true);
+      });
+      return;
+    }
     list.innerHTML = `<div class="hwfit-loading" style="flex-direction:column;gap:8px;text-align:center;"><div style="color:var(--red);font-weight:600;">Cached model scan failed</div><div style="font-size:11px;opacity:0.65;max-width:420px;line-height:1.4;">${esc(e.message)}</div><button type="button" class="hwfit-gpu-btn serve-empty-scan-btn" style="height:26px;padding:3px 10px;">Retry</button></div>`;
     list.querySelector('.serve-empty-scan-btn')?.addEventListener('click', () => {
       _fetchCachedModels(true);
     });
   }
+}
+
+// Several startup/state-sync paths can request the same cache scan together.
+// Share that request per selected server so stale-response protection does not
+// merely discard duplicate SSH work after it has already happened.
+const _cachedModelsInFlight = new Map();
+export function _fetchCachedModels(fresh = false, opts = {}) {
+  const cacheServer = document.getElementById('hwfit-cache-server');
+  const key = [
+    cacheServer?.value || 'local',
+    _envState.remoteHost || '',
+    opts.allowNetwork === false ? 'offline' : 'network',
+  ].join('|');
+  const existing = _cachedModelsInFlight.get(key);
+  if (existing) return existing;
+  const pending = _fetchCachedModelsImpl(fresh, opts);
+  _cachedModelsInFlight.set(key, pending);
+  const clearPending = () => {
+    if (_cachedModelsInFlight.get(key) === pending) _cachedModelsInFlight.delete(key);
+  };
+  pending.then(clearPending, clearPending);
+  return pending;
+}
+
+// Closing the modal should not leave an SSH/cache scan running in the
+// background. Incrementing the fetch id suppresses a completion that races
+// with the abort signal.
+export function _cancelCachedModelScan() {
+  _cachedModelsFetchId++;
+  _cachedModelsRequestController?.abort();
+  _cachedModelsRequestController = null;
 }
 
 /** Filter presets matching a model repo */
@@ -4303,3 +4502,51 @@ document.addEventListener('click', (e) => {
   const repo = pill.dataset.repo || '';
   if (repo) _openRunningTabForRepo(repo);
 });
+
+// Handle Cancel at the document level too. The serve panel is built after an
+// async cached-model lookup, so a fast click can arrive before its local
+// listener is attached.
+if (!window._cookbookServeCancelBound) {
+  window._cookbookServeCancelBound = true;
+  const closeFromCancel = (e) => {
+    const button = e.target.closest?.('.hwfit-serve-cancel, .hwfit-action-panel button');
+    if (!button) return;
+    const panel = button.closest('.hwfit-serve-panel');
+    const item = panel?.closest('.memory-item[data-repo]');
+    const actionPanel = button.closest('.hwfit-action-panel');
+    const isCancel = button.classList.contains('hwfit-serve-cancel')
+      || button.textContent.trim().toLowerCase() === 'cancel';
+    if (!isCancel) return;
+    if (actionPanel) {
+      const row = actionPanel.previousElementSibling;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      actionPanel.remove();
+      row?.classList.remove('hwfit-row-active');
+      return;
+    }
+    if (!panel || !item) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    try {
+      panel._cleanupServePanel?.();
+    } catch (err) {
+      console.warn('Serve panel cleanup failed:', err);
+    } finally {
+      panel.remove();
+      item.classList.remove('doclib-card-expanded');
+      item.style.flexDirection = '';
+      item.style.alignItems = '';
+      item.style.maxHeight = '';
+      const list = item.closest('.hwfit-cached-list');
+      if (list) {
+        list.style.minHeight = '';
+        list.style.maxHeight = '';
+      }
+    }
+  };
+  // Capture pointerdown as well as click so touch interaction cannot be
+  // consumed by the expanded card's row handler before Cancel runs.
+  document.addEventListener('pointerdown', closeFromCancel, true);
+  document.addEventListener('click', closeFromCancel, true);
+}

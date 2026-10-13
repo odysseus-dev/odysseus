@@ -40,8 +40,9 @@ class _FakeSessionManager:
         return self.sessions[session_id]
 
     def create_session(self, session_id=None, name=None, endpoint_url=None,
-                       model=None, rag=False, owner=None):
+                       model=None, rag=False, owner=None, endpoint_id=None):
         self.created = _FakeSession(name=name, owner=owner)
+        self.created.endpoint_id = endpoint_id
         return self.created
 
     def save_sessions(self):
@@ -59,6 +60,7 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
     monkeypatch.setattr(mod, "_verify_session_owner", lambda *a, **k: None)
 
     source = _FakeSession(name="Original", owner="alice")
+    source.endpoint_id = "chatgpt-account-b"
     source.history = [
         ChatMessage("user", "hi", {"_db_id": "src-0"}),
         ChatMessage("assistant", "yo", {"_db_id": "src-1"}),
@@ -78,6 +80,7 @@ def test_fork_does_not_corrupt_source_message_metadata(monkeypatch):
 
     assert result["status"] == "ok"
     assert result["kept"] == 2
+    assert sm.created.endpoint_id == "chatgpt-account-b"
 
     # The forked session got its own metadata dicts...
     new_session = sm.created

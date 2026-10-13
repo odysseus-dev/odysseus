@@ -5,23 +5,23 @@ check-in for one user pulled EVERY user's calendar events (summaries,
 locations) into their digest — a cross-tenant leak. Ownership lives on
 CalendarCal.owner; the query must join it, like routes/calendar_routes.
 """
-import tempfile
 import uuid
+import sys
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
+from tests.helpers.database import disposable_database
 
-import core.database as cdb
 from core.database import CalendarEvent, CalendarCal
 from src.task_scheduler import _checkin_calendar_events
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(f"sqlite:///{_TMPDB.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
+
+@pytest.fixture(autouse=True)
+def _digest_database(tmp_path):
+    with disposable_database(tmp_path) as factory:
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(sys.modules[__name__], "_TS", factory, raising=False)
+            yield
 
 
 def _seed():

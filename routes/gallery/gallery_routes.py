@@ -21,6 +21,7 @@ from src.upload_limits import (
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
 from src.constants import GENERATED_IMAGES_DIR
+from src.path_confinement import confine
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery.gallery_helpers import (
@@ -235,12 +236,9 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     safe_name = _sanitize_gallery_filename(filename)
     original = str(filename or "")
-    root = GALLERY_IMAGE_DIR.resolve()
-    path = (GALLERY_IMAGE_DIR / safe_name).resolve()
     try:
-        if os.path.commonpath([str(root), str(path)]) != str(root):
-            raise ValueError
-    except Exception:
+        path = Path(confine(GALLERY_IMAGE_DIR, safe_name, allow_root=False))
+    except (ValueError, OSError):
         raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
@@ -265,6 +263,7 @@ def _is_openai_api_base(url: str) -> bool:
 
 
 _GALLERY_ENDPOINT_PATHS = frozenset({
+    "/images",
     "/images/edits",
     "/images/generations",
     "/images/harmonize",
@@ -305,12 +304,28 @@ def _first_visible_image_endpoint(db, owner: str | None):
     return endpoints[0] if endpoints else None
 
 
-def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
+def _visible_image_endpoint_for_base(db, base: str, owner: str | None, model: str = ""):
+    import json
     target = _normalize_image_endpoint_base(base)
     if not target:
         return None
     fallback = None
-    for ep in _visible_image_endpoint_query(db, owner).all():
+    from src.auth_helpers import owner_filter
+    from src.image_model_ids import looks_like_image_generation_model
+    query = owner_filter(db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True), ModelEndpoint, owner)
+    for ep in query.all():
+        if getattr(ep, "model_type", None) != "image":
+            # Mixed providers are eligible only for a configured image model.
+            configured = set()
+            for field in ("cached_models", "pinned_models"):
+                try:
+                    values = getattr(ep, field, None) or []
+                    values = json.loads(values) if isinstance(values, str) else values
+                    configured.update(v for v in values if isinstance(v, str))
+                except (TypeError, ValueError):
+                    pass
+            if model not in configured or not looks_like_image_generation_model(model):
+                continue
         if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
             if owner and getattr(ep, "owner", None) == owner:
                 return ep
@@ -1293,7 +1308,7 @@ def setup_gallery_routes() -> APIRouter:
             # so the outbound URL never depends directly on request-body input.
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+                ep = _visible_image_endpoint_for_base(db, requested_base, user, chosen_model)
                 if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
                 base = ep.base_url.rstrip("/")
@@ -1305,8 +1320,10 @@ def setup_gallery_routes() -> APIRouter:
             base += "/v1"
 
         is_openai = _is_openai_api_base(base)
+        from src.model_capability_readers.base import detect_vendor
+        is_openrouter = detect_vendor(base) == "openrouter"
 
-        if is_openai:
+        if is_openai or is_openrouter:
             # OpenAI path: /v1/images/edits with gpt-image-1.
             # Mask convention differs from Stable Diffusion:
             #   SD:     white pixels = regenerate, black = keep
@@ -1374,7 +1391,23 @@ def setup_gallery_routes() -> APIRouter:
             headers = {"Authorization": f"Bearer {api_key}"}
             try:
                 async with httpx.AsyncClient(timeout=120) as client:
-                    r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
+                    if is_openrouter:
+                        # Reference-based editing, then composite locally so
+                        # pixels outside the user's mask remain unchanged.
+                        reference_mask = io.BytesIO()
+                        mask_png.save(reference_mask, format="PNG")
+                        references = [src_buf.getvalue(), reference_mask.getvalue()]
+                        payload = {
+                            "model": oa_model, "size": size, "n": 1,
+                            "output_format": "png",
+                            "prompt": "Edit the first image. The second image is a mask: white marks the region to edit, black marks the region to preserve. Keep composition and framing unchanged. Requested edit: " + str(body.get("prompt", "")),
+                            "input_references": [{"type": "image_url", "image_url": {
+                                "url": "data:image/png;base64," + base64.b64encode(value).decode(),
+                            }} for value in references],
+                        }
+                        r = await client.post(_join_checked_gallery_endpoint(base, "/images"), headers=headers, json=payload)
+                    else:
+                        r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
                         logger.error("inpaint_proxy OpenAI edit: status %s", r.status_code)
                         raise HTTPException(r.status_code, "OpenAI edit failed")
@@ -1410,10 +1443,9 @@ def setup_gallery_routes() -> APIRouter:
                         blended.save(out_buf, format="PNG")
                         return {"image": base64.b64encode(out_buf.getvalue()).decode()}
                     except Exception as comp_err:
-                        # If compositing fails for any reason, fall back
-                        # to the raw OpenAI output rather than blocking.
-                        logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
-                        return {"image": raw_b64}
+                        # Never return a full-image edit when masking fails.
+                        logger.warning(f"Inpaint compose failed: {comp_err}")
+                        raise HTTPException(502, "Could not apply the edit within the selected region")
             except httpx.TimeoutException:
                 raise HTTPException(504, "OpenAI inpaint timed out (120s)")
 
@@ -2016,12 +2048,14 @@ def setup_gallery_routes() -> APIRouter:
 
         try:
             from rembg import remove
-            cut = remove(crop)
+            from starlette.concurrency import run_in_threadpool
+            cut = await run_in_threadpool(remove, crop)
         except ImportError:
             try:
                 from transformers import pipeline
-                pipe = pipeline("image-segmentation", model="briaai/RMBG-1.4", trust_remote_code=True)
-                mask_img = pipe(crop, return_mask=True).convert("L")
+                from starlette.concurrency import run_in_threadpool
+                pipe = await run_in_threadpool(pipeline, "image-segmentation", model="briaai/RMBG-1.4", trust_remote_code=True)
+                mask_img = (await run_in_threadpool(pipe, crop, return_mask=True)).convert("L")
                 tmp = crop.copy()
                 tmp.putalpha(mask_img)
                 cut = tmp

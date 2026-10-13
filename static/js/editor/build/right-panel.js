@@ -77,6 +77,10 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   // docked inside the right panel above the layers list.
   if (window.innerWidth <= 700 && state.container) {
     state.container.appendChild(controls);
+    // Start canvas-first on phones. The active tool button brings this
+    // sheet back and minimizes Layers, so the two bottom sheets never
+    // compete for the same pointer events on initial open.
+    controls.classList.add('dismissed');
   }
 
   // Move every slider-row's value chip out of its <label> and place
@@ -102,6 +106,9 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
   {
     const header = layerPanel.querySelector('.ge-layers-header');
     if (header) {
+      const claimLayerSheet = () => {
+        if (window.innerWidth <= 700) controls.classList.add('dismissed');
+      };
       let sy = 0, sx = 0, dragging = false, didSwipe = false;
       header.addEventListener('touchstart', (e) => {
         if (window.innerWidth > 700) return;
@@ -121,6 +128,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
         //   expanded → peek → minimized   (swipe down)
         if (Math.abs(dy) > 20 && Math.abs(dy) > dx) {
           didSwipe = true;
+          claimLayerSheet();
           const isExpanded = rightPanel.classList.contains('expanded');
           const isMinimized = rightPanel.classList.contains('minimized');
           if (dy < 0) {
@@ -143,6 +151,7 @@ export function buildRightPanel({ controlsHTML, layerPanelHTML }) {
         if (window.innerWidth > 700) return;
         if (e.target.closest('button')) return;
         if (didSwipe) { didSwipe = false; return; }
+        claimLayerSheet();
         // Click cycles between peek and expanded; minimized comes
         // back to peek (so a tap on the handle always reveals at
         // least the active layer row).

@@ -41,27 +41,52 @@
  * }} deps
  */
 import { state } from './state.js';
+import { beginAIOperation, decodeAIImage } from './ai-operation.js';
 
 export function wireInpaintButtons({
   buildMergedMaskCanvas, dilateMask, applyInpaintFeather,
   getSelectedAIEndpoint, ensureActiveMaskLayer,
-  saveState, createLayer, composite, renderLayerPanel,
+  saveState, createLayer, composite, flatten, renderLayerPanel, renderLayer,
   spinnerModule, uiModule,
 }) {
   // Shared inpaint runner — used by Generate, Remove, and Outpaint.
   async function runInpaint({ prompt, strength, btnId, labelId, idleLabel, busyLabel }) {
     // Pre-check: build the union mask the AI will receive and verify
     // at least one pixel is painted.
-    const preMerged = buildMergedMaskCanvas();
-    if (!preMerged) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
-    const pmCtx = preMerged.getContext('2d');
-    const maskData = pmCtx.getImageData(0, 0, preMerged.width, preMerged.height).data;
-    let hasMask = false;
-    for (let i = 3; i < maskData.length; i += 4) { if (maskData[i] > 0) { hasMask = true; break; } }
-    if (!hasMask) { if (uiModule) uiModule.showToast('Draw the area you want to inpaint first'); return; }
+    let preMerged = buildMergedMaskCanvas();
+    const hasPixels = canvas => canvas && canvas.getContext('2d')
+      .getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value > 0);
+    let layerSource = null;
+    if (!hasPixels(preMerged)) {
+      const layer = state.layers.find(item => item.id === state.activeLayerId);
+      if (!layer || layer.kind === 'adjustment') {
+        uiModule?.showToast('Select an image layer to inpaint');
+        return;
+      }
+      const rendered = renderLayer?.(layer) || layer.canvas;
+      const offset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+      layerSource = document.createElement('canvas');
+      layerSource.width = state.imgWidth;
+      layerSource.height = state.imgHeight;
+      layerSource.getContext('2d').drawImage(rendered, offset.x, offset.y);
+      preMerged = document.createElement('canvas');
+      preMerged.width = state.imgWidth;
+      preMerged.height = state.imgHeight;
+      const ctx = preMerged.getContext('2d');
+      ctx.drawImage(layerSource, 0, 0);
+      // Preserve transparent cutouts; empty layers use their full bounds.
+      if (hasPixels(preMerged)) ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(offset.x, offset.y, rendered.width, rendered.height);
+      ctx.globalCompositeOperation = 'source-over';
+      if (!hasPixels(preMerged)) {
+        uiModule?.showToast('The selected layer is outside the canvas');
+        return;
+      }
+    }
     const btn = document.getElementById(btnId);
     const btnLabel = labelId ? document.getElementById(labelId) : null;
-    btn.disabled = true;
+    const operation = beginAIOperation(btn, () => uiModule?.showToast('Inpaint cancelled'));
     if (btnLabel) btnLabel.textContent = busyLabel;
     let runWp = null;
     try {
@@ -110,16 +135,7 @@ export function wireInpaintButtons({
     } catch (_) { /* overlay is decorative */ }
     try {
       // Flatten current image.
-      const flatCanvas = document.createElement('canvas');
-      flatCanvas.width = state.imgWidth; flatCanvas.height = state.imgHeight;
-      const flatCtx = flatCanvas.getContext('2d');
-      for (const layer of state.layers) {
-        if (!layer.visible) continue;
-        flatCtx.globalAlpha = layer.opacity;
-        const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-        flatCtx.drawImage(layer.canvas, off.x, off.y);
-      }
-      flatCtx.globalAlpha = 1;
+      const flatCanvas = layerSource || flatten();
       // Dilate the user's brush mask before sending to the model.
       // The AI fills a small buffer zone around the brush, so the
       // post-gen Edge feather slider has AI content to fade INTO
@@ -132,7 +148,7 @@ export function wireInpaintButtons({
       // This way, if the user built up the inpaint region across
       // multiple masks, the final generation sees the combined
       // region instead of just the currently-active mask.
-      const mergedMask = buildMergedMaskCanvas() || state.maskCanvas;
+      const mergedMask = preMerged;
       const dilatedMask = dilateMask(mergedMask, padPx);
       const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
       const maskB64 = dilatedMask.toDataURL('image/png').split(',')[1];
@@ -141,6 +157,7 @@ export function wireInpaintButtons({
       baseSnap.height = state.imgHeight;
       baseSnap.getContext('2d').drawImage(flatCanvas, 0, 0);
       const res = await fetch('/api/image/inpaint', {
+        signal: operation.signal,
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify((() => {
@@ -161,8 +178,9 @@ export function wireInpaintButtons({
       // unfeathered (AI image + hard mask) on the layer so the live
       // Feather slider can re-derive the alpha on each input event
       // without re-running the model.
-      const resultImg = new Image();
-      resultImg.onload = () => {
+      const resultImg = await decodeAIImage(data.image, operation.signal);
+      operation.signal.throwIfAborted();
+      {
         if (!state.editorOpen) return; // user closed mid-decode
         try {
           saveState('Inpaint result');
@@ -181,9 +199,9 @@ export function wireInpaintButtons({
           aiSnap.width = state.imgWidth; aiSnap.height = state.imgHeight;
           aiSnap.getContext('2d').drawImage(resultLayer.canvas, 0, 0);
           const maskSnap = document.createElement('canvas');
-          maskSnap.width = state.maskCanvas.width;
-          maskSnap.height = state.maskCanvas.height;
-          maskSnap.getContext('2d').drawImage(state.maskCanvas, 0, 0);
+          maskSnap.width = mergedMask.width;
+          maskSnap.height = mergedMask.height;
+          maskSnap.getContext('2d').drawImage(mergedMask, 0, 0);
           resultLayer.inpaintSource = { ai: aiSnap, mask: maskSnap, base: baseSnap, padPx };
           // Apply initial alpha = hard mask (no feather, no edge shift).
           applyInpaintFeather(resultLayer, 0, 0);
@@ -196,7 +214,9 @@ export function wireInpaintButtons({
           // on each sub-row's eye icon.
           for (const ly of state.layers) {
             if (!ly.masks || !ly.masks.length) continue;
-            for (const mk of ly.masks) mk.visible = false;
+            for (const mk of ly.masks) {
+              if (mk.mode !== 'layer') mk.visible = false;
+            }
           }
           composite();
           renderLayerPanel();
@@ -234,15 +254,11 @@ export function wireInpaintButtons({
           console.error('[inpaint] render error', renderErr);
           if (uiModule) uiModule.showToast('Inpaint render failed: ' + (renderErr.message || renderErr), 6000);
         }
-      };
-      resultImg.onerror = (e) => {
-        console.error('[inpaint] base64 decode failed', e);
-        if (uiModule) uiModule.showToast('Inpaint result failed to decode', 6000);
-      };
-      resultImg.src = 'data:image/png;base64,' + data.image;
+      }
     } catch (e) {
-      if (uiModule) uiModule.showToast('Inpaint failed: ' + e.message, 6000);
+      if (!operation.signal.aborted && uiModule) uiModule.showToast('Inpaint failed: ' + e.message, 6000);
     } finally {
+      operation.finish();
       btn.disabled = false;
       if (btnLabel) btnLabel.textContent = idleLabel;
       if (runWp) { try { runWp.destroy(); } catch (_) {} }
@@ -270,7 +286,9 @@ export function wireInpaintButtons({
   // SDXL inpaint pipelines literally try to draw the prompt, so we
   // send a generic surroundings-matching prompt and crank strength.
   document.getElementById('ge-inpaint-remove').addEventListener('click', async () => {
-    const sel = getSelectedAIEndpoint('inpaint');
+    let sel;
+    try { sel = getSelectedAIEndpoint('inpaint'); }
+    catch (error) { uiModule?.showToast(error.message); return; }
     const ep = (sel.endpoint || '').toLowerCase();
     const isOpenAI = ep.includes('api.openai.com');
     let prompt, strength;

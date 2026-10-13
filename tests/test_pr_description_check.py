@@ -14,14 +14,21 @@ _WORKFLOW = _REPO / ".github" / "workflows" / "pr-description-check.yml"
 pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="node not on PATH")
 
 
-def _body(*, app_ran=False, app_not_run=False, screenshot=False, media=""):
+def _body(
+    *,
+    app_ran=False,
+    app_not_run=False,
+    screenshot=False,
+    media="",
+    linked_issue="Fixes #5934",
+):
     return f"""## Summary
 
 This focused change has enough concrete summary detail for the checker.
 
 ## Linked Issue
 
-Fixes #5934
+{linked_issue}
 
 ## Type of Change
 
@@ -47,7 +54,15 @@ Run the focused checker regression tests and inspect their exact assertions.
 """
 
 
-def _run_checker(files, body, *, missing_labels=(), draft=False):
+def _run_checker(
+    files,
+    body,
+    *,
+    missing_labels=(),
+    draft=False,
+    owner="odysseus-dev",
+    repo="odysseus",
+):
     harness = r"""
 const checkPrDescription = require(process.argv[1]);
 const input = JSON.parse(process.argv[2]);
@@ -89,7 +104,7 @@ const context = {
       draft: input.draft,
     },
   },
-  repo: { owner: 'odysseus-dev', repo: 'odysseus' },
+  repo: { owner: input.owner, repo: input.repo },
 };
 const core = {
   warning: (message) => calls.push({ method: 'warning', message }),
@@ -109,6 +124,8 @@ checkPrDescription({ github, context, core })
             "body": body,
             "missingLabels": list(missing_labels),
             "draft": draft,
+            "owner": owner,
+            "repo": repo,
         }
     )
     proc = subprocess.run(
@@ -156,6 +173,43 @@ def test_complete_expected_state_is_ready(files, body):
     assert _added_labels(calls) == {"ready for review"}
     assert not _comment(calls)
     assert not any(call["method"] == "setFailed" for call in calls)
+
+
+def test_public_repo_still_requires_linked_issue():
+    calls = _run_checker(
+        ["README.md"],
+        _body(linked_issue="N/A — maintainer integration work"),
+    )
+
+    assert any(call["method"] == "setFailed" for call in calls)
+    assert "**Linked Issue**" in _comment(calls)
+    assert "ready for review" not in _added_labels(calls)
+
+
+def test_maintainer_preview_accepts_explicit_na_linked_issue():
+    calls = _run_checker(
+        ["README.md"],
+        _body(linked_issue="N/A — maintainer integration work"),
+        owner="pewdiepie-archdaemon",
+        repo="odysseus-maintainer-preview",
+    )
+
+    assert _added_labels(calls) == {"ready for review"}
+    assert not _comment(calls)
+    assert not any(call["method"] == "setFailed" for call in calls)
+
+
+def test_maintainer_preview_rejects_ambiguous_non_issue_text():
+    calls = _run_checker(
+        ["README.md"],
+        _body(linked_issue="No tracking needed"),
+        owner="pewdiepie-archdaemon",
+        repo="odysseus-maintainer-preview",
+    )
+
+    assert any(call["method"] == "setFailed" for call in calls)
+    assert "**Linked Issue**" in _comment(calls)
+    assert "ready for review" not in _added_labels(calls)
 
 
 def test_ui_checkbox_without_media_still_needs_visual_evidence():

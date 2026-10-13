@@ -6,9 +6,15 @@ guarantee that non-macOS (Linux/Windows) detection is unchanged.
 
 import json
 
+import pytest
+
 from services.hwfit import hardware
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
+from tests.hwfit_publication_fixtures import publication_catalog  # noqa: F401
+
+# Rank authored inputs rather than publication catalog snapshots.
+pytestmark = pytest.mark.usefixtures("publication_catalog")
 
 
 def _metal_system(ram_gb=16.0, vram_gb=10.7):
@@ -78,25 +84,26 @@ def test_only_gguf_or_mlx_models_recommended_on_metal():
     assert unservable == [], f"{len(unservable)} non-servable models on Metal, e.g. {unservable[:3]}"
 
 
-def test_qwen_catalog_entries_point_at_verified_gguf_repos():
-    """Qwen GGUF-looking Cookbook rows must download GGUF repos, not the base
-    safetensors repositories."""
-    catalog = {m["name"]: m for m in get_models()}
+def test_qwen_gguf_rows_rank_with_their_gguf_downloads_on_metal(publication_catalog):
+    """Qwen GGUF-looking Cookbook rows must download the GGUF repo/file their
+    catalog row names, not the base safetensors repository."""
     expected = {
-        "Qwen/Qwen3.5-9B": ("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf"),
-        "Qwen/Qwen3.6-27B": ("unsloth/Qwen3.6-27B-GGUF", "Qwen3.6-27B-Q4_K_M.gguf"),
-        "Qwen/Qwen3.6-35B-A3B": ("unsloth/Qwen3.6-35B-A3B-GGUF", "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"),
+        r["name"]: r["gguf_sources"]
+        for r in publication_catalog
+        if r["name"].startswith("Qwen/Qwen3.") and r["gguf_sources"]
     }
+    assert len(expected) == 3
+    ranked = {r["name"]: r for r in rank_models(_metal_system(), search="Qwen/Qwen3.", limit=50)}
 
-    for model_name, (repo, filename) in expected.items():
-        sources = catalog[model_name].get("gguf_sources") or []
-        assert any(src.get("repo") == repo and src.get("file") == filename for src in sources)
+    for model_name, sources in expected.items():
+        assert ranked[model_name]["gguf_sources"] == sources
+        assert all(src["repo"] != model_name and src["file"].endswith(".gguf") for src in ranked[model_name]["gguf_sources"])
 
 
 def test_safetensors_models_still_recommended_on_cuda():
     """Regression guard: vLLM serves safetensors on CUDA, so non-GGUF repos must
     NOT be filtered there — the GGUF-only rule is Metal-specific."""
-    names = {r["name"] for r in rank_models(_cuda_system(), limit=900)}
+    names = {r["name"] for r in rank_models(_cuda_system(), search="microsoft/Phi-mini-MoE-instruct", limit=10)}
     assert "microsoft/Phi-mini-MoE-instruct" in names
 
 

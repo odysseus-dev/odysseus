@@ -34,6 +34,10 @@ def extract_office_text(file_path: str) -> str:
     Returns "" when markitdown is missing or extraction fails, mirroring
     extract_pdf_text — the indexer then simply skips the file's content.
     """
+    if file_path.lower().endswith(".doc"):
+        from src.document_processor import _process_legacy_word_document
+        return _process_legacy_word_document(file_path, os.path.basename(file_path))
+
     from src.markitdown_runtime import convert_to_markdown
     return convert_to_markdown(file_path) or ""
 
@@ -44,7 +48,7 @@ class PersonalDocsConfig:
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     DEFAULT_EXTENSIONS: Tuple[str, ...] = (
-        ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
+        ".txt", ".md", ".json", ".pdf", ".doc", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
     )
     DEFAULT_K: int = 5
     STOP_WORDS: Set[str] = None
@@ -121,7 +125,7 @@ def load_personal_index(
             ext = os.path.splitext(name)[1].lower()
             if ext == ".pdf":
                 text = extract_pdf_text(p)
-            elif ext in MARKITDOWN_EXTS:
+            elif ext == ".doc" or ext in MARKITDOWN_EXTS:
                 text = extract_office_text(p)
             else:
                 text = read_text_file(p)

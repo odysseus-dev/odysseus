@@ -13,7 +13,7 @@ const _defaultKeybinds = {
   // Open-tool shortcuts (Calendar bound by default; rest unbound).
   open_calendar: 'ctrl+alt+c', open_compare: '', open_cookbook: '',
   open_research: '', open_gallery: '', open_library: '', open_memory: '',
-  open_notes: '', open_tasks: '', open_theme: '',
+  open_skills: '', open_notes: '', open_tasks: '', open_theme: '',
 };
 
 export function _matchesCombo(e, combo, isMac = IS_MAC) {
@@ -58,7 +58,15 @@ export function initKeyboardShortcuts(modules) {
 
   // Load saved keybinds
   getSettings()
-    .then(s => { if (s.keybinds) window._odysseusKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
+    .then(s => {
+      if (!s.keybinds) return;
+      window._odysseusKeybinds = { ..._defaultKeybinds, ...s.keybinds };
+      // Ctrl+B belongs to browser bookmarks. Migrate the former default when
+      // encountered in saved settings instead of continuing to intercept it.
+      if (window._odysseusKeybinds.toggle_sidebar === 'ctrl+b') {
+        window._odysseusKeybinds.toggle_sidebar = _defaultKeybinds.toggle_sidebar;
+      }
+    })
     .catch(() => {});
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
@@ -153,15 +161,8 @@ export function initKeyboardShortcuts(modules) {
     }
     if (_matchesCombo(e, kb.toggle_sidebar)) {
       e.preventDefault();
-      var sb = document.getElementById('sidebar');
-      var ir = document.getElementById('icon-rail');
-      if (sb && !sb.classList.contains('hidden')) {
-        sb.classList.add('hidden');
-      } else {
-        if (ir) ir.classList.remove('rail-hidden');
-        if (sb) sb.classList.remove('hidden');
-      }
-      if (typeof syncRailSide === 'function') syncRailSide();
+      const toggle = el('hamburger-btn');
+      if (toggle) toggle.click();
       return;
     }
     if (_matchesCombo(e, kb.tts)) {
@@ -270,6 +271,7 @@ export function initKeyboardShortcuts(modules) {
       open_gallery:  'tool-gallery-btn',
       open_library:  'tool-library-btn',
       open_memory:   'tool-memory-btn',
+      open_skills:   'tool-skills-btn',
       open_notes:    'tool-notes-btn',
       open_tasks:    'tool-tasks-btn',
       open_theme:    'tool-theme-btn',

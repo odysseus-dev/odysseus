@@ -14,11 +14,10 @@ file identifies the breakpoint it belongs to.
 
 import re
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 
-CSS = (Path(__file__).resolve().parents[1] / "static" / "style.css").read_text(
-    encoding="utf-8"
-)
+CSS = app_css()
 
 THREAD = r"^[ \t]*\.agent-thread[ \t]*\{"
 RAIL = r"^[ \t]*\.agent-thread::before[ \t]*\{"

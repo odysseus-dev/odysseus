@@ -1085,6 +1085,10 @@ class ServeRequest(BaseModel):
     hf_token: str | None = None
     gpus: str | None = None
     platform: str | None = None    # "linux", "termux", or "windows"
+    # Optional explicit image runtime adapter. "auto" preserves compatibility
+    # with older callers; catalog-backed launches can set this without relying
+    # on model-name heuristics in the generated runner.
+    runtime_adapter: str | None = None
 
 
 def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:

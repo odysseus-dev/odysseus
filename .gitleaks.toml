@@ -1,0 +1,23 @@
+# Gitleaks configuration: the built-in default rules plus one narrow exception.
+#
+# THIRD_PARTY_PROVENANCE.json keys its transitive npm notices by
+# "<package>_<version>" ("key": "inherits_2.0.4"). Four of those identifiers
+# trip the default generic-api-key rule. They are package names, not secrets.
+# The exception below applies only to that rule, only in that file, and only
+# to those four exact values; every other rule and file is scanned as usual.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed package identifiers in THIRD_PARTY_PROVENANCE.json"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(?:^|/)THIRD_PARTY_PROVENANCE\.json$''']
+regexTarget = "secret"
+regexes = [
+  '''^inherits_2\.0\.4$''',
+  '''^bluebird_3\.4\.7$''',
+  '''^inherits_2\.0\.1$''',
+  '''^inherits_2\.0\.3$''',
+]

@@ -1,0 +1,1052 @@
+{
+  "scope": "Task 2.10-B accepted Plan B retained artifacts; no broader asset clearance is asserted.",
+  "authority_manifest_sha256": "5090815ec985d9d44e3f23667a28950b51e2e00d6fbadb56a246a50f98352708",
+  "starting_tree": "ce7dbb5ffdb5fd9ff5317529650b030d137667fc",
+  "retained": [
+    {
+      "action_id": "SAN-158",
+      "identity": "Highlight.js official common browser build",
+      "version": "11.9.0, banner git f47103d4f1",
+      "identity_proof": "Byte-identical to highlightjs/cdn-release tag 11.9.0 build/highlight.min.js, 121727 bytes. Exact bytes and embedded version agree.",
+      "upstream_urls": [
+        "https://raw.githubusercontent.com/highlightjs/cdn-release/11.9.0/build/highlight.min.js",
+        "https://raw.githubusercontent.com/highlightjs/highlight.js/11.9.0/LICENSE"
+      ],
+      "license_basis": "Official tag BSD-3-Clause license, Copyright 2006 Ivan Sagalaev; it supplies the correct attribution missing from the undefined name in the distributed banner.",
+      "bundled_components": "Highlight.js core and bundled language grammars in the official common browser build; no separately installed runtime dependency is required. Do not infer that separately loaded future grammars have the same provenance.",
+      "artifacts": [
+        {
+          "path": "static/lib/highlight.min.js",
+          "sha256": "837a6fa5b0c736b52bbde2b2b6190f305da3fc9ed41681db5321507057b5c846",
+          "oid": "5d699ae6a4cfc9544a22a9ac394b01db2e5abd4f",
+          "size_bytes": 121727,
+          "source_id": "highlight_11.9.0.js"
+        }
+      ],
+      "modified": false,
+      "source_records": [
+        {
+          "id": "highlight_11.9.0.js",
+          "url": "https://raw.githubusercontent.com/highlightjs/cdn-release/11.9.0/build/highlight.min.js",
+          "final_url": "https://raw.githubusercontent.com/highlightjs/cdn-release/11.9.0/build/highlight.min.js",
+          "bytes": 121727,
+          "sha256": "837a6fa5b0c736b52bbde2b2b6190f305da3fc9ed41681db5321507057b5c846",
+          "saved_path": "external_sources/highlight_11.9.0.js",
+          "proves": "Official browser distribution candidate; exact bytes compared locally",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        },
+        {
+          "id": "highlight_LICENSE",
+          "url": "https://raw.githubusercontent.com/highlightjs/highlight.js/11.9.0/LICENSE",
+          "final_url": "https://raw.githubusercontent.com/highlightjs/highlight.js/11.9.0/LICENSE",
+          "bytes": 1514,
+          "sha256": "6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490",
+          "saved_path": "external_sources/highlight_LICENSE",
+          "proves": "Official tagged BSD license and copyright",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        }
+      ],
+      "notice": "licenses/highlightjs-BSD-3-Clause.txt",
+      "notice_sha256": "6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490"
+    },
+    {
+      "action_id": "SAN-159",
+      "identity": "SheetJS Community Edition standalone full browser distribution",
+      "version": "0.20.3",
+      "identity_proof": "Byte-identical to official versioned CDN dist/xlsx.full.min.js and to the same member of the official 0.20.3 tarball, 951904 bytes; embedded XLSX.version=0.20.3.",
+      "upstream_urls": [
+        "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
+        "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+        "https://docs.sheetjs.com/docs/miscellany/license/"
+      ],
+      "license_basis": "Exact official package and dist/LICENSE carry Apache-2.0 with SheetJS copyright. Official standalone documentation names this distribution. License documentation requires distribution attribution and preserved notices.",
+      "bundled_components": "Self-contained parsers/writers, code-page tables (cptable 1.15.0), CRC32 1.2.0 and CFB 1.2.2 embedded version fields, spreadsheet number formatting and helpers. Official 0.20.3 package declares no external runtime dependencies; devDependencies are not automatically bundled obligations. Entire official dist is accompanied by dist/LICENSE. No extra runtime libraries were inferred from development tools.",
+      "artifacts": [
+        {
+          "path": "static/lib/xlsx.full.min.js",
+          "sha256": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41",
+          "oid": "21471af69ef0e4cda1613c2702c54101b92f48d2",
+          "size_bytes": 951904,
+          "source_id": "xlsx_0.20.3.js"
+        }
+      ],
+      "modified": false,
+      "source_records": [
+        {
+          "id": "xlsx_0.20.3.js",
+          "url": "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
+          "final_url": "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
+          "bytes": 951904,
+          "sha256": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41",
+          "saved_path": "external_sources/xlsx_0.20.3.js",
+          "proves": "Official SheetJS versioned distribution candidate; exact bytes compared locally",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        },
+        {
+          "url": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+          "archive_sha256": "8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8",
+          "artifact_member": "package/dist/xlsx.full.min.js",
+          "license_member": "package/dist/LICENSE",
+          "license_sha256": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64"
+        }
+      ],
+      "notice": "licenses/SheetJS-Apache-2.0.txt",
+      "notice_sha256": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64"
+    },
+    {
+      "action_id": "SAN-160",
+      "identity": "docx official UMD build, renamed locally",
+      "version": "8.5.0",
+      "identity_proof": "Byte-identical to official npm docx-8.5.0.tgz package/build/index.umd.js, 742858 bytes. Local min.js name does not describe a minified rebuild.",
+      "upstream_urls": [
+        "https://registry.npmjs.org/docx/-/docx-8.5.0.tgz",
+        "https://codeload.github.com/dolanmiu/docx/tar.gz/refs/tags/8.5.0"
+      ],
+      "license_basis": "Exact package MIT license, Copyright 2016 Dolan; official tagged lock and component distributions establish the relevant permissive notice family. Retaining only the docx MIT text is insufficient.",
+      "bundled_components": "docx plus xml 1.0.1, xml-js (tag lock 1.6.11), sax 1.2.4, nanoid 5.0.4, JSZip 3.10.1 (embedded version confirms), its lie/immediate, pako, readable-stream, setimmediate and stream helpers; browser buffer/base64/ieee754/process polyfills. Tagged lock versions are corroboration, not a claim that every build-tool dependency is shipped. Component archives, full licenses and source notice blocks are preserved.",
+      "artifacts": [
+        {
+          "path": "static/lib/docx.umd.min.js",
+          "sha256": "02d568d203c0180af37609bcf5ff6c0919d220f933a88ca896eba0556a08faad",
+          "oid": "cb9bdb072bd37f1d657a9bf2b31ba5c08629c40e",
+          "size_bytes": 742858,
+          "archive_member": "package/build/index.umd.js"
+        }
+      ],
+      "modified": false,
+      "source_records": [
+        {
+          "package": "docx",
+          "version": "8.5.0",
+          "url": "https://registry.npmjs.org/docx/-/docx-8.5.0.tgz",
+          "archive_sha256": "3f5b46629fc3e425489ac7ab29b0f9dfc7afe843e74e341509a34cf1a5d5bd49",
+          "files": [
+            {
+              "member": "package/build/index.umd.js",
+              "size": 742858,
+              "equal": true,
+              "sha256": "02d568d203c0180af37609bcf5ff6c0919d220f933a88ca896eba0556a08faad"
+            }
+          ]
+        }
+      ],
+      "notice": "licenses/docx-8.5.0-NOTICES.txt",
+      "notice_sources": [
+        {
+          "file": "external_sources/docx_8.5.0_LICENSE",
+          "sha256": "b5b2364c0c95a26b2a2399d7e706a61acac680be1d5b180b00592ee85830bffb"
+        },
+        {
+          "file": "external_sources/base64-js_1.5.1_package_LICENSE",
+          "sha256": "5b37224c080cdcc97c871ada971c224e9926370fe74f11b539aa1cf9f3b1aca1"
+        },
+        {
+          "file": "external_sources/buffer_5.7.1_package_LICENSE",
+          "sha256": "06bafa45fdad2579ba0e43b0c9b2c6290287c99c4203c300254a462b38a307f6"
+        },
+        {
+          "file": "external_sources/core-util-is_1.0.3_package_LICENSE",
+          "sha256": "33b734d60042d0fe0c92dd1fc1e874193a1c899ec3e276a2eb935d2d0bf5b710"
+        },
+        {
+          "file": "external_sources/ieee754_1.2.1_package_LICENSE",
+          "sha256": "18d45466ba3253deae04667e267a91ea8de8548f18c1125264d1c9db28194cc1"
+        },
+        {
+          "file": "external_sources/immediate_3.0.6_package_LICENSE.txt",
+          "sha256": "809e66de579fb7d92503848bbe6d1f348f4f6521a71e5d294fe7cc0c87a3b4ff"
+        },
+        {
+          "file": "external_sources/inherits_2.0.4_package_LICENSE",
+          "sha256": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b"
+        },
+        {
+          "file": "external_sources/isarray_1.0.0_package_README.md",
+          "sha256": "ff138e683771b187f3629c383db72ee7d632009010a36d08e18e8d2a34222ec7"
+        },
+        {
+          "file": "external_sources/jszip_3.10.1_package_LICENSE.markdown",
+          "sha256": "566c953c6090b1218ca6217dd7359d45dde46581968586dc607d59a78af6a9c4"
+        },
+        {
+          "file": "external_sources/lie_3.3.0_package_license.md",
+          "sha256": "5c81b0caa98593408b03125efa25efe622341ed87ae55561968828cd887d64a4"
+        },
+        {
+          "file": "external_sources/nanoid_5.0.4_package_LICENSE",
+          "sha256": "da4db1480d9beea3483a2eda5c53b22238d0827d57da162b48f122e04d2d9987"
+        },
+        {
+          "file": "external_sources/pako_1.0.11_package_LICENSE",
+          "sha256": "a04665b3b2de56c66730c1f720f528175739e4104f79073614aa611da1e85539"
+        },
+        {
+          "file": "external_sources/process_0.11.10_package_LICENSE",
+          "sha256": "59a400d04c5078579acc27ddd6452c1bdf763f9506e01364700935fbb1a7c91b"
+        },
+        {
+          "file": "external_sources/process-nextick-args_2.0.1_package_license.md",
+          "sha256": "ecdccbcf39024f624ded480c01c0b25458e1eca8f26ecf040933865ce56d9a4f"
+        },
+        {
+          "file": "external_sources/readable-stream_2.3.6_package_LICENSE",
+          "sha256": "ec62dc96da0099b87f4511736c87309335527fb7031639493e06c95728dc8c54"
+        },
+        {
+          "file": "external_sources/safe-buffer_5.1.2_package_LICENSE",
+          "sha256": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac"
+        },
+        {
+          "file": "external_sources/sax_1.2.4_package_LICENSE",
+          "sha256": "3098be2717081cfe2b88a0faa221cb4f2326720cb8ce869199a9d6234f219319"
+        },
+        {
+          "file": "external_sources/setimmediate_1.0.5_package_LICENSE.txt",
+          "sha256": "c4b4ad3a5746f1f5249a6dd90396ec519264e1bb02e01e48a6522c48a3a97cb4"
+        },
+        {
+          "file": "external_sources/string_decoder_1.1.1_package_LICENSE",
+          "sha256": "11f2aafb37d06b3ee5bdaf06e9811141d0da05263c316f3d627f45c20d43261b"
+        },
+        {
+          "file": "external_sources/util-deprecate_1.0.2_package_LICENSE",
+          "sha256": "0154425673db15cdfa80ecba2c9b1f1a867f7197a006764712849bfc3a93cbb7"
+        },
+        {
+          "file": "external_sources/xml_1.0.1_package_LICENSE",
+          "sha256": "d2b3e2f62078f282f21a8c5119a44cc7313fe6aa4a22094c8ad93f4b577b7901"
+        },
+        {
+          "file": "external_sources/xml-js_1.6.11_package_LICENSE",
+          "sha256": "8ada61091ef0ef154a69321483e5ffadf5c50693ca945047ffb90a6b4b12b088"
+        }
+      ],
+      "component_source_records": [
+        {
+          "key": "base64-js_1.5.1",
+          "package": "base64-js",
+          "version": "1.5.1",
+          "url": "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz",
+          "sha256": "b1b7a945b52685269083425216d6597e33d97bf21699d656e92fdb3eb5210a85",
+          "evidence_files": [
+            "external_sources/base64-js_1.5.1_package_LICENSE",
+            "external_sources/base64-js_1.5.1_package_package.json"
+          ]
+        },
+        {
+          "key": "buffer_5.7.1",
+          "package": "buffer",
+          "version": "5.7.1",
+          "url": "https://registry.npmjs.org/buffer/-/buffer-5.7.1.tgz",
+          "sha256": "98bfac55b7a37ade644f5eccbcf94a59269afd13e1f9af597e61fd06c057c0bc",
+          "evidence_files": [
+            "external_sources/buffer_5.7.1_package_LICENSE",
+            "external_sources/buffer_5.7.1_package_package.json"
+          ]
+        },
+        {
+          "key": "core-util-is_1.0.3",
+          "package": "core-util-is",
+          "version": "1.0.3",
+          "url": "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.3.tgz",
+          "sha256": "4430fdc71f2cf3b5e297113b9a692da2d6cff96cf84da00f0ecef5e5a6e74d0c",
+          "evidence_files": [
+            "external_sources/core-util-is_1.0.3_package_LICENSE",
+            "external_sources/core-util-is_1.0.3_package_package.json"
+          ]
+        },
+        {
+          "key": "ieee754_1.2.1",
+          "package": "ieee754",
+          "version": "1.2.1",
+          "url": "https://registry.npmjs.org/ieee754/-/ieee754-1.2.1.tgz",
+          "sha256": "8ef14b9b397e339db89db97881fb714f49319d8f0eb1275901f45567b28f9dac",
+          "evidence_files": [
+            "external_sources/ieee754_1.2.1_package_LICENSE",
+            "external_sources/ieee754_1.2.1_package_package.json"
+          ]
+        },
+        {
+          "key": "immediate_3.0.6",
+          "package": "immediate",
+          "version": "3.0.6",
+          "url": "https://registry.npmjs.org/immediate/-/immediate-3.0.6.tgz",
+          "sha256": "98c792f39650b00818c05dcc407902034dc4092f368596b37658d44f28739d11",
+          "evidence_files": [
+            "external_sources/immediate_3.0.6_package_package.json",
+            "external_sources/immediate_3.0.6_package_LICENSE.txt"
+          ]
+        },
+        {
+          "key": "inherits_2.0.4",
+          "package": "inherits",
+          "version": "2.0.4",
+          "url": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+          "sha256": "d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf",
+          "evidence_files": [
+            "external_sources/inherits_2.0.4_package_package.json",
+            "external_sources/inherits_2.0.4_package_LICENSE"
+          ]
+        },
+        {
+          "key": "isarray_1.0.0",
+          "package": "isarray",
+          "version": "1.0.0",
+          "url": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz",
+          "sha256": "e23c76f14f5222e07e39d89858b61e8e33f96956de9e0df3659cbdf8db950c87",
+          "evidence_files": [
+            "external_sources/isarray_1.0.0_package_package.json"
+          ]
+        },
+        {
+          "key": "jszip_3.10.1",
+          "package": "jszip",
+          "version": "3.10.1",
+          "url": "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
+          "sha256": "5117f4a2a645aeb307bf3b829c575ad58135cc97e75291e594532ab5b5b21b23",
+          "evidence_files": [
+            "external_sources/jszip_3.10.1_package_lib_license_header.js",
+            "external_sources/jszip_3.10.1_package_package.json",
+            "external_sources/jszip_3.10.1_package_LICENSE.markdown"
+          ]
+        },
+        {
+          "key": "lie_3.3.0",
+          "package": "lie",
+          "version": "3.3.0",
+          "url": "https://registry.npmjs.org/lie/-/lie-3.3.0.tgz",
+          "sha256": "2db8461cd4a10e2fc3588c8c55da34d33465ff81cc19c72416bbcaec7ee6a36e",
+          "evidence_files": [
+            "external_sources/lie_3.3.0_package_package.json",
+            "external_sources/lie_3.3.0_package_license.md"
+          ]
+        },
+        {
+          "key": "nanoid_5.0.4",
+          "package": "nanoid",
+          "version": "5.0.4",
+          "url": "https://registry.npmjs.org/nanoid/-/nanoid-5.0.4.tgz",
+          "sha256": "c31aed2b9cd1803803425a2be8befdf1590927443a84ecdb60b01923319dbc92",
+          "evidence_files": [
+            "external_sources/nanoid_5.0.4_package_LICENSE",
+            "external_sources/nanoid_5.0.4_package_package.json"
+          ]
+        },
+        {
+          "key": "pako_1.0.11",
+          "package": "pako",
+          "version": "1.0.11",
+          "url": "https://registry.npmjs.org/pako/-/pako-1.0.11.tgz",
+          "sha256": "0d4028dc0352a740c30cbfd772917f2744986d42bfa0b06ec7642bffe7ad3941",
+          "evidence_files": [
+            "external_sources/pako_1.0.11_package_LICENSE",
+            "external_sources/pako_1.0.11_package_package.json"
+          ]
+        },
+        {
+          "key": "process_0.11.10",
+          "package": "process",
+          "version": "0.11.10",
+          "url": "https://registry.npmjs.org/process/-/process-0.11.10.tgz",
+          "sha256": "7c10569b3c9cb056152ad630d40f9f4fcc321a0013c2bb8384f036aaa674e6bb",
+          "evidence_files": [
+            "external_sources/process_0.11.10_package_package.json",
+            "external_sources/process_0.11.10_package_LICENSE"
+          ]
+        },
+        {
+          "key": "process-nextick-args_2.0.1",
+          "package": "process-nextick-args",
+          "version": "2.0.1",
+          "url": "https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz",
+          "sha256": "425bf8c725d23bc5ac76bcedd10d9cdbbd6354c7273dd7def44417cfbca8889b",
+          "evidence_files": [
+            "external_sources/process-nextick-args_2.0.1_package_package.json",
+            "external_sources/process-nextick-args_2.0.1_package_license.md"
+          ]
+        },
+        {
+          "key": "readable-stream_2.3.6",
+          "package": "readable-stream",
+          "version": "2.3.6",
+          "url": "https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.6.tgz",
+          "sha256": "0f205b60dc0fb300f05bbbf1d1583b3f87cca8cecc0b6a8673910c9519c45c77",
+          "evidence_files": [
+            "external_sources/readable-stream_2.3.6_package_package.json",
+            "external_sources/readable-stream_2.3.6_package_LICENSE"
+          ]
+        },
+        {
+          "key": "safe-buffer_5.1.2",
+          "package": "safe-buffer",
+          "version": "5.1.2",
+          "url": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
+          "sha256": "e09206c60fccafb952c854af7629cbb031a98d6da2e143fb3aa3c8a48402aa22",
+          "evidence_files": [
+            "external_sources/safe-buffer_5.1.2_package_package.json",
+            "external_sources/safe-buffer_5.1.2_package_LICENSE"
+          ]
+        },
+        {
+          "key": "sax_1.2.4",
+          "package": "sax",
+          "version": "1.2.4",
+          "url": "https://registry.npmjs.org/sax/-/sax-1.2.4.tgz",
+          "sha256": "adc442e017041cffca4d4418d06006ae5f17a9984557fa80c3a6cd8859021cf2",
+          "evidence_files": [
+            "external_sources/sax_1.2.4_package_package.json",
+            "external_sources/sax_1.2.4_package_LICENSE"
+          ]
+        },
+        {
+          "key": "setimmediate_1.0.5",
+          "package": "setimmediate",
+          "version": "1.0.5",
+          "url": "https://registry.npmjs.org/setimmediate/-/setimmediate-1.0.5.tgz",
+          "sha256": "5cb9fc22698364ed42c02d6aa3dc50ffeafa68452ae84699672e3dfd74922c9e",
+          "evidence_files": [
+            "external_sources/setimmediate_1.0.5_package_package.json",
+            "external_sources/setimmediate_1.0.5_package_LICENSE.txt"
+          ]
+        },
+        {
+          "key": "string_decoder_1.1.1",
+          "package": "string_decoder",
+          "version": "1.1.1",
+          "url": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz",
+          "sha256": "af8262434508fa8292407f7fef4690d19eabb73387ca230b41f2a1155216963a",
+          "evidence_files": [
+            "external_sources/string_decoder_1.1.1_package_package.json",
+            "external_sources/string_decoder_1.1.1_package_LICENSE"
+          ]
+        },
+        {
+          "key": "util-deprecate_1.0.2",
+          "package": "util-deprecate",
+          "version": "1.0.2",
+          "url": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
+          "sha256": "79a1de983c1b393180c47456d6b73caab278a00ea6e37d5c6675f2dcdec2a3e5",
+          "evidence_files": [
+            "external_sources/util-deprecate_1.0.2_package_package.json",
+            "external_sources/util-deprecate_1.0.2_package_LICENSE"
+          ]
+        },
+        {
+          "key": "xml_1.0.1",
+          "package": "xml",
+          "version": "1.0.1",
+          "url": "https://registry.npmjs.org/xml/-/xml-1.0.1.tgz",
+          "sha256": "38032bd701fa20427b2ee31ed55e6761ce1a881a6eabcd90005ebe74ab04a623",
+          "evidence_files": [
+            "external_sources/xml_1.0.1_package_package.json",
+            "external_sources/xml_1.0.1_package_LICENSE"
+          ]
+        },
+        {
+          "key": "xml-js_1.6.11",
+          "package": "xml-js",
+          "version": "1.6.11",
+          "url": "https://registry.npmjs.org/xml-js/-/xml-js-1.6.11.tgz",
+          "sha256": "7fa22b957f335efef3ead84aaa8285e2f3b08dbfeee18f9f41021a1a0c584369",
+          "evidence_files": [
+            "external_sources/xml-js_1.6.11_package_package.json",
+            "external_sources/xml-js_1.6.11_package_LICENSE"
+          ]
+        }
+      ],
+      "notice_sha256": "e764c49a33c269884d88a46a1b73012b8c3e5d04f18e6df9fda300003a595dbe"
+    },
+    {
+      "action_id": "SAN-161",
+      "identity": "Mammoth official minified browser distribution",
+      "version": "1.8.0",
+      "identity_proof": "Byte-identical to official mammoth-1.8.0.tgz package/mammoth.browser.min.js, 642194 bytes. Companion official unminified browser file enumerates 16 module identities and license expressions.",
+      "upstream_urls": [
+        "https://registry.npmjs.org/mammoth/-/mammoth-1.8.0.tgz",
+        "https://codeload.github.com/mwilliamson/mammoth.js/tar.gz/refs/tags/1.8.0"
+      ],
+      "license_basis": "Exact root BSD-2-Clause grant (Michael Williamson, 2013), exact companion browser manifest and official versioned component package licenses. SPDX declarations in the exact dingbat-to-unicode 1.0.1 package state BSD-2-Clause even though the old package/tag omitted a full LICENSE file; current js/LICENSE provides the full author text separately. Do not describe the current file as an exact old-tag match.",
+      "bundled_components": "Official browser manifest: @xmldom/xmldom 0.8.6, base64-js 1.5.1, bluebird 3.4.7, buffer 4.9.1, dingbat-to-unicode 1.0.1, ieee754 1.1.8, inherits 2.0.1, isarray 1.0.0, JSZip 3.7.1, lop 0.4.1, Mammoth 1.8.0, option 0.2.4, process 0.11.9, underscore 1.13.1, util 0.10.3, xmlbuilder 10.0.0; JSZip includes compression/promise/stream helpers. CLI argparse/path dependency declarations are not automatically browser obligations.",
+      "artifacts": [
+        {
+          "path": "static/lib/mammoth.browser.min.js",
+          "sha256": "deb07bf230d1cb3e190bc5adc6743f35c6531b6571d1e5469b24f452a7f0f4ab",
+          "oid": "d79e10473b7d6267dfcce488cbd36e74ef6278f1",
+          "size_bytes": 642194,
+          "archive_member": "package/mammoth.browser.min.js"
+        }
+      ],
+      "modified": false,
+      "source_records": [
+        {
+          "package": "mammoth",
+          "version": "1.8.0",
+          "url": "https://registry.npmjs.org/mammoth/-/mammoth-1.8.0.tgz",
+          "archive_sha256": "4d6b560ff8fbc509e544b22c2fc468e68459d5b71ce3979c531b17b7009b20a8",
+          "files": [
+            {
+              "member": "package/mammoth.browser.min.js",
+              "size": 642194,
+              "equal": true,
+              "sha256": "deb07bf230d1cb3e190bc5adc6743f35c6531b6571d1e5469b24f452a7f0f4ab"
+            }
+          ]
+        },
+        {
+          "url": "https://raw.githubusercontent.com/mwilliamson/dingbat-to-unicode/main/js/LICENSE",
+          "file": "external_sources/dingbat_current_js_LICENSE",
+          "sha256": "1013cef4b629a3c7eaf737c110fb5bebbf3abbc16e154d769468d71c3653fa37",
+          "proves": "Current full BSD-2-Clause terms; 1.0.1 package-specific license declaration is separate exact evidence, do not treat current file alone as a version match."
+        },
+        {
+          "url": "https://raw.githubusercontent.com/sindresorhus/set-immediate-shim/v1.0.1/license",
+          "file": "external_sources/set_immediate_license",
+          "sha256": "6fb9754611c20f6649f68805e8c990e83261f29316e29de9e6cedae607b8634c"
+        }
+      ],
+      "notice": "licenses/mammoth-1.8.0-NOTICES.txt",
+      "notice_sources": [
+        {
+          "file": "external_sources/mammoth_1.8.0_LICENSE",
+          "sha256": "6663bbd049205d38a496ccacb412a151980b444627d38de218b3b809aef330f1"
+        },
+        {
+          "file": "external_sources/@xmldom_xmldom_0.8.6_package_LICENSE",
+          "sha256": "4da724fc305d81606b245b324d4d2586916b9d248b23d82183df753ace0fdf71"
+        },
+        {
+          "file": "external_sources/base64-js_1.5.1_package_LICENSE",
+          "sha256": "5b37224c080cdcc97c871ada971c224e9926370fe74f11b539aa1cf9f3b1aca1"
+        },
+        {
+          "file": "external_sources/bluebird_3.4.7_package_LICENSE",
+          "sha256": "bd92858f2261ae179cd4c4f56aaa6fa628dee927cc33808044bd7f676198c0fc"
+        },
+        {
+          "file": "external_sources/buffer_4.9.1_package_LICENSE",
+          "sha256": "06bafa45fdad2579ba0e43b0c9b2c6290287c99c4203c300254a462b38a307f6"
+        },
+        {
+          "file": "external_sources/core-util-is_1.0.2_package_LICENSE",
+          "sha256": "33b734d60042d0fe0c92dd1fc1e874193a1c899ec3e276a2eb935d2d0bf5b710"
+        },
+        {
+          "file": "external_sources/dingbat-to-unicode_1.0.1_package_package.json",
+          "sha256": "e34a07af5c8074ec60fdc1f9db775d117d2b2f985d88175c455c9fc37f898d59"
+        },
+        {
+          "file": "external_sources/dingbat_current_js_LICENSE",
+          "sha256": "1013cef4b629a3c7eaf737c110fb5bebbf3abbc16e154d769468d71c3653fa37"
+        },
+        {
+          "file": "external_sources/duck_0.1.12_package_LICENSE",
+          "sha256": "6663bbd049205d38a496ccacb412a151980b444627d38de218b3b809aef330f1"
+        },
+        {
+          "file": "external_sources/ieee754_1.1.8_package_LICENSE",
+          "sha256": "6d5ef6dcbcc2d08589c716a674536afe8a23ac2499a814afb5b14b39cc415126"
+        },
+        {
+          "file": "external_sources/immediate_3.0.6_package_LICENSE.txt",
+          "sha256": "809e66de579fb7d92503848bbe6d1f348f4f6521a71e5d294fe7cc0c87a3b4ff"
+        },
+        {
+          "file": "external_sources/inherits_2.0.1_package_LICENSE",
+          "sha256": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b"
+        },
+        {
+          "file": "external_sources/inherits_2.0.3_package_LICENSE",
+          "sha256": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b"
+        },
+        {
+          "file": "external_sources/isarray_1.0.0_package_README.md",
+          "sha256": "ff138e683771b187f3629c383db72ee7d632009010a36d08e18e8d2a34222ec7"
+        },
+        {
+          "file": "external_sources/jszip_3.7.1_package_LICENSE.markdown",
+          "sha256": "14450c78405ad2a2173e25740b56406556779149df9c4c83523a8c63d0686210"
+        },
+        {
+          "file": "external_sources/lie_3.3.0_package_license.md",
+          "sha256": "5c81b0caa98593408b03125efa25efe622341ed87ae55561968828cd887d64a4"
+        },
+        {
+          "file": "external_sources/lop_0.4.1_package_LICENSE",
+          "sha256": "6663bbd049205d38a496ccacb412a151980b444627d38de218b3b809aef330f1"
+        },
+        {
+          "file": "external_sources/option_0.2.4_package_LICENSE",
+          "sha256": "6663bbd049205d38a496ccacb412a151980b444627d38de218b3b809aef330f1"
+        },
+        {
+          "file": "external_sources/pako_1.0.11_package_LICENSE",
+          "sha256": "a04665b3b2de56c66730c1f720f528175739e4104f79073614aa611da1e85539"
+        },
+        {
+          "file": "external_sources/process_0.11.9_package_LICENSE",
+          "sha256": "59a400d04c5078579acc27ddd6452c1bdf763f9506e01364700935fbb1a7c91b"
+        },
+        {
+          "file": "external_sources/process-nextick-args_2.0.1_package_license.md",
+          "sha256": "ecdccbcf39024f624ded480c01c0b25458e1eca8f26ecf040933865ce56d9a4f"
+        },
+        {
+          "file": "external_sources/readable-stream_2.3.7_package_LICENSE",
+          "sha256": "ec62dc96da0099b87f4511736c87309335527fb7031639493e06c95728dc8c54"
+        },
+        {
+          "file": "external_sources/safe-buffer_5.1.2_package_LICENSE",
+          "sha256": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac"
+        },
+        {
+          "file": "external_sources/set_immediate_license",
+          "sha256": "6fb9754611c20f6649f68805e8c990e83261f29316e29de9e6cedae607b8634c"
+        },
+        {
+          "file": "external_sources/string_decoder_1.1.1_package_LICENSE",
+          "sha256": "11f2aafb37d06b3ee5bdaf06e9811141d0da05263c316f3d627f45c20d43261b"
+        },
+        {
+          "file": "external_sources/underscore_1.13.1_package_LICENSE",
+          "sha256": "708bd87d08b48ffd427ee2717fe76efeb63c09c5bdf64e3dae4674e20986bc6c"
+        },
+        {
+          "file": "external_sources/util_0.10.3_package_LICENSE",
+          "sha256": "6239c6144c31e58cf925c34483606969c555574d64ffa96518ab5d7f45c75d43"
+        },
+        {
+          "file": "external_sources/util-deprecate_1.0.2_package_LICENSE",
+          "sha256": "0154425673db15cdfa80ecba2c9b1f1a867f7197a006764712849bfc3a93cbb7"
+        },
+        {
+          "file": "external_sources/xmlbuilder_10.0.0_package_LICENSE",
+          "sha256": "8ad16994acb18814fcd2ff6d0b559906b842047b995baf33fd0c55e4d24cbac8"
+        }
+      ],
+      "component_source_records": [
+        {
+          "key": "@xmldom_xmldom_0.8.6",
+          "package": "@xmldom/xmldom",
+          "version": "0.8.6",
+          "url": "https://registry.npmjs.org/@xmldom/xmldom/-/xmldom-0.8.6.tgz",
+          "sha256": "df6fce876473e4582e38d1683876b8a65affb3c635f0dce3d1feb8b5bd3c8836",
+          "evidence_files": [
+            "external_sources/@xmldom_xmldom_0.8.6_package_LICENSE",
+            "external_sources/@xmldom_xmldom_0.8.6_package_package.json"
+          ]
+        },
+        {
+          "key": "base64-js_1.5.1",
+          "package": "base64-js",
+          "version": "1.5.1",
+          "url": "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz",
+          "sha256": "b1b7a945b52685269083425216d6597e33d97bf21699d656e92fdb3eb5210a85",
+          "evidence_files": [
+            "external_sources/base64-js_1.5.1_package_LICENSE",
+            "external_sources/base64-js_1.5.1_package_package.json"
+          ]
+        },
+        {
+          "key": "bluebird_3.4.7",
+          "package": "bluebird",
+          "version": "3.4.7",
+          "url": "https://registry.npmjs.org/bluebird/-/bluebird-3.4.7.tgz",
+          "sha256": "e9228ac32d28024336b2a7fdcae689344165ff5d9fdcb8dc65af14444bd2e2dd",
+          "evidence_files": [
+            "external_sources/bluebird_3.4.7_package_package.json",
+            "external_sources/bluebird_3.4.7_package_LICENSE"
+          ]
+        },
+        {
+          "key": "buffer_4.9.1",
+          "package": "buffer",
+          "version": "4.9.1",
+          "url": "https://registry.npmjs.org/buffer/-/buffer-4.9.1.tgz",
+          "sha256": "186d0c8a8ded6ded2b5166d90a927d9084dc2d65459c0a349bb040ac2eb389a6",
+          "evidence_files": [
+            "external_sources/buffer_4.9.1_package_package.json",
+            "external_sources/buffer_4.9.1_package_LICENSE"
+          ]
+        },
+        {
+          "key": "core-util-is_1.0.2",
+          "package": "core-util-is",
+          "version": "1.0.2",
+          "url": "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.2.tgz",
+          "sha256": "a4a44dab6579ede3e06ade58d26f8fd642eae09153fd59c608fcb7951a499398",
+          "evidence_files": [
+            "external_sources/core-util-is_1.0.2_package_package.json",
+            "external_sources/core-util-is_1.0.2_package_LICENSE"
+          ]
+        },
+        {
+          "key": "dingbat-to-unicode_1.0.1",
+          "package": "dingbat-to-unicode",
+          "version": "1.0.1",
+          "url": "https://registry.npmjs.org/dingbat-to-unicode/-/dingbat-to-unicode-1.0.1.tgz",
+          "sha256": "e3360a80e59952789ca59b499dd443796a43a698c3b45d5ae3a3dfb2bef9560a",
+          "evidence_files": [
+            "external_sources/dingbat-to-unicode_1.0.1_package_package.json"
+          ]
+        },
+        {
+          "key": "duck_0.1.12",
+          "package": "duck",
+          "version": "0.1.12",
+          "url": "https://registry.npmjs.org/duck/-/duck-0.1.12.tgz",
+          "sha256": "851cf25b200ff6e7cb3b18dbc342917d7ab27aee7a5a94a555157601a8f20ba3",
+          "evidence_files": [
+            "external_sources/duck_0.1.12_package_LICENSE",
+            "external_sources/duck_0.1.12_package_package.json"
+          ]
+        },
+        {
+          "key": "ieee754_1.1.8",
+          "package": "ieee754",
+          "version": "1.1.8",
+          "url": "https://registry.npmjs.org/ieee754/-/ieee754-1.1.8.tgz",
+          "sha256": "a0dd51ee2de6ab8ad452e829ece19bcfc5fdb796502051ec8d533adc9cba1b31",
+          "evidence_files": [
+            "external_sources/ieee754_1.1.8_package_package.json",
+            "external_sources/ieee754_1.1.8_package_LICENSE"
+          ]
+        },
+        {
+          "key": "immediate_3.0.6",
+          "package": "immediate",
+          "version": "3.0.6",
+          "url": "https://registry.npmjs.org/immediate/-/immediate-3.0.6.tgz",
+          "sha256": "98c792f39650b00818c05dcc407902034dc4092f368596b37658d44f28739d11",
+          "evidence_files": [
+            "external_sources/immediate_3.0.6_package_package.json",
+            "external_sources/immediate_3.0.6_package_LICENSE.txt"
+          ]
+        },
+        {
+          "key": "inherits_2.0.1",
+          "package": "inherits",
+          "version": "2.0.1",
+          "url": "https://registry.npmjs.org/inherits/-/inherits-2.0.1.tgz",
+          "sha256": "e0d5493f8142aff09125344665a90a8227b9a3ffa4bb8d086d0fb471c00deb29",
+          "evidence_files": [
+            "external_sources/inherits_2.0.1_package_package.json",
+            "external_sources/inherits_2.0.1_package_LICENSE"
+          ]
+        },
+        {
+          "key": "inherits_2.0.3",
+          "package": "inherits",
+          "version": "2.0.3",
+          "url": "https://registry.npmjs.org/inherits/-/inherits-2.0.3.tgz",
+          "sha256": "7f5f58e9b54e87e264786e7e84d9e078aaf68c1003de9fa68945101e02356cdf",
+          "evidence_files": [
+            "external_sources/inherits_2.0.3_package_package.json",
+            "external_sources/inherits_2.0.3_package_LICENSE"
+          ]
+        },
+        {
+          "key": "isarray_1.0.0",
+          "package": "isarray",
+          "version": "1.0.0",
+          "url": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz",
+          "sha256": "e23c76f14f5222e07e39d89858b61e8e33f96956de9e0df3659cbdf8db950c87",
+          "evidence_files": [
+            "external_sources/isarray_1.0.0_package_package.json"
+          ]
+        },
+        {
+          "key": "jszip_3.7.1",
+          "package": "jszip",
+          "version": "3.7.1",
+          "url": "https://registry.npmjs.org/jszip/-/jszip-3.7.1.tgz",
+          "sha256": "7ac88dbebbfb5de3ad37cd263324481f0372210a336d7dd2ede0b186a6eb5b33",
+          "evidence_files": [
+            "external_sources/jszip_3.7.1_package_lib_license_header.js",
+            "external_sources/jszip_3.7.1_package_package.json",
+            "external_sources/jszip_3.7.1_package_LICENSE.markdown"
+          ]
+        },
+        {
+          "key": "lie_3.3.0",
+          "package": "lie",
+          "version": "3.3.0",
+          "url": "https://registry.npmjs.org/lie/-/lie-3.3.0.tgz",
+          "sha256": "2db8461cd4a10e2fc3588c8c55da34d33465ff81cc19c72416bbcaec7ee6a36e",
+          "evidence_files": [
+            "external_sources/lie_3.3.0_package_package.json",
+            "external_sources/lie_3.3.0_package_license.md"
+          ]
+        },
+        {
+          "key": "lop_0.4.1",
+          "package": "lop",
+          "version": "0.4.1",
+          "url": "https://registry.npmjs.org/lop/-/lop-0.4.1.tgz",
+          "sha256": "044365a154df24441839646787577a839e8a5d946c84305b332ebe6a3daf3a4c",
+          "evidence_files": [
+            "external_sources/lop_0.4.1_package_LICENSE",
+            "external_sources/lop_0.4.1_package_package.json"
+          ]
+        },
+        {
+          "key": "option_0.2.4",
+          "package": "option",
+          "version": "0.2.4",
+          "url": "https://registry.npmjs.org/option/-/option-0.2.4.tgz",
+          "sha256": "0c6ef87c6b17166f3b4a926309fcdfe453a2d05e21b443e9d34da8a4a079712b",
+          "evidence_files": [
+            "external_sources/option_0.2.4_package_package.json",
+            "external_sources/option_0.2.4_package_LICENSE"
+          ]
+        },
+        {
+          "key": "pako_1.0.11",
+          "package": "pako",
+          "version": "1.0.11",
+          "url": "https://registry.npmjs.org/pako/-/pako-1.0.11.tgz",
+          "sha256": "0d4028dc0352a740c30cbfd772917f2744986d42bfa0b06ec7642bffe7ad3941",
+          "evidence_files": [
+            "external_sources/pako_1.0.11_package_LICENSE",
+            "external_sources/pako_1.0.11_package_package.json"
+          ]
+        },
+        {
+          "key": "process_0.11.9",
+          "package": "process",
+          "version": "0.11.9",
+          "url": "https://registry.npmjs.org/process/-/process-0.11.9.tgz",
+          "sha256": "dea1a4481f59f7d837769bc5033fcc7e56aea6669c00640a575f61619c0642ef",
+          "evidence_files": [
+            "external_sources/process_0.11.9_package_package.json",
+            "external_sources/process_0.11.9_package_LICENSE"
+          ]
+        },
+        {
+          "key": "process-nextick-args_2.0.1",
+          "package": "process-nextick-args",
+          "version": "2.0.1",
+          "url": "https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz",
+          "sha256": "425bf8c725d23bc5ac76bcedd10d9cdbbd6354c7273dd7def44417cfbca8889b",
+          "evidence_files": [
+            "external_sources/process-nextick-args_2.0.1_package_package.json",
+            "external_sources/process-nextick-args_2.0.1_package_license.md"
+          ]
+        },
+        {
+          "key": "readable-stream_2.3.7",
+          "package": "readable-stream",
+          "version": "2.3.7",
+          "url": "https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.7.tgz",
+          "sha256": "09a07ecf7aa5dce26bad942925abb75fcb85e058f90e42a6329102374d3477c7",
+          "evidence_files": [
+            "external_sources/readable-stream_2.3.7_package_LICENSE",
+            "external_sources/readable-stream_2.3.7_package_package.json"
+          ]
+        },
+        {
+          "key": "safe-buffer_5.1.2",
+          "package": "safe-buffer",
+          "version": "5.1.2",
+          "url": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
+          "sha256": "e09206c60fccafb952c854af7629cbb031a98d6da2e143fb3aa3c8a48402aa22",
+          "evidence_files": [
+            "external_sources/safe-buffer_5.1.2_package_package.json",
+            "external_sources/safe-buffer_5.1.2_package_LICENSE"
+          ]
+        },
+        {
+          "key": "set-immediate-shim_1.0.1",
+          "package": "set-immediate-shim",
+          "version": "1.0.1",
+          "url": "https://registry.npmjs.org/set-immediate-shim/-/set-immediate-shim-1.0.1.tgz",
+          "sha256": "d72d78d5fa9944408bdf30d59140c0298a5673ff30b4ec8597fe2e6bf694d696",
+          "evidence_files": [
+            "external_sources/set-immediate-shim_1.0.1_package_package.json"
+          ]
+        },
+        {
+          "key": "string_decoder_1.1.1",
+          "package": "string_decoder",
+          "version": "1.1.1",
+          "url": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz",
+          "sha256": "af8262434508fa8292407f7fef4690d19eabb73387ca230b41f2a1155216963a",
+          "evidence_files": [
+            "external_sources/string_decoder_1.1.1_package_package.json",
+            "external_sources/string_decoder_1.1.1_package_LICENSE"
+          ]
+        },
+        {
+          "key": "underscore_1.13.1",
+          "package": "underscore",
+          "version": "1.13.1",
+          "url": "https://registry.npmjs.org/underscore/-/underscore-1.13.1.tgz",
+          "sha256": "223b9ca7be6f44992350bce5e1f411225bf4719b5c695970b6b98ac624f63a0a",
+          "evidence_files": [
+            "external_sources/underscore_1.13.1_package_LICENSE",
+            "external_sources/underscore_1.13.1_package_package.json"
+          ]
+        },
+        {
+          "key": "util_0.10.3",
+          "package": "util",
+          "version": "0.10.3",
+          "url": "https://registry.npmjs.org/util/-/util-0.10.3.tgz",
+          "sha256": "88033ac0a981b3c3919d7bf21e9808d0a2903c331688e4122bdd32eeea3dd6d0",
+          "evidence_files": [
+            "external_sources/util_0.10.3_package_package.json",
+            "external_sources/util_0.10.3_package_LICENSE"
+          ]
+        },
+        {
+          "key": "util-deprecate_1.0.2",
+          "package": "util-deprecate",
+          "version": "1.0.2",
+          "url": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
+          "sha256": "79a1de983c1b393180c47456d6b73caab278a00ea6e37d5c6675f2dcdec2a3e5",
+          "evidence_files": [
+            "external_sources/util-deprecate_1.0.2_package_package.json",
+            "external_sources/util-deprecate_1.0.2_package_LICENSE"
+          ]
+        },
+        {
+          "key": "xmlbuilder_10.0.0",
+          "package": "xmlbuilder",
+          "version": "10.0.0",
+          "url": "https://registry.npmjs.org/xmlbuilder/-/xmlbuilder-10.0.0.tgz",
+          "sha256": "411ae7cbdc686cd51d06ddb635713226b6ba38fa330b0599741a390954a00396",
+          "evidence_files": [
+            "external_sources/xmlbuilder_10.0.0_package_package.json",
+            "external_sources/xmlbuilder_10.0.0_package_LICENSE"
+          ]
+        }
+      ],
+      "notice_sha256": "3354a3eacd8fc5b30f3474f1097c4c9043ca9e5ec3bab5c271a9c31b7c31106a"
+    },
+    {
+      "action_id": "SAN-163",
+      "identity": "Fira Code Light, Regular and SemiBold static WOFF2",
+      "version": "Release 6.2; internal Version 6.002",
+      "identity_proof": "All three retained files byte-identical to official Fira_Code_v6.2.zip woff2/FiraCode-{Light,Regular,SemiBold}.woff2; 2030 glyphs each. Internal version/name/copyright consistent with official release.",
+      "upstream_urls": [
+        "https://github.com/tonsky/FiraCode/releases/download/6.2/Fira_Code_v6.2.zip",
+        "https://raw.githubusercontent.com/tonsky/FiraCode/6.2/LICENSE"
+      ],
+      "license_basis": "Exact official font release and OFL-1.1 copyright/license, with embedded font licensing metadata.",
+      "bundled_components": "Font outlines, hinting and metadata in exact upstream WOFF2; no separately bundled font dependency identified. Release authors/contributors covered by release license.",
+      "artifacts": [
+        {
+          "path": "static/fonts/FiraCode-Light.woff2",
+          "sha256": "e3aa3db06cfb19dfc0b0f1f38355add3e8d1ef45d3af39ce95d9ca7d96114e6c",
+          "oid": "eeaa30363cf1bebde2ca2490c6d8db74898c21fb",
+          "size_bytes": 102924,
+          "source_id": "FiraCode_6.2.zip",
+          "archive_member": "woff2/FiraCode-Light.woff2"
+        },
+        {
+          "path": "static/fonts/FiraCode-Regular.woff2",
+          "sha256": "a6ce59520b90e15d7062ffef214f94c8add5a4085c0bbb1683602ef227a4d1fe",
+          "oid": "f8b63fb0181781ce675391d1e6a3be35a039cb94",
+          "size_bytes": 103240,
+          "source_id": "FiraCode_6.2.zip",
+          "archive_member": "woff2/FiraCode-Regular.woff2"
+        },
+        {
+          "path": "static/fonts/FiraCode-SemiBold.woff2",
+          "sha256": "d16779aa6dfc7c4effe686ece5bdf4b1356a7352167e37fa256f596a9d428f11",
+          "oid": "ccbefc8845bc22d1af71b3de349c9074030f8e39",
+          "size_bytes": 106992,
+          "source_id": "FiraCode_6.2.zip",
+          "archive_member": "woff2/FiraCode-SemiBold.woff2"
+        }
+      ],
+      "modified": false,
+      "source_records": [
+        {
+          "id": "FiraCode_6.2.zip",
+          "url": "https://github.com/tonsky/FiraCode/releases/download/6.2/Fira_Code_v6.2.zip",
+          "final_url": "https://github.com/tonsky/FiraCode/releases/download/6.2/Fira_Code_v6.2.zip",
+          "bytes": 2462987,
+          "sha256": "0949915ba8eb24d89fd93d10a7ff623f42830d7c5ffc3ecbf960e4ecad3e3e79",
+          "saved_path": "external_sources/FiraCode_6.2.zip",
+          "proves": "Official font release archive; all three WOFF2 candidates compared byte for byte",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        },
+        {
+          "id": "FiraCode_LICENSE",
+          "url": "https://raw.githubusercontent.com/tonsky/FiraCode/6.2/LICENSE",
+          "final_url": "https://raw.githubusercontent.com/tonsky/FiraCode/6.2/LICENSE",
+          "bytes": 4389,
+          "sha256": "1d41e10031ab125302780a05ec4c91d218e47db0c7e37cf315cce5e608cdc25c",
+          "saved_path": "external_sources/FiraCode_LICENSE",
+          "proves": "Official font release OFL license",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        }
+      ],
+      "notice": "licenses/FiraCode-OFL-1.1.txt",
+      "notice_sha256": "1d41e10031ab125302780a05ec4c91d218e47db0c7e37cf315cce5e608cdc25c"
+    },
+    {
+      "action_id": "SAN-164",
+      "identity": "Inter Medium, Regular and SemiBold hinted static WOFF2",
+      "version": "Release 4.1; internal Version 4.001, git-9221beed3",
+      "identity_proof": "All three retained files byte-identical to official Inter-4.1.zip extras/woff-hinted/Inter-{Medium,Regular,SemiBold}.woff2, 2937 glyphs each. The similarly named web/*.woff2 candidates do not match; exact member matters.",
+      "upstream_urls": [
+        "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+        "https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt"
+      ],
+      "license_basis": "Exact official hinted release members, Inter authors copyright and full OFL-1.1 terms, plus internal licensing metadata.",
+      "bundled_components": "Static hinted font binaries from official release; no external runtime font dependency. Distinguish release 4.1 from internal 4.001.",
+      "artifacts": [
+        {
+          "path": "static/fonts/Inter-Medium.woff2",
+          "sha256": "7e80d9f65861ee6836a0081d4e75d88fb8789e5651d05edbc49640442a9610ee",
+          "oid": "3397fcce4b590cc2306eccf68172c2b906059f89",
+          "size_bytes": 143664,
+          "source_id": "Inter_4.1.zip",
+          "archive_member": "extras/woff-hinted/Inter-Medium.woff2"
+        },
+        {
+          "path": "static/fonts/Inter-Regular.woff2",
+          "sha256": "338239f6b590b8ced3bf857654d32da3fd3663294cd3003651ed57aa3abd7aa1",
+          "oid": "9606e69cd9196ea9a1457a34c943f1b2957b14e9",
+          "size_bytes": 140944,
+          "source_id": "Inter_4.1.zip",
+          "archive_member": "extras/woff-hinted/Inter-Regular.woff2"
+        },
+        {
+          "path": "static/fonts/Inter-SemiBold.woff2",
+          "sha256": "5013f48d77ab627b1db7c2415914284ef09abc3f60a8e0d0d8f3cd1bfebefb5e",
+          "oid": "4ef2081d5a2f21763fcc608f09a6a4bb3b31fe29",
+          "size_bytes": 144628,
+          "source_id": "Inter_4.1.zip",
+          "archive_member": "extras/woff-hinted/Inter-SemiBold.woff2"
+        }
+      ],
+      "modified": false,
+      "source_records": [
+        {
+          "id": "Inter_4.1.zip",
+          "url": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+          "final_url": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+          "bytes": 33707794,
+          "sha256": "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e",
+          "saved_path": "external_sources/Inter_4.1.zip",
+          "proves": "Official Inter release archive; three static WOFF2 candidates compared byte for byte",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        },
+        {
+          "id": "Inter_LICENSE",
+          "url": "https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt",
+          "final_url": "https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt",
+          "bytes": 4380,
+          "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+          "saved_path": "external_sources/Inter_LICENSE",
+          "proves": "Official Inter OFL terms",
+          "source_record": "EXTERNAL_FETCH_RECORD.json"
+        }
+      ],
+      "notice": "licenses/Inter-OFL-1.1.txt",
+      "notice_sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+    }
+  ]
+}

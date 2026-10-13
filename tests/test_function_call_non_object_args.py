@@ -60,6 +60,26 @@ def test_email_mcp_non_object_arguments_are_rejected(tool_name):
     assert block is None
 
 
+def test_write_file_recovers_legacy_command_path_content_shape():
+    block = function_call_to_tool_block(
+        "write_file",
+        '{"command":"/workspace/output.html\\n<html>ok</html>"}',
+    )
+
+    assert block is not None
+    assert block.tool_type == "write_file"
+    assert block.content == "/workspace/output.html\n<html>ok</html>"
+
+
+def test_write_file_rejects_one_line_command_alias():
+    block = function_call_to_tool_block(
+        "write_file",
+        '{"command":"not a path-plus-content payload"}',
+    )
+
+    assert block is None
+
+
 def test_edit_document_skips_non_object_edit_items():
     block = function_call_to_tool_block(
         "edit_document",

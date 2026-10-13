@@ -138,3 +138,75 @@ def test_pinned_hidream_model_is_still_served(server, tmp_path, monkeypatch):
     _client(server).post("/v1/images/generations", json={"model": "", "prompt": "x"})
 
     assert marker.exists(), "the model this server was launched with must still run"
+
+
+@pytest.mark.parametrize("prompt", [
+    "ordinary prompt with spaces and 'quotes'",
+    "image; touch SHELL_MARKER",
+    "image && touch SHELL_MARKER || echo failed",
+    "$(touch SHELL_MARKER) `touch SHELL_MARKER`",
+    "image\ntouch SHELL_MARKER\n",
+    "image > SHELL_MARKER | touch SHELL_MARKER",
+    "--output=SHELL_MARKER",
+])
+def test_hidream_prompt_reaches_real_child_as_one_literal_argument(
+    server, tmp_path, monkeypatch, prompt,
+):
+    import base64
+    import json
+
+    model_dir, _ = _plant_hidream_model_dir(tmp_path)
+    server._args.model = str(model_dir)
+    script = model_dir / "scripts" / "hidream_o1" / "generate_hidream_o1_mlx.py"
+    script.write_text(
+        "import json, pathlib, sys\n"
+        "argv = sys.argv[1:]\n"
+        "out = pathlib.Path(argv[argv.index('--output') + 1])\n"
+        "out.write_text(json.dumps(argv), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    marker = tmp_path / "shell-executed"
+    shell_startup = tmp_path / "shell-startup"
+    shell_startup.write_text(f"touch {str(marker)!r}\n", encoding="utf-8")
+    monkeypatch.setenv("BASH_ENV", str(shell_startup))
+    monkeypatch.setenv("ENV", str(shell_startup))
+    monkeypatch.setenv("SHELL", "/bin/sh")
+    prompt = prompt.replace("SHELL_MARKER", str(marker))
+
+    response = _client(server).post(
+        "/v1/images/generations",
+        json={"model": "attacker/hidream-other", "prompt": prompt, "size": "64x64"},
+    )
+
+    assert response.status_code == 200
+    argv = json.loads(base64.b64decode(response.json()["data"][0]["b64_json"]))
+    assert argv[argv.index("--prompt") + 1] == prompt
+    assert len(argv) == 13
+    assert argv[argv.index("--model-path") + 1] == str(model_dir)
+    assert not marker.exists()
+
+
+def test_mflux_prompt_is_one_argv_item_without_shell(server, monkeypatch):
+    import subprocess
+
+    prompt = "a picture; $(touch /tmp/should-not-exist)\n--output=/etc/passwd"
+    seen = []
+    monkeypatch.setattr(server, "_resolve_cli", lambda name: "/operator/bin/mflux-generate")
+
+    def run(cmd, **kwargs):
+        seen.append((cmd, kwargs))
+        Path(cmd[cmd.index("--output") + 1]).write_bytes(b"image")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+    response = _client(server).post(
+        "/v1/images/generations", json={"model": "/attacker/flux", "prompt": prompt},
+    )
+    assert response.status_code == 200
+    cmd, kwargs = seen[0]
+    assert cmd[0] == "/operator/bin/mflux-generate"
+    assert cmd[cmd.index("--model") + 1] == server._args.model
+    assert cmd[cmd.index("--prompt") + 1] == prompt
+    assert len(cmd) == 13
+    assert not kwargs.get("shell", False)
+    assert "executable" not in kwargs

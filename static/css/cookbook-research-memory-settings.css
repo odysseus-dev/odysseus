@@ -1,0 +1,1454 @@
+/* Cookbook (including What Fits?), deep research, memory, settings and admin.
+ *
+ * This is an eagerly loaded tail segment of the app stylesheet cascade. The
+ * former static/style.css now lives in the numbered 00-17 fragments; these
+ * three pre-existing panel files follow those fragments without changing
+ * their relative order. Nothing here is lazy-loaded.
+ *
+ * LOAD ORDER IS PART OF THE CONTRACT. static/index.html and the PRECACHE list
+ * in static/sw.js must agree:
+ *   1. static/css/00-tokens.css through static/css/17-research.css,
+ *      in numeric order
+ *   2. static/css/documents-gallery-editor.css
+ *   3. static/css/email-calendar-notes-tasks.css
+ *   4. static/css/cookbook-research-memory-settings.css
+ *
+ * Rules in this file retain their existing cascade position. Shared rules
+ * formerly kept in static/style.css now live in the numbered fragments.
+ */
+
+/* Cookbook already shows its own running/served-status dot
+       (#cookbook-notif-dot, toggled with .cookbook-notif-active on the
+       button). Don't stack the tabbed-down pulse on top of it — the two
+       dots overlap. Suppress the minimized dot while the status dot is up. */
+.list-item.rail-minimized.cookbook-notif-active::after { display: none; }
+@keyframes research-done-pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.5); opacity: 0.7; }
+    }
+#cookbook-gguf-delete-overlay {
+      background:rgba(0,0,0,0.5);
+      backdrop-filter:blur(4px);
+      pointer-events:auto !important;
+      z-index:99999 !important;
+      position:fixed !important;
+      inset:0 !important;
+    }
+.cookbook-gguf-delete-actions {
+      flex-wrap:wrap;
+    }
+/* ── Processing pulse animation (reused by session-star) ── */
+@keyframes research-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+@keyframes memory-synapse-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.65; transform: scale(1.02); }
+}
+.memory-add-input::placeholder {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+.memory-toolbar-toggle:has(input:not(:checked)) > span {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.memory-sort-label { white-space: nowrap; }
+.memory-sort-btn[aria-expanded="true"] .memory-sort-caret { transform: rotate(180deg); }
+@keyframes memory-synapse-sweep {
+  /* Sweep traverses left → right in the first ~12% of the cycle (≈0.7s of
+     a 6.2s loop), then waits offscreen. */
+  0%   { --sweep: -20%; }
+  12%  { --sweep: 120%; }
+  13%, 100% { --sweep: 120%; }
+}
+.memory-item-edit-input:focus {
+  outline: none;
+}
+.memory-edit-cat-select:focus {
+  outline: none;
+}
+.memory-add-row .memory-edit-cat-select:focus {
+  border-color: var(--red);
+}
+.memory-item-source::before,
+.memory-item-time::before {
+  content: '\00b7  ';
+}
+.adm-check-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 5px;
+  height: 2.5px;
+  border-left: 1.5px solid #fff;
+  border-bottom: 1.5px solid #fff;
+  transform: translate(-50%, -50%) rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-model-row:active .adm-check-dot {
+  transform: scale(0.9);
+}
+.adm-cb-hidden:checked + .adm-check-dot::after {
+  transform: translate(-50%, -50%) rotate(-45deg) scale(1);
+}
+.adm-cb-hidden:checked + .adm-endpoint-select-dot::after {
+  display: none;
+}
+/* Most recently added endpoint — brief accent glow so the user can
+   spot the new row immediately after Adding / Find. Fades out cleanly. */
+@keyframes adm-ep-just-added-glow {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+  60%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
+}
+.adm-section-toggle:focus-visible { outline: 1px solid var(--red); outline-offset: 1px; }
+/* Collapsed: hide the form body and point the caret right. */
+.adm-add-section.collapsed .admin-model-form { display: none; }
+.adm-add-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+.adm-quickstart-section {
+  margin-top: 7px;
+}
+.adm-quickstart-section:not(.collapsed) .adm-quickstart-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-quickstart-section.collapsed .adm-quickstart-body { display: none; }
+.adm-quickstart-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+.adm-provider-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes admin-spin {
+  to { transform: rotate(360deg); }
+}
+.admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
+/* Cookbook's cached-model list: NO inner-scroll cap. Two nested scroll
+   surfaces (this + the outer .admin-card) trapped the wheel so an expanded
+   serve panel couldn't be reached on tall content. Let the outer
+   .admin-card (overflow-y:auto) be the single scroll surface. */
+.hwfit-cached-list {
+  max-height: none !important;
+  overflow-y: visible !important;
+}
+/* The Servers list reuses .memory-toolbar for layout but must grow with every
+   added server — the 120px cap above was clipping manually-added servers. */
+.memory-toolbar.cookbook-servers-toolbar {
+  max-height: none;
+  overflow: visible;
+}
+#hwfit-cached-list {
+  position: relative;
+  top: -6px;
+}
+#hwfit-server-select,
+#hwfit-search {
+  position: relative;
+  top: -2px !important;
+}
+#hwfit-search {
+  height: 30px;
+  min-height: 30px;
+  font-family: inherit;
+  font-size: 11px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e06c75' stroke-opacity='0.85' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat;
+  background-position: 9px center;
+  padding-left: 28px;
+}
+.cookbook-body::-webkit-scrollbar {
+  width: 4px;
+}
+.cookbook-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 4px;
+}
+.cookbook-body::-webkit-scrollbar-track {
+  background: transparent;
+  padding: 4px 0;
+}
+#hwfit-dl-server.cookbook-server-select-colored,
+#hwfit-server-select.cookbook-server-select-colored,
+#hwfit-cache-server.cookbook-server-select-colored,
+#hwfit-deps-server.cookbook-server-select-colored {
+  color: var(--cookbook-server-color, var(--fg));
+  border-color: color-mix(in srgb, var(--cookbook-server-color) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--cookbook-server-color) 12%, var(--bg));
+}
+.cookbook-output-wrap:hover .cookbook-output-kill { opacity: 0.7; }
+.cookbook-tab-error-dot { --notif-glow: var(--color-error, #f44); }
+/* Brief highlight on the matched task card when jumping from the
+   running pill, so the user can spot it among a long list. */
+.cookbook-task-flash {
+  animation: cookbook-task-flash-anim 1.6s ease-out;
+}
+@keyframes cookbook-task-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+/* Cookbook header "downloading" status label sits 2px too far left
+   against the rest of the cookbook chrome — nudge it right. */
+#cookbook-bg-status {
+  left: 2px;
+}
+/* Keep both GPU action labels on one line — they wrapped to two rows on
+   mobile, which looked broken. */
+.cookbook-gpu-probe, .cookbook-gpu-clear { white-space: nowrap; }
+#cookbook-hf-latest-list .cookbook-hf-link:hover {
+  opacity: 1;
+}
+#cookbook-hf-latest-list {
+  min-height: 0;
+  max-height: min(52vh, 480px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.cookbook-section-header .cookbook-section-title {
+  flex: 1;
+}
+.cookbook-section-header:hover .cookbook-section-chevron { opacity: 1; }
+.cookbook-slot-wrap:hover .cookbook-slot-del { opacity: 1; }
+/* Keep dependency pills visually centered against the package description.
+   The row itself stays stable; only the controls move down slightly. */
+.cookbook-dep-row > .cookbook-dep-tag {
+  transform: translateY(2px);
+}
+/* Conditional line under the Download h2: only when the section is folded
+   (collapsed). When expanded, the body content provides separation; the
+   underline reads as clutter. */
+#cookbook-dl-tab-fold { border-bottom: none !important; padding-bottom: 0 !important; }
+#cookbook-dl-tab-fold.is-folded {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent) !important;
+  padding-bottom: 6px !important;
+}
+/* Smooth open/close for the Direct Download body — replaces the
+   instant display:none toggle with a max-height + opacity slide so
+   auto-fold and auto-expand don't feel jarring. 1200px is a safe
+   upper bound for the body height; the slide only fires up to the
+   actual content height because content stops there. */
+#cookbook-dl-tab-fold-body {
+  overflow: hidden;
+  max-height: 1200px;
+  opacity: 1;
+  transition: max-height 0.28s ease, opacity 0.18s ease, margin 0.28s ease;
+}
+#cookbook-dl-tab-fold-body.is-folded {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+.cookbook-dep-installed-btn .cookbook-dep-installed-label { padding: 0 8px; }
+.cookbook-dep-installed-btn:hover { filter: brightness(1.15); }
+.hwfit-serve-topline .hwfit-serve-runtime-note {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Expanded serve panel — make sure it can be scrolled past when it
+   grows taller than the visible viewport. Caps panel height to viewport
+   minus chrome and gives it its own internal scroll, so the surrounding
+   cached-list scroll isn't the only escape route. */
+.hwfit-cached-item .hwfit-serve-panel {
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+@media (max-width: 768px) {
+  .hwfit-cached-item .hwfit-serve-panel {
+    max-height: calc(100svh - 120px);
+  }
+  .hwfit-serve-preset-row {
+    justify-content: flex-end;
+    margin: -2px 0 0;
+  }
+  .hwfit-serve-topline {
+    flex-wrap: wrap;
+  }
+  .hwfit-serve-topline .hwfit-serve-runtime-note {
+    flex-basis: 100%;
+  }
+  .hwfit-serve-topline .hwfit-serve-runtime-text {
+    white-space: normal;
+  }
+}
+.hwfit-serve-row label select,
+.hwfit-serve-row label input {
+  display: block;
+  margin-top: 2px;
+}
+.hwfit-extra-env-label {
+  grid-column: 1 / -1;
+}
+.hwfit-serve-panel[data-backend-active="vllm"] .hwfit-extra-env-label {
+  grid-column: 2 / -1;
+}
+.hwfit-sf.hwfit-sf-full { grid-column: 1 / -1; }
+.hwfit-spec-tokens-bare::-webkit-outer-spin-button,
+.hwfit-spec-tokens-bare::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+  display: none;
+}
+.hwfit-numstep .hwfit-spec-tokens::-webkit-outer-spin-button,
+.hwfit-numstep .hwfit-spec-tokens::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.hwfit-numstep-btn:focus { outline: none; }
+.hwfit-spec-group:has(input[type="checkbox"]:not(:checked)) .hwfit-spec-method,
+.hwfit-spec-group:has(input[type="checkbox"]:not(:checked)) .hwfit-spec-tokens,
+.hwfit-spec-group:has(input[type="checkbox"]:not(:checked)) .hwfit-numstep {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.hwfit-serve-extra {
+  margin-bottom: 6px;
+}
+.hwfit-serve-cmd-details {
+  margin: 4px 0 0;
+}
+.hwfit-serve-cmd-summary::-webkit-details-marker {
+  display: none;
+}
+.hwfit-serve-cmd-summary::after {
+  content: '';
+  margin-left: auto;
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  opacity: 0.6;
+  transform: rotate(0deg);
+  transition: transform 0.18s ease;
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary::after {
+  transform: rotate(90deg);
+}
+.hwfit-serve-cmd-details[open] > .hwfit-serve-cmd-summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* Same z-index treatment as .cookbook-task-dropdown — cookbook modal's
+   auto-stack climbs past low values; popups append to body and need to
+   sit above the modal regardless. */
+:where(.hwfit-cached-dropdown,
+.cookbook-gpu-split-menu,
+.cookbook-launch-actions-menu,
+.cookbook-saved-menu,
+.cookbook-dep-menu) {
+  z-index: 10000;
+}
+.hwfit-serve-cmd-wrap .hwfit-serve-cmd {
+  /* Just enough breathing room so a cursor at line-end doesn't actually
+     touch the Copy icon — text otherwise uses the full width of the box. */
+  padding-right: 32px;
+}
+.hwfit-serve-cmd-details[open] .hwfit-serve-cmd {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 16%, transparent),
+              0 0 12px color-mix(in srgb, var(--accent, var(--red)) 13%, transparent);
+}
+.cookbook-gpu-split .cookbook-gpu-split-main {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}
+.cookbook-gpu-split .cookbook-gpu-split-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left-width: 0 !important;
+  padding: 0 6px !important;
+  min-width: 24px;
+}
+.cookbook-task[data-type="download"][data-status="running"] .cookbook-task-type[data-type="download"] {
+  background: color-mix(in srgb, var(--color-accent, #00aaff) 18%, transparent);
+  color: var(--color-accent, #00aaff);
+}
+@keyframes cookbook-wave-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+.cookbook-task[data-status="done"] .cookbook-task-check-ico { display: inline; }
+.cookbook-task[data-status="done"] .cookbook-task-clear-ico { display: none; }
+.cookbook-task-header {
+  cursor: pointer;
+}
+.cookbook-env-row > .cookbook-field-label {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+.cookbook-extra-label { grid-column: 1 / -1; }
+.cookbook-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--fg);
+  border: 2px solid var(--panel);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.cookbook-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 20%, transparent);
+}
+.cookbook-slider:active::-webkit-slider-thumb {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+}
+.cookbook-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg);
+  border: 2px solid var(--panel);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  cursor: pointer;
+}
+.cookbook-slider::-moz-range-progress {
+  background: var(--accent, var(--red));
+  height: 6px;
+  border-radius: 4px;
+}
+.cookbook-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 4px;
+}
+.cookbook-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.cookbook-checkbox:checked::after {
+  transform: translateX(14px);
+}
+/* Sliders span full row for alignment */
+.cookbook-field-slider {
+  grid-column: 1 / -1;
+}
+.cookbook-diag-body {
+  margin-top: 7px;
+}
+/* Add Server collapsible */
+.cookbook-server-details {
+  margin: 4px 0 6px;
+}
+.cookbook-server-toggle::-webkit-details-marker { display: none; }
+.cookbook-srv-status:hover { transform: scale(1.3); }
+@keyframes cookbook-srv-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.cookbook-server-entry::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    transparent calc(var(--sweep, -20%) - 8%),
+    color-mix(in srgb, var(--cookbook-server-color, var(--red)) 85%, transparent) var(--sweep, -20%),
+    transparent calc(var(--sweep, -20%) + 8%),
+    transparent 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: memory-synapse-sweep 6.2s linear infinite;
+  animation-delay: 0.4s;
+}
+#cookbook-servers-list .cookbook-server-entry:nth-child(2n)::after { animation-duration: 7.4s; animation-delay: 1.6s; }
+#cookbook-servers-list .cookbook-server-entry:nth-child(3n)::after { animation-duration: 8.8s; animation-delay: 3.2s; }
+#cookbook-servers-list .cookbook-server-entry:nth-child(5n)::after { animation-duration: 9.3s; animation-delay: 4.7s; }
+#cookbook-servers-list .cookbook-server-entry:nth-child(7n)::after { animation-duration: 5.5s; animation-delay: 2.3s; }
+.cookbook-server-entry:hover::after { animation: none; opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .cookbook-server-entry::after { animation: none; opacity: 0; }
+}
+/* Keep the row inside the card on narrow screens — the fixed-width host/path
+   inputs would otherwise overflow the card's background to the right. */
+@media (max-width: 768px) {
+  .cookbook-server-row .cookbook-srv-host,
+  .cookbook-server-row .cookbook-srv-path { flex: 1 1 100% !important; width: auto !important; min-width: 0 !important; }
+}
+.cookbook-server-row .cookbook-srv-name { width: 60px; flex-shrink: 0; flex-grow: 0; }
+.cookbook-server-row select.cookbook-srv-color {
+  display: none !important;
+}
+.cookbook-server-row .cookbook-srv-color-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cookbook-server-color, var(--accent, var(--red))) 70%, transparent);
+  outline-offset: 2px;
+}
+.cookbook-server-row .cookbook-srv-host { flex: 1; min-width: 100px; }
+.cookbook-server-row .cookbook-srv-host[readonly] { opacity: 0.4; cursor: default; }
+.cookbook-server-row .cookbook-srv-port { width: 40px; flex-shrink: 0; flex-grow: 0; }
+.cookbook-server-row .cookbook-srv-env { width: 65px; flex-shrink: 0; flex-grow: 0; }
+.cookbook-server-row .cookbook-srv-path { flex: 1; min-width: 80px; }
+.cookbook-server-row .cookbook-srv-status { width: 8px; height: 8px; align-self: center; }
+/* Brief highlight on the serve command box when a saved config is loaded, so
+   the click clearly registers (loading is otherwise silent). */
+.cookbook-cmd-flash {
+  animation: cookbookCmdFlash 0.6s ease;
+}
+.hwfit-toolbar:has(.hwfit-hw-manual-btn) {
+  gap: 8px;
+}
+.hwfit-toolbar .hwfit-server-select { min-width: 70px; flex-shrink: 0; }
+.hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
+.hwfit-toolbar .hwfit-engine { min-width: 0; width: 86px; flex-shrink: 0; font-size: 10px; }
+.hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
+.hwfit-advanced-panel .hwfit-engine-menu {
+  min-width: 132px;
+}
+/* Lower-opacity "Search models..." placeholder so it reads as a hint, not
+   a label — matches the muted form-field feel of the inline filters. */
+.hwfit-search::placeholder { opacity: 0.5; }
+.hwfit-search::-webkit-input-placeholder { opacity: 0.5; }
+.hwfit-search::-moz-placeholder { opacity: 0.5; }
+.hwfit-quant-wrap .hwfit-quant,
+.hwfit-engine-wrap .hwfit-engine {
+  /* Make room for the ? on the right edge, in addition to the native chevron. */
+  padding-right: 32px;
+}
+.hwfit-toolbar .hwfit-host { width: 110px; flex-shrink: 0; }
+.hwfit-env-row .hwfit-envtype { width: auto; min-width: 70px; flex-shrink: 0; }
+.hwfit-env-row .hwfit-envpath { flex: 1; min-width: 100px; }
+.hwfit-env-row .hwfit-gpus { width: 90px; flex-shrink: 0; }
+.hwfit-hw-chip-dismiss { cursor: pointer; }
+.hwfit-hw-chip-row[data-hw-chip="gpu"] .hwfit-hw-chip-x {
+  transform: translateY(-3px);
+}
+.hwfit-manual-panel .hwfit-hw-manual-save,
+.hwfit-manual-panel .hwfit-hw-manual-clear {
+  /* -3 (was -2) — 1px more up to optically align with the labeled
+     inputs to their left. */
+  transform: translateY(-3px);
+}
+.cookbook-model-list-fade {
+  animation: cookbook-model-list-fade-in 180ms ease-out both;
+}
+@keyframes cookbook-model-list-fade-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cookbook-model-list-fade,
+  .hwfit-list.cookbook-hwfit-models-just-loaded > .hwfit-row:not(.hwfit-header) { animation: none; }
+}
+.hwfit-row:has(.hwfit-dl-dot):hover { opacity: 0.9; }
+.hwfit-row:has(.hwfit-dl-dot) .hwfit-dl-dot { opacity: 1; }
+.hwfit-header .hwfit-name { font-size: 9px; }
+.hwfit-sortable { cursor: pointer; user-select: none; }
+.hwfit-c-params { width: 42px; }
+.hwfit-c-quant  { width: 52px; }
+.hwfit-c-vram   { width: 42px; }
+.hwfit-c-ctx    { width: 32px; }
+.hwfit-c-speed  { width: 44px; }
+.hwfit-c-mode   { width: 72px; }
+@keyframes hwfit-panel-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.hwfit-cb { cursor: pointer; }
+.settings-appearance-panel {
+  flex-direction: column;
+}
+@keyframes cookbook-modal-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.94);
+    filter: saturate(0.85);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.012);
+    filter: saturate(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: none;
+  }
+}
+@keyframes cookbook-modal-enter-mobile {
+  0%   { opacity: 0; transform: translateY(100%); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+/* Cookbook Serve Advanced fold — wraps the rarely-touched tuning rows
+   (KV/Attention/Swap/Env for vLLM, llama.cpp batch/cache/split, VRAM
+   monitor, speculative, extra args). Matches the existing .hwfit-panel-
+   advanced look: muted-gray label, no caps, no letter-spacing, no
+   warning-y opacity. Content flows into the parent's existing scroll
+   surface (no inner max-height) and inner rows reset their margin so
+   stacking gaps don't double when the fold opens. */
+/* Styled to match the Add Models page collapsible sections
+   (.adm-section-toggle) — same border/background/caret pattern, so the
+   two folds across the app read consistently. */
+details.hwfit-serve-advanced {
+  margin-top: 8px;
+  overflow: visible;
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.8;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s, border-radius 0s;
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary:hover {
+  opacity: 1;
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+/* Caret on the right, rotates open/closed. SVG-style rectangles via
+   borders keep this glyph-free + crisp at small sizes. */
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary::after {
+  content: '';
+  margin-left: auto;
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  opacity: 0.6;
+  transform: rotate(90deg);
+  transition: transform 0.18s ease;
+}
+details.hwfit-serve-advanced:not([open]) > summary.hwfit-serve-advanced-summary::after {
+  transform: rotate(0deg);
+}
+/* Body rows below the header — tight rhythm so the fold doesn't
+   feel airy. The cookbook modal's existing .cookbook-body is the
+   scroll surface; nothing inside the fold should add its own scroll. */
+details.hwfit-serve-advanced[open] > summary.hwfit-serve-advanced-summary {
+  margin-bottom: 6px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row.hwfit-vram-monitor .hwfit-vram-readout {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row label select,
+details.hwfit-serve-advanced > .hwfit-serve-row label input {
+  margin-top: 1px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_attn_backend"]) {
+  position: relative;
+  left: -63px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
+  position: relative;
+  left: -75px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
+  position: relative;
+  left: -73px;
+}
+details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype"]) {
+  position: relative;
+  left: 2px;
+}
+@media (max-width: 768px) {
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_block_size"]) {
+    left: 1px;
+  }
+  details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="swap"]) {
+    left: -3px;
+  }
+  details.hwfit-serve-advanced > .hwfit-serve-checks .hwfit-sf-cb {
+    flex: 1 1 100%;
+  }
+}
+/* Hide the native number-input spinner arrows (e.g. SMTP/IMAP Port) — they
+   render unstyled and ugly. Field still accepts only numbers. */
+.settings-input[type="number"]::-webkit-outer-spin-button,
+.settings-input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.settings-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.cookbook-output-wrap:hover .cookbook-output-copy {
+  opacity: 0.5;
+}
+.cookbook-output-wrap .cookbook-output-copy:hover {
+  opacity: 1;
+}
+#cookbook-dl-btn-search {
+  position: relative;
+  top: -4px;
+  padding-top: 0;
+  padding-bottom: 0;
+  height: 28px;
+}
+#cookbook-dl-btn {
+  position: relative;
+  top: -4px;
+}
+.research-synapse-compact .rs-stage { height: 288px; }
+@keyframes rs-live {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.research-synapse .rs-guide ellipse {
+  fill: none;
+  stroke: color-mix(in srgb, var(--fg) 7%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 7;
+}
+.research-synapse .rs-edge-tone-1 { stroke: color-mix(in srgb, var(--gold, #d4a72c) 45%, var(--border)); }
+.research-synapse .rs-edge-tone-2 { stroke: color-mix(in srgb, #5aa7c7 42%, var(--border)); }
+.research-synapse .rs-edge.rs-edge-firing {
+  stroke: var(--accent, var(--red));
+  stroke-width: 2;
+  opacity: 1;
+  filter: drop-shadow(0 0 4px var(--accent, var(--red)));
+  animation: rs-fire 1.1s ease-out;
+}
+@keyframes rs-fire {
+  0%   { stroke-dasharray: 4 200; stroke-dashoffset: 200; opacity: 0; }
+  20%  { opacity: 1; }
+  100% { stroke-dasharray: 200 4; stroke-dashoffset: -200; opacity: 0.55; }
+}
+.research-synapse .rs-node-root {
+  fill: var(--accent, var(--red));
+  stroke: var(--accent, var(--red));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent, var(--red)) 65%, transparent));
+}
+.research-synapse .rs-root-halo {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
+  stroke-width: 1;
+}
+/* Sub & leaf nodes stay inside the accent palette so the whole graph
+   reads as one organism. Leaves are softer/lower-contrast dots that
+   float around their sub — not green-on-stem (which read as palm fronds). */
+.research-synapse .rs-node-sub {
+  fill: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--bg));
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 70%, var(--fg));
+}
+.research-synapse .rs-node-sub.rs-node-tone-1 {
+  fill: color-mix(in srgb, var(--gold, #d4a72c) 11%, var(--bg));
+  stroke: color-mix(in srgb, var(--gold, #d4a72c) 76%, var(--fg));
+}
+.research-synapse .rs-node-sub.rs-node-tone-2 {
+  fill: color-mix(in srgb, #5aa7c7 11%, var(--bg));
+  stroke: color-mix(in srgb, #5aa7c7 72%, var(--fg));
+}
+.research-synapse .rs-node-leaf {
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  fill: color-mix(in srgb, var(--accent, var(--red)) 42%, var(--bg));
+}
+.research-synapse .rs-node-leaf.rs-node-tone-1 { fill: color-mix(in srgb, var(--gold, #d4a72c) 48%, var(--bg)); }
+.research-synapse .rs-node-leaf.rs-node-tone-2 { fill: color-mix(in srgb, #5aa7c7 48%, var(--bg)); }
+.research-synapse .rs-source-node { cursor: help; }
+@keyframes rs-hub-expand {
+  0% { filter: drop-shadow(0 0 0 transparent); }
+  35% { filter: drop-shadow(0 0 7px var(--accent, var(--red))); }
+  100% { filter: drop-shadow(0 0 0 transparent); }
+}
+@keyframes rs-pop {
+  0%   { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.25); opacity: 1; }
+  100% { opacity: 1; }
+}
+@keyframes rs-pulse {
+  0%   { transform: scale(1); opacity: 0.65; }
+  100% { transform: scale(5); opacity: 0; }
+}
+.research-synapse .rs-meta .rs-sep { display: none; }
+.research-synapse.rs-complete .rs-pulse { animation: none; opacity: 0; }
+.research-synapse.rs-complete .rs-node-root {
+  fill: var(--color-success, #4caf50);
+  stroke: var(--color-success, #4caf50);
+}
+@media (max-width: 480px) {
+  .research-synapse .rs-meta { grid-template-columns: 1fr auto auto; row-gap: 6px; }
+  .research-synapse .rs-meta .rs-status { display: none; }
+}
+.hwfit-cached-menu-btn svg { fill: currentColor; }
+.settings-email-preferences-card > h2 {
+  display: none;
+}
+[data-settings-panel="email"] > .settings-email-preferences-card {
+  padding-top: 0;
+}
+.cookbook-task-menu-btn {
+  top: 0 !important;
+  transform: translateY(2px) scale(1.15) !important;
+}
+/* Settings "+ Add server" matches the model-dir "+ Add" path button (22px). */
+#cookbook-server-add.cal-add-btn-text {
+  height: 28px;
+  min-width: 62px;
+  border-radius: 14px;
+  padding: 0 12px 0 8px;
+  position: relative;
+  top: 1px;
+  font-size: 12px;
+}
+@keyframes research-pane-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.research-pane-header:active { cursor:grabbing; }
+.research-pane-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--red);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.research-tab-panel.hidden,
+.research-tab-panel[hidden] { display: none; }
+.research-tab-heading h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+.research-tab-panel:not([data-research-panel="research"]) .research-jobs-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Hide the in-body "Research" subtitle on mobile to save vertical space —
+   the toolbar/header carries enough context already. */
+/* Match the .admin-card h2 styling used in Documents/Library so the
+   "Research" sub-title reads the same as those modals' titles. */
+.research-new-job h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.research-new-job > .research-new-job-desc {
+  margin: 6px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  /* Keep the "Research" title visible on mobile (matches the Cookbook tab
+     titles, which show on mobile). It used to be hidden here. */
+  .research-new-job h2 {
+    font-size: 14px;
+  }
+}
+.research-setting:has(#research-model) .research-setting-label {
+  position: relative;
+  top: 1px;
+}
+.research-setting:has(#research-rounds) select,
+.research-setting:has(#research-category) select {
+  position: relative;
+  top: -4px;
+}
+.research-setting:has(#research-rounds) .research-setting-label,
+.research-setting:has(#research-category) .research-setting-label {
+  position: relative;
+  top: 4px;
+}
+.research-setting select {
+  font-size: 11px; padding: 4px 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.research-picker-btn:focus-visible,
+.research-picker-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
+  outline-offset: 1px;
+}
+.research-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-picker.open .research-picker-btn > svg { transform: rotate(180deg); }
+.research-picker-menu[hidden] { display: none; }
+.research-picker-option > span:nth-child(2):not(.research-picker-check),
+.research-picker-option > span:first-child:not(.research-picker-icon) {
+  overflow: hidden; text-overflow: ellipsis;
+}
+.research-picker-option.active .research-picker-check { opacity: 1; }
+.research-run-mode-popover.rrm-up { transform-origin: bottom right; }
+.research-run-mode-popover .research-run-mode-row:hover {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 14%, transparent);
+}
+.research-job-card.done { cursor:pointer; }
+/* Past (library) research used to be dimmed to 0.65 which read as "greyed out".
+   They now look the same as the rest — folding them under "Past research"
+   handles the de-clutter instead. */
+.research-job-card.done.from-library { opacity:1; }
+.research-job-thumb-frame[role="button"] { cursor: pointer; }
+.research-job-thumb-frame[role="button"]:hover {
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 65%, transparent);
+  outline-offset: 1px;
+}
+.research-job-report-body h1, .research-job-report-body h2, .research-job-report-body h3 {
+  color: var(--cat-color, var(--accent, var(--fg)));
+}
+.research-hero::after {
+  content: ''; position: absolute; right: -40px; top: -40px;
+  width: 160px; height: 160px; border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--cat-color, var(--accent)) 15%, transparent) 0%, transparent 60%);
+  pointer-events: none;
+}
+.research-hero-icon svg { width: 100%; height: 100%; }
+/* Product: callout-style bullets */
+.research-body-product ul { list-style: none; padding-left: 0; }
+.research-body-product ul li {
+  padding: 6px 10px 6px 28px; margin: 4px 0;
+  border-left: 2px solid color-mix(in srgb, #5b8abf 40%, transparent);
+  background: color-mix(in srgb, #5b8abf 4%, transparent);
+  border-radius: 0 4px 4px 0; position: relative;
+}
+.research-body-product ul li::before {
+  content: '▸'; position: absolute; left: 10px;
+  color: #5b8abf; font-weight: bold;
+}
+/* Comparison: styled table */
+.research-body-comparison table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+  border: 1px solid color-mix(in srgb, #e5a33a 25%, transparent);
+  border-radius: 6px; overflow: hidden;
+}
+.research-body-comparison th {
+  background: color-mix(in srgb, #e5a33a 18%, transparent);
+  color: #e5a33a; font-weight: 700;
+  padding: 8px 12px; text-align: left;
+  border-bottom: 2px solid color-mix(in srgb, #e5a33a 40%, transparent);
+}
+.research-body-comparison td {
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, #e5a33a 12%, transparent);
+}
+.research-body-comparison tr:nth-child(even) td {
+  background: color-mix(in srgb, #e5a33a 3%, transparent);
+}
+/* How-to: big numbered steps */
+.research-body-howto ol { counter-reset: howto-step; list-style: none; padding-left: 0; }
+.research-body-howto ol > li {
+  counter-increment: howto-step; position: relative;
+  padding: 10px 12px 10px 52px; margin: 8px 0;
+  background: color-mix(in srgb, #82c882 5%, transparent);
+  border-radius: 8px; border-left: 2px solid #82c882;
+}
+.research-body-howto ol > li::before {
+  content: counter(howto-step);
+  position: absolute; left: 10px; top: 14px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #82c882; color: white;
+  font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 6px color-mix(in srgb, #82c882 40%, transparent);
+}
+/* Landscape: section banners */
+.research-body-landscape h3 {
+  padding: 8px 14px;
+  background: linear-gradient(90deg, color-mix(in srgb, #a07ae0 15%, transparent), transparent);
+  border-left: 3px solid #a07ae0;
+  border-radius: 0 6px 6px 0;
+  margin: 14px 0 8px;
+}
+/* Fact-check: verdict emphasis */
+.research-body-factcheck blockquote {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 6%, transparent);
+  padding: 10px 14px; margin: 10px 0;
+  border-radius: 0 6px 6px 0;
+}
+.research-body-factcheck strong {
+  color: var(--red);
+  padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.research-job-cancel:hover,
+.research-job-remove:hover,
+.research-job-report-link:hover { opacity:1; }
+.research-synapse-toggle:hover,
+.research-synapse-toggle.active { opacity:1; }
+.research-job-synapse-host.synapse-collapsed { display:none; }
+.research-job-summary .research-job-thumb-frame {
+  transform: translateY(-4px);
+}
+.research-job-summary .research-job-failnote {
+  margin: 2px 0 0;
+}
+.research-job-thumb-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center,
+    transparent 42%,
+    color-mix(in srgb, var(--accent, var(--red)) 28%, transparent) 100%);
+  opacity: 0.75;
+}
+/* Push the first dim (dismiss/delete) button — and everything after it — to
+   the right edge of the actions row. `:first-of-type` would match the very
+   first <button> in the row regardless of class; this immediate-sibling
+   combinator targets only a dim button that follows a non-dim one. */
+.research-job-actions .research-job-action:not(.research-job-action-dim)
+  + .research-job-action-dim { margin-left: auto; }
+/* Edge case: all buttons in the row are dim — push first dim right. */
+.research-job-actions > .research-job-action-dim:first-child { margin-left: auto; }
+.research-job-action-dim:hover { opacity: 1; }
+.research-job-overflow.open .research-job-more {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--cat-color) 45%, var(--border));
+  background: color-mix(in srgb, var(--cat-color) 8%, transparent);
+}
+.research-job-menu[hidden] { display: none; }
+.research-section-divider::before,
+.research-section-divider::after {
+  content:''; flex:1; height:1px;
+  background:var(--border);
+}
+.research-section.collapsed .research-section-body { display: none; }
+.research-section:not(.collapsed) > .research-section-header { border-bottom: 1px solid var(--border); }
+.research-section-header:has(.research-library-hint) { padding-bottom: 8px; }
+.research-section.collapsed .research-section-chevron { transform: rotate(-90deg); }
+/* Active section dot: pulsing accent glow (work in progress). */
+.research-section-dot.pulsing { animation: research-dot-pulse 1.5s ease-in-out infinite; }
+@keyframes research-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); }
+  70%      { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+}
+.research-source-link:hover { text-decoration:underline; }
+.research-navigation-trace-live {
+  margin:7px 0 0;
+  max-height:92px;
+  overflow:hidden;
+}
+.research-nav-target {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.research-nav-status {
+  opacity:0.85;
+}
+.research-action-row .research-nav-target {
+  opacity:0.9;
+}
+.research-action-skipped {
+  opacity:0.62;
+}
+.research-nav-meta {
+  grid-column:2 / -1;
+  opacity:0.68;
+}
+.research-job-report-body h1,
+.research-job-report-body h2,
+.research-job-report-body h3 { font-size:13px; margin:12px 0 4px; }
+.research-job-report-body p { margin:4px 0; }
+.research-job-report-body pre { font-size:11px; }
+.research-library-toggle:hover { opacity:1; }
+.research-library-list {
+  max-height:300px; overflow-y:auto;
+}
+.research-lib-open:hover { opacity:1; }
+@keyframes research-badge-breathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary, var(--red)) 55%, transparent);
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-primary, var(--red)) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-badge { animation: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .research-sb-dot { animation: none; }
+}
+/* Nudge the X icon in the "Clear all" button down 2px. */
+#research-clear-all svg { position: relative; top: 2px; }
+@media (min-width: 769px) {
+  #research-pane.research-results-view {
+    height: 78vh;
+  }
+}
+.research-section-clear svg { width: 11px; height: 11px; }
+.research-job-action.research-job-action-report:hover {
+  color: var(--cat-color, var(--accent, var(--red)));
+  border-color: var(--cat-color, var(--accent, var(--red)));
+  background: color-mix(in srgb, var(--cat-color, var(--accent, var(--red))) 10%, transparent);
+}
+.research-start-btn svg { color: inherit; }
+.research-library-link:hover { opacity: 0.8; }
+/* Nudge the Delete button 4px left. */
+.research-job-action[data-action="delete"] { position: relative; right: 2px; }
+.research-job-card.research-standard:hover {
+  background: color-mix(in srgb, var(--research-accent) 7%, var(--bg));
+  border-color: color-mix(in srgb, var(--research-accent) 42%, var(--border));
+}
+.research-job-card.research-standard .research-progress-fill {
+  background: var(--research-accent);
+}
+.research-job-card.research-standard-v0,
+.research-hero.research-hero-v0 { --research-accent: #db8576; }
+.research-job-card.research-standard-v1,
+.research-hero.research-hero-v1 { --research-accent: #d2a45f; }
+.research-job-card.research-standard-v2,
+.research-hero.research-hero-v2 { --research-accent: #72ad8d; }
+.research-job-card.research-standard-v3,
+.research-hero.research-hero-v3 { --research-accent: #72a5cf; }
+.research-job-card.research-standard-v4,
+.research-hero.research-hero-v4 { --research-accent: #aa86c7; }
+.adm-copilot-copy { margin-left: auto; }
+.adm-chatgpt-usage-host {
+  margin: 4px 0 6px 0;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+/* Days field inline with From / Until — push it + the action buttons to
+   the right end of the row so the row reads: From | Until | …gap… | Days | Cancel | Save. */
+.hwfit-schedule-days-field {
+  margin-left: auto;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err.is-visible { display: block; }
+/* Real-time Diagnostics Log Terminal UI Styles */
+.settings-system-logs-svg {
+  vertical-align: -2px;
+  margin-right: 5px;
+  opacity: 0.6;
+}
+.settings-system-logs-toggle-sub {
+  margin-bottom: 12px;
+}
+.settings-system-logs-tab:hover,
+.settings-system-logs-tab.active {
+  opacity: 1;
+}
+.settings-system-logs-refresh-svg {
+  pointer-events: none;
+}
+/* ── Settings navigation / finder ────────────────────────────── */
+.settings-sidebar-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* Build provenance at the bottom of the sidebar. The nav above it takes the
+   free space, so this needs no absolute positioning to sit at the bottom.
+   `[hidden]` needs restating: an author `display` rule outranks the UA
+   stylesheet's [hidden] rule, so the attribute alone would not hide it. */
+.settings-sidebar-build {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 8px;
+  padding: 4px 12px 2px;
+  border-top: 1px solid var(--border);
+  font-size: 9px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.settings-sidebar-build[hidden] {
+  display: none;
+}
+/* Same treatment as the "Admin" group label this sits under. */
+.settings-sidebar-build-version {
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.settings-sidebar-build-commit {
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.settings-nav-search-wrap {
+  position: relative;
+  margin: 0 0 8px;
+}
+.settings-nav-search {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 5px 9px 5px 29px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+}
+.settings-nav-search:focus {
+  border-color: var(--accent, var(--red));
+}
+.settings-nav-search::placeholder {
+  color: var(--fg);
+  opacity: 0.45;
+}
+.settings-nav-search-icon {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  left: 9px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+.settings-nav-search-results {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 100%;
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+.settings-search-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-search-result:hover,
+.settings-search-result.active {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.settings-search-result-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.settings-search-result-group {
+  flex: 0 0 auto;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  opacity: 0.5;
+}
+.settings-search-empty {
+  padding: 8px;
+  color: var(--fg);
+  font-size: 10px;
+  text-align: center;
+  opacity: 0.55;
+}
+.settings-sidebar-resize-handle {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+.settings-sidebar-resize-handle:hover,
+.settings-sidebar-resizing .settings-sidebar-resize-handle {
+  background: var(--accent, var(--red));
+  opacity: 0.45;
+}
+.settings-sidebar-resizing {
+  transition: none;
+  user-select: none;
+}
+body.settings-sidebar-resize-active {
+  cursor: col-resize;
+  user-select: none;
+}
+.settings-sidebar-toggle {
+  position: absolute;
+  z-index: 25;
+  top: 9px;
+  right: -13px;
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, border-color 0.12s ease;
+}
+.settings-sidebar:hover .settings-sidebar-toggle,
+.settings-sidebar-toggle:focus-visible,
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
+  opacity: 1;
+}
+.settings-sidebar-toggle:hover,
+.settings-sidebar-toggle:focus-visible {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.settings-sidebar-toggle-expand {
+  display: none;
+}
+.settings-sidebar.settings-sidebar-collapsed {
+  width: 34px;
+  flex-basis: 34px;
+  padding: 0;
+}
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
+  display: none;
+}
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-build {
+  display: none;
+}
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-resize-handle {
+  display: none;
+}
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle {
+  top: 10px;
+  right: 5px;
+}
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-collapse {
+  display: none;
+}
+.settings-sidebar.settings-sidebar-collapsed .settings-sidebar-toggle-expand {
+  display: block;
+}
+/* The existing narrow/snapped layout is a horizontal tab rail. Sidebar
+   resizing/collapse applies only to the vertical desktop layout. */
+@container settings-modal (max-width: 620px) {
+  .settings-sidebar {
+    width: auto;
+    flex: 0 0 auto;
+    transition: none;
+  }
+
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .settings-nav-search-wrap,
+  .settings-sidebar-resize-handle,
+  .settings-sidebar-toggle,
+  .settings-sidebar-build {
+    display: none;
+  }
+
+  .settings-sidebar.settings-sidebar-collapsed {
+    width: auto;
+    flex-basis: auto;
+    padding: 6px;
+  }
+
+  .settings-sidebar.settings-sidebar-collapsed .settings-sidebar-content {
+    display: flex;
+  }
+}
+@media (max-width: 600px) {
+  .settings-sidebar {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .settings-sidebar-content {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .settings-nav-search-wrap,
+  .settings-sidebar-resize-handle,
+  .settings-sidebar-toggle,
+  .settings-sidebar-build {
+    display: none;
+  }
+}
+.cookbook-chat-target {
+  animation: cookbook-chat-target-pulse 1.8s ease-out;
+}
+@keyframes cookbook-chat-target-pulse {
+  0%, 35% { outline: 2px solid var(--accent, #d46a6a); outline-offset: 2px; }
+  100% { outline: 2px solid transparent; outline-offset: 5px; }
+}
+#research-pane .research-history-clear-btn {
+  margin-left: auto;
+  height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+#research-pane .research-history-desc {
+  flex: 0 0 auto;
+  position: relative;
+  top: -8px;
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+#research-pane .research-history-search-wrap {
+  position: relative;
+  top: 2px;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  margin-top: 0;
+}

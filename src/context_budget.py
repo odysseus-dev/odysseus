@@ -68,6 +68,42 @@ def compute_input_token_budget(
     return configured if configured > 0 else default
 
 
+def bound_trim_reserve(context_window: int, requested_reserve: int) -> int:
+    """Keep the response reserve from consuming the entire context window.
+
+    At least half of a small context window remains available for input. The
+    caller can then combine this bounded reserve with its independently
+    computed input budget without subtracting the reserve twice.
+    """
+
+    budget = max(0, _int_or_zero(context_window))
+    reserve = max(0, _int_or_zero(requested_reserve))
+    return min(reserve, budget // 2)
+
+
+def compute_trim_context_window(
+    input_budget: int,
+    context_length: int,
+    requested_reserve: int,
+) -> tuple[int, int]:
+    """Return ``(trim_window, reserve)`` for ``trim_for_context``.
+
+    ``compute_input_token_budget`` returns an input allowance, whereas
+    ``trim_for_context`` expects a total window and subtracts its response
+    reserve internally. Add the reserve to the input allowance exactly once,
+    clamped to the model's real context window.
+    """
+
+    input_budget = max(1, _int_or_zero(input_budget))
+    context_length = max(0, _int_or_zero(context_length))
+    reserve_basis = context_length if context_length > 0 else input_budget
+    reserve = bound_trim_reserve(reserve_basis, requested_reserve)
+    trim_window = input_budget + reserve
+    if context_length > 0:
+        trim_window = min(trim_window, context_length)
+    return max(1, trim_window), reserve
+
+
 def budget_is_explicit(configured: int, *, default: int = DEFAULT_BUDGET) -> bool:
     """Whether a configured agent_input_token_budget is a deliberate explicit cap.
 

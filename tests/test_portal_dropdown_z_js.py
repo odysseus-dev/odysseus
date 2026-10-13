@@ -16,6 +16,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,9 +101,11 @@ def test_late_routed_dropdowns_use_top_portal_z(rel):
     assert "topPortalZ()" in src, f"{rel} must call topPortalZ() for its dropdown z"
 
 
-@pytest.mark.parametrize("rel", ["static/js/tasks.js", "static/js/skills.js", "static/style.css"])
+@pytest.mark.parametrize("rel", ["static/js/tasks.js", "static/js/skills.js", "app-css"])
 def test_no_hardcoded_portal_z_literals_remain(rel):
-    src = (ROOT / rel).read_text()
+    # "app-css" is the whole cascade: a moved rule must not escape this check
+    # by landing in a stylesheet this list does not name.
+    src = app_css() if rel == "app-css" else (ROOT / rel).read_text()
     # Match the exact 100000/100002 these dropdowns used; the trailing-digit
     # guard avoids false-matching an unrelated 1000000 elsewhere.
     hits = re.findall(r"z-index:\s*10000[02](?!\d)", src)

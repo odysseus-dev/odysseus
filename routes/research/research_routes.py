@@ -7,7 +7,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -271,7 +271,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "query": entry.get("query", ""),
                     "status": "running",
                     "progress": entry.get("progress", {}),
+                    "source_state": research_handler.get_source_state(sid),
+                    "source_coverage": research_handler.get_source_coverage(sid),
+                    "navigation_trace": research_handler.get_navigation_trace(sid),
+                    "action_trace": research_handler.get_action_trace(sid),
                     "started_at": entry.get("started_at", 0),
+                    "category": research_handler.get_category(sid),
+                    "mode": research_handler.get_mode(sid),
                 })
         return {"active": active}
 
@@ -284,6 +290,24 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         status = research_handler.get_status(session_id)
         if status is None:
             raise HTTPException(404, "No research found for this session")
+        try:
+            source_state = research_handler.get_source_state(session_id)
+            if isinstance(source_state, str) and source_state:
+                status["source_state"] = source_state
+            source_coverage = research_handler.get_source_coverage(session_id)
+            if isinstance(source_coverage, dict) and source_coverage:
+                status["source_coverage"] = source_coverage
+        except Exception:
+            pass
+        try:
+            navigation_trace = research_handler.get_navigation_trace(session_id)
+            if isinstance(navigation_trace, list) and navigation_trace:
+                status["navigation_trace"] = navigation_trace
+            action_trace = research_handler.get_action_trace(session_id)
+            if isinstance(action_trace, list) and action_trace:
+                status["action_trace"] = action_trace
+        except Exception:
+            pass
         return status
 
     @router.post("/api/research/cancel/{session_id}")
@@ -306,8 +330,26 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
         raw_findings = research_handler.get_raw_findings(session_id) or []
+        analyzed_urls = research_handler.get_analyzed_urls(session_id) or []
+        source_state = research_handler.get_source_state(session_id)
+        source_coverage = research_handler.get_source_coverage(session_id)
+        navigation_trace = research_handler.get_navigation_trace(session_id)
+        action_trace = research_handler.get_action_trace(session_id)
+        category = research_handler.get_category(session_id)
+        mode = research_handler.get_mode(session_id)
         research_handler.clear_result(session_id)
-        return {"result": result, "sources": sources, "raw_findings": raw_findings}
+        return {
+            "result": result,
+            "sources": sources,
+            "raw_findings": raw_findings,
+            "analyzed_urls": analyzed_urls,
+            "source_state": source_state,
+            "source_coverage": source_coverage,
+            "navigation_trace": navigation_trace,
+            "action_trace": action_trace,
+            "category": category,
+            "mode": mode,
+        }
 
     def _assert_owns_research(session_id: str, user: str) -> None:
         """404-not-403 ownership gate for a research session's on-disk JSON.
@@ -394,6 +436,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "id": p.stem,
                     "query": query,
                     "category": d.get("category") or "",
+                    "mode": d.get("mode") or "research",
+                    "mode": d.get("mode") or "research",
                     "source_count": len(sources),
                     "status": d.get("status", "done"),
                     "duration": d.get("stats", {}).get("Duration", ""),
@@ -479,6 +523,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
     class ResearchStartRequest(BaseModel):
         query: str
+        origin_chat_id: Optional[str] = None
         # max_rounds=0 means "Auto" — let the AI decide when to stop, capped at 20.
         max_rounds: int = Field(default=0, ge=0, le=20)
         search_provider: Optional[str] = None
@@ -487,7 +532,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         max_time: int = Field(default=300, ge=60, le=1800)
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
-        category: Optional[str] = None
+        category: Optional[Literal["product", "comparison", "howto", "factcheck"]] = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -509,6 +554,15 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         pass
                 user = tool_owner
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
+        delivery = getattr(request.app.state, 'background_tool_jobs', None)
+        if body.origin_chat_id:
+            from core.database import SessionLocal, Session as DbSession
+            with SessionLocal() as db:
+                origin = db.get(DbSession, body.origin_chat_id)
+                if origin is None or origin.owner != user:
+                    raise HTTPException(404, 'Origin chat not found')
+            if delivery is None:
+                raise HTTPException(503, 'Background chat delivery is unavailable')
 
         if body.endpoint_id:
             from src.database import SessionLocal
@@ -558,8 +612,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             if body.model:
                 ep_model = body.model
 
-        # max_rounds=0 → "Auto", let AI decide; pass 20 as the safety cap.
-        effective_max_rounds = body.max_rounds if body.max_rounds > 0 else 20
+        # 0 = auto research capped at 20.
+        effective_max_rounds = body.max_rounds if body.max_rounds != 0 else 20
+        if body.origin_chat_id and 'max_rounds' not in body.model_fields_set:
+            effective_max_rounds = 2
+        if body.origin_chat_id:
+            delivery.register(session_id, body.origin_chat_id, user, 'research', body.query, effective_max_rounds)
         research_handler.start_research(
             session_id=session_id,
             query=body.query,
@@ -573,8 +631,22 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             extraction_timeout=body.extraction_timeout,
             extraction_concurrency=body.extraction_concurrency,
             owner=user,
+            on_complete=(lambda sid, result, sources, findings: delivery.complete(sid, result, sources))
+                if body.origin_chat_id else None,
         )
-        return {"session_id": session_id, "status": "running", "query": body.query}
+        return {
+            "session_id": session_id,
+            "status": "running",
+            "query": body.query,
+            "category": body.category or "",
+            "mode": "research",
+        }
+
+    @router.get('/api/research/chat-jobs/{chat_id}')
+    async def chat_research_jobs(chat_id: str, request: Request):
+        user = _require_user(request)
+        delivery = getattr(request.app.state, 'background_tool_jobs', None)
+        return {'jobs': delivery.list_for_chat(chat_id, user) if delivery else []}
 
     @router.get("/api/research/stream/{session_id}")
     async def research_stream(session_id: str, request: Request):
@@ -584,7 +656,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         async def _generate():
-            last_progress = None
+            last_payload = None
             while True:
                 status = research_handler.get_status(session_id)
                 if status is None:
@@ -592,9 +664,30 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     return
                 st = status.get("status", "")
                 progress = status.get("progress", {})
-                if progress != last_progress:
-                    last_progress = progress
-                    yield f"data: {json.dumps({**progress, 'status': st})}\n\n"
+                payload = {
+                    **progress,
+                    'status': st,
+                    'category': research_handler.get_category(session_id),
+                    'mode': research_handler.get_mode(session_id),
+                }
+                try:
+                    source_state = research_handler.get_source_state(session_id)
+                    if source_state:
+                        payload["source_state"] = source_state
+                    source_coverage = research_handler.get_source_coverage(session_id)
+                    if source_coverage:
+                        payload["source_coverage"] = source_coverage
+                    navigation_trace = research_handler.get_navigation_trace(session_id)
+                    if navigation_trace:
+                        payload["navigation_trace"] = navigation_trace
+                    action_trace = research_handler.get_action_trace(session_id)
+                    if action_trace:
+                        payload["action_trace"] = action_trace
+                except Exception:
+                    pass
+                if payload != last_payload:
+                    last_payload = payload
+                    yield f"data: {json.dumps(payload)}\n\n"
                 if st != "running":
                     final = {'status': st, 'final': True}
                     task = research_handler._active_tasks.get(session_id, {})
@@ -625,12 +718,33 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "result": d.get("result", ""),
                     "sources": d.get("sources", []),
                     "raw_findings": d.get("raw_findings", []),
+                    "analyzed_urls": d.get("analyzed_urls", []),
+                    "source_state": d.get("source_state", ""),
+                    "source_coverage": d.get("source_coverage", {}),
+                    "navigation_trace": d.get("navigation_trace", []),
+                    "action_trace": d.get("action_trace", []),
                     "category": d.get("category") or "",
                 }
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
         raw_findings = research_handler.get_raw_findings(session_id) or []
-        return {"result": result, "sources": sources, "raw_findings": raw_findings, "category": ""}
+        analyzed_urls = research_handler.get_analyzed_urls(session_id) or []
+        source_state = research_handler.get_source_state(session_id)
+        source_coverage = research_handler.get_source_coverage(session_id)
+        navigation_trace = research_handler.get_navigation_trace(session_id)
+        action_trace = research_handler.get_action_trace(session_id)
+        return {
+            "result": result,
+            "sources": sources,
+            "raw_findings": raw_findings,
+            "analyzed_urls": analyzed_urls,
+            "source_state": source_state,
+            "source_coverage": source_coverage,
+            "navigation_trace": navigation_trace,
+            "action_trace": action_trace,
+            "category": research_handler.get_category(session_id),
+            "mode": research_handler.get_mode(session_id),
+        }
 
     @router.post("/api/research/spinoff/{session_id}")
     async def research_spinoff(session_id: str, request: Request):

@@ -2,10 +2,10 @@
  * Gallery Editor — canvas-based image editor with layers, brush, eraser, text, crop, inpaint mask.
  */
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
-import { attachColorPicker } from './colorPicker.js';
+import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 import modalManager from './modalManager.js';
 import { canvasCoords as _canvasCoords } from './editor/canvas-coords.js';
 import { drawCheckerboard as _drawCheckerboard } from './editor/checkerboard.js';
@@ -38,7 +38,19 @@ import {
   isLayerEmpty as _isLayerEmpty,
   relTime as _relTime,
 } from './editor/layer-helpers.js';
-import { computeSnap as _computeSnapImpl, cursorForHandle as _cursorForHandle } from './editor/snap.js';
+import {
+  renderEffects as _renderEffects,
+  effectsWithPreview as _effectsWithPreview,
+  renderEffectsAsync as _renderEffectsAsync,
+  normalizeEffect as _normalizeEffect,
+  effectLabel as _effectLabel,
+  effectPreset as _effectPreset,
+} from './editor/effects.js';
+import {
+  computeSnap as _computeSnapImpl,
+  computeTransformSnap as _computeTransformSnapImpl,
+  cursorForHandle as _cursorForHandle,
+} from './editor/snap.js';
 import {
   layerUnionAlpha as _layerUnionAlphaImpl,
   seamMask as _seamMaskImpl,
@@ -50,16 +62,22 @@ import {
   motionBlur as _motionBlur,
 } from './editor/filters/blur.js';
 import { edgeFeather as _edgeFeather } from './editor/filters/edge-feather.js';
+import { createRenderGeneration as _createRenderGeneration } from './editor/render-cancellation.js';
 import {
-  buildThumbnail as _buildThumbnailImpl,
   buildMergedMaskCanvas as _buildMergedMaskCanvasImpl,
+  renderWithLayerMasks as _renderWithLayerMasks,
 } from './editor/composite-helpers.js';
-import { buildToolbar as _buildToolbar } from './editor/build/toolbar.js?v=20260708sam3';
-import { buildTopbar as _buildTopbar } from './editor/build/topbar.js';
+import {
+  drawAdjustmentLayer as _drawAdjustmentLayer,
+  drawAdjustmentLayerAsync as _drawAdjustmentLayerAsync,
+  normalizeAdjustmentData as _normalizeAdjustmentData,
+} from './editor/adjustment-layer.js';
+import { buildToolbar as _buildToolbar } from './editor/build/toolbar.js?v=20260830editor2';
+import { buildTopbar as _buildTopbar, buildZoomFooter as _buildZoomFooter } from './editor/build/topbar.js';
 import {
   controlsHTML as _controlsHTML,
   layerPanelHTML as _layerPanelHTML,
-} from './editor/build/controls.js?v=20260708match1';
+} from './editor/build/controls.js?v=20260830editor2';
 import {
   transformPopupHTML as _transformPopupHTML,
   attachSpinRepeat as _attachSpinRepeat,
@@ -70,11 +88,72 @@ import {
   canvasSizePromptHTML as _canvasSizePromptHTML,
 } from './editor/build/popups.js';
 import { state } from './editor/state.js';
+import {
+  cloneDocumentValue as _cloneDocumentValue,
+  EDITOR_PROJECT_MAX_BYTES as _EDITOR_PROJECT_MAX_BYTES,
+  nextLayerIdFromDocument as _nextLayerIdFromDocument,
+  normalizeEditorView as _normalizeEditorView,
+  prepareEditorDocument as _prepareEditorDocument,
+  serializeEditorDocument as _serializeEditorDocument,
+} from './editor/document-codec.js';
+import {
+  snapshotByteSize as _snapshotByteSize,
+  trimHistoryStack as _trimHistoryStack,
+  shareSnapshotPixels as _shareSnapshotPixels,
+} from './editor/history-budget.js';
+import { cropDocument as _cropDocument } from './editor/document-geometry.js';
+import { encodeExportCanvas as _encodeExportCanvas, openExportDialog as _openExportDialog } from './editor/export-dialog.js';
+import {
+  normalizeTextData as _normalizeTextData,
+  rasterizeTextLayer as _rasterizeTextLayer,
+  renderTextLayer as _renderTextLayer,
+} from './editor/text-layer.js';
+import { createTextEditOverlay } from './editor/text-edit-overlay.js';
+import {
+  normalizeGradientStops as _normalizeGradientStops,
+  normalizeShapeData as _normalizeShapeData,
+  rasterizeShapeLayer as _rasterizeShapeLayer,
+  renderShapeLayer as _renderShapeLayer,
+} from './editor/shape-layer.js';
+import {
+  createPlacedData as _createPlacedData,
+  rasterizePlacedLayer as _rasterizePlacedLayer,
+  renderPlacedLayer as _renderPlacedLayer,
+  replacePlacedSource as _replacePlacedSource,
+} from './editor/placed-layer.js';
 import { createMoveTool } from './editor/tools/move.js';
+import { createLayerGeometryController } from './editor/layer-geometry.js';
+import {
+  drawGroupedLayers as _drawGroupedLayers,
+  drawGroupedLayersAsync as _drawGroupedLayersAsync,
+  groupAncestors as _groupAncestors,
+  isLayerEffectivelyLocked as _isLayerEffectivelyLocked,
+  isLayerPixelLocked as _isLayerPixelLocked,
+  isLayerTransparencyLocked as _isLayerTransparencyLocked,
+  normalizeLayerLocks as _normalizeLayerLocks,
+  normalizeLayerGroups as _normalizeLayerGroups,
+} from './editor/layer-groups.js';
+import { normalizeLayerClipping as _normalizeLayerClipping } from './editor/layer-clipping.js';
 import { createCropTool } from './editor/tools/crop.js';
 import { createLassoTool } from './editor/tools/lasso.js';
+import { createPenSelectionTool } from './editor/tools/pen-selection.js';
+import { LAYER_STYLES, styleParams } from './editor/layer-styles.js';
+import { openLayerStyleMenu } from './editor/layer-style-menu.js';
+import { createMarqueeTool } from './editor/tools/marquee.js';
 import { createWandTool } from './editor/tools/wand.js';
+import {
+  createMarqueeMask as _createMarqueeMask,
+  mergeSelectionMasks as _mergeSelectionMasks,
+  paintSelectionBoundary as _paintSelectionBoundary,
+  refineSelectionMask as _refineSelectionMask,
+  selectionBoundaryPixels as _selectionBoundaryPixels,
+  selectionMaskForLayer as _selectionMaskForLayer,
+  selectionMaskToDocument as _selectionMaskToDocument,
+  translateSelectionMask as _translateSelectionMask,
+} from './editor/selection-mask.js';
 import { createCloneTool } from './editor/tools/clone.js';
+import { createEyedropperTool } from './editor/tools/eyedropper.js';
+import { createGradientTool } from './editor/tools/gradient.js';
 import { createTransformDragTool } from './editor/tools/transform-drag.js';
 import { createStrokeTool } from './editor/tools/stroke.js';
 import { createLayerPanelRenderer } from './editor/layer-panel.js';
@@ -82,6 +161,7 @@ import {
   syncOverlay as _syncTransformOverlayImpl,
   drawHandles as _drawTransformHandlesImpl,
   getHandleAt as _getTransformHandleImpl,
+  containsFramePoint as _containsTransformFramePoint,
 } from './editor/tools/transform-handles.js';
 import { createCanvasTransforms } from './editor/canvas-transforms.js';
 import { createApplyImageTool } from './editor/ai-tool-runner.js';
@@ -95,7 +175,7 @@ import { wireSliderUx } from './editor/slider-ux.js';
 import { createShortcutsPopover } from './editor/shortcuts-popover.js';
 import { wireKeyboardShortcuts } from './editor/keyboard-shortcuts.js';
 import { wireClipboardAndDrop } from './editor/clipboard-and-drop.js';
-import { wireAIModelSelectors } from './editor/ai-models.js';
+import { wireAIModelSelectors, resolveInpaintModel } from './editor/ai-models.js';
 import { wireInpaintButtons } from './editor/ai-inpaint.js?v=20260708match1';
 import { wireAIToolsMisc } from './editor/ai-tools-misc.js';
 import { wireRembgAndSharpen } from './editor/ai-rembg.js';
@@ -107,25 +187,53 @@ import { wireInpaintControls } from './editor/wire-inpaint-controls.js?v=2026070
 import { wireTopbar, closeOtherTopbarMenus as _closeOtherTopbarMenus } from './editor/wire-topbar.js';
 import { wireTopbarOverflow } from './editor/wire-topbar-overflow.js';
 import { wireTopbarMenus } from './editor/wire-topbar-menus.js';
+import { createPrecisionGuides } from './editor/precision-guides.js';
+import { wireViewMenu } from './editor/wire-view-menu.js';
 
 const API_BASE = window.location.origin;
 // ── State ──
 // Transform-overlay canvas — sits over the main canvas with extra margin
 // so resize / rotation handles render OUTSIDE the image edges. Pointer
 // events disabled; the main canvas still handles all input.
-const _TRANSFORM_OVERLAY_MARGIN = 60; // image-space px of slack on each side
+const _TRANSFORM_OVERLAY_MARGIN = 60; // screen-space px of slack on each side
 // Thin wrappers around the transform-handles impls — the refactor
 // imported them under *Impl aliases but several call sites still use
 // the bare names. Without these, _startTransform threw a ReferenceError
 // before opening the popup, so Transform showed no handles / no popup.
 function _drawTransformHandles() { _drawTransformHandlesImpl(_TRANSFORM_OVERLAY_MARGIN); }
-function _getTransformHandle(x, y) { return _getTransformHandleImpl(x, y); }
+function _getTransformHandle(x, y, options) { return _getTransformHandleImpl(x, y, options); }
 function _syncTransformOverlay() { _syncTransformOverlayImpl(_TRANSFORM_OVERLAY_MARGIN); }
+function _computeTransformSnap(frame, center) {
+  const selectedIds = new Set(state.selectedLayerIds || []);
+  return _computeTransformSnapImpl(frame, center, {
+    zoom: state.zoom,
+    canvasW: state.imgWidth,
+    canvasH: state.imgHeight,
+    otherLayers: state.layers.filter(layer => !selectedIds.has(layer.id)).map(layer => ({
+      visible: layer.visible,
+      id: layer.id,
+      canvas: layer.canvas,
+      offset: state.layerOffsets.get(layer.id) || { x: 0, y: 0 },
+    })),
+    verticalGuides: state.guides?.vertical || [],
+    horizontalGuides: state.guides?.horizontal || [],
+    snapToGrid: !!state.snapToGrid,
+    gridSize: state.gridSize || 16,
+  });
+}
 // Inpaint uses a much bigger default brush — when the user enters
 // the inpaint tool for the first time in this editor session we bump
 // the slider to this value (without touching other tools).
 const _INPAINT_DEFAULT_BRUSH = 100;
 let _samAbortController = null;
+let _precisionGuides = null;
+let _selectionAnimationFrame = null;
+let _selectionAnimationLast = 0;
+let _selectionAnimationPhase = 0;
+let _selectionBoundaryCache = null;
+let _selectionNudgeTimer = null;
+let _selectionNudgeHistorySaved = false;
+let _renderSavedSelectionsMenu = null;
 
 function _cancelSamQuery(showToast = true) {
   if (!_samAbortController) return false;
@@ -141,6 +249,20 @@ function _galleryEditMounted() {
 if (!window.__galleryEditEscHardGuardInstalled) {
   window.__galleryEditEscHardGuardInstalled = true;
   window.addEventListener('keydown', (e) => {
+    if (_activeFilterPrompt) {
+      _activeFilterPrompt.handleKey(e);
+      return;
+    }
+    if (_rasterizePromptPending && (e.key === 'Escape' || e.key === 'Enter')) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const target = e.key === 'Escape' ? 'styled-confirm-cancel'
+        : (e.target?.id === 'styled-confirm-cancel' ? 'styled-confirm-cancel' : 'styled-confirm-ok');
+      document.getElementById(target)?.click();
+      return;
+    }
+    if (e.target?.closest?.('#styled-confirm-overlay')) return;
+    if (state.editorOpen && state.tool === 'pen' && !e.target?.closest?.('input, textarea, select, [contenteditable="true"]') && _penTool.key(e)) return;
     const isSamCancel = !!_samAbortController
       && (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 'c'));
     if (isSamCancel) {
@@ -151,6 +273,86 @@ if (!window.__galleryEditEscHardGuardInstalled) {
       return;
     }
     if (e.key !== 'Escape') return;
+    // Quick Edit owns Escape while expanded. Dispatch a local close event
+    // before the gallery-level guard can consume it for the whole editor.
+    const quickEdit = e.target?.closest?.('#ge-ai-command');
+    if (quickEdit && !quickEdit.classList.contains('ge-ai-command-collapsed')) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      quickEdit.dispatchEvent(new CustomEvent('ge-ai-command-close'));
+      return;
+    }
+    const renameInput = e.target?.closest?.('.ge-layer-name-input');
+    if (renameInput) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      renameInput.dataset.cancelRename = 'true';
+      renameInput.blur();
+      return;
+    }
+    // Resolve the New Project prompt before any outer modal handler can hide
+    // it without completing the pending openEditor() promise.
+    const sizePrompt = e.target?.closest?.('#ge-canvas-size-overlay');
+    if (sizePrompt) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      sizePrompt._cancelCanvasSize?.();
+      return;
+    }
+    // Window capture runs before Gallery's document-level Escape guard. Handle
+    // the transform here so no surrounding modal can swallow the cancellation.
+    if (state.transformActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _cancelTransform();
+      return;
+    }
+    if (state.cropRect || state.cropping || state.cropMoving) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _cancelCrop('escape');
+      return;
+    }
+    if (state.marqueeActive || state.selectionMoving) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _marqueeTool.cancel('escape');
+      return;
+    }
+    if (state.lassoActive || state.lassoPoints.length) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _lassoTool.cancel();
+      return;
+    }
+    if (state.gradientActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _gradientTool.cancel();
+      return;
+    }
+    if (state.drawing) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _strokeTool.cancel();
+      return;
+    }
+    if (_shapeDraft) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _cancelShapeDraft();
+      return;
+    }
     if (window.__galleryEditLive || _galleryEditMounted()) {
       e.preventDefault();
       e.stopPropagation();
@@ -221,8 +423,8 @@ function _registerDocClickAway(handler) {
 // Double-tap detection for the Clone tool on touch devices — sets the
 // sample anchor without a keyboard Alt modifier.
 
-// Undo/Redo
-const MAX_HISTORY = 20;
+// Undo/Redo snapshots are raw RGBA data, so entry count alone is not a safe
+// bound for large layered documents. history-budget.js applies both limits.
 
 /** Get the selected AI endpoint+model. Returns { endpoint, model }.
  * Dropdown values are encoded as "<base_url>::<model_id>" so users can pick
@@ -230,7 +432,9 @@ const MAX_HISTORY = 20;
 function _getSelectedAIEndpoint(type) {
   let raw = '';
   if (type === 'inpaint') {
-    raw = document.getElementById('ge-ai-inpaint')?.value || '';
+    const option = resolveInpaintModel(document.getElementById('ge-ai-inpaint'));
+    if (!option) throw new Error('No available inpaint model. Select or connect an image-editing endpoint.');
+    raw = option.value;
   } else if (type) {
     // Per-tool dropdowns (harmonize/upscale/style). Each lives in its
     // own section's panel and is marked with data-ge-tool-model="<name>".
@@ -308,11 +512,37 @@ function _runExistingButton(id, status) {
   const btn = document.getElementById(id);
   if (!btn) {
     _setAiCommandStatus('That edit is not available in this editor state.', 'error');
-    return false;
+    return null;
+  }
+  if (btn.disabled) {
+    _setAiCommandStatus('That edit is already running.', 'error');
+    return null;
   }
   if (status) _setAiCommandStatus(status, 'running');
   btn.click();
-  return true;
+  return btn;
+}
+
+function _waitForExistingButton(btn) {
+  if (!btn) return Promise.resolve();
+  return new Promise(resolve => {
+    let sawBusy = !!(btn.disabled || btn.classList.contains('ge-btn-processing'));
+    let frames = 0;
+    const check = () => {
+      const busy = !!(btn.disabled || btn.classList.contains('ge-btn-processing'));
+      sawBusy ||= busy;
+      // Tool handlers set their busy state synchronously on click. The
+      // short fallback also prevents a stale/missing handler from locking
+      // Quick Edit forever.
+      if ((sawBusy && !busy) || (!sawBusy && frames > 2) || frames > 36000) {
+        resolve();
+        return;
+      }
+      frames += 1;
+      requestAnimationFrame(check);
+    };
+    requestAnimationFrame(check);
+  });
 }
 
 function _openSamPrompt() {
@@ -342,17 +572,25 @@ function _buildAiCommandBox() {
         <polyline points="6 15 12 9 18 15"></polyline>
       </svg>
     </button>
+    <div class="ge-ai-command-head">
+      <span class="ge-btn-ai-mark" aria-hidden="true">✦</span>
+      <span class="ge-ai-command-title">Quick Edit</span>
+      <span class="ge-ai-command-scope">Document</span>
+      <button type="button" class="ge-ai-command-close" id="ge-ai-command-close" title="Collapse Quick Edit" aria-label="Collapse Quick Edit">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+    </div>
     <form class="ge-ai-command-form" id="ge-ai-command-form">
-      <input type="text" class="ge-ai-command-input" id="ge-ai-command-input" autocomplete="off" />
+      <input type="text" class="ge-ai-command-input" id="ge-ai-command-input" autocomplete="off" aria-label="Describe the image edit" placeholder="Describe an edit, or choose an action" />
+      <button type="button" class="ge-ai-command-clear" id="ge-ai-command-clear" title="Clear command" aria-label="Clear command" hidden>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
       <button type="submit" class="ge-ai-command-run" id="ge-ai-command-run" title="Run AI edit" aria-label="Run AI edit">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <line x1="12" y1="19" x2="12" y2="5"></line>
           <polyline points="5 12 12 5 19 12"></polyline>
-        </svg>
-      </button>
-      <button type="button" class="ge-ai-command-close" id="ge-ai-command-close" title="Collapse AI edit" aria-label="Collapse AI edit">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="6 9 12 15 18 9"></polyline>
         </svg>
       </button>
     </form>
@@ -363,17 +601,17 @@ function _buildAiCommandBox() {
 }
 
 const _AI_COMMAND_SUGGESTIONS = [
-  { label: 'Rotate 90', insert: 'rotate 90', hint: 'Turn the image clockwise', aliases: ['ro', 'rotate', 'right', 'clockwise', 'turn'] },
-  { label: 'Rotate left', insert: 'rotate left', hint: 'Turn the image counter-clockwise', aliases: ['rotate left', 'left', 'counter clockwise', 'ccw'] },
-  { label: 'Rotate 180', insert: 'rotate 180', hint: 'Flip the canvas upside down', aliases: ['rotate 180', 'upside down'] },
-  { label: 'Flip horizontal', insert: 'flip horizontal', hint: 'Mirror left to right', aliases: ['flip', 'mirror', 'horizontal'] },
-  { label: 'Flip vertical', insert: 'flip vertical', hint: 'Mirror top to bottom', aliases: ['flip vertical', 'vertical'] },
-  { label: 'Remove background', insert: 'remove background', hint: 'Make the background transparent', aliases: ['remove bg', 'background', 'transparent', 'cut out'] },
-  { label: 'Upscale', insert: 'upscale 2x', hint: 'Increase image resolution', aliases: ['upscale', 'bigger', 'larger', '2x', '4x'] },
-  { label: 'Denoise', insert: 'denoise', hint: 'Reduce grain and noise', aliases: ['denoise', 'noise', 'grain', 'clean up'] },
-  { label: 'Sharpen', insert: 'sharpen', hint: 'Make details crisper', aliases: ['sharpen', 'sharp', 'clearer', 'crisp', 'enhance'] },
-  { label: 'Enhance face', insert: 'enhance face', hint: 'Restore portrait and skin detail', aliases: ['face', 'portrait', 'skin', 'selfie', 'restore'] },
-  { label: 'Style edit', insert: 'style: ', hint: 'Run a full-image prompt edit', aliases: ['style', 'paint', 'anime', 'photo', 'prompt'] },
+  { label: 'Rotate 90', insert: 'rotate 90', hint: 'Turn the image clockwise', kind: 'Local', aliases: ['ro', 'rotate', 'right', 'clockwise', 'turn'] },
+  { label: 'Rotate left', insert: 'rotate left', hint: 'Turn the image counter-clockwise', kind: 'Local', aliases: ['rotate left', 'left', 'counter clockwise', 'ccw'] },
+  { label: 'Rotate 180', insert: 'rotate 180', hint: 'Flip the canvas upside down', kind: 'Local', aliases: ['rotate 180', 'upside down'] },
+  { label: 'Flip horizontal', insert: 'flip horizontal', hint: 'Mirror left to right', kind: 'Local', aliases: ['flip', 'mirror', 'horizontal'] },
+  { label: 'Flip vertical', insert: 'flip vertical', hint: 'Mirror top to bottom', kind: 'Local', aliases: ['flip vertical', 'vertical'] },
+  { label: 'Remove background', insert: 'remove background', hint: 'Make the background transparent', kind: 'AI', aliases: ['remove bg', 'background', 'transparent', 'cut out'] },
+  { label: 'Upscale', insert: 'upscale 2x', hint: 'Increase image resolution', kind: 'AI', aliases: ['upscale', 'bigger', 'larger', '2x', '4x'] },
+  { label: 'Denoise', insert: 'denoise', hint: 'Reduce grain and noise', kind: 'AI', aliases: ['denoise', 'noise', 'grain', 'clean up'] },
+  { label: 'Sharpen', insert: 'sharpen', hint: 'Make details crisper', kind: 'AI', aliases: ['sharpen', 'sharp', 'clearer', 'crisp', 'enhance'] },
+  { label: 'Enhance face', insert: 'enhance face', hint: 'Restore portrait and skin detail', kind: 'AI', aliases: ['face', 'portrait', 'skin', 'selfie', 'restore'] },
+  { label: 'Style edit', insert: 'style: ', hint: 'Run a full-image prompt edit', kind: 'AI', aliases: ['style', 'paint', 'anime', 'photo', 'prompt'] },
 ];
 
 function _matchAiCommandSuggestions(query) {
@@ -389,7 +627,7 @@ function _matchAiCommandSuggestions(query) {
     })
     .filter(Boolean)
     .sort((a, b) => a.score - b.score || a.item.label.localeCompare(b.item.label))
-    .slice(0, 6)
+    .slice(0, 3)
     .map(hit => hit.item);
 }
 
@@ -399,11 +637,23 @@ function _wireAiCommandBox() {
   const closeBtn = document.getElementById('ge-ai-command-close');
   const form = document.getElementById('ge-ai-command-form');
   const input = document.getElementById('ge-ai-command-input');
+  const clearBtn = document.getElementById('ge-ai-command-clear');
   const runBtn = document.getElementById('ge-ai-command-run');
   const suggestions = document.getElementById('ge-ai-command-suggestions');
   if (!wrap || !form || !input || !runBtn) return;
   let suggestionItems = [];
   let suggestionIndex = 0;
+  let busy = false;
+  const syncClearButton = () => {
+    if (clearBtn) clearBtn.hidden = !input.value;
+  };
+  const setBusy = next => {
+    busy = !!next;
+    wrap.classList.toggle('ge-ai-command-busy', busy);
+    input.disabled = busy;
+    runBtn.disabled = busy;
+    if (clearBtn) clearBtn.disabled = busy;
+  };
   const hideSuggestions = () => {
     suggestionItems = [];
     suggestionIndex = 0;
@@ -423,6 +673,7 @@ function _wireAiCommandBox() {
     suggestions.hidden = false;
     suggestions.innerHTML = suggestionItems.map((item, idx) => `
       <button type="button" class="ge-ai-command-suggestion${idx === suggestionIndex ? ' active' : ''}" data-ai-command-suggestion="${idx}">
+        <span class="ge-ai-command-suggestion-kind">${_escapeAiCommandText(item.kind || 'Edit')}</span>
         <span class="ge-ai-command-suggestion-main">${_escapeAiCommandText(item.label)}</span>
         <span class="ge-ai-command-suggestion-hint">${_escapeAiCommandText(item.hint || item.insert)}</span>
       </button>
@@ -443,7 +694,7 @@ function _wireAiCommandBox() {
   suggestions?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ai-command-suggestion]');
     if (!btn) return;
-    pickSuggestion(Number(btn.dataset.aiCommandSuggestion), true);
+    pickSuggestion(Number(btn.dataset.aiCommandSuggestion), false);
   });
   const setOpen = (open) => {
     wrap.classList.toggle('ge-ai-command-collapsed', !open);
@@ -454,9 +705,21 @@ function _wireAiCommandBox() {
     });
     else hideSuggestions();
   };
+  wrap.addEventListener('ge-ai-command-close', () => setOpen(false));
   toggle?.addEventListener('click', () => setOpen(wrap.classList.contains('ge-ai-command-collapsed')));
   closeBtn?.addEventListener('click', () => setOpen(false));
-  input.addEventListener('input', renderSuggestions);
+  clearBtn?.addEventListener('click', () => {
+    input.value = '';
+    syncClearButton();
+    _setAiCommandStatus('', '');
+    hideSuggestions();
+    input.focus();
+    renderSuggestions();
+  });
+  input.addEventListener('input', () => {
+    syncClearButton();
+    renderSuggestions();
+  });
   input.addEventListener('keydown', (e) => {
     const open = suggestions && !suggestions.hidden && suggestionItems.length;
     if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -484,6 +747,7 @@ function _wireAiCommandBox() {
   });
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (busy) return;
     hideSuggestions();
     const prompt = input.value.trim();
     if (!prompt) {
@@ -492,45 +756,47 @@ function _wireAiCommandBox() {
       return;
     }
     const p = prompt.toLowerCase();
+    setBusy(true);
     try {
       if (/\brotate\b.*\b180\b|\bupside\s*down\b/.test(p)) {
-        _saveState('Rotate 180');
         _rotateAllLayers(180);
-        _setAiCommandStatus('Rotated 180.', 'done');
+        requestAnimationFrame(() => _setAiCommandStatus('Rotated 180.', 'done'));
         return;
       }
       if (/\brotate\b.*\b(left|ccw|counter)\b|\bturn\s+left\b/.test(p)) {
-        _saveState('Rotate left');
         _rotateAllLayers(270);
-        _setAiCommandStatus('Rotated left.', 'done');
+        requestAnimationFrame(() => _setAiCommandStatus('Rotated left.', 'done'));
         return;
       }
       if (/\brotate\b|\bturn\s+right\b|\bclockwise\b/.test(p)) {
-        _saveState('Rotate 90');
         _rotateAllLayers(90);
-        _setAiCommandStatus('Rotated 90.', 'done');
+        requestAnimationFrame(() => _setAiCommandStatus('Rotated 90.', 'done'));
         return;
       }
       if (/\bflip\b.*\b(vertical|v)\b|\bmirror\b.*\b(vertical|v)\b/.test(p)) {
-        _saveState('Flip vertical');
         _flipAllLayers('v');
         _setAiCommandStatus('Flipped vertical.', 'done');
         return;
       }
       if (/\bflip\b|\bmirror\b/.test(p)) {
-        _saveState('Flip horizontal');
         _flipAllLayers('h');
         _setAiCommandStatus('Flipped horizontal.', 'done');
         return;
       }
       if (/\b(remove|erase|cut\s*out|transparent)\b.*\b(bg|background)\b|\b(bg|background)\b.*\b(remove|erase|transparent)\b/.test(p)) {
         _clickToolButton('rembg');
-        _runExistingButton('ge-rembg-run', 'Removing background...');
+        const target = _runExistingButton('ge-rembg-run', 'Removing background...');
+        if (!target) return;
+        await _waitForExistingButton(target);
+        _setAiCommandStatus('Background removal finished.', 'done');
         return;
       }
       if (/\b(upscale|higher\s*res|increase\s*resolution|bigger|2x|4x)\b/.test(p)) {
         _clickToolButton('upscale');
-        _runExistingButton('ge-upscale-ai', 'Upscaling image...');
+        const target = _runExistingButton('ge-upscale-ai', 'Upscaling image...');
+        if (!target) return;
+        await _waitForExistingButton(target);
+        _setAiCommandStatus('Upscale finished.', 'done');
         return;
       }
       if (/\b(denoise|noise|grain|grainy|clean\s*up)\b/.test(p)) {
@@ -552,7 +818,10 @@ function _wireAiCommandBox() {
           amount.dispatchEvent(new Event('input', { bubbles: true }));
         }
         _clickToolButton('sharpen');
-        _runExistingButton('ge-sharpen-run', 'Sharpening image...');
+        const target = _runExistingButton('ge-sharpen-run', 'Sharpening image...');
+        if (!target) return;
+        await _waitForExistingButton(target);
+        _setAiCommandStatus('Sharpen finished.', 'done');
         return;
       }
 
@@ -564,12 +833,18 @@ function _wireAiCommandBox() {
         styleStrength.dispatchEvent(new Event('input', { bubbles: true }));
       }
       _clickToolButton('style');
-      _runExistingButton('ge-style-run', 'Running full-image AI edit...');
+      const target = _runExistingButton('ge-style-run', 'Running full-image AI edit...');
+      if (!target) return;
+      await _waitForExistingButton(target);
+      _setAiCommandStatus('Style edit finished.', 'done');
     } catch (err) {
       console.error('[ge-ai-command] failed', err);
       _setAiCommandStatus(err?.message || 'AI edit failed', 'error');
+    } finally {
+      setBusy(false);
     }
   });
+  syncClearButton();
 }
 
 // Layer offsets for move tool
@@ -589,6 +864,15 @@ function createLayer(name, width, height) {
     visible: true,
     opacity: 1,
     locked: false,
+    locks: { pixels: false, transparency: false, position: false },
+    clipped: false,
+    blendMode: 'source-over',
+    kind: 'raster',
+    text: null,
+    shape: null,
+    adjustment: null,
+    effects: [],
+    placed: null,
     // Mask sub-layers — same shape as adjLayers, parallel concept.
     // Each entry: {id, name, canvas, visible}. The "active" mask is the
     // one that paint / lasso / inpaint operations target; rendered as a
@@ -641,10 +925,20 @@ function _activeParentLayer() {
 // mask-paint mode — that surprised the user, so the fallback is
 // gone.
 function _getActiveMaskLayer() {
+  const activeGroup = (state.layerGroups || []).find(group => group.id === state.activeGroupId);
+  if (activeGroup?.activeMaskId) {
+    const groupMask = (activeGroup.masks || []).find(mask => mask.id === activeGroup.activeMaskId);
+    if (groupMask) return groupMask;
+  }
   const parent = _activeParentLayer();
   if (!parent || !parent.masks || !parent.masks.length) return null;
   if (!parent.activeMaskId) return null;
   return parent.masks.find(m => m.id === parent.activeMaskId) || null;
+}
+
+function _getStrokeTargetMask() {
+  const mask = _getActiveMaskLayer();
+  return state.tool === 'inpaint' && mask?.mode !== 'selection' ? null : mask;
 }
 
 // Get-or-create a mask sub-layer on the active parent. Used by tools
@@ -655,6 +949,11 @@ function _ensureActiveMaskLayer() {
   if (!parent) return null;
   if (!parent.masks) parent.masks = [];
   let mask = _getActiveMaskLayer();
+  if (mask?.mode === 'layer') mask = null;
+  if (!mask) {
+    mask = parent.masks.find(m => m.mode !== 'layer') || null;
+    if (mask) parent.activeMaskId = mask.id;
+  }
   if (mask) return mask;
   const c = document.createElement('canvas');
   c.width = state.imgWidth;
@@ -665,6 +964,7 @@ function _ensureActiveMaskLayer() {
     canvas: c,
     ctx: c.getContext('2d'),
     visible: true,
+    mode: 'selection',
   };
   parent.masks.push(mask);
   parent.activeMaskId = mask.id;
@@ -716,6 +1016,7 @@ const _adjPopupSystem = createAdjPopupSystem({
   composite,
   saveState: _saveState,
   renderLayerPanel: () => _renderLayerPanel(),
+  getAdjustmentSource: layer => _adjustmentSourceCanvas(layer),
 });
 const _closeFxPopup                     = _adjPopupSystem.closeFxPopup;
 const _ensureAdjustments                = _adjPopupSystem.ensureAdjustments;
@@ -728,8 +1029,82 @@ const _closeAdjPopup                    = _adjPopupSystem.closeAdjPopup;
 const _minimiseAdjPopup                 = _adjPopupSystem.minimiseAdjPopup;
 const _syncFxPanelToActiveLayerIfPresent = _adjPopupSystem.syncFxPanelToActiveLayerIfPresent;
 
+function _pickLayerAtEvent(e) {
+  const point = _canvasCoords(e, state.mainCanvas);
+  if (!point) return null;
+  // Walk front-to-back and inspect rendered alpha, so retained text/shapes,
+  // masks, and ordinary raster layers share the same hit-test semantics.
+  for (let index = state.layers.length - 1; index >= 0; index -= 1) {
+    const layer = state.layers[index];
+    if (!layer?.visible || layer.kind === 'adjustment' || !layer.canvas) continue;
+    const parentGroup = (state.layerGroups || []).find(group => (group.layerIds || []).includes(layer.id));
+    if (parentGroup && _groupAncestors(state, parentGroup, { includeSelf: true }).some(group => group.visible === false)) continue;
+    const offset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+    const x = Math.floor(point.x - offset.x);
+    const y = Math.floor(point.y - offset.y);
+    if (x < 0 || y < 0 || x >= layer.canvas.width || y >= layer.canvas.height) continue;
+    const rendered = _renderLayerOutput(layer);
+    if (!rendered || x >= rendered.width || y >= rendered.height) continue;
+    const alpha = rendered.getContext('2d', { willReadFrequently: true })
+      .getImageData(x, y, 1, 1).data[3];
+    if (alpha > 8) return layer;
+  }
+  return null;
+}
+
 function activeLayer() {
   return state.layers.find(l => l.id === state.activeLayerId) || null;
+}
+
+function _addAdjustmentLayer(type, anchorEl) {
+  const undoLength = state.undoStack.length;
+  _saveState(`Add ${_adjLayerLabel(type)} adjustment layer`);
+  const layer = createLayer(_adjLayerLabel(type), state.imgWidth, state.imgHeight);
+  layer.kind = 'adjustment';
+  layer.adjustment = { type, params: _defaultAdjParams(type) };
+  layer.locks = { pixels: true, transparency: true, position: true };
+  layer._newAdjustmentLayer = true;
+  layer._newAdjustmentUndoLength = undoLength;
+  const activeIndex = state.layers.findIndex(item => item.id === state.activeLayerId);
+  const insertIndex = activeIndex >= 0 ? activeIndex + 1 : state.layers.length;
+  state.layers.splice(insertIndex, 0, layer);
+  const activeGroup = (state.layerGroups || []).find(group => (group.layerIds || []).includes(state.activeLayerId));
+  if (activeGroup) activeGroup.layerIds.push(layer.id);
+  state.activeLayerId = layer.id;
+  state.selectedLayerIds = [layer.id];
+  _renderLayerPanel();
+  composite();
+  const row = document.querySelector(`.ge-layer-item[data-layer-id="${CSS.escape(layer.id)}"]`);
+  _openAdjPopup(layer, type, row || anchorEl, layer.adjustment);
+}
+
+function _adjustmentSourceCanvas(layer) {
+  const canvas = document.createElement('canvas');
+  canvas.width = state.imgWidth;
+  canvas.height = state.imgHeight;
+  const index = state.layers.findIndex(item => item.id === layer?.id);
+  if (index <= 0) return canvas;
+  const layers = state.layers.slice(0, index);
+  const validIds = new Set(layers.map(item => item.id));
+  const view = {
+    ...state,
+    layers,
+    layerGroups: (state.layerGroups || []).map(group => ({
+      ...group,
+      layerIds: (group.layerIds || []).filter(id => validIds.has(id)),
+      masks: [...(group.masks || [])],
+    })),
+    clippingCompositeCanvas: null,
+    groupCompositeCanvases: new Map(),
+  };
+  const renderLayer = item => _renderLayerOutput(item);
+  _drawGroupedLayers(
+    canvas.getContext('2d'),
+    view,
+    renderLayer,
+    (target, item, base) => _drawAdjustmentLayer(target, view, item, base, renderLayer),
+  );
+  return canvas;
 }
 
 // Flood-fill enclosed regions of the inpaint mask. After the user
@@ -820,6 +1195,7 @@ const _canvasTransforms = createCanvasTransforms({
   fitZoom: () => _fitZoom(),
   showCanvasLoading: (label) => _showCanvasLoading(label),
   hideCanvasLoading: () => _hideCanvasLoading(),
+  renderLayerPanel: () => _renderLayerPanel(),
 });
 function _rotateAllLayers(deg) { return _canvasTransforms.rotateAll(deg); }
 function _flipAllLayers(axis)  { return _canvasTransforms.flipAll(axis); }
@@ -828,27 +1204,354 @@ function _flipAllLayers(axis)  { return _canvasTransforms.flipAll(axis); }
 
 // ── Composite ──
 
-function composite() {
-  if (!state.mainCtx) return;
-  state.mainCtx.clearRect(0, 0, state.mainCanvas.width, state.mainCanvas.height);
-  // Checkerboard background
-  _drawCheckerboard(state.mainCtx, state.mainCanvas.width, state.mainCanvas.height);
-  for (const layer of state.layers) {
-    if (!layer.visible) continue;
-    state.mainCtx.globalAlpha = layer.opacity;
-    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-    // Source = layer.canvas walked through all its adjustment
-    // sub-layers (plus any staged-in-progress edit). Falls back to
-    // raw layer.canvas when no adjustments are present.
-    const source = _renderLayerWithAdjLayers(layer);
-    state.mainCtx.drawImage(source, off.x, off.y);
-    state.mainCtx.globalAlpha = 1;
+function _renderLayerOutput(layer, shouldContinue = () => true) {
+  return _renderWithLayerMasks(
+    _renderEffects(_renderLayerWithAdjLayers(layer), _effectsWithPreview(layer), shouldContinue),
+    layer,
+    state.layerOffsets.get(layer.id) || { x: 0, y: 0 },
+  );
+}
+
+const _renderGeneration = _createRenderGeneration();
+let _asyncCompositeInFlight = null;
+let _asyncCompositeQueued = false;
+
+function _drawDocumentLayers(ctx, shouldContinue = () => true) {
+  const renderLayer = layer => _renderLayerOutput(layer, shouldContinue);
+  _drawGroupedLayers(
+    ctx,
+    state,
+    renderLayer,
+    (target, layer, base) => _drawAdjustmentLayer(target, state, layer, base, renderLayer),
+    (base, group, renderGroupContinue) => _renderEffects(base, _effectsWithPreview(group), renderGroupContinue),
+    shouldContinue,
+  );
+}
+
+async function _renderLayerOutputAsync(layer, shouldContinue = () => true) {
+  const rendered = await _renderEffectsAsync(_renderLayerWithAdjLayers(layer), _effectsWithPreview(layer), shouldContinue);
+  return _renderWithLayerMasks(rendered, layer, state.layerOffsets.get(layer.id) || { x: 0, y: 0 });
+}
+
+async function _drawDocumentLayersAsync(ctx, shouldContinue = () => true) {
+  const renderLayer = layer => _renderLayerOutputAsync(layer, shouldContinue);
+  await _drawGroupedLayersAsync(
+    ctx,
+    state,
+    renderLayer,
+    (target, layer, base) => _drawAdjustmentLayerAsync(
+      target,
+      state,
+      layer,
+      base,
+      item => _renderLayerOutputAsync(item, shouldContinue),
+      shouldContinue,
+    ),
+    (base, group, renderGroupContinue) => _renderEffectsAsync(base, _effectsWithPreview(group), renderGroupContinue),
+    shouldContinue,
+  );
+}
+
+function _hasRetainedEffects() {
+  return state.layers.some(layer => (layer.effects && layer.effects.length) || layer._effectPreview)
+    || (state.layerGroups || []).some(group => (group.effects && group.effects.length) || group._effectPreview);
+}
+
+function _selectionMaskAsDocument({ materializeLasso = false } = {}) {
+  if (state.wandMask) {
+    const layer = state.layers.find(item => item.id === state.wandLayerId);
+    const offset = layer ? (state.layerOffsets.get(layer.id) || { x: 0, y: 0 }) : { x: 0, y: 0 };
+    const documentMask = _selectionMaskToDocument(
+      state.wandMask,
+      state.wandMaskSpace || 'layer',
+      offset,
+      state.imgWidth,
+      state.imgHeight,
+    );
+    if (materializeLasso && documentMask !== state.wandMask) {
+      state.wandMask = documentMask;
+      state.wandMaskSpace = 'document';
+    }
+    return documentMask;
+  }
+  if (!state.lassoActive && state.lassoPoints.length >= 3) {
+    const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0', 10);
+    const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0', 10);
+    const documentMask = _buildLassoMask(state.imgWidth, state.imgHeight, 0, 0, feather, grow);
+    if (materializeLasso) {
+      state.wandMask = documentMask;
+      state.wandLayerId = state.activeLayerId;
+      state.wandMaskSpace = 'document';
+      state.selectionSource = 'lasso';
+      state.wandLastSeed = null;
+      state.lassoPoints = [];
+      state.lassoActive = false;
+    }
+    return documentMask;
+  }
+  return null;
+}
+
+function _cloneSelectionCanvas(source) {
+  if (!source) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width;
+  canvas.height = source.height;
+  canvas.getContext('2d').drawImage(source, 0, 0);
+  return canvas;
+}
+
+function _activateSelectionCanvas(source, selectionSource = 'saved') {
+  if (!source) return false;
+  state.wandMask = _cloneSelectionCanvas(source);
+  state.wandLayerId = state.activeLayerId;
+  state.wandMaskSpace = 'document';
+  state.selectionSource = selectionSource;
+  state.wandLastSeed = null;
+  state.wandMaskVisible = true;
+  state.lassoPoints = [];
+  state.lassoActive = false;
+  composite();
+  _syncToolClearIndicators();
+  return true;
+}
+
+function _deselectSelection({ saveHistory = true, remember = true } = {}) {
+  const selection = _selectionMaskAsDocument({ materializeLasso: true });
+  if (!selection) return false;
+  if (saveHistory) _saveState('Deselect');
+  if (remember) state.lastSelection = { canvas: _cloneSelectionCanvas(selection) };
+  state.wandMask = null;
+  state.wandLayerId = null;
+  state.wandMaskSpace = 'layer';
+  state.selectionSource = null;
+  state.wandLastSeed = null;
+  state.lassoPoints = [];
+  state.lassoActive = false;
+  _invalidateWandCache();
+  composite();
+  _syncToolClearIndicators();
+  return true;
+}
+
+function _reselectSelection() {
+  if (!state.lastSelection?.canvas) return false;
+  _saveState('Reselect');
+  return _activateSelectionCanvas(state.lastSelection.canvas, 'reselect');
+}
+
+function _selectAllSelection() {
+  if (!state.imgWidth || !state.imgHeight) return false;
+  _saveState('Select all');
+  return _activateSelectionCanvas(_createMarqueeMask(
+    state.imgWidth,
+    state.imgHeight,
+    { x: 0, y: 0, w: state.imgWidth, h: state.imgHeight },
+    'rectangle',
+  ), 'marquee');
+}
+
+function _saveNamedSelection(name) {
+  const mask = _selectionMaskAsDocument({ materializeLasso: true });
+  if (!mask) return false;
+  const cleanName = String(name || '').trim().slice(0, 100) || `Selection ${(state.savedSelections || []).length + 1}`;
+  _saveState(`Save selection "${cleanName}"`);
+  const existing = (state.savedSelections || []).find(item => item.name.toLowerCase() === cleanName.toLowerCase());
+  if (existing) {
+    existing.name = cleanName;
+    existing.canvas = _cloneSelectionCanvas(mask);
+  } else {
+    state.savedSelections.push({
+      id: `selection-${state.nextSavedSelectionId++}`,
+      name: cleanName,
+      canvas: _cloneSelectionCanvas(mask),
+    });
+  }
+  _schedulePersist();
+  _renderSavedSelectionsMenu?.();
+  return true;
+}
+
+function _loadNamedSelection(id) {
+  const saved = (state.savedSelections || []).find(item => item.id === id);
+  if (!saved) return false;
+  _saveState(`Load selection "${saved.name}"`);
+  return _activateSelectionCanvas(saved.canvas, 'saved');
+}
+
+function _deleteNamedSelection(id) {
+  const index = (state.savedSelections || []).findIndex(item => item.id === id);
+  if (index < 0) return false;
+  const saved = state.savedSelections[index];
+  _saveState(`Delete selection "${saved.name}"`);
+  state.savedSelections.splice(index, 1);
+  _schedulePersist();
+  _renderSavedSelectionsMenu?.();
+  return true;
+}
+
+async function _refineSelection() {
+  const current = _selectionMaskAsDocument({ materializeLasso: true });
+  if (!current) return false;
+  const original = _cloneSelectionCanvas(current);
+  let preview = original;
+  const renderPreview = values => {
+    preview = _refineSelectionMask(original, values);
+    state.wandMask = preview;
+    state.wandMaskSpace = 'document';
+    state.wandMaskVisible = true;
+    composite();
+  };
+  const values = await _filterSliderPrompt('Refine Selection', [
+    { key: 'feather', label: 'Feather', min: 0, max: 100, step: 1, value: 0, suffix: 'px' },
+    { key: 'expand', label: 'Expand / Contract', min: -100, max: 100, step: 1, value: 0, suffix: 'px' },
+    { key: 'smooth', label: 'Smooth', min: 0, max: 50, step: 1, value: 0, suffix: 'px' },
+    { key: 'border', label: 'Border', min: 0, max: 100, step: 1, value: 0, suffix: 'px' },
+  ], renderPreview);
+  state.wandMask = original;
+  state.wandMaskSpace = 'document';
+  if (values === null) {
+    composite();
+    return false;
+  }
+  _saveState('Refine selection');
+  state.wandMask = _refineSelectionMask(original, values);
+  state.wandMaskSpace = 'document';
+  state.wandLastSeed = null;
+  composite();
+  _syncToolClearIndicators();
+  return true;
+}
+
+function _syncSelectionOverlay() {
+  const overlay = state.selectionOverlay;
+  if (!overlay || !state.mainCanvas) return;
+  if (overlay.width !== state.imgWidth) overlay.width = state.imgWidth;
+  if (overlay.height !== state.imgHeight) overlay.height = state.imgHeight;
+  overlay.style.width = `${state.imgWidth * state.zoom}px`;
+  overlay.style.height = `${state.imgHeight * state.zoom}px`;
+  overlay.style.left = `${state.mainCanvas.offsetLeft}px`;
+  overlay.style.top = `${state.mainCanvas.offsetTop}px`;
+  overlay.style.transform = state.mainCanvas.style.transform || 'none';
+}
+
+function _stopSelectionAnimation() {
+  if (_selectionAnimationFrame) cancelAnimationFrame(_selectionAnimationFrame);
+  _selectionAnimationFrame = null;
+  _selectionAnimationLast = 0;
+}
+
+function _paintSelectionOverlay() {
+  const overlay = state.selectionOverlay;
+  const ctx = state.selectionOverlayCtx;
+  if (!overlay || !ctx) return;
+  _syncSelectionOverlay();
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  const mask = _selectionMaskAsDocument();
+  if (!mask || !state.wandMaskVisible) {
+    overlay.style.display = 'none';
+    return;
+  }
+  overlay.style.display = '';
+  if (state.quickMaskActive) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(224, 58, 72, 0.48)';
+    ctx.fillRect(0, 0, overlay.width, overlay.height);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.drawImage(mask, 0, 0, overlay.width, overlay.height);
+    ctx.restore();
+    return;
+  }
+  const cache = _selectionBoundaryCache;
+  if (!cache || cache.mask !== mask || cache.width !== mask.width || cache.height !== mask.height) return;
+  _paintSelectionBoundary(ctx, cache.pixels, overlay.width, overlay.height, _selectionAnimationPhase);
+}
+
+function _ensureSelectionAnimation() {
+  if (_selectionAnimationFrame || state.quickMaskActive || !state.wandMaskVisible || !_selectionMaskAsDocument()) return;
+  const tick = timestamp => {
+    _selectionAnimationFrame = null;
+    if (!state.editorOpen || state.quickMaskActive || !state.wandMaskVisible || !_selectionMaskAsDocument()) {
+      _stopSelectionAnimation();
+      return;
+    }
+    if (!_selectionAnimationLast || timestamp - _selectionAnimationLast >= 110) {
+      _selectionAnimationLast = timestamp;
+      _selectionAnimationPhase = (_selectionAnimationPhase + 1) % 8;
+      _paintSelectionOverlay();
+    }
+    _selectionAnimationFrame = requestAnimationFrame(tick);
+  };
+  _selectionAnimationFrame = requestAnimationFrame(tick);
+}
+
+function _refreshSelectionOverlay() {
+  const mask = _selectionMaskAsDocument();
+  if (!mask || !state.wandMaskVisible) {
+    _selectionBoundaryCache = null;
+    _stopSelectionAnimation();
+    if (state.selectionOverlayCtx && state.selectionOverlay) {
+      state.selectionOverlayCtx.clearRect(0, 0, state.selectionOverlay.width, state.selectionOverlay.height);
+      state.selectionOverlay.style.display = 'none';
+    }
+    return;
+  }
+  _selectionBoundaryCache = {
+    mask,
+    width: mask.width,
+    height: mask.height,
+    pixels: _selectionBoundaryPixels(mask),
+  };
+  _paintSelectionOverlay();
+  if (state.quickMaskActive) _stopSelectionAnimation();
+  else _ensureSelectionAnimation();
+}
+
+let _layerPreviewTimer;
+function _finishComposite(render, documentCanvas) {
+  if (!render.isCurrent()) return;
+  clearTimeout(_layerPreviewTimer);
+  _layerPreviewTimer = setTimeout(() => {
+    if (render.isCurrent() && !state.drawing) _layerPanelRenderer.refreshPreviews();
+  }, 100);
+  state.documentRenderReady = true;
+  if (!state.compareBaselineCanvas && !state.compareActive && documentCanvas.width && documentCanvas.height) {
+    state.compareBaselineCanvas = document.createElement('canvas');
+    state.compareBaselineCanvas.width = documentCanvas.width;
+    state.compareBaselineCanvas.height = documentCanvas.height;
+    state.compareBaselineCanvas.getContext('2d').drawImage(documentCanvas, 0, 0);
+  }
+  const displayCanvas = state.compareActive && state.compareBaselineCanvas
+    ? state.compareBaselineCanvas
+    : documentCanvas;
+  state.mainCtx.drawImage(displayCanvas, 0, 0);
+  if (state.compareActive && state.compareBaselineCanvas) return;
+  const inspectedMask = state.maskInspectMode ? _getActiveMaskLayer() : null;
+  if (inspectedMask?.canvas) {
+    // Render the selected mask in isolation without changing document data.
+    // Layer masks use the same document-space placement as the compositor.
+    const ctx = state.mainCtx;
+    const parent = _activeParentLayer();
+    const layerOffset = parent ? (state.layerOffsets.get(parent.id) || { x: 0, y: 0 }) : { x: 0, y: 0 };
+    const maskOffset = inspectedMask.mode === 'layer' && inspectedMask.space !== 'document'
+      ? {
+          x: (Number(layerOffset.x) || 0) + (Number(inspectedMask.offset?.x) || 0),
+          y: (Number(layerOffset.y) || 0) + (Number(inspectedMask.offset?.y) || 0),
+        }
+      : { x: 0, y: 0 };
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, state.mainCanvas.width, state.mainCanvas.height);
+    ctx.drawImage(inspectedMask.canvas, maskOffset.x, maskOffset.y);
+    ctx.restore();
   }
   // Show mask overlay as red tint whenever a mask sub-layer is present
   // on the active parent (was previously gated on inpaint-tool only; now
   // masks are first-class layer entities, so users see them in any tool).
   // Mask canvas has white pixels — we tint them red for visibility.
-  if (state.maskVisible) {
+  if (state.maskVisible && !inspectedMask) {
     // Build a SINGLE merged mask canvas from every visible mask
     // sub-layer (union of alpha — `lighter` keeps max alpha per pixel,
     // so overlapping strokes don't visually stack). Then tint it red
@@ -868,6 +1571,7 @@ function composite() {
     for (const ly of state.layers) {
       if (!ly.masks || !ly.masks.length) continue;
       for (const mk of ly.masks) {
+        if (mk.mode === 'layer') continue;
         if (!mk.visible) continue;
         if (!mk.canvas || !mk.canvas.width || !mk.canvas.height) continue;
         uctx.drawImage(mk.canvas, 0, 0);
@@ -876,8 +1580,6 @@ function composite() {
     }
     uctx.globalCompositeOperation = 'source-over';
     if (_haveAny) {
-      // Tint the merged mask in-place: anywhere alpha exists becomes
-      // red; everywhere else stays transparent.
       uctx.globalCompositeOperation = 'source-in';
       uctx.fillStyle = state.maskTintColor || 'rgba(255, 50, 50, 1)';
       uctx.fillRect(0, 0, union.width, union.height);
@@ -887,28 +1589,91 @@ function composite() {
       state.mainCtx.globalAlpha = 1;
     }
   }
-  // Draw transform handles if active
   if (state.transformActive) _drawTransformHandles();
   else if (state.transformOverlay) state.transformOverlay.style.display = 'none';
-  // Persist the lasso selection overlay across composite redraws — without
-  // this, leaving/re-entering the canvas (which triggers _endDraw →
-  // composite) would visually wipe a completed selection even though
-  // state.lassoPoints is still populated.
-  if (!state.lassoActive && state.lassoPoints.length >= 3) _drawLassoOverlay();
-  // Same idea for the crop overlay — once the user releases the drag,
-  // the crop rect should remain visible until they Apply or cancel.
-  // Hovering over the floating Apply button counts as a mouseleave on
-  // the canvas, which used to wipe the overlay.
+  if (state.marqueeActive && state.marqueeRect) _drawMarqueeOverlay();
+  _penTool.draw();
   if (state.cropRect && !state.cropping) _drawCropOverlay();
-  // Snap guides — drawn while the user is moving a layer with Ctrl held.
   if (state.activeSnapGuides && state.activeSnapGuides.length) _drawSnapGuides();
-  // Magic-wand selection overlay (translucent red tint of the mask).
-  if (state.wandMask && state.wandLayerId && state.wandMaskVisible) _drawWandOverlay();
-  // Keep the per-tool clear-X badges in sync. Cheap: two classList
-  // toggles. Composite runs on every visible state change, so this
-  // catches every lasso/wand mutation site without each one having to
-  // remember to call the sync helper.
+  _precisionGuides?.drawDocumentOverlay(state.mainCtx);
+  _refreshSelectionOverlay();
   _syncToolClearIndicators();
+}
+
+function composite() {
+  if (!state.mainCtx) return;
+  const asyncComposite = _hasRetainedEffects()
+    && typeof Worker !== 'undefined'
+    && typeof OffscreenCanvas !== 'undefined';
+  if (asyncComposite && _asyncCompositeInFlight) {
+    // A slider or drag can invalidate many frames before the worker finishes.
+    // Keep one latest-generation rerender queued instead of spawning another
+    // full-canvas worker for every input event.
+    _renderGeneration.invalidate();
+    _asyncCompositeQueued = true;
+    state.documentRenderReady = false;
+    return;
+  }
+  const render = _renderGeneration.begin();
+  state.documentRenderReady = false;
+  state.mainCtx.clearRect(0, 0, state.mainCanvas.width, state.mainCanvas.height);
+  // Checkerboard background
+  _drawCheckerboard(state.mainCtx, state.mainCanvas.width, state.mainCanvas.height);
+  if (!state.documentCompositeCanvas) state.documentCompositeCanvas = document.createElement('canvas');
+  const documentCanvas = state.documentCompositeCanvas;
+  if (documentCanvas.width !== state.imgWidth || documentCanvas.height !== state.imgHeight) {
+    documentCanvas.width = state.imgWidth;
+    documentCanvas.height = state.imgHeight;
+  }
+  // Keep the last completed document visible while an async generation is
+  // rendering. The new generation replaces it atomically when ready.
+  if (asyncComposite && documentCanvas.width && documentCanvas.height) {
+    state.mainCtx.drawImage(documentCanvas, 0, 0);
+  }
+  if (asyncComposite) {
+    const renderPromise = _drawDocumentLayersAsync(documentCanvas.getContext('2d'), render.isCurrent)
+      .then(() => _finishComposite(render, documentCanvas))
+      .catch(() => {
+        if (!render.isCurrent()) return;
+        _drawDocumentLayers(documentCanvas.getContext('2d'), render.isCurrent);
+        _finishComposite(render, documentCanvas);
+      });
+    const job = {};
+    job.promise = renderPromise.then(() => {
+      if (_asyncCompositeInFlight !== job) return;
+      _asyncCompositeInFlight = null;
+      if (_asyncCompositeQueued) {
+        _asyncCompositeQueued = false;
+        composite();
+      }
+    }, () => {
+      if (_asyncCompositeInFlight !== job) return;
+      _asyncCompositeInFlight = null;
+      if (_asyncCompositeQueued) {
+        _asyncCompositeQueued = false;
+        composite();
+      }
+    });
+    _asyncCompositeInFlight = job;
+    return;
+  }
+  _drawDocumentLayers(documentCanvas.getContext('2d'), render.isCurrent);
+  _finishComposite(render, documentCanvas);
+}
+
+function _toggleCompare() {
+  if (!state.compareBaselineCanvas) {
+    uiModule?.showToast?.('Compare is available after the document finishes loading');
+    return;
+  }
+  state.compareActive = !state.compareActive;
+  const button = document.getElementById('ge-compare-btn');
+  if (button) {
+    button.setAttribute('aria-pressed', state.compareActive ? 'true' : 'false');
+    button.classList.toggle('active', state.compareActive);
+    button.title = state.compareActive ? 'Show the current document' : 'Show the document before editing';
+  }
+  composite();
 }
 
 function _drawSnapGuides() {
@@ -945,12 +1710,7 @@ function _drawCropOverlay() {
   state.mainCtx.rect(x, y, w, h);
   state.mainCtx.clip();
   _drawCheckerboard(state.mainCtx, state.mainCanvas.width, state.mainCanvas.height);
-  for (const layer of state.layers) {
-    if (!layer.visible) continue;
-    state.mainCtx.globalAlpha = layer.opacity;
-    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-    state.mainCtx.drawImage(layer.canvas, off.x, off.y);
-  }
+  if (state.documentCompositeCanvas) state.mainCtx.drawImage(state.documentCompositeCanvas, 0, 0);
   state.mainCtx.globalAlpha = 1;
   state.mainCtx.restore();
   state.mainCtx.strokeStyle = '#fff';
@@ -971,6 +1731,8 @@ function _snapshotState() {
       const wctx = state.wandMask.getContext('2d');
       wand = {
         layerId: state.wandLayerId,
+        space: state.wandMaskSpace || 'layer',
+        source: state.selectionSource || null,
         w: state.wandMask.width,
         h: state.wandMask.height,
         imageData: wctx.getImageData(0, 0, state.wandMask.width, state.wandMask.height),
@@ -978,10 +1740,61 @@ function _snapshotState() {
       };
     } catch {}
   }
-  return {
+  const snapshot = {
     imgWidth: state.imgWidth,
     imgHeight: state.imgHeight,
+    activeLayerId: state.activeLayerId,
+    selectedLayerIds: [...(state.selectedLayerIds || [])],
+    selectionAnchorId: state.selectionAnchorId || null,
+    layerGroups: (state.layerGroups || []).map(group => ({
+      id: group.id,
+      name: group.name,
+      layerIds: [...(group.layerIds || [])],
+      parentId: group.parentId || null,
+      visible: group.visible !== false,
+      opacity: group.opacity,
+      blendMode: group.blendMode,
+      locked: !!group.locked,
+      collapsed: !!group.collapsed,
+      activeMaskId: group.activeMaskId || null,
+      effects: (group.effects || []).map(effect => _cloneDocumentValue(_normalizeEffect(effect), null)),
+      masks: (group.masks || []).map(mask => {
+        let imageData = null;
+        try { imageData = mask.ctx.getImageData(0, 0, mask.canvas.width, mask.canvas.height); } catch {}
+        return {
+          id: mask.id,
+          name: mask.name,
+          visible: mask.visible !== false,
+          mode: 'group',
+          space: 'document',
+          canvasW: mask.canvas.width,
+          canvasH: mask.canvas.height,
+          imageData,
+        };
+      }),
+    })),
+    activeGroupId: state.activeGroupId || null,
+    nextLayerId: state.nextLayerId,
     wand,
+    savedSelections: (state.savedSelections || []).map(selection => {
+      let imageData = null;
+      try { imageData = selection.canvas.getContext('2d').getImageData(0, 0, selection.canvas.width, selection.canvas.height); } catch {}
+      return { id: selection.id, name: selection.name, w: selection.canvas.width, h: selection.canvas.height, imageData };
+    }),
+    lastSelection: (() => {
+      const canvas = state.lastSelection?.canvas;
+      if (!canvas) return null;
+      let imageData = null;
+      try { imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height); } catch {}
+      return { w: canvas.width, h: canvas.height, imageData };
+    })(),
+    nextSavedSelectionId: state.nextSavedSelectionId,
+    lassoPoints: (state.lassoPoints || []).map(point => ({ ...point })),
+    lassoActive: !!state.lassoActive,
+    guides: {
+      vertical: [...(state.guides?.vertical || [])],
+      horizontal: [...(state.guides?.horizontal || [])],
+    },
     layers: state.layers.map(l => {
       // getImageData throws on a 0-sized canvas — guard so a single
       // broken layer/mask can't take down the whole snapshot (which
@@ -992,12 +1805,58 @@ function _snapshotState() {
           imageData = l.ctx.getImageData(0, 0, l.canvas.width, l.canvas.height);
         }
       } catch (_) { /* keep imageData=null, restore will skip */ }
+      let placed = null;
+      if (l.kind === 'placed' && l.placed?.sourceCanvas) {
+        let sourceImageData = null;
+        try {
+          sourceImageData = l.placed.sourceCanvas.getContext('2d').getImageData(
+            0, 0, l.placed.sourceCanvas.width, l.placed.sourceCanvas.height,
+          );
+        } catch {}
+        placed = {
+          sourceW: l.placed.sourceCanvas.width,
+          sourceH: l.placed.sourceCanvas.height,
+          sourceImageData,
+          sourceName: l.placed.sourceName || 'Placed image',
+          matrix: Array.isArray(l.placed.matrix) ? [...l.placed.matrix] : [1, 0, 0, 1, 0, 0],
+        };
+      }
       return {
         id: l.id, name: l.name, visible: l.visible, opacity: l.opacity, locked: l.locked,
+        locks: _normalizeLayerLocks(l.locks),
+        clipped: !!l.clipped,
+        blendMode: l.blendMode || 'source-over',
+        kind: l.kind || 'raster',
+        text: _cloneDocumentValue(l.text, null),
+        shape: _cloneDocumentValue(l.shape, null),
+        adjustment: _cloneDocumentValue(l.adjustment, null),
+        effects: (l.effects || []).map(effect => {
+          const normalized = _normalizeEffect(effect);
+          const mask = effect?.mask;
+          if (!mask?.canvas) return normalized;
+          let imageData = null;
+          try { imageData = mask.ctx.getImageData(0, 0, mask.canvas.width, mask.canvas.height); } catch {}
+          return {
+            ...normalized,
+            mask: {
+              id: mask.id,
+              name: mask.name || 'Effect Mask',
+              visible: mask.visible !== false,
+              canvasW: mask.canvas.width,
+              canvasH: mask.canvas.height,
+              imageData,
+            },
+          };
+        }),
+        placed,
         canvasW: l.canvas.width,
         canvasH: l.canvas.height,
         imageData,
         offset: { ...(state.layerOffsets.get(l.id) || { x: 0, y: 0 }) },
+        adjustments: (() => {
+          try { return JSON.parse(JSON.stringify(l.adjustments || {})); }
+          catch (e) { console.error('[gallery] adjustments not serializable, dropping from snapshot:', e); return {}; }
+        })(),
         // Deep-clone defensively — a non-serializable / circular value here
         // would throw out of the whole snapshot (and historically aborted
         // every mutating op). Fall back to [] rather than blow up.
@@ -1016,6 +1875,10 @@ function _snapshotState() {
             id: m.id,
             name: m.name,
             visible: m.visible !== false,
+            mode: m.mode || 'selection',
+            space: m.space || (m.mode === 'layer' ? 'layer' : 'document'),
+            linked: m.mode === 'layer' ? m.linked !== false : true,
+            offset: { x: Number(m.offset?.x) || 0, y: Number(m.offset?.y) || 0 },
             canvasW: m.canvas.width,
             canvasH: m.canvas.height,
             imageData: mImageData,
@@ -1026,6 +1889,8 @@ function _snapshotState() {
       };
     }),
   };
+  snapshot._bytes = _snapshotByteSize(snapshot);
+  return snapshot;
 }
 
 function _saveState(label) {
@@ -1036,11 +1901,11 @@ function _saveState(label) {
   // isolated: a history-snapshot failure must degrade (lose one undo
   // step) rather than kill the user's action.
   try {
-    const snap = _snapshotState();
+    const snap = _shareSnapshotPixels(_snapshotState(), state.undoStack.at(-1));
     snap._label = label || 'Edit';
     snap._ts = Date.now();
     state.undoStack.push(snap);
-    if (state.undoStack.length > MAX_HISTORY) state.undoStack.shift();
+    _trimHistoryStack(state.undoStack);
     state.redoStack = [];
   } catch (e) {
     console.error('[gallery] saveState snapshot failed (continuing without this undo step):', e);
@@ -1059,86 +1924,330 @@ function _saveState(label) {
 // for "save back to the original photo" behaviour.
 const PERSIST_DEBOUNCE_MS = 800;
 const THUMB_MAX = 160;
+const ACTIVE_EDITOR_SESSION_KEY = 'odysseus-gallery-active-editor-v1';
+
+// Keep just enough session metadata to reopen the editor after a browser
+// refresh. The actual layered document remains in the server-backed draft.
+function _writeActiveEditorSession() {
+  if (!state.editorOpen) return;
+  try {
+    sessionStorage.setItem(ACTIVE_EDITOR_SESSION_KEY, JSON.stringify({
+      imageUrl: state.imageUrl || null,
+      imageId: state.imageId || null,
+      draftId: state.draftId || null,
+      draftName: state.draftName || 'Untitled',
+      width: Number(state.imgWidth) || 0,
+      height: Number(state.imgHeight) || 0,
+    }));
+  } catch (_) {}
+}
+
+function _setDraftStatus(label, stateName = '') {
+  const el = document.getElementById('ge-draft-status');
+  if (!el) return;
+  const normalizedState = stateName === 'saved' ? 'saved' : 'dirty';
+  const normalizedLabel = normalizedState === 'saved' ? 'Saved' : 'Unsaved';
+  el.textContent = normalizedLabel;
+  el.dataset.state = stateName;
+  const iconHost = el.closest('#ge-save-menu-btn');
+  iconHost?.querySelectorAll('.ge-save-state-icon').forEach(icon => {
+    icon.hidden = !icon.classList.contains(`ge-save-state-${normalizedState}`);
+  });
+  const saveButton = document.getElementById('ge-save-menu-btn');
+  if (saveButton) {
+    saveButton.title = normalizedState === 'error' ? 'Draft autosave needs attention' : `Draft status: ${normalizedLabel}`;
+    saveButton.setAttribute('aria-label', normalizedLabel);
+  }
+}
+
+function _clearActiveEditorSession() {
+  try { sessionStorage.removeItem(ACTIVE_EDITOR_SESSION_KEY); } catch (_) {}
+}
 
 function _schedulePersist() {
   if (!state.editorOpen || !state.layers.length) return;
   if (state.persistTimer) clearTimeout(state.persistTimer);
-  state.persistTimer = setTimeout(() => { state.persistTimer = null; _persistDraft(); }, PERSIST_DEBOUNCE_MS);
+  _setDraftStatus('Saving soon…', 'pending');
+  // The first save establishes the recovery anchor. Start it immediately
+  // when no server draft exists; subsequent edits can stay debounced.
+  const delay = state.draftId ? PERSIST_DEBOUNCE_MS : 0;
+  state.persistTimer = setTimeout(() => { state.persistTimer = null; _persistDraft(); }, delay);
 }
 
 function _buildDraftPayload() {
-  return {
-    v: 2,
-    imageId: state.imageId,
-    imgWidth: state.imgWidth,
-    imgHeight: state.imgHeight,
-    activeLayerId: state.activeLayerId,
-    nextLayerId: state.nextLayerId,
-    layers: state.layers.map(l => ({
-      id: l.id,
-      name: l.name,
-      visible: l.visible,
-      opacity: l.opacity,
-      locked: l.locked,
-      isBase: !!l.isBase,
-      canvasW: l.canvas.width,
-      canvasH: l.canvas.height,
-      offset: { ...(state.layerOffsets.get(l.id) || { x: 0, y: 0 }) },
-      dataUrl: l.canvas.toDataURL('image/png'),
+  return _serializeEditorDocument(state);
+}
+
+function _serializationSnapshot(source, canvasProxy) {
+  const groups = (source.layerGroups || []).map(group => ({
+    ...group,
+    masks: (group.masks || []).map(mask => ({ ...mask, canvas: canvasProxy(mask.canvas) })),
+    effects: (group.effects || []).map(effect => ({
+      ...effect,
+      mask: effect.mask ? { ...effect.mask, canvas: canvasProxy(effect.mask.canvas) } : effect.mask,
     })),
+  }));
+  const layers = (source.layers || []).map(layer => ({
+    ...layer,
+    canvas: canvasProxy(layer.canvas),
+    masks: (layer.masks || []).map(mask => ({ ...mask, canvas: canvasProxy(mask.canvas) })),
+    effects: (layer.effects || []).map(effect => ({
+      ...effect,
+      mask: effect.mask ? { ...effect.mask, canvas: canvasProxy(effect.mask.canvas) } : effect.mask,
+    })),
+    placed: layer.placed ? { ...layer.placed, sourceCanvas: canvasProxy(layer.placed.sourceCanvas) } : layer.placed,
+  }));
+  return {
+    ...source,
+    savedSelections: (source.savedSelections || []).map(selection => ({
+      ...selection,
+      canvas: canvasProxy(selection.canvas),
+    })),
+    layerGroups: groups,
+    layers,
   };
 }
 
+function _replaceSerializationTokens(value, replacements) {
+  if (typeof value === 'string') return replacements.get(value) || value;
+  if (Array.isArray(value)) return value.map(item => _replaceSerializationTokens(item, replacements));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    _replaceSerializationTokens(item, replacements),
+  ]));
+}
+
+function _readBlobAsDataUrl(blob) {
+  return new Promise(resolve => {
+    if (!blob) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function _encodeSerializedCanvases(canvases) {
+  const fallback = () => canvases.map(canvas => {
+    try { return canvas?.toDataURL?.('image/png') || null; } catch { return null; }
+  });
+  if (!canvases.length || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined'
+      || typeof createImageBitmap !== 'function') return fallback();
+  const bitmaps = [];
+  try {
+    for (const canvas of canvases) bitmaps.push(canvas ? await createImageBitmap(canvas) : null);
+  } catch {
+    for (const bitmap of bitmaps) bitmap?.close?.();
+    return fallback();
+  }
+  return new Promise(resolve => {
+    const worker = new Worker(new URL('./editor/serialization-worker.js', import.meta.url), { type: 'module' });
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      resolve(value);
+    };
+    worker.onmessage = async event => {
+      const { blobs, error } = event.data || {};
+      if (error || !Array.isArray(blobs)) { finish(fallback()); return; }
+      finish(await Promise.all(blobs.map(_readBlobAsDataUrl)));
+    };
+    worker.onerror = () => finish(fallback());
+    worker.postMessage({ bitmaps }, bitmaps.filter(Boolean));
+  });
+}
+
+async function _buildDraftPayloadAsync() {
+  const canvases = [];
+  const tokens = new Map();
+  const canvasProxy = canvas => {
+    if (!canvas || typeof canvas.toDataURL !== 'function') return canvas;
+    let index = canvases.indexOf(canvas);
+    if (index < 0) {
+      index = canvases.length;
+      canvases.push(canvas);
+    }
+    const token = `data:image/png;base64,ODYSSEUS_CANVAS_TOKEN_${index}`;
+    tokens.set(canvas, token);
+    return { width: canvas.width, height: canvas.height, toDataURL: () => token };
+  };
+  const snapshot = _serializationSnapshot(state, canvasProxy);
+  const payload = _serializeEditorDocument(snapshot);
+  const encoded = await _encodeSerializedCanvases(canvases);
+  const replacements = new Map(encoded.map((value, index) => [
+    tokens.get(canvases[index]), value || tokens.get(canvases[index]),
+  ]));
+  return _replaceSerializationTokens(payload, replacements);
+}
+
 function _buildThumbnail() {
-  return _buildThumbnailImpl(state.layers, state.imgWidth, state.imgHeight, state.layerOffsets, THUMB_MAX, 0.6);
+  return _buildThumbnailFromSource(
+    state.documentRenderReady && state.documentCompositeCanvas
+      ? state.documentCompositeCanvas
+      : flatten(),
+  );
+}
+
+function _buildThumbnailFromSource(source) {
+  try {
+    const scale = Math.min(1, THUMB_MAX / Math.max(source.width, source.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(source.width * scale));
+    canvas.height = Math.max(1, Math.round(source.height * scale));
+    canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.6);
+  } catch {
+    return null;
+  }
+}
+
+async function _buildThumbnailAsync() {
+  let source;
+  try {
+    source = state.documentRenderReady && state.documentCompositeCanvas
+      ? state.documentCompositeCanvas
+      : flatten();
+  } catch {
+    return null;
+  }
+  if (!source || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined'
+      || typeof createImageBitmap !== 'function') {
+    return _buildThumbnailFromSource(source);
+  }
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(source);
+  } catch {
+    return _buildThumbnailFromSource(source);
+  }
+  return new Promise(resolve => {
+    const worker = new Worker(new URL('./editor/thumbnail-worker.js', import.meta.url), { type: 'module' });
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      resolve(value);
+    };
+    worker.onmessage = event => {
+      const { blob, error } = event.data || {};
+      if (error || !blob) {
+        finish(_buildThumbnailFromSource(source));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => finish(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => finish(_buildThumbnailFromSource(source));
+      reader.readAsDataURL(blob);
+    };
+    worker.onerror = () => finish(_buildThumbnailFromSource(source));
+    worker.postMessage({ bitmap, maxDim: THUMB_MAX, quality: 0.6 }, [bitmap]);
+  });
 }
 
 async function _persistDraft() {
   if (!state.editorOpen || !state.layers.length) return;
   // Coalesce concurrent saves — if one's already in-flight, mark dirty
   // and let the running call kick off another when it returns.
-  if (state.persistInFlight) { state.persistDirty = true; return; }
-  const payload = _buildDraftPayload();
-  const thumbnail = _buildThumbnail();
-  const body = {
-    name: state.draftName || 'Untitled',
-    source_image_id: state.imageId || null,
-    width: state.imgWidth,
-    height: state.imgHeight,
-    payload,
-    thumbnail,
-  };
-  const doRequest = async () => {
-    if (state.draftId) {
-      const res = await fetch(`/api/editor-drafts/${encodeURIComponent(state.draftId)}`, {
-        method: 'PUT', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      // 404 means our row was deleted while editing — fall through to
-      // create a fresh one so the user doesn't lose work.
-      if (res.status === 404) {
-        state.draftId = null;
-        return doRequest();
+  if (state.persistInFlight) { state.persistDirty = true; _setDraftStatus('Saving…', 'saving'); return; }
+  const sessionToken = state.editorSessionToken;
+  const draftIdAtStart = state.draftId || null;
+  const draftNameAtStart = state.draftName || 'Untitled';
+  const sourceImageIdAtStart = state.imageId || null;
+  const widthAtStart = state.imgWidth;
+  const heightAtStart = state.imgHeight;
+  const isCurrentSession = () => state.editorOpen && state.editorSessionToken === sessionToken;
+  _setDraftStatus('Saving…', 'saving');
+  // Reserve the in-flight slot before thumbnail encoding yields. This keeps
+  // a second edit from starting a competing save while the worker is busy.
+  const doSave = async () => {
+    // Start both captures before either one yields. Close-time cleanup can
+    // clear editor state while workers are active, so each operation must
+    // retain its own source snapshot rather than reading state sequentially.
+    const payloadPromise = _buildDraftPayloadAsync();
+    const thumbnailPromise = _buildThumbnailAsync();
+    const [payload, thumbnail] = await Promise.all([payloadPromise, thumbnailPromise]);
+    const body = {
+      name: draftNameAtStart,
+      source_image_id: sourceImageIdAtStart,
+      width: widthAtStart,
+      height: heightAtStart,
+      payload,
+      thumbnail,
+    };
+    const serializedBody = JSON.stringify(body);
+    if (serializedBody.length > _EDITOR_PROJECT_MAX_BYTES) {
+      const message = 'Draft autosave paused: this layered document exceeds the 256 MB safety limit. Export or flatten a copy before closing.';
+      if (isCurrentSession()) {
+        if (state.persistErrorMessage !== message && uiModule) uiModule.showToast(message, 9000);
+        state.persistErrorMessage = message;
+        _setDraftStatus('Save paused', 'error');
       }
-      if (!res.ok) throw new Error(`PUT failed: ${res.status}`);
-      return res.json();
-    } else {
+      return;
+    }
+    const responseError = async (res, method) => {
+      let detail = '';
+      try { detail = (await res.json())?.detail || ''; } catch {}
+      const error = new Error(detail || `${method} failed: ${res.status}`);
+      error.status = res.status;
+      return error;
+    };
+    const doRequest = async () => {
+      if (draftIdAtStart) {
+        const res = await fetch(`/api/editor-drafts/${encodeURIComponent(draftIdAtStart)}`, {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: serializedBody,
+        });
+        // 404 means our row was deleted while editing — fall through to
+        // create a fresh one so the user doesn't lose work.
+        if (res.status === 404) {
+          return fetch('/api/editor-drafts', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: serializedBody,
+          }).then(async created => {
+            if (!created.ok) throw await responseError(created, 'POST');
+            return created.json();
+          });
+        }
+        if (!res.ok) throw await responseError(res, 'PUT');
+        return res.json();
+      }
       const res = await fetch('/api/editor-drafts', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: serializedBody,
       });
-      if (!res.ok) throw new Error(`POST failed: ${res.status}`);
-      const out = await res.json();
-      if (out && out.id) state.draftId = out.id;
-      return out;
-    }
+      if (!res.ok) throw await responseError(res, 'POST');
+      return res.json();
+    };
+    return doRequest();
   };
-  state.persistInFlight = doRequest()
-    .catch((e) => { console.warn('[ge] draft save failed', e); })
-    .then(() => {
-      state.persistInFlight = null;
+  const savePromise = doSave();
+  state.persistInFlight = savePromise
+    .catch((e) => {
+      console.warn('[ge] draft save failed', e);
+      if (!isCurrentSession()) return;
+      const message = e?.status === 413
+        ? 'Draft autosave paused: the document exceeds the configured storage limit.'
+        : `Draft autosave failed: ${e?.message || 'server error'}`;
+      if (state.persistErrorMessage !== message && uiModule) uiModule.showToast(message, 7000);
+      state.persistErrorMessage = message;
+      _setDraftStatus('Save failed', 'error');
+    })
+    .then((out) => {
+      if (isCurrentSession()) state.persistInFlight = null;
+      if (!isCurrentSession()) return;
+      if (out && out.id) {
+        state.draftId = out.id;
+        _writeActiveEditorSession();
+      }
+      state.persistErrorMessage = null;
+      if (!state.persistErrorMessage) _setDraftStatus('Saved', 'saved');
       if (state.persistDirty) {
         state.persistDirty = false;
         _schedulePersist();
@@ -1189,39 +2298,281 @@ async function _clearDraftServer(draftId) {
 // raw payload (v1 localStorage shape) or a server response with
 // {payload: {...}}. Returns a promise that resolves once every layer's
 // dataURL has decoded into its canvas.
-function _restoreDraft(draft) {
-  return new Promise((resolve) => {
-    // Server response: {id, name, payload:{...}, ...}. Unwrap.
-    const data = draft.payload && draft.payload.layers ? draft.payload : draft;
-    state.imgWidth = data.imgWidth;
-    state.imgHeight = data.imgHeight;
-    _initCanvasFromDims(data.imgWidth, data.imgHeight);
-    state.layers = [];
-    state.layerOffsets.clear();
-    let pending = data.layers.length;
-    if (pending === 0) { resolve(); return; }
-    data.layers.forEach((s, idx) => {
-      const layer = createLayer(s.name || 'Layer', s.canvasW || state.imgWidth, s.canvasH || state.imgHeight);
-      layer.id = s.id;
-      layer.visible = s.visible !== false;
-      layer.opacity = typeof s.opacity === 'number' ? s.opacity : 1;
-      layer.locked = !!s.locked;
-      if (s.isBase) layer.isBase = true;
-      state.layers[idx] = layer;
-      state.layerOffsets.set(layer.id, { ...(s.offset || { x: 0, y: 0 }) });
-      const img = new Image();
-      img.onload = () => {
-        if (!state.editorOpen) { resolve(); return; }
-        layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-        layer.ctx.drawImage(img, 0, 0);
-        if (--pending === 0) resolve();
-      };
-      img.onerror = () => { if (--pending === 0) resolve(); };
-      img.src = s.dataUrl;
-    });
-    state.nextLayerId = data.nextLayerId || (state.layers.reduce((m, l) => Math.max(m, l.id || 0), 0) + 1);
-    state.activeLayerId = data.activeLayerId || (state.layers[state.layers.length - 1]?.id ?? null);
+async function _restoreDraft(draft) {
+  // Server response: {id, name, payload:{...}, ...}. Unwrap.
+  const rawData = draft.payload && typeof draft.payload === 'object' ? draft.payload : draft;
+  const prepared = _prepareEditorDocument(rawData);
+  const data = prepared.document;
+  const restoreWarnings = [...prepared.warnings];
+  const records = Array.isArray(data.layers) ? data.layers : [];
+  _initCanvasFromDims(data.imgWidth, data.imgHeight);
+  state.layers = [];
+  state.layerOffsets.clear();
+  Object.assign(state, _normalizeEditorView(data.view, {
+    rulersVisible: state.rulersVisible,
+    gridVisible: state.gridVisible,
+    gridSize: state.gridSize,
+    snapEnabled: state.snapEnabled,
+    snapToGrid: state.snapToGrid,
+    guides: { vertical: [], horizontal: [] },
+  }));
+
+  const decodeInto = (dataUrl, canvas, ctx, failure) => new Promise(resolve => {
+    if (!dataUrl) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        if (!state.editorOpen) { resolve(null); return; }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        resolve(null);
+      } catch {
+        resolve(failure);
+      }
+    };
+    img.onerror = () => resolve(failure);
+    img.src = dataUrl;
   });
+
+  const decodes = [];
+  const missingPlacedPreviewIds = new Set();
+  for (const s of records) {
+    const layer = createLayer(s.name || 'Layer', s.canvasW || state.imgWidth, s.canvasH || state.imgHeight);
+    const generatedId = layer.id;
+    layer.id = s.id || generatedId;
+    if (generatedId !== layer.id) state.layerOffsets.delete(generatedId);
+    layer.visible = s.visible !== false;
+    layer.opacity = typeof s.opacity === 'number' ? s.opacity : 1;
+    layer.locked = !!s.locked;
+    layer.locks = _normalizeLayerLocks(s.locks);
+    layer.clipped = !!s.clipped;
+    layer.isBase = !!s.isBase;
+    layer.blendMode = s.blendMode || 'source-over';
+    layer.kind = s.kind || 'raster';
+    layer.text = layer.kind === 'text' ? _normalizeTextData(s.text) : null;
+    layer.shape = layer.kind === 'shape' ? _normalizeShapeData(s.shape) : null;
+    layer.adjustment = layer.kind === 'adjustment' ? _normalizeAdjustmentData(s.adjustment) : null;
+    layer.effects = Array.isArray(s.effects) ? s.effects.map(effect => {
+      const normalized = _normalizeEffect(effect);
+      const savedMask = effect?.mask;
+      if (!savedMask?.imageData) return normalized;
+      const canvas = document.createElement('canvas');
+      canvas.width = savedMask.canvasW || layer.canvas.width;
+      canvas.height = savedMask.canvasH || layer.canvas.height;
+      const ctx = canvas.getContext('2d');
+      try { ctx.putImageData(savedMask.imageData, 0, 0); } catch {}
+      normalized.mask = {
+        id: savedMask.id || `effect-mask-${state.nextLayerId++}`,
+        name: savedMask.name || 'Effect Mask',
+        visible: savedMask.visible !== false,
+        canvas,
+        ctx,
+        canvasW: canvas.width,
+        canvasH: canvas.height,
+      };
+      return normalized;
+    }) : [];
+    for (const effect of layer.effects) {
+      const savedMask = effect.mask;
+      if (!savedMask?.dataUrl || savedMask.canvas) continue;
+      const canvas = document.createElement('canvas');
+      canvas.width = savedMask.canvasW || layer.canvas.width;
+      canvas.height = savedMask.canvasH || layer.canvas.height;
+      const ctx = canvas.getContext('2d');
+      effect.mask = {
+        id: savedMask.id || `effect-mask-${state.nextLayerId++}`,
+        name: savedMask.name || 'Effect Mask',
+        visible: savedMask.visible !== false,
+        canvas,
+        ctx,
+        canvasW: canvas.width,
+        canvasH: canvas.height,
+      };
+      decodes.push(decodeInto(savedMask.dataUrl, canvas, ctx, {
+        type: 'effect-mask', layerId: layer.id, id: effect.mask.id,
+        message: `${layer.name} / ${effect.name || 'Effect'} mask was skipped because its image could not be decoded.`,
+      }));
+    }
+    layer.placed = null;
+    if (layer.kind === 'placed' && s.placed) {
+      const sourceCanvas = document.createElement('canvas');
+      sourceCanvas.width = s.placed.sourceWidth;
+      sourceCanvas.height = s.placed.sourceHeight;
+      layer.placed = {
+        sourceCanvas,
+        sourceWidth: s.placed.sourceWidth,
+        sourceHeight: s.placed.sourceHeight,
+        sourceName: s.placed.sourceName || 'Placed image',
+        matrix: [...s.placed.matrix],
+      };
+      decodes.push(decodeInto(
+        s.placed.sourceDataUrl,
+        sourceCanvas,
+        sourceCanvas.getContext('2d'),
+        {
+          type: 'placed-source', id: layer.id,
+          message: `${layer.name} had a corrupt placed source and was recovered from its preview.`,
+        },
+      ));
+    }
+    layer.adjustments = _cloneDocumentValue(s.adjustments, layer.adjustments);
+    layer.adjLayers = _cloneDocumentValue(s.adjLayers, []);
+    layer.masks = [];
+    for (const ms of Array.isArray(s.masks) ? s.masks : []) {
+      const canvas = document.createElement('canvas');
+      canvas.width = ms.canvasW || state.imgWidth;
+      canvas.height = ms.canvasH || state.imgHeight;
+      const ctx = canvas.getContext('2d');
+      const mask = {
+        id: ms.id || `mask-${state.nextLayerId++}`,
+        name: ms.name || 'Mask',
+        visible: ms.visible !== false,
+        mode: ms.mode || 'selection',
+        space: ms.space || (ms.mode === 'layer' ? 'layer' : 'document'),
+        linked: ms.mode === 'layer' ? ms.linked !== false : true,
+        offset: { x: Number(ms.offset?.x) || 0, y: Number(ms.offset?.y) || 0 },
+        canvas,
+        ctx,
+      };
+      layer.masks.push(mask);
+      decodes.push(decodeInto(ms.dataUrl, canvas, ctx, {
+        type: 'mask', layerId: layer.id, id: mask.id,
+        message: `${layer.name} / ${mask.name} was skipped because its image could not be decoded.`,
+      }));
+    }
+    layer.activeMaskId = s.activeMaskId && layer.masks.some(m => m.id === s.activeMaskId)
+      ? s.activeMaskId
+      : null;
+    state.layers.push(layer);
+    state.layerOffsets.set(layer.id, { ...(s.offset || { x: 0, y: 0 }) });
+    if (layer.kind === 'placed' && !s.dataUrl) missingPlacedPreviewIds.add(layer.id);
+    decodes.push(decodeInto(s.dataUrl, layer.canvas, layer.ctx, {
+      type: ['text', 'shape'].includes(layer.kind) ? `${layer.kind}-preview` : (layer.kind === 'placed' ? 'placed-preview' : 'layer'), id: layer.id,
+      message: ['text', 'shape'].includes(layer.kind)
+        ? `${layer.name} preview was rebuilt from its editable ${layer.kind} data.`
+        : `${layer.name} was skipped because its image could not be decoded.`,
+    }));
+  }
+
+  const restoredGroups = (data.groups || []).map(source => {
+    const group = {
+      ...source,
+      effects: Array.isArray(source.effects) ? source.effects.map(effect => _normalizeEffect(effect)) : [],
+      masks: [],
+    };
+    for (const savedMask of source.masks || []) {
+      const canvas = document.createElement('canvas');
+      canvas.width = savedMask.canvasW || state.imgWidth;
+      canvas.height = savedMask.canvasH || state.imgHeight;
+      const ctx = canvas.getContext('2d');
+      const mask = {
+        id: savedMask.id || `mask-${state.nextLayerId++}`,
+        name: savedMask.name || 'Group Mask',
+        visible: savedMask.visible !== false,
+        mode: 'group',
+        space: 'document',
+        canvas,
+        ctx,
+      };
+      group.masks.push(mask);
+      decodes.push(decodeInto(savedMask.dataUrl, canvas, ctx, {
+        type: 'group-mask', groupId: group.id, id: mask.id,
+        message: `${group.name} / ${mask.name} was skipped because its image could not be decoded.`,
+      }));
+    }
+    group.activeMaskId = group.masks.some(mask => mask.id === source.activeMaskId) ? source.activeMaskId : null;
+    return group;
+  });
+
+  state.savedSelections = (data.savedSelections || []).map(source => {
+    const canvas = document.createElement('canvas');
+    canvas.width = source.canvasW || state.imgWidth;
+    canvas.height = source.canvasH || state.imgHeight;
+    const selection = { id: source.id, name: source.name || 'Selection', canvas };
+    decodes.push(decodeInto(source.dataUrl, canvas, canvas.getContext('2d'), {
+      type: 'saved-selection', id: source.id,
+      message: `${selection.name} was skipped because its saved selection could not be decoded.`,
+    }));
+    return selection;
+  });
+  state.lastSelection = null;
+  state.nextSavedSelectionId = Math.max(1, ...state.savedSelections.map(selection => {
+    const match = String(selection.id || '').match(/(\d+)$/);
+    return match ? Number(match[1]) + 1 : 1;
+  }));
+
+  const decodeFailures = (await Promise.all(decodes)).filter(Boolean);
+  const failedLayerIds = new Set(decodeFailures.filter(item => item.type === 'layer').map(item => item.id));
+  const failedPlacedSourceIds = new Set(decodeFailures.filter(item => item.type === 'placed-source').map(item => item.id));
+  const failedPlacedPreviewIds = new Set(decodeFailures.filter(item => item.type === 'placed-preview').map(item => item.id));
+  for (const layer of state.layers) {
+    if (layer.kind !== 'placed') continue;
+    if (failedPlacedSourceIds.has(layer.id)) {
+      layer.kind = 'raster';
+      layer.placed = null;
+      if (failedPlacedPreviewIds.has(layer.id) || missingPlacedPreviewIds.has(layer.id)) failedLayerIds.add(layer.id);
+      continue;
+    }
+    // The serialized layer canvas is the exact visible result at save time.
+    // Do not redraw it from the immutable source during restore: another
+    // interpolation pass can change pixels across browsers. Rebuild only
+    // when an older/incomplete project has no rendered preview.
+    if (!missingPlacedPreviewIds.has(layer.id)) continue;
+    const rendered = _renderPlacedLayer(layer);
+    if (rendered) state.layerOffsets.set(layer.id, rendered.offset);
+  }
+  const failedMaskIds = new Set(decodeFailures.filter(item => item.type === 'mask').map(item => item.id));
+  if (failedLayerIds.size) {
+    state.layers = state.layers.filter(layer => {
+      if (!failedLayerIds.has(layer.id)) return true;
+      state.layerOffsets.delete(layer.id);
+      return false;
+    });
+  }
+  for (const layer of state.layers) {
+    if (failedMaskIds.size) layer.masks = (layer.masks || []).filter(mask => !failedMaskIds.has(mask.id));
+    if (!layer.masks.some(mask => mask.id === layer.activeMaskId)) layer.activeMaskId = null;
+  }
+  const failedGroupMaskIds = new Set(decodeFailures.filter(item => item.type === 'group-mask').map(item => item.id));
+  for (const group of restoredGroups) {
+    if (failedGroupMaskIds.size) group.masks = group.masks.filter(mask => !failedGroupMaskIds.has(mask.id));
+    if (!group.masks.some(mask => mask.id === group.activeMaskId)) group.activeMaskId = null;
+  }
+  const failedSelectionIds = new Set(decodeFailures.filter(item => item.type === 'saved-selection').map(item => item.id));
+  if (failedSelectionIds.size) {
+    state.savedSelections = state.savedSelections.filter(selection => !failedSelectionIds.has(selection.id));
+  }
+  restoreWarnings.push(...decodeFailures.map(item => item.message));
+  if (!state.layers.length) throw new Error('No recoverable layers could be decoded from this project.');
+
+  state.nextLayerId = _nextLayerIdFromDocument(data);
+  state.activeLayerId = data.activeLayerId && state.layers.some(l => l.id === data.activeLayerId)
+    ? data.activeLayerId
+    : state.layers[state.layers.length - 1].id;
+  state.layerGroups = restoredGroups;
+  state.activeGroupId = null;
+  state.selectedLayerIds = [state.activeLayerId];
+  state.selectionAnchorId = state.activeLayerId;
+  _normalizeLayerGroups(state);
+  _normalizeLayerClipping(state);
+  const activeMask = _getActiveMaskLayer();
+  state.maskCanvas = activeMask?.canvas || null;
+  state.maskCtx = activeMask?.ctx || null;
+  for (const layer of state.layers) {
+    if (layer.kind === 'text' && layer.text) _renderTextLayer(layer);
+    if (layer.kind === 'shape' && layer.shape) _renderShapeLayer(layer);
+  }
+  _precisionGuides?.syncVisibility();
+  _renderSavedSelectionsMenu?.();
+  return { warnings: restoreWarnings, migratedFrom: prepared.migratedFrom };
+}
+
+function _showDocumentRestoreReport(report) {
+  const warnings = Array.isArray(report?.warnings) ? report.warnings.filter(Boolean) : [];
+  if (!warnings.length || !uiModule) return;
+  const preview = warnings.slice(0, 2).join(' ');
+  const remaining = warnings.length > 2 ? ` (+${warnings.length - 2} more)` : '';
+  uiModule.showToast(`Opened with ${warnings.length} recovery warning${warnings.length === 1 ? '' : 's'}: ${preview}${remaining}`, 9000);
 }
 
 // Used both by the fresh openEditor path and by _restoreDraft. The full
@@ -1274,7 +2625,8 @@ function _restoreState(snap) {
       c.width = s.canvasW || state.imgWidth;
       c.height = s.canvasH || state.imgHeight;
       layer = { id: s.id, name: s.name, canvas: c, ctx: c.getContext('2d'),
-                visible: true, opacity: 1, locked: false };
+                visible: true, opacity: 1, locked: false,
+                locks: { pixels: false, transparency: false, position: false } };
     } else {
       _existingById.delete(s.id);
     }
@@ -1282,12 +2634,36 @@ function _restoreState(snap) {
     layer.visible = s.visible;
     layer.opacity = s.opacity;
     layer.locked = s.locked;
+    layer.locks = _normalizeLayerLocks(s.locks);
+    layer.clipped = !!s.clipped;
+    layer.blendMode = s.blendMode || 'source-over';
+    layer.kind = s.kind || 'raster';
+    layer.text = layer.kind === 'text' ? _normalizeTextData(s.text) : null;
+    layer.shape = layer.kind === 'shape' ? _normalizeShapeData(s.shape) : null;
+    layer.adjustment = layer.kind === 'adjustment' ? _normalizeAdjustmentData(s.adjustment) : null;
+    layer.placed = null;
+    layer.adjustments = s.adjustments
+      ? JSON.parse(JSON.stringify(s.adjustments))
+      : layer.adjustments;
     if (s.canvasW && s.canvasH) {
       layer.canvas.width = s.canvasW;
       layer.canvas.height = s.canvasH;
     }
     try { if (s.imageData) layer.ctx.putImageData(s.imageData, 0, 0); } catch (_) {}
     state.layerOffsets.set(layer.id, { ...s.offset });
+    if (layer.kind === 'placed' && s.placed?.sourceImageData) {
+      const sourceCanvas = document.createElement('canvas');
+      sourceCanvas.width = s.placed.sourceW;
+      sourceCanvas.height = s.placed.sourceH;
+      sourceCanvas.getContext('2d').putImageData(s.placed.sourceImageData, 0, 0);
+      layer.placed = _createPlacedData(sourceCanvas, s.placed.matrix, s.placed.sourceName);
+      const rendered = _renderPlacedLayer(layer);
+      if (rendered) state.layerOffsets.set(layer.id, rendered.offset);
+    } else if (layer.kind === 'placed') {
+      // Old history entries have only a preview. Keep their visible pixels
+      // rather than leaving a broken placed-layer shell.
+      layer.kind = 'raster';
+    }
     // Restore adjustment sub-layers + invalidate the composite cache
     // so the live render reflects the rolled-back FX state.
     layer.adjLayers = s.adjLayers ? JSON.parse(JSON.stringify(s.adjLayers)) : [];
@@ -1301,7 +2677,14 @@ function _restoreState(snap) {
       mc.height = ms.canvasH || state.imgHeight;
       const mctx = mc.getContext('2d');
       try { if (ms.imageData) mctx.putImageData(ms.imageData, 0, 0); } catch {}
-      return { id: ms.id, name: ms.name, canvas: mc, ctx: mctx, visible: ms.visible !== false };
+      return {
+        id: ms.id, name: ms.name, canvas: mc, ctx: mctx,
+        visible: ms.visible !== false,
+        mode: ms.mode || 'selection',
+        space: ms.space || (ms.mode === 'layer' ? 'layer' : 'document'),
+        linked: ms.mode === 'layer' ? ms.linked !== false : true,
+        offset: { x: Number(ms.offset?.x) || 0, y: Number(ms.offset?.y) || 0 },
+      };
     });
     layer.activeMaskId = s.activeMaskId || (layer.masks[0]?.id ?? null);
     layer._adjFinal = null;
@@ -1313,6 +2696,33 @@ function _restoreState(snap) {
   // Drop any layer that's no longer in the snapshot.
   for (const lost of _existingById.values()) state.layerOffsets.delete(lost.id);
   state.layers = _rebuilt;
+  state.nextLayerId = Number.isFinite(snap.nextLayerId) ? snap.nextLayerId : state.nextLayerId;
+  state.activeLayerId = snap.activeLayerId || state.activeLayerId;
+  state.selectedLayerIds = (snap.selectedLayerIds || [state.activeLayerId]).filter(id =>
+    state.layers.some(layer => layer.id === id)
+  );
+  state.selectionAnchorId = snap.selectionAnchorId || state.activeLayerId;
+  state.layerGroups = (snap.layerGroups || []).map(group => ({
+    ...group,
+    effects: Array.isArray(group.effects) ? group.effects.map(effect => _normalizeEffect(effect)) : [],
+    masks: (group.masks || []).map(mask => {
+      const canvas = document.createElement('canvas');
+      canvas.width = mask.canvasW || state.imgWidth;
+      canvas.height = mask.canvasH || state.imgHeight;
+      const ctx = canvas.getContext('2d');
+      try { if (mask.imageData) ctx.putImageData(mask.imageData, 0, 0); } catch {}
+      return { ...mask, mode: 'group', space: 'document', canvas, ctx };
+    }),
+  }));
+  state.activeGroupId = snap.activeGroupId || null;
+  _normalizeLayerGroups(state);
+  _normalizeLayerClipping(state);
+  state.lassoPoints = (snap.lassoPoints || []).map(point => ({ ...point }));
+  state.lassoActive = !!snap.lassoActive;
+  state.guides = {
+    vertical: [...(snap.guides?.vertical || [])],
+    horizontal: [...(snap.guides?.horizontal || [])],
+  };
   if (!state.layers.find(l => l.id === state.activeLayerId) && state.layers.length) {
     state.activeLayerId = state.layers[state.layers.length - 1].id;
   }
@@ -1321,6 +2731,7 @@ function _restoreState(snap) {
   {
     const m = _getActiveMaskLayer();
     if (m) { state.maskCanvas = m.canvas; state.maskCtx = m.ctx; }
+    else { state.maskCanvas = null; state.maskCtx = null; }
   }
   // Restore wand selection (or clear it if the snapshot had none).
   if (snap.wand && snap.wand.imageData) {
@@ -1330,13 +2741,34 @@ function _restoreState(snap) {
     mc.getContext('2d').putImageData(snap.wand.imageData, 0, 0);
     state.wandMask = mc;
     state.wandLayerId = snap.wand.layerId;
+    state.wandMaskSpace = snap.wand.space || 'layer';
+    state.selectionSource = snap.wand.source || null;
     state.wandLastSeed = snap.wand.seed ? { ...snap.wand.seed } : null;
   } else {
     state.wandMask = null;
     state.wandLayerId = null;
+    state.wandMaskSpace = 'layer';
+    state.selectionSource = null;
     state.wandLastSeed = null;
   }
+  state.savedSelections = (snap.savedSelections || []).map(saved => {
+    const canvas = document.createElement('canvas');
+    canvas.width = saved.w || state.imgWidth;
+    canvas.height = saved.h || state.imgHeight;
+    try { if (saved.imageData) canvas.getContext('2d').putImageData(saved.imageData, 0, 0); } catch {}
+    return { id: saved.id, name: saved.name, canvas };
+  });
+  if (snap.lastSelection?.imageData) {
+    const canvas = document.createElement('canvas');
+    canvas.width = snap.lastSelection.w || state.imgWidth;
+    canvas.height = snap.lastSelection.h || state.imgHeight;
+    canvas.getContext('2d').putImageData(snap.lastSelection.imageData, 0, 0);
+    state.lastSelection = { canvas };
+  } else state.lastSelection = null;
+  state.nextSavedSelectionId = Number.isFinite(snap.nextSavedSelectionId) ? snap.nextSavedSelectionId : 1;
+  _renderSavedSelectionsMenu?.();
   composite();
+  _precisionGuides?.redrawRulers();
   _renderLayerPanel();
   _syncToolClearIndicators();
   // Refit the viewport when canvas size changed (crop undo/redo) so the
@@ -1351,21 +2783,29 @@ function _restoreState(snap) {
 
 function undo() {
   if (state.undoStack.length === 0) return;
+  const target = state.undoStack.pop();
   const cur = _snapshotState();
-  cur._label = 'Current';
+  _shareSnapshotPixels(cur, target);
+  cur._label = target._label || 'Edit';
   cur._ts = Date.now();
   state.redoStack.push(cur);
-  _restoreState(state.undoStack.pop());
+  _trimHistoryStack(state.redoStack);
+  _restoreState(target);
+  _schedulePersist();
   _refreshHistoryPanelIfOpen();
 }
 
 function redo() {
   if (state.redoStack.length === 0) return;
+  const target = state.redoStack.pop();
   const cur = _snapshotState();
-  cur._label = 'Current';
+  _shareSnapshotPixels(cur, target);
+  cur._label = target._label || 'Edit';
   cur._ts = Date.now();
   state.undoStack.push(cur);
-  _restoreState(state.redoStack.pop());
+  _trimHistoryStack(state.undoStack);
+  _restoreState(target);
+  _schedulePersist();
   _refreshHistoryPanelIfOpen();
 }
 
@@ -1388,10 +2828,62 @@ const _refreshHistoryPanelIfOpen = _historyPanel.refreshHistoryPanelIfOpen;
 
 // ── Drawing ──
 
+let _rasterizePromptPending = false;
+const _pixelPaintTools = new Set(['brush', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'gradient']);
+
+async function _offerRasterizeForTool(tool = state.tool) {
+  const layer = activeLayer() || _activeParentLayer();
+  if (!_pixelPaintTools.has(tool) || _getActiveMaskLayer() || state.quickMaskActive ||
+      !['text', 'shape', 'placed'].includes(layer?.kind)) return false;
+  return _confirmRasterizeLayer(layer);
+}
+
+async function _confirmRasterizeLayer(layer) {
+  if (_rasterizePromptPending || _isLayerPixelLocked(state, layer)) return false;
+  _rasterizePromptPending = true;
+  try {
+    const accepted = await uiModule.styledConfirm(
+      `Rasterize "${layer.name || layer.kind}" to edit its pixels? You can undo this change.`,
+      { title: 'Rasterize layer', confirmText: 'Rasterize', cancelText: 'Cancel' },
+    );
+    // The document or active target may have changed while the dialog was open.
+    if (!accepted || !state.editorOpen || !state.layers.includes(layer) ||
+        (activeLayer() || _activeParentLayer()) !== layer || _getActiveMaskLayer() ||
+        _isLayerPixelLocked(state, layer)) return false;
+    _saveState(`Rasterize "${layer.name}"`);
+    _rasterizeTextLayer(layer);
+    _rasterizeShapeLayer(layer);
+    _rasterizePlacedLayer(layer);
+    composite();
+    _renderLayerPanel();
+    _schedulePersist();
+  } finally {
+    _rasterizePromptPending = false;
+  }
+  return true;
+}
+
 function _beginDraw(e) {
+  // Move always follows the object under the pointer. Selecting it before the
+  // drag starts keeps the active layer, layer panel, and dragged pixels aligned.
+  if (state.tool === 'move') {
+    const picked = _pickLayerAtEvent(e);
+    if (picked && picked.id !== state.activeLayerId) {
+      state.activeLayerId = picked.id;
+      state.selectedLayerIds = [picked.id];
+      state.activeGroupId = null;
+      _renderLayerPanel();
+      _syncToolClearIndicators();
+    }
+  }
   // Fall back to the parent resolver so a stale activeLayerId doesn't
   // block strokes when there ARE layers present.
   const layer = activeLayer() || _activeParentLayer();
+  if (_pixelPaintTools.has(state.tool) && !_getActiveMaskLayer() && !state.quickMaskActive &&
+      ['text', 'shape', 'placed'].includes(layer?.kind)) {
+    void _offerRasterizeForTool();
+    return;
+  }
   // Transform-tool drag (handle grab or move-fallback) — handler in
   // editor/tools/transform-drag.js.
   if (_transformDragTool.tryBegin(e)) return;
@@ -1400,9 +2892,20 @@ function _beginDraw(e) {
   // Full implementation in editor/tools/wand.js.
   if (state.tool === 'wand') return _wandTool.click(e);
   if (state.tool === 'sam') return _runSamSelection(e);
+  if (state.tool === 'text') return _placeText(e);
+  if (state.tool === 'shape') return _beginShape(e);
+  if (state.tool === 'eyedropper') return _eyedropperTool.pick(e);
+  if (state.tool === 'gradient') return _gradientTool.begin(e);
+  if (state.tool === 'marquee') return _marqueeTool.begin(e);
+  if (state.tool === 'pen') return _penTool.begin(e);
   // Inpaint can create its own layer + mask on the fly, so skip the
   // "no active layer → bail" gate for it specifically.
-  if (state.tool !== 'inpaint' && (!layer || layer.locked)) return;
+  const activeMask = _getActiveMaskLayer();
+  const activeGroup = (state.layerGroups || []).find(group => group.id === state.activeGroupId);
+  const groupMaskLocked = activeMask?.mode === 'group' && activeGroup
+    ? activeGroup.locked || _groupAncestors(state, activeGroup).some(group => group.locked)
+    : null;
+  if (state.tool !== 'inpaint' && (!layer || (groupMaskLocked ?? _isLayerEffectivelyLocked(state, layer)))) return;
   // Keep activeLayerId in sync so downstream lookups resolve.
   if (layer && state.activeLayerId !== layer.id) state.activeLayerId = layer.id;
   if (state.tool === 'move') return _beginMove(e);
@@ -1411,7 +2914,7 @@ function _beginDraw(e) {
   // Clone-stamp — source pick + stroke start. Full implementation in
   // editor/tools/clone.js; per-sample stamping continues through the
   // shared `_strokeTo` pipeline below.
-  if (state.tool === 'clone') return _cloneTool.begin(e);
+  if (state.tool === 'clone' || state.tool === 'heal') return _cloneTool.begin(e);
   // Brush / Eraser / Inpaint share a stroke pipeline — handler in
   // editor/tools/stroke.js. Returns true for those tools, false
   // otherwise (any other tool that reached here is a no-op).
@@ -1419,11 +2922,13 @@ function _beginDraw(e) {
 }
 
 function _continueDraw(e) {
+  if (state.tool === 'pen') return _penTool.drag(e);
   // _continueDraw is now bound to the window so drags can extend past
   // the canvas. The brush-cursor overlay should only follow the cursor
   // when it's actually over the canvas, otherwise hide it.
   const overCanvas = state.mainCanvas && e.target === state.mainCanvas;
-  if (['eraser', 'inpaint', 'lasso', 'brush'].includes(state.tool) && state.mainCanvas) {
+  if (state.tool === 'eyedropper' && overCanvas) _eyedropperTool.preview(e);
+  if (['eraser', 'inpaint', 'lasso', 'brush', 'clone', 'heal', 'smudge', 'dodge', 'burn'].includes(state.tool) && state.mainCanvas) {
     if (overCanvas) _updateBrushCursor(e);
     else if (state.cursorEl) state.cursorEl.style.display = 'none';
   }
@@ -1434,6 +2939,9 @@ function _continueDraw(e) {
   // tools that share the canvas hover (none currently, but kept for
   // future-proofing).
   if (_transformDragTool.tryContinue(e)) return;
+  if (_shapeDraft) return _continueShape(e);
+  if (state.gradientActive) return _gradientTool.drag(e);
+  if (state.marqueeActive || state.selectionMoving) return _marqueeTool.drag(e);
   if (state.lassoActive) return _continueLasso(e);
   if (!state.drawing) {
     if (state.moving) return _continueMove(e);
@@ -1445,15 +2953,19 @@ function _continueDraw(e) {
   _strokeTool.tryContinue(e);
 }
 
-function _endDraw() {
+function _endDraw(e) {
+  if (state.tool === 'pen') return _penTool.end();
   // Transform-tool drag end — handler in editor/tools/transform-drag.js.
-  if (_transformDragTool.tryEnd()) return;
+  if (_transformDragTool.tryEnd(e)) return;
+  if (_shapeDraft) return _endShape(e);
+  if (state.gradientActive) return _gradientTool.end(e);
+  if (state.marqueeActive || state.selectionMoving) return _marqueeTool.end(e);
   if (state.lassoActive) return _endLasso();
   if (state.moving) return _endMove();
-  if (state.cropping || state.cropMoving) return _endCrop();
+  if (state.cropping || state.cropMoving) return _endCrop(e);
   // Stroke end (brush / eraser / inpaint / clone) — handler in
   // editor/tools/stroke.js.
-  _strokeTool.tryEnd();
+  _strokeTool.tryEnd(e);
 }
 
 // Floating popup that appears after an inpaint stroke so the user can
@@ -1481,11 +2993,12 @@ const _strokePipeline = createStrokePipeline({
   // strokeTo bail even though a mask had been created on the fallback
   // parent — the "inpaint draws nothing" bug.
   activeLayer: () => activeLayer() || _activeParentLayer(),
-  getActiveMaskLayer: () => _getActiveMaskLayer(),
+  getActiveMaskLayer: () => _getStrokeTargetMask(),
   composite,
 });
-const _strokeTo      = _strokePipeline.strokeTo;
-const _cloneStrokeTo = _strokePipeline.cloneStrokeTo;
+const _beginStroke = _strokePipeline.beginStroke;
+const _strokeTo = _strokePipeline.strokeTo;
+const _endStroke = _strokePipeline.endStroke;
 
 // ── Brush cursor overlay ──
 
@@ -1495,6 +3008,8 @@ function _updateBrushCursor(e) {
   const rect = state.mainCanvas.getBoundingClientRect();
   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
 
   if (!state.cursorEl) {
     state.cursorEl = document.createElement('div');
@@ -1511,12 +3026,17 @@ function _updateBrushCursor(e) {
   } else {
     basePx = state.brushSize;
   }
-  const diameter = basePx * state.zoom;
-  state.cursorEl.style.width = diameter + 'px';
-  state.cursorEl.style.height = diameter + 'px';
-  state.cursorEl.style.left = (clientX - diameter / 2) + 'px';
-  state.cursorEl.style.top = (clientY - diameter / 2) + 'px';
-  state.cursorEl.style.display = '';
+  // Use the canvas's real rendered scale. This stays accurate when fit-to-view
+  // or responsive layout changes the canvas independently of nominal zoom.
+  const diameterX = basePx * (rect.width / Math.max(1, state.mainCanvas.width));
+  const diameterY = basePx * (rect.height / Math.max(1, state.mainCanvas.height));
+  state.cursorEl.style.width = diameterX + 'px';
+  state.cursorEl.style.height = diameterY + 'px';
+  state.cursorEl.style.left = (clientX - diameterX / 2) + 'px';
+  state.cursorEl.style.top = (clientY - diameterY / 2) + 'px';
+  state.cursorEl.style.display = 'block';
+  state.cursorEl.dataset.clientX = String(clientX);
+  state.cursorEl.dataset.clientY = String(clientY);
   if (state.tool === 'inpaint') {
     // Visual cue for paint vs erase mode. Ctrl+Alt held mid-hover also
     // flips the cursor so the user sees the effective mode before they
@@ -1549,7 +3069,16 @@ function _updateBrushCursor(e) {
 // `_beginMove` / `_continueMove` / `_endMove` to the factory output so
 // the existing dispatcher (_beginDraw / _continueDraw / _endDraw) keeps
 // working without changes.
-const _moveTool = createMoveTool({ activeLayer, saveState: _saveState, composite });
+const _layerGeometry = createLayerGeometryController({ activeLayer, saveState: _saveState, composite });
+const _moveTool = createMoveTool({
+  activeLayer,
+  saveState: _saveState,
+  composite,
+  onPositionChange: (layer, before, next) => {
+    _layerGeometry.trackExternalMove(layer, before, next);
+    if (state.transformActive) _drawTransformHandles();
+  },
+});
 const _beginMove    = _moveTool.begin;
 const _continueMove = _moveTool.drag;
 const _endMove      = _moveTool.end;
@@ -1559,10 +3088,21 @@ const _endMove      = _moveTool.end;
 // Crop tool — full implementation in editor/tools/crop.js. Wire
 // `_beginCrop` / `_continueCrop` / `_endCrop` to the factory output so
 // the existing dispatcher keeps working without changes.
-const _cropTool = createCropTool({ composite, showCropApply: () => _showCropApply() });
+const _cropTool = createCropTool({
+  composite,
+  showCropApply: () => _showCropApply(),
+  snapFrame: (frame, center) => _computeTransformSnap(frame, center),
+});
 const _beginCrop    = _cropTool.begin;
 const _continueCrop = _cropTool.drag;
 const _endCrop      = _cropTool.end;
+function _cancelCrop(reason = 'cancel') {
+  if (!state.cropRect && !state.cropping && !state.cropMoving) return false;
+  _cropTool.cancel(reason);
+  const panel = state.container?.querySelector('.ge-crop-apply');
+  if (panel) panel.remove();
+  return true;
+}
 
 function _showCropApply() {
   let pop = state.container.querySelector('.ge-crop-apply');
@@ -1633,32 +3173,482 @@ function _showCropApply() {
 function _applyCrop() {
   if (!state.cropRect) return;
   _saveState('Crop');
-  const { x, y, w, h } = state.cropRect;
-  const cw = Math.round(w);
-  const ch = Math.round(h);
-  for (const layer of state.layers) {
-    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-    const data = layer.ctx.getImageData(x - off.x, y - off.y, cw, ch);
-    layer.canvas.width = cw;
-    layer.canvas.height = ch;
-    layer.ctx.putImageData(data, 0, 0);
-    state.layerOffsets.set(layer.id, { x: 0, y: 0 });
-  }
-  state.mainCanvas.width = cw;
-  state.mainCanvas.height = ch;
-  state.imgWidth = cw;
-  state.imgHeight = ch;
-  if (state.maskCanvas) { state.maskCanvas.width = cw; state.maskCanvas.height = ch; }
-  state.cropRect = null;
+  _cropDocument(state, state.cropRect);
   const btn = state.container.querySelector('.ge-crop-apply');
   if (btn) btn.remove();
   composite();
+  _renderLayerPanel();
+  _schedulePersist();
   _fitZoom();
 }
 
-// Text tool was removed from the toolbar; the _placeText implementation
-// (and the `state.tool === 'text'` dispatcher branch) used to live here
-// but had no remaining call sites and was dead code.
+function _activeTextLayer() {
+  const layer = activeLayer();
+  return layer?.kind === 'text' && layer.text ? layer : null;
+}
+
+function _activeShapeLayer() {
+  const layer = activeLayer();
+  return layer?.kind === 'shape' && layer.shape ? layer : null;
+}
+
+let _textEditor = null;
+let _shapeDraft = null;
+
+function _syncTextControls() {
+  const section = document.getElementById('ge-text-section');
+  if (!section) return;
+  const layer = _activeTextLayer();
+  section.classList.toggle('has-text-layer', !!layer);
+  if (!layer) return;
+  const text = _normalizeTextData(layer.text);
+  const setValue = (id, value) => {
+    const input = document.getElementById(id);
+    if (input && document.activeElement !== input) input.value = String(value);
+  };
+  setValue('ge-text-content', text.content);
+  setValue('ge-text-font', text.fontFamily);
+  setValue('ge-text-size', text.fontSize);
+  setValue('ge-text-color', text.color);
+  setValue('ge-text-line-height', text.lineHeight);
+  setValue('ge-text-letter-spacing', text.letterSpacing);
+  setValue('ge-text-frame-width', text.frameWidth);
+  setValue('ge-text-frame-height', text.frameHeight);
+  setValue('ge-text-vertical-align', text.verticalAlign);
+  setValue('ge-text-stroke-width', text.strokeWidth);
+  setValue('ge-text-stroke-color', text.strokeColor);
+  const autoWidth = document.getElementById('ge-text-auto-width');
+  if (autoWidth) autoWidth.checked = !!text.autoWidth;
+  const frameWidth = document.getElementById('ge-text-frame-width');
+  if (frameWidth) frameWidth.disabled = !!text.autoWidth;
+  const bold = document.getElementById('ge-text-bold');
+  const italic = document.getElementById('ge-text-italic');
+  bold?.classList.toggle('active', text.fontWeight === '700');
+  bold?.setAttribute('aria-pressed', text.fontWeight === '700' ? 'true' : 'false');
+  italic?.classList.toggle('active', text.fontStyle === 'italic');
+  italic?.setAttribute('aria-pressed', text.fontStyle === 'italic' ? 'true' : 'false');
+  section.querySelectorAll('[data-text-align]').forEach(button => {
+    const active = button.dataset.textAlign === text.align;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function _textDataFromControls(base = {}) {
+  const section = document.getElementById('ge-text-section');
+  const activeAlign = section?.querySelector('[data-text-align].active')?.dataset.textAlign || base.align;
+  const contentInput = document.getElementById('ge-text-content');
+  return _normalizeTextData({
+    ...base,
+    content: contentInput ? contentInput.value : (base.content ?? 'Text'),
+    fontFamily: document.getElementById('ge-text-font')?.value || base.fontFamily,
+    fontSize: document.getElementById('ge-text-size')?.value || base.fontSize,
+    fontWeight: document.getElementById('ge-text-bold')?.classList.contains('active') ? '700' : '400',
+    fontStyle: document.getElementById('ge-text-italic')?.classList.contains('active') ? 'italic' : 'normal',
+    align: activeAlign,
+    color: document.getElementById('ge-text-color')?.value || base.color,
+    lineHeight: document.getElementById('ge-text-line-height')?.value || base.lineHeight,
+    letterSpacing: document.getElementById('ge-text-letter-spacing')?.value ?? base.letterSpacing,
+    frameWidth: document.getElementById('ge-text-frame-width')?.value || base.frameWidth,
+    frameHeight: document.getElementById('ge-text-frame-height')?.value ?? base.frameHeight,
+    autoWidth: !!document.getElementById('ge-text-auto-width')?.checked,
+    verticalAlign: document.getElementById('ge-text-vertical-align')?.value || base.verticalAlign,
+    strokeWidth: document.getElementById('ge-text-stroke-width')?.value ?? base.strokeWidth,
+    strokeColor: document.getElementById('ge-text-stroke-color')?.value || base.strokeColor,
+  });
+}
+
+function _rerenderTextLayer(layer, nextText, preserveCenter = true) {
+  const offset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const center = { x: offset.x + layer.canvas.width / 2, y: offset.y + layer.canvas.height / 2 };
+  layer.text = _normalizeTextData(nextText);
+  _renderTextLayer(layer);
+  if (preserveCenter) {
+    state.layerOffsets.set(layer.id, {
+      x: Math.round(center.x - layer.canvas.width / 2),
+      y: Math.round(center.y - layer.canvas.height / 2),
+    });
+  }
+  layer.name = layer.text.content.split('\n')[0].trim().slice(0, 36) || 'Text';
+  composite();
+}
+
+function _openTextEditor(layer, { selectAll = false, saveHistory = true } = {}) {
+  if (!layer?.text || !_textEditor) return;
+  if (saveHistory) _saveState('Edit text');
+  _textEditor.open(layer, { selectAll });
+}
+
+function _syncShapeControls() {
+  const section = document.getElementById('ge-shape-section');
+  if (!section) return;
+  const layer = _activeShapeLayer();
+  const shape = _normalizeShapeData(layer?.shape || {
+    type: section.querySelector('[data-shape-type].active')?.dataset.shapeType,
+    fillColor: state.color,
+  });
+  section.classList.toggle('has-shape-layer', !!layer);
+  const setValue = (id, value) => {
+    const input = document.getElementById(id);
+    if (input && document.activeElement !== input) input.value = String(value);
+  };
+  setValue('ge-shape-fill', shape.fillColor);
+  setValue('ge-shape-fill-type', shape.fillType);
+  setValue('ge-shape-gradient-start', shape.gradientStart);
+  setValue('ge-shape-gradient-mid', shape.gradientMid);
+  setValue('ge-shape-gradient-mid-position', shape.gradientMidPosition);
+  setValue('ge-shape-gradient-end', shape.gradientEnd);
+  setValue('ge-shape-gradient-angle', shape.gradientAngle);
+  const extraStops = section.querySelector('#ge-shape-gradient-extra-stops');
+  if (extraStops) {
+    const legacyPositions = new Set([0, 100]);
+    if (shape.gradientMidEnabled) legacyPositions.add(Number(shape.gradientMidPosition));
+    extraStops.innerHTML = shape.gradientStops
+      .filter(stop => !legacyPositions.has(Number(stop.position)))
+      .map((stop, index) => `
+        <div class="ge-gradient-extra-stop" data-gradient-extra-stop>
+          <label class="ge-text-field"><span>Stop ${index + 1}</span><input type="color" class="ge-color-picker" data-gradient-stop-color value="${String(stop.color).replace(/"/g, '&quot;')}" /></label>
+          <label class="ge-text-field"><span>Position</span><input type="number" min="1" max="99" step="1" data-gradient-stop-position value="${Number(stop.position)}" /></label>
+          <button type="button" class="ge-btn ge-btn-sm ge-gradient-stop-remove" data-gradient-stop-remove title="Remove gradient stop" aria-label="Remove gradient stop">×</button>
+        </div>`).join('');
+  }
+  setValue('ge-shape-stroke', shape.strokeColor);
+  setValue('ge-shape-stroke-width', shape.strokeWidth);
+  setValue('ge-shape-radius', shape.cornerRadius);
+  setValue('ge-shape-sides', shape.sides);
+  section.querySelectorAll('[data-shape-type]').forEach(button => {
+    const selected = button.dataset.shapeType === shape.type;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+  const sides = section.querySelector('.ge-shape-sides-field');
+  if (sides) sides.hidden = shape.type !== 'polygon';
+  const gradientVisible = shape.fillType === 'linear-gradient';
+  const gradientFields = section.querySelector('.ge-shape-gradient-fields');
+  const gradientAngle = section.querySelector('.ge-shape-gradient-angle-field');
+  if (gradientFields) gradientFields.hidden = !gradientVisible;
+  if (gradientAngle) gradientAngle.hidden = !gradientVisible;
+  const gradientMidEnabled = section.querySelector('#ge-shape-gradient-mid-enabled');
+  const gradientMid = section.querySelector('#ge-shape-gradient-mid');
+  const gradientMidPosition = section.querySelector('#ge-shape-gradient-mid-position');
+  if (gradientMidEnabled) gradientMidEnabled.checked = !!shape.gradientMidEnabled;
+  if (gradientMid) gradientMid.disabled = !shape.gradientMidEnabled;
+  if (gradientMidPosition) gradientMidPosition.disabled = !shape.gradientMidEnabled;
+  const addGradientStop = section.querySelector('#ge-shape-gradient-add-stop');
+  if (addGradientStop) addGradientStop.hidden = !gradientVisible;
+}
+
+function _shapeDataFromControls(base = {}) {
+  const section = document.getElementById('ge-shape-section');
+  const gradientStart = document.getElementById('ge-shape-gradient-start')?.value || base.gradientStart || '#ffffff';
+  const gradientMid = document.getElementById('ge-shape-gradient-mid')?.value || base.gradientMid || '#808080';
+  const gradientMidEnabled = !!document.getElementById('ge-shape-gradient-mid-enabled')?.checked;
+  const gradientMidPosition = document.getElementById('ge-shape-gradient-mid-position')?.value ?? base.gradientMidPosition;
+  const gradientEnd = document.getElementById('ge-shape-gradient-end')?.value || base.gradientEnd || '#000000';
+  const extraStops = [...(section?.querySelectorAll('[data-gradient-extra-stop]') || [])].map(row => ({
+    color: row.querySelector('[data-gradient-stop-color]')?.value,
+    position: row.querySelector('[data-gradient-stop-position]')?.value,
+  }));
+  const gradientStops = _normalizeGradientStops([
+    { position: 0, color: gradientStart },
+    ...(gradientMidEnabled ? [{ position: gradientMidPosition, color: gradientMid }] : []),
+    ...extraStops,
+    { position: 100, color: gradientEnd },
+  ]);
+  return _normalizeShapeData({
+    ...base,
+    type: section?.querySelector('[data-shape-type].active')?.dataset.shapeType || base.type,
+    fillColor: document.getElementById('ge-shape-fill')?.value || base.fillColor || state.color,
+    fillType: document.getElementById('ge-shape-fill-type')?.value || base.fillType,
+    gradientStart,
+    gradientMid,
+    gradientMidEnabled,
+    gradientMidPosition,
+    gradientEnd,
+    gradientStops,
+    gradientAngle: document.getElementById('ge-shape-gradient-angle')?.value ?? base.gradientAngle,
+    strokeColor: document.getElementById('ge-shape-stroke')?.value || base.strokeColor,
+    strokeWidth: document.getElementById('ge-shape-stroke-width')?.value ?? base.strokeWidth,
+    cornerRadius: document.getElementById('ge-shape-radius')?.value ?? base.cornerRadius,
+    sides: document.getElementById('ge-shape-sides')?.value ?? base.sides,
+  });
+}
+
+function _rerenderShapeLayer(layer, nextShape, preserveCenter = true) {
+  const offset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const center = { x: offset.x + layer.canvas.width / 2, y: offset.y + layer.canvas.height / 2 };
+  layer.shape = _normalizeShapeData(nextShape);
+  _renderShapeLayer(layer);
+  if (preserveCenter) {
+    state.layerOffsets.set(layer.id, {
+      x: Math.round(center.x - layer.canvas.width / 2),
+      y: Math.round(center.y - layer.canvas.height / 2),
+    });
+  }
+  layer.name = `${layer.shape.type[0].toUpperCase()}${layer.shape.type.slice(1)}`;
+  composite();
+}
+
+function _wireShapeControls(controls) {
+  const section = controls.querySelector('#ge-shape-section');
+  if (!section || section.dataset.wired) return;
+  section.dataset.wired = 'true';
+  section.querySelectorAll('[data-shape-type]').forEach(button => button.addEventListener('click', () => {
+    section.querySelectorAll('[data-shape-type]').forEach(item => item.classList.toggle('active', item === button));
+    const layer = _activeShapeLayer();
+    if (layer) {
+      _saveState('Change shape');
+      _rerenderShapeLayer(layer, _shapeDataFromControls(layer.shape));
+      _renderLayerPanel();
+    }
+    _syncShapeControls();
+  }));
+  section.querySelectorAll('input').forEach(input => {
+    input.addEventListener('focus', () => { input.dataset.geHistorySaved = 'false'; });
+    input.addEventListener('input', () => {
+      const layer = _activeShapeLayer();
+      if (!layer) return;
+      if (input.dataset.geHistorySaved !== 'true') {
+        _saveState('Edit shape');
+        input.dataset.geHistorySaved = 'true';
+      }
+      _rerenderShapeLayer(layer, _shapeDataFromControls(layer.shape));
+    });
+    input.addEventListener('change', () => {
+      input.dataset.geHistorySaved = 'false';
+      _renderLayerPanel();
+    });
+  });
+  section.querySelector('#ge-shape-fill-type')?.addEventListener('change', event => {
+    const layer = _activeShapeLayer();
+    if (!layer) return;
+    _saveState('Change shape fill');
+    _rerenderShapeLayer(layer, _shapeDataFromControls(layer.shape));
+    _syncShapeControls();
+  });
+  section.querySelector('#ge-shape-gradient-add-stop')?.addEventListener('click', () => {
+    const layer = _activeShapeLayer();
+    if (!layer) return;
+    const shape = _shapeDataFromControls(layer.shape);
+    const stops = shape.gradientStops;
+    if (stops.length >= 12) return;
+    let largestGap = 0;
+    let position = 50;
+    for (let index = 1; index < stops.length; index += 1) {
+      const gap = stops[index].position - stops[index - 1].position;
+      if (gap > largestGap) {
+        largestGap = gap;
+        position = Math.round(stops[index - 1].position + gap / 2);
+      }
+    }
+    _saveState('Add gradient stop');
+    shape.gradientStops.push({ position, color: '#808080' });
+    _rerenderShapeLayer(layer, shape);
+    _renderLayerPanel();
+    _syncShapeControls();
+  });
+  section.addEventListener('click', event => {
+    const remove = event.target.closest('[data-gradient-stop-remove]');
+    if (!remove) return;
+    const row = remove.closest('[data-gradient-extra-stop]');
+    const layer = _activeShapeLayer();
+    if (!row || !layer) return;
+    const shape = _shapeDataFromControls(layer.shape);
+    const rows = [...section.querySelectorAll('[data-gradient-extra-stop]')];
+    const index = rows.indexOf(row);
+    if (index < 0) return;
+    const interior = shape.gradientStops.filter(stop => stop.position > 0 && stop.position < 100 && !(shape.gradientMidEnabled && stop.position === Number(shape.gradientMidPosition)));
+    if (!interior[index]) return;
+    _saveState('Remove gradient stop');
+    interior.splice(index, 1);
+    shape.gradientStops = _normalizeGradientStops([
+      { position: 0, color: shape.gradientStart },
+      ...(shape.gradientMidEnabled ? [{ position: shape.gradientMidPosition, color: shape.gradientMid }] : []),
+      ...interior,
+      { position: 100, color: shape.gradientEnd },
+    ]);
+    _rerenderShapeLayer(layer, shape);
+    _renderLayerPanel();
+    _syncShapeControls();
+  });
+  section.addEventListener('focusin', event => {
+    if (event.target.matches('[data-gradient-stop-color], [data-gradient-stop-position]')) {
+      event.target.dataset.geHistorySaved = 'false';
+    }
+  });
+  section.addEventListener('input', event => {
+    if (!event.target.matches('[data-gradient-stop-color], [data-gradient-stop-position]')) return;
+    const layer = _activeShapeLayer();
+    if (!layer) return;
+    if (event.target.dataset.geHistorySaved !== 'true') {
+      _saveState('Edit shape');
+      event.target.dataset.geHistorySaved = 'true';
+    }
+    _rerenderShapeLayer(layer, _shapeDataFromControls(layer.shape));
+  });
+  section.querySelector('#ge-shape-rasterize')?.addEventListener('click', () => {
+    const layer = _activeShapeLayer();
+    if (!layer) return;
+    _saveState(`Rasterize "${layer.name}"`);
+    _rasterizeShapeLayer(layer);
+    composite();
+    _renderLayerPanel();
+    _syncShapeControls();
+    uiModule.showToast('Shape layer rasterized');
+  });
+  _syncShapeControls();
+}
+
+function _wireTextControls(controls) {
+  const section = controls.querySelector('#ge-text-section');
+  if (!section || section.dataset.wired) return;
+  section.dataset.wired = 'true';
+  const editable = section.querySelectorAll('textarea, select, input[type="number"], .ge-color-picker');
+  editable.forEach(input => {
+    input.addEventListener('focus', () => { input.dataset.geHistorySaved = 'false'; });
+    input.addEventListener('mousedown', () => { input.dataset.geHistorySaved = 'false'; });
+    input.addEventListener('input', () => {
+      const layer = _activeTextLayer();
+      if (!layer) return;
+      if (input.dataset.geHistorySaved !== 'true') {
+        _saveState('Edit text');
+        input.dataset.geHistorySaved = 'true';
+      }
+      _rerenderTextLayer(layer, _textDataFromControls(layer.text));
+    });
+    input.addEventListener('change', () => {
+      input.dataset.geHistorySaved = 'false';
+      _renderLayerPanel();
+    });
+  });
+  section.querySelector('#ge-text-auto-width')?.addEventListener('change', () => {
+    const layer = _activeTextLayer();
+    if (!layer) return;
+    _saveState('Toggle text auto width');
+    _rerenderTextLayer(layer, _textDataFromControls(layer.text));
+    _syncTextControls();
+    _renderLayerPanel();
+  });
+  const toggle = (button, mutator) => button?.addEventListener('click', () => {
+    const layer = _activeTextLayer();
+    if (!layer) return;
+    _saveState('Format text');
+    mutator(button, layer);
+    _rerenderTextLayer(layer, _textDataFromControls(layer.text));
+    _renderLayerPanel();
+    _syncTextControls();
+  });
+  toggle(section.querySelector('#ge-text-bold'), button => button.classList.toggle('active'));
+  toggle(section.querySelector('#ge-text-italic'), button => button.classList.toggle('active'));
+  section.querySelectorAll('[data-text-align]').forEach(button => toggle(button, selected => {
+    section.querySelectorAll('[data-text-align]').forEach(item => item.classList.toggle('active', item === selected));
+  }));
+  section.querySelector('#ge-text-rasterize')?.addEventListener('click', () => {
+    const layer = _activeTextLayer();
+    if (!layer) return;
+    _saveState(`Rasterize "${layer.name}"`);
+    layer.kind = 'raster';
+    layer.text = null;
+    composite();
+    _renderLayerPanel();
+    _syncTextControls();
+    uiModule.showToast('Text layer rasterized');
+  });
+  _syncTextControls();
+}
+
+function _placeText(e) {
+  const point = _canvasCoords(e, state.mainCanvas);
+  for (let index = state.layers.length - 1; index >= 0; index--) {
+    const layer = state.layers[index];
+    if (layer.kind !== 'text' || !layer.visible) continue;
+    const offset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+    if (point.x < offset.x || point.y < offset.y ||
+        point.x > offset.x + layer.canvas.width || point.y > offset.y + layer.canvas.height) continue;
+    state.activeLayerId = layer.id;
+    layer.activeMaskId = null;
+    state.maskCanvas = null;
+    state.maskCtx = null;
+    _renderLayerPanel();
+    _syncTextControls();
+    _openTextEditor(layer);
+    return;
+  }
+  _saveState('Add text');
+  const layer = createLayer('Text', 1, 1);
+  layer.kind = 'text';
+  layer.text = _textDataFromControls({ color: state.color, frameWidth: 320, autoWidth: false });
+  if (!layer.text.content) layer.text.content = 'Text';
+  _renderTextLayer(layer);
+  state.layerOffsets.set(layer.id, { x: Math.round(point.x), y: Math.round(point.y) });
+  state.layers.push(layer);
+  state.activeLayerId = layer.id;
+  _renderLayerPanel();
+  composite();
+  _syncTextControls();
+  _openTextEditor(layer, { selectAll: true, saveHistory: false });
+}
+
+function _beginShape(e) {
+  const point = _canvasCoords(e, state.mainCanvas);
+  _saveState('Add shape');
+  const layer = createLayer('Shape', 1, 1);
+  layer.kind = 'shape';
+  layer.shape = _shapeDataFromControls({ width: 1, height: 1, fillColor: state.color });
+  _renderShapeLayer(layer);
+  state.layerOffsets.set(layer.id, { x: Math.round(point.x), y: Math.round(point.y) });
+  state.layers.push(layer);
+  state.activeLayerId = layer.id;
+  _shapeDraft = { layer, start: point };
+  _renderLayerPanel();
+  _syncShapeControls();
+  composite();
+}
+
+function _continueShape(e) {
+  if (!_shapeDraft) return;
+  const point = _canvasCoords(e, state.mainCanvas);
+  const x = Math.min(_shapeDraft.start.x, point.x);
+  const y = Math.min(_shapeDraft.start.y, point.y);
+  const shape = {
+    ..._shapeDraft.layer.shape,
+    width: Math.max(1, Math.abs(point.x - _shapeDraft.start.x)),
+    height: Math.max(1, Math.abs(point.y - _shapeDraft.start.y)),
+  };
+  _shapeDraft.layer.shape = _normalizeShapeData(shape);
+  _renderShapeLayer(_shapeDraft.layer);
+  state.layerOffsets.set(_shapeDraft.layer.id, { x: Math.round(x), y: Math.round(y) });
+  composite();
+}
+
+function _endShape(e) {
+  if (!_shapeDraft) return;
+  if (e) _continueShape(e);
+  if (_shapeDraft.layer.shape.width < 3 && _shapeDraft.layer.shape.height < 3) {
+    _shapeDraft.layer.shape.width = 180;
+    _shapeDraft.layer.shape.height = 120;
+    _renderShapeLayer(_shapeDraft.layer);
+  }
+  _shapeDraft = null;
+  _renderLayerPanel();
+  _syncShapeControls();
+  _schedulePersist();
+  composite();
+}
+
+function _cancelShapeDraft() {
+  if (!_shapeDraft) return false;
+  const draftLayer = _shapeDraft.layer;
+  state.layers = state.layers.filter(layer => layer !== draftLayer);
+  state.layerOffsets.delete(draftLayer.id);
+  state.selectedLayerIds = (state.selectedLayerIds || []).filter(id => id !== draftLayer.id);
+  state.activeLayerId = state.selectedLayerIds.at(-1) || state.layers.at(-1)?.id || null;
+  _shapeDraft = null;
+  _renderLayerPanel();
+  _syncShapeControls();
+  composite();
+  return true;
+}
 
 // ── Free Transform (Ctrl+Alt+T) ──
 
@@ -1675,18 +3665,59 @@ const _transformSession = createTransformSession({
   hideCanvasLoading: () => _hideCanvasLoading(),
   undo,
   uiModule,
+  syncGeometryControls: () => _layerGeometry.sync(),
+  getDocumentSelection: () => _selectionMaskAsDocument({ materializeLasso: true }),
+  syncSelectionUi: () => _syncToolClearIndicators(),
+  schedulePersist: () => _schedulePersist(),
 });
 const _startTransform      = _transformSession.startTransform;
+const _startSelectionTransform = _transformSession.startSelectionTransform;
 const _openTransformPopup  = _transformSession.openTransformPopup;
 const _closeTransformPopup = _transformSession.closeTransformPopup;
 const _reapplyTransform    = _transformSession.reapplyTransform;
+const _nudgeTransform      = _transformSession.nudgeTransform;
 const _confirmTransform    = _transformSession.confirmTransform;
 const _cancelTransform     = _transformSession.cancelTransform;
+window.__galleryEditorHandleEscape = () => {
+  const sizePrompt = document.getElementById('ge-canvas-size-overlay');
+  if (sizePrompt && getComputedStyle(sizePrompt).display !== 'none') {
+    sizePrompt._cancelCanvasSize?.();
+    return true;
+  }
+  if (state.transformActive) {
+    _cancelTransform();
+    return true;
+  }
+  if (state.cropRect || state.cropping || state.cropMoving) {
+    _cancelCrop('escape');
+    return true;
+  }
+  if (state.marqueeActive || state.selectionMoving) {
+    _marqueeTool.cancel('escape');
+    return true;
+  }
+  if (state.lassoActive || state.lassoPoints.length) {
+    _cancelLasso();
+    return true;
+  }
+  if (state.gradientActive) {
+    _gradientTool.cancel();
+    return true;
+  }
+  if (_shapeDraft) {
+    _cancelShapeDraft();
+    return true;
+  }
+  return false;
+};
 
 // ── Lasso tool ──
 
 // Lasso tool — full implementation in editor/tools/lasso.js.
 const _lassoTool = createLassoTool({
+  activeLayer,
+  saveState: _saveState,
+  commitSelectionMask: (mask, layer, mode, source, offset) => _commitSelectionMask(mask, layer, mode, source, offset),
   composite,
   drawLassoOverlay: () => _drawLassoOverlay(),
   syncToolClearIndicators: () => _syncToolClearIndicators(),
@@ -1694,6 +3725,42 @@ const _lassoTool = createLassoTool({
 const _beginLasso    = _lassoTool.begin;
 const _continueLasso = _lassoTool.drag;
 const _endLasso      = _lassoTool.end;
+const _cancelLasso   = _lassoTool.cancel;
+const _penTool = createPenSelectionTool({
+  activeLayer, saveState: _saveState, composite,
+  commitSelectionMask: _commitSelectionMask,
+  syncSelectionUi: _syncToolClearIndicators,
+});
+
+function _drawMarqueeOverlay() {
+  const rect = state.marqueeRect;
+  if (!rect || !state.mainCtx) return;
+  const ctx = state.mainCtx;
+  ctx.save();
+  ctx.beginPath();
+  if (state.marqueeShape === 'ellipse') {
+    ctx.ellipse(rect.x + rect.w / 2, rect.y + rect.h / 2, rect.w / 2, rect.h / 2, 0, 0, Math.PI * 2);
+  } else {
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  }
+  ctx.fillStyle = 'rgba(255, 80, 80, 0.12)';
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1 / state.zoom;
+  ctx.setLineDash([4 / state.zoom, 4 / state.zoom]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+const _marqueeTool = createMarqueeTool({
+  activeLayer,
+  saveState: _saveState,
+  composite,
+  drawOverlay: _drawMarqueeOverlay,
+  syncSelectionUi: () => _syncToolClearIndicators(),
+  ensureDocumentSelection: () => _selectionMaskAsDocument({ materializeLasso: true }),
+  snapFrame: (frame, center) => _computeTransformSnap(frame, center),
+});
 
 // Magic wand — selection-only click handler in editor/tools/wand.js.
 const _wandTool = createWandTool({
@@ -1702,7 +3769,18 @@ const _wandTool = createWandTool({
   composite,
   wandHits: (x, y) => _wandHits(x, y),
   runMagicWand: (x, y, mode) => _runMagicWand(x, y, mode),
+  deselectSelection: () => _deselectSelection(),
 });
+
+function _syncCloneSourceUi() {
+  const label = document.getElementById('ge-clone-source-label');
+  const clear = document.getElementById('ge-clone-source-clear');
+  const hasSource = state.cloneSourceX !== null && state.cloneSourceY !== null;
+  if (label) label.textContent = hasSource
+    ? (state.cloneSampleMode === 'composite' ? 'All visible layers sampled' : 'Active layer sampled')
+    : 'No source selected';
+  if (clear) clear.hidden = !hasSource;
+}
 
 // Clone-stamp tool — source-pick + stroke-start handler in
 // editor/tools/clone.js. Per-sample stamping still runs through the
@@ -1711,20 +3789,112 @@ const _wandTool = createWandTool({
 const _cloneTool = createCloneTool({
   activeLayer,
   saveState: _saveState,
-  strokeTo: (x, y) => _strokeTo(x, y),
+  beginStroke: (sample, tool) => _beginStroke(sample, tool),
   showToast: (msg) => { if (uiModule) uiModule.showToast(msg); },
+  onSourceChanged: _syncCloneSourceUi,
+  getSampleCanvas: ({ layer, mode }) => mode === 'composite'
+    ? state.documentCompositeCanvas
+    : layer?.canvas,
+});
+
+const _eyedropperTool = createEyedropperTool({
+  activeLayer,
+  composite,
+  syncColor: (color) => {
+    state.container?.querySelectorAll('.ge-color-picker').forEach(input => {
+      input.value = color;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  },
+  syncPreview: (color, sample) => {
+    const value = state.container?.querySelector('#ge-eyedropper-live-value');
+    const rgbValue = state.container?.querySelector('#ge-eyedropper-live-rgb');
+    const hslValue = state.container?.querySelector('#ge-eyedropper-live-hsl');
+    const swatch = state.container?.querySelector('#ge-eyedropper-live-swatch');
+    const loupe = state.container?.querySelector('#ge-eyedropper-loupe');
+    if (value) value.textContent = color || 'No visible pixel';
+    const rgb = sample?.rgb;
+    if (rgbValue) rgbValue.textContent = rgb ? `RGB ${rgb.join(' ')}` : 'RGB --';
+    if (hslValue) {
+      if (!rgb) hslValue.textContent = 'HSL --';
+      else {
+        const [r, g, b] = rgb.map(channel => channel / 255);
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const delta = max - min;
+        const lightness = (max + min) / 2;
+        let hue = 0;
+        let saturation = 0;
+        if (delta) {
+          saturation = delta / (1 - Math.abs(2 * lightness - 1));
+          if (max === r) hue = ((g - b) / delta) % 6;
+          else if (max === g) hue = (b - r) / delta + 2;
+          else hue = (r - g) / delta + 4;
+          hue = Math.round(hue * 60);
+          if (hue < 0) hue += 360;
+        }
+        hslValue.textContent = `HSL ${hue} ${Math.round(saturation * 100)}% ${Math.round(lightness * 100)}%`;
+      }
+    }
+    if (swatch) {
+      swatch.style.background = color || 'transparent';
+      swatch.classList.toggle('empty', !color);
+    }
+    if (loupe) {
+      const ctx = loupe.getContext('2d');
+      ctx.clearRect(0, 0, loupe.width, loupe.height);
+      if (sample?.canvas && Number.isFinite(sample.x) && Number.isFinite(sample.y)) {
+        const radius = 5;
+        const size = radius * 2 + 1;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(sample.canvas, Math.floor(sample.x) - radius, Math.floor(sample.y) - radius, size, size, 0, 0, loupe.width, loupe.height);
+        ctx.strokeStyle = 'rgba(224, 108, 117, 0.92)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(loupe.width / 2, 0);
+        ctx.lineTo(loupe.width / 2, loupe.height);
+        ctx.moveTo(0, loupe.height / 2);
+        ctx.lineTo(loupe.width, loupe.height / 2);
+        ctx.stroke();
+      }
+    }
+  },
+  showToast: (msg) => uiModule?.showToast(msg),
+});
+
+const _gradientTool = createGradientTool({
+  activeLayer,
+  saveState: _saveState,
+  composite,
+  schedulePersist: _schedulePersist,
+  renderLayerPanel: () => _renderLayerPanel(),
+  getSettings: () => ({
+    start: document.getElementById('ge-gradient-start')?.value || state.gradientStart,
+    mid: document.getElementById('ge-gradient-mid')?.value || state.gradientMid,
+    midPosition: document.getElementById('ge-gradient-mid-position')?.value ?? state.gradientMidPosition,
+    midEnabled: document.getElementById('ge-gradient-mid-enabled')?.checked ?? state.gradientMidEnabled,
+    extraStops: [...(document.querySelectorAll('#ge-gradient-extra-stops [data-gradient-extra-stop]') || [])].map(row => ({
+      color: row.querySelector('[data-gradient-stop-color]')?.value,
+      position: row.querySelector('[data-gradient-stop-position]')?.value,
+    })),
+    end: document.getElementById('ge-gradient-end')?.value || state.gradientEnd,
+    endAlpha: document.getElementById('ge-gradient-end-alpha')?.value ?? state.gradientEndAlpha,
+    opacity: document.getElementById('ge-gradient-opacity')?.value ?? state.gradientOpacity,
+    type: document.getElementById('ge-gradient-type')?.value || state.gradientType,
+  }),
 });
 
 // Transform-tool drag interactions (handle picking, rotation, resize)
 // in editor/tools/transform-drag.js. The dispatcher calls
 // `tryBegin/tryContinue/tryEnd` and short-circuits when they return true.
 const _transformDragTool = createTransformDragTool({
-  beginMove: (e) => _beginMove(e),
   composite,
   drawTransformHandles: () => _drawTransformHandles(),
   reapplyTransform: () => _reapplyTransform(),
-  getTransformHandle: (x, y) => _getTransformHandle(x, y),
+  getTransformHandle: (x, y, options) => _getTransformHandle(x, y, options),
   cursorForHandle: _cursorForHandle,
+  pointInTransformFrame: (x, y) => _containsTransformFramePoint(x, y),
+  snapTransformFrame: (frame, center) => _computeTransformSnap(frame, center),
 });
 
 // Shared stroke pipeline (brush / eraser / inpaint) in
@@ -1732,14 +3902,18 @@ const _transformDragTool = createTransformDragTool({
 // shared drawing flag; clone's own begin is in editor/tools/clone.js.
 const _strokeTool = createStrokeTool({
   saveState: _saveState,
-  strokeTo: (x, y) => _strokeTo(x, y),
+  undo,
+  beginStroke: (sample, tool) => _beginStroke(sample, tool),
+  strokeTo: (sample) => _strokeTo(sample),
+  endStroke: (sample) => _endStroke(sample),
   composite,
-  getActiveMaskLayer: () => _getActiveMaskLayer(),
+  getActiveMaskLayer: () => _getStrokeTargetMask(),
   activeParentLayer: () => _activeParentLayer(),
   ensureActiveMaskLayer: () => _ensureActiveMaskLayer(),
   createLayer,
   renderLayerPanel: () => _renderLayerPanel(),
   syncToolClearIndicators: () => _syncToolClearIndicators(),
+  showToast: (message) => uiModule?.showToast(message),
 });
 
 // Compute the outward-normal offset of the lasso polygon by `grow`
@@ -1821,6 +3995,34 @@ function _buildLassoMask(w, h, offX, offY, feather, grow) {
 // Pristine snapshot of the last Bg-Removed cutout so the Edge cleanup
 // sliders can live-rebuild the alpha without re-running the model.
 function _invalidateWandCache() { state.wandSrcCache = null; }
+
+function _commitSelectionMask(mask, layer, mode = 'replace', source = 'wand', sourceOffset = null) {
+  if (!mask || !layer) return;
+  const previousLayer = state.layers.find(candidate => candidate.id === state.wandLayerId);
+  const previousOffset = previousLayer
+    ? (state.layerOffsets.get(previousLayer.id) || { x: 0, y: 0 })
+    : { x: 0, y: 0 };
+  const current = _selectionMaskToDocument(
+    state.wandMask,
+    state.wandMaskSpace || 'layer',
+    previousOffset,
+    state.imgWidth,
+    state.imgHeight,
+  );
+  const incomingOffset = sourceOffset || state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const incoming = _selectionMaskToDocument(
+    mask,
+    'layer',
+    incomingOffset,
+    state.imgWidth,
+    state.imgHeight,
+  );
+  state.wandMask = _mergeSelectionMasks(current, incoming, mode);
+  state.wandLayerId = layer.id;
+  state.wandMaskSpace = 'document';
+  state.selectionSource = source;
+}
+
 function _getWandSource(layer) {
   if (state.wandSrcCache && state.wandSrcCache.layerId === layer.id
       && state.wandSrcCache.w === layer.canvas.width
@@ -1843,8 +4045,9 @@ function _wandHits(cx, cy) {
   const layer = state.layers.find(l => l.id === state.wandLayerId);
   if (!layer) return false;
   const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-  const lx = Math.floor(cx - off.x);
-  const ly = Math.floor(cy - off.y);
+  const documentSpace = state.wandMaskSpace === 'document';
+  const lx = Math.floor(documentSpace ? cx : cx - off.x);
+  const ly = Math.floor(documentSpace ? cy : cy - off.y);
   if (lx < 0 || ly < 0 || lx >= state.wandMask.width || ly >= state.wandMask.height) return false;
   try {
     const px = state.wandMask.getContext('2d').getImageData(lx, ly, 1, 1).data;
@@ -1867,12 +4070,12 @@ function _runMagicWand(cx, cy, mode = 'replace', opts = {}) {
     return;
   }
   const layer = activeLayer();
-  if (!layer || layer.locked) return;
+  if (!layer) return;
   // If an active mask sub-layer is selected, the wand operates on the
   // MASK pixels rather than the parent layer's pixels — lets the user
   // click inside / outside an existing mask to select that region for
-  // further editing. Mask canvases are doc-sized with no per-layer
-  // offset, so the seed coords are used as-is.
+  // further editing. Document-space masks use the document origin; true
+  // layer masks use the parent layer origin plus their relative offset.
   const activeMask = _getActiveMaskLayer();
   const sourceCanvas = activeMask ? activeMask.canvas : layer.canvas;
   const sourceCtx = activeMask ? activeMask.ctx : layer.ctx;
@@ -1882,7 +4085,13 @@ function _runMagicWand(cx, cy, mode = 'replace', opts = {}) {
   if (!opts.retune) _saveState();
   // Remember the seed so the tolerance slider can re-run the wand live.
   state.wandLastSeed = { x: cx, y: cy, mode };
-  const off = activeMask ? { x: 0, y: 0 } : (state.layerOffsets.get(layer.id) || { x: 0, y: 0 });
+  const layerOffset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const off = !activeMask || activeMask.mode === 'layer'
+    ? {
+        x: layerOffset.x + (activeMask?.offset?.x || 0),
+        y: layerOffset.y + (activeMask?.offset?.y || 0),
+      }
+    : { x: 0, y: 0 };
   const lx = Math.floor(cx - off.x);
   const ly = Math.floor(cy - off.y);
   const w = sourceCanvas.width, h = sourceCanvas.height;
@@ -1900,30 +4109,15 @@ function _runMagicWand(cx, cy, mode = 'replace', opts = {}) {
   // Merge with existing selection per `mode`. If the existing mask is
   // for a different layer or has different dimensions, treat as replace
   // since merging doesn't make sense across canvases.
-  const compatible = state.wandMask && state.wandLayerId === layer.id &&
-    state.wandMask.width === mask.width && state.wandMask.height === mask.height;
-  if (compatible && mode === 'add') {
-    // Union: paint new selection on top of the existing one.
-    state.wandMask.getContext('2d').drawImage(mask, 0, 0);
-  } else if (compatible && mode === 'subtract') {
-    // Difference: erase new selection from the existing one.
-    const ec = state.wandMask.getContext('2d');
-    ec.save();
-    ec.globalCompositeOperation = 'destination-out';
-    ec.drawImage(mask, 0, 0);
-    ec.restore();
-  } else {
-    state.wandMask = mask;
-    state.wandLayerId = layer.id;
-  }
+  _commitSelectionMask(mask, layer, mode, 'wand', off);
   composite();
   _syncToolClearIndicators();
 }
 
 async function _runSamSelection(e) {
   const layer = activeLayer();
-  if (!layer || layer.locked) {
-    if (uiModule) uiModule.showToast('Select an unlocked layer');
+  if (!layer) {
+    if (uiModule) uiModule.showToast('Select a layer');
     return;
   }
   const coords = _canvasCoords(e, state.mainCanvas);
@@ -1956,8 +4150,8 @@ async function _runSamSelection(e) {
 
 async function _runSamTextSelection() {
   const layer = activeLayer();
-  if (!layer || layer.locked) {
-    if (uiModule) uiModule.showToast('Select an unlocked layer');
+  if (!layer) {
+    if (uiModule) uiModule.showToast('Select a layer');
     return;
   }
   const input = document.getElementById('ge-sam-query');
@@ -2034,20 +4228,7 @@ async function _requestAndApplySamMask(layer, payload, mode, seedPoint, opts = {
   mctx.putImageData(maskData, 0, 0);
 
   _saveState();
-  const compatible = state.wandMask && state.wandLayerId === layer.id &&
-    state.wandMask.width === mask.width && state.wandMask.height === mask.height;
-  if (compatible && mode === 'add') {
-    state.wandMask.getContext('2d').drawImage(mask, 0, 0);
-  } else if (compatible && mode === 'subtract') {
-    const ec = state.wandMask.getContext('2d');
-    ec.save();
-    ec.globalCompositeOperation = 'destination-out';
-    ec.drawImage(mask, 0, 0);
-    ec.restore();
-  } else {
-    state.wandMask = mask;
-    state.wandLayerId = layer.id;
-  }
+  _commitSelectionMask(mask, layer, mode, 'sam');
   state.wandLastSeed = seedPoint
     ? { x: seedPoint.x, y: seedPoint.y, mode, source: 'sam' }
     : { x: 0, y: 0, mode, source: 'sam-text' };
@@ -2086,7 +4267,9 @@ function _drawWandOverlay() {
   if (!state.wandMask || !state.mainCtx) return;
   const layer = state.layers.find(l => l.id === state.wandLayerId);
   if (!layer) return;
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const off = state.wandMaskSpace === 'document'
+    ? { x: 0, y: 0 }
+    : (state.layerOffsets.get(layer.id) || { x: 0, y: 0 });
   // Tint the white mask red, draw at the layer's offset on the main canvas.
   const tint = document.createElement('canvas');
   tint.width = state.wandMask.width;
@@ -2103,14 +4286,7 @@ function _drawWandOverlay() {
   state.mainCtx.restore();
 }
 
-function _wandClear() {
-  state.wandMask = null;
-  state.wandLayerId = null;
-  state.wandLastSeed = null;
-  _invalidateWandCache();
-  composite();
-  _syncToolClearIndicators();
-}
+function _wandClear() { _deselectSelection(); }
 
 // Hover thumbnail — generated by downscaling the layer's canvas into a
 // small floating panel. Lives in document.body so panel `overflow:
@@ -2123,13 +4299,19 @@ function _showLayerThumb(rowEl, layer) {
     document.body.appendChild(state.layerThumbEl);
   }
   const SIZE = 120;
+  // Keep the hover preview consistent with the inline thumbnail: retained
+  // effects and layer masks belong to the visible layer output, not the raw
+  // source canvas.
+  const preview = _renderLayerOutput(layer) || layer.canvas;
   // Downscale layer onto a small canvas, preserving aspect.
-  const lw = layer.canvas.width, lh = layer.canvas.height;
+  const lw = preview.width, lh = preview.height;
   const scale = Math.min(SIZE / lw, SIZE / lh);
   const tw = Math.max(1, Math.round(lw * scale));
   const th = Math.max(1, Math.round(lh * scale));
   const c = document.createElement('canvas');
   c.width = tw; c.height = th;
+  c.setAttribute('role', 'img');
+  c.setAttribute('aria-label', `${layer.name || 'Layer'} preview`);
   // Checker bg so transparency reads
   const ctx = c.getContext('2d');
   const tile = 8;
@@ -2137,7 +4319,7 @@ function _showLayerThumb(rowEl, layer) {
     ctx.fillStyle = ((x / tile + y / tile) & 1) ? '#444' : '#333';
     ctx.fillRect(x, y, tile, tile);
   }
-  ctx.drawImage(layer.canvas, 0, 0, tw, th);
+  ctx.drawImage(preview, 0, 0, tw, th);
   state.layerThumbEl.innerHTML = '';
   state.layerThumbEl.appendChild(c);
   // Position to the LEFT of the row so it doesn't cover other layers.
@@ -2151,13 +4333,14 @@ function _hideLayerThumb() {
   if (state.layerThumbEl) state.layerThumbEl.style.display = 'none';
 }
 
-// Shift+click on a layer row → use that layer's opaque pixels as a
+// Ctrl-click on a layer thumbnail uses that layer's opaque pixels as a
 // wand-style selection. Lifts pixel alpha > 0 into the wand mask so the
 // user can immediately Bg-Remove / Erase / Copy through the layer.
 function _loadLayerAlphaAsSelection(layer) {
   if (!layer || !layer.canvas) return;
-  const w = layer.canvas.width, h = layer.canvas.height;
-  const src = layer.ctx.getImageData(0, 0, w, h).data;
+  const rendered = _renderLayerOutput(layer) || layer.canvas;
+  const w = rendered.width, h = rendered.height;
+  const src = rendered.getContext('2d').getImageData(0, 0, w, h).data;
   const mask = document.createElement('canvas');
   mask.width = w; mask.height = h;
   const mctx = mask.getContext('2d');
@@ -2172,11 +4355,31 @@ function _loadLayerAlphaAsSelection(layer) {
   }
   mctx.putImageData(mdata, 0, 0);
   _saveState();
-  state.wandMask = mask;
-  state.wandLayerId = layer.id;
-  state.wandLastSeed = null;
-  composite();
+  _commitSelectionMask(mask, layer, 'replace', 'wand');
+  _activateSelectionCanvas(state.wandMask, 'wand');
   if (uiModule) uiModule.showToast('Layer pixels selected');
+}
+
+function _loadMaskAsSelection(layer, mask) {
+  if (!layer || !mask?.canvas) return;
+  const layerOffset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const maskOffset = mask.offset || { x: 0, y: 0 };
+  const offset = mask.mode === 'layer'
+    ? {
+        x: layerOffset.x + (Number(maskOffset.x) || 0),
+        y: layerOffset.y + (Number(maskOffset.y) || 0),
+      }
+    : (mask.space === 'document' ? { x: 0, y: 0 } : layerOffset);
+  const documentMask = _selectionMaskToDocument(
+    mask.canvas,
+    mask.space === 'document' ? 'document' : 'layer',
+    offset,
+    state.imgWidth,
+    state.imgHeight,
+  );
+  _saveState(`Load mask "${mask.name || 'Mask'}" as selection`);
+  _activateSelectionCanvas(documentMask, 'mask');
+  uiModule?.showToast('Mask loaded as selection');
 }
 
 // Invert the active selection: lasso (point list — turn into a polygon
@@ -2216,6 +4419,8 @@ function _invertSelection() {
     cctx.fill();
     state.wandMask = c;
     state.wandLayerId = state.activeLayerId;
+    state.wandMaskSpace = 'document';
+    state.selectionSource = 'lasso';
     state.wandLastSeed = null;
     state.lassoPoints = [];
     state.lassoActive = false;
@@ -2230,9 +4435,12 @@ function _invertSelection() {
 // Switches to the inpaint tool so the user sees the result right away.
 function _wandToMask() {
   if (!state.wandMask || !state.wandLayerId) return;
-  const layer = state.layers.find(l => l.id === state.wandLayerId);
+  const selectionLayer = state.layers.find(l => l.id === state.wandLayerId);
+  const layer = activeLayer() || selectionLayer;
   if (!layer) return;
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const selectionOffset = selectionLayer
+    ? (state.layerOffsets.get(selectionLayer.id) || { x: 0, y: 0 })
+    : { x: 0, y: 0 };
   // Make the wand's parent active so the mask is attached to it, then
   // get-or-create a mask sub-layer on it. Repoint the global mask
   // plumbing at the new sub-layer's canvas/ctx.
@@ -2247,7 +4455,13 @@ function _wandToMask() {
   // result's alpha for a soft edge.
   const wFeather = parseInt(document.getElementById('ge-wand-feather')?.value || '0', 10);
   const wGrow = parseInt(document.getElementById('ge-wand-grow')?.value || '0', 10);
-  let refinedWand = state.wandMask;
+  let refinedWand = _selectionMaskToDocument(
+    state.wandMask,
+    state.wandMaskSpace || 'layer',
+    selectionOffset,
+    state.imgWidth,
+    state.imgHeight,
+  );
   if (wGrow !== 0) {
     const c = document.createElement('canvas');
     c.width = state.wandMask.width; c.height = state.wandMask.height;
@@ -2283,7 +4497,7 @@ function _wandToMask() {
   tmp.width = state.maskCanvas.width;
   tmp.height = state.maskCanvas.height;
   const tctx = tmp.getContext('2d');
-  tctx.drawImage(refinedWand, off.x, off.y);
+  tctx.drawImage(refinedWand, 0, 0);
   const incoming = tctx.getImageData(0, 0, tmp.width, tmp.height);
   const cur = state.maskCtx.getImageData(0, 0, state.maskCanvas.width, state.maskCanvas.height);
   for (let i = 0; i < incoming.data.length; i += 4) {
@@ -2300,6 +4514,8 @@ function _wandToMask() {
   // overlay doesn't double up over the inpaint-mask red tint).
   state.wandMask = null;
   state.wandLayerId = null;
+  state.wandMaskSpace = 'layer';
+  state.selectionSource = null;
   state.wandLastSeed = null;
   mask.visible = true;
   layer.activeMaskId = mask.id;
@@ -2412,10 +4628,12 @@ function _syncToolClearIndicators() {
   //       Edge stroke) on the lasso / wand panels.
   //   (3) the topbar Fill button — visible whenever lasso/wand/active
   //       mask gives us a region to fill.
-  const lassoHasSel = state.lassoPoints.length >= 3 && !state.lassoActive;
+  const lassoHasSel = (state.lassoPoints.length >= 3 && !state.lassoActive)
+    || (!!state.wandMask && state.selectionSource === 'lasso');
   const wandHasSel = !!state.wandMask;
   const hasMaskTarget = !!_getActiveMaskLayer();
   const hasSel = lassoHasSel || wandHasSel;
+  _renderSavedSelectionsMenu?.();
   document.querySelectorAll('.ge-layer-mask-btn').forEach(b => {
     b.classList.toggle('from-selection', hasSel);
   });
@@ -2440,13 +4658,15 @@ function _syncToolClearIndicators() {
   if (wFeather) wFeather.style.display = wandHasSel ? '' : 'none';
   if (wGrow) wGrow.style.display = wandHasSel ? '' : 'none';
   if (!state.container) return;
+  const marqueeBtn = state.container.querySelector('.ge-tool-btn[data-tool="marquee"]');
   const lassoBtn = state.container.querySelector('.ge-tool-btn[data-tool="lasso"]');
   const wandBtn  = state.container.querySelector('.ge-tool-btn[data-tool="wand"]');
   const samBtn   = state.container.querySelector('.ge-tool-btn[data-tool="sam"]');
   const inpaintBtn = state.container.querySelector('.ge-tool-btn[data-tool="inpaint"]');
-  if (lassoBtn) lassoBtn.classList.toggle('has-selection', state.lassoPoints.length >= 3 && !state.lassoActive);
-  if (wandBtn)  wandBtn.classList.toggle('has-selection', !!state.wandMask);
-  if (samBtn)   samBtn.classList.toggle('has-selection', !!state.wandMask);
+  if (marqueeBtn) marqueeBtn.classList.toggle('has-selection', !!state.wandMask && state.selectionSource === 'marquee');
+  if (lassoBtn) lassoBtn.classList.toggle('has-selection', lassoHasSel);
+  if (wandBtn)  wandBtn.classList.toggle('has-selection', !!state.wandMask && state.selectionSource === 'wand');
+  if (samBtn)   samBtn.classList.toggle('has-selection', !!state.wandMask && state.selectionSource === 'sam');
   // Inpaint no longer carries a clear-X badge; masks live as sub-layers
   // in the layer panel and are deleted from there.
   if (inpaintBtn) inpaintBtn.classList.remove('has-selection');
@@ -2461,108 +4681,140 @@ function _hasMaskPixels() {
   return false;
 }
 
-function _wandDeleteSelection() {
+async function _canMutateLayerPixels(layer, action = 'editing pixels') {
+  if (!layer) return false;
+  if (layer.kind === 'adjustment') {
+    uiModule?.showToast(`Select a pixel layer or mask before ${action}`);
+    return false;
+  }
+  if (!['placed', 'text', 'shape'].includes(layer.kind)) return true;
+  return _confirmRasterizeLayer(layer);
+}
+
+function _readPixelTarget() {
+  const parent = activeLayer();
+  const mask = _getActiveMaskLayer();
+  const surface = mask || parent;
+  if (!surface?.canvas) return null;
+  const parentOffset = state.layerOffsets.get(parent?.id) || { x: 0, y: 0 };
+  const offset = mask
+    ? (mask.mode === 'layer' && mask.space !== 'document'
+      ? { x: parentOffset.x + (mask.offset?.x || 0), y: parentOffset.y + (mask.offset?.y || 0) }
+      : { x: 0, y: 0 })
+    : parentOffset;
+  return { parent, mask, canvas: surface.canvas, ctx: surface.ctx || surface.canvas.getContext('2d'), offset };
+}
+
+async function _preparePixelTarget(action, { erase = false } = {}) {
+  const parent = activeLayer();
+  const mask = _getActiveMaskLayer();
+  const group = (state.layerGroups || []).find(item => item.id === state.activeGroupId);
+  const ownerLocked = group && mask?.mode === 'group'
+    ? group.locked || _groupAncestors(state, group).some(item => item.locked)
+    : _isLayerEffectivelyLocked(state, parent);
+  if (!parent && !mask) { uiModule?.showToast('Select a layer or mask first'); return null; }
+  if (ownerLocked || mask?.locked || (!mask && _isLayerPixelLocked(state, parent))) {
+    uiModule?.showToast('Unlock the selected layer or mask first'); return null;
+  }
+  if (!mask && erase && _isLayerTransparencyLocked(state, parent)) {
+    uiModule?.showToast('Unlock transparent pixels before erasing'); return null;
+  }
+  if (!mask && !await _canMutateLayerPixels(parent, action)) return null;
+  if (activeLayer() !== parent || _getActiveMaskLayer() !== mask) return null;
+  return _readPixelTarget();
+}
+
+function _captureSelectedPixels(target) {
+  const selection = _selectionMaskAsDocument({ materializeLasso: true });
+  const canvas = document.createElement('canvas');
+  canvas.width = target.canvas.width;
+  canvas.height = target.canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(target.canvas, 0, 0);
+  if (selection) {
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(_selectionMaskForLayer(selection, 'document', target.offset, canvas.width, canvas.height), 0, 0);
+  }
+  return canvas;
+}
+
+async function _copyPixelsToClipboard({ cut = false } = {}) {
+  const target = cut ? await _preparePixelTarget('cutting pixels', { erase: true }) : _readPixelTarget();
+  if (!target) return;
+  const canvas = _captureSelectedPixels(target);
+  state.internalClipboard = canvas;
+  state.internalClipboardOffset = { ...target.offset };
+  if (cut) {
+    if (state.wandMask) await _wandDeleteSelection({ message: 'Selection cut' });
+    else {
+      _saveState('Cut pixels');
+      target.ctx.clearRect(0, 0, target.canvas.width, target.canvas.height);
+      composite();
+      _renderLayerPanel();
+    }
+  }
+  canvas.toBlob(blob => {
+    if (blob && navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+        .then(() => uiModule?.showToast(cut ? 'Cut to clipboard' : 'Copied to clipboard'))
+        .catch(() => uiModule?.showToast(cut ? 'Cut (editor only)' : 'Copied (editor only)'));
+    } else uiModule?.showToast(cut ? 'Cut (editor only)' : 'Copied (editor only)');
+  }, 'image/png');
+}
+
+async function _wandDeleteSelection({ saveHistory = true, message = 'Selection deleted' } = {}) {
   if (!state.wandMask) return;
-  const layer = state.layers.find(l => l.id === state.wandLayerId);
-  if (!layer || layer.locked) return;
-  _saveState();
+  const selection = _selectionMaskAsDocument({ materializeLasso: true });
+  const layer = await _preparePixelTarget('erasing pixels', { erase: true });
+  if (!layer || !selection) return;
+  if (saveHistory) _saveState();
+  const layerMask = _selectionMaskForLayer(
+    selection,
+    'document',
+    layer.offset,
+    layer.canvas.width,
+    layer.canvas.height,
+  );
   // Use destination-out with the mask to erase the selected pixels.
   layer.ctx.save();
   layer.ctx.globalCompositeOperation = 'destination-out';
-  layer.ctx.drawImage(state.wandMask, 0, 0);
+  layer.ctx.drawImage(layerMask, 0, 0);
   layer.ctx.restore();
-  _wandClear();
+  _deselectSelection({ saveHistory: false, remember: false });
+  _renderLayerPanel();
+  uiModule?.showToast(message);
 }
 
-function _wandCopyToNewLayer() {
-  if (!state.wandMask) return;
-  const src = state.layers.find(l => l.id === state.wandLayerId);
+function _wandCopyToNewLayer({ saveHistory = true, activate = true, announce = true } = {}) {
+  if (!_selectionMaskAsDocument({ materializeLasso: true })) return;
+  const src = _readPixelTarget();
   if (!src) return;
-  _saveState();
-  // Clip the source by the mask, put it on a new layer.
-  const tmp = document.createElement('canvas');
-  tmp.width = src.canvas.width;
-  tmp.height = src.canvas.height;
-  const tCtx = tmp.getContext('2d');
-  tCtx.drawImage(src.canvas, 0, 0);
-  tCtx.globalCompositeOperation = 'destination-in';
-  tCtx.drawImage(state.wandMask, 0, 0);
-  const newLayer = createLayer('Wand copy', src.canvas.width, src.canvas.height);
+  if (saveHistory) _saveState();
+  const tmp = _captureSelectedPixels(src);
+  const newLayer = createLayer('Selection', src.canvas.width, src.canvas.height);
   newLayer.ctx.drawImage(tmp, 0, 0);
-  const srcOff = state.layerOffsets.get(src.id) || { x: 0, y: 0 };
-  state.layerOffsets.set(newLayer.id, { ...srcOff });
-  const idx = state.layers.findIndex(l => l.id === src.id);
+  state.layerOffsets.set(newLayer.id, { ...src.offset });
+  const idx = state.layers.findIndex(l => l.id === src.parent?.id);
   state.layers.splice(idx + 1, 0, newLayer);
-  state.activeLayerId = newLayer.id;
+  if (activate) {
+    state.activeLayerId = newLayer.id;
+    state.selectedLayerIds = [newLayer.id];
+    state.activeGroupId = null;
+  }
   composite();
   _renderLayerPanel();
   _revealLayerPanel();
-  if (uiModule) uiModule.showToast('Copied to new layer');
+  if (announce && uiModule) uiModule.showToast('Copied to new layer');
+  return newLayer;
 }
 
-function _lassoDeleteSelection() {
-  const layer = activeLayer();
-  if (!layer || state.lassoPoints.length < 3) return;
-  const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0');
-  const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0');
-  _saveState();
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-  const w = layer.canvas.width, h = layer.canvas.height;
-
-  const mask = _buildLassoMask(w, h, off.x, off.y, feather, grow);
-  const maskData = mask.getContext('2d').getImageData(0, 0, w, h);
-  const imgData = layer.ctx.getImageData(0, 0, w, h);
-
-  for (let i = 0; i < w * h; i++) {
-    const maskVal = maskData.data[i * 4]; // red channel
-    if (maskVal > 0) {
-      const fade = maskVal / 255;
-      imgData.data[i * 4 + 3] = Math.round(imgData.data[i * 4 + 3] * (1 - fade));
-    }
-  }
-  layer.ctx.putImageData(imgData, 0, 0);
-
-  state.lassoPoints = [];
-  composite();
-  uiModule.showToast('Selection deleted');
+async function _lassoDeleteSelection() {
+  if (!_selectionMaskAsDocument({ materializeLasso: true })) return;
+  return _wandDeleteSelection();
 }
 
 function _lassoCopyToLayer() {
-  const layer = activeLayer();
-  if (!layer || state.lassoPoints.length < 3) return;
-  const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0');
-  const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0');
-  _saveState();
-  const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-  const w = layer.canvas.width, h = layer.canvas.height;
-
-  const mask = _buildLassoMask(w, h, off.x, off.y, feather, grow);
-  const newLayer = createLayer('Selection', state.imgWidth, state.imgHeight);
-
-  // Copy layer pixels masked by the selection
-  const srcData = layer.ctx.getImageData(0, 0, w, h);
-  const maskData = mask.getContext('2d').getImageData(0, 0, w, h);
-  const outData = newLayer.ctx.createImageData(w, h);
-
-  for (let i = 0; i < w * h; i++) {
-    const maskVal = maskData.data[i * 4];
-    if (maskVal > 0) {
-      const fade = maskVal / 255;
-      outData.data[i * 4] = srcData.data[i * 4];
-      outData.data[i * 4 + 1] = srcData.data[i * 4 + 1];
-      outData.data[i * 4 + 2] = srcData.data[i * 4 + 2];
-      outData.data[i * 4 + 3] = Math.round(srcData.data[i * 4 + 3] * fade);
-    }
-  }
-  newLayer.ctx.putImageData(outData, 0, 0);
-
-  state.layers.push(newLayer);
-  state.activeLayerId = newLayer.id;
-  state.lassoPoints = [];
-  _renderLayerPanel();
-  _revealLayerPanel();
-  composite();
-  uiModule.showToast('Selection copied to new layer');
+  return _wandCopyToNewLayer();
 }
 
 function _lassoToMask() {
@@ -2605,15 +4857,27 @@ function _lassoToMask() {
 
 // Themed slider modal for filter parameters. Builds a single in-line
 // overlay anchored to the canvas-area's centre. `params` is an array
-// of `{ key, label, min, max, step, value, suffix }`. As the user
+// of `{ key, label, min, max, step, value, suffix }` or a color control.
+// As the user
 // drags any slider the `onPreview(values)` callback fires for live
 // rendering; clicking Apply commits and resolves the returned Promise
 // with the final values; Cancel / Esc resolves with null. The caller
 // is responsible for snapshotting state BEFORE opening (so Cancel can
 // restore the layer's pixels).
-function _filterSliderPrompt(title, params, onPreview) {
+let _activeFilterPrompt = null;
+
+function _filterSliderPrompt(title, params, onPreview, onCancel) {
+  _activeFilterPrompt?.cancel();
   return new Promise((resolve) => {
     if (!state.container) { resolve(null); return; }
+    const session = state.editorSessionToken;
+    const parent = _activeParentLayer();
+    const mask = _getActiveMaskLayer();
+    const groupId = state.activeGroupId;
+    const previousFocus = document.activeElement;
+    const isCurrent = () => state.editorOpen && state.editorSessionToken === session
+      && _activeParentLayer() === parent && _getActiveMaskLayer() === mask
+      && state.activeGroupId === groupId;
     const overlay = document.createElement('div');
     overlay.className = 'ge-filter-overlay';
     let rows = '';
@@ -2621,15 +4885,18 @@ function _filterSliderPrompt(title, params, onPreview) {
       // Reuse the editor's eraser-row class so the slider picks up the
       // standard slim red-thumb styling instead of the bare browser
       // default. Value chip on the same line as the label.
+      const isColor = p.type === 'color';
       rows += `
         <div class="ge-filter-row ge-eraser-row">
-          <label>${p.label} <span class="ge-filter-row-value" data-val-for="${p.key}">${p.value}${p.suffix || ''}</span></label>
-          <input type="range" data-key="${p.key}" min="${p.min}" max="${p.max}" step="${p.step || 1}" value="${p.value}" />
+          <label>${p.label}${isColor ? '' : ` <span class="ge-filter-row-value" data-val-for="${p.key}">${p.value}${p.suffix || ''}</span>`}</label>
+          ${isColor
+            ? `<input type="color" data-key="${p.key}" value="${p.value}" aria-label="${p.label}" />`
+            : `<input type="range" data-key="${p.key}" min="${p.min}" max="${p.max}" step="${p.step || 1}" value="${p.value}" />`}
         </div>
       `;
     }
     overlay.innerHTML = `
-      <div class="ge-filter-modal">
+      <div class="ge-filter-modal" role="dialog" aria-modal="true" aria-label="${title}">
         <div class="ge-filter-modal-head">${title}</div>
         ${rows}
         <div class="ge-filter-modal-actions">
@@ -2643,27 +4910,50 @@ function _filterSliderPrompt(title, params, onPreview) {
     for (const p of params) values[p.key] = p.value;
     // Initial preview render.
     try { onPreview(values); } catch {}
-    overlay.querySelectorAll('input[type="range"]').forEach(inp => {
+    overlay.querySelectorAll('input[data-key]').forEach(inp => {
       inp.addEventListener('input', (e) => {
+        if (!isCurrent()) { cleanup(null); return; }
         const k = e.target.dataset.key;
-        const v = parseFloat(e.target.value);
+        const param = params.find(p => p.key === k);
+        const v = param?.type === 'color' ? e.target.value : parseFloat(e.target.value);
         values[k] = v;
         const lbl = overlay.querySelector(`[data-val-for="${k}"]`);
-        const param = params.find(p => p.key === k);
         if (lbl) lbl.textContent = v + (param && param.suffix ? param.suffix : '');
         try { onPreview(values); } catch {}
       });
     });
+    let settled = false;
     const cleanup = (result) => {
+      if (settled) return;
+      settled = true;
+      const current = isCurrent();
+      if (result === null || !current) onCancel?.();
+      observer.disconnect();
       try { overlay.remove(); } catch {}
-      document.removeEventListener('keydown', onKey, true);
-      resolve(result);
+      if (_activeFilterPrompt === prompt) _activeFilterPrompt = null;
+      if (current && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      resolve(current ? result : null);
     };
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(null); }
-      else if (e.key === 'Enter') { e.preventDefault(); cleanup(values); }
+      e.stopImmediatePropagation();
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        cleanup(e.target?.dataset.action === 'cancel' ? null : values);
+      } else if (e.key === 'Tab') {
+        const fields = [...overlay.querySelectorAll('input, button')];
+        const index = fields.indexOf(document.activeElement);
+        e.preventDefault();
+        fields[(index + (e.shiftKey ? -1 : 1) + fields.length) % fields.length]?.focus();
+      }
     };
-    document.addEventListener('keydown', onKey, true);
+    const prompt = { handleKey: onKey, cancel: () => cleanup(null) };
+    _activeFilterPrompt = prompt;
+    const observer = new MutationObserver(() => {
+      if (!overlay.isConnected || !isCurrent()) cleanup(null);
+    });
+    observer.observe(state.container, { childList: true, subtree: true });
+    overlay.querySelector('input, button')?.focus({ preventScroll: true });
     overlay.querySelector('[data-action="apply"]').addEventListener('click', () => cleanup(values));
     overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => cleanup(null));
     // Click outside the modal (on the dim backdrop) = cancel.
@@ -2671,41 +4961,39 @@ function _filterSliderPrompt(title, params, onPreview) {
   });
 }
 
-// Generic helper for live-preview blur filters. Saves the PRE-blur
-// state to the undo stack first (so Ctrl-Z reverts cleanly), snapshots
-// the layer for re-rendering, applies `renderer(snap, values)` into
-// the layer on every slider change for instant feedback. Apply keeps
-// the result; Cancel / Esc restores the snapshot AND pops the undo
-// entry we pre-saved so the canceled run leaves no trace.
+// Preview from a fixed source; only acceptance creates a history entry.
 async function _applyLiveBlur({ title, params, label, renderer }) {
-  const layer = activeLayer();
-  if (!layer || layer.locked) { if (uiModule) uiModule.showToast('Select an unlocked layer'); return; }
+  const layer = await _preparePixelTarget('applying a pixel filter');
+  if (!layer) return;
   const w = layer.canvas.width, h = layer.canvas.height;
   const snap = document.createElement('canvas');
   snap.width = w; snap.height = h;
   snap.getContext('2d').drawImage(layer.canvas, 0, 0);
-  // Save state BEFORE any preview — the undo stack now holds the
-  // pre-blur pixels. Apply leaves it; Cancel pops it.
-  _saveState(label);
+  const session = state.editorSessionToken;
+  const isCurrent = () => state.editorOpen && state.editorSessionToken === session
+    && _readPixelTarget()?.canvas === layer.canvas;
   const draw = (values) => {
+    if (!isCurrent()) return;
     layer.ctx.clearRect(0, 0, w, h);
     try { renderer(snap, values, layer.ctx); } catch (_) { layer.ctx.drawImage(snap, 0, 0); }
     composite();
   };
-  const result = await _filterSliderPrompt(title, params, draw);
-  if (result === null) {
+  const restore = () => {
     layer.ctx.clearRect(0, 0, w, h);
     layer.ctx.drawImage(snap, 0, 0);
-    composite();
-    // Drop the snapshot we pushed — there's nothing to undo to.
-    if (state.undoStack.length) state.undoStack.pop();
-    _refreshHistoryPanelIfOpen();
+  };
+  const result = await _filterSliderPrompt(title, params, draw, restore);
+  restore();
+  if (result === null || !isCurrent()) {
+    if (state.editorSessionToken === session) composite();
     return;
   }
+  _saveState(label);
   // Final render from snapshot for a clean commit.
   layer.ctx.clearRect(0, 0, w, h);
   renderer(snap, result, layer.ctx);
   composite();
+  _renderLayerPanel();
   if (uiModule) uiModule.showToast(label + ' applied');
 }
 
@@ -2716,6 +5004,309 @@ function _applyGaussianBlur() {
     params: [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 1, value: 6, suffix: 'px' }],
     renderer: _gaussianBlur,
   });
+}
+
+async function _addRetainedGaussianBlur(presetName = null) {
+  const layer = state.activeGroupId
+    ? (state.layerGroups || []).find(group => group.id === state.activeGroupId)
+    : activeLayer();
+  if (!layer || layer.kind === 'adjustment') {
+    uiModule?.showToast?.('Select an image layer or group first');
+    return;
+  }
+  const preset = _effectPreset(presetName);
+  const initial = [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 1, value: preset?.type === 'gaussian-blur' ? preset.params.radius : 6, suffix: 'px' }];
+  const result = await _filterSliderPrompt(
+    'Retained Gaussian Blur',
+    initial,
+    values => {
+      layer._effectPreview = { type: 'gaussian-blur', params: values, opacity: 1, visible: true };
+      composite();
+    },
+  );
+  layer._effectPreview = null;
+  composite();
+  if (!result) return;
+  _saveState('Add retained Gaussian Blur');
+  if (!Array.isArray(layer.effects)) layer.effects = [];
+  layer.effects.push(_normalizeEffect({ type: 'gaussian-blur', params: result }));
+  _schedulePersist();
+  _renderLayerPanel();
+  composite();
+  uiModule?.showToast?.('Retained Gaussian Blur added');
+}
+
+async function _addRetainedEffect(type, presetName = null) {
+  if (type === 'gaussian-blur') return _addRetainedGaussianBlur(presetName);
+  const layer = state.activeGroupId
+    ? (state.layerGroups || []).find(group => group.id === state.activeGroupId)
+    : activeLayer();
+  if (!layer || layer.kind === 'adjustment') {
+    uiModule?.showToast?.('Select an image layer or group first');
+    return;
+  }
+  if (LAYER_STYLES[type]) return _configureLayerStyle(layer, type);
+  const initial = type === 'color-overlay'
+    ? [
+      { key: 'color', label: 'Color', type: 'color', value: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: 20, suffix: '%' },
+    ]
+    : type === 'sharpen'
+      ? [{ key: 'amount', label: 'Amount', min: 0, max: 100, step: 1, value: 50, suffix: '%' }]
+    : type === 'stroke'
+      ? [
+        { key: 'color', label: 'Color', type: 'color', value: '#ffffff' },
+        { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: 100, suffix: '%' },
+        { key: 'width', label: 'Width', min: 0, max: 100, step: 1, value: 3, suffix: 'px' },
+      ]
+    : [
+      { key: 'color', label: 'Color', type: 'color', value: '#000000' },
+      { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: 45, suffix: '%' },
+      { key: 'blur', label: 'Blur', min: 0, max: 100, step: 1, value: 12, suffix: 'px' },
+      { key: 'x', label: 'Horizontal', min: -100, max: 100, step: 1, value: 4, suffix: 'px' },
+      { key: 'y', label: 'Vertical', min: -100, max: 100, step: 1, value: 6, suffix: 'px' },
+    ];
+  const preset = _effectPreset(presetName);
+  if (preset?.type === type) {
+    for (const control of initial) {
+      const value = preset.params[control.key];
+      if (value == null) continue;
+      control.value = control.type === 'color' ? value : Number(value) * (control.suffix === '%' ? 100 : 1);
+    }
+  }
+  const result = await _filterSliderPrompt(
+    type === 'color-overlay' ? 'Retained Color Overlay' : type === 'sharpen' ? 'Retained Sharpen' : type === 'stroke' ? 'Retained Stroke' : 'Retained Drop Shadow',
+    initial,
+    values => {
+      layer._effectPreview = {
+        type,
+        opacity: 1,
+        visible: true,
+        params: type === 'sharpen'
+          ? { amount: values.amount / 100 }
+          : type === 'color-overlay'
+          ? { color: values.color, opacity: values.opacity / 100, blendMode: 'source-atop' }
+          : type === 'stroke'
+            ? { color: values.color, opacity: values.opacity / 100, width: values.width }
+            : { color: values.color, opacity: values.opacity / 100, blur: values.blur, x: values.x, y: values.y },
+      };
+      composite();
+    },
+  );
+  layer._effectPreview = null;
+  composite();
+  if (!result) return;
+  _saveState(`Add retained ${type === 'color-overlay' ? 'Color Overlay' : 'Drop Shadow'}`);
+  if (!Array.isArray(layer.effects)) layer.effects = [];
+  layer.effects.push(_normalizeEffect({
+    type,
+    params: type === 'sharpen'
+      ? { amount: result.amount / 100 }
+      : type === 'color-overlay'
+      ? { color: result.color, opacity: result.opacity / 100, blendMode: 'source-atop' }
+      : type === 'stroke'
+        ? { color: result.color, opacity: result.opacity / 100, width: result.width }
+        : { color: result.color, opacity: result.opacity / 100, blur: result.blur, x: result.x, y: result.y },
+  }));
+  _schedulePersist();
+  _renderLayerPanel();
+  composite();
+  uiModule?.showToast?.(`${type === 'color-overlay' ? 'Color Overlay' : 'Drop Shadow'} added`);
+}
+
+async function _configureLayerStyle(layer, type, existing = null) {
+  if (_isLayerEffectivelyLocked(state, layer)) { uiModule?.showToast('Unlock the layer first'); return; }
+  const session = state.editorSessionToken;
+  const initial = styleParams(type, existing?.params);
+  const controls = LAYER_STYLES[type].controls.map(control => ({ ...control, value: initial[control.key] }));
+  const result = await _filterSliderPrompt(LAYER_STYLES[type].label, controls, values => {
+    layer._effectPreview = { ...existing, type, visible: true, opacity: existing?.opacity ?? 1, params: styleParams(type, values) };
+    composite();
+  });
+  layer._effectPreview = null;
+  composite();
+  if (!result || session !== state.editorSessionToken || !state.editorOpen ||
+      !(state.layers.includes(layer) || state.layerGroups?.includes(layer))) return;
+  _saveState(`${existing ? 'Edit' : 'Add'} ${LAYER_STYLES[type].label}`);
+  if (existing) existing.params = styleParams(type, result);
+  else {
+    layer.effects ||= [];
+    layer.effects.push(_normalizeEffect({ type, params: styleParams(type, result) }));
+  }
+  _schedulePersist(); _renderLayerPanel(); composite();
+}
+
+async function _editRetainedGradient(layer, effect) {
+  const params = effect.params || {};
+  const stops = Array.isArray(params.stops) && params.stops.length >= 2
+    ? params.stops
+    : [{ position: 0, color: '#e06c75', alpha: 1 }, { position: 100, color: '#ffffff', alpha: 1 }];
+  const start = stops[0];
+  const end = stops[stops.length - 1];
+  const initial = [
+    { key: 'start', label: 'Start', type: 'color', value: start.color },
+    { key: 'end', label: 'End', type: 'color', value: end.color },
+    { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: Math.round((Number(params.opacity) || 0) * 100), suffix: '%' },
+    { key: 'x1', label: 'Start X', min: -2000000, max: 2000000, step: 1, value: Number(params.x1) || 0, suffix: 'px' },
+    { key: 'y1', label: 'Start Y', min: -2000000, max: 2000000, step: 1, value: Number(params.y1) || 0, suffix: 'px' },
+    { key: 'x2', label: 'End X', min: -2000000, max: 2000000, step: 1, value: Number(params.x2) || 0, suffix: 'px' },
+    { key: 'y2', label: 'End Y', min: -2000000, max: 2000000, step: 1, value: Number(params.y2) || 0, suffix: 'px' },
+  ];
+  stops.slice(1, -1).forEach((stop, index) => {
+    initial.push(
+      { key: `stopColor${index}`, label: `Stop ${index + 2}`, type: 'color', value: stop.color },
+      { key: `stopPosition${index}`, label: `Stop ${index + 2} position`, min: 1, max: 99, step: 1, value: Number(stop.position) || 50, suffix: '%' },
+    );
+  });
+  const buildParams = values => ({
+    x1: values.x1, y1: values.y1, x2: values.x2, y2: values.y2,
+    opacity: values.opacity / 100,
+    stops: stops.map((stop, index) => ({
+      ...stop,
+      color: index === 0 ? values.start
+        : index === stops.length - 1 ? values.end
+          : values[`stopColor${index - 1}`] || stop.color,
+      position: index === 0 ? 0
+        : index === stops.length - 1 ? 100
+          : Number(values[`stopPosition${index - 1}`]) || stop.position,
+    })),
+  });
+  const result = await _filterSliderPrompt('Edit Gradient', initial, values => {
+    layer._effectPreview = { ...effect, params: buildParams(values) };
+    composite();
+  });
+  layer._effectPreview = null;
+  composite();
+  if (!result) return;
+  _saveState('Edit Gradient');
+  effect.params = buildParams(result);
+  composite();
+  _schedulePersist();
+  _renderLayerPanel();
+  uiModule?.showToast?.('Gradient updated');
+}
+
+async function _editRetainedEffect(layer, effect) {
+  if (!layer || !effect) return;
+  const type = effect.type;
+  if (LAYER_STYLES[type]) return _configureLayerStyle(layer, type, effect);
+  if (type === 'linear-gradient' || type === 'radial-gradient') return _editRetainedGradient(layer, effect);
+  const p = effect.params || {};
+  const initial = type === 'gaussian-blur'
+    ? [{ key: 'radius', label: 'Radius', min: 0, max: 100, step: 1, value: Number(p.radius) || 0, suffix: 'px' }]
+    : type === 'sharpen'
+      ? [{ key: 'amount', label: 'Amount', min: 0, max: 100, step: 1, value: Math.round((Number(p.amount) || 0) * 100), suffix: '%' }]
+    : type === 'color-overlay'
+      ? [
+        { key: 'color', label: 'Color', type: 'color', value: p.color || '#ffffff' },
+        { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: Math.round((Number(p.opacity) || 0) * 100), suffix: '%' },
+      ]
+      : type === 'stroke'
+        ? [
+          { key: 'color', label: 'Color', type: 'color', value: p.color || '#ffffff' },
+          { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: Math.round((Number(p.opacity) || 0) * 100), suffix: '%' },
+          { key: 'width', label: 'Width', min: 0, max: 100, step: 1, value: Number(p.width) || 0, suffix: 'px' },
+        ]
+      : [
+        { key: 'color', label: 'Color', type: 'color', value: p.color || '#000000' },
+        { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: Math.round((Number(p.opacity) || 0) * 100), suffix: '%' },
+        { key: 'blur', label: 'Blur', min: 0, max: 100, step: 1, value: Number(p.blur) || 0, suffix: 'px' },
+        { key: 'x', label: 'Horizontal', min: -100, max: 100, step: 1, value: Number(p.x) || 0, suffix: 'px' },
+        { key: 'y', label: 'Vertical', min: -100, max: 100, step: 1, value: Number(p.y) || 0, suffix: 'px' },
+      ];
+  const preview = values => {
+    const params = type === 'gaussian-blur'
+      ? { radius: values.radius }
+      : type === 'sharpen'
+        ? { amount: values.amount / 100 }
+      : type === 'color-overlay'
+        ? { color: values.color, opacity: values.opacity / 100, blendMode: p.blendMode || 'source-atop' }
+        : type === 'stroke'
+          ? { color: values.color, opacity: values.opacity / 100, width: values.width }
+        : { color: values.color, opacity: values.opacity / 100, blur: values.blur, x: values.x, y: values.y };
+    layer._effectPreview = { ...effect, params };
+    composite();
+  };
+  const result = await _filterSliderPrompt(`Edit ${_effectLabel(type)}`, initial, preview);
+  layer._effectPreview = null;
+  composite();
+  if (!result) return;
+  _saveState(`Edit ${_effectLabel(type)}`);
+  effect.params = type === 'gaussian-blur'
+    ? { radius: result.radius }
+    : type === 'sharpen'
+      ? { amount: result.amount / 100 }
+    : type === 'color-overlay'
+      ? { color: result.color, opacity: result.opacity / 100, blendMode: p.blendMode || 'source-atop' }
+      : type === 'stroke'
+        ? { color: result.color, opacity: result.opacity / 100, width: result.width }
+      : { color: result.color, opacity: result.opacity / 100, blur: result.blur, x: result.x, y: result.y };
+  composite();
+  _schedulePersist();
+  _renderLayerPanel();
+  uiModule?.showToast?.(`${_effectLabel(type)} updated`);
+}
+
+function _addEffectMask(layer, effect) {
+  if (!layer || !effect) return;
+  const selection = _selectionMaskAsDocument({ materializeLasso: true });
+  if (!selection) {
+    uiModule?.showToast?.('Create a selection before adding an effect mask');
+    return;
+  }
+  const layerOffset = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  const canvas = document.createElement('canvas');
+  canvas.width = layer.canvas.width;
+  canvas.height = layer.canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(selection, -layerOffset.x, -layerOffset.y, state.imgWidth, state.imgHeight);
+  _saveState(`Add mask to ${_effectLabel(effect.type)}`);
+  effect.mask = {
+    id: `effect-mask-${state.nextLayerId++}`,
+    name: 'Effect Mask',
+    visible: true,
+    canvas,
+    ctx,
+    canvasW: canvas.width,
+    canvasH: canvas.height,
+  };
+  _schedulePersist();
+  composite();
+  _renderLayerPanel();
+  uiModule?.showToast?.(`${_effectLabel(effect.type)} mask added from selection`);
+}
+
+async function _rasterizeEffects(layer) {
+  if (!layer || layer.kind === 'adjustment' || !Array.isArray(layer.effects) || !layer.effects.length) return;
+  const base = _renderLayerWithAdjLayers(layer);
+  _showCanvasLoading('Rasterizing effects…');
+  let baked;
+  try {
+    // Rasterization must use the same renderer as export/composite. The
+    // worker path can apply browser color/shadow operations slightly
+    // differently, which makes a visually identical bake fail fidelity
+    // checks and surprises users when they commit an effect.
+    baked = _renderEffects(base, layer.effects);
+  } catch (error) {
+    _hideCanvasLoading();
+    uiModule?.showToast?.(`Could not rasterize effects: ${error.message || error}`);
+    return;
+  }
+  _hideCanvasLoading();
+  _saveState(`Rasterize effects on "${layer.name}"`);
+  layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+  layer.ctx.drawImage(baked, 0, 0, layer.canvas.width, layer.canvas.height);
+  layer.kind = 'raster';
+  layer.text = null;
+  layer.shape = null;
+  layer.placed = null;
+  layer.effects = [];
+  layer._effectPreview = null;
+  layer._adjFinalKey = null;
+  composite();
+  _schedulePersist();
+  _renderLayerPanel();
+  uiModule?.showToast?.('Effects rasterized');
 }
 
 function _applyZoomBlur() {
@@ -2739,12 +5330,15 @@ function _applyMotionBlur() {
   });
 }
 
-function _applyEdgeFeather(layer, width, hardDelete) {
+async function _applyEdgeFeather(layer, width, hardDelete) {
+  if (!await _canMutateLayerPixels(layer, 'feathering pixels')) return false;
+  _saveState(hardDelete ? 'Delete edges' : 'Feather edges');
   const w = layer.canvas.width;
   const h = layer.canvas.height;
   const imgData = layer.ctx.getImageData(0, 0, w, h);
   _edgeFeather(imgData, width, hardDelete);
   layer.ctx.putImageData(imgData, 0, 0);
+  return true;
 }
 
 // ── Zoom ──
@@ -2753,19 +5347,21 @@ function _fitZoom() {
   const fit = _getFitZoom();
   if (!fit) return;
   state.zoom = fit;
-  _applyZoom();
+  state.zoomViewMode = 'fit';
+  _applyZoom({ resetPan: true });
 }
 
 function _getFitZoom() {
   const area = state.container.querySelector('.ge-canvas-area');
   if (!area || !state.imgWidth) return null;
   const pad = 20;
-  const maxW = area.clientWidth - pad * 2;
-  const maxH = area.clientHeight - pad * 2;
+  const rulerPad = state.rulersVisible ? 18 : 0;
+  const maxW = area.clientWidth - pad * 2 - rulerPad;
+  const maxH = area.clientHeight - pad * 2 - rulerPad;
   return Math.min(1, maxW / state.imgWidth, maxH / state.imgHeight);
 }
 
-function _applyZoom() {
+function _applyZoom({ resetPan = false } = {}) {
   if (!state.mainCanvas) return;
   state.mainCanvas.style.width = (state.imgWidth * state.zoom) + 'px';
   state.mainCanvas.style.height = (state.imgHeight * state.zoom) + 'px';
@@ -2773,30 +5369,113 @@ function _applyZoom() {
   if (label) label.textContent = Math.round(state.zoom * 100) + '%';
   _syncZoomControls();
   const area = state.container && state.container.querySelector('.ge-canvas-area');
-  if (area && area._resetPan) area._resetPan();
+  if (resetPan && area && area._resetPan) area._resetPan();
+  _syncSelectionOverlay();
+  _precisionGuides?.redrawRulers();
+}
+
+function _buildQuickMaskBar() {
+  const bar = document.createElement('div');
+  bar.id = 'ge-quick-mask-bar';
+  bar.className = 'ge-quick-mask-bar';
+  bar.hidden = true;
+  bar.innerHTML = `
+    <span class="ge-quick-mask-label">Quick Mask</span>
+    <div class="ge-quick-mask-tools" role="group" aria-label="Quick Mask brush mode">
+      <button type="button" class="ge-quick-mask-tool active" data-tool="brush">Brush</button>
+      <button type="button" class="ge-quick-mask-tool" data-tool="eraser">Erase</button>
+    </div>
+    <button type="button" class="ge-quick-mask-done">Done</button>`;
+  bar.querySelectorAll('.ge-quick-mask-tool').forEach(button => {
+    button.addEventListener('click', () => {
+      bar.querySelectorAll('.ge-quick-mask-tool').forEach(item => item.classList.toggle('active', item === button));
+      _clickToolButton(button.dataset.tool);
+    });
+  });
+  bar.querySelector('.ge-quick-mask-done')?.addEventListener('click', () => _setQuickMaskActive(false));
+  return bar;
+}
+
+function _setQuickMaskActive(active) {
+  const next = !!active;
+  if (next && !_selectionMaskAsDocument({ materializeLasso: true })) {
+    uiModule?.showToast('Make a selection before using Quick Mask');
+    return false;
+  }
+  state.quickMaskActive = next;
+  state.wandMaskVisible = true;
+  const bar = document.getElementById('ge-quick-mask-bar');
+  if (bar) bar.hidden = !next;
+  document.querySelectorAll('.ge-quick-mask-toggle').forEach(button => {
+    button.classList.toggle('active', next);
+    button.setAttribute('aria-pressed', next ? 'true' : 'false');
+  });
+  if (next) {
+    bar?.querySelectorAll('.ge-quick-mask-tool').forEach(item => item.classList.toggle('active', item.dataset.tool === 'brush'));
+    _clickToolButton('brush');
+  }
+  composite();
+  return true;
+}
+
+function _toggleQuickMask() {
+  return _setQuickMaskActive(!state.quickMaskActive);
+}
+
+function _nudgeSelectionBoundary(dx, dy) {
+  const mask = _selectionMaskAsDocument({ materializeLasso: true });
+  if (!mask) return false;
+  if (!_selectionNudgeHistorySaved) {
+    _saveState('Nudge selection boundary');
+    _selectionNudgeHistorySaved = true;
+  }
+  state.wandMask = _translateSelectionMask(mask, dx, dy, state.imgWidth, state.imgHeight);
+  state.wandMaskSpace = 'document';
+  state.wandLastSeed = null;
+  state.savedSelections = [];
+  state.lastSelection = null;
+  state.nextSavedSelectionId = 1;
+  clearTimeout(_selectionNudgeTimer);
+  _selectionNudgeTimer = setTimeout(() => { _selectionNudgeHistorySaved = false; }, 300);
+  composite();
+  return true;
 }
 
 function _syncZoomControls() {
-  const fitBtn = document.getElementById('ge-zoom-fit');
   const actualBtn = document.getElementById('ge-zoom-100');
   const fit = _getFitZoom();
-  const isFit = fit !== null && Math.abs(state.zoom - fit) < 0.001;
-  const isActual = !isFit && Math.abs(state.zoom - 1) < 0.001;
-  if (fitBtn) {
-    fitBtn.classList.toggle('active', isFit);
-    fitBtn.setAttribute('aria-pressed', isFit ? 'true' : 'false');
-  }
+  const isFit = fit !== null && Math.abs(state.zoom - fit) < 0.001 &&
+    (fit < 0.999 || state.zoomViewMode !== 'scale');
   if (actualBtn) {
-    actualBtn.classList.toggle('active', isActual);
+    const isActual = !isFit && Math.abs(state.zoom - 1) < 0.001;
+    actualBtn.classList.toggle('active', isFit || isActual);
     actualBtn.setAttribute('aria-pressed', isActual ? 'true' : 'false');
+    actualBtn.title = isActual ? 'Switch to fit view' : 'Switch to actual size';
+    actualBtn.setAttribute('aria-label', isActual ? 'Actual size; switch to fit view' : 'Fit view; switch to actual size');
+    const label = actualBtn.querySelector('.ge-stacked-label');
+    if (label) label.textContent = isActual ? 'SCALE' : 'FIT';
+    const glyph = actualBtn.querySelector('.ge-stacked-glyph');
+    if (glyph) glyph.innerHTML = isActual ? '1:1' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 4 20 10 20"/><polyline points="20 10 20 4 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
   }
+}
+
+let _inpaintPanelPosition = null;
+
+function _applyInpaintPanelPosition(panel, position) {
+  const left = Math.max(8, Math.min(window.innerWidth - panel.offsetWidth - 8, position.left));
+  const top = Math.max(8, Math.min(window.innerHeight - panel.offsetHeight - 8, position.top));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  return { left, top };
 }
 
 function _positionInpaintPanel(anchorBtn) {
   const panel = document.getElementById('ge-inpaint-section');
   if (!panel || window.innerWidth <= 820) return;
-  if (panel.dataset.userMoved === '1') {
+  if (_inpaintPanelPosition) {
     panel.classList.add('ge-inpaint-popover');
+    panel.dataset.userMoved = '1';
+    _inpaintPanelPosition = _applyInpaintPanelPosition(panel, _inpaintPanelPosition);
     return;
   }
   panel.classList.add('ge-inpaint-popover');
@@ -2815,6 +5494,7 @@ function _positionInpaintPanel(anchorBtn) {
     const r = anchorBtn?.getBoundingClientRect?.();
     if (!r) return;
     requestAnimationFrame(() => {
+      if (!panel.isConnected || _inpaintPanelPosition || panel.dataset.userMoved === '1') return;
       const panelW = panel.offsetWidth || 320;
       const panelH = panel.offsetHeight || 520;
       const left = Math.min(window.innerWidth - panelW - 12, Math.max(12, r.right + 10));
@@ -2825,6 +5505,7 @@ function _positionInpaintPanel(anchorBtn) {
     return;
   }
   requestAnimationFrame(() => {
+    if (!panel.isConnected || _inpaintPanelPosition || panel.dataset.userMoved === '1') return;
     const refRect = ref.getBoundingClientRect();
     const panelW = panel.offsetWidth || 320;
     const panelH = panel.offsetHeight || 520;
@@ -2856,13 +5537,17 @@ function _wireInpaintPopoverWindow() {
   const head = panel.querySelector('[data-inpaint-drag]');
   if (!head) return;
   head.addEventListener('pointerdown', (e) => {
-    if (window.innerWidth <= 820 || e.target.closest('button')) return;
+    if (window.innerWidth <= 820 || e.button !== 0 || e.target.closest('button')) return;
     e.preventDefault();
     e.stopPropagation();
     panel.classList.add('ge-inpaint-popover');
     const startX = e.clientX;
     const startY = e.clientY;
     const r0 = panel.getBoundingClientRect();
+    // Claim the position immediately so a pending auto-placement cannot
+    // overwrite this drag, and retain it when the editor rebuilds its DOM.
+    panel.dataset.userMoved = '1';
+    _inpaintPanelPosition = { left: r0.left, top: r0.top };
     head.setPointerCapture(e.pointerId);
     head.style.cursor = 'grabbing';
     const onMove = (ev) => {
@@ -2873,15 +5558,20 @@ function _wireInpaintPopoverWindow() {
       panel.dataset.userMoved = '1';
       panel.style.left = `${nx}px`;
       panel.style.top = `${ny}px`;
+      _inpaintPanelPosition = { left: nx, top: ny };
     };
     const onUp = () => {
       try { head.releasePointerCapture(e.pointerId); } catch {}
       head.style.cursor = '';
       head.removeEventListener('pointermove', onMove);
       head.removeEventListener('pointerup', onUp);
+      head.removeEventListener('pointercancel', onUp);
+      head.removeEventListener('lostpointercapture', onUp);
     };
     head.addEventListener('pointermove', onMove);
     head.addEventListener('pointerup', onUp);
+    head.addEventListener('pointercancel', onUp);
+    head.addEventListener('lostpointercapture', onUp);
   });
 }
 
@@ -2894,6 +5584,7 @@ function _buildEditor(container) {
 
   // Toolbar (left) — DOM construction lives in editor/build/toolbar.js;
   // the big tool-switch handler stays here so it can touch module state.
+  let canvasNavigation = null;
   const { toolbar, toolKeyMap: _toolKeyMap } = _buildToolbar({
     currentTool: state.tool,
     onClearSelection: (which) => {
@@ -2901,7 +5592,7 @@ function _buildEditor(container) {
         state.lassoPoints = [];
         state.lassoActive = false;
         composite();
-      } else if (which === 'wand') {
+      } else if (which === 'marquee' || which === 'wand') {
         _wandClear();
       } else if (which === 'sam') {
         _openSamPrompt();
@@ -2910,24 +5601,36 @@ function _buildEditor(container) {
       _syncToolClearIndicators();
     },
     onSelectTool: (toolId, _btn, toolbarEl) => {
+      if (state.tool !== toolId) {
+        _penTool.cancel();
+        // Finish a paint gesture before its tool identity changes.
+        if (state.drawing) _strokeTool.tryEnd();
+        _cropTool.cancel('tool-switch');
+        _marqueeTool.cancel('tool-switch');
+        if (state.gradientActive) _gradientTool.cancel();
+        _transformDragTool.tryEnd();
+      }
       // Leaving transform mode without confirm? Treat tool change as confirm.
       if (state.transformActive && toolId !== 'transform') _confirmTransform();
+      if (toolId !== 'text' && _textEditor?.isOpen()) _textEditor.close(true);
       // Re-clicking the active tool toggles the mobile control sheet —
       // lets the user swipe-down to dismiss, then tap the tool again to
       // bring it back. On desktop this is a no-op visually since the
       // controls live in the right panel.
       const reactivated = state.tool === toolId;
       state.tool = toolId;
+      void _offerRasterizeForTool(toolId);
+      state.hoveredHandle = null;
       const controls = document.getElementById('ge-controls') || document.querySelector('.ge-controls');
       if (controls) {
-        if (reactivated) controls.classList.toggle('dismissed');
+        if (reactivated && window.innerWidth <= 820) controls.classList.toggle('dismissed');
         else controls.classList.remove('dismissed');
       }
       // On mobile, picking a tool that's about to SHOW its controls
       // panel auto-minimises the layers sheet so the controls aren't
       // covered. Swiping the layers handle back up restores it.
       const isMobile = window.innerWidth <= 820;
-      const hasToolControls = ['brush', 'eraser', 'clone', 'inpaint', 'sam'].includes(toolId);
+      const hasToolControls = ['move', 'transform', 'brush', 'gradient', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'eyedropper', 'text', 'shape', 'marquee', 'lasso', 'pen', 'wand', 'inpaint', 'sam'].includes(toolId);
       const controlsVisible = controls && !controls.classList.contains('dismissed');
       if (isMobile && hasToolControls && controlsVisible) {
         const rp = document.querySelector('.ge-right-panel');
@@ -2942,11 +5645,24 @@ function _buildEditor(container) {
       // Show/hide brush controls. Brush, Eraser AND Clone use the
       // shared size+color row; Inpaint has its OWN size slider.
       const brushControls = document.getElementById('ge-brush-controls');
-      const needsBrush = ['brush', 'eraser', 'clone'].includes(toolId);
+      const needsBrush = ['brush', 'eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn'].includes(toolId);
       if (brushControls) brushControls.style.display = needsBrush ? '' : 'none';
+      const textSection = document.getElementById('ge-text-section');
+      const penSection = document.getElementById('ge-pen-section');
+      if (penSection) penSection.style.display = toolId === 'pen' ? '' : 'none';
+      if (textSection) textSection.style.display = toolId === 'text' ? '' : 'none';
+      if (toolId === 'text') _syncTextControls();
+      const shapeSection = document.getElementById('ge-shape-section');
+      if (shapeSection) shapeSection.style.display = toolId === 'shape' ? '' : 'none';
+      if (toolId === 'shape') _syncShapeControls();
+      const gradientSection = document.getElementById('ge-gradient-section');
+      if (gradientSection) gradientSection.style.display = toolId === 'gradient' ? '' : 'none';
+      const geometrySection = document.getElementById('ge-layer-geometry-section');
+      if (geometrySection) geometrySection.style.display = ['move', 'transform'].includes(toolId) ? '' : 'none';
+      if (['move', 'transform'].includes(toolId)) _layerGeometry.sync();
       // Eraser and Clone don't care about color — hide the color row.
       const colorRow = document.getElementById('ge-color-row');
-      if (colorRow) colorRow.style.display = (toolId === 'eraser' || toolId === 'clone') ? 'none' : '';
+      if (colorRow) colorRow.style.display = ['eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn'].includes(toolId) ? 'none' : '';
       const colorLabel = colorRow?.querySelector('label');
       if (colorLabel) colorLabel.textContent = 'Color';
       const sizeLabelEl = brushControls?.querySelector('.ge-size-slider')?.parentElement?.querySelector('label');
@@ -2955,11 +5671,37 @@ function _buildEditor(container) {
       }
       // Per-tool stroke-modifier sections (opacity / flow / softness).
       const brushSection = document.getElementById('ge-brush-section');
-      if (brushSection) brushSection.style.display = toolId === 'brush' ? '' : 'none';
+      if (brushSection) brushSection.style.display = ['brush', 'smudge', 'dodge', 'burn'].includes(toolId) ? '' : 'none';
+      const brushTitle = brushSection?.querySelector('.ge-section-title > span');
+      if (brushTitle) brushTitle.textContent = toolId === 'smudge' ? 'Smudge' : 'Brush';
+      const smudgeStrengthRow = document.getElementById('ge-smudge-strength-row');
+      if (smudgeStrengthRow) smudgeStrengthRow.style.display = toolId === 'smudge' ? '' : 'none';
       const cloneSection = document.getElementById('ge-clone-section');
-      if (cloneSection) cloneSection.style.display = toolId === 'clone' ? '' : 'none';
+      if (cloneSection) cloneSection.style.display = ['clone', 'heal'].includes(toolId) ? '' : 'none';
+      const cloneTitle = cloneSection?.querySelector('.ge-section-title > span');
+      if (cloneTitle) cloneTitle.textContent = toolId === 'heal' ? 'Healing' : 'Clone';
+      const cloneHelp = cloneSection?.querySelector('.ge-section-help');
+      if (cloneHelp) {
+        cloneHelp.setAttribute('aria-label', toolId === 'heal' ? 'How healing works' : 'How clone works');
+        cloneHelp.title = toolId === 'heal'
+          ? 'Paint over a small blemish to blend it with nearby pixels, or Alt-click (desktop) / double-tap (mobile) to sample a source first. Size / Opacity / Flow / Softness come from the Brush panel.'
+          : 'Alt-click (desktop) or double-tap (mobile) somewhere on the canvas to set the sample source. Then drag elsewhere to clone those pixels onto the active layer. The source point moves with your brush so the offset stays constant. Size / Opacity / Flow / Softness come from the Brush panel.';
+      }
+      const cloneHintDesktop = cloneSection?.querySelector('.ge-clone-hint-desktop');
+      const cloneHintMobile = cloneSection?.querySelector('.ge-clone-hint-mobile');
+      if (toolId === 'heal') {
+        if (cloneHintDesktop) cloneHintDesktop.textContent = 'Paint over, or Alt-click to sample';
+        if (cloneHintMobile) cloneHintMobile.textContent = 'Paint over, or double-tap to sample';
+      } else {
+        if (cloneHintDesktop) cloneHintDesktop.textContent = 'Alt-click';
+        if (cloneHintMobile) cloneHintMobile.textContent = 'Double-tap';
+      }
+      const eyedropperSection = document.getElementById('ge-eyedropper-section');
+      if (eyedropperSection) eyedropperSection.style.display = toolId === 'eyedropper' ? '' : 'none';
       const lassoSection = document.getElementById('ge-lasso-section');
       if (lassoSection) lassoSection.style.display = state.tool === 'lasso' ? '' : 'none';
+      const marqueeSection = document.getElementById('ge-marquee-section');
+      if (marqueeSection) marqueeSection.style.display = state.tool === 'marquee' ? '' : 'none';
       const wandSection = document.getElementById('ge-wand-section');
       if (wandSection) wandSection.style.display = state.tool === 'wand' ? '' : 'none';
       const samSection = document.getElementById('ge-sam-section');
@@ -3009,9 +5751,11 @@ function _buildEditor(container) {
         // the most-recent one instead of creating a new "Mask 2" /
         // "Mask 3" every time the user re-enters inpaint.
         const parent = _activeParentLayer();
-        if (parent && parent.masks && parent.masks.length) {
-          if (!parent.activeMaskId) {
-            parent.activeMaskId = parent.masks[parent.masks.length - 1].id;
+        const selectionMasks = (parent?.masks || []).filter(m => m.mode !== 'layer');
+        if (selectionMasks.length) {
+          const current = _getActiveMaskLayer();
+          if (!current || current.mode === 'layer') {
+            parent.activeMaskId = selectionMasks[selectionMasks.length - 1].id;
           }
           const m = _getActiveMaskLayer();
           if (m) { state.maskCanvas = m.canvas; state.maskCtx = m.ctx; }
@@ -3055,7 +5799,7 @@ function _buildEditor(container) {
       // Toggle cursor — hide native cursor for tools that draw via our
       // own circle overlay (brush/eraser/inpaint/lasso); for other tools
       // pick a cursor that matches the tool's affordance.
-      const useCircle = state.tool === 'brush' || state.tool === 'eraser' || state.tool === 'inpaint' || state.tool === 'lasso' || state.tool === 'clone';
+      const useCircle = ['brush', 'eraser', 'inpaint', 'lasso', 'clone', 'heal', 'smudge', 'dodge', 'burn'].includes(state.tool);
       if (state.mainCanvas) {
         // Custom SVG cursor for the Move tool — white fill with black
         // stroke so it reads on both light and dark canvases.
@@ -3064,11 +5808,13 @@ function _buildEditor(container) {
         )}`;
         let cursor = 'crosshair';
         if (state.tool === 'move') cursor = `url("${moveCursorSvg}") 12 12, move`;
+        else if (state.tool === 'hand') cursor = 'grab';
         else if (state.tool === 'transform') cursor = 'default';
-        else if (useCircle) cursor = 'crosshair';
+        else if (useCircle) cursor = 'none';
         state.mainCanvas.style.cursor = cursor;
       }
       if (state.cursorEl) state.cursorEl.style.display = useCircle ? '' : 'none';
+      canvasNavigation?.updateCursor();
       composite();
     },
   });
@@ -3100,6 +5846,31 @@ function _buildEditor(container) {
     state.mainCanvas.style.cursor = 'crosshair';
   }
   canvasArea.appendChild(state.mainCanvas);
+  _textEditor = createTextEditOverlay({
+    state,
+    onInput: (layer, value, input, frameWidth) => {
+      if (!layer?.text) return;
+      _rerenderTextLayer(layer, {
+        ...layer.text,
+        content: value,
+        frameWidth: frameWidth || layer.text.frameWidth,
+        autoWidth: false,
+      }, false);
+      _syncTextControls();
+    },
+    onCommit: layer => {
+      if (!layer) return;
+      _renderLayerPanel();
+      _syncTextControls();
+      _schedulePersist();
+    },
+    onCancel: () => undo(),
+  });
+
+  state.selectionOverlay = document.createElement('canvas');
+  state.selectionOverlay.className = 'ge-selection-overlay';
+  state.selectionOverlayCtx = state.selectionOverlay.getContext('2d');
+  canvasArea.appendChild(state.selectionOverlay);
 
   // Transform overlay — separate canvas positioned over the main canvas
   // with extra margin so the resize/rotation handles can render OUTSIDE
@@ -3110,23 +5881,46 @@ function _buildEditor(container) {
   state.transformOverlay.className = 'ge-transform-overlay';
   state.transformOverlayCtx = state.transformOverlay.getContext('2d');
   canvasArea.appendChild(state.transformOverlay);
+  canvasArea.appendChild(_buildQuickMaskBar());
   canvasArea.appendChild(_buildAiCommandBox());
+  _precisionGuides = createPrecisionGuides({
+    canvasArea,
+    composite,
+    saveState: _saveState,
+    schedulePersist: _schedulePersist,
+  });
   // Keep the transform handles glued to the photo while the canvas-area
   // scrolls (the overlay is anchored to the canvas's live rect, so a
   // re-draw on scroll re-reads its position).
   canvasArea.addEventListener('scroll', () => {
+    _syncSelectionOverlay();
     if (state.transformActive) _drawTransformHandles();
   }, { passive: true });
 
   // Canvas events (mouse + touch + pinch-zoom + pan) — full
   // implementation in editor/canvas-events.js.
-  wireCanvasEvents({
+  canvasNavigation = wireCanvasEvents({
     canvasArea,
     beginDraw: _beginDraw,
     continueDraw: _continueDraw,
     endDraw: _endDraw,
+    cancelDraw: () => {
+      if (state.tool === 'pen') { _penTool.cancel(); return; }
+      if (state.transformActive) _cancelTransform();
+      else if (state.drawing) _strokeTool.cancel();
+      else if (state.gradientActive) _gradientTool.cancel();
+      else if (state.marqueeActive || state.selectionMoving) _marqueeTool.cancel('pointercancel');
+      else if (state.lassoActive || state.lassoPoints.length) _cancelLasso();
+      else if (state.cropRect || state.cropping || state.cropMoving) _cancelCrop('pointercancel');
+      else if (_shapeDraft) _cancelShapeDraft();
+    },
     updateBrushCursor: (e) => _updateBrushCursor(e),
+    updateEyedropperPreview: (e, leaving = false) => {
+      if (leaving) return _eyedropperTool.clearPreview();
+      if (e) _eyedropperTool.preview(e);
+    },
     syncZoomControls: () => _syncZoomControls(),
+    onViewportChange: () => _precisionGuides?.redrawRulers(),
   });
 
   editorBody.appendChild(canvasArea);
@@ -3139,6 +5933,7 @@ function _buildEditor(container) {
   });
   editorBody.appendChild(rightPanel);
   container.appendChild(editorBody);
+  container.appendChild(_buildZoomFooter());
   _wireInpaintPopoverWindow();
 
   // Slider UX (expand-while-using, floating bubble, click-to-type) —
@@ -3166,6 +5961,139 @@ function _buildEditor(container) {
   // no native OS dialog. Each picker keeps its existing `input` event
   // wiring so callers just keep reading `e.target.value`.
   controls.querySelectorAll('.ge-color-picker').forEach(attachColorPicker);
+  const gradientStart = controls.querySelector('#ge-gradient-start');
+  const gradientEnd = controls.querySelector('#ge-gradient-end');
+  const gradientMid = controls.querySelector('#ge-gradient-mid');
+  const gradientMidEnabled = controls.querySelector('#ge-gradient-mid-enabled');
+  const gradientMidPosition = controls.querySelector('#ge-gradient-mid-position');
+  const gradientExtraStops = controls.querySelector('#ge-gradient-extra-stops');
+  const gradientEndAlpha = controls.querySelector('#ge-gradient-end-alpha');
+  const gradientOpacity = controls.querySelector('#ge-gradient-opacity');
+  const gradientType = controls.querySelector('#ge-gradient-type');
+  gradientType?.addEventListener('change', e => { state.gradientType = e.target.value; });
+  if (gradientType) gradientType.value = state.gradientType || 'linear-gradient';
+  gradientStart?.addEventListener('input', e => { state.gradientStart = e.target.value; });
+  gradientEnd?.addEventListener('input', e => { state.gradientEnd = e.target.value; });
+  gradientMid?.addEventListener('input', e => { state.gradientMid = e.target.value; });
+  gradientMidEnabled?.addEventListener('change', e => {
+    state.gradientMidEnabled = e.target.checked;
+    if (gradientMid) gradientMid.disabled = !state.gradientMidEnabled;
+    if (gradientMidPosition) gradientMidPosition.disabled = !state.gradientMidEnabled;
+  });
+  gradientMidPosition?.addEventListener('input', e => {
+    state.gradientMidPosition = Number(e.target.value);
+    const label = controls.querySelector('#ge-gradient-mid-position-label');
+    if (label) label.textContent = `${state.gradientMidPosition}%`;
+  });
+  if (gradientMid) gradientMid.value = state.gradientMid;
+  if (gradientMidEnabled) gradientMidEnabled.checked = state.gradientMidEnabled;
+  if (gradientMidPosition) gradientMidPosition.value = String(state.gradientMidPosition);
+  if (gradientMid) gradientMid.disabled = !state.gradientMidEnabled;
+  if (gradientMidPosition) gradientMidPosition.disabled = !state.gradientMidEnabled;
+  const gradientMidPositionLabel = controls.querySelector('#ge-gradient-mid-position-label');
+  if (gradientMidPositionLabel) gradientMidPositionLabel.textContent = `${state.gradientMidPosition}%`;
+  const readGradientExtraStops = () => [...(gradientExtraStops?.querySelectorAll('[data-gradient-extra-stop]') || [])].map(row => ({
+    color: row.querySelector('[data-gradient-stop-color]')?.value || '#808080',
+    position: Number(row.querySelector('[data-gradient-stop-position]')?.value) || 50,
+  }));
+  const renderGradientExtraStops = () => {
+    if (!gradientExtraStops) return;
+    const stops = state.gradientStops?.length ? state.gradientStops : readGradientExtraStops();
+    gradientExtraStops.innerHTML = stops.map((stop, index) => `
+      <div class="ge-gradient-extra-stop" data-gradient-extra-stop>
+        <label class="ge-text-field"><span>Stop ${index + 1}</span><input type="color" class="ge-color-picker" data-gradient-stop-color value="${String(stop.color).replace(/"/g, '&quot;')}" /></label>
+        <label class="ge-text-field"><span>Position</span><input type="number" min="1" max="99" step="1" data-gradient-stop-position value="${Math.max(1, Math.min(99, stop.position))}" /></label>
+        <button type="button" class="ge-btn ge-btn-sm ge-gradient-stop-remove" data-gradient-stop-remove title="Remove gradient stop" aria-label="Remove gradient stop">×</button>
+      </div>`).join('');
+    gradientExtraStops.querySelectorAll('.ge-color-picker').forEach(attachColorPicker);
+  };
+  if (gradientExtraStops && state.gradientStops?.length) renderGradientExtraStops();
+  controls.querySelector('#ge-gradient-add-stop')?.addEventListener('click', () => {
+    const stops = [
+      { position: 0 },
+      ...(gradientMidEnabled?.checked ? [{ position: Number(gradientMidPosition?.value) || 50 }] : []),
+      ...readGradientExtraStops(),
+      { position: 100 },
+    ].sort((a, b) => a.position - b.position);
+    if (stops.length >= 12) return;
+    let largestGap = 0;
+    let position = 50;
+    for (let index = 1; index < stops.length; index += 1) {
+      const gap = stops[index].position - stops[index - 1].position;
+      if (gap > largestGap) {
+        largestGap = gap;
+        position = Math.round(stops[index - 1].position + gap / 2);
+      }
+    }
+    _saveState('Add gradient stop');
+    state.gradientStops = [...readGradientExtraStops(), { position, color: '#808080' }];
+    renderGradientExtraStops();
+  });
+  gradientExtraStops?.addEventListener('click', event => {
+    const remove = event.target.closest('[data-gradient-stop-remove]');
+    if (!remove) return;
+    const row = remove.closest('[data-gradient-extra-stop]');
+    const rows = [...gradientExtraStops.querySelectorAll('[data-gradient-extra-stop]')];
+    const index = rows.indexOf(row);
+    if (index < 0) return;
+    const next = readGradientExtraStops();
+    _saveState('Remove gradient stop');
+    next.splice(index, 1);
+    state.gradientStops = next;
+    renderGradientExtraStops();
+  });
+  gradientExtraStops?.addEventListener('focusin', event => {
+    if (event.target.matches('[data-gradient-stop-color], [data-gradient-stop-position]')) event.target.dataset.geHistorySaved = 'false';
+  });
+  gradientExtraStops?.addEventListener('input', event => {
+    if (!event.target.matches('[data-gradient-stop-color], [data-gradient-stop-position]')) return;
+    if (event.target.dataset.geHistorySaved !== 'true') {
+      _saveState('Edit gradient stop');
+      event.target.dataset.geHistorySaved = 'true';
+    }
+    state.gradientStops = readGradientExtraStops();
+  });
+  gradientEndAlpha?.addEventListener('input', e => {
+    state.gradientEndAlpha = Number(e.target.value);
+    const label = controls.querySelector('#ge-gradient-end-alpha-label');
+    if (label) label.textContent = `${state.gradientEndAlpha}%`;
+  });
+  gradientOpacity?.addEventListener('input', e => {
+    state.gradientOpacity = Number(e.target.value);
+    const label = controls.querySelector('#ge-gradient-opacity-label');
+    if (label) label.textContent = `${state.gradientOpacity}%`;
+  });
+  controls.querySelector('#ge-clone-source-clear')?.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    state.cloneSourceX = null;
+    state.cloneSourceY = null;
+    state.cloneSourceLayerId = null;
+    state.cloneSourceSnapshot = null;
+    state.cloneSourceOffsetX = 0;
+    state.cloneSourceOffsetY = 0;
+    _syncCloneSourceUi();
+    uiModule?.showToast?.('Sampled source cleared');
+  });
+  const cloneSampleMode = controls.querySelector('#ge-clone-sample-mode');
+  if (cloneSampleMode) {
+    cloneSampleMode.value = state.cloneSampleMode || 'active-layer';
+    cloneSampleMode.addEventListener('change', event => {
+      state.cloneSampleMode = event.target.value === 'composite' ? 'composite' : 'active-layer';
+      state.cloneSourceX = null;
+      state.cloneSourceY = null;
+      state.cloneSourceLayerId = null;
+      state.cloneSourceSnapshot = null;
+      state.cloneSourceOffsetX = 0;
+      state.cloneSourceOffsetY = 0;
+      _syncCloneSourceUi();
+      uiModule?.showToast?.('Sample source cleared');
+    });
+  }
+  _syncCloneSourceUi();
+  _wireTextControls(controls);
+  _wireShapeControls(controls);
+  _layerGeometry.wire(controls);
   controls.querySelectorAll('.ge-color-picker').forEach(el => {
     // Set the initial swatch background so it reflects the starting value.
     el.value = el.value;
@@ -3173,6 +6101,8 @@ function _buildEditor(container) {
   // Hide brush controls initially (default tool is Move)
   const initBrushCtrl = document.getElementById('ge-brush-controls');
   if (initBrushCtrl) initBrushCtrl.style.display = 'none';
+  const initGradientCtrl = document.getElementById('ge-gradient-section');
+  if (initGradientCtrl) initGradientCtrl.style.display = 'none';
   // Brush-size slider is exponential — slider position 0..1000 maps to
   // brush size 1..800 via Math.pow(800, pos/1000). This gives fine
   // control at small sizes (where precision matters most) and bigger
@@ -3189,6 +6119,12 @@ function _buildEditor(container) {
     if (inpaintLabel) inpaintLabel.textContent = state.brushSize + 'px';
     if (globalInput && source !== globalInput) globalInput.value = String(pos);
     if (inpaintInput && source !== inpaintInput) inpaintInput.value = String(pos);
+    const cursorX = Number(state.cursorEl?.dataset.clientX);
+    const cursorY = Number(state.cursorEl?.dataset.clientY);
+    if (state.cursorEl && state.cursorEl.style.display !== 'none'
+      && Number.isFinite(cursorX) && Number.isFinite(cursorY)) {
+      _updateBrushCursor({ clientX: cursorX, clientY: cursorY });
+    }
   }
   function _wireBrushSlider(el) {
     if (!el) return;
@@ -3206,6 +6142,7 @@ function _buildEditor(container) {
   wireTopbar({
     undo, redo,
     toggleHistoryPanel: _toggleHistoryPanel,
+    toggleCompare: _toggleCompare,
     fitZoom: () => _fitZoom(),
     applyZoom: () => _applyZoom(),
     exportToGallery, downloadPNG,
@@ -3217,6 +6154,13 @@ function _buildEditor(container) {
     composite,
     registerDocClickAway: _registerDocClickAway,
     uiModule,
+  });
+  wireViewMenu({
+    closeOtherTopbarMenus: _closeOtherTopbarMenus,
+    registerDocClickAway: _registerDocClickAway,
+    precisionGuides: _precisionGuides,
+    composite,
+    schedulePersist: _schedulePersist,
   });
   // Fill — visible only when a selection or active mask exists. Pours
   // the current colour into whichever target is live:
@@ -3230,38 +6174,45 @@ function _buildEditor(container) {
   //     the mask (uses mask alpha as a stencil).
   //   - lasso closed → fills the polygon area on the active layer.
   //   - wand selection → fills the wand mask area on the active layer.
-  function _doFillSelection() {
-    const layer = activeLayer();
-    if (!layer || layer.locked) return;
-    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
+  async function _doFillSelection() {
+    const selection = _selectionMaskAsDocument({ materializeLasso: true });
+    const layer = await _preparePixelTarget('filling pixels');
+    if (!layer) return;
+    const off = layer.offset;
     const w = layer.canvas.width;
     const h = layer.canvas.height;
-    const mask = _getActiveMaskLayer();
-    const hasLasso = state.lassoPoints.length >= 3 && !state.lassoActive;
     const stencil = document.createElement('canvas');
     stencil.width = w; stencil.height = h;
     const sctx = stencil.getContext('2d');
-    if (mask) {
-      sctx.drawImage(mask.canvas, -off.x, -off.y);
-    } else if (hasLasso) {
-      const feather = parseInt(document.getElementById('ge-lasso-feather')?.value || '0');
-      const grow = parseInt(document.getElementById('ge-lasso-grow')?.value || '0');
-      sctx.drawImage(_buildLassoMask(w, h, off.x, off.y, feather, grow), 0, 0);
-    } else if (state.wandMask) {
-      sctx.drawImage(state.wandMask, 0, 0);
+    if (selection) {
+      sctx.drawImage(_selectionMaskForLayer(
+        selection,
+        'document',
+        off,
+        w,
+        h,
+      ), 0, 0);
     } else {
-      return;
+      sctx.fillStyle = '#fff';
+      sctx.fillRect(0, 0, w, h);
     }
-    _saveState('Fill selection');
+    _saveState(selection ? 'Fill selection' : 'Fill layer');
     sctx.globalCompositeOperation = 'source-in';
     sctx.fillStyle = state.color;
     sctx.fillRect(0, 0, w, h);
     sctx.globalCompositeOperation = 'source-over';
+    layer.ctx.save();
+    if (!layer.mask && _isLayerTransparencyLocked(state, layer.parent)) layer.ctx.globalCompositeOperation = 'source-atop';
     layer.ctx.drawImage(stencil, 0, 0);
+    layer.ctx.restore();
     composite();
     _renderLayerPanel();
     if (uiModule) uiModule.showToast('Filled');
+    _schedulePersist();
   }
+  document.getElementById('ge-layer-fill')?.addEventListener('click', () => _doFillSelection());
+  document.getElementById('ge-pen-commit')?.addEventListener('click', () => _penTool.commit());
+  document.getElementById('ge-pen-cancel')?.addEventListener('click', () => _penTool.cancel());
 
   // AI model selectors (Gen, Inpaint, per-tool) — full
   // implementation in editor/ai-models.js.
@@ -3321,7 +6272,12 @@ function _buildEditor(container) {
       if (uiModule) uiModule.showToast('Failed to save: ' + msg, 6000);
     } finally {
       endBusy();
-      if (savedOk) _flashSaveButtonOk();
+      if (savedOk) {
+        _setDraftStatus('Saved', 'saved');
+        _flashSaveButtonOk();
+      } else {
+        _setDraftStatus('Save failed', 'error');
+      }
     }
   });
 
@@ -3333,20 +6289,33 @@ function _buildEditor(container) {
   // helpers — full implementation in editor/wire-topbar-menus.js. The
   // returned `_resizeCustomPrompt` is consumed by the keyboard
   // shortcuts module (Ctrl+Shift+T).
-  const { resizeCustomPrompt: _resizeCustomPrompt } = wireTopbarMenus({
+  const { resizeCustomPrompt: _resizeCustomPrompt, renderSelectionMenu } = wireTopbarMenus({
     closeOtherTopbarMenus: _closeOtherTopbarMenus,
     registerDocClickAway: _registerDocClickAway,
     saveState: _saveState,
     composite,
     fitZoom: () => _fitZoom(),
+    renderLayerPanel: () => _renderLayerPanel(),
     promptCanvasSize: (opts) => _promptCanvasSize(opts),
     doFillSelection: () => _doFillSelection(),
     rotateAllLayers: (deg) => _rotateAllLayers(deg),
     flipAllLayers: (axis) => _flipAllLayers(axis),
     applyGaussianBlur: () => _applyGaussianBlur(),
     applyZoomBlur: () => _applyZoomBlur(),
+    addRetainedGaussianBlur: (presetName) => _addRetainedGaussianBlur(presetName),
+    addRetainedEffect: (type, presetName) => _addRetainedEffect(type, presetName),
+    selectAll: _selectAllSelection,
+    deselectSelection: () => _deselectSelection(),
+    reselectSelection: _reselectSelection,
+    invertSelection: _invertSelection,
+    transformSelection: _startSelectionTransform,
+    refineSelection: _refineSelection,
+    saveNamedSelection: _saveNamedSelection,
+    loadNamedSelection: _loadNamedSelection,
+    deleteNamedSelection: _deleteNamedSelection,
     uiModule,
   });
+  _renderSavedSelectionsMenu = renderSelectionMenu;
 
   // Inpaint side-panel controls (Feather/Strength previews, post-gen
   // edge tuner, mask vis/invert/clear, paint-erase toggle, mask tint
@@ -3363,6 +6332,7 @@ function _buildEditor(container) {
   // AI inpaint (Generate / Remove / Outpaint) — full implementation
   // in editor/ai-inpaint.js.
   wireInpaintButtons({
+    renderLayer: (layer) => _renderLayerOutput(layer),
     buildMergedMaskCanvas: () => _buildMergedMaskCanvas(),
     dilateMask: _dilateMask,
     applyInpaintFeather: _applyInpaintFeather,
@@ -3371,6 +6341,7 @@ function _buildEditor(container) {
     saveState: _saveState,
     createLayer,
     composite,
+    flatten,
     renderLayerPanel: () => _renderLayerPanel(),
     spinnerModule,
     uiModule,
@@ -3378,7 +6349,22 @@ function _buildEditor(container) {
 
   // Per-tool Opacity / Flow / Softness sliders (Eraser / Brush /
   // Clone) — full implementation in editor/stroke-tool-sliders.js.
-  wireStrokeToolSliders();
+  wireStrokeToolSliders({
+    onPresetApplied: () => {
+      _brushSizeSync(null);
+      const values = {
+        'ge-brush-opacity': state.brushOpacity,
+        'ge-brush-flow': state.brushFlow,
+        'ge-brush-softness': state.brushSoftness,
+      };
+      Object.entries(values).forEach(([id, value]) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.value = String(value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    },
+  });
 
   // Sharpen + Bg Remove + edge cleanup — full implementation in
   // editor/ai-rembg.js. Returns the selection-hint-mask builder so
@@ -3418,6 +6404,7 @@ function _buildEditor(container) {
     renderLayerPanel: () => _renderLayerPanel(),
     spinnerModule,
     uiModule,
+    openAdjustmentLayer: (type, anchor) => _addAdjustmentLayer(type, anchor),
   });
   // (Merge dropdown removed — Merge Down / Merge All / Flatten Copy
   // are now three inline icon buttons in the layers header next to
@@ -3439,6 +6426,7 @@ function _buildEditor(container) {
     buildSelectionHintMask: _buildSelectionHintMask,
     applyImageTool: _applyImageTool,
     uiModule,
+    toggleQuickMask: _toggleQuickMask,
   });
   document.getElementById('ge-sam-find')?.addEventListener('click', () => _runSamTextSelection());
   document.getElementById('ge-sam-query')?.addEventListener('keydown', (e) => {
@@ -3470,7 +6458,8 @@ function _buildEditor(container) {
     createLayer,
     renderLayerPanel: () => _renderLayerPanel(),
     composite,
-    renderLayer: (layer) => _renderLayerWithAdjLayers(layer),
+    renderLayer: (layer) => _renderLayerOutput(layer),
+    flatten,
     uiModule,
   });
 
@@ -3480,6 +6469,23 @@ function _buildEditor(container) {
   // accidentally close the gallery modal.
   document.addEventListener('keydown', (e) => {
     if (!state.editorOpen) return;
+    if (e.target?.closest?.('#styled-confirm-overlay')) return;
+    // Inline layer renaming owns Escape so it can restore the original name
+    // without the editor-wide guard swallowing the event first.
+    const renameInput = e.key === 'Escape' && e.target?.closest?.('.ge-layer-name-input');
+    if (renameInput) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      renameInput.dataset.cancelRename = 'true';
+      renameInput.blur();
+      return;
+    }
+    const sizePrompt = e.key === 'Escape' && e.target?.closest?.('#ge-canvas-size-overlay');
+    if (sizePrompt) {
+      sizePrompt._cancelCanvasSize?.();
+      return;
+    }
     // Esc on the shortcuts overlay closes it; takes priority over the
     // other modal cancels so the cheatsheet feels responsive AND so the
     // gallery's own Esc handler doesn't fire and close gallery instead.
@@ -3501,6 +6507,20 @@ function _buildEditor(container) {
       _applyCrop();
       return;
     }
+    if (e.key === 'Escape' && state.transformActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _cancelTransform();
+      return;
+    }
+    if (e.key === 'Escape' && (state.cropRect || state.cropping || state.cropMoving)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      _cancelCrop('escape');
+      return;
+    }
     if (e.key !== 'Escape') return;
     // Escape is disabled inside Gallery Edit. It must not close the
     // editor, close Gallery, or cancel active editor state.
@@ -3512,12 +6532,15 @@ function _buildEditor(container) {
   // Keyboard shortcuts — full implementation in
   // editor/keyboard-shortcuts.js.
   wireKeyboardShortcuts({
+    fillSelection: _doFillSelection,
+    copyPixelsToClipboard: _copyPixelsToClipboard,
     toolbar, toolKeyMap: _toolKeyMap,
     composite, saveState: _saveState, undo, redo,
     toggleShortcuts: _toggleShortcuts,
     confirmTransform: _confirmTransform,
     cancelTransform: _cancelTransform,
     startTransform: _startTransform,
+    nudgeTransform: _nudgeTransform,
     resizeCustomPrompt: _resizeCustomPrompt,
     addEmptyLayer: _addEmptyLayer,
     brushSizeSync: _brushSizeSync,
@@ -3530,7 +6553,15 @@ function _buildEditor(container) {
     buildLassoMask: _buildLassoMask,
     drawLassoOverlay: _drawLassoOverlay,
     activeLayer,
+    deleteSelectedLayers: () => _layerPanelRenderer.deleteSelectedLayers?.(),
+    duplicateActiveLayer: () => _layerPanelRenderer.duplicateActiveLayer?.(),
     uiModule,
+    setTemporaryPan: (active) => canvasNavigation?.setTemporaryPan(active),
+    nudgeActiveLayer: (dx, dy) => _layerGeometry.nudge(dx, dy),
+    endLayerNudge: () => _layerGeometry.endNudge(),
+    toggleQuickMask: _toggleQuickMask,
+    nudgeSelection: _nudgeSelectionBoundary,
+    deselectSelection: () => _deselectSelection(),
   });
   container.setAttribute('tabindex', '0');
 
@@ -3542,34 +6573,103 @@ function _buildEditor(container) {
     createLayer,
     renderLayerPanel: () => _renderLayerPanel(),
     composite,
-    handleImportedImage: (img) => _handleImportedImage(img),
+    handleImportedImage: (img, sourceName) => _handleImportedImage(img, sourceName),
     uiModule,
   });
 }
 
 // ── Layer panel rendering ──
 
+function _replacePlacedLayerFromFile(layer) {
+  if (layer?.kind !== 'placed') return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const source = document.createElement('canvas');
+        source.width = image.naturalWidth || image.width;
+        source.height = image.naturalHeight || image.height;
+        source.getContext('2d').drawImage(image, 0, 0);
+        _saveState(`Replace source for "${layer.name}"`);
+        const rendered = _replacePlacedSource(layer, source, file.name || 'Placed image');
+        if (!rendered) throw new Error('The selected layer is no longer a placed image.');
+        state.layerOffsets.set(layer.id, rendered.offset);
+        composite();
+        _renderLayerPanel();
+        _schedulePersist();
+        uiModule?.showToast('Placed image replaced');
+      } catch (error) {
+        uiModule?.showToast(error?.message || 'Could not replace placed image');
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      uiModule?.showToast('Could not read replacement image');
+    };
+    image.src = url;
+  }, { once: true });
+  input.click();
+}
+
+function _rasterizePlacedLayerCommand(layer) {
+  if (layer?.kind !== 'placed') return;
+  _saveState(`Rasterize "${layer.name}"`);
+  if (!_rasterizePlacedLayer(layer)) return;
+  composite();
+  _renderLayerPanel();
+  _schedulePersist();
+  uiModule?.showToast('Placed layer rasterized');
+}
+
 // Layer-panel renderer — implementation in editor/layer-panel.js.
 // Wrap to the legacy name so the dozens of `_renderLayerPanel()` call
 // sites scattered across the file keep working unchanged.
 const _layerPanelRenderer = createLayerPanelRenderer({
+  openLayerStyles: (layer, anchor) => openLayerStyleMenu(anchor, type => {
+    state.activeGroupId = null;
+    state.activeLayerId = layer.id;
+    void _addRetainedEffect(type);
+  }),
   composite,
   saveState: _saveState,
   showLayerThumb: (row, layer) => _showLayerThumb(row, layer),
   hideLayerThumb: () => _hideLayerThumb(),
   loadLayerAlphaAsSelection: (layer) => _loadLayerAlphaAsSelection(layer),
+  loadMaskAsSelection: (layer, mask) => _loadMaskAsSelection(layer, mask),
+  getDocumentSelection: () => _selectionMaskAsDocument({ materializeLasso: true }),
   openFxPopup: (layer, anchor) => _openFxPopup(layer, anchor),
   editAdjLayer: (layer, adj, anchor) => _editAdjLayer(layer, adj, anchor),
+  editRetainedEffect: (layer, effect, anchor) => _editRetainedEffect(layer, effect, anchor),
+  addEffectMask: (layer, effect) => _addEffectMask(layer, effect),
+  rasterizeEffects: (layer) => _rasterizeEffects(layer),
   createLayer,
-  renderLayer: (layer) => _renderLayerWithAdjLayers(layer),
+  renderLayer: (layer) => _renderLayerOutput(layer),
+  replacePlacedLayer: (layer) => _replacePlacedLayerFromFile(layer),
+  rasterizePlacedLayer: (layer) => _rasterizePlacedLayerCommand(layer),
   lassoToMask: () => _lassoToMask(),
   wandToMask: () => _wandToMask(),
   getActiveMaskLayer: () => _getActiveMaskLayer(),
+  onSelectLayer: () => { _syncTextControls(); _syncShapeControls(); _layerGeometry.sync(); },
   syncFxPanelToActiveLayerIfPresent: () => _syncFxPanelToActiveLayerIfPresent(),
   dragSortModule,
   uiModule,
 });
-function _renderLayerPanel() { return _layerPanelRenderer.render(); }
+function _renderLayerPanel() {
+  const result = _layerPanelRenderer.render();
+  _layerPanelRenderer.refreshPreviews();
+  _syncTextControls();
+  _syncShapeControls();
+  _layerGeometry.sync();
+  return result;
+}
 
 function _revealLayerPanel() {
   requestAnimationFrame(() => {
@@ -3588,13 +6688,7 @@ function flatten() {
   out.width = state.imgWidth;
   out.height = state.imgHeight;
   const ctx = out.getContext('2d');
-  for (const layer of state.layers) {
-    if (!layer.visible) continue;
-    ctx.globalAlpha = layer.opacity;
-    const off = state.layerOffsets.get(layer.id) || { x: 0, y: 0 };
-    ctx.drawImage(_renderLayerWithAdjLayers(layer), off.x, off.y);
-  }
-  ctx.globalAlpha = 1;
+  _drawDocumentLayers(ctx);
   return out;
 }
 
@@ -3668,25 +6762,35 @@ function _saveButtonBusy(label) {
   };
 }
 
+function _defaultExportName() {
+  return String(state.draftName || 'edited-image')
+    .replace(/×/g, 'x')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-z0-9 _-]+/gi, '')
+    .replace(/\s+/g, '-')
+    .trim() || 'edited-image';
+}
+
 export async function exportToGallery() {
-  const endBusy = _saveButtonBusy('Saving copy…');
   let blob = null;
   let savedOk = false;
   const t0 = performance.now();
+  const flat = flatten();
+  const settings = await _openExportDialog({
+    sourceCanvas: flat,
+    defaultName: _defaultExportName(),
+    title: 'Save Copy',
+    submitLabel: 'Save Copy',
+    attachColorPicker,
+    returnFocus: document.getElementById('ge-save-menu-btn'),
+  });
+  if (!settings) return;
+  const endBusy = _saveButtonBusy('Saving copy…');
   try {
-    // toBlob() avoids the 2x peak memory of dataURL → fetch → blob. JPEG
-    // re-encode for camera photos keeps uploads small enough to make it
-    // through remote tunnels.
-    const flat = flatten();
-    const ext = (state.originalExt || 'png').toLowerCase();
-    const isJpeg = ext === 'jpg' || ext === 'jpeg';
-    const mime = isJpeg ? 'image/jpeg' : 'image/png';
-    const quality = isJpeg ? 0.92 : undefined;
-    blob = await new Promise((resolve, reject) => {
-      flat.toBlob(b => b ? resolve(b) : reject(new Error('Canvas encode failed')), mime, quality);
-    });
+    const encoded = await _encodeExportCanvas(flat, settings);
+    blob = encoded.blob;
     const formData = new FormData();
-    formData.append('file', blob, `edited.${isJpeg ? 'jpg' : 'png'}`);
+    formData.append('file', blob, `${settings.filename}.${encoded.extension}`);
 
     const saveRes = await fetch(`${API_BASE}/api/gallery/upload`, {
       method: 'POST',
@@ -3849,12 +6953,28 @@ function _openCookbookForImg2img() {
   if (uiModule) uiModule.showToast('Open Cookbook from the sidebar to serve an img2img model', 6000);
 }
 
-export function downloadPNG() {
-  const dataUrl = exportPNG();
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = 'edited-image.png';
-  a.click();
+export async function downloadPNG() {
+  const source = flatten();
+  const settings = await _openExportDialog({
+    sourceCanvas: source,
+    defaultName: _defaultExportName(),
+    attachColorPicker,
+    returnFocus: document.getElementById('ge-save-menu-btn'),
+  });
+  if (!settings) return;
+  try {
+    const { blob, extension } = await _encodeExportCanvas(source, settings);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${settings.filename}.${extension}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (uiModule) uiModule.showToast(`Exported ${(blob.size / 1024 / 1024).toFixed(1)} MB`);
+  } catch (error) {
+    console.error('[image-export] error:', error);
+    if (uiModule) uiModule.showToast('Export failed: ' + (error?.message || 'unknown error'), 5000);
+  }
 }
 
 // Save the entire layered editor state as a JSON project file. Each
@@ -3865,26 +6985,14 @@ function _saveProject() {
     if (uiModule) uiModule.showToast('Nothing to save');
     return;
   }
-  const project = {
-    v: 1,
+  const project = _serializeEditorDocument(state, {
     type: 'odysseus-gallery-editor-project',
-    imgWidth: state.imgWidth,
-    imgHeight: state.imgHeight,
-    activeLayerId: state.activeLayerId,
-    nextLayerId: state.nextLayerId,
-    layers: state.layers.map(l => ({
-      id: l.id,
-      name: l.name,
-      visible: l.visible,
-      opacity: l.opacity,
-      locked: l.locked,
-      canvasW: l.canvas.width,
-      canvasH: l.canvas.height,
-      offset: { ...(state.layerOffsets.get(l.id) || { x: 0, y: 0 }) },
-      dataUrl: l.canvas.toDataURL('image/png'),
-    })),
-  };
+  });
   const json = JSON.stringify(project);
+  if (json.length > _EDITOR_PROJECT_MAX_BYTES) {
+    if (uiModule) uiModule.showToast('Project exceeds the 256 MB export safety limit. Flatten or remove layers first.', 8000);
+    return;
+  }
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3903,19 +7011,35 @@ function _loadProjectPrompt() {
   inp.addEventListener('change', async () => {
     const file = inp.files && inp.files[0];
     if (!file) return;
+    let previousSnapshot = null;
+    let previousView = null;
     try {
+      if (file.size > _EDITOR_PROJECT_MAX_BYTES) {
+        throw new Error('Project file exceeds the 256 MB safety limit.');
+      }
       const text = await file.text();
       const proj = JSON.parse(text);
       if (proj.type !== 'odysseus-gallery-editor-project') {
         if (uiModule) uiModule.showToast('Not a project file', 5000);
         return;
       }
-      await _restoreDraft(proj);
+      previousSnapshot = _snapshotState();
+      previousView = _normalizeEditorView(state);
+      const report = await _restoreDraft(proj);
+      previousSnapshot._label = 'Before load project';
+      previousSnapshot._ts = Date.now();
+      state.undoStack = [previousSnapshot];
+      state.redoStack = [];
       composite();
       _renderLayerPanel();
       _fitZoom();
       if (uiModule) uiModule.showToast('Project loaded', 3000);
+      _showDocumentRestoreReport(report);
     } catch (e) {
+      if (previousSnapshot) {
+        Object.assign(state, previousView);
+        _restoreState(previousSnapshot);
+      }
       if (uiModule) uiModule.showToast('Load failed: ' + (e.message || e), 6000);
     }
   });
@@ -3930,7 +7054,7 @@ function _loadProjectPrompt() {
 //   title, okLabel, initialW, initialH.
 function _promptCanvasSize(opts) {
   opts = opts || {};
-  const title    = opts.title    || 'New canvas';
+  const title    = opts.title    || 'New project';
   const okLabel  = opts.okLabel  || 'Create';
   const initialW = opts.initialW || 1024;
   const initialH = opts.initialH || 1024;
@@ -3950,10 +7074,36 @@ function _promptCanvasSize(opts) {
     const okBtn = document.getElementById('ge-canvas-prompt-ok');
     const cancelBtn = document.getElementById('ge-canvas-prompt-cancel');
     const titleEl = document.getElementById('ge-canvas-prompt-title');
+    const presetButtons = overlay.querySelectorAll('[data-canvas-preset]');
+    const presetGrid = overlay.querySelector('.ge-canvas-preset-grid');
+    const customLabel = overlay.querySelector('.ge-canvas-prompt-custom-label');
+    const anchorButtons = overlay.querySelectorAll('[data-canvas-anchor]');
+    const anchorOptions = overlay.querySelector('.ge-canvas-anchor-options');
+    const resizeOptions = overlay.querySelector('.ge-canvas-resize-options');
+    const lockInput = document.getElementById('ge-canvas-prompt-lock');
+    const interpolationField = overlay.querySelector('.ge-canvas-interpolation-field');
+    const interpolationInput = document.getElementById('ge-canvas-prompt-interpolation');
+    const unitsField = overlay.querySelector('.ge-canvas-units-field');
+    const unitsInput = document.getElementById('ge-canvas-prompt-units');
     if (titleEl) titleEl.textContent = title;
     if (okBtn) okBtn.textContent = okLabel;
-    wInput.value = String(initialW);
-    hInput.value = String(initialH);
+    const showUnits = !!opts.showUnits;
+    const initialUnit = showUnits && opts.units === 'percent' ? 'percent' : 'px';
+    if (unitsField) unitsField.hidden = !showUnits;
+    if (unitsInput) unitsInput.value = initialUnit;
+    if (presetGrid) presetGrid.hidden = opts.showPresets === false;
+    if (customLabel) customLabel.hidden = opts.showPresets === false;
+    wInput.value = initialUnit === 'percent' ? '100' : String(initialW);
+    hInput.value = initialUnit === 'percent' ? '100' : String(initialH);
+    if (anchorOptions) anchorOptions.hidden = !opts.showAnchor;
+    if (resizeOptions) resizeOptions.hidden = !opts.showInterpolation && !opts.keepProportions;
+    if (interpolationField) interpolationField.hidden = !opts.showInterpolation;
+    if (lockInput) {
+      lockInput.checked = !!opts.keepProportions;
+      lockInput.hidden = !opts.keepProportions;
+    }
+    presetButtons.forEach(button => button.classList.remove('active'));
+    anchorButtons.forEach((button, index) => button.classList.toggle('active', index === 0));
     setTimeout(() => { wInput.focus(); wInput.select(); }, 0);
     function cleanup(result) {
       overlay.style.display = 'none';
@@ -3961,14 +7111,71 @@ function _promptCanvasSize(opts) {
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onBackdrop);
       document.removeEventListener('keydown', onKey);
+      overlay.removeEventListener('keydown', onKey, true);
+      if (overlay._cancelCanvasSize === onCancel) delete overlay._cancelCanvasSize;
+      presetButtons.forEach(button => button.removeEventListener('click', onPreset));
+      anchorButtons.forEach(button => button.removeEventListener('click', onAnchor));
+      wInput.removeEventListener('input', onWidthInput);
+      hInput.removeEventListener('input', onHeightInput);
+      unitsInput?.removeEventListener('change', onUnitsChange);
       resolve(result);
     }
     function onOk() {
-      const dims = _parseCanvasSizePrompt(wInput.value, hInput.value, initialW, initialH);
+      const unit = unitsInput?.value === 'percent' ? 'percent' : 'px';
+      const dims = unit === 'percent'
+        ? _parsePercentSizePrompt(wInput.value, hInput.value, initialW, initialH)
+        : _parseCanvasSizePrompt(wInput.value, hInput.value, initialW, initialH);
       if (!dims) { uiModule.showToast('Invalid size'); return; }
-      cleanup(dims);
+      const anchor = overlay.querySelector('[data-canvas-anchor].active')?.dataset.canvasAnchor || '0,0';
+      const [anchorX, anchorY] = anchor.split(',').map(Number);
+      cleanup({
+        ...dims,
+        anchorX,
+        anchorY,
+        interpolation: interpolationInput?.value || 'high',
+        keepProportions: !!lockInput?.checked,
+        units: unit,
+      });
     }
     function onCancel() { cleanup(null); }
+    overlay._cancelCanvasSize = onCancel;
+    function onPreset(e) {
+      const match = String(e.currentTarget.dataset.canvasPreset || '').match(/^(\d+)x(\d+)$/);
+      if (!match) return;
+      wInput.value = match[1];
+      hInput.value = match[2];
+      presetButtons.forEach(button => button.classList.toggle('active', button === e.currentTarget));
+    }
+    function onAnchor(e) {
+      anchorButtons.forEach(button => button.classList.toggle('active', button === e.currentTarget));
+    }
+    const ratio = Number(initialW) / Math.max(1, Number(initialH));
+    function onWidthInput() {
+      if (!lockInput?.checked || !Number.isFinite(ratio) || ratio <= 0) return;
+      const width = Number(wInput.value);
+      if (Number.isFinite(width) && width > 0) hInput.value = unitsInput?.value === 'percent'
+        ? String(Math.max(1, Math.min(1000, Math.round(width))))
+        : String(Math.max(1, Math.round(width / ratio)));
+    }
+    function onHeightInput() {
+      if (!lockInput?.checked || !Number.isFinite(ratio) || ratio <= 0) return;
+      const height = Number(hInput.value);
+      if (Number.isFinite(height) && height > 0) wInput.value = unitsInput?.value === 'percent'
+        ? String(Math.max(1, Math.min(1000, Math.round(height))))
+        : String(Math.max(1, Math.round(height * ratio)));
+    }
+    function onUnitsChange() {
+      const percent = unitsInput?.value === 'percent';
+      const width = Number(wInput.value);
+      const height = Number(hInput.value);
+      if (percent) {
+        wInput.value = String(Math.max(1, Math.min(100, Math.round(width / initialW * 100)))) || '100';
+        hInput.value = String(Math.max(1, Math.min(100, Math.round(height / initialH * 100)))) || '100';
+      } else {
+        wInput.value = String(Math.max(1, Math.round(initialW * width / 100)));
+        hInput.value = String(Math.max(1, Math.round(initialH * height / 100)));
+      }
+    }
     function onBackdrop(e) { if (e.target === overlay) cleanup(null); }
     function onKey(e) {
       if (e.key === 'Enter') { e.preventDefault(); onOk(); }
@@ -3976,8 +7183,16 @@ function _promptCanvasSize(opts) {
     }
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
+    presetButtons.forEach(button => button.addEventListener('click', onPreset));
+    anchorButtons.forEach(button => button.addEventListener('click', onAnchor));
+    wInput.addEventListener('input', onWidthInput);
+    hInput.addEventListener('input', onHeightInput);
+    unitsInput?.addEventListener('change', onUnitsChange);
     overlay.addEventListener('click', onBackdrop);
     document.addEventListener('keydown', onKey);
+    // Capture Escape on the dialog itself so global modal/shortcut handlers
+    // cannot hide the prompt without resolving its pending Promise.
+    overlay.addEventListener('keydown', onKey, true);
   });
 }
 
@@ -4004,6 +7219,20 @@ function _parseCanvasSizePrompt(widthText, heightText, initialW = 1024, initialH
   const h = parseWhole(heightText);
   if (!w || !h) return null;
   return { w, h };
+}
+
+function _parsePercentSizePrompt(widthText, heightText, initialW, initialH) {
+  const parsePercent = (value) => {
+    const n = Number(String(value || '').trim());
+    return Number.isFinite(n) && n >= 1 && n <= 1000 ? n : null;
+  };
+  const width = parsePercent(widthText);
+  const height = parsePercent(heightText);
+  if (width == null || height == null) return null;
+  return {
+    w: Math.max(1, Math.min(8192, Math.round(initialW * width / 100))),
+    h: Math.max(1, Math.min(8192, Math.round(initialH * height / 100))),
+  };
 }
 
 // imageUrl=null + presetSize={w,h} → skips the size prompt and creates a
@@ -4066,6 +7295,7 @@ function _unmountEditorLoading() {
 }
 
 export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) {
+  _activeFilterPrompt?.cancel();
   _setEditTabLabel(displayName || (presetSize ? 'New canvas' : 'Untitled'));
   state.imageId = imageId || null;
   // Track original file extension so save-over-original can re-encode in the
@@ -4076,20 +7306,63 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
     state.originalExt = m ? m[1].toLowerCase() : 'png';
   } catch { state.originalExt = 'png'; }
   state.draftId = draftId || null;
+  state.imageUrl = imageUrl || null;
   state.draftName = displayName || (presetSize ? `New ${presetSize.w}×${presetSize.h}` : 'Untitled');
+  state.editorSessionToken += 1;
   state.editorOpen = true;
+  _writeActiveEditorSession();
   state.layers = [];
+  state.selectedLayerIds = [];
+  state.selectionAnchorId = null;
+  state.layerGroups = [];
+  state.activeGroupId = null;
   state.undoStack = [];
   state.redoStack = [];
   state.layerOffsets.clear();
   state.nextLayerId = 1;
   state.tool = 'move';
+  state.gradientActive = false;
+  state.gradientStops = [];
+  state.compareBaselineCanvas = null;
+  state.compareActive = false;
+  state.transformActive = false;
+  state.transformTarget = null;
+  state.transformLayer = null;
+  state.transformSelectionCanvas = null;
+  state.transformLayers = [];
+  state.transformItems = [];
+  state.transformSelectionBounds = null;
+  state.transformBounds = null;
+  state.transformCenter = null;
+  state.panX = 0;
+  state.panY = 0;
+  state.spacePanActive = false;
+  state.navigationPanning = false;
+  state.guides = { vertical: [], horizontal: [] };
   state.cropRect = null;
   state.lassoPoints = [];
   state.lassoActive = false;
+  state.marqueeActive = false;
+  state.marqueeStart = null;
+  state.marqueeRect = null;
+  state.wandMask = null;
+  state.wandLayerId = null;
+  state.wandMaskSpace = 'layer';
+  state.selectionSource = null;
+  state.wandLastSeed = null;
+  state.quickMaskActive = false;
+  state.savedSelections = [];
+  state.lastSelection = null;
+  state.selectionMoving = false;
+  state.selectionMoveStart = null;
+  state.selectionMoveOrigin = null;
+  _selectionBoundaryCache = null;
+  _stopSelectionAnimation();
   window.__galleryEditLive = true;
   if (state.persistTimer) { clearTimeout(state.persistTimer); state.persistTimer = null; }
   state.persistDirty = false;
+  state.persistErrorMessage = null;
+  state.persistInFlight = null;
 
   state.container = document.getElementById('gallery-editor-container');
   if (!state.container) {
@@ -4137,24 +7410,27 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
         }
         state.draftId = d.id;
         state.draftName = d.name || 'Untitled';
+        _writeActiveEditorSession();
         _setEditTabLabel(state.draftName);
         state.imageId = d.source_image_id || null;
-        return _restoreDraft(d).then(() => {
+        return _restoreDraft(d).then(report => {
           if (!state.editorOpen) return;
           composite();
           _renderLayerPanel();
           _fitZoom();
+          _setDraftStatus('Saved', 'saved');
           const sizeLabel = document.getElementById('ge-canvas-size');
           if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
           _unmountEditorLoading();
           if (uiModule) uiModule.showToast('Resumed draft');
+          _showDocumentRestoreReport(report);
         });
       })
       .catch(err => {
         if (!state.editorOpen) return;
         _unmountEditorLoading();
         console.warn('[ge] draft load failed', err);
-        if (uiModule) uiModule.showToast('Failed to load draft');
+        if (uiModule) uiModule.showToast(`Failed to load draft: ${err?.message || 'invalid project data'}`, 7000);
         closeEditor();
       });
   }
@@ -4175,6 +7451,9 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
       state.layers.push(bgLayer);
       state.layers.push(editLayer);
       state.activeLayerId = editLayer.id;
+      // Refresh recovery needs the chosen canvas dimensions even before the
+      // first debounced server draft has been created.
+      _writeActiveEditorSession();
       composite();
       _renderLayerPanel();
       _fitZoom();
@@ -4186,7 +7465,15 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
       return;
     }
     return _promptCanvasSize().then(size => {
-      if (!size) { closeEditor(); return; }
+      if (!size) {
+        // The editor shell is mounted before the prompt opens, so the normal
+        // user-facing close guard would mistake this cancellation for an
+        // attempt to close an active edit. Treat the cancelled setup as an
+        // internal teardown instead.
+        closeEditor({ force: true });
+        window.dispatchEvent(new CustomEvent('gallery-editor-setup-cancelled'));
+        return;
+      }
       _finishBlank(size.w, size.h);
     });
   }
@@ -4200,9 +7487,10 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
     if (!_draft) return null;
     state.draftId = _draft.id;
     state.draftName = _draft.name || displayName || 'Untitled';
+    _writeActiveEditorSession();
     const innerLabel = state.editorLoadingEl?.querySelector('.ge-loading-text');
     if (innerLabel) innerLabel.textContent = 'Resuming draft…';
-    return _restoreDraft(_draft).then(() => {
+    return _restoreDraft(_draft).then(report => {
       if (!state.editorOpen) return null;
       // If the draft was broken/empty (0 layers reconstructed), fall
       // through to loading the source image as a normal edit. Without
@@ -4215,10 +7503,12 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
       composite();
       _renderLayerPanel();
       _fitZoom();
+      _setDraftStatus('Saved', 'saved');
       const sizeLabel = document.getElementById('ge-canvas-size');
       if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
       _unmountEditorLoading();
       if (uiModule) uiModule.showToast('Resumed previous edit');
+      _showDocumentRestoreReport(report);
       return 'restored';
     });
   }).then(restored => {
@@ -4289,12 +7579,16 @@ function _setEditTabLabel(name) {
   tab.classList.add('has-edit');
 }
 
-export function closeEditor() {
+export function closeEditor(options = {}) {
+  _penTool.cancel();
+  const force = options === true || options.force === true;
   const editorMounted = _galleryEditMounted();
-  if ((state.editorOpen || editorMounted) && !window.__galleryAllowCloseEditor) {
+  if ((state.editorOpen || editorMounted) && !force && !window.__galleryAllowCloseEditor) {
     try { uiModule.showToast('Close the edit tab first'); } catch {}
     return false;
   }
+  _activeFilterPrompt?.cancel();
+  if (_textEditor?.isOpen()) _textEditor.close(true);
   // Flush any pending debounced persist + fire one final save so closing
   // the editor mid-stroke doesn't lose work. The call is fire-and-forget;
   // the server commit lands shortly after the modal hides.
@@ -4302,9 +7596,19 @@ export function closeEditor() {
   if (state.layers.length) {
     try { _persistDraft(); } catch {}
   }
+  // Invalidate asynchronous encoding/network callbacks before tearing down
+  // the document, so a late save cannot mutate the next editor session.
+  state.editorSessionToken += 1;
   _setEditTabLabel(null);
+  _clearActiveEditorSession();
   _unmountEditorLoading();
   state.editorOpen = false;
+  _renderSavedSelectionsMenu = null;
+  _stopSelectionAnimation();
+  if (_selectionNudgeTimer) clearTimeout(_selectionNudgeTimer);
+  _selectionNudgeTimer = null;
+  _selectionNudgeHistorySaved = false;
+  _precisionGuides = null;
   // Drop every document-level click-away handler registered by this
   // openEditor invocation. Without this, dropdown closers accumulated
   // across reopens (six handlers × N opens).
@@ -4357,14 +7661,43 @@ export function closeEditor() {
     state.container.innerHTML = '';
   }
   state.layers = [];
+  state.selectedLayerIds = [];
+  state.selectionAnchorId = null;
+  state.layerGroups = [];
+  state.activeGroupId = null;
   state.undoStack = [];
   state.redoStack = [];
   state.layerOffsets.clear();
   state.mainCanvas = null;
   state.mainCtx = null;
+  state.selectionOverlay = null;
+  state.selectionOverlayCtx = null;
+  state.quickMaskActive = false;
+  state.documentCompositeCanvas = null;
+  state.documentRenderReady = false;
+  _renderGeneration.invalidate();
+  _asyncCompositeQueued = false;
+  _asyncCompositeInFlight = null;
+  state.groupCompositeCanvas = null;
+  state.groupCompositeCanvases = new Map();
+  state.clippingCompositeCanvas = null;
+  state.transformActive = false;
+  state.transformTarget = null;
+  state.transformLayer = null;
+  state.transformSelectionCanvas = null;
+  state.transformLayers = [];
+  state.transformItems = [];
+  state.transformSelectionBounds = null;
+  state.transformBounds = null;
+  state.transformCenter = null;
   state.maskCanvas = null;
   state.maskCtx = null;
   state.imageId = null;
+  state.imageUrl = null;
+  state.gradientActive = false;
+  state.gradientStops = [];
+  state.compareBaselineCanvas = null;
+  state.compareActive = false;
   state.container = null;
   window.__galleryEditLive = false;
   return true;

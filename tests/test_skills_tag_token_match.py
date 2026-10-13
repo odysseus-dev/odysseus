@@ -34,3 +34,18 @@ def test_tag_whole_token_still_boosts(tmp_path):
     skills = [_skill("git-helper", "version control stuff", ["git"])]
     out = sm.get_relevant_skills("help me with git rebase", skills=skills)
     assert any(s["name"] == "git-helper" for s in out)
+
+
+def test_relevance_keeps_inconclusive_but_rejects_failed_audits(tmp_path):
+    sm = SkillsManager(str(tmp_path))
+    inconclusive = _skill("git-inconclusive", "git workflow", ["git"])
+    inconclusive["audit_verdict"] = "inconclusive"
+    failed = _skill("git-failed", "git workflow", ["git"])
+    failed["audit_verdict"] = "fail"
+
+    out = sm.get_relevant_skills(
+        "help me with git rebase",
+        skills=[inconclusive, failed],
+    )
+
+    assert [skill["name"] for skill in out] == ["git-inconclusive"]

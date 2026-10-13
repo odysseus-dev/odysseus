@@ -10,6 +10,7 @@ of the other tests in this suite.
 """
 import re
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 _REPO = Path(__file__).resolve().parent.parent
 _INDEX = (_REPO / "static" / "index.html").read_text(encoding="utf-8")
@@ -19,7 +20,7 @@ _UI = (_REPO / "static" / "js" / "ui.js").read_text(encoding="utf-8")
 def test_static_modals_expose_dialog_role_and_name():
     # Each static tool window must announce itself as a named dialog. These are
     # dockable/tiling windows, so they are role="dialog" WITHOUT aria-modal.
-    for name in ("Brain", "Theme", "Prompt", "Rename session", "Cookbook", "Settings"):
+    for name in ("Memory", "Theme", "Prompt", "Rename session", "Cookbook", "Settings"):
         assert f'role="dialog" aria-label="{name}"' in _INDEX, f"missing dialog role/name for {name!r}"
 
 
@@ -46,6 +47,17 @@ def test_styled_confirm_and_prompt_are_modal_dialogs():
     assert 'id="styled-prompt-msg"' in _UI
 
 
+def test_styled_confirm_cancel_or_close_label_is_shifted_without_moving_button():
+    css = app_css()
+
+    assert "cancelLabel.textContent = cancelText;" in _UI
+    assert "cancelBtn.appendChild(cancelLabel);" in _UI
+    rule_start = css.index("#styled-confirm-cancel .styled-confirm-cancel-label")
+    rule = css[rule_start:rule_start + 150]
+    assert "position:relative;" in rule
+    assert "top:2px;" in rule
+
+
 def test_styled_dialogs_manage_focus():
     # A dialog is only really accessible if it restores focus to the trigger on
     # close and traps Tab while open. Both styledConfirm and styledPrompt should
@@ -63,4 +75,3 @@ def test_toast_has_dismiss_button():
     assert "aria-label" in ui
     assert "Dismiss" in ui
     assert ui.count("toast-close-btn") >= 2
-

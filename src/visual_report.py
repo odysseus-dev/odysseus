@@ -15,6 +15,7 @@ and wraps them in an editorial-quality HTML document with:
 import html
 import json
 import logging
+import math
 import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 # target/rel that _md_to_html puts on external links.
 _REPORT_ALLOWED_TAGS = set(nh3.ALLOWED_TAGS) | {"details", "summary"}
 _REPORT_ALLOWED_ATTRS = {k: set(v) for k, v in nh3.ALLOWED_ATTRIBUTES.items()}
+_REPORT_ALLOWED_ATTRS.setdefault("details", set()).add("markdown")
 for _h in ("h1", "h2", "h3", "h4", "h5", "h6"):
     _REPORT_ALLOWED_ATTRS.setdefault(_h, set()).add("id")
 for _t in ("span", "code", "pre", "div", "table", "td", "th"):
@@ -77,7 +79,7 @@ def _md_to_html(md_text: str) -> str:
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
-        extensions=["extra", "codehilite", "toc", "tables", "sane_lists"],
+        extensions=["extra", "codehilite", "toc", "tables", "sane_lists", "md_in_html"],
         extension_configs={
             "codehilite": {"css_class": "code", "guess_lang": False},
             "toc": {"marker": "", "toc_depth": "2-3"},
@@ -195,7 +197,50 @@ _IMG_OVERLAY_BTNS = (
 )
 
 
-def _inject_images(report_html: str, images: List[str]) -> Tuple[str, int]:
+def _wrap_report_sections(report_html: str) -> str:
+    """Group each top-level h2 and its content into an editorial section."""
+    soup = BeautifulSoup(report_html, "html.parser")
+    for details in soup.find_all("details"):
+        summary = details.find("summary", recursive=False)
+        if summary and summary.get_text(" ", strip=True).lower() == "research trace":
+            details["class"] = list(details.get("class") or []) + ["research-trace"]
+    current_section = None
+    for child in list(soup.contents):
+        if getattr(child, "name", None) == "h2":
+            current_section = soup.new_tag("section")
+            current_section["class"] = ["report-section"]
+            child.insert_before(current_section)
+        if current_section is not None:
+            current_section.append(child.extract())
+    return str(soup)
+
+
+def _extract_research_trace(report_html: str) -> Tuple[str, str]:
+    """Remove the trace from the article body so it can sit beside Sources."""
+    soup = BeautifulSoup(report_html, "html.parser")
+    trace = soup.select_one("details.research-trace")
+    if trace is None:
+        return report_html, ""
+
+    previous = trace.find_previous_sibling()
+    if previous is not None and getattr(previous, "name", None) == "hr":
+        previous.decompose()
+    trace_html = str(trace.extract())
+
+    for section in soup.select("section.report-section"):
+        meaningful = section.get_text(" ", strip=True) or section.find(
+            ["img", "table", "pre", "blockquote"]
+        )
+        if not meaningful:
+            section.decompose()
+    return str(soup), trace_html
+
+
+def _inject_images(
+    report_html: str,
+    images: List[str],
+    image_labels: Optional[Dict[str, Tuple[str, str]]] = None,
+) -> Tuple[str, int]:
     """Insert OG images between h2 sections as figures.
 
     Returns (html, consumed) where ``consumed`` is how many of ``images``
@@ -219,16 +264,63 @@ def _inject_images(report_html: str, images: List[str]) -> Tuple[str, int]:
         img_url = images[img_idx]
         img_idx += 1
         url_esc = html.escape(img_url)
+        title, domain = (image_labels or {}).get(img_url, ("", ""))
+        caption = ""
+        if title or domain:
+            caption = (
+                '<figcaption>'
+                f'<span>{html.escape(title or "Source image")}</span>'
+                f'<span>{html.escape(domain)}</span>'
+                '</figcaption>'
+            )
         figure = (
             f'\n<figure class="section-image" data-img-url="{url_esc}">'
-            f'<img src="{url_esc}" alt="" loading="lazy" '
+            f'<img src="{url_esc}" alt="{html.escape(title)}" loading="lazy" '
             f'onerror="this.parentElement.style.display=\'none\'">'
+            f'{caption}'
             f'{_IMG_OVERLAY_BTNS}'
             f'</figure>\n'
         )
         report_html = report_html[:pos] + figure + report_html[pos:]
 
     return report_html, img_idx
+
+
+def _source_evidence_summary(sources: List[Dict]) -> Dict[str, object]:
+    """Summarize source diversity and quality for the visible report chrome."""
+    domains = set()
+    primary_count = 0
+    browser_count = 0
+    scores = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        try:
+            hostname = (urlparse(str(source.get("url") or "")).hostname or "").lower()
+            if hostname.startswith("www."):
+                hostname = hostname[4:]
+            if hostname:
+                domains.add(hostname)
+        except Exception:
+            pass
+        if str(source.get("source_kind") or "").lower() == "primary":
+            primary_count += 1
+        if str(source.get("retrieval") or "").lower() == "browser":
+            browser_count += 1
+        try:
+            score = int(source.get("source_score"))
+            if 0 <= score <= 100:
+                scores.append(score)
+        except (TypeError, ValueError):
+            pass
+    return {
+        "sources": len(sources),
+        "domains": len(domains),
+        "primary": primary_count,
+        "browser": browser_count,
+        "average_score": round(sum(scores) / len(scores)) if scores else None,
+        "rated": len(scores),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +403,21 @@ body {{
   position: relative;
   min-height: 100vh;
 }}
+.reading-progress {{
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 200;
+  height: 3px;
+  background: transparent;
+  pointer-events: none;
+}}
+.reading-progress-bar {{
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 45%, transparent);
+  transition: width 0.08s linear;
+}}
 
 /* ── Aurora background ─────────────────────────────────
    Slowly-drifting layered blobs in the accent palette. Sits behind
@@ -349,16 +456,17 @@ body::after {{
   body::before {{ animation: none; }}
 }}
 
-/* ── Toolbar (top-right) ──────────────────────────── */
+/* ── Toolbar (top-right, anchored to the report) ─── */
 .toolbar {{
-  position: fixed;
+  position: absolute;
   top: 1rem;
-  right: 1rem;
+  right: 0;
   z-index: 100;
   display: flex;
+  align-items: flex-start;
   gap: 0.4rem;
-  opacity: 0.7;
-  transition: opacity 0.2s;
+  opacity: 0.82;
+  transition: opacity 0.2s ease;
 }}
 .toolbar:hover {{ opacity: 1; }}
 .toolbar button {{
@@ -396,6 +504,45 @@ body::after {{
 }}
 .toolbar .toast.show {{ opacity: 1; }}
 .dropdown {{ position: relative; }}
+.export-bookmark {{
+  width: 38px;
+  transition: width 0.2s ease;
+}}
+.export-bookmark:hover,
+.export-bookmark:focus-within,
+.export-bookmark.is-open {{ width: 108px; }}
+.toolbar .export-bookmark > #btn-export {{
+  width: 100%;
+  min-width: 38px;
+  height: 34px;
+  padding: 6px 10px;
+  overflow: hidden;
+  justify-content: flex-start;
+  white-space: nowrap;
+  border-radius: 7px;
+  box-shadow: var(--shadow-sm);
+}}
+.export-bookmark-label,
+.export-bookmark-caret {{
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 0.14s ease, transform 0.2s ease;
+}}
+.export-bookmark:hover .export-bookmark-label,
+.export-bookmark:hover .export-bookmark-caret,
+.export-bookmark:focus-within .export-bookmark-label,
+.export-bookmark:focus-within .export-bookmark-caret,
+.export-bookmark.is-open .export-bookmark-label,
+.export-bookmark.is-open .export-bookmark-caret {{
+  opacity: 1;
+  transform: translateX(0);
+}}
+.export-bookmark-caret {{
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+}}
+.export-bookmark .dropdown-menu {{ right: 8px; }}
 .dropdown-menu {{
   display: none;
   position: absolute;
@@ -422,6 +569,10 @@ body::after {{
   cursor: pointer;
 }}
 .dropdown-menu button:hover {{ background: var(--bg-surface-alt); }}
+.dropdown-menu button.menu-secondary {{
+  border-top: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}}
 
 /* ── Hero ──────────────────────────────────────────── */
 .hero {{
@@ -477,7 +628,7 @@ body::after {{
 
 /* ── Hero image ───────────────────────────────────── */
 .hero-image {{
-  max-width: var(--max-w);
+  max-width: 920px;
   margin: -2rem auto 0;
   position: relative;
   z-index: 1;
@@ -485,26 +636,51 @@ body::after {{
 }}
 .hero-image img {{
   width: 100%;
-  max-height: 360px;
+  aspect-ratio: 2 / 1;
   object-fit: cover;
-  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
   box-shadow: var(--shadow-md);
   display: block;
 }}
+.hero-image figcaption {{
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.25rem 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}}
+.hero-image figcaption span:last-child {{ white-space: nowrap; }}
 
 /* ── Section images ───────────────────────────────── */
 .section-image {{
-  margin: 1.5rem 0;
+  width: calc(100% + 4rem);
+  margin: 2rem 0 2rem -2rem;
   position: relative;
 }}
 .section-image img {{
   width: 100%;
-  max-height: 300px;
+  aspect-ratio: 16 / 8;
   object-fit: cover;
-  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   box-shadow: var(--shadow-sm);
   display: block;
 }}
+.section-image figcaption {{
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0.25rem 0;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}}
+.section-image figcaption span:first-child {{ overflow-wrap: anywhere; }}
+.section-image figcaption span:last-child {{ white-space: nowrap; }}
 
 /* ── Per-image hide button ────────────────────────────
    A small X that appears on hover (or always on touch) so users can
@@ -580,6 +756,65 @@ body::after {{
 .stat {{ display: flex; align-items: center; gap: 0.35rem; }}
 .stat-value {{ font-weight: 600; color: var(--text); }}
 
+/* ── Evidence profile ──────────────────────────────── */
+.evidence-profile {{
+  max-width: calc(var(--max-w) + 260px);
+  margin: 0 auto;
+  padding: 1.15rem 2rem;
+  display: grid;
+  grid-template-columns: minmax(150px, 1.25fr) repeat(4, minmax(90px, 1fr));
+  border-bottom: 1px solid var(--border);
+}}
+.evidence-intro {{ padding-right: 1.5rem; }}
+.evidence-read-time {{
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--text);
+  font-size: 0.82rem;
+}}
+.evidence-read-time svg {{
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex: 0 0 auto;
+}}
+.evidence-read-time strong {{ font-size: 1rem; font-weight: 650; }}
+.evidence-kicker {{
+  display: block;
+  color: var(--accent);
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}}
+.evidence-caption {{
+  display: block;
+  margin-top: 0.18rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}}
+.evidence-metric {{
+  padding: 0 1rem;
+  border-left: 1px solid var(--border);
+}}
+.evidence-value {{
+  display: block;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.25;
+}}
+.evidence-label {{
+  display: block;
+  margin-top: 0.16rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.25;
+}}
+.mobile-section-nav {{ display: none; }}
+
 /* ── Layout ────────────────────────────────────────── */
 .layout {{
   display: grid;
@@ -600,6 +835,14 @@ body::after {{
   font-size: 0.78rem;
 }}
 .toc-sidebar nav {{ position: relative; }}
+.toc-title {{
+  margin: 0 0 0.75rem 0.85rem;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}}
 .toc-sidebar nav a {{
   position: relative;
   display: block;
@@ -650,7 +893,37 @@ body::after {{
 .toc-sidebar nav a.depth-3:hover {{ padding-left: 1.45rem; }}
 
 /* ── Content ───────────────────────────────────────── */
-.content {{ max-width: var(--max-w); padding: 3rem 2.5rem 4rem; }}
+.content {{
+  max-width: var(--max-w);
+  min-width: 0;
+  width: 100%;
+  padding: 3rem 2.5rem 4rem;
+  counter-reset: report-section;
+}}
+.report-section {{
+  position: relative;
+  margin-bottom: 4.25rem;
+  counter-increment: report-section;
+}}
+.report-section:last-of-type {{ margin-bottom: 1rem; }}
+body[class^="standard-report-"] .report-section {{
+  padding-left: 1.2rem;
+  border-left: 1px solid var(--border);
+}}
+body[class^="standard-report-"] .report-section > h2::before {{
+  content: counter(report-section, decimal-leading-zero);
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: 0.12em;
+}}
+body[class^="standard-report-"] .report-section:nth-of-type(even) {{
+  border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}}
 
 /* Display headings — Fraunces optical-size driven so they get more
    contrast and personality at the larger end. */
@@ -667,7 +940,8 @@ body::after {{
   line-height: 1.2;
   color: var(--text);
 }}
-.content h2:first-child {{ margin-top: 0; }}
+.content > h2:first-child,
+.report-section:first-of-type > h2:first-child {{ margin-top: 0; }}
 .content h3 {{
   font-family: var(--font-display);
   font-size: 1.22rem;
@@ -691,7 +965,8 @@ body::after {{
 /* Drop cap on the very first paragraph of the body — old-school editorial
    touch that anchors the reader. */
 .content > p:first-of-type::first-letter,
-.content > h2:first-child + p::first-letter {{
+.content > h2:first-child + p::first-letter,
+.report-section:first-of-type > h2:first-child + p::first-letter {{
   font-family: var(--font-display);
   font-weight: 700;
   font-variation-settings: 'opsz' 144;
@@ -752,6 +1027,107 @@ body::after {{
 .content tr:last-child td {{ border-bottom: none; }}
 .content tr:hover td {{ background: var(--accent-bg); }}
 
+/* Generated visual explanations */
+.visual-html-story {{
+  width: calc(100% + 3rem);
+  margin: 1.5rem 0 2.5rem -1.5rem;
+  border-block: 1px solid var(--border-strong);
+  background: var(--bg);
+}}
+.visual-html-story iframe {{
+  display: block;
+  width: 100%;
+  min-height: 680px;
+  border: 0;
+  background: var(--bg);
+  color-scheme: dark light;
+}}
+.visual-diagram {{
+  width: calc(100% + 2rem);
+  margin: 2rem 0 2.25rem -1rem;
+  padding: 1.1rem 1rem 1rem;
+  border-block: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+}}
+.visual-diagram figcaption {{
+  margin: 0 0 0.8rem;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.35;
+}}
+.visual-diagram-canvas {{
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: var(--border-strong) transparent;
+}}
+.visual-diagram svg {{
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 660px;
+  color: var(--accent);
+}}
+.visual-diagram-layers svg,
+.visual-diagram-timeline svg {{ min-width: 540px; }}
+.visual-edge {{
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 66%, var(--text-muted));
+  stroke-width: 2.25;
+}}
+.visual-edge-label {{
+  fill: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: var(--bg-surface);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}}
+.visual-diagram marker path {{ fill: var(--accent); }}
+.visual-node rect {{
+  fill: var(--bg-surface);
+  stroke: color-mix(in srgb, var(--accent) 52%, var(--border-strong));
+  stroke-width: 1.5;
+}}
+.visual-node-1 rect {{ fill: color-mix(in srgb, var(--accent) 7%, var(--bg-surface)); }}
+.visual-node-2 rect {{ fill: color-mix(in srgb, var(--gold) 7%, var(--bg-surface)); }}
+.visual-node-3 rect {{ fill: color-mix(in srgb, var(--text-muted) 7%, var(--bg-surface)); }}
+.visual-node-index {{ fill: var(--accent); }}
+.visual-node-index-text {{
+  fill: #fff;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 750;
+}}
+.visual-node-label {{
+  fill: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 700;
+}}
+.visual-node-detail {{
+  fill: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 11.5px;
+}}
+@media (max-width: 600px) {{
+  .visual-html-story {{
+    width: calc(100% + 1.5rem);
+    margin-left: -0.75rem;
+  }}
+  .visual-html-story iframe {{ min-height: 760px; }}
+  .visual-diagram {{
+    width: calc(100% + 1.5rem);
+    margin-left: -0.75rem;
+    padding-inline: 0.75rem;
+  }}
+  .visual-diagram figcaption {{ font-size: 0.92rem; }}
+}}
+
 /* ── Sources (collapsible list) ───────────────────── */
 .sources-panel {{ margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }}
 .sources-panel details {{ margin: 0; }}
@@ -767,21 +1143,190 @@ body::after {{
   transition: transform 0.2s;
 }}
 .sources-panel details[open] summary::before {{ transform: rotate(90deg); }}
-.sources-list {{ padding: 0.5rem 0 0 0.25rem; }}
+.sources-list {{ padding: 0.5rem 0 0; }}
 .sources-list a {{
-  display: flex; align-items: baseline; gap: 0.5rem;
-  padding: 0.35rem 0; font-size: 0.85rem;
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.65rem;
+  padding: 0.7rem 0.25rem;
+  font-size: 0.85rem;
   color: var(--text); text-decoration: none;
-  transition: color 0.15s;
+  border-bottom: 1px solid var(--border);
+  transition: color 0.15s, background 0.15s;
 }}
-.sources-list a:hover {{ color: var(--accent); }}
+.sources-list a:last-child {{ border-bottom: 0; }}
+.sources-list a:hover {{ color: var(--accent); background: var(--accent-bg); }}
 .sources-list .snum {{
   color: var(--text-muted); font-size: 0.75rem;
-  min-width: 1.5rem; text-align: right; flex-shrink: 0;
+  text-align: right;
 }}
-.sources-list .sdomain {{
-  color: var(--text-muted); font-size: 0.75rem;
-  margin-left: auto; flex-shrink: 0;
+.source-copy {{ min-width: 0; line-height: 1.35; }}
+.source-title {{ display: block; overflow-wrap: anywhere; }}
+.source-meta {{
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.28rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}}
+.source-badge {{
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-surface-alt);
+  color: var(--text-dim);
+  font-size: 0.64rem;
+  font-weight: 650;
+  text-transform: capitalize;
+}}
+.source-badge.primary {{
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-bg);
+  color: var(--accent);
+}}
+.source-score {{
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}}
+
+/* ── Research trace ─────────────────────────────────── */
+.research-trace {{
+  margin: 3rem 0 0;
+  padding-top: 1.5rem;
+  border-top: 2px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.5;
+}}
+.research-trace > summary {{
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.5rem 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}}
+.research-trace > summary::-webkit-details-marker {{ display: none; }}
+.research-trace > summary::before {{
+  content: '\25B6';
+  color: var(--text-muted);
+  font-size: 0.65em;
+  transition: transform 0.2s;
+}}
+.research-trace[open] > summary::before {{ transform: rotate(90deg); }}
+.research-trace h3 {{
+  margin: 1rem 0 0.35rem;
+  color: var(--text-dim);
+  font-family: var(--font-body);
+  font-size: 11px;
+  letter-spacing: 0;
+}}
+.research-trace ul,
+.research-trace ol {{ margin: 0.35rem 0 0.7rem 1.2rem; }}
+.research-trace li {{ margin-bottom: 0.22rem; }}
+.research-trace pre {{
+  margin: 0.45rem 0 0.8rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+}}
+.research-trace code {{ font-size: 10px; }}
+.sources-panel > .research-trace {{
+  margin: 0;
+  padding-top: 0;
+  border-top: 1px solid var(--border);
+}}
+
+@media (max-width: 900px) {{
+  .toolbar {{ top: 0.75rem; }}
+  .evidence-profile {{
+    grid-template-columns: repeat(2, 1fr);
+    padding: 0.9rem 1rem;
+    row-gap: 0.8rem;
+  }}
+  .evidence-intro {{ grid-column: 1 / -1; padding-right: 0; }}
+  .evidence-metric {{ padding: 0 0.75rem; }}
+  .evidence-metric:nth-last-child(-n+2) {{ border-top: 1px solid var(--border); padding-top: 0.75rem; }}
+  .mobile-section-nav {{
+    position: sticky;
+    top: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: 2.75rem;
+    padding: 0.45rem 0.75rem;
+    background: color-mix(in srgb, var(--panel, var(--bg)) 94%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+    border-radius: 6px;
+    margin: 0 0.75rem 0.75rem;
+    box-shadow: 0 2px 12px color-mix(in srgb, var(--accent) 8%, transparent);
+    backdrop-filter: blur(14px);
+  }}
+  .mobile-section-nav svg {{ width: 15px; height: 15px; color: var(--accent); opacity: 0.85; flex: 0 0 auto; }}
+  .mobile-section-nav select {{
+    width: 100%;
+    min-width: 0;
+    min-height: 1.9rem;
+    padding: 0 1.8rem 0 0.55rem;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    border-radius: 4px;
+    appearance: auto;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    color: var(--text);
+    font: 600 0.78rem/1.35 var(--font-body);
+    outline: none;
+    cursor: pointer;
+    color-scheme: dark;
+  }}
+  .mobile-section-nav select option {{
+    background: var(--bg);
+    color: var(--text);
+  }}
+  .mobile-section-nav select:focus {{
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  }}
+  .content {{ padding: 2.25rem 1.25rem 3rem; }}
+  .section-image {{ width: 100%; margin: 1.5rem 0; }}
+  .hero-image {{ padding: 0 1rem; }}
+  .hero-image figcaption {{ padding-inline: 0.1rem; }}
+  body[class^="standard-report-"] .report-section {{ padding-left: 0.8rem; }}
+  .toolbar button {{ padding: 6px 9px; }}
+}}
+
+@media (max-width: 600px) {{
+  /* The chapter jump bar sits outside .content, so let it use the complete
+     mobile viewport instead of inheriting article-style side margins. */
+  .mobile-section-nav {{
+    width: 100%;
+    box-sizing: border-box;
+    margin-left: 0;
+    margin-right: 0;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }}
+  .export-bookmark {{ width: 38px; }}
+  .export-bookmark.is-open {{ width: 108px; }}
+}}
+
+@media (hover: none) {{
+  .export-bookmark {{ width: 38px; }}
+  .export-bookmark.is-open {{ width: 108px; }}
 }}
 
 /* ── Chat-about CTA ────────────────────────────────── */
@@ -814,8 +1359,7 @@ body::after {{
 
 /* ── Animations ────────────────────────────────────── */
 @media (prefers-reduced-motion: no-preference) {{
-  .content h2, .content h3, .content p, .content ul, .content ol,
-  .content blockquote, .content table, .content pre, .section-image {{
+  .report-section, .content > p, .content > details {{
     animation: fadeUp 0.4s ease both;
   }}
   @keyframes fadeUp {{
@@ -826,7 +1370,7 @@ body::after {{
 
 /* ── Print ─────────────────────────────────────────── */
 @media print {{
-  .toc-sidebar, .toolbar {{ display: none !important; }}
+  .toc-sidebar, .toolbar, .mobile-section-nav, .reading-progress {{ display: none !important; }}
   .layout {{ grid-template-columns: 1fr; }}
   .hero {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
 }}
@@ -835,17 +1379,20 @@ body::after {{
 </head>
 <body class="{body_class}">
 
-<!-- Toolbar: Export + Restore hidden images -->
+<div class="reading-progress" aria-hidden="true"><div class="reading-progress-bar"></div></div>
+
+<!-- Toolbar: Export and report display actions -->
 <div class="toolbar">
   {restore_btn_html}
-  <div class="dropdown">
-    <button id="btn-export" title="Export">
+  <div class="dropdown export-bookmark">
+    <button id="btn-export" type="button" title="Export" aria-haspopup="menu" aria-expanded="false">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Export &#9662;
+      <span class="export-bookmark-label">Export</span><span class="export-bookmark-caret" aria-hidden="true">&#9662;</span>
     </button>
-    <div class="dropdown-menu" id="export-menu">
+    <div class="dropdown-menu" id="export-menu" role="menu">
       <button id="btn-pdf">Save as PDF</button>
       <button id="btn-html">Download HTML</button>
+      <button id="btn-hide-toolbar" class="menu-secondary">Hide toolbar</button>
     </div>
   </div>
 </div>
@@ -861,9 +1408,14 @@ body::after {{
   {stats_html}
 </div>
 
+{evidence_profile_html}
+
+{mobile_toc_html}
+
 <div class="layout">
   <aside class="toc-sidebar">
     <nav>
+      <div class="toc-title">In this report</div>
       {toc_html}
     </nav>
   </aside>
@@ -892,36 +1444,66 @@ body::after {{
     var t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     var menu = document.getElementById('export-menu');
-    if (menu && menu.classList.contains('open')) {{ menu.classList.remove('open'); return; }}
+    if (menu && menu.classList.contains('open')) {{
+      menu.classList.remove('open');
+      var bookmark = menu.closest('.export-bookmark');
+      if (bookmark) bookmark.classList.remove('is-open');
+      var button = document.getElementById('btn-export');
+      if (button) button.setAttribute('aria-expanded', 'false');
+      return;
+    }}
     try {{ window.close(); }} catch (err) {{}}
     // window.close() is a no-op when the tab wasn't script-opened; in that
     // case fall back to navigation so the key isn't ignored.
     setTimeout(function() {{ if (!window.closed) history.back(); }}, 50);
   }});
 
-  // Export dropdown toggle
+  // Export dropdown toggle. The downloaded HTML removes this control, so
+  // keep the live report script valid when it is opened without the toolbar.
   var exportBtn = document.getElementById('btn-export');
   var exportMenu = document.getElementById('export-menu');
-  exportBtn.addEventListener('click', function(e) {{
-    e.stopPropagation();
-    exportMenu.classList.toggle('open');
-  }});
-  document.addEventListener('click', function() {{ exportMenu.classList.remove('open'); }});
+  var exportBookmark = exportBtn && exportBtn.closest('.export-bookmark');
+  function setExportMenuOpen(open) {{
+    if (!exportMenu || !exportBtn) return;
+    exportMenu.classList.toggle('open', open);
+    exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (exportBookmark) exportBookmark.classList.toggle('is-open', open);
+  }}
+  if (exportBtn && exportMenu) {{
+    exportBtn.addEventListener('click', function(e) {{
+      e.stopPropagation();
+      setExportMenuOpen(!exportMenu.classList.contains('open'));
+    }});
+    document.addEventListener('click', function() {{ setExportMenuOpen(false); }});
+  }}
 
   // Save as PDF (browser print)
-  document.getElementById('btn-pdf').addEventListener('click', function() {{
-    exportMenu.classList.remove('open');
+  var pdfBtn = document.getElementById('btn-pdf');
+  if (pdfBtn) pdfBtn.addEventListener('click', function() {{
+    setExportMenuOpen(false);
     window.print();
   }});
 
   // Download HTML
-  document.getElementById('btn-html').addEventListener('click', function() {{
-    exportMenu.classList.remove('open');
-    var blob = new Blob([document.documentElement.outerHTML], {{ type: 'text/html' }});
+  var htmlBtn = document.getElementById('btn-html');
+  if (htmlBtn) htmlBtn.addEventListener('click', function() {{
+    setExportMenuOpen(false);
+    var exportedDocument = document.documentElement.cloneNode(true);
+    var exportedToolbar = exportedDocument.querySelector('.toolbar .dropdown');
+    if (exportedToolbar) exportedToolbar.remove();
+    var blob = new Blob(['<!DOCTYPE html>\\n' + exportedDocument.outerHTML], {{ type: 'text/html' }});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = document.title.replace(/[^a-z0-9]+/gi, '-').substring(0, 60) + '.html';
     a.click();
+  }});
+
+  // Keep toolbar dismissal available without a permanent close control.
+  var hideToolbarBtn = document.getElementById('btn-hide-toolbar');
+  if (hideToolbarBtn) hideToolbarBtn.addEventListener('click', function() {{
+    setExportMenuOpen(false);
+    var toolbar = exportBtn && exportBtn.closest('.toolbar');
+    if (toolbar) toolbar.style.display = 'none';
   }});
 
   // Per-image hide — fades the image out, then POSTs to the backend so
@@ -931,6 +1513,56 @@ body::after {{
   var __sessionId = {session_id_js};
   // Unused scraped images — the reroll pool. Each is used at most once.
   var __spareImages = {spare_images_js};
+
+  // Match the report accent to the hero image when its host permits canvas
+  // sampling. The server-generated palette remains the fallback for images
+  // without cross-origin access.
+  function __applyImagePalette(url) {{
+    if (!url) return;
+    var probe = new Image();
+    probe.crossOrigin = 'anonymous';
+    probe.onload = function() {{
+      try {{
+        var canvas = document.createElement('canvas');
+        canvas.width = 32; canvas.height = 32;
+        var ctx = canvas.getContext('2d', {{ willReadFrequently: true }});
+        ctx.drawImage(probe, 0, 0, 32, 32);
+        var pixels = ctx.getImageData(0, 0, 32, 32).data;
+        var r = 0, g = 0, b = 0, weight = 0;
+        for (var i = 0; i < pixels.length; i += 4) {{
+          if (pixels[i + 3] < 180) continue;
+          var hi = Math.max(pixels[i], pixels[i + 1], pixels[i + 2]);
+          var lo = Math.min(pixels[i], pixels[i + 1], pixels[i + 2]);
+          var saturation = hi ? (hi - lo) / hi : 0;
+          if (saturation < 0.2 || hi < 35 || lo > 235) continue;
+          var pixelWeight = 0.5 + saturation;
+          r += pixels[i] * pixelWeight;
+          g += pixels[i + 1] * pixelWeight;
+          b += pixels[i + 2] * pixelWeight;
+          weight += pixelWeight;
+        }}
+        if (weight < 8) return;
+        r = Math.round(r / weight); g = Math.round(g / weight); b = Math.round(b / weight);
+        var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        var target = dark ? 178 : 112;
+        var scale = Math.max(0.65, Math.min(1.8, target / Math.max(1, luminance)));
+        r = Math.max(0, Math.min(255, Math.round(r * scale)));
+        g = Math.max(0, Math.min(255, Math.round(g * scale)));
+        b = Math.max(0, Math.min(255, Math.round(b * scale)));
+        var root = document.documentElement.style;
+        root.setProperty('--accent', 'rgb(' + r + ',' + g + ',' + b + ')');
+        root.setProperty('--accent-light', 'rgb(' +
+          Math.min(255, r + 32) + ',' + Math.min(255, g + 32) + ',' + Math.min(255, b + 32) + ')');
+        root.setProperty('--accent-bg', 'rgba(' + r + ',' + g + ',' + b + ',0.08)');
+        root.setProperty('--aurora-a', 'rgba(' + r + ',' + g + ',' + b + ',0.12)');
+      }} catch (err) {{ /* Cross-origin image: retain the generated palette. */ }}
+    }};
+    probe.src = url;
+  }}
+
+  var heroWrap = document.querySelector('.hero-image[data-img-url]');
+  if (heroWrap) __applyImagePalette(heroWrap.dataset.imgUrl);
 
   // Persist a rejected URL so future renders skip it.
   function __persistHide(url) {{
@@ -990,6 +1622,7 @@ body::after {{
         if (ok) {{
           img.src = newUrl;
           wrap.dataset.imgUrl = newUrl;
+          if (wrap.classList.contains('hero-image')) __applyImagePalette(newUrl);
           __persistHide(oldUrl);
         }} else {{
           // Bad candidate — persist-hide it so it can't resurface on reload,
@@ -1029,16 +1662,50 @@ body::after {{
   // bypass the CSS `scroll-behavior: smooth` rule on hash clicks).
   // Also keeps the URL hash updated and toggles an `.active` highlight.
   var tocLinks = document.querySelectorAll('.toc-sidebar nav a[href^="#"]');
+  function scrollToHeading(target) {{
+    var start = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    var toolbarOffset = 64;
+    var maxTop = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    var destination = Math.max(0, Math.min(maxTop, start + target.getBoundingClientRect().top - toolbarOffset));
+    var distance = destination - start;
+    if (Math.abs(distance) < 1) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {{
+      window.scrollTo(0, destination);
+      return;
+    }}
+    var startedAt = null;
+    var duration = 520;
+    var step = function(timestamp) {{
+      if (startedAt === null) startedAt = timestamp;
+      var progress = Math.min(1, (timestamp - startedAt) / duration);
+      var eased = progress < 0.5
+        ? 2 * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+      window.scrollTo(0, start + distance * eased);
+      if (progress < 1) window.requestAnimationFrame(step);
+    }};
+    window.requestAnimationFrame(step);
+  }}
   tocLinks.forEach(function(link) {{
     link.addEventListener('click', function(e) {{
       var id = link.getAttribute('href').slice(1);
       var target = document.getElementById(id);
       if (!target) return;
       e.preventDefault();
-      target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+      scrollToHeading(target);
       history.replaceState(null, '', '#' + id);
     }});
   }});
+
+  var mobileToc = document.getElementById('mobile-section-select');
+  if (mobileToc) {{
+    mobileToc.addEventListener('change', function() {{
+      var target = document.getElementById(mobileToc.value);
+      if (!target) return;
+      scrollToHeading(target);
+      history.replaceState(null, '', '#' + mobileToc.value);
+    }});
+  }}
 
   // Highlight the TOC entry that matches whichever heading is currently
   // closest to the top of the viewport. IntersectionObserver keeps it
@@ -1052,6 +1719,7 @@ body::after {{
     if (id === activeId) return;
     if (activeId && tocMap[activeId]) tocMap[activeId].classList.remove('active');
     if (id && tocMap[id]) tocMap[id].classList.add('active');
+    if (id && mobileToc && mobileToc.value !== id) mobileToc.value = id;
     activeId = id;
   }}
   var headings = document.querySelectorAll('.content h2[id], .content h3[id]');
@@ -1072,6 +1740,24 @@ body::after {{
     }}, {{ rootMargin: '-10% 0px -75% 0px', threshold: 0 }});
     headings.forEach(function(h) {{ io.observe(h); }});
   }}
+
+  // Thin page-level progress gives long reports a stable sense of position.
+  var progressBar = document.querySelector('.reading-progress-bar');
+  var progressTicking = false;
+  function updateReadingProgress() {{
+    var root = document.documentElement;
+    var available = Math.max(1, root.scrollHeight - window.innerHeight);
+    var current = window.pageYOffset || root.scrollTop || 0;
+    progressBar.style.width = Math.max(0, Math.min(100, current / available * 100)) + '%';
+    progressTicking = false;
+  }}
+  window.addEventListener('scroll', function() {{
+    if (!progressTicking) {{
+      progressTicking = true;
+      window.requestAnimationFrame(updateReadingProgress);
+    }}
+  }}, {{ passive: true }});
+  updateReadingProgress();
 
   // Chat about this research — POST to spinoff and redirect to the new chat
   var chatBtn = document.getElementById('btn-chat-about');
@@ -1154,9 +1840,40 @@ if (document.body.classList.contains('category-comparison')) {{
 # Public API
 # ---------------------------------------------------------------------------
 
-def _category_css(category: Optional[str]) -> str:
+def _standard_visual_variant(question: str, session_id: Optional[str] = None) -> int:
+    """Standard is a format, so every standard report uses the same palette."""
+    return 0
+
+
+def _category_css(category: Optional[str], standard_variant: Optional[int] = None) -> str:
     if not category:
-        return ""
+        palettes = (
+            ("#277f83", "#45aeb2", "rgba(39,127,131,0.07)", "rgba(39,127,131,0.11)"),
+            ("#4b72a9", "#7096cf", "rgba(75,114,169,0.07)", "rgba(75,114,169,0.11)"),
+            ("#4f8b61", "#70b27f", "rgba(79,139,97,0.07)", "rgba(79,139,97,0.11)"),
+            ("#7653a8", "#9a78c9", "rgba(118,83,168,0.07)", "rgba(118,83,168,0.11)"),
+            ("#aa5c78", "#cf7f9b", "rgba(170,92,120,0.07)", "rgba(170,92,120,0.11)"),
+        )
+        accent, light, accent_bg, aurora_a = palettes[standard_variant or 0]
+        return f"""
+/* Stable palette for uncategorized reports. */
+body.standard-report-v{standard_variant or 0} {{
+  --accent: {accent};
+  --accent-light: {light};
+  --accent-bg: {accent_bg};
+  --aurora-a: {aurora_a};
+  --aurora-b: rgba(201,149,46,0.06);
+  --aurora-c: rgba(64,98,128,0.07);
+}}
+@media (prefers-color-scheme: dark) {{
+  body.standard-report-v{standard_variant or 0} {{
+    --accent: {light};
+    --accent-light: #e1c7d2;
+    --accent-bg: rgba(255,255,255,0.09);
+    --aurora-a: rgba(255,255,255,0.08);
+  }}
+}}
+"""
     # Per-category palette overrides — applied BEFORE the structural rules so
     # everything that reads --accent / --aurora-* automatically retints. The
     # default (no category) keeps the warm terracotta defined in :root.
@@ -1196,6 +1913,14 @@ body.category-landscape {
   --aurora-b: rgba(184,84,58,0.06);
   --aurora-c: rgba(122,76,184,0.05);
 }
+body.category-visual {
+  --accent: #247f78;
+  --accent-light: #45aaa0;
+  --accent-bg: rgba(36,127,120,0.08);
+  --aurora-a: rgba(36,127,120,0.12);
+  --aurora-b: rgba(181,72,105,0.06);
+  --aurora-c: rgba(62,102,146,0.07);
+}
 @media (prefers-color-scheme: dark) {
   body.category-product {
     --accent: #5cc8cb; --accent-light: #8fdde0;
@@ -1224,6 +1949,13 @@ body.category-landscape {
     --aurora-a: rgba(230,192,105,0.15);
     --aurora-b: rgba(232,143,115,0.07);
     --aurora-c: rgba(184,150,232,0.06);
+  }
+  body.category-visual {
+    --accent: #62c9bf; --accent-light: #91ded7;
+    --accent-bg: rgba(98,201,191,0.10);
+    --aurora-a: rgba(98,201,191,0.13);
+    --aurora-b: rgba(224,115,147,0.07);
+    --aurora-c: rgba(115,165,218,0.08);
   }
 }
 
@@ -1256,6 +1988,12 @@ body.category-product {
   --font-body: 'Inter', system-ui, sans-serif;
 }
 
+/* Visual: neutral sans keeps diagram labels and prose in one system. */
+body.category-visual {
+  --font-display: 'Manrope', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+}
+
 /* Source Serif sits visually larger than Inter at the same px — pull it
    back one notch for the categories that use it as body so line length
    and rhythm stay comparable across categories. */
@@ -1269,6 +2007,11 @@ body.category-comparison .content > p:first-of-type::first-letter,
 body.category-product   .content > h2:first-child + p::first-letter,
 body.category-howto     .content > h2:first-child + p::first-letter,
 body.category-comparison .content > h2:first-child + p::first-letter {
+  font-size: 1em; float: none; margin: 0; color: inherit;
+  font-family: inherit; font-weight: inherit;
+}
+body.category-visual .content > p:first-of-type::first-letter,
+body.category-visual .content > h2:first-child + p::first-letter {
   font-size: 1em; float: none; margin: 0; color: inherit;
   font-family: inherit; font-weight: inherit;
 }
@@ -1344,7 +2087,8 @@ body.category-landscape::before {
   body.category-product::before,
   body.category-comparison::before,
   body.category-howto::before,
-  body.category-landscape::before {
+  body.category-landscape::before,
+  body.category-visual::before {
     animation: none;
   }
 }
@@ -1664,6 +2408,18 @@ body.category-product .content h3 + table {
   font-size:1.1em;
 }
 """,
+        "visual": """
+/* Visual explanation category */
+.category-visual .hero-label::after { content:' / visual explanation'; }
+.category-visual .content h2 {
+  display:flex; align-items:center; gap:10px;
+}
+.category-visual .content h2::before {
+  content:''; width:20px; height:2px; flex:0 0 auto;
+  background:var(--accent);
+}
+.category-visual .report-section { margin-bottom:3.5rem; }
+""",
     }
     # Always emit the per-category palette block when ANY category is set —
     # it contains body.category-X scoped rules so it only re-skins the page
@@ -1725,6 +2481,248 @@ def _is_icon_or_logo_url(url: str) -> bool:
     return bool(_ICON_LOGO_RE.search(url or ""))
 
 
+_VISUAL_DIAGRAM_RE = re.compile(
+    r"(?ms)^[ \t]*```visual-diagram[ \t]*\n(?P<body>.*?)^[ \t]*```[ \t]*$"
+)
+_VISUAL_HTML_RE = re.compile(
+    r"(?ms)^[ \t]*```visual-html[ \t]*\n(?P<body>.*?)^[ \t]*```[ \t]*$"
+)
+_HTML_FENCE_RE = re.compile(
+    r"(?ms)^[ \t]*```html[ \t]*\n(?P<body>.*?)^[ \t]*```[ \t]*$"
+)
+_VISUAL_LAYOUTS = {"flow", "cycle", "timeline", "layers"}
+
+
+def _sanitize_visual_html(raw_html: str) -> str:
+    """Sanitize a model-created visual artifact for a sandboxed srcdoc iframe."""
+    soup = BeautifulSoup(raw_html or "", "html.parser")
+    for tag in soup.find_all(("script", "iframe", "object", "embed", "form", "input", "button",
+                              "textarea", "select", "video", "audio", "img", "link", "meta", "base")):
+        tag.decompose()
+    for tag in soup.find_all(True):
+        for attr in list(tag.attrs):
+            lower = attr.lower()
+            value = " ".join(tag.get(attr)) if isinstance(tag.get(attr), list) else str(tag.get(attr) or "")
+            if lower.startswith("on") or lower in {"src", "srcset", "action", "formaction"}:
+                del tag.attrs[attr]
+            elif lower in {"href", "xlink:href"} and value and not value.startswith("#"):
+                del tag.attrs[attr]
+            elif lower == "style" and re.search(r"(?i)url\s*\(|expression\s*\(|javascript\s*:", value):
+                del tag.attrs[attr]
+    for style in soup.find_all("style"):
+        css = style.string or style.get_text() or ""
+        css = re.sub(r"(?is)@import\s+[^;]+;?", "", css)
+        css = re.sub(r"(?is)url\s*\([^)]*\)", "none", css)
+        css = re.sub(r"(?is)expression\s*\([^)]*\)", "", css)
+        css = re.sub(r"(?i)javascript\s*:", "", css)
+        style.string = css
+    if soup.html:
+        if not soup.head:
+            soup.html.insert(0, soup.new_tag("head"))
+        viewport = soup.new_tag("meta")
+        viewport.attrs["name"] = "viewport"
+        viewport.attrs["content"] = "width=device-width, initial-scale=1"
+        soup.head.insert(0, viewport)
+        return str(soup)
+    return (
+        '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
+        '</head><body>' + str(soup) + '</body></html>'
+    )
+
+
+def _extract_visual_html(report_markdown: str, *, allow_html_fallback: bool = False) -> Tuple[str, Dict[str, str]]:
+    """Extract one visual-first artifact and embed it in an isolated iframe."""
+    artifacts: Dict[str, str] = {}
+
+    def replace(match: re.Match) -> str:
+        if artifacts:
+            return ""
+        sanitized = _sanitize_visual_html(match.group("body"))
+        if not sanitized.strip():
+            return ""
+        token = "ODYSSEUSVISUALHTML0TOKEN"
+        artifacts[token] = (
+            '<figure class="visual-html-story" role="group">'
+            '<iframe sandbox="allow-same-origin" loading="lazy" scrolling="no" '
+            'onload="const resize=()=>this.style.height=Math.min(2800,Math.max(560,this.contentDocument.documentElement.scrollHeight+4))+\'px\';'
+            'resize();this._visualResizeObserver=new ResizeObserver(resize);'
+            'this._visualResizeObserver.observe(this.contentDocument.documentElement)" '
+            'title="Interactive visual explanation" '
+            f'srcdoc="{html.escape(sanitized, quote=True)}"></iframe>'
+            '</figure>'
+        )
+        return f"\n\n{token}\n\n"
+
+    remaining = _VISUAL_HTML_RE.sub(replace, report_markdown or "")
+    if allow_html_fallback and not artifacts:
+        remaining = _HTML_FENCE_RE.sub(replace, remaining, count=1)
+    return remaining, artifacts
+
+
+def _diagram_text_lines(value: object, max_chars: int, max_lines: int) -> List[str]:
+    """Wrap untrusted diagram copy into a small, predictable SVG text box."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return []
+    words = text.split(" ")
+    lines: List[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and len(candidate) > max_chars:
+            lines.append(current)
+            current = word
+            if len(lines) == max_lines:
+                break
+        else:
+            current = candidate
+    if len(lines) < max_lines and current:
+        lines.append(current)
+    consumed = " ".join(lines)
+    if len(consumed) < len(text) and lines:
+        lines[-1] = lines[-1][: max(1, max_chars - 1)].rstrip() + "…"
+    return lines[:max_lines]
+
+
+def _svg_text(lines: List[str], x: float, y: float, class_name: str, step: int = 17) -> str:
+    if not lines:
+        return ""
+    tspans = "".join(
+        f'<tspan x="{x:.1f}" dy="{0 if index == 0 else step}">{html.escape(line)}</tspan>'
+        for index, line in enumerate(lines)
+    )
+    return f'<text class="{class_name}" x="{x:.1f}" y="{y:.1f}" text-anchor="middle">{tspans}</text>'
+
+
+def _render_visual_diagram(spec: object, index: int) -> str:
+    """Render the model's constrained diagram JSON as escaped inline SVG."""
+    if not isinstance(spec, dict):
+        return ""
+    layout = str(spec.get("layout") or "flow").strip().lower()
+    if layout not in _VISUAL_LAYOUTS:
+        layout = "flow"
+    raw_nodes = spec.get("nodes")
+    if not isinstance(raw_nodes, list):
+        return ""
+    nodes = []
+    for raw in raw_nodes[:8]:
+        if isinstance(raw, dict):
+            label = str(raw.get("label") or "").strip()[:80]
+            detail = str(raw.get("detail") or "").strip()[:140]
+        else:
+            label, detail = str(raw or "").strip()[:80], ""
+        if label:
+            nodes.append({"label": label, "detail": detail})
+    if len(nodes) < 2:
+        return ""
+
+    width = 960
+    node_w, node_h = 176, 92
+    positions: List[Tuple[float, float]] = []
+    if layout == "cycle":
+        height = 520
+        radius = 175 if len(nodes) > 4 else 145
+        for i in range(len(nodes)):
+            angle = -math.pi / 2 + (2 * math.pi * i / len(nodes))
+            positions.append((width / 2 + math.cos(angle) * radius, height / 2 + math.sin(angle) * radius))
+    elif layout == "layers":
+        height = 120 + len(nodes) * 112
+        positions = [(width / 2, 72 + i * 112) for i in range(len(nodes))]
+        node_w = 520
+        node_h = 78
+    elif layout == "timeline":
+        height = 190 + len(nodes) * 92
+        positions = [
+            (width * (0.32 if i % 2 == 0 else 0.68), 82 + i * 92)
+            for i in range(len(nodes))
+        ]
+    elif len(nodes) <= 4:
+        height = 230
+        gap = (width - 120) / len(nodes)
+        positions = [(60 + gap * (i + 0.5), 112) for i in range(len(nodes))]
+        node_w = min(176, gap - 28)
+    else:
+        height = 120 + len(nodes) * 108
+        positions = [(width / 2, 66 + i * 108) for i in range(len(nodes))]
+
+    raw_edges = spec.get("edges")
+    edges = []
+    if isinstance(raw_edges, list):
+        for edge in raw_edges[:12]:
+            if not isinstance(edge, dict):
+                continue
+            try:
+                source, target = int(edge.get("from")), int(edge.get("to"))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= source < len(nodes) and 0 <= target < len(nodes) and source != target:
+                edges.append((source, target, str(edge.get("label") or "").strip()[:50]))
+    if not edges:
+        edges = [(i, (i + 1) % len(nodes), "") for i in range(len(nodes) - (0 if layout == "cycle" else 1))]
+
+    marker_id = f"visual-arrow-{index}"
+    edge_svg = []
+    for source, target, label in edges:
+        x1, y1 = positions[source]
+        x2, y2 = positions[target]
+        dx, dy = x2 - x1, y2 - y1
+        distance = max((dx * dx + dy * dy) ** 0.5, 1)
+        inset = min(node_w, node_h) * 0.48
+        sx, sy = x1 + dx / distance * inset, y1 + dy / distance * inset
+        tx, ty = x2 - dx / distance * inset, y2 - dy / distance * inset
+        edge_svg.append(
+            f'<path class="visual-edge" d="M {sx:.1f} {sy:.1f} L {tx:.1f} {ty:.1f}" marker-end="url(#{marker_id})"/>'
+        )
+        if label:
+            edge_svg.append(
+                _svg_text(_diagram_text_lines(label, 18, 1), (sx + tx) / 2, (sy + ty) / 2 - 7, "visual-edge-label", 14)
+            )
+
+    node_svg = []
+    for node_index, (node, (cx, cy)) in enumerate(zip(nodes, positions)):
+        node_svg.append(
+            f'<g class="visual-node visual-node-{node_index % 4}">'
+            f'<rect x="{cx - node_w / 2:.1f}" y="{cy - node_h / 2:.1f}" width="{node_w:.1f}" height="{node_h:.1f}" rx="12"/>'
+            f'<circle class="visual-node-index" cx="{cx - node_w / 2 + 17:.1f}" cy="{cy - node_h / 2 + 17:.1f}" r="10"/>'
+            f'<text class="visual-node-index-text" x="{cx - node_w / 2 + 17:.1f}" y="{cy - node_h / 2 + 21:.1f}" text-anchor="middle">{node_index + 1}</text>'
+            f'{_svg_text(_diagram_text_lines(node["label"], 22 if node_w < 300 else 52, 2), cx, cy - 8, "visual-node-label")}'
+            f'{_svg_text(_diagram_text_lines(node["detail"], 26 if node_w < 300 else 62, 2), cx, cy + 20, "visual-node-detail", 14)}'
+            '</g>'
+        )
+
+    title = str(spec.get("title") or "Visual explanation").strip()[:120]
+    return (
+        f'<figure class="visual-diagram visual-diagram-{layout}" role="group">'
+        f'<figcaption>{html.escape(title)}</figcaption>'
+        f'<div class="visual-diagram-canvas"><svg viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(title)}" preserveAspectRatio="xMidYMid meet">'
+        f'<defs><marker id="{marker_id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>'
+        + "".join(edge_svg)
+        + "".join(node_svg)
+        + '</svg></div></figure>'
+    )
+
+
+def _extract_visual_diagrams(report_markdown: str) -> Tuple[str, Dict[str, str]]:
+    """Replace valid visual-diagram fences with inert tokens before Markdown."""
+    diagrams: Dict[str, str] = {}
+
+    def replace(match: re.Match) -> str:
+        if len(diagrams) >= 6:
+            return ""
+        try:
+            spec = json.loads(match.group("body"))
+        except (TypeError, ValueError):
+            return ""
+        rendered = _render_visual_diagram(spec, len(diagrams))
+        if not rendered:
+            return ""
+        token = f"ODYSSEUSVISUALDIAGRAM{len(diagrams)}TOKEN"
+        diagrams[token] = rendered
+        return f"\n\n{token}\n\n"
+
+    return _VISUAL_DIAGRAM_RE.sub(replace, report_markdown or ""), diagrams
+
+
 def generate_visual_report(
     question: str,
     report_markdown: str,
@@ -1755,10 +2753,19 @@ def generate_visual_report(
             flags=re.MULTILINE,
         )
 
+    report_markdown, visual_artifacts = _extract_visual_html(
+        report_markdown,
+        allow_html_fallback=category == "visual",
+    )
+    report_markdown, visual_diagrams = _extract_visual_diagrams(report_markdown)
     report_html = _md_to_html(report_markdown)
 
     headings = _extract_headings(report_markdown)
     report_html = _apply_heading_ids(report_html, headings)
+    for token, diagram_html in visual_diagrams.items():
+        report_html = report_html.replace(f"<p>{token}</p>", diagram_html)
+    for token, artifact_html in visual_artifacts.items():
+        report_html = report_html.replace(f"<p>{token}</p>", artifact_html)
 
     # Collect all OG images from sources (skip icons, tiny images, known junk)
     _IMAGE_BLOCKLIST = {
@@ -1766,9 +2773,11 @@ def generate_visual_report(
     }
     _seen_images = set()
     all_images = []
+    image_labels = {}
     for s in sources:
         img = s.get("image", "")
-        if (img and img.startswith("https://")
+        if (not (category == "visual" and visual_artifacts)
+            and img and img.startswith("https://")
             and img not in _seen_images
             and img not in hidden_images_set
             and not img.endswith((".svg", ".ico", ".gif"))
@@ -1776,18 +2785,34 @@ def generate_visual_report(
             and not _is_icon_or_logo_url(img)):
             _seen_images.add(img)
             all_images.append(img)
+            source_domain = ""
+            try:
+                source_domain = urlparse(str(s.get("url") or "")).hostname or ""
+                if source_domain.startswith("www."):
+                    source_domain = source_domain[4:]
+            except Exception:
+                pass
+            image_labels[img] = (
+                str(s.get("title") or source_domain or "Source image"),
+                source_domain,
+            )
 
     # Hero image = first available. data-img-url drives the per-image hide
     # button rendered by the script at the bottom of the page.
     hero_image_html = ""
     if all_images:
         hero_url = html.escape(all_images[0])
+        hero_title, hero_domain = image_labels.get(all_images[0], ("", ""))
         hero_image_html = (
-            f'<div class="hero-image" data-img-url="{hero_url}">'
-            f'<img src="{hero_url}" alt="" loading="lazy" '
+            f'<figure class="hero-image" data-img-url="{hero_url}">'
+            f'<img src="{hero_url}" alt="{html.escape(hero_title)}" loading="lazy" '
             f'onerror="this.parentElement.style.display=\'none\'">'
             f'{_IMG_OVERLAY_BTNS}'
-            f'</div>'
+            '<figcaption>'
+            f'<span>{html.escape(hero_title)}</span>'
+            f'<span>{html.escape(hero_domain)}</span>'
+            '</figcaption>'
+            f'</figure>'
         )
 
     # Product quick-links bar
@@ -1803,8 +2828,10 @@ def generate_visual_report(
     # Inject remaining images between sections. Whatever isn't placed (hero
     # took [0], sections took the next `consumed`) becomes the spare pool the
     # reroll button draws from to swap out an irrelevant image in-page.
+    report_html = _wrap_report_sections(report_html)
     section_pool = all_images[1:]
-    report_html, _consumed = _inject_images(report_html, section_pool)
+    report_html, _consumed = _inject_images(report_html, section_pool, image_labels)
+    report_html, research_trace_html = _extract_research_trace(report_html)
     spare_images = section_pool[_consumed:]
 
     # Build TOC
@@ -1816,7 +2843,33 @@ def generate_visual_report(
         )
     toc_html = "\n      ".join(toc_lines) if toc_lines else ""
 
+    mobile_toc_html = ""
+    if headings:
+        options = []
+        for h in headings:
+            prefix = "\u2014 " if h["level"] == 3 else ""
+            options.append(
+                f'<option value="{h["slug"]}">{prefix}{html.escape(h["text"])}</option>'
+            )
+        mobile_toc_html = (
+            '<div class="mobile-section-nav">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+            'aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/>'
+            '<line x1="8" y1="12" x2="21" y2="12"/>'
+            '<line x1="8" y1="18" x2="21" y2="18"/>'
+            '<line x1="3" y1="6" x2="3.01" y2="6"/>'
+            '<line x1="3" y1="12" x2="3.01" y2="12"/>'
+            '<line x1="3" y1="18" x2="3.01" y2="18"/></svg>'
+            '<select id="mobile-section-select" aria-label="Jump to report section">'
+            + "".join(options)
+            + '</select></div>'
+        )
+
     # Build stats bar
+    visible_text = BeautifulSoup(report_html, "html.parser").get_text(" ", strip=True)
+    word_count = len(re.findall(r"\b[\w'-]+\b", visible_text))
+    reading_minutes = max(1, (word_count + 224) // 225)
     stat_items = []
     for key, label in [("Duration", "Duration"), ("Rounds", "Rounds"), ("Queries", "Queries"), ("URLs", "URLs Analyzed"), ("Model", "Model"), ("Search", "Search")]:
         val = stats.get(key)
@@ -1826,8 +2879,37 @@ def generate_visual_report(
             )
     stats_html = "\n  ".join(stat_items)
 
-    # Build sources panel — compact collapsible list
-    sources_html = ""
+    generated_at = datetime.now()
+    evidence = _source_evidence_summary(sources)
+    evidence_profile_html = ""
+    if sources:
+        average_score = evidence["average_score"]
+        quality_value = f'{average_score}/100' if average_score is not None else "Not rated"
+        quality_label = (
+            f'Average quality across {evidence["rated"]} rated sources'
+            if evidence["rated"] else "Quality metadata unavailable"
+        )
+        evidence_profile_html = (
+            '<section class="evidence-profile" aria-label="Evidence profile">'
+            '<div class="evidence-intro evidence-read-time">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" '
+            'aria-hidden="true"><circle cx="12" cy="12" r="9"/>'
+            '<path d="M12 7v5l3 2"/></svg>'
+            f'<span><strong>{reading_minutes} min</strong> read</span></div>'
+            f'<div class="evidence-metric"><span class="evidence-value">{evidence["sources"]}</span>'
+            '<span class="evidence-label">Sources used</span></div>'
+            f'<div class="evidence-metric"><span class="evidence-value">{evidence["domains"]}</span>'
+            '<span class="evidence-label">Distinct domains</span></div>'
+            f'<div class="evidence-metric"><span class="evidence-value">{evidence["primary"]}</span>'
+            '<span class="evidence-label">Primary sources</span></div>'
+            f'<div class="evidence-metric"><span class="evidence-value">{quality_value}</span>'
+            f'<span class="evidence-label">{quality_label}</span></div>'
+            '</section>'
+        )
+
+    # Build one supporting-material panel containing Sources and Research Trace.
+    support_details = []
     if sources:
         items = []
         for i, s in enumerate(sources, 1):
@@ -1840,23 +2922,52 @@ def generate_visual_report(
                     domain = domain[4:]
             except Exception:
                 domain = url
+            kind = str(s.get("source_kind") or "").strip().lower()
+            retrieval = str(s.get("retrieval") or "").strip().lower()
+            reason = str(s.get("source_reason") or "").strip()
+            try:
+                score = int(s.get("source_score"))
+            except (TypeError, ValueError):
+                score = None
+            badges = []
+            if kind:
+                kind_class = " primary" if kind == "primary" else ""
+                badges.append(
+                    f'<span class="source-badge{kind_class}">{html.escape(kind)}</span>'
+                )
+            if retrieval == "browser":
+                badges.append('<span class="source-badge">Rendered read</span>')
+            meta_title = f' title="{html.escape(reason)}"' if reason else ""
+            score_html = (
+                f'<span class="source-score"{meta_title}>{score}/100</span>'
+                if score is not None else ""
+            )
             items.append(
                 f'<a href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
                 f'<span class="snum">{i}.</span>'
-                f'<span>{title}</span>'
-                f'<span class="sdomain">{html.escape(domain)}</span>'
+                f'<span class="source-copy"><span class="source-title">{title}</span>'
+                f'<span class="source-meta"><span>{html.escape(domain)}</span>{"".join(badges)}</span></span>'
+                f'{score_html}'
                 f'</a>'
             )
-        sources_html = (
-            '<div class="sources-panel">\n'
+        support_details.append(
             '<details>\n'
             f'<summary>Sources ({len(sources)})</summary>\n'
             '<div class="sources-list">\n'
             + "\n".join(items)
-            + "\n</div>\n</details>\n</div>"
+            + "\n</div>\n</details>"
         )
+    if research_trace_html:
+        support_details.append(research_trace_html)
+    sources_html = (
+        '<div class="sources-panel">\n'
+        + "\n".join(support_details)
+        + "\n</div>"
+        if support_details else ""
+    )
 
-    timestamp = datetime.now().strftime("%B %d, %Y at %H:%M")
+    timestamp = generated_at.strftime("%B %d, %Y at %H:%M")
+    standard_variant = None if category else _standard_visual_variant(question, session_id)
 
     # Build description for OG/meta tags (first 160 chars of plain text)
     desc_text = re.sub(r'[#*_\[\]()]', '', report_markdown)[:160].strip()
@@ -1881,11 +2992,10 @@ def generate_visual_report(
             '</div>'
         )
 
-    # "Restore hidden images" toolbar button — only render if there are any
-    # hidden images on this research AND we have a session_id (needed for
-    # the POST endpoint).
+    # Visual explanations are presentation-first, so their toolbar never
+    # exposes the image restoration control. Other report formats retain it.
     restore_btn_html = ""
-    if session_id and hidden_images_set:
+    if category != "visual" and session_id and hidden_images_set:
         restore_btn_html = (
             '<button id="btn-restore-images" type="button" '
             f'title="Restore {len(hidden_images_set)} hidden image'
@@ -1905,14 +3015,19 @@ def generate_visual_report(
         question_html=html.escape(synthesized),
         hero_image_html=hero_image_html,
         stats_html=stats_html,
+        evidence_profile_html=evidence_profile_html,
+        mobile_toc_html=mobile_toc_html,
         toc_html=toc_html,
         report_html=report_html,
         sources_html=sources_html,
         chat_cta_html=chat_cta_html,
         restore_btn_html=restore_btn_html,
         timestamp=timestamp,
-        category_css=_category_css(category),
-        body_class=f"category-{html.escape(str(category))}" if category else "",
+        category_css=_category_css(category, standard_variant),
+        body_class=(
+            f"category-{html.escape(str(category))}" if category
+            else f"standard-report-v{standard_variant}"
+        ),
         session_id_js=json_dumps_str(session_id or ""),
         spare_images_js=_json_for_script(spare_images),
     )

@@ -1,0 +1,4 @@
+# The complete application environment plus local parallel test tooling.
+-r requirements.txt
+# psutil lets `-n auto` use physical cores instead of logical CPU threads.
+pytest-xdist[psutil]>=3.8,<4
