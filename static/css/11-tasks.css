@@ -989,6 +989,7 @@ a.chat-link[href^="#research-"] {
 .settings-row {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 .settings-col {
   display: flex;
@@ -997,7 +998,7 @@ a.chat-link[href^="#research-"] {
 }
 .settings-label {
   font-size: 12px;
-  min-width: 85px;
+  min-width: 70px;
 }
 #set-utilityEffortLabel { flex: 0 0 85px; line-height: 1.2; }
 .settings-label-sub {
