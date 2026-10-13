@@ -29,7 +29,12 @@ class Mailbox:
         uid = raw_uid.decode() if isinstance(raw_uid, bytes) else (str(raw_uid) if raw_uid is not None else "")
         self.calls.append((command, uid))
         if command == "FETCH":
-            return "OK", [f"1 (UID {uid})".encode()] if uid in self.inbox else []
+            if uid not in self.inbox:
+                return "OK", []
+            if args and "(FLAGS)" in args:
+                flags = rb"(\Deleted)" if uid in self.deleted else rb"()"
+                return "OK", [(f"1 (UID {uid} FLAGS ".encode() + flags + b")")]
+            return "OK", [f"1 (UID {uid})".encode()]
         if command == "SEARCH":
             if args and "DELETED" in args:
                 return "OK", [b" ".join(u.encode() for u in sorted(self.deleted))]
@@ -37,17 +42,23 @@ class Mailbox:
             return "OK", [searched_uid.encode() if searched_uid in self.inbox else b""]
         if command == "MOVE":
             status = self.move_status.get(uid, "NO") if isinstance(self.move_status, dict) else self.move_status
+            if isinstance(status, Exception):
+                raise status
             if status == "OK":
                 self.trash.add(uid)
                 self.inbox.remove(uid)
             return status, []
         if command == "COPY":
             status = self.copy_status.get(uid, "OK")
+            if isinstance(status, Exception):
+                raise status
             if status == "OK":
                 self.trash.add(uid)
             return status, []
         if command == "STORE":
             status = self.store_status.get(uid, "OK")
+            if isinstance(status, Exception):
+                raise status
             if status == "OK":
                 if args and args[0] == "-FLAGS":
                     self.deleted.discard(uid)
@@ -287,38 +298,96 @@ def test_uid_expunge_preserves_unrelated_deleted_message(bulk_delete):
     assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
 
 
-def test_fallback_refuses_mailbox_expunge_when_unrelated_deleted_message_present(bulk_delete):
-    # Server does not support UIDPLUS
+def test_server_lacking_uidplus_never_calls_mailbox_expunge(bulk_delete):
+    # Server does not support UIDPLUS (UID EXPUNGE returns BAD)
+    # Even if no other deleted messages exist, mailbox-wide EXPUNGE is strictly forbidden.
     bulk_delete.mailbox.uid_expunge_status = "BAD"
-    bulk_delete.mailbox.inbox.add("999")
-    bulk_delete.mailbox.deleted.add("999")
+    assert bulk_delete.mailbox.deleted == set()
 
     result = bulk_delete.delete(["101"])
 
     assert result["success"] is False
     assert result["deleted_uids"] == []
     assert result["failed_uids"] == ["101"]
-    # Both 101 and 999 preserved; 101 was unflagged, 999 still has \Deleted
     assert "101" in bulk_delete.mailbox.inbox
-    assert "999" in bulk_delete.mailbox.inbox
-    assert bulk_delete.mailbox.deleted == {"999"}
-    # Mailbox-wide EXPUNGE was never called
+    assert "101" not in bulk_delete.mailbox.deleted
     assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
     bulk_delete.index_delete.assert_not_called()
 
 
-def test_fallback_allows_mailbox_expunge_when_no_unrelated_deleted_messages(bulk_delete):
-    # Server does not support UIDPLUS, but no other deleted messages exist
-    bulk_delete.mailbox.uid_expunge_status = "BAD"
-    assert bulk_delete.mailbox.deleted == set()
+def test_concurrent_client_marks_unrelated_deleted_message_during_operation(bulk_delete):
+    # Another client marks unrelated UID 999 \Deleted before/during the operation
+    bulk_delete.mailbox.inbox.add("999")
+    bulk_delete.mailbox.deleted.add("999")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    # 101 was expunged, unrelated 999 is NEVER expunged
+    assert "101" not in bulk_delete.mailbox.inbox
+    assert "999" in bulk_delete.mailbox.inbox
+    assert bulk_delete.mailbox.deleted == {"999"}
+    assert ("EXPUNGE", "101") in bulk_delete.mailbox.calls
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+
+
+def test_preexisting_deleted_flag_preserved_when_expunge_fails(bulk_delete):
+    # Message 101 already had \Deleted flag before the bulk operation
+    bulk_delete.mailbox.deleted.add("101")
+    bulk_delete.mailbox.uid_expunge_status = "NO"
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+    assert "101" in bulk_delete.mailbox.inbox
+    # Pre-existing \Deleted flag must NOT be removed
+    assert "101" in bulk_delete.mailbox.deleted
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_not_called()
+
+
+def test_preexisting_deleted_flag_expunged_on_success(bulk_delete):
+    # Message 101 already had \Deleted flag before the bulk operation
+    bulk_delete.mailbox.deleted.add("101")
 
     result = bulk_delete.delete(["101"])
 
     assert result["success"] is True
     assert result["deleted_uids"] == ["101"]
     assert "101" not in bulk_delete.mailbox.inbox
-    assert ("EXPUNGE", None) in bulk_delete.mailbox.calls
+    assert "101" not in bulk_delete.mailbox.deleted
+    assert "101" in bulk_delete.mailbox.trash
     bulk_delete.index_delete.assert_called_once_with("alice", None, "INBOX", "101")
+
+
+@pytest.mark.parametrize("status", ["NO", "BAD"])
+def test_uid_expunge_status_failures(bulk_delete, status):
+    bulk_delete.mailbox.uid_expunge_status = status
+
+    result = bulk_delete.delete(["101", "102"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101", "102"]
+    assert bulk_delete.mailbox.inbox == {"101", "102", "103"}
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_not_called()
+
+
+def test_uid_expunge_connection_exception_handled_conservatively(bulk_delete):
+    bulk_delete.mailbox.uid_expunge_status = ConnectionResetError("Connection lost during selective expunge")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+    assert "101" in bulk_delete.mailbox.inbox
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_not_called()
 
 
 def test_disconnect_after_copy_before_store_preserves_message(bulk_delete):
@@ -333,7 +402,41 @@ def test_disconnect_after_copy_before_store_preserves_message(bulk_delete):
     assert "101" in bulk_delete.mailbox.inbox
     assert "101" in bulk_delete.mailbox.trash
     assert bulk_delete.mailbox.deleted == set()
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
     bulk_delete.index_delete.assert_not_called()
+
+
+def test_disconnect_after_store_preserves_messages_and_index(bulk_delete):
+    # COPY and STORE succeed, but UID EXPUNGE disconnects
+    bulk_delete.mailbox.uid_expunge_status = ConnectionResetError("Disconnected during expunge")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is False
+    assert result["deleted_uids"] == []
+    assert result["failed_uids"] == ["101"]
+    assert "101" in bulk_delete.mailbox.inbox
+    assert "101" in bulk_delete.mailbox.trash
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_not_called()
+
+
+def test_disconnect_with_partial_move_success(bulk_delete):
+    # 101 succeeds via MOVE, 102 falls back to COPY+STORE and UID EXPUNGE disconnects
+    bulk_delete.mailbox.move_status = {"101": "OK", "102": "NO"}
+    bulk_delete.mailbox.uid_expunge_status = ConnectionResetError("Disconnected during expunge")
+
+    result = bulk_delete.delete(["101", "102"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    assert result["failed_uids"] == ["102"]
+    assert "101" not in bulk_delete.mailbox.inbox
+    assert "102" in bulk_delete.mailbox.inbox
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+    bulk_delete.index_delete.assert_called_once_with("alice", None, "INBOX", "101")
+    bulk_delete.invalidate_cache.assert_any_call(None, "INBOX")
+    bulk_delete.invalidate_cache.assert_any_call(None, "Trash")
 
 
 def test_lost_acknowledgement_retains_local_index_and_permits_safe_retry(bulk_delete):
@@ -346,6 +449,7 @@ def test_lost_acknowledgement_retains_local_index_and_permits_safe_retry(bulk_de
     assert result["success"] is False
     assert result["deleted_uids"] == []
     assert result["failed_uids"] == ["101"]
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
     bulk_delete.index_delete.assert_not_called()
 
     # Retry when server is reconnected and 101 was already moved (absent from source)
@@ -357,3 +461,49 @@ def test_lost_acknowledgement_retains_local_index_and_permits_safe_retry(bulk_de
     assert retry_result["deleted_uids"] == []
     assert retry_result["failed_uids"] == ["101"]
     bulk_delete.index_delete.assert_not_called()
+
+
+def test_repeated_requests_after_partial_failure(bulk_delete):
+    # Initial request: 101 moves, 102 fails copy
+    bulk_delete.mailbox.move_status = {"101": "OK", "102": "NO"}
+    bulk_delete.mailbox.copy_status["102"] = "NO"
+
+    res1 = bulk_delete.delete(["101", "102"])
+    assert res1["deleted_uids"] == ["101"]
+    assert res1["failed_uids"] == ["102"]
+
+    # Retry with failed UID 102 now succeeding via copy
+    bulk_delete.mailbox.copy_status["102"] = "OK"
+    res2 = bulk_delete.delete(["102"])
+    assert res2["deleted_uids"] == ["102"]
+    assert res2["failed_uids"] == []
+
+    assert bulk_delete.mailbox.inbox == {"103"}
+    assert bulk_delete.mailbox.trash == {"101", "102"}
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+
+
+def test_unrelated_messages_never_expunged(bulk_delete):
+    # Mailbox contains unrelated 888 (with \Deleted) and 999 (without \Deleted)
+    bulk_delete.mailbox.inbox.update({"888", "999"})
+    bulk_delete.mailbox.deleted.add("888")
+
+    result = bulk_delete.delete(["101"])
+
+    assert result["success"] is True
+    assert result["deleted_uids"] == ["101"]
+    assert "101" not in bulk_delete.mailbox.inbox
+    assert "101" in bulk_delete.mailbox.trash
+    # 888 and 999 are completely untouched in inbox
+    assert "888" in bulk_delete.mailbox.inbox
+    assert "999" in bulk_delete.mailbox.inbox
+    assert "888" in bulk_delete.mailbox.deleted
+    assert "888" not in bulk_delete.mailbox.trash
+    assert "999" not in bulk_delete.mailbox.trash
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls
+
+
+def test_standard_expunge_never_invoked_by_fallback(bulk_delete):
+    # Perform operations under multiple fallback conditions; standard expunge is never called
+    bulk_delete.delete(["101"])
+    assert ("EXPUNGE", None) not in bulk_delete.mailbox.calls

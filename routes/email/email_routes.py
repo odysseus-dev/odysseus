@@ -573,6 +573,23 @@ def _uid_exists(conn, uid: str, *, strict: bool = False) -> bool:
         return False
 
 
+def _uid_has_deleted_flag(conn, uid: str) -> bool:
+    r"""Return True if message already carries \Deleted flag."""
+    try:
+        status, data = conn.uid("FETCH", _uid_bytes(uid), "(FLAGS)")
+        if status == "OK" and data:
+            for part in data:
+                if not part:
+                    continue
+                meta = part[0] if isinstance(part, tuple) else part
+                meta_b = meta if isinstance(meta, bytes) else str(meta).encode()
+                if rb"\Deleted" in meta_b:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def _resolve_current_email_uid(conn, uid: str, message_id: str | None = None) -> str:
     """Resolve a stale cached UID by the message's stable RFC Message-ID."""
     uid = str(uid or "").strip()
@@ -4788,6 +4805,7 @@ def setup_email_routes():
                     except Exception:
                         pass
                 pending_expunge = []
+                preexisting_deleted = set()
                 for uid in uids:
                     try:
                         if not _uid_exists(conn, uid):
@@ -4801,6 +4819,8 @@ def setup_email_routes():
                                 # the original without a recoverable Trash copy.
                                 failed_uids.append(uid)
                                 continue
+                            if _uid_has_deleted_flag(conn, uid):
+                                preexisting_deleted.add(uid)
                             store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
                             if store_status != "OK":
                                 failed_uids.append(uid)
@@ -4816,39 +4836,18 @@ def setup_email_routes():
                         logger.debug("Bulk email delete failed for uid=%s", uid, exc_info=True)
                 if pending_expunge:
                     expunge_ok = False
-                    # 1. Attempt selective RFC 4315 UID EXPUNGE so unrelated messages
+                    # Attempt selective RFC 4315 UID EXPUNGE so unrelated messages
                     # carrying \Deleted in the selected mailbox are never expunged.
+                    # Mailbox-wide EXPUNGE is strictly avoided to eliminate TOCTOU races
+                    # where concurrent clients mark unrelated messages \Deleted.
                     try:
                         uid_set_bytes = _uid_bytes(",".join(pending_expunge))
                         uid_exp_status, _ = conn.uid("EXPUNGE", uid_set_bytes)
                         if uid_exp_status == "OK":
                             expunge_ok = True
                     except Exception:
-                        pass
-
-                    # 2. If selective UID EXPUNGE is unavailable, verify whether any
-                    # unrelated messages in the selected mailbox currently have \Deleted.
-                    if not expunge_ok:
-                        safe_to_expunge = False
-                        try:
-                            srch_status, srch_data = conn.uid("SEARCH", None, "DELETED")
-                            if srch_status == "OK":
-                                on_server = set()
-                                if srch_data and srch_data[0]:
-                                    on_server = {
-                                        u.decode() if isinstance(u, bytes) else str(u)
-                                        for u in srch_data[0].split()
-                                    }
-                                unrelated = on_server - set(pending_expunge)
-                                if not unrelated:
-                                    safe_to_expunge = True
-                        except Exception:
-                            safe_to_expunge = False
-
-                        if safe_to_expunge:
-                            expunge_status, _ = conn.expunge()
-                            if expunge_status == "OK":
-                                expunge_ok = True
+                        logger.debug("Selective UID EXPUNGE failed", exc_info=True)
+                        expunge_ok = False
 
                     if expunge_ok:
                         for uid in pending_expunge:
@@ -4857,15 +4856,20 @@ def setup_email_routes():
                     else:
                         # Prioritize preservation over cleanup: unflag \Deleted from our
                         # copied messages so future EXPUNGE operations do not destroy them.
+                        # Do not remove a pre-existing \Deleted flag present before this operation.
                         for uid in pending_expunge:
-                            try:
-                                conn.uid("STORE", _uid_bytes(uid), "-FLAGS", "\\Deleted")
-                            except Exception:
-                                pass
+                            if uid not in preexisting_deleted:
+                                try:
+                                    conn.uid("STORE", _uid_bytes(uid), "-FLAGS", "\\Deleted")
+                                except Exception:
+                                    pass
                         failed_uids.extend(pending_expunge)
             if not deleted_uids:
                 return {"success": False, "error": "Failed to delete requested emails", "deleted_uids": [], "failed_uids": failed_uids}
-            return {"success": True, "deleted_uids": deleted_uids, "failed_uids": failed_uids}
+            res = {"success": True, "deleted_uids": deleted_uids, "failed_uids": failed_uids}
+            if failed_uids:
+                res["error"] = "Mail operation partially failed"
+            return res
         except Exception as e:
             logger.error(f"Failed to bulk delete emails: {e}")
             failed_all = [u for u in uids if u not in deleted_uids]
