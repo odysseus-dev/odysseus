@@ -2,7 +2,6 @@
 import asyncio
 from dataclasses import fields, is_dataclass
 from difflib import unified_diff
-import hashlib
 import inspect
 import json
 from contextvars import ContextVar
@@ -151,7 +150,6 @@ def test_api_and_python_signatures_match_baseline():
     app.include_router(router)
     schema = app.openapi()
     _assert_openapi_matches_baseline(schema)
-    assert hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest() == baseline['openapi_sha256']
     declarations = [[sorted(r.methods), r.path, r.name] for r in router.routes]
     assert declarations == baseline['routes']
     for name, signature in baseline['signatures'].items():
@@ -298,12 +296,10 @@ def test_signature_contract_detects_model_validation_configuration(setting):
     assert _signature_contract(Before) != _signature_contract(After)
 
 
-def test_openapi_golden_is_canonical_and_matches_frozen_digest():
+def test_openapi_golden_is_canonical():
     golden = (FIXTURES / 'skills_openapi_baseline.json').read_text(encoding='utf-8')
     schema = json.loads(golden)
     assert golden == _canonical_openapi(schema)
-    baseline = json.loads((FIXTURES / 'skills_api_baseline.json').read_text(encoding='utf-8'))
-    assert hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest() == baseline['openapi_sha256']
 
 
 @pytest.mark.parametrize('section, key', [

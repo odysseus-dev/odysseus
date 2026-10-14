@@ -222,8 +222,8 @@ route test-task builder. Execution continues to reuse one task for both arms,
 as in the original implementation; it does not independently derive a baseline
 task through that alias.
 
-`tests/fixtures/skills_api_baseline.json` records declaration order, the OpenAPI
-SHA-256 digest and structural signatures captured from pre-extraction revision
+`tests/fixtures/skills_api_baseline.json` records declaration order and structural
+signatures captured from pre-extraction revision
 `86b886c611338282af6d4a717246ea4e256f58df`. Signature records retain parameter
 names, order, kinds, defaults, default factories and annotations, including
 Pydantic constraint metadata. They compare typing origins and arguments instead
@@ -247,16 +247,32 @@ digest were checked unchanged before accepting the new field records.
 Skills-router OpenAPI document, generated with a standalone FastAPI application.
 Sorted keys, ASCII escaping, two-space indentation and a final newline make the
 fixture deterministic. Tests require exact canonical equality and print a unified
-diff before checking the unchanged digest. The fixture also pins model schemas
-and constraints. CI reads committed fixtures and needs no Git history for these
-tests. Baseline updates require an intentional compatibility decision, rather
+diff on mismatch. The redundant digest field and assertions have been removed;
+they provided no independent compatibility guarantee. The fixture pins model
+schemas and constraints. CI reads committed fixtures and needs no Git history
+for these tests. Baseline updates require an intentional compatibility decision, rather
 than regenerating fixtures from a failing implementation.
 
 The narrow `.gitleaks.toml` exception remains necessary for the historical public
-digest in the fixture and earlier documentation. It applies to the exact digest,
+digest in earlier fixture and documentation revisions. It applies to the exact digest,
 the `generic-api-key` rule and the two named paths. Removing a current copy cannot
 remove findings from published history. Keep the exception unless the pinned
 full-history scan proves it unnecessary; do not rewrite history to remove it.
+The checksum-verified 8.30.1 scan without this exception still reports both
+historical copies in commit `a547c4d8`; retaining the exception passes the full
+PR/dev history scan.
+Reconsider it after squash merge only after verifying the resulting reachable
+history with the pinned full-history scan.
+
+The ReDoS source guard scans `services/skills/evaluation.py`, the canonical
+evaluation parser module, as well as the retained route and memory-extractor
+locations. Verdict regex runtime tests import the canonical module directly.
+The source guard must reject reintroducing the lazy think-block expression;
+the ordinary-input and adversarial-flood runtime tests remain in place. An isolated
+source mutation reproduced the old guard's false green for the evaluation module.
+The corrected guard rejected the vulnerable expression in each of the three
+locations and passed again after restoring the temporary copies. The mutated
+regex was never executed, and production parser behavior was not changed.
 
 ## Reproducible validation
 
