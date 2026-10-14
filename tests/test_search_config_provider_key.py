@@ -6,6 +6,7 @@ PROVIDER_ENV_KEYS = (
     "GOOGLE_API_KEY",
     "TAVILY_API_KEY",
     "SERPER_API_KEY",
+    "SOFYA_API_KEY",
 )
 
 

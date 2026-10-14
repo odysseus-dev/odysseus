@@ -782,20 +782,21 @@ var _searchProviderHints = {
   tavily: 'AI-optimized search. 1,000 free credits/month at ' + _LINK('https://tavily.com/', 'tavily.com'),
   serper: 'Google results via API. 2,500 free queries at ' + _LINK('https://serper.dev/', 'serper.dev'),
   you_com: 'Works with no key, but keyless requests are subject to usage limits and Deep Research can consume multiple requests. Optional API key from ' + _LINK('https://you.com/platform?utm_source=odysseus-dev-odysseus&utm_medium=oss_integration&utm_campaign=2026-10-oss-integrations&utm_content=settings', 'you.com/platform') + ' for higher limits.',
+  sofya: 'Search API for agents. Free credits at ' + _LINK('https://sofya.co/', 'sofya.co'),
   disabled: 'Web search and deep research tools will be unavailable.',
 };
-var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
+var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1, sofya: 1 };
 // Optional key: show the key field but do not treat a missing key as misconfigured.
 var _searchOptionalKey = { you_com: 1 };
 var _searchLabels = {
   searxng: 'SearXNG', duckduckgo: 'DuckDuckGo', brave: 'Brave Search',
   google_pse: 'Google PSE', tavily: 'Tavily', serper: 'Serper',
-  you_com: 'You.com', disabled: 'Disabled',
+  you_com: 'You.com', sofya: 'Sofya', disabled: 'Disabled',
 };
 var _searchKeyFields = {
   brave: 'brave_api_key', google_pse: 'google_pse_key',
   tavily: 'tavily_api_key', serper: 'serper_api_key',
-  you_com: 'ydc_api_key',
+  you_com: 'ydc_api_key', sofya: 'sofya_api_key',
 };
 
 async function initSearchSettings() {
@@ -833,6 +834,7 @@ async function initSearchSettings() {
     else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
     else if (prov === 'serper') keyInput.placeholder = 'Serper API key';
     else if (prov === 'you_com') keyInput.placeholder = 'YDC_API_KEY (optional)';
+    else if (prov === 'sofya') keyInput.placeholder = 'Sofya API key';
     else keyInput.placeholder = 'API key';
     loadKeyForProvider(prov);
   }

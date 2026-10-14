@@ -446,7 +446,7 @@ def test_frontend_optional_key_behavior():
     assert "(env key active)" not in settings_js
 
     # 4. Required-key providers still require a key
-    assert "_searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };" in settings_js
+    assert "_searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1, sofya: 1 };" in settings_js
 
     # 5. You.com hint notes keyless limits and Deep Research consumption
     assert "keyless requests are subject to usage limits" in settings_js
