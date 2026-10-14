@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, text
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, _auth_disabled
@@ -845,7 +845,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if db.get_bind().dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            doc = db.query(Document).filter(Document.id == doc_id).with_for_update().first()
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
@@ -913,7 +915,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         coalesced = True
 
             if not coalesced:
-                new_ver = doc.version_count + 1
+                current_max = max(doc.version_count or 0, latest_ver.version_number if latest_ver else 0)
+                new_ver = current_max + 1
                 ver = DocumentVersion(
                     id=str(uuid.uuid4()),
                     document_id=doc_id,
@@ -1058,7 +1061,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if db.get_bind().dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            doc = db.query(Document).filter(Document.id == doc_id).with_for_update().first()
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
@@ -1070,7 +1075,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not old_ver:
                 raise HTTPException(404, "Version not found")
 
-            new_ver_num = doc.version_count + 1
+            latest_ver = db.query(DocumentVersion).filter(
+                DocumentVersion.document_id == doc_id,
+            ).order_by(DocumentVersion.version_number.desc()).first()
+            current_max = max(doc.version_count or 0, latest_ver.version_number if latest_ver else 0)
+            new_ver_num = current_max + 1
             ver = DocumentVersion(
                 id=str(uuid.uuid4()),
                 document_id=doc_id,
