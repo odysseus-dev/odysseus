@@ -9,7 +9,7 @@ from .dependencies import AuditDependencies
 from .agent_runner import SkillAuditUnavailable
 from .prompts import _skill_test_task, _skill_test_messages, _skill_baseline_messages
 
-logger = logging.getLogger("routes.skills_routes")
+logger = logging.getLogger(__name__)
 
 _skill_audit_jobs: dict = {}
 

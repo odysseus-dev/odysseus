@@ -6,7 +6,7 @@ from typing import Optional
 
 from .dependencies import AuditDependencies
 
-logger = logging.getLogger("routes.skills_routes")
+logger = logging.getLogger(__name__)
 
 def auto_publish_policy(owner) -> tuple[bool, float]:
     """Return (auto_publish_enabled, minimum_confidence) for audit finalization."""

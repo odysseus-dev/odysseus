@@ -8,7 +8,7 @@ from .dependencies import AuditDependencies
 
 from .prompts import _skill_test_messages, _skill_baseline_messages
 
-logger = logging.getLogger("routes.skills_routes")
+logger = logging.getLogger(__name__)
 
 _skill_test_jobs: dict = {}
 

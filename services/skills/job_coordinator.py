@@ -11,7 +11,7 @@ from src.prompt_security import untrusted_context_message
 from .dependencies import AuditDependencies
 from .prompts import _skill_test_messages
 
-logger = logging.getLogger("routes.skills_routes")
+logger = logging.getLogger(__name__)
 
 
 def start_test_job(name, md, task, url, model, headers, user, skills_manager,

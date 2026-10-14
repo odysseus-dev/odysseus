@@ -1,16 +1,99 @@
 """Offline contracts captured against the merged skills baseline before extraction."""
 import asyncio
+from dataclasses import fields, is_dataclass
+from difflib import unified_diff
 import hashlib
 import inspect
 import json
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Annotated, get_args, get_origin
 
 import pytest
 from fastapi import FastAPI
 from starlette.requests import Request
 
 from routes import skills_routes as routes
+
+
+FIXTURES = Path(__file__).parent / 'fixtures'
+
+
+def _qualified_name(value):
+    return f'{value.__module__}.{value.__qualname__}'
+
+
+def _value_contract(value):
+    if value is inspect.Signature.empty:
+        return {'empty': True}
+    if value is None or type(value) in (bool, int, float, str):
+        return {'type': _qualified_name(type(value)), 'value': value}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {'type': _qualified_name(type(value)), 'fields': {
+            field.name: _value_contract(getattr(value, field.name))
+            for field in fields(value)
+        }}
+    raise TypeError(f'Unsupported contract value: {type(value)}')
+
+
+def _annotation_contract(annotation):
+    if annotation is inspect.Signature.empty or annotation is None:
+        return _value_contract(annotation)
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        base, *metadata = get_args(annotation)
+        return {'origin': _qualified_name(origin),
+                'annotation': _annotation_contract(base),
+                'metadata': [_value_contract(item) for item in metadata]}
+    if origin is not None:
+        return {'origin': _qualified_name(origin), 'module': annotation.__module__,
+                'arguments': [_annotation_contract(arg) for arg in get_args(annotation)]}
+    return {'type': _qualified_name(annotation)}
+
+
+def _signature_contract(target):
+    """Freeze signature structure without Python/typing annotation reprs."""
+    signature = inspect.signature(target)
+    model_fields = getattr(target, 'model_fields', {})
+    parameters = []
+    for parameter in signature.parameters.values():
+        field = model_fields.get(parameter.name)
+        if field is not None and field.default_factory is not None:
+            # Keep both the constructor marker and the actual factory identity.
+            default = {'factory': _qualified_name(field.default_factory),
+                       'marker': _qualified_name(type(parameter.default))}
+        else:
+            default = _value_contract(parameter.default)
+        parameters.append({'name': parameter.name, 'kind': parameter.kind.name,
+                           'annotation': _annotation_contract(parameter.annotation),
+                           'default': default})
+    return {'parameters': parameters,
+            'return': _annotation_contract(signature.return_annotation)}
+
+
+def _canonical_openapi(schema):
+    return json.dumps(schema, sort_keys=True, indent=2, ensure_ascii=True) + '\n'
+
+
+def _assert_openapi_matches_baseline(schema):
+    expected = (FIXTURES / 'skills_openapi_baseline.json').read_text(encoding='utf-8')
+    actual = _canonical_openapi(schema)
+    if actual != expected:
+        baseline = json.loads(expected)
+        affected = []
+        for label, before, after in [
+            ('paths', baseline.get('paths', {}), schema.get('paths', {})),
+            ('schemas', baseline.get('components', {}).get('schemas', {}),
+             schema.get('components', {}).get('schemas', {})),
+        ]:
+            changed = [key for key in sorted(before.keys() | after.keys())
+                       if _canonical_openapi(before.get(key)) != _canonical_openapi(after.get(key))]
+            if changed:
+                affected.append(f'Changed {label}: {", ".join(changed)}\n')
+        pytest.fail('OpenAPI contract changed:\n' + ''.join(affected) + ''.join(unified_diff(
+            expected.splitlines(keepends=True), actual.splitlines(keepends=True),
+            fromfile='skills_openapi_baseline.json', tofile='generated OpenAPI',
+        )))
 
 
 def endpoint(method, path, manager=None):
@@ -27,15 +110,95 @@ def request(owner='alice', body=None):
 
 
 def test_api_and_python_signatures_match_baseline():
-    baseline = json.loads((Path(__file__).parent / 'fixtures/skills_api_baseline.json').read_text())
+    baseline = json.loads((FIXTURES / 'skills_api_baseline.json').read_text(encoding='utf-8'))
     app = FastAPI()
     router = routes.setup_skills_routes(object())
     app.include_router(router)
-    assert hashlib.sha256(json.dumps(app.openapi(), sort_keys=True).encode()).hexdigest() == baseline['openapi_sha256']
+    schema = app.openapi()
+    _assert_openapi_matches_baseline(schema)
+    assert hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest() == baseline['openapi_sha256']
     declarations = [[sorted(r.methods), r.path, r.name] for r in router.routes]
     assert declarations == baseline['routes']
     for name, signature in baseline['signatures'].items():
-        assert str(inspect.signature(getattr(routes, name))) == signature, name
+        assert _signature_contract(getattr(routes, name)) == signature, name
+
+
+def test_signature_contract_ignores_annotated_repr(monkeypatch):
+    target = routes.SkillImportUrlRequest
+    before = _signature_contract(target)
+    annotation = inspect.signature(target).parameters['url'].annotation
+    monkeypatch.setattr(type(annotation), '__repr__', lambda self: 'different Python rendering')
+    assert _signature_contract(target) == before
+
+
+@pytest.mark.parametrize('change', ['name', 'order', 'kind', 'default', 'annotation', 'return'])
+def test_signature_contract_detects_interface_changes(change):
+    def original(first: str, second: int = 1) -> bool:
+        pass
+    signature = inspect.signature(original)
+    first, second = signature.parameters.values()
+    parameters = [first, second]
+    if change == 'order':
+        parameters = [second.replace(default=inspect.Parameter.empty),
+                      first.replace(default='')]
+    elif change == 'return':
+        signature = signature.replace(return_annotation=str)
+    else:
+        changes = {
+            'name': {'name': 'renamed'},
+            'kind': {'kind': inspect.Parameter.KEYWORD_ONLY},
+            'default': {'default': 2},
+            'annotation': {'annotation': float},
+        }
+        parameters[1] = second.replace(**changes[change])
+    def changed():
+        pass
+    changed.__signature__ = signature.replace(parameters=parameters)
+    assert _signature_contract(changed) != _signature_contract(original)
+
+
+@pytest.mark.parametrize('change', ['constraint', 'factory'])
+def test_signature_contract_detects_model_changes(change):
+    from pydantic import BaseModel, Field
+
+    class Original(BaseModel):
+        text: str = Field(max_length=8)
+        tags: list[str] = Field(default_factory=list)
+
+    class Changed(BaseModel):
+        text: str = Field(max_length=9 if change == 'constraint' else 8)
+        tags: list[str] = Field(default_factory=tuple if change == 'factory' else list)
+
+    assert _signature_contract(Changed) != _signature_contract(Original)
+
+
+def test_openapi_golden_is_canonical_and_matches_frozen_digest():
+    golden = (FIXTURES / 'skills_openapi_baseline.json').read_text(encoding='utf-8')
+    schema = json.loads(golden)
+    assert golden == _canonical_openapi(schema)
+    baseline = json.loads((FIXTURES / 'skills_api_baseline.json').read_text(encoding='utf-8'))
+    assert hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest() == baseline['openapi_sha256']
+
+
+@pytest.mark.parametrize('section, key', [
+    ('paths', '/api/skills/add'), ('schemas', 'SkillAddRequest'),
+])
+def test_openapi_failure_identifies_changed_endpoint_or_schema(section, key):
+    schema = json.loads((FIXTURES / 'skills_openapi_baseline.json').read_text(encoding='utf-8'))
+    target = schema['paths'] if section == 'paths' else schema['components']['schemas']
+    if section == 'paths':
+        target[key]['post']['responses']['200']['description'] = 'changed contract'
+    else:
+        target[key]['properties']['solution']['anyOf'][0]['maxLength'] = 4999
+    with pytest.raises(pytest.fail.Exception) as failure:
+        _assert_openapi_matches_baseline(schema)
+    diagnostic = str(failure.value)
+    assert '--- skills_openapi_baseline.json' in diagnostic
+    assert '+++ generated OpenAPI' in diagnostic
+    assert f'Changed {section}: {key}' in diagnostic
+    expected_change = '"description": "changed contract"' if section == 'paths' else '"maxLength": 4999'
+    assert any(line.startswith('+') and expected_change in line
+               for line in diagnostic.splitlines())
 
 
 @pytest.mark.parametrize('raw, expected', [

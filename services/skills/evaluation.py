@@ -7,7 +7,7 @@ from typing import Optional
 from src.text_helpers import strip_closed_think_blocks
 from src.utility_effort import effort_for_call
 
-logger = logging.getLogger("routes.skills_routes")
+logger = logging.getLogger(__name__)
 
 # Last-resort verdict extraction from a teacher/verifier model's prose (run when
 # JSON parsing fails). `["\'\s:]*` already consumes whitespace, so the original

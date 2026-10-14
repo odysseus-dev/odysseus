@@ -1,48 +1,171 @@
-# Skills domain service boundaries
+# Skills evaluation and audit architecture
 
-## Current integration state
+The Skills backend separates HTTP transport, model evaluation, agent execution,
+audit orchestration and publication policy. `services/skills/` coordinates those
+responsibilities; `services/memory/skills.py` remains the canonical persistence
+and lifecycle owner. The extraction preserves the existing HTTP and Python
+contracts. [PR #6711](https://github.com/odysseus-dev/odysseus/pull/6711) tracks
+this boundary change under [issue #6710](https://github.com/odysseus-dev/odysseus/issues/6710).
 
-This document covers draft [PR #6711](https://github.com/odysseus-dev/odysseus/pull/6711),
-tracking [issue #6710](https://github.com/odysseus-dev/odysseus/issues/6710), on
-`refactor/skills-evaluation-boundary` in the `architecture/skills-evaluation`
-worktree. The domain naming pass began on 2026-10-14 from clean PR head
-`5bf51207dc6d183b4b7357f77098f60614e32185`, verified against GitHub.
-Official public `dev` was `c3819e3cbf56c4f899eacc66b21115a77d9c570d`.
-Its six commits since the extraction baseline do not change the Skills service
-files. They are not incorporated by this naming pass.
-
-The initial extraction was committed as `a547c4d8`; the narrowly scoped
-Gitleaks correction followed in `5bf51207`. The original S0 through S4 work
-started from `86b886c611338282af6d4a717246ea4e256f58df`, which contained
-#6683, #6572, #6643 and #6693. Historical extraction results below refer to
-that work, not to fresh validation of the domain naming pass.
-
-## Skills domain responsibilities
-
-`services/skills/` did not exist before this pass. Repository-wide inspection
-found no conflicting module, dynamic import, deployment assumption or external
-compatibility requirement for the old service package. There is no compatibility
-package under the old name. Public compatibility stays at the existing route
-boundary.
+## Responsibilities and dependency boundaries
 
 | Module | Responsibility |
 | --- | --- |
-| `services/skills/__init__.py` | Identify the domain package without a second service facade |
-| `evaluation.py` | Verdict parsing, model grading, necessity, retrieval precision, efficiency fields and improvement generation; no job scheduling or persistence |
-| `agent_runner.py` | Manual execution, audit arms, agent loop integration, transcript capture, authority propagation, exact approval continuation and same-task stream closure |
-| `audit_workflow.py` | Individual audit sequencing, retry, teacher escalation, sequential batches, scheduled execution and existing audit registry ownership |
-| `job_coordinator.py` | Job creation and selection, continuation after HTTP approval validation, status projections, polling and cancellation requests |
-| `publication.py` | Confidence thresholds, publishing eligibility, duplicate/redundancy policies, batch finalization, status decisions and improved markdown applied through SkillsManager |
-| `model_selection.py` | Owner-scoped evaluator/teacher resolution, utility/default fallback, endpoint selection and existing credential lookup |
-| `prompts.py` | Shared task construction and explicitly untrusted skill context |
-| `dependencies.py` | Frozen `AuditDependencies` with explicit callable bindings and transient registry references |
-| `routes/skills_routes.py` | FastAPI, request/response contracts, authentication and ownership checks, HTTP errors, sealed approval validation/consumption and Python compatibility wrappers |
-| `services/memory/skills.py` | Unchanged canonical persistent storage, identity, ownership, indexing, retrieval and lifecycle state |
+| `routes/skills_routes.py` | FastAPI request models, endpoint declarations, authentication, ownership, HTTP errors, exact approval validation and Python compatibility bindings |
+| `services/skills/job_coordinator.py` | Transient job creation, continuation after approval validation, candidate selection, public polling projections and cancellation requests |
+| `services/skills/agent_runner.py` | Manual execution, audit arms, agent loop integration, transcripts, authority propagation, approval pauses and same-task stream closure |
+| `services/skills/audit_workflow.py` | Per-skill audit sequencing, self-edit retries, teacher escalation, sequential batches and scheduled execution |
+| `services/skills/evaluation.py` | Model grading, verdict parsing, necessity and retrieval checks, efficiency fields and markdown improvement generation |
+| `services/skills/publication.py` | Confidence and publishing policy, duplicate rules, batch finalization and markdown updates through SkillsManager |
+| `services/skills/model_selection.py` | Owner-scoped worker/teacher resolution, utility fallback, endpoint selection and credential lookup |
+| `services/skills/prompts.py` | Shared task construction and explicitly untrusted skill context |
+| `services/skills/dependencies.py` | Frozen `AuditDependencies` containing callable bindings and transient registry references |
+| `services/memory/skills.py` | Canonical skill identity, owner isolation, durable storage, indexing, retrieval and lifecycle state |
 
-Publication calculations remain together. The per-skill duplicate guard and
-batch connected-group finalizer retain their distinct selection rules; storage
-retrieval retains its established eligibility policy. Consolidating those rules
-would change behavior and is outside this pass.
+The package initializer identifies the domain without adding a service facade.
+Evaluation does not schedule jobs or persist skills. Publication computes policy
+and applies updates through the supplied SkillsManager. Services do not import
+`routes.skills_routes`. The existing preferences adapter in `publication.py`
+still imports `routes.prefs_routes`; moving that adapter is a separate change.
+
+```mermaid
+flowchart TD
+    HTTP[Authenticated HTTP requests] --> Routes[skills_routes]
+    Builtins[builtin_actions callers] --> Routes
+    Routes --> Jobs[job_coordinator]
+    Routes --> Models[model_selection]
+    Routes --> Evaluation[evaluation]
+    Routes --> Runner[agent_runner]
+    Routes --> Workflow[audit_workflow]
+    Jobs -->|injected calls| Runner
+    Jobs -->|injected calls| Workflow
+    Workflow -->|injected calls| Runner
+    Workflow -->|injected calls| Evaluation
+    Workflow -->|injected calls| Publication[publication]
+    Runner -->|injected calls| Evaluation
+    Runner --> Runtime[Agent runtime and authority enforcement]
+    Runner --> Prompts[prompts and untrusted context]
+    Jobs --> Prompts
+    Workflow --> Prompts
+    Routes --> Manager[Canonical SkillsManager]
+    Runner --> Manager
+    Workflow --> Manager
+    Publication --> Manager
+    Publication --> Preferences[Existing preferences adapter]
+    Models --> Resolver[Endpoint resolver and owner-scoped credentials]
+```
+
+Arrows include injected calls, rather than only Python imports. The workflow
+imports `SkillAuditUnavailable` from the runner. Route wrappers construct
+`AuditDependencies` on entry from the current route bindings, so existing
+callers and monkeypatches reach the same collaborators without rebinding shared
+service globals.
+
+The manual test registry belongs to `agent_runner.py`; the audit registry belongs
+to `audit_workflow.py`. Routes expose aliases to those dictionaries. Registries
+hold process-local job state and are not durable skill stores. All durable
+metadata, confidence, markdown and publication changes use SkillsManager.
+Published-only retrieval and local exclusion of `remote-only` skills stay in
+the manager/index boundary. Service loggers use their module names; the route
+module retains its own logger. Root handlers supply the existing log output.
+
+## Execution and publication lifecycle
+
+1. The HTTP handler authenticates the caller, verifies ownership and validates
+   the request. Manual model choices retain registered-endpoint validation and
+   owner-scoped credential lookup.
+2. Job coordination creates the owner-keyed transient record and launches the
+   execution coroutine. Replacing a manual test retires its pending approval.
+   Polling exposes only the existing public fields, excluding credentials,
+   private transcripts, continuation state and asyncio tasks.
+3. The runner uses the originating request authority or the consumed sealed
+   approval authority. It captures the transcript and closes the async stream
+   with `aclosing` inside the task that opened it, including early approval
+   pauses, cancellation and exceptions.
+4. Manual approval pauses return to the HTTP validation boundary. Continuation
+   reconstructs context from the original untrusted skill and accumulated
+   untrusted transcript. Manual completion records audit metadata and adjusts
+   confidence (pass .95, needs_work .6, fail .4) without publishing.
+5. An automated audit checks deterministic duplicates, advisory necessity and,
+   when indicated, retrieval precision. It runs skill and no-skill arms on the
+   same task, grades the result, then may self-edit and retry. An optional
+   distinct teacher rewrites the skill; the worker performs the retry.
+6. Publication applies owner preferences, confidence thresholds, necessity,
+   utility and duplicate rules through SkillsManager. A normal sequential batch
+   finalizes its processed results. Cancellation or infrastructure unavailability
+   skips batch finalization and clears task/current state.
+
+A clean audit pass sets confidence to .95, a self-edit pass to .85 and a teacher
+rewrite pass to .8. Continued failure becomes draft at .35. Unknown and
+inconclusive verdicts preserve publication state. Automatic publishing requires
+an enabled owner policy, a passing verdict at or above the configured threshold,
+and no necessity, worse-baseline or duplicate blocker. The default threshold is
+.85; owner values are clamped to [0, 1]. Markdown edits pin the existing skill name
+so usage and audit sidecars remain attached to the same identity.
+
+Per-skill duplicate blocking and batch duplicate finalization have distinct
+selection rules and must not be consolidated without a behavior proposal.
+Batch finalization excludes builtins and binned records, changes only processed
+skills, protects approval-required results, and bins duplicate losers. Duplicate
+similarity uses the existing .38 threshold and name-suffix grouping.
+
+Batches run sequentially per owner, retain current/done/results and timestamps,
+and cap progress logs at 1,000 entries. Ordinary exceptions record inconclusive
+skill audits. Infrastructure failures stop the batch without inventing a skill
+verdict. Scheduled execution skips an active owner job, selects existing lifecycle
+candidates by oldest audit, caps the batch (default eight), and marks model phases
+as background work. These services retain the existing scheduling and
+cancellation semantics.
+
+## Security and approval invariants
+
+HTTP authentication and owner verification remain at the transport boundary.
+Manager reads and writes receive the owner. Ownerless builtins retain their
+existing visibility; an authenticated user cannot access an ownerless ordinary
+skill. Existing ownerless deployment behavior is preserved.
+
+The `/test-approval` handler validates the pending job, approval ID, decision,
+owner and empty session binding, then destructively consumes the sealed approval
+with `allow_continuation=False` before calling the coordinator. Stale, mismatched
+or reused approvals fail with 409. The consumed grant authorizes only its exact
+action. Services do not manufacture approval authority or relax process identity,
+workspace confinement or request-authority enforcement in the agent runtime.
+
+Skill markdown and resumed transcripts remain explicitly untrusted context,
+never trusted system instructions. Audit arms suppress saved skill injection.
+Unattended runs deny encountered approval records instead of leaving reusable
+grants. An approval-required audit result preserves the skill's publication and
+confidence and directs the user to manual approval. Same-task stream closure
+preserves the originating ContextVar cleanup.
+
+## Model selection and evaluation
+
+Audit resolution uses an explicit endpoint/model pair when supplied, looking up
+credentials among enabled owner-visible endpoints. A model-only choice uses the
+existing owner-scoped model resolver. Otherwise it resolves the utility model,
+including the resolver's default behavior, then takes the first configured
+utility fallback if the primary result is incomplete. A missing worker raises
+`ValueError`. Served-model normalization keeps an exact match, then a basename
+match, then the first served ID; discovery exceptions keep the resolved choice.
+
+An enabled teacher resolves separately with the same owner. Its credentials are
+not borrowed from the worker. Teacher resolution failure logs the existing warning
+and leaves the teacher absent. Manual tests retain their HTTP endpoint validation
+and registered fallback credentials.
+
+Owner reasoning effort is resolved for each evaluation or rewrite call. Workload
+flags, credentials, retries, prompts and permissive parsing remain unchanged:
+
+| Phase | Token budget | Timeout in seconds |
+| --- | --- | --- |
+| Run review, up to two attempts | 32768 | 180 |
+| Necessity | 8192 | 120 |
+| Retrieval precision | 4096 | 90 |
+| Markdown improvement | 16384 | 180 |
+
+Review parsing retains think-block stripping, trailing-comma recovery, last
+usable verdict selection, prose fallback, bounded fields and unknown outcomes.
+These model outputs are advisory and do not grant execution authority.
 
 ## Public HTTP contract
 
@@ -80,377 +203,58 @@ Strict owner verification allows an ownerless builtin but denies an ownerless
 ordinary skill for an authenticated user. The existing ownerless deployment
 behavior remains. Global auth middleware is unchanged.
 
-## Python compatibility and test seams
+## Python compatibility and frozen contracts
 
-`app.py` imports `setup_skills_routes`. `src/builtin_actions.py` imports
-`_run_skill_test_once`, `_skill_test_task`, `_resolve_audit_models`,
-`_run_audit_all_job` and `_skill_audit_jobs`. Tests additionally import or patch
-`_VERDICT_PROSE_RE`, `_skill_baseline_task`, `_run_skill_audit_arm`,
-`_run_skill_test_job`, `_skill_test_jobs`, `_audit_one_skill`,
-`_audit_auto_publish_policy`, `_audit_finalize_status`, `_audit_utility_blocker`,
-`_finalize_audit_batch`, the evaluation helpers and `SkillAuditUnavailable`.
-Retain all original top-level functions, classes, signatures and registries.
-Bindings must pass patched collaborators explicitly; copying imports alone
-would silently bypass these fixtures.
+`app.py` imports `setup_skills_routes`. `src/builtin_actions.py` uses the existing
+route helpers and audit registry. Route aliases and wrappers preserve the original
+28 inspectable interfaces, `SkillAuditUnavailable`, registry identity and patchable
+collaborators. Lazy model/agent imports and route-level effort injection keep
+existing offline test seams effective.
 
-External dependency patches target `src.agent_loop.stream_agent_loop`,
-`src.llm_core.llm_call_async/list_model_ids`, endpoint resolver functions,
-`src.ai_interaction._resolve_model`, preferences and settings. Keep lazy
-resolution and route-level effort injection so offline patches remain effective.
+`tests/fixtures/skills_api_baseline.json` records declaration order, the OpenAPI
+SHA-256 digest and structural signatures captured from pre-extraction revision
+`86b886c611338282af6d4a717246ea4e256f58df`. Signature records retain parameter
+names, order, kinds, defaults, default factories and annotations, including
+Pydantic constraint metadata. They compare typing origins and arguments instead
+of Python-version-dependent annotation representations.
 
-## Characterized lifecycle and security contracts
+`tests/fixtures/skills_openapi_baseline.json` is the same baseline's complete
+Skills-router OpenAPI document, generated with a standalone FastAPI application.
+Sorted keys, ASCII escaping, two-space indentation and a final newline make the
+fixture deterministic. Tests require exact canonical equality and print a unified
+diff before checking the unchanged digest. The fixture also pins model schemas
+and constraints. CI reads committed fixtures and needs no Git history for these
+tests. Baseline updates require an intentional compatibility decision, rather
+than regenerating fixtures from a failing implementation.
 
-Manual tests replace owner/name jobs, deny replaced approvals, run detached
-tasks, retain server-only continuation state on approval and poll condensed
-logs. Manual results adjust confidence (pass .95, needs_work .6, fail .4)
-without publishing. Audit arms suppress saved skill injection, use 4096 tokens,
-and inherit active request authority or use empty owner authority. Manual
-tests use the explicit originating authority or the sealed approval authority.
-Both close async generators inside the originating task with `aclosing`.
+The narrow `.gitleaks.toml` exception remains necessary for the historical public
+digest in the fixture and earlier documentation. It applies to the exact digest,
+the `generic-api-key` rule and the two named paths. Removing a current copy cannot
+remove findings from published history. Keep the exception unless the pinned
+full-history scan proves it unnecessary; do not rewrite history to remove it.
 
-Approval requests consume the exact ID destructively with
-`allow_continuation=False`. Transcripts and skill markdown remain untrusted
-context messages. Unattended audits deny encountered approvals and preserve
-publication/confidence for approval-required results. No approval grants are
-invented by a service boundary. Issue #6635 remains open: a manual test without
-an appropriate workspace can still be unable to execute its proposed action.
+## Reproducible validation
 
-Batches run sequentially per owner, record current/done/results, cap logs at
-1,000, and finalize only on normal completion. Cancellation clears current/task
-and skips finalization; infrastructure unavailability stops without a skill
-verdict. Ordinary exceptions record an inconclusive result. Scheduled runs
-select existing lifecycle candidates by oldest audit, cap the batch, skip
-an active owner job and mark every model phase as background work.
-
-Run review makes two attempts (32768 tokens, 180 seconds); necessity uses
-8192/120, retrieval uses 4096/90, rewrites use 16384/180. Owner effort is
-resolved for each model call. Preserve prompts, think stripping, trailing-comma
-parsing, last verdict selection, bounded schema fields and unknown fallbacks.
-
-Per-skill pass confidence is .95, self-edit pass .85, teacher rewrite pass .8;
-continued failure becomes draft/.35. Inconclusive preserves publication.
-Thresholds, automatic approval, redundancy and worse-baseline blockers remain.
-Batch finalization touches only processed skills, protects approval-required
-results, excludes builtins/binned records, and bins duplicate losers.
-Published eligibility and remote-only exclusion remain in SkillsManager.
-
-## Historical overlap inspection
-
-Read-only GitHub inspection found all of #6568, #6265, #6191, #6275 and #6695
-open and unmerged during the initial extraction. They concern model effort
-capability evidence, frontmatter escaping, tool registry extraction, tool
-availability across turns and OXS. Their changes were excluded from the
-extraction. Recheck upstream state before merge.
-
-## Final architecture and inventory
-
-The transport module delegates evaluation, execution, job transitions and audit
-publication. Its original request classes, endpoint functions and declaration
-order stay in place. Compatibility functions have their original signatures;
-stateless helpers are aliases. At each service entry, `_audit_dependencies()`
-binds current route symbols into a frozen, explicit collaborator record.
-This preserves existing monkeypatches without changing service module globals
-or importing `routes.skills_routes` from a service.
-
-The test registry is owned by `agent_runner.py`, and the audit registry by
-`audit_workflow.py`. Routes expose aliases to those same dictionaries. Neither
-registry is a second skill store: all durable updates use the supplied
-SkillsManager. Polling deliberately projects only existing public fields.
-HTTP handlers retain registered endpoint authorization and exact approval
-validation; the service receives the consumed server-side grant.
-
-```mermaid
-flowchart TD
-    HTTP[Authenticated HTTP requests] --> Routes[skills_routes transport and compatibility bindings]
-    Builtins[Existing builtin_actions callers] --> Routes
-    Routes --> Jobs[job_coordinator]
-    Routes --> Models[model_selection]
-    Routes --> Evaluation[evaluation]
-    Routes --> Runner[agent_runner]
-    Routes --> Workflow[audit_workflow]
-    Jobs -->|injected runner| Runner
-    Jobs -->|injected workflow| Workflow
-    Workflow -->|injected callbacks| Runner
-    Workflow -->|injected callbacks| Evaluation
-    Workflow -->|injected callbacks| Publication[publication]
-    Runner -->|injected evaluation| Evaluation
-    Runner --> Agent[Existing agent runtime and authority enforcement]
-    Runner --> Prompts[prompts and untrusted context]
-    Jobs --> Prompts
-    Workflow --> Prompts
-    Routes --> Manager[Canonical SkillsManager]
-    Runner --> Manager
-    Workflow --> Manager
-    Publication --> Manager
-    Publication --> Preferences[Existing routes.prefs_routes adapter]
-    Models --> Resolver[Existing endpoint resolver and owner-filtered credentials]
-```
-
-Arrows describe domain responsibilities, including injected calls. The only
-concrete import between the runner and workflow is the workflow's import of
-`SkillAuditUnavailable`. The frozen dependency record provides existing
-callbacks without service imports of `routes.skills_routes`. Route wrappers
-bind the current patchable functions on every entry, preserving builtin callers
-and monkeypatch behavior. Logger names remain unchanged for observability.
-
-`SkillsManager` is the sole persistent state owner. Runner and workflow calls
-that record audit metadata still go through that manager; the service package
-has no storage, identity or indexing implementation. Published-only and
-remote-only eligibility remain in their existing manager/index boundaries.
-`services/memory/skills.py` and `src/skill_index.py` are unchanged.
-
-### Runtime execution flow
-
-1. HTTP handlers authenticate, verify ownership and validate requests. Manual
-   model choices retain registered-endpoint validation and owner-scoped credentials.
-2. Job coordination records the existing transient state and launches the
-   existing background coroutine. Polling projects only the established fields.
-3. The runner passes originating or sealed approval authority into the existing
-   agent runtime, captures tainted transcripts and closes streams with `aclosing`
-   inside the originating task. Approval pauses return to HTTP validation.
-4. The approval handler matches the sealed identity, owner and empty session,
-   consumes it once with `allow_continuation=False`, then delegates continuation
-   using the consumed grant. The coordinator rebuilds untrusted context.
-5. Audit workflows sequence necessity/retrieval checks, execution, grading,
-   self-edit retries and optional teacher rewrites. Scheduled runs retain their
-   lifecycle candidate selection and background workload flags.
-6. Publication decisions and markdown changes use the supplied canonical manager.
-   Sequential batches finalize only after normal completion; cancellation and
-   infrastructure unavailability retain their existing cleanup and verdict rules.
-
-### Final directory layout
-
-```text
-services/
-├── skills/
-│   ├── __init__.py
-│   ├── evaluation.py
-│   ├── agent_runner.py
-│   ├── audit_workflow.py
-│   ├── job_coordinator.py
-│   ├── publication.py
-│   ├── model_selection.py
-│   ├── prompts.py
-│   └── dependencies.py
-└── memory/
-    ├── skills.py
-    ├── skill_format.py
-    ├── skill_lifecycle.py
-    └── ...
-routes/
-└── skills_routes.py
-```
-
-### Exact file moves in the domain naming pass
-
-| Old path | New path |
-| --- | --- |
-| `services/skill_audit/__init__.py` | `services/skills/__init__.py` |
-| `services/skill_audit/evaluation.py` | `services/skills/evaluation.py` |
-| `services/skill_audit/execution.py` | `services/skills/agent_runner.py` |
-| `services/skill_audit/orchestration.py` | `services/skills/audit_workflow.py` |
-| `services/skill_audit/jobs.py` | `services/skills/job_coordinator.py` |
-| `services/skill_audit/policy.py` | `services/skills/publication.py` |
-| `services/skill_audit/models.py` | `services/skills/model_selection.py` |
-| `services/skill_audit/prompts.py` | `services/skills/prompts.py` |
-| `services/skill_audit/dependencies.py` | `services/skills/dependencies.py` |
-
-The other changed files in this pass are `routes/skills_routes.py`,
-`tests/test_skills_audit_services.py` and this document. The source changes are
-module names, internal import aliases and the package docstring. Function
-bodies, constants, prompts, registry ownership and the frozen HTTP/Python
-fixture remain intact. References to old paths in the table above are migration
-history, not active imports.
-
-The initial extraction reduced the route from 2,462 to 865 lines. Its integration
-inventory was the route, nine service modules, the frozen fixture, two test files,
-this document and `.gitleaks.toml`. This naming pass moves those nine modules
-and updates the three files listed above. Ignored development environment,
-bytecode, test logs and caches are not integration deliverables.
-
-## Compatibility and security verification
-
-The baseline fixture freezes all 22 endpoint declarations, all 28 inspectable
-original Python signatures, and the whole generated OpenAPI digest:
-`7abc5b334a6c3c52dd3eba15d8bc516da728a67f14fb7f56d0bb5992d89a16ca`.
-The exception class remains available at its original import path as an alias.
-The fixture was captured before structural extraction. No request models,
-endpoint docstrings, operation IDs or response declarations changed.
-
-During the initial extraction, a read-only AST comparison against
-`git show 86b886c6:routes/skills_routes.py`
-verified 20 moved function bodies, the extracted verdict parser, and four
-model system prompts. Comparison normalized only injected collaborator names
-and excluded docstrings; it did not normalize branching, thresholds, request
-arguments, stream cleanup or exception handling. The evaluation parser's
-imports and verdict tuple moved with it. Full runtime checks supplement this
-structural evidence.
-
-A second AST comparison verified all 19 unchanged route handlers/helpers and
-the approval handler's validation and sealed-consumption prefix. The only
-removed import in that prefix was `asyncio`, now used by the job service.
-
-| Required contract | Evidence |
-| --- | --- |
-| Route and Python compatibility | Frozen declaration order, OpenAPI digest, signatures and existing route tests |
-| Owner isolation | Existing manager/update/delete, request-authority, registered-endpoint and teacher-owner tests; live second-owner 404 |
-| Utility effort and fallback | Existing utility reasoning tests; advisory owner tests; first owner-scoped audit fallback and served-model normalization |
-| Verdict parsing and failure schemas | Characterization cases for think blocks, trailing commas, last verdict, coercion, prose, retry and transient exceptions |
-| Scheduling and progress | Existing scheduled/background phase tests; batch done/results/current/timestamps and ordinary exception case |
-| Finalization and publication | Threshold/auto-approval matrix, inconclusive preservation, duplicate winners/losers, unprocessed and approval-required protection |
-| Cancellation and cleanup | Cancellation in the originating context, skipped batch finalization, cleared task/current and stream exception cleanup |
-| Approved and rejected execution | Existing exact ungranted-process and authority tests; route grant/deny integration tests |
-| Exact approval reuse prevention | Destructive store consumption, single-action grant flags and second submission returning 409 |
-| Published and remote-only eligibility | Existing index/retrieval and lifecycle suites; SkillsManager implementation unchanged |
-| Skills UI/API integration | Existing Skills UI/static tests, Node approval metrics tests, live authenticated API and asset checks |
-
-The security review found no widened authority source. The manual runner uses
-the original request or sealed pending authority and otherwise empty owner
-authority. Audit arms retain active task-local authority, saved-skill
-suppression and same-task `aclosing`. Both approval ID and normalized owner
-must match, and the session must be empty. Internal tool approval requests are
-still rejected before consumption. Continuations keep skill/transcript bytes
-tainted. Unattended approvals are denied rather than retained as reusable
-grants. Services do not reconstruct sealed operations or choose a workspace.
-
-## Domain naming pass validation, 2026-10-14
-
-The worktree-local CPython 3.11.17 environment and Node 22.23.1 were reused.
-The focused selection is exactly the 53-file algorithm documented below.
-Pre-change hashes and outputs are retained in ignored `.cache/skills-domain-*`
-artifacts, separately from the historical extraction logs.
-
-| Check actually executed | Result |
-| --- | --- |
-| Pre-change focused selection at `5bf51207` | 729 passed, 2 warnings, 26.16 seconds |
-| Characterization and service suites | 42 passed, 1 warning, .73 seconds |
-| Post-change full focused Skills/authority/approval selection | 729 passed, 2 warnings, 26.17 seconds |
-| `.venv/bin/python -m compileall -q app.py core routes src services scripts tests` | Passed |
-| `.venv/bin/python scripts/build_frontend.py --check` | Passed, zero changed deployment modules |
-| `node scripts/check_frontend.mjs` | Passed |
-| `node --test tests/skillsApproval.test.mjs tests/frontendArchitecture.test.mjs` | 13 passed |
-| `node --check` over the same documented JavaScript inventory | 235 files passed |
-| Fresh interpreter import for each of the nine new modules and builtin-actions import | Passed |
-| Import graph inspection | Acyclic service imports; no import of Skills transport |
-| Frozen API fixture comparison | All 22 declarations in order, all 28 signatures and exact OpenAPI digest match |
-| Isolated uvicorn HTTP smoke using `.cache/skills-runtime-smoke.py` | 17 checks passed, including authenticated owner isolation |
-| Full Python suite with the documented environment and `-q -rs --durations=25` | 13,963 passed, 2 failed, 60 skipped, 6 warnings, 6 subtests passed, 570.22 seconds |
-| `git diff --check` and staged whitespace validation | Passed |
-
-All eight service implementation files are byte-identical after normalizing the
-workflow's single renamed relative import. The package docstring identifies the
-Skills domain. The route is byte-identical after normalizing module imports and
-private aliases. Service tests have identical ASTs after normalizing only module
-imports and collaborator names, including unchanged assertion values and fixture
-strings. No expectation or frozen compatibility baseline was updated.
-
-Hash checks confirm that `services/memory/skills.py`, `src/skill_index.py`,
-`src/builtin_actions.py`, `tests/fixtures/skills_api_baseline.json` and
-`.gitleaks.toml` match pre-change head exactly. Runtime identity checks confirm
-that route aliases still expose the runner's test registry, the workflow's audit
-registry and the same `SkillAuditUnavailable` class. `AuditDependencies` remains
-frozen. Repository-wide source and configuration search found no old-package
-imports, dynamic targets or deployment references; the only old paths are the
-nine deliberate entries in the migration table above.
-
-The full-suite failures are exactly:
-
-```text
-tests/test_containment_enforcement.py::test_namespace_handshake_closes_model_stdin
-tests/test_containment_enforcement.py::test_execution_environment_cannot_replace_probed_bwrap[False]
-```
-
-The previously intermittent tmux cleanup test passed in this run. The 60 skips
-retain their existing opt-in, optional dependency and platform reasons. The
-full suite is not green on this host; the failures reproduce on clean baselines
-and do not establish a regression in the domain naming pass. Official CI is
-required to validate the supported runner. Full output is retained in
-`.cache/skills-domain-full-pytest.log`.
-
-The exact full-suite command was:
+From the repository root, use a virtual environment with `requirements-dev.txt`
+installed and the repository's frontend dependencies available. The examples use
+`.venv/bin/python`; repeat the contract tests with a Python 3.12 environment as
+well as Python 3.11. Record interpreter/dependency versions with results.
 
 ```sh
-env -u APP_PORT PATH="$PWD/.venv/bin:$PATH" \
-  PLAYWRIGHT_BROWSERS_PATH="$PWD/.cache/ms-playwright" \
-  .venv/bin/python -m pytest -q -rs --durations=25
+.venv/bin/python -m pytest -q \
+  tests/test_skills_audit_characterization.py tests/test_skills_audit_services.py
+.venv/bin/python -m compileall -q app.py core routes src services scripts tests
+.venv/bin/python -c 'import routes.skills_routes; import services.skills.agent_runner; import services.skills.audit_workflow'
+.venv/bin/python scripts/build_frontend.py --check
+node scripts/check_frontend.mjs
+node --test tests/skillsApproval.test.mjs tests/frontendArchitecture.test.mjs
+git diff --check
 ```
 
-The two documented containment cases were also rerun individually as a pair
-in the current worktree and fresh `git archive` snapshots of pre-change head
-`5bf51207` and official extraction baseline `86b886c6`. All three runs had
-exactly the same two failures: expected `closed`/`contained` output followed by
-three host journal `Failed to create stream fd: No such file or directory`
-stderr lines. Current: 2 failed in .67 seconds; pre-change: 2 failed in .84
-seconds; official extraction baseline: 2 failed in .81 seconds. No runtime code
-or test assertion was changed. Temporary baseline snapshots were removed.
-Logs are `.cache/skills-domain-{current,prechange,official-extraction-baseline}-containment.log`.
+The focused Skills, authority and approval selection is reproducible with:
 
-## Historical initial extraction validation
-
-All Python runs used the worktree-local CPython 3.11 environment and the
-declared `requirements-dev.txt`. The shell's original `python` belonged to an
-unrelated project and lacked pytest; no changes were made to that environment.
-The first fixture-generation attempt tried to inspect the exception class,
-which has no Python signature. After limiting the signature inventory to
-inspectable symbols, the complete baseline passed. No assertion was weakened.
-
-The checkpoint command groups below are literal pytest arguments:
-
-```text
-S0:
-tests/test_skills_audit_characterization.py tests/test_skill_audit_utility.py
-tests/test_skill_audit_unavailable.py tests/test_skill_test_stream_closed.py
-tests/test_skills_routes_owner_update.py tests/test_skills_routes_nondict.py
-tests/test_skills_delete_owner.py tests/test_skill_save_no_rename.py
-tests/test_skills_manager_owner_isolation.py tests/test_skill_lifecycle.py
-tests/test_skill_index_local_model_gating.py tests/test_utility_reasoning_effort.py
-tests/test_teacher_audit_owner_scope.py tests/test_review_endpoint_credentials.py
-tests/test_request_authority.py tests/test_endpoint_registered_authority.py
-tests/test_exact_approval_ungranted_process.py tests/test_tool_approvals.py
-tests/test_tool_approval_single_action_scope.py tests/test_tool_approval_task_scope.py
-
-S1:
-tests/test_skills_audit_characterization.py tests/test_skill_audit_utility.py
-tests/test_utility_reasoning_effort.py tests/test_redos_verdict_continuation.py
-tests/test_redos_residual_python.py
-
-S2:
-tests/test_skills_audit_characterization.py tests/test_skill_test_stream_closed.py
-tests/test_skills_routes_nondict.py tests/test_skills_routes_owner_update.py
-tests/test_skill_audit_unavailable.py tests/test_skill_audit_utility.py
-tests/test_teacher_audit_owner_scope.py tests/test_review_endpoint_credentials.py
-tests/test_request_authority.py tests/test_endpoint_registered_authority.py
-tests/test_tool_approval_single_action_scope.py
-
-S3:
-tests/test_skills_audit_characterization.py tests/test_skill_audit_utility.py
-tests/test_skills_manager_owner_isolation.py tests/test_skill_lifecycle.py
-tests/test_skill_save_no_rename.py tests/test_skill_index_local_model_gating.py
-
-S4:
-tests/test_skills_audit_characterization.py tests/test_skills_routes_owner_update.py
-tests/test_skills_routes_nondict.py tests/test_skill_audit_utility.py
-tests/test_skill_audit_unavailable.py tests/test_skill_test_stream_closed.py
-tests/test_request_authority.py tests/test_endpoint_registered_authority.py
-tests/test_tool_approval_single_action_scope.py
-```
-
-| Run | Command | Result |
-| --- | --- | --- |
-| S0 | `.venv/bin/python -m pytest -q` with S0 arguments | 447 passed, 2 warnings, 18.63 seconds |
-| S1 after parser extraction | Same command with S1 arguments | 133 passed, 1 warning, 1.47 seconds |
-| S2 | Same command with S2 arguments | 374 passed, 2 warnings, 17.31 seconds |
-| S3 | Same command with S3 arguments | 48 passed, 1 warning, .94 seconds |
-| S4 | Same command with S4 arguments | 356 passed, 2 warnings, 16.21 seconds |
-| Added service/HTTP contracts | `.venv/bin/python -m pytest -q tests/test_skills_audit_services.py tests/test_skills_audit_characterization.py` | 39 passed, 1 warning, .70 seconds |
-| Added duplicate finalization cases | `.venv/bin/python -m pytest -q tests/test_skills_audit_services.py` | 22 passed, 1 warning, .65 seconds |
-| Initial full relevant selection | `.venv/bin/python -m pytest -q -rs --durations=15` with the 53-file selection below | 726 passed, 2 warnings, 21.65 seconds |
-| Final full relevant selection, including fallback and duplicate cases | Same command with the 53-file selection below | 729 passed, 2 warnings, 22.88 seconds |
-| Repository-wide CI-equivalent Python scope | `env -u APP_PORT PATH="$PWD/.venv/bin:$PATH" PLAYWRIGHT_BROWSERS_PATH="$PWD/.cache/ms-playwright" .venv/bin/python -m pytest -q -rs --durations=25` | 13959 passed, 3 failed, 60 skipped, 6 warnings, 6 subtests passed, 605.00 seconds |
-
-The reproducible relevant-file selection used for the final run is:
-
-```python
+```sh
+.venv/bin/python - <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
@@ -470,116 +274,59 @@ files.update([
 ])
 subprocess.run([sys.executable, "-m", "pytest", "-q", "-rs",
                 "--durations=15", *sorted(files)], check=True)
+PYTHON
 ```
 
-Other executed validation:
-
-- `.venv/bin/python -m compileall -q app.py core routes src services scripts tests`: passed.
-- `.venv/bin/python scripts/build_frontend.py --check`: passed, zero changed modules.
-- `node scripts/check_frontend.mjs`: passed.
-- `node --test tests/skillsApproval.test.mjs tests/frontendArchitecture.test.mjs`: 13 passed.
-- `node --check` for `static/app.js`, `scripts/check_frontend.mjs`, all `static/js/**/*.js` and `frontend/src/**/*.js`: 235 files passed.
-- `git diff --check`: passed.
-- `bwrap --die-with-parent --unshare-pid --ro-bind / / --proc /proc --dev /dev /bin/true`: passed.
-- `.venv/bin/python .cache/skills-runtime-smoke.py`: 17 live HTTP checks passed against an isolated uvicorn process.
-
-Python was 3.11.17 and Node was 22.23.1. CI's Python version matches; its Node
-version is 20, so the local Node checks are equivalent commands with a newer
-runtime. Existing SQLAlchemy and Pydantic deprecation warnings remain.
-
-The repository-wide run completed with failures in these unchanged tests:
-
-```text
-tests/test_agent_tmux_retirement.py::test_legacy_cleanup_against_a_private_real_tmux_server
-tests/test_containment_enforcement.py::test_namespace_handshake_closes_model_stdin
-tests/test_containment_enforcement.py::test_execution_environment_cannot_replace_probed_bwrap[False]
-```
-
-The tmux test reported `{seen: 1, torn_down: 0, unverifiable: 1, failed: 0}`.
-Both containment tests completed their expected command but included three
-extra stderr lines: `Failed to create stream fd: No such file or directory`.
-Their exact-output assertions failed. No containment implementation or
-assertion was modified to suppress this output.
-
-The exact targeted rerun command was:
+The original selection contained 729 cases. Additional characterization cases
+increase that count without removing the original coverage. For the full suite,
+remove a development `APP_PORT` and put the environment's tools on PATH:
 
 ```sh
-env -u APP_PORT PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -q -rs \
-  tests/test_agent_tmux_retirement.py::test_legacy_cleanup_against_a_private_real_tmux_server \
-  tests/test_containment_enforcement.py::test_namespace_handshake_closes_model_stdin \
-  'tests/test_containment_enforcement.py::test_execution_environment_cannot_replace_probed_bwrap[False]'
+env -u APP_PORT PATH="$PWD/.venv/bin:$PATH" \
+  PLAYWRIGHT_BROWSERS_PATH="$PWD/.cache/ms-playwright" \
+  .venv/bin/python -m pytest -q -rs --durations=25
 ```
 
-Current-worktree rerun: 2 failed, 1 passed, 1 warning, 2.69 seconds.
-A fresh `git archive HEAD` snapshot, unpacked into an owned temporary directory
-under this worktree's `.cache/`, ran the same three nodes with the same Python
-environment: 2 failed, 1 passed, 1 warning, 2.82 seconds. Both containment
-failures reproduced against the unchanged required baseline with the same
-stderr output. The tmux case passed in both isolated reruns; its full-suite
-failure remains intermittent or dependent on test order/environment and is
-not fully diagnosed. The snapshot was removed after collecting evidence.
-The full-suite check is therefore not green. Official CI should verify these
-host-dependent process cases before integration.
+Run the checksum-verified Gitleaks binary pinned in
+`.github/workflows/secret-scan.yml` on full reachable history, including the PR
+head and fetched official `dev`. The current workflow pins 8.30.1. Its CI command
+is `gitleaks git --no-banner --redact --verbose .` with a full-history checkout.
+A local checkout can restrict refs to the relevant histories with
+`--log-opts='HEAD upstream/dev'`; do not restrict the commit range to just the
+latest patch. Scan uncommitted fixtures too before committing.
 
-Sixty existing skips cover unconfigured live application/Ajax smoke tests,
-an allowlisted browser release image, absent optional tools/dependencies and
-platform-specific cases. The final relevant run includes the three new
-duplicate/fallback cases added after repository-wide test collection.
-Full output is retained locally in `.cache/skills-full-pytest.log`,
-`.cache/skills-failure-recheck.log` and
-`.cache/skills-baseline-failure-recheck.log`.
+## Historical evidence and validation limits
 
-The application smoke script started real uvicorn on an owned ephemeral
-loopback socket with authentication enabled. Its temporary data directory,
-database, caches and sockets were inside this worktree. Chroma pointed at
-unavailable port 0; pollers, scheduler and embedding prewarm were disabled
-through existing deployment settings. Seventeen HTTP checks passed: health,
-setup/login, Skills list/index/slash catalog, draft creation, markdown, manual
-test and audit missing-model 400 responses, test polling, cancellation, memory
-page, Skills JavaScript, second account/login, and cross-owner markdown 404.
-The server completed shutdown and its private runtime directory was removed.
-No live model execution or production skill state was used.
+The initial extraction validation at `a547c4d8` reported 42 characterization and
+service cases, 729 focused cases, 13 relevant Node cases and 17 isolated uvicorn
+HTTP checks passing. The historical repository-wide run reported 13,959 passed,
+60 skipped and three failures. These counts describe the extraction validation,
+not the current revision. The HTTP checks used isolated state and authentication
+and included second-owner denial, but exercised neither a configured live model
+nor an external tool action.
 
-## Future architecture opportunities and remaining limitations
+The two containment failures reproduced on unchanged baseline `86b886c6` with
+extra `Failed to create stream fd: No such file or directory` stderr output:
 
-The existing publication preferences adapter imports `routes.prefs_routes`.
-That layer inversion remains intentionally intact. Future boundary hardening
-could move the preferences adapter below transport while preserving owner
-resolution and fallback semantics.
+- `test_namespace_handshake_closes_model_stdin`
+- `test_execution_environment_cannot_replace_probed_bwrap[False]`
 
-Long-term consolidation of Skills storage under the domain package would require
-an explicit lifecycle migration proposal. This PR leaves `SkillsManager`, skill
-format/lifecycle modules and indexing in their canonical locations. A future
-job-lifetime proposal could address transient state across restarts; this pass
-preserves the current dictionaries, task lifetime and scheduling behavior.
-The frozen dependency record remains the compatibility mechanism, without a
-new dependency injection framework, abstract hierarchy or second service facade.
+`test_legacy_cleanup_against_a_private_real_tmux_server` failed under the original
+full-suite load and passed isolated reruns. Its cause was not fully diagnosed.
+These historical failures must be distinguished from new regressions; successful
+CI and maintainer review remain integration gates. Earlier AST comparisons and
+the [maintainer review](https://github.com/odysseus-dev/odysseus/pull/6711#issuecomment-6170115749)
+provide historical extraction evidence, not an independent review of later fixes.
 
-Issue #6635 remains unresolved: manual tests without an appropriate workspace
-can still fail to execute. Advisory model outputs retain their existing
-permissive coercions and unknown fallbacks. Historical isolated HTTP smoke
-checks did not exercise a configured live model or a real external tool action.
-Offline stream/approval tests and existing sealed-process tests cover those
-boundaries deterministically. The earlier independent audit was CONDITIONAL
-PASS; it does not constitute a new independent review of this naming pass.
+## Known limitations and follow-up boundaries
 
-Review and successful CI remain necessary before merge. The PR remains a draft;
-this task does not authorize merging or marking it ready. No Notes files,
-agent runtime, authorization implementation, provider configuration, persistent
-schema or frontend source are changed.
+[Issue #6635](https://github.com/odysseus-dev/odysseus/issues/6635) remains open:
+manual tests without an appropriate workspace can still fail to execute their
+proposed action. Stream cleanup and exact approvals are preserved, but do not
+supply a missing workspace.
 
-## Gitleaks baseline checksum review
-
-The initial extraction included 14 files. The PR also
-updated `.gitleaks.toml` to handle two reviewed
-`generic-api-key` false positives.
-
-Both findings refer to the same public OpenAPI SHA-256 compatibility
-digest, appearing in the characterization fixture and this report.
-
-The exception requires an exact digest match, the specific rule,
-and one of the two documented file paths. It does not suppress
-unrelated secret findings or disable scanning.
-
-The exception in `.gitleaks.toml` is byte-identical to pre-change PR head
-`5bf51207`. The digest and frozen fixture are unchanged by the naming pass.
+Jobs remain process-local and do not survive restarts. Durable jobs, moving the
+preferences adapter below transport, consolidating storage under the domain
+package, or changing duplicate/publication policies need separate designs.
+The canonical manager, skill format/lifecycle modules, provider implementations,
+agent authority enforcement and frontend contracts remain their existing owners.

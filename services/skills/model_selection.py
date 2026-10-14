@@ -3,7 +3,7 @@
 import logging
 
 
-logger = logging.getLogger("routes.skills_routes")
+logger = logging.getLogger(__name__)
 
 def resolve_audit_models(owner=None, model_spec=None, endpoint_url=None):
     """Resolve (url, model, headers, teacher) for an audit run from Settings.
