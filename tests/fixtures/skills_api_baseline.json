@@ -1,0 +1,190 @@
+{
+  "baseline": "86b886c611338282af6d4a717246ea4e256f58df",
+  "openapi_sha256": "7abc5b334a6c3c52dd3eba15d8bc516da728a67f14fb7f56d0bb5992d89a16ca",
+  "routes": [
+    [
+      [
+        "GET"
+      ],
+      "/api/skills",
+      "list_skills"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/index",
+      "get_index"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/slash-catalog",
+      "get_slash_catalog"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/builtin",
+      "list_builtin_skills"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/builtin/{name}",
+      "get_builtin_skill"
+    ],
+    [
+      [
+        "PUT"
+      ],
+      "/api/skills/builtin/{name}",
+      "set_builtin_override"
+    ],
+    [
+      [
+        "DELETE"
+      ],
+      "/api/skills/builtin/{name}",
+      "reset_builtin_override"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/import-from-url",
+      "import_skill_from_url"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/add",
+      "add_skill"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/{skill_id}/invoke",
+      "invoke_skill"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/{skill_id}",
+      "get_skill"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/{skill_id}/markdown",
+      "get_skill_markdown"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/{skill_id}/test",
+      "test_skill"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/{skill_id}/test-approval",
+      "approve_skill_test_action"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/{skill_id}/test-status",
+      "test_skill_status"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/audit-all",
+      "audit_all_skills"
+    ],
+    [
+      [
+        "GET"
+      ],
+      "/api/skills/audit-all/status",
+      "audit_status"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/audit-all/cancel",
+      "audit_cancel"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/{skill_id}/markdown",
+      "save_skill_markdown"
+    ],
+    [
+      [
+        "PUT"
+      ],
+      "/api/skills/{skill_id}",
+      "update_skill"
+    ],
+    [
+      [
+        "DELETE"
+      ],
+      "/api/skills/{skill_id}",
+      "delete_skill"
+    ],
+    [
+      [
+        "POST"
+      ],
+      "/api/skills/search",
+      "search_skills"
+    ]
+  ],
+  "signatures": {
+    "_verdict_efficiency": "(verdict: Optional[dict]) -> dict",
+    "SkillAddRequest": "(*, name: Annotated[Optional[str], MaxLen(max_length=80)] = None, description: Annotated[Optional[str], MaxLen(max_length=200)] = None, category: typing.Annotated[str, MaxLen(max_length=40)] = 'general', tags: List[str] = <factory>, platforms: List[str] = <factory>, requires_toolsets: List[str] = <factory>, fallback_for_toolsets: List[str] = <factory>, when_to_use: Annotated[Optional[str], MaxLen(max_length=2000)] = None, procedure: List[str] = <factory>, pitfalls: List[str] = <factory>, verification: List[str] = <factory>, status: str = 'draft', version: str = '1.0.0', confidence: float = 0.8, source: str = 'user', teacher_model: Optional[str] = None, session_id: Optional[str] = None, title: Annotated[Optional[str], MaxLen(max_length=200)] = None, problem: Annotated[Optional[str], MaxLen(max_length=2000)] = None, solution: Annotated[Optional[str], MaxLen(max_length=5000)] = None, steps: List[str] = <factory>) -> None",
+    "SkillImportUrlRequest": "(*, url: typing.Annotated[str, MinLen(min_length=8), MaxLen(max_length=2000)]) -> None",
+    "SkillUpdateRequest": "(*, name: Optional[str] = None, description: Optional[str] = None, category: Optional[str] = None, tags: Optional[List[str]] = None, platforms: Optional[List[str]] = None, requires_toolsets: Optional[List[str]] = None, fallback_for_toolsets: Optional[List[str]] = None, when_to_use: Optional[str] = None, procedure: Optional[List[str]] = None, pitfalls: Optional[List[str]] = None, verification: Optional[List[str]] = None, status: Optional[str] = None, version: Optional[str] = None, confidence: Optional[float] = None, body_extra: Optional[str] = None, title: Optional[str] = None, problem: Optional[str] = None, solution: Optional[str] = None, steps: Optional[List[str]] = None) -> None",
+    "_skill_test_task": "(skill: dict) -> str",
+    "_skill_baseline_task": "(skill: dict) -> str",
+    "_skill_test_messages": "(md: str, task: str) -> list[dict]",
+    "_skill_baseline_messages": "(task: str) -> list[dict]",
+    "_eval_skill_run": "(skill_md: str, task: str, transcript: str, url: str, model: str, headers: Optional[dict], baseline_transcript: str = '', skill_stats: Optional[dict] = None, baseline_stats: Optional[dict] = None, workload: str = 'foreground', owner: Optional[str] = None) -> dict",
+    "_eval_skill_necessity": "(skill_md: str, others: list, url: str, model: str, headers: Optional[dict], workload: str = 'foreground', owner: Optional[str] = None) -> Optional[dict]",
+    "_should_check_retrieval_precision": "(skill: dict) -> bool",
+    "_eval_skill_retrieval_precision": "(skill_md: str, others: list, url: str, model: str, headers: Optional[dict], workload: str = 'foreground', owner: Optional[str] = None) -> Optional[dict]",
+    "_run_skill_test_job": "(key, name, md, task, url, model, headers, owner, skills_manager=None, *, messages=None, transcript=None, exact_approval=None, request_authority=None)",
+    "_audit_auto_publish_policy": "(owner) -> tuple[bool, float]",
+    "_skill_duplicate_blocker": "(skills_manager, name: str, owner) -> Optional[str]",
+    "_finalize_audit_batch": "(skills_manager, results: list[dict], owner, log) -> None",
+    "_audit_flag_text": "(*parts) -> str",
+    "_audit_utility_blocker": "(skill: Optional[dict], necessity: Optional[dict], verdict_data: Optional[dict]) -> Optional[str]",
+    "_audit_finalize_status": "(skills_manager, name: str, owner, verdict: str, confidence: Optional[float], necessity: Optional[dict] = None, verdict_data: Optional[dict] = None) -> str",
+    "_apply_skill_md": "(skills_manager, name: str, md: str, owner) -> bool",
+    "_run_skill_audit_arm": "(messages: list[dict], url, model, headers, owner, workload: str = 'foreground') -> tuple[str, dict, typing.Optional[dict]]",
+    "_run_skill_test_once": "(md: str, task: str, url, model, headers, owner, workload: str = 'foreground') -> tuple",
+    "_improve_skill_md": "(skill_md: str, verdict: dict, transcript: str, url, model, headers, workload: str = 'foreground', owner: Optional[str] = None)",
+    "_audit_one_skill": "(skills_manager, skill, url, model, headers, teacher, owner, log, workload: str = 'foreground') -> dict",
+    "_run_audit_all_job": "(key, skills_manager, names, url, model, headers, teacher, owner, workload: str = 'foreground')",
+    "_resolve_audit_models": "(owner=None, model_spec=None, endpoint_url=None)",
+    "run_scheduled_skill_audit": "(skills_manager: services.memory.skills.SkillsManager, owner: Optional[str] = None, max_skills: int = 8) -> dict",
+    "setup_skills_routes": "(skills_manager: services.memory.skills.SkillsManager) -> fastapi.routing.APIRouter"
+  }
+}
