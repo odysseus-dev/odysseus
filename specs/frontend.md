@@ -20,7 +20,7 @@ This spec covers the current browser app in:
 
 `/backgrounds` currently targets `static/backgrounds.html`; if that route remains, the file must exist or the route should be removed.
 
-The static PWA icon files (192px, 512px, maskable) were deliberately omitted from publication, and `static/icons/` is intentionally absent. `static/manifest.json` declares no `icons`, and neither `static/index.html` nor `static/login.html` ships a static `apple-touch-icon` link. Icons come from generated inline SVG at runtime: the `data:image/svg+xml` favicon, the `apple-touch-icon` link that `static/index.html` and `static/js/theme.js` create, and per-route Blob manifests whose `icons` point at that SVG. Do not reintroduce references to icon files that are not shipped.
+`static/manifest.json`, `static/index.html`, and `static/login.html` reference first-party PWA icon files under `static/icons/` (192px, 512px, and maskable). At runtime, route-specific manifests can also be generated as Blob URLs when supported, and per-route favicon links use generated inline SVG.
 
 ## Current Call Sites Include
 
@@ -81,7 +81,7 @@ Storage/secrets policy:
 - other static assets use cache-first with background refresh;
 - `CACHE_NAME` bumps and `PRECACHE` updates must accompany cache policy or shell asset changes.
 
-`static/manifest.json` owns default PWA metadata and intentionally has no `icons` entry. Route-specific manifests can be generated as Blob URLs when supported; their icons are the route's generated inline SVG, not files.
+`static/manifest.json` owns default PWA metadata, referencing the restored icons under `static/icons/`. Route-specific manifests can be generated as Blob URLs when supported; dynamic icons use the route's generated inline SVG, while the default manifest uses the static icons.
 
 KaTeX and Mermaid are self-hosted and lazy-loaded through memoized, retry-after-failure promises in `static/js/markdown.js`; math placeholders preserve source until KaTeX arrives, detached PDF export renders its own container, and Mermaid fetches only when a diagram exists. Pyodide remains a jsDelivr-loaded optional runtime, so offline/PWA behavior is not fully self-contained.
 

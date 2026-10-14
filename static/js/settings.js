@@ -212,9 +212,11 @@ function _bindFallbackWidget(opts) {
   var endpointsRef = opts.endpoints;       // mutable list reference
   var modelsFilter = opts.modelsFilter || function() { return true; };
   var settingKey = opts.settingKey;
-  var current = opts.initial || [];        // [{endpoint_id, model}]
+  var current = opts.initial || [];        // [{endpoint_id, model, reasoning_effort}]
+  var supportsEffort = Boolean(opts.supportsEffort);
+  var getEffortLevels = opts.getEffortLevels;
 
-  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {} };
+  if (!fbContainer || !addBtn) return { setEndpoints: function() {}, setInitial: function() {}, refresh: function() {} };
 
   function enabledEps() { return (endpointsRef() || []).filter(function(e) { return e.is_enabled; }); }
 
@@ -233,8 +235,36 @@ function _bindFallbackWidget(opts) {
     if (selected) selectEl.value = selected;
   }
 
+  function fillEffort(selectEl, epId, modelId, selected) {
+    if (!selectEl) return;
+    while (selectEl.options.length) selectEl.remove(0);
+    var levels = getEffortLevels ? getEffortLevels(epId, modelId) : [];
+    var base = document.createElement('option');
+    base.value = '';
+    base.textContent = 'Provider default';
+    selectEl.appendChild(base);
+    levels.forEach(function(lvl) {
+      var val = typeof lvl === 'string' ? lvl : (lvl && lvl.effort);
+      if (val) {
+        var o = document.createElement('option');
+        o.value = val.toLowerCase();
+        o.textContent = val;
+        selectEl.appendChild(o);
+      }
+    });
+    var validValues = [''].concat(levels.map(function(l) { return (typeof l === 'string' ? l : l.effort).toLowerCase(); }));
+    selectEl.value = validValues.indexOf((selected || '').toLowerCase()) >= 0 ? (selected || '').toLowerCase() : '';
+    selectEl.style.display = levels.length > 0 ? '' : 'none';
+  }
+
   async function save() {
-    var clean = current.filter(function(f) { return f.endpoint_id && f.model; });
+    var clean = current.filter(function(f) { return f.endpoint_id && f.model; }).map(function(f) {
+      var item = { endpoint_id: f.endpoint_id, model: f.model };
+      if (supportsEffort && typeof f.reasoning_effort !== 'undefined') {
+        item.reasoning_effort = f.reasoning_effort || '';
+      }
+      return item;
+    });
     var body = {};
     body[settingKey] = clean;
     try {
@@ -270,13 +300,36 @@ function _bindFallbackWidget(opts) {
       fb.endpoint_id = epS.value;
       fb.model = mS.value;
 
+      var effS = null;
+      if (supportsEffort) {
+        effS = document.createElement('select');
+        effS.className = 'settings-select settings-fallback-effort';
+        fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
+        fb.reasoning_effort = effS.value;
+        effS.addEventListener('change', function() {
+          fb.reasoning_effort = effS.value;
+          save();
+        });
+      }
+
       epS.addEventListener('change', function() {
         fb.endpoint_id = epS.value;
         fillModels(mS, epS.value, '');
         fb.model = mS.value;
+        if (effS) {
+          fillEffort(effS, epS.value, mS.value, '');
+          fb.reasoning_effort = effS.value;
+        }
         save();
       });
-      mS.addEventListener('change', function() { fb.model = mS.value; save(); });
+      mS.addEventListener('change', function() {
+        fb.model = mS.value;
+        if (effS) {
+          fillEffort(effS, epS.value, mS.value, fb.reasoning_effort);
+          fb.reasoning_effort = effS.value;
+        }
+        save();
+      });
 
       var rm = document.createElement('button');
       rm.type = 'button';
@@ -292,6 +345,7 @@ function _bindFallbackWidget(opts) {
       row.appendChild(num);
       row.appendChild(epS);
       row.appendChild(mS);
+      if (effS) row.appendChild(effS);
       row.appendChild(rm);
       fbContainer.appendChild(row);
     });
@@ -299,7 +353,7 @@ function _bindFallbackWidget(opts) {
 
   addBtn.addEventListener('click', function() {
     var first = enabledEps()[0];
-    current.push({ endpoint_id: first ? first.id : '', model: '' });
+    current.push({ endpoint_id: first ? first.id : '', model: '', reasoning_effort: '' });
     render();
     save();
   });
@@ -371,9 +425,14 @@ async function initDefaultChat() {
 async function initUtilityModel() {
   var epSel = el('set-utilityEpSelect');
   var modelSel = el('set-utilityModelSelect');
+  var effortSel = el('set-utilityEffortSelect');
+  var effortRow = el('set-utilityEffortRow');
+  var effortHelp = el('set-utilityEffortHelp');
+  var effortQualifier = el('set-utilityEffortQualifier');
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
   var fallbackWidget = null;
+  var _levelsByEndpoint = {};
   if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
   if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
 
@@ -382,24 +441,110 @@ async function initUtilityModel() {
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
   } catch (e) { console.warn('Failed to load endpoints for utility model', e); }
 
+  // Effort levels come from /api/models `models_metadata` (same evidence the
+  // chat composer uses); /api/model-endpoints does not carry them.
+  async function loadEffortLevels() {
+    try {
+      var r = await fetch('/api/models', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      var data = await r.json();
+      var items = Array.isArray(data) ? data : (data.models || data.items || []);
+      _levelsByEndpoint = {};
+      items.forEach(function(item) {
+        if (item && item.endpoint_id) _levelsByEndpoint[item.endpoint_id] = item.models_metadata || {};
+      });
+    } catch (e) { console.warn('Failed to load reasoning levels for utility model', e); }
+  }
+
+  function refreshEffort(selected) {
+    if (!effortSel) return;
+    var targetEp = epSel.value;
+    var targetModel = modelSel.value;
+    if (!targetEp) {
+      var defEp = el('set-defaultEpSelect');
+      var defModel = el('set-defaultModelSelect');
+      if (defEp) targetEp = defEp.value;
+      if (defModel) targetModel = defModel.value;
+    }
+    var meta = (_levelsByEndpoint[targetEp] || {})[targetModel] || {};
+    var levels = Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels.slice() : [];
+    var isInherited = !epSel.value;
+    if (isInherited && levels.length === 0) {
+      var allLevels = {};
+      Object.keys(_levelsByEndpoint).forEach(function(epId) {
+        var models = _levelsByEndpoint[epId] || {};
+        Object.keys(models).forEach(function(mId) {
+          var mLevels = (models[mId] || {}).supported_reasoning_levels;
+          if (Array.isArray(mLevels)) {
+            mLevels.forEach(function(lvl) {
+              var val = typeof lvl === 'string' ? lvl : (lvl && lvl.effort);
+              if (val) allLevels[val.toLowerCase()] = true;
+            });
+          }
+        });
+      });
+      levels = Object.keys(allLevels);
+      if (levels.length === 0) {
+        levels = ['low', 'medium', 'high'];
+      }
+    }
+    while (effortSel.options.length) effortSel.remove(0);
+    var base = document.createElement('option');
+    base.value = '';
+    base.textContent = isInherited ? 'Same as chat' : 'Provider default';
+    if (effortQualifier) effortQualifier.style.display = isInherited ? '' : 'none';
+    effortSel.appendChild(base);
+    if (isInherited) {
+      var offOpt = document.createElement('option');
+      offOpt.value = 'off';
+      offOpt.textContent = 'Provider default';
+      effortSel.appendChild(offOpt);
+    }
+    levels.forEach(function(level) {
+      var opt = document.createElement('option');
+      opt.value = level;
+      opt.textContent = level;
+      effortSel.appendChild(opt);
+    });
+    var validValues = [''].concat(isInherited ? ['off'] : []).concat(levels);
+    effortSel.value = validValues.indexOf(selected) >= 0 ? selected : '';
+    var show = isInherited || levels.length > 0;
+    if (effortRow) effortRow.style.display = show ? '' : 'none';
+    if (effortHelp) effortHelp.style.display = show ? '' : 'none';
+  }
+
   function refreshModels(selectedModel) {
     var epId = epSel.value;
     var ep = _endpoints.find(function(e) { return e.id === epId; });
     _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
   }
 
+  await loadEffortLevels();
+
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.utility_endpoint_id) epSel.value = settings.utility_endpoint_id;
     refreshModels(settings.utility_model || '');
+    refreshEffort(settings.utility_reasoning_effort || '');
     fallbackWidget = _bindFallbackWidget({
       containerId: 'set-utilityFallbacks',
       addBtnId: 'set-utilityAddFallback',
       endpoints: function() { return _endpoints; },
       settingKey: 'utility_model_fallbacks',
+      supportsEffort: true,
+      getEffortLevels: function(epId, modelId) {
+        var meta = (_levelsByEndpoint[epId] || {})[modelId] || {};
+        return Array.isArray(meta.supported_reasoning_levels) ? meta.supported_reasoning_levels : [];
+      },
       initial: Array.isArray(settings.utility_model_fallbacks)
-        ? settings.utility_model_fallbacks.map(function(f) { return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' }; })
+        ? settings.utility_model_fallbacks.map(function(f) {
+            return {
+              endpoint_id: (f && f.endpoint_id) || '',
+              model: (f && f.model) || '',
+              reasoning_effort: (f && f.reasoning_effort) || '',
+            };
+          })
         : [],
     });
   } catch (e) { console.warn('Failed to load utility model settings', e); }
@@ -411,20 +556,30 @@ async function initUtilityModel() {
     try {
       await _postSettings({
         utility_endpoint_id: epSel.value || '',
-        utility_model: modelSel.value || ''
+        utility_model: modelSel.value || '',
+        utility_reasoning_effort: effortSel ? (effortSel.value || '') : ''
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
     } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
-  modelSel.addEventListener('change', saveUtility);
+  // A new endpoint/model may not advertise the saved effort; refreshEffort
+  // resets it to the provider default, and saveUtility persists that.
+  epSel.addEventListener('change', function() { refreshModels(''); refreshEffort(''); saveUtility(); });
+  modelSel.addEventListener('change', function() { refreshEffort(effortSel ? effortSel.value : ''); saveUtility(); });
+  if (effortSel) effortSel.addEventListener('change', saveUtility);
+  var defEp = el('set-defaultEpSelect');
+  var defModel = el('set-defaultModelSelect');
+  if (defEp) defEp.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
+  if (defModel) defModel.addEventListener('change', function() { if (!epSel.value) refreshEffort(effortSel ? effortSel.value : ''); });
 
-  _registerAiEndpointRefresh(function(endpoints) {
+  _registerAiEndpointRefresh(async function(endpoints) {
     _endpoints = endpoints;
     _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
     refreshModels(modelSel.value);
+    await loadEffortLevels();
+    refreshEffort(effortSel ? effortSel.value : '');
     if (fallbackWidget && fallbackWidget.refresh) fallbackWidget.refresh();
   });
 }

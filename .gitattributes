@@ -10,6 +10,10 @@
 entrypoint.sh text eol=lf
 docker/entrypoint.sh text eol=lf
 
+# Maintained frontend modules and this lane's byte-identical deployment output.
+frontend/src/** text eol=lf
+static/js/actionMenuOrder.js text eol=lf
+
 # Windows-native scripts stay CRLF.
 *.ps1 text eol=crlf
 *.cmd text eol=crlf

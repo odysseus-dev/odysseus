@@ -443,9 +443,11 @@ async def _generate_email_summary(
     headers: dict | None = None,
     max_tokens: int = 8192,
     timeout: int = 180,
+    owner: str | None = None,
 ) -> str:
     """Generate an interactive email summary through the shared LLM adapter."""
     from src.llm_core import llm_call_async
+    from src.utility_effort import effort_for_call
 
     raw = await llm_call_async(
         url=url,
@@ -456,6 +458,7 @@ async def _generate_email_summary(
         headers=headers,
         timeout=timeout,
         workload="foreground",
+        reasoning_effort=effort_for_call(url, model, owner),
     )
     return _normalize_email_summary(raw)
 

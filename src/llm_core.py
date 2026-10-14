@@ -2268,10 +2268,25 @@ def normalize_model_id(
             return a
     return None
 
+
+def _apply_explicit_nonstream_reasoning_effort(
+    payload: Dict, reasoning_effort: Optional[str]
+) -> None:
+    """Apply explicit effort to an OpenAI-compatible non-streaming request.
+
+    No explicit effort preserves existing provider-specific defaults.
+    Native Ollama, Anthropic and ChatGPT Responses use separate builders.
+    """
+    effort = str(reasoning_effort or "").strip().lower()
+    if effort and effort != "default":
+        payload["reasoning_effort"] = effort
+
+
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
-             thinking_mode: Optional[str] = None) -> str:
+             thinking_mode: Optional[str] = None,
+             reasoning_effort: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -2303,7 +2318,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     provider = _detect_provider(url)
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
-        thinking_mode=thinking_mode,
+        thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2343,6 +2358,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         )
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_explicit_nonstream_reasoning_effort(payload, reasoning_effort)
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -2465,14 +2481,30 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
 
 
 async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
-    """Async variant of `llm_call_with_fallback` — same semantics."""
+    """Async variant of `llm_call_with_fallback` — same semantics.
+
+    An optional ``candidate_request_factory(index, url, model, headers)`` may
+    return ``{"messages": ..., "kwargs": {...}}`` to adjust the request per
+    candidate (same contract as `llm_call_async_with_route_fallback`).
+    """
+    candidate_request_factory = kwargs.pop("candidate_request_factory", None)
     cands = dedupe_model_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return await llm_call_async(url, model, messages, headers=headers, **kwargs)
+            candidate_messages = messages
+            candidate_kwargs = kwargs
+            if candidate_request_factory is not None:
+                request = candidate_request_factory(i, url, model, headers) or {}
+                if hasattr(request, "__await__"):
+                    request = await request
+                candidate_messages = request.get("messages", messages)
+                candidate_kwargs = {**kwargs, **(request.get("kwargs") or {})}
+            return await llm_call_async(
+                url, model, candidate_messages, headers=headers, **candidate_kwargs
+            )
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -2740,6 +2772,7 @@ async def llm_call_async(
         _apply_deepseek_v4_reasoning_defaults(
             payload, target_url, model, thinking_mode
         )
+        _apply_explicit_nonstream_reasoning_effort(payload, reasoning_effort)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")

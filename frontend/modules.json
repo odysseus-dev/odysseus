@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "source": "shared/actionMenuOrder.js",
+      "deployment": "js/actionMenuOrder.js"
+    }
+  ]
+}

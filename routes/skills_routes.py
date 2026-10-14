@@ -9,6 +9,7 @@ The on-disk format is SKILL.md (frontmatter + structured body) under
 
 import logging
 import re
+from contextlib import aclosing
 from typing import List, Optional
 
 import httpx
@@ -20,6 +21,7 @@ from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
 from src.text_helpers import strip_closed_think_blocks
+from src.utility_effort import effort_for_call
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -169,7 +171,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                           baseline_transcript: str = "",
                           skill_stats: Optional[dict] = None,
                           baseline_stats: Optional[dict] = None,
-                          workload: str = "foreground") -> dict:
+                          workload: str = "foreground", owner: Optional[str] = None) -> dict:
     """LLM-as-judge: grade a skill test run from its transcript. Advisory only.
 
     Robust against local reasoning models (strips <think>, lenient JSON,
@@ -348,6 +350,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                 url, model, msgs,
                 temperature=0.1, max_tokens=32768, headers=headers, timeout=180,
                 workload=workload,
+                reasoning_effort=effort_for_call(url, model, owner),
             )
         except Exception as e:
             # Don't give up on a transient first-attempt error — let the second
@@ -367,7 +370,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
 
 async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: str,
                                 headers: Optional[dict],
-                                workload: str = "foreground") -> Optional[dict]:
+                                workload: str = "foreground", owner: Optional[str] = None) -> Optional[dict]:
     """Advisory judge: is this skill worth keeping, or is it redundant / trivially
     unnecessary? Sees the OTHER skills' names+descriptions so it can spot
     duplicates. Returns {necessary, redundant_with, reason} or None. Never acts —
@@ -400,6 +403,7 @@ async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: st
             [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
             temperature=0.1, max_tokens=8192, headers=headers, timeout=120,
             workload=workload,
+            reasoning_effort=effort_for_call(url, model, owner),
         )
     except Exception as e:
         logger.warning(f"Necessity check failed: {e}")
@@ -452,7 +456,7 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
 async def _eval_skill_retrieval_precision(skill_md: str, others: list,
                                           url: str, model: str,
                                           headers: Optional[dict],
-                                          workload: str = "foreground") -> Optional[dict]:
+                                          workload: str = "foreground", owner: Optional[str] = None) -> Optional[dict]:
     """Advisory judge: would this skill's metadata make retrieval over-select it?
 
     This is distinct from "does the procedure work?". It asks whether tags,
@@ -490,6 +494,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
             [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
             temperature=0.1, max_tokens=4096, headers=headers, timeout=90,
             workload=workload,
+            reasoning_effort=effort_for_call(url, model, owner),
         )
     except Exception as e:
         logger.warning(f"Retrieval precision check failed: {e}")
@@ -558,70 +563,74 @@ async def _run_skill_test_job(
 
     messages = list(messages) if isinstance(messages, list) else _skill_test_messages(md, task)
     try:
-        async for chunk in stream_agent_loop(
+        # aclosing: pausing for an approval leaves this loop early, and the
+        # stream's ContextVar cleanup must run in this task, not in asyncio's
+        # finalizer (#6635).
+        async with aclosing(stream_agent_loop(
             url, model, messages, headers=headers,
             temperature=0.3, max_tokens=0, max_rounds=8, owner=owner,
             exact_approval=exact_approval,
             request_authority=(request_authority or (
                 exact_approval.pending.request_authority if exact_approval is not None else None
             ) or RequestAuthority.empty(owner=owner)),
-        ):
-            if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
-                continue
-            try:
-                d = _json.loads(chunk[6:])
-            except Exception:
-                continue
-            if d.get("delta"):
-                say_buf.append(d["delta"]); transcript.append(d["delta"])
-            elif d.get("type") == "tool_start":
-                _flush_say()
-                skill_stats["tool_calls"] += 1
-                cmd = str(d.get("command") or d.get("args") or "")[:300]
-                log.append({"type": "tool_start", "tool": d.get("tool"), "command": cmd})
-                transcript.append(f"\n[tool {d.get('tool')}] {cmd}\n")
-            elif d.get("type") == "tool_output":
-                _flush_say()
-                out = str(d.get("output") or "")[:600]
-                tool_log = {"type": "tool_output", "output": out}
-                approval = d.get("ask_user")
-                if isinstance(approval, dict):
-                    tool_log["ask_user"] = approval
-                log.append(tool_log)
-                transcript.append(f"[output] {out}\n")
-                if (
-                    isinstance(approval, dict)
-                    and approval.get("kind") == "tool_approval"
-                    and approval.get("approval_id")
-                ):
-                    # Manual skill tests have their own polling UI instead of a
-                    # chat session. Pause the run and retain only server-side
-                    # continuation state until the same owner approves/denies
-                    # this exact sealed action.
-                    job["status"] = "awaiting_approval"
-                    job["approval"] = approval
-                    job["_transcript"] = transcript
-                    return
-            elif d.get("type") == "agent_step":
-                _flush_say()
+        )) as stream:
+            async for chunk in stream:
+                if not chunk.startswith("data: ") or chunk.strip() == "data: [DONE]":
+                    continue
                 try:
-                    skill_stats["turns"] = max(skill_stats["turns"], int(d.get("round") or 0))
-                except (TypeError, ValueError):
-                    pass
-                log.append({"type": "agent_step", "round": d.get("round")})
-                transcript.append(f"\n--- round {d.get('round')} ---\n")
-            elif d.get("type") == "metrics":
-                data = d.get("data") or {}
-                try:
-                    skill_stats["turns"] = max(skill_stats["turns"], int(data.get("agent_rounds") or 0))
-                except (TypeError, ValueError):
-                    pass
-                try:
-                    skill_stats["tool_calls"] = max(skill_stats["tool_calls"], int(data.get("tool_calls") or 0))
-                except (TypeError, ValueError):
-                    pass
-            if len(log) > 600:
-                del log[0:len(log) - 600]
+                    d = _json.loads(chunk[6:])
+                except Exception:
+                    continue
+                if d.get("delta"):
+                    say_buf.append(d["delta"]); transcript.append(d["delta"])
+                elif d.get("type") == "tool_start":
+                    _flush_say()
+                    skill_stats["tool_calls"] += 1
+                    cmd = str(d.get("command") or d.get("args") or "")[:300]
+                    log.append({"type": "tool_start", "tool": d.get("tool"), "command": cmd})
+                    transcript.append(f"\n[tool {d.get('tool')}] {cmd}\n")
+                elif d.get("type") == "tool_output":
+                    _flush_say()
+                    out = str(d.get("output") or "")[:600]
+                    tool_log = {"type": "tool_output", "output": out}
+                    approval = d.get("ask_user")
+                    if isinstance(approval, dict):
+                        tool_log["ask_user"] = approval
+                    log.append(tool_log)
+                    transcript.append(f"[output] {out}\n")
+                    if (
+                        isinstance(approval, dict)
+                        and approval.get("kind") == "tool_approval"
+                        and approval.get("approval_id")
+                    ):
+                        # Manual skill tests have their own polling UI instead of a
+                        # chat session. Pause the run and retain only server-side
+                        # continuation state until the same owner approves/denies
+                        # this exact sealed action.
+                        job["status"] = "awaiting_approval"
+                        job["approval"] = approval
+                        job["_transcript"] = transcript
+                        return
+                elif d.get("type") == "agent_step":
+                    _flush_say()
+                    try:
+                        skill_stats["turns"] = max(skill_stats["turns"], int(d.get("round") or 0))
+                    except (TypeError, ValueError):
+                        pass
+                    log.append({"type": "agent_step", "round": d.get("round")})
+                    transcript.append(f"\n--- round {d.get('round')} ---\n")
+                elif d.get("type") == "metrics":
+                    data = d.get("data") or {}
+                    try:
+                        skill_stats["turns"] = max(skill_stats["turns"], int(data.get("agent_rounds") or 0))
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        skill_stats["tool_calls"] = max(skill_stats["tool_calls"], int(data.get("tool_calls") or 0))
+                    except (TypeError, ValueError):
+                        pass
+                if len(log) > 600:
+                    del log[0:len(log) - 600]
         _flush_say()
     except Exception as e:
         _flush_say()
@@ -662,6 +671,7 @@ async def _run_skill_test_job(
             baseline_transcript=baseline_transcript,
             skill_stats=skill_stats,
             baseline_stats=baseline_stats,
+            owner=owner,
         )
     except Exception as e:
         job["verdict"] = {"verdict": "unknown", "confidence": 0, "summary": f"Eval failed: {e}", "issues": []}
@@ -1054,53 +1064,55 @@ async def _run_skill_audit_arm(messages: list[dict], url, model, headers, owner,
         # OpenAI-compat) generate an empty completion, which manifested as
         # the skill test returning nothing while chat (which carries its
         # preset's max_tokens) worked. 4096 matches the chat default.
-        async for chunk in stream_agent_loop(
+        # aclosing: stopping for an approval leaves this loop early (#6635).
+        async with aclosing(stream_agent_loop(
             url, model, messages, headers=headers,
             temperature=0.3, max_tokens=4096, max_rounds=8,
             owner=owner, workload=workload, suppress_skills=True,
             request_authority=(active_request_authority() or RequestAuthority.empty(owner=owner)),
-        ):
-            # Streams can include an SSE event line before the data line,
-            # notably `event: error`. Do not silently discard those failures.
-            payload = next((line[6:] for line in chunk.splitlines() if line.startswith("data: ")), None)
-            if payload is None or payload == "[DONE]":
-                continue
-            try:
-                d = _json.loads(payload)
-            except Exception:
-                continue
-            if d.get("error") or d.get("type") == "error":
-                raise SkillAuditUnavailable(str(d.get("error") or d.get("message") or "Audit stream failed"))
-            if d.get("delta"):
-                transcript.append(d["delta"])
-            elif d.get("type") == "tool_start":
-                stats["tool_calls"] += 1
-                transcript.append(f"\n[tool {d.get('tool')}] {str(d.get('command') or d.get('args') or '')[:300]}\n")
-            elif d.get("type") == "tool_output":
-                transcript.append(f"[output] {str(d.get('output') or '')[:600]}\n")
-                approval = d.get("ask_user")
-                if (
-                    isinstance(approval, dict)
-                    and approval.get("kind") == "tool_approval"
-                ):
-                    approval_required = approval
-                    break
-            elif d.get("type") == "agent_step":
+        )) as stream:
+            async for chunk in stream:
+                # Streams can include an SSE event line before the data line,
+                # notably `event: error`. Do not silently discard those failures.
+                payload = next((line[6:] for line in chunk.splitlines() if line.startswith("data: ")), None)
+                if payload is None or payload == "[DONE]":
+                    continue
                 try:
-                    stats["turns"] = max(stats["turns"], int(d.get("round") or 0))
-                except (TypeError, ValueError):
-                    pass
-                transcript.append(f"\n--- round {d.get('round')} ---\n")
-            elif d.get("type") == "metrics":
-                data = d.get("data") or {}
-                try:
-                    stats["turns"] = max(stats["turns"], int(data.get("agent_rounds") or 0))
-                except (TypeError, ValueError):
-                    pass
-                try:
-                    stats["tool_calls"] = max(stats["tool_calls"], int(data.get("tool_calls") or 0))
-                except (TypeError, ValueError):
-                    pass
+                    d = _json.loads(payload)
+                except Exception:
+                    continue
+                if d.get("error") or d.get("type") == "error":
+                    raise SkillAuditUnavailable(str(d.get("error") or d.get("message") or "Audit stream failed"))
+                if d.get("delta"):
+                    transcript.append(d["delta"])
+                elif d.get("type") == "tool_start":
+                    stats["tool_calls"] += 1
+                    transcript.append(f"\n[tool {d.get('tool')}] {str(d.get('command') or d.get('args') or '')[:300]}\n")
+                elif d.get("type") == "tool_output":
+                    transcript.append(f"[output] {str(d.get('output') or '')[:600]}\n")
+                    approval = d.get("ask_user")
+                    if (
+                        isinstance(approval, dict)
+                        and approval.get("kind") == "tool_approval"
+                    ):
+                        approval_required = approval
+                        break
+                elif d.get("type") == "agent_step":
+                    try:
+                        stats["turns"] = max(stats["turns"], int(d.get("round") or 0))
+                    except (TypeError, ValueError):
+                        pass
+                    transcript.append(f"\n--- round {d.get('round')} ---\n")
+                elif d.get("type") == "metrics":
+                    data = d.get("data") or {}
+                    try:
+                        stats["turns"] = max(stats["turns"], int(data.get("agent_rounds") or 0))
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        stats["tool_calls"] = max(stats["tool_calls"], int(data.get("tool_calls") or 0))
+                    except (TypeError, ValueError):
+                        pass
     except SkillAuditUnavailable:
         raise
     except Exception as e:
@@ -1150,12 +1162,13 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner,
         headers,
         skill_stats=stats,
         workload=workload,
+        owner=owner,
     )
     return text, verdict
 
 
 async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, model, headers,
-                            workload: str = "foreground"):
+                            workload: str = "foreground", owner: Optional[str] = None):
     """Have a model rewrite SKILL.md to fix the reviewer's issues. Returns the
     corrected markdown, or None if it couldn't produce a usable change."""
     import re as _re
@@ -1185,7 +1198,8 @@ async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, 
                                    [{"role": "system", "content": sys_prompt},
                                     {"role": "user", "content": user_msg}],
                                    temperature=0.2, max_tokens=16384, headers=headers, timeout=180,
-                                   workload=workload)
+                                   workload=workload,
+                                   reasoning_effort=effort_for_call(url, model, owner))
     except Exception as e:
         logger.warning(f"Audit: improve call failed: {e}")
         return None
@@ -1255,6 +1269,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         ]
         nec = await _eval_skill_necessity(
             md, others, url, model, headers, workload=workload,
+            owner=owner,
         )
         if nec is not None:
             skills_manager.set_necessity(name, nec.get("necessary", True),
@@ -1271,6 +1286,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         if _should_check_retrieval_precision(skill):
             rp = await _eval_skill_retrieval_precision(
                 md, others, url, model, headers, workload=workload,
+                owner=owner,
             )
             if rp and not rp.get("ok"):
                 issues = rp.get("issues") or ["metadata: retrieval: narrow tags and when_to_use to the intended trigger"]
@@ -1281,7 +1297,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
                     "summary": rp.get("summary") or "Retrieval metadata is too broad.",
                     "issues": issues,
                 }, "Retrieval audit only: the procedure may work, but matching metadata is too broad.",
-                    url, model, headers, workload=workload)
+                    url, model, headers, workload=workload, owner=owner)
                 if fixed and fixed.strip() != md.strip() and _apply_skill_md(skills_manager, name, fixed, owner):
                     md = fixed
                     refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == name), None)
@@ -1357,6 +1373,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
             skill_stats=skill_stats,
             baseline_stats=baseline_stats,
             workload=workload,
+            owner=owner,
         )
     v = verdict.get("verdict")
     log(f"{name}: verdict = {v} ({verdict.get('summary', '')[:80]})")
@@ -1390,6 +1407,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
             log(f"{name}: pass, but fixing {len(meta_issues)} metadata issue(s)…")
             fixed = await _improve_skill_md(
                 md, verdict, transcript, url, model, headers, workload=workload,
+                owner=owner,
             )
             if fixed and fixed.strip() != md.strip():
                 _apply_skill_md(skills_manager, name, fixed, owner)
@@ -1423,6 +1441,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     log(f"{name}: self-editing to fix issues…")
     new_md = await _improve_skill_md(
         md, verdict, transcript, url, model, headers, workload=workload,
+        owner=owner,
     )
     if new_md and new_md.strip() != md.strip() and _apply_skill_md(skills_manager, name, new_md, owner):
         md = new_md
@@ -1457,6 +1476,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         log(f"{name}: teacher {t_model} rewriting the skill…")
         t_md = await _improve_skill_md(
             md, verdict, transcript, t_url, t_model, t_headers, workload=workload,
+            owner=owner,
         )
         if t_md and t_md.strip() != md.strip() and _apply_skill_md(skills_manager, name, t_md, owner):
             md = t_md

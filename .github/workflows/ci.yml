@@ -81,6 +81,8 @@ jobs:
           python-version: "3.11"
       # Byte-compile sources — catches syntax errors without installing deps.
       - run: python -m compileall -q app.py core routes src services scripts tests
+      - name: Check committed frontend deployment modules
+        run: python scripts/build_frontend.py --check
 
   node-syntax:
     name: JS syntax (node --check)
@@ -92,13 +94,19 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "20"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check frontend architecture
+        run: node scripts/check_frontend.mjs
       # Syntax-check our own JS (skip vendored libs in static/lib).
       - name: node --check
         run: |
           shopt -s globstar nullglob
-          for f in static/app.js static/js/**/*.js; do
+          for f in static/app.js static/js/**/*.js frontend/src/**/*.js; do
             node --check "$f"
           done
+          node --check scripts/check_frontend.mjs
+      - name: Test frontend architecture gates and stateless proof
+        run: node --test tests/frontendArchitecture.test.mjs
 
   python-tests:
     name: Python tests (pytest ${{ matrix.shard }})
@@ -147,8 +155,15 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           python-version: "3.11"
-          cache: pip
-      - run: pip install -r requirements.txt
+      # uv resolves the same versions as pip but installs ~5x faster, and its
+      # cache keeps each shard from re-downloading the whole requirement set.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        if: steps.docs-check.outputs.docs_only != 'true'
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+          prune-cache: false
+      - run: uv pip install --system -r requirements.txt
         if: steps.docs-check.outputs.docs_only != 'true'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         if: steps.docs-check.outputs.docs_only != 'true'
@@ -157,15 +172,25 @@ jobs:
           cache: npm
       - run: npm ci
         if: steps.docs-check.outputs.docs_only != 'true'
+      # Browser binaries are keyed on the lockfile's Playwright version. On a
+      # hit, --with-deps still installs the system libraries but skips the
+      # browser downloads.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        if: steps.docs-check.outputs.docs_only != 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
         if: steps.docs-check.outputs.docs_only != 'true'
       - run: mkdir -p data  # sqlite DB lives at ./data/app.db
         if: steps.docs-check.outputs.docs_only != 'true'
-      - name: Install FFmpeg for media integration tests
+      # One apt pass for FFmpeg (media integration tests) and bubblewrap
+      # (containment, verified in the next step).
+      - name: Install FFmpeg and bubblewrap
         if: steps.docs-check.outputs.docs_only != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap
           command -v ffmpeg
           ffmpeg -version | head -n 1
 
@@ -174,8 +199,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bubblewrap
           bwrap --version
           sysctl kernel.unprivileged_userns_clone user.max_user_namespaces \
             kernel.apparmor_restrict_unprivileged_userns
@@ -223,4 +246,4 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
         env:
           PYTEST_SHARD: ${{ matrix.shard }}
-        run: python -m pytest -q -rs --shard "$PYTEST_SHARD"
+        run: python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD"

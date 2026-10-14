@@ -964,24 +964,28 @@ def _is_hardlinked_regular_file(resolved: str) -> bool:
     return stat.S_ISREG(target.st_mode) and getattr(target, "st_nlink", 1) > 1
 
 
-def _is_denied_tool_path(resolved: str) -> bool:
-    """Apply every path deny to a canonical traversal result."""
+def _is_denied_tool_path(resolved: str, *, snapshot=None) -> bool:
+    """Apply every path deny to a canonical traversal result.
+
+    Directory scans pass one ``_control_plane_snapshot()`` for the whole walk;
+    rebuilding it per entry made grep/ls/glob linear in protected-state stats.
+    """
     from src.agent_runtime.resources import _control_plane_path
     return (
         _is_sensitive_path(resolved)
         or _is_app_state_path(resolved)
         or _is_hardlinked_regular_file(resolved)
-        or _control_plane_path(resolved)
+        or _control_plane_path(resolved, snapshot=snapshot)
     )
 
 
-def _can_traverse_tool_path(resolved: str) -> bool:
+def _can_traverse_tool_path(resolved: str, *, snapshot=None) -> bool:
     """Allow walking a denied state parent only to reach safe carve-outs."""
     if _is_sensitive_path(resolved):
         return False
     if not _is_app_state_path(resolved):
         from src.agent_runtime.resources import _control_plane_path
-        return not _control_plane_path(resolved)
+        return not _control_plane_path(resolved, snapshot=snapshot)
     return any(
         _path_within(readable, resolved)
         for readable in _agent_readable_data_subdirs()
