@@ -179,6 +179,38 @@ def setup_upload_routes(upload_handler):
 
         raise HTTPException(404, "File not found")
 
+    def _verify_upload_access(request: Request, file_owner: str | None) -> None:
+        if auth_disabled():
+            return
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        if auth_mgr is not None and not getattr(auth_mgr, "is_configured", False):
+            # Intentional first-run mode: setup before admin account creation
+            return
+
+        current_user = effective_user(request)
+
+        # Cross-user isolation: an authenticated caller can NEVER access another
+        # user's upload unless verified as an administrator.
+        if file_owner is not None and current_user is not None and file_owner != current_user:
+            if not (auth_mgr and hasattr(auth_mgr, "is_admin") and auth_mgr.is_admin(current_user)):
+                raise HTTPException(404, "File not found")
+
+        # When auth is configured, enforce authentication and ownership
+        if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+            if not current_user:
+                raise HTTPException(403, "Access denied")
+            if file_owner != current_user and not auth_mgr.is_admin(current_user):
+                raise HTTPException(404, "File not found")
+            return
+
+        # When auth is enabled but auth_mgr is missing (infrastructure failure):
+        if auth_mgr is None:
+            client = getattr(request, "client", None)
+            host = (client.host if client else "") or ""
+            is_loopback = host in ("127.0.0.1", "::1", "localhost")
+            if not is_loopback:
+                raise HTTPException(503, "Authentication service unavailable")
+
     def _valid_session_id_for_owner(db, session_id: str | None, owner: str | None) -> str | None:
         if not session_id:
             return None
@@ -383,15 +415,8 @@ def setup_upload_routes(upload_handler):
         info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
         if info:
             original_name = info.get("name", file_id)
-        auth_mgr = getattr(request.app.state, "auth_manager", None)
-        auth_configured = bool(auth_mgr and auth_mgr.is_configured and not auth_disabled())
-        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
-        if auth_configured:
-            if not current_user:
-                raise HTTPException(403, "Access denied")
-            if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+        _verify_upload_access(request, file_owner)
         path = _resolve_upload_path(file_id)
         mime = (info or {}).get("mime") or _mt.guess_type(path)[0] or "application/octet-stream"
         from fastapi.responses import FileResponse
@@ -472,15 +497,9 @@ def setup_upload_routes(upload_handler):
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         info = _load_upload_info(file_id)
-        auth_mgr = getattr(request.app.state, "auth_manager", None)
-        auth_configured = bool(auth_mgr and auth_mgr.is_configured and not auth_disabled())
-        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
-        if auth_configured:
-            if not current_user:
-                raise HTTPException(403, "Access denied")
-            if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+        _verify_upload_access(request, file_owner)
+        current_user = effective_user(request)
         path = _resolve_upload_path(file_id)
         import mimetypes as _mt
         mime = (info or {}).get("mime") or _mt.guess_type(path)[0] or ""
@@ -518,15 +537,9 @@ def setup_upload_routes(upload_handler):
         info = _load_upload_info(file_id)
         if not info:
             raise HTTPException(404, "File not found")
-        auth_mgr = getattr(request.app.state, "auth_manager", None)
-        auth_configured = bool(auth_mgr and auth_mgr.is_configured and not auth_disabled())
-        current_user = effective_user(request)
         file_owner = info.get("owner")
-        if auth_configured:
-            if not current_user:
-                raise HTTPException(403, "Access denied")
-            if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+        _verify_upload_access(request, file_owner)
+        current_user = effective_user(request)
         _resolve_upload_path(file_id)
         try:
             body = await request.json()

@@ -150,10 +150,10 @@ def test_auth_configured_enforces_owner_isolation(upload_client, monkeypatch, ca
 
 
 @pytest.mark.parametrize("operation", ["download", "thumbnail", "read_vision", "edit_vision"])
-def test_absent_auth_manager_allows_access_without_crash(upload_client, monkeypatch, operation):
-    """When auth_manager is absent from app.state (e.g. standalone test or
-    minimal configuration), upload routes must not crash (no 500) and must
-    serve requests without error."""
+def test_absent_auth_manager_fails_closed(upload_client, monkeypatch, operation):
+    """When AUTH_ENABLED=true and auth_manager is absent from app.state (unexpected
+    infrastructure failure), upload routes must fail closed (503 Service Unavailable)
+    rather than failing open."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     client, file_id, image_path, cache_path = upload_client
     if hasattr(client.app.state, "auth_manager"):
@@ -167,27 +167,24 @@ def test_absent_auth_manager_allows_access_without_crash(upload_client, monkeypa
     else:
         response = client.get(url, params={"thumb": int(operation == "thumbnail")})
 
-    assert response.status_code == 200, response.text
-    assert response.status_code != 500
-    if operation == "download":
-        assert response.content == image_path.read_bytes()
-    elif operation == "edit_vision":
-        assert response.json() == {"ok": True}
-        assert cache_path.read_text(encoding="utf-8") == "No auth_manager edit"
+    assert response.status_code == 503, response.text
+    if operation == "edit_vision":
+        assert cache_path.read_text(encoding="utf-8") == "A red image"
 
 
-def test_absent_auth_manager_restoring_auth_closes_access(upload_client, monkeypatch):
-    """Verify that absent auth_manager is not an irreversible authorization bypass:
-    attaching a configured auth_manager immediately restores owner isolation."""
+def test_absent_auth_manager_restoring_auth_enforces_access(upload_client, monkeypatch):
+    """Verify that when auth_manager is absent, routes fail closed (503),
+    and attaching a configured auth_manager enforces full owner isolation."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     client, file_id, _, _ = upload_client
 
-    # First, verify access works when auth_manager is absent
+    # First, verify access fails closed when auth_manager is absent
     if hasattr(client.app.state, "auth_manager"):
         delattr(client.app.state, "auth_manager")
-    assert client.get(f"/api/upload/{file_id}").status_code == 200
+    assert client.get(f"/api/upload/{file_id}").status_code == 503
 
-    # Now attach configured auth_manager: anonymous access must immediately fail closed
+    # Now attach configured auth_manager: anonymous access must fail closed (403),
+    # wrong owner gets 404, owner and admin get 200.
     client.app.state.auth_manager = SimpleNamespace(
         is_configured=True,
         is_admin=lambda user: user == "admin",
@@ -196,6 +193,45 @@ def test_absent_auth_manager_restoring_auth_closes_access(upload_client, monkeyp
     assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "bob"}).status_code == 404
     assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "alice"}).status_code == 200
     assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "admin"}).status_code == 200
+
+
+def test_authenticated_cross_user_with_absent_auth_manager_fails_closed(upload_client, monkeypatch):
+    """When AUTH_ENABLED=true, an authenticated non-owner (e.g. Bob) must NOT be able
+    to access Alice's upload even if app.state.auth_manager is absent/None.
+    The route must enforce ownership isolation (404 File not found) instead of
+    silently disabling ownership checks and leaking the file."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, _, cache_path = upload_client
+    if hasattr(client.app.state, "auth_manager"):
+        delattr(client.app.state, "auth_manager")
+
+    # Bob is authenticated but auth_manager is absent on app.state
+    resp_download = client.get(f"/api/upload/{file_id}", headers={"x-test-user": "bob"})
+    assert resp_download.status_code == 404
+
+    resp_thumb = client.get(f"/api/upload/{file_id}?thumb=1", headers={"x-test-user": "bob"})
+    assert resp_thumb.status_code == 404
+
+    resp_read_vision = client.get(f"/api/upload/{file_id}/vision", headers={"x-test-user": "bob"})
+    assert resp_read_vision.status_code == 404
+
+    resp_edit_vision = client.put(f"/api/upload/{file_id}/vision", headers={"x-test-user": "bob"}, json={"text": "Defaced"})
+    assert resp_edit_vision.status_code == 404
+    assert cache_path.read_text(encoding="utf-8") == "A red image"
+
+
+def test_absent_auth_manager_allows_access_when_auth_disabled(upload_client, monkeypatch):
+    """When AUTH_ENABLED=false, absent auth_manager must NOT block single-user access."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    client, file_id, image_path, cache_path = upload_client
+    if hasattr(client.app.state, "auth_manager"):
+        delattr(client.app.state, "auth_manager")
+
+    assert client.get(f"/api/upload/{file_id}").status_code == 200
+    assert client.get(f"/api/upload/{file_id}?thumb=1").status_code == 200
+    assert client.get(f"/api/upload/{file_id}/vision").status_code == 200
+    assert client.put(f"/api/upload/{file_id}/vision", json={"text": "Single user edit"}).status_code == 200
+    assert cache_path.read_text(encoding="utf-8") == "Single user edit"
 
 
 # ===========================================================================
