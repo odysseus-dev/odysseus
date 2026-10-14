@@ -434,3 +434,19 @@ This work adds no workspace workaround or new security policy. The isolated
 smoke did not exercise a configured live model or a real external tool action.
 Offline stream/approval tests and existing sealed-process tests cover those
 boundaries deterministically.
+
+## Gitleaks baseline checksum review
+
+The original 14-file architecture extraction is unchanged. The PR
+additionally updates `.gitleaks.toml` to handle two reviewed
+`generic-api-key` false positives.
+
+Both findings refer to the same public OpenAPI SHA-256 compatibility
+digest, appearing in the characterization fixture and this report.
+
+The exception requires an exact digest match, the specific rule,
+and one of the two documented file paths. It does not suppress
+unrelated secret findings or disable scanning.
+
+The final PR therefore changes 15 files, including this narrowly
+scoped secret-scan configuration update.
