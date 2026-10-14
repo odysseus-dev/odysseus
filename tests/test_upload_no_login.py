@@ -46,6 +46,10 @@ def upload_client(tmp_path, monkeypatch):
         user = request.headers.get("x-test-user")
         if user:
             request.state.current_user = user
+        if request.headers.get("x-test-api-token"):
+            request.state.current_user = "api"
+            request.state.api_token = True
+            request.state.api_token_owner = request.headers.get("x-test-api-token-owner")
         return await call_next(request)
 
     app.include_router(router)
@@ -85,14 +89,15 @@ def test_upload_access_after_disabling_login(upload_client, monkeypatch, auth_en
 
 
 # ===========================================================================
-# 1. AUTH_ENABLED=true with auth_manager.is_configured=False (First-run mode)
+# 1. AUTH_ENABLED=true with auth_manager.is_configured=False
 # ===========================================================================
 
 
 @pytest.mark.parametrize("operation", ["download", "thumbnail", "read_vision", "edit_vision"])
-def test_first_run_mode_unconfigured_auth_manager_allows_access(upload_client, monkeypatch, operation):
-    """When AUTH_ENABLED=true but auth_manager is not yet configured (first-run),
-    the owner gate must be skipped and all operations must succeed."""
+def test_unconfigured_auth_manager_fails_closed(upload_client, monkeypatch, operation):
+    """When AUTH_ENABLED=true and auth_manager is not configured (e.g. first-run
+    before initial setup is complete), existing uploads must NOT be exposed
+    and modification attempts must be rejected with 401 Setup required."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     client, file_id, image_path, cache_path = upload_client
     client.app.state.auth_manager = SimpleNamespace(
@@ -102,22 +107,15 @@ def test_first_run_mode_unconfigured_auth_manager_allows_access(upload_client, m
     url = f"/api/upload/{file_id}"
 
     if operation == "edit_vision":
-        response = client.put(f"{url}/vision", json={"text": "First-run vision edit"})
+        response = client.put(f"{url}/vision", json={"text": "Defaced OCR"})
     elif operation == "read_vision":
         response = client.get(f"{url}/vision")
     else:
         response = client.get(url, params={"thumb": int(operation == "thumbnail")})
 
-    assert response.status_code == 200, response.text
-    if operation == "download":
-        assert response.content == image_path.read_bytes()
-    elif operation == "thumbnail":
-        assert response.headers["content-type"] == "image/jpeg"
-    elif operation == "read_vision":
-        assert response.json() == {"text": "A red image", "cached": True}
-    elif operation == "edit_vision":
-        assert response.json() == {"ok": True}
-        assert cache_path.read_text(encoding="utf-8") == "First-run vision edit"
+    assert response.status_code == 401, response.text
+    if operation == "edit_vision":
+        assert cache_path.read_text(encoding="utf-8") == "A red image"
 
 
 @pytest.mark.parametrize("caller,expected_status", [
@@ -145,7 +143,97 @@ def test_auth_configured_enforces_owner_isolation(upload_client, monkeypatch, ca
 
 
 # ===========================================================================
-# 2. auth_manager absent from app.state
+# 2. Finding A: Unconfigured manager in route state must NOT grant access
+# ===========================================================================
+
+
+@pytest.mark.parametrize("auth_method", ["cookie", "bearer"])
+@pytest.mark.parametrize("operation", ["download", "thumbnail", "read_vision", "edit_vision"])
+def test_finding_a_unconfigured_route_manager_denies_cross_user(upload_client, monkeypatch, auth_method, operation):
+    """Finding A Regression Test:
+    When AUTH_ENABLED=true and middleware authenticates Bob, but app.state.auth_manager
+    is an unconfigured manager instance (is_configured=False), Bob MUST NOT be granted
+    access to Alice's upload. Access must fail closed with 401 Setup required."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, image_path, cache_path = upload_client
+
+    # Route observes an unconfigured manager
+    client.app.state.auth_manager = SimpleNamespace(
+        is_configured=False,
+        is_admin=lambda user: False,
+    )
+
+    url = f"/api/upload/{file_id}"
+    headers = {}
+    if auth_method == "cookie":
+        headers["x-test-user"] = "bob"
+    else:
+        # Bearer token owned by Bob
+        headers["x-test-api-token"] = "1"
+        headers["x-test-api-token-owner"] = "bob"
+
+    if operation == "edit_vision":
+        response = client.put(f"{url}/vision", headers=headers, json={"text": "Defaced by Bob"})
+    elif operation == "read_vision":
+        response = client.get(f"{url}/vision", headers=headers)
+    else:
+        response = client.get(url, headers=headers, params={"thumb": int(operation == "thumbnail")})
+
+    # Must fail closed: 401 Setup required (never 200)
+    assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
+    if operation == "edit_vision":
+        # OCR cache must remain untouched
+        assert cache_path.read_text(encoding="utf-8") == "A red image"
+
+
+# ===========================================================================
+# 3. Finding B: Loopback requests under infrastructure failure must fail closed
+# ===========================================================================
+
+
+@pytest.mark.parametrize("loopback_host", ["127.0.0.1", "::1", "localhost"])
+@pytest.mark.parametrize("proxy_header", [None, "X-Forwarded-For", "CF-Connecting-IP"])
+@pytest.mark.parametrize("caller", [None, "bob", "admin"])
+def test_finding_b_loopback_infrastructure_failure_fails_closed(
+    upload_client, monkeypatch, loopback_host, proxy_header, caller
+):
+    """Finding B Regression Test:
+    When AUTH_ENABLED=true and app.state.auth_manager is None (infrastructure failure),
+    loopback requests (127.0.0.1, ::1, localhost) MUST NOT bypass authentication or
+    gain access to uploads. All requests must fail closed with 503 Service Unavailable."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, _, cache_path = upload_client
+    if hasattr(client.app.state, "auth_manager"):
+        delattr(client.app.state, "auth_manager")
+
+    headers = {}
+    if caller:
+        headers["x-test-user"] = caller
+    if proxy_header:
+        headers[proxy_header] = "203.0.113.195"
+
+    url = f"/api/upload/{file_id}"
+
+    # Test download
+    resp_dl = client.get(url, headers=headers)
+    assert resp_dl.status_code == 503, f"Loopback host {loopback_host} leaked file: {resp_dl.status_code}"
+
+    # Test thumbnail
+    resp_th = client.get(url, headers=headers, params={"thumb": 1})
+    assert resp_th.status_code == 503
+
+    # Test vision read
+    resp_vr = client.get(f"{url}/vision", headers=headers)
+    assert resp_vr.status_code == 503
+
+    # Test vision edit
+    resp_ve = client.put(f"{url}/vision", headers=headers, json={"text": "Defaced"})
+    assert resp_ve.status_code == 503
+    assert cache_path.read_text(encoding="utf-8") == "A red image"
+
+
+# ===========================================================================
+# 4. Absent auth_manager (infrastructure failure) fail-closed behavior
 # ===========================================================================
 
 
@@ -197,26 +285,25 @@ def test_absent_auth_manager_restoring_auth_enforces_access(upload_client, monke
 
 def test_authenticated_cross_user_with_absent_auth_manager_fails_closed(upload_client, monkeypatch):
     """When AUTH_ENABLED=true, an authenticated non-owner (e.g. Bob) must NOT be able
-    to access Alice's upload even if app.state.auth_manager is absent/None.
-    The route must enforce ownership isolation (404 File not found) instead of
-    silently disabling ownership checks and leaking the file."""
+    to access Alice's upload when app.state.auth_manager is absent/None.
+    The route must fail closed (503 Service Unavailable)."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     client, file_id, _, cache_path = upload_client
     if hasattr(client.app.state, "auth_manager"):
         delattr(client.app.state, "auth_manager")
 
-    # Bob is authenticated but auth_manager is absent on app.state
+    # Bob is authenticated but auth_manager is absent on app.state -> 503
     resp_download = client.get(f"/api/upload/{file_id}", headers={"x-test-user": "bob"})
-    assert resp_download.status_code == 404
+    assert resp_download.status_code == 503
 
     resp_thumb = client.get(f"/api/upload/{file_id}?thumb=1", headers={"x-test-user": "bob"})
-    assert resp_thumb.status_code == 404
+    assert resp_thumb.status_code == 503
 
     resp_read_vision = client.get(f"/api/upload/{file_id}/vision", headers={"x-test-user": "bob"})
-    assert resp_read_vision.status_code == 404
+    assert resp_read_vision.status_code == 503
 
     resp_edit_vision = client.put(f"/api/upload/{file_id}/vision", headers={"x-test-user": "bob"}, json={"text": "Defaced"})
-    assert resp_edit_vision.status_code == 404
+    assert resp_edit_vision.status_code == 503
     assert cache_path.read_text(encoding="utf-8") == "A red image"
 
 
@@ -232,6 +319,103 @@ def test_absent_auth_manager_allows_access_when_auth_disabled(upload_client, mon
     assert client.get(f"/api/upload/{file_id}/vision").status_code == 200
     assert client.put(f"/api/upload/{file_id}/vision", json={"text": "Single user edit"}).status_code == 200
     assert cache_path.read_text(encoding="utf-8") == "Single user edit"
+
+
+# ===========================================================================
+# 5. Bearer token identity & Legacy ownerless upload isolation
+# ===========================================================================
+
+
+def test_bearer_token_owner_isolation(upload_client, monkeypatch):
+    """Bearer tokens must resolve to their actual token owner (effective_user).
+    Alice's token gets 200 for Alice's upload, Bob's token gets 404, Admin's gets 200."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, image_path, cache_path = upload_client
+    client.app.state.auth_manager = SimpleNamespace(
+        is_configured=True,
+        is_admin=lambda user: user == "admin",
+    )
+
+    # Bob's bearer token -> 404
+    bob_headers = {"x-test-api-token": "1", "x-test-api-token-owner": "bob"}
+    assert client.get(f"/api/upload/{file_id}", headers=bob_headers).status_code == 404
+    assert client.get(f"/api/upload/{file_id}?thumb=1", headers=bob_headers).status_code == 404
+    assert client.get(f"/api/upload/{file_id}/vision", headers=bob_headers).status_code == 404
+    resp_edit = client.put(f"/api/upload/{file_id}/vision", headers=bob_headers, json={"text": "Defaced by Bob token"})
+    assert resp_edit.status_code == 404
+    assert cache_path.read_text(encoding="utf-8") == "A red image"
+
+    # Alice's bearer token -> 200
+    alice_headers = {"x-test-api-token": "1", "x-test-api-token-owner": "alice"}
+    assert client.get(f"/api/upload/{file_id}", headers=alice_headers).status_code == 200
+    assert client.get(f"/api/upload/{file_id}?thumb=1", headers=alice_headers).status_code == 200
+    assert client.get(f"/api/upload/{file_id}/vision", headers=alice_headers).status_code == 200
+    resp_edit_alice = client.put(f"/api/upload/{file_id}/vision", headers=alice_headers, json={"text": "Updated by Alice token"})
+    assert resp_edit_alice.status_code == 200
+    assert cache_path.read_text(encoding="utf-8") == "Updated by Alice token"
+
+    # Admin's bearer token -> 200
+    admin_headers = {"x-test-api-token": "1", "x-test-api-token-owner": "admin"}
+    assert client.get(f"/api/upload/{file_id}", headers=admin_headers).status_code == 200
+
+
+def test_legacy_ownerless_upload_isolation(tmp_path, monkeypatch):
+    """Legacy ownerless uploads (owner=None in uploads.json) must remain
+    administrator-only when AUTH_ENABLED=true:
+    - Anonymous callers get 403 Access denied
+    - Regular authenticated users get 404 File not found
+    - Verified administrators get 200 OK"""
+    from routes import upload_routes
+    from src.upload_handler import UploadHandler
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    upload_dir = tmp_path / "uploads_legacy"
+    upload_dir.mkdir()
+    file_id = "f" * 32 + ".png"
+    img_path = upload_dir / file_id
+    Image.new("RGB", (100, 100), "blue").save(img_path)
+    (upload_dir / "uploads.json").write_text(
+        json.dumps({"legacy_key": {
+            "id": file_id,
+            "path": str(img_path),
+            "name": "legacy.png",
+            "mime": "image/png",
+            "owner": None,
+        }}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(upload_routes, "router", APIRouter(prefix="/api/upload"))
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    router, _cleanup = upload_routes.setup_upload_routes(handler)
+    app = FastAPI()
+    app.state.auth_manager = SimpleNamespace(
+        is_configured=True,
+        is_admin=lambda user: user == "admin",
+    )
+
+    @app.middleware("http")
+    async def set_user(request: Request, call_next):
+        user = request.headers.get("x-test-user")
+        if user:
+            request.state.current_user = user
+        return await call_next(request)
+
+    app.include_router(router)
+    with TestClient(app) as client:
+        # Anonymous -> 403
+        assert client.get(f"/api/upload/{file_id}").status_code == 403
+        assert client.get(f"/api/upload/{file_id}?thumb=1").status_code == 403
+        assert client.get(f"/api/upload/{file_id}/vision").status_code == 403
+
+        # Non-admin user "bob" -> 404
+        assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "bob"}).status_code == 404
+        assert client.get(f"/api/upload/{file_id}?thumb=1", headers={"x-test-user": "bob"}).status_code == 404
+        assert client.get(f"/api/upload/{file_id}/vision", headers={"x-test-user": "bob"}).status_code == 404
+
+        # Admin user "admin" -> 200
+        assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "admin"}).status_code == 200
+        assert client.get(f"/api/upload/{file_id}?thumb=1", headers={"x-test-user": "admin"}).status_code == 200
+        assert client.get(f"/api/upload/{file_id}/vision", headers={"x-test-user": "admin"}).status_code == 200
 
 
 # ===========================================================================

@@ -182,34 +182,25 @@ def setup_upload_routes(upload_handler):
     def _verify_upload_access(request: Request, file_owner: str | None) -> None:
         if auth_disabled():
             return
+
         auth_mgr = getattr(request.app.state, "auth_manager", None)
-        if auth_mgr is not None and not getattr(auth_mgr, "is_configured", False):
-            # Intentional first-run mode: setup before admin account creation
-            return
+        if auth_mgr is None:
+            raise HTTPException(503, "Authentication service unavailable")
+
+        if not getattr(auth_mgr, "is_configured", False):
+            raise HTTPException(401, "Setup required")
 
         current_user = effective_user(request)
+        if not current_user:
+            raise HTTPException(403, "Access denied")
 
-        # Cross-user isolation: an authenticated caller can NEVER access another
-        # user's upload unless verified as an administrator.
-        if file_owner is not None and current_user is not None and file_owner != current_user:
-            if not (auth_mgr and hasattr(auth_mgr, "is_admin") and auth_mgr.is_admin(current_user)):
-                raise HTTPException(404, "File not found")
-
-        # When auth is configured, enforce authentication and ownership
-        if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
-            if not current_user:
-                raise HTTPException(403, "Access denied")
-            if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+        # Owner access
+        if file_owner is not None and current_user == file_owner:
             return
 
-        # When auth is enabled but auth_mgr is missing (infrastructure failure):
-        if auth_mgr is None:
-            client = getattr(request, "client", None)
-            host = (client.host if client else "") or ""
-            is_loopback = host in ("127.0.0.1", "::1", "localhost")
-            if not is_loopback:
-                raise HTTPException(503, "Authentication service unavailable")
+        # Non-owner or legacy ownerless upload: administrator only
+        if not (hasattr(auth_mgr, "is_admin") and auth_mgr.is_admin(current_user)):
+            raise HTTPException(404, "File not found")
 
     def _valid_session_id_for_owner(db, session_id: str | None, owner: str | None) -> str | None:
         if not session_id:
