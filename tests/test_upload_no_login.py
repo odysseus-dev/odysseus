@@ -50,6 +50,11 @@ def upload_client(tmp_path, monkeypatch):
             request.state.current_user = "api"
             request.state.api_token = True
             request.state.api_token_owner = request.headers.get("x-test-api-token-owner")
+            scopes_header = request.headers.get("x-test-api-token-scopes")
+            if scopes_header is not None:
+                request.state.api_token_scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+            else:
+                request.state.api_token_scopes = ["chat"]
         return await call_next(request)
 
     app.include_router(router)
@@ -328,7 +333,8 @@ def test_absent_auth_manager_allows_access_when_auth_disabled(upload_client, mon
 
 def test_bearer_token_owner_isolation(upload_client, monkeypatch):
     """Bearer tokens must resolve to their actual token owner (effective_user).
-    Alice's token gets 200 for Alice's upload, Bob's token gets 404, Admin's gets 200."""
+    Alice's token gets 200 for Alice's upload, Bob's token gets 404, Admin's token
+    gets 404 (delegated tokens never inherit admin privileges on other users' files)."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     client, file_id, image_path, cache_path = upload_client
     client.app.state.auth_manager = SimpleNamespace(
@@ -336,7 +342,7 @@ def test_bearer_token_owner_isolation(upload_client, monkeypatch):
         is_admin=lambda user: user == "admin",
     )
 
-    # Bob's bearer token -> 404
+    # Bob's bearer token -> 404 (non-owner)
     bob_headers = {"x-test-api-token": "1", "x-test-api-token-owner": "bob"}
     assert client.get(f"/api/upload/{file_id}", headers=bob_headers).status_code == 404
     assert client.get(f"/api/upload/{file_id}?thumb=1", headers=bob_headers).status_code == 404
@@ -345,7 +351,7 @@ def test_bearer_token_owner_isolation(upload_client, monkeypatch):
     assert resp_edit.status_code == 404
     assert cache_path.read_text(encoding="utf-8") == "A red image"
 
-    # Alice's bearer token -> 200
+    # Alice's bearer token -> 200 (legitimate owner)
     alice_headers = {"x-test-api-token": "1", "x-test-api-token-owner": "alice"}
     assert client.get(f"/api/upload/{file_id}", headers=alice_headers).status_code == 200
     assert client.get(f"/api/upload/{file_id}?thumb=1", headers=alice_headers).status_code == 200
@@ -354,17 +360,32 @@ def test_bearer_token_owner_isolation(upload_client, monkeypatch):
     assert resp_edit_alice.status_code == 200
     assert cache_path.read_text(encoding="utf-8") == "Updated by Alice token"
 
-    # Admin's bearer token -> 200
+    # Admin's bearer token accessing Alice's file -> 404 (delegated token does NOT inherit admin access)
     admin_headers = {"x-test-api-token": "1", "x-test-api-token-owner": "admin"}
-    assert client.get(f"/api/upload/{file_id}", headers=admin_headers).status_code == 200
+    assert client.get(f"/api/upload/{file_id}", headers=admin_headers).status_code == 404
+    assert client.get(f"/api/upload/{file_id}?thumb=1", headers=admin_headers).status_code == 404
+    assert client.get(f"/api/upload/{file_id}/vision", headers=admin_headers).status_code == 404
+    resp_edit_admin = client.put(f"/api/upload/{file_id}/vision", headers=admin_headers, json={"text": "Defaced by Admin token"})
+    assert resp_edit_admin.status_code == 404
+    assert cache_path.read_text(encoding="utf-8") == "Updated by Alice token"
+
+    # Interactive Admin session (cookie) accessing Alice's file -> 200
+    admin_cookie_headers = {"x-test-user": "admin"}
+    assert client.get(f"/api/upload/{file_id}", headers=admin_cookie_headers).status_code == 200
+    assert client.get(f"/api/upload/{file_id}?thumb=1", headers=admin_cookie_headers).status_code == 200
+    assert client.get(f"/api/upload/{file_id}/vision", headers=admin_cookie_headers).status_code == 200
+    resp_edit_admin_cookie = client.put(f"/api/upload/{file_id}/vision", headers=admin_cookie_headers, json={"text": "Admin override"})
+    assert resp_edit_admin_cookie.status_code == 200
+    assert cache_path.read_text(encoding="utf-8") == "Admin override"
 
 
 def test_legacy_ownerless_upload_isolation(tmp_path, monkeypatch):
     """Legacy ownerless uploads (owner=None in uploads.json) must remain
-    administrator-only when AUTH_ENABLED=true:
+    administrator-only for interactive sessions when AUTH_ENABLED=true:
     - Anonymous callers get 403 Access denied
     - Regular authenticated users get 404 File not found
-    - Verified administrators get 200 OK"""
+    - Delegated bearer tokens (even admin-owned) get 404 File not found
+    - Verified interactive administrators get 200 OK"""
     from routes import upload_routes
     from src.upload_handler import UploadHandler
 
@@ -398,6 +419,15 @@ def test_legacy_ownerless_upload_isolation(tmp_path, monkeypatch):
         user = request.headers.get("x-test-user")
         if user:
             request.state.current_user = user
+        if request.headers.get("x-test-api-token"):
+            request.state.current_user = "api"
+            request.state.api_token = True
+            request.state.api_token_owner = request.headers.get("x-test-api-token-owner")
+            scopes_header = request.headers.get("x-test-api-token-scopes")
+            if scopes_header is not None:
+                request.state.api_token_scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+            else:
+                request.state.api_token_scopes = ["chat"]
         return await call_next(request)
 
     app.include_router(router)
@@ -407,15 +437,276 @@ def test_legacy_ownerless_upload_isolation(tmp_path, monkeypatch):
         assert client.get(f"/api/upload/{file_id}?thumb=1").status_code == 403
         assert client.get(f"/api/upload/{file_id}/vision").status_code == 403
 
-        # Non-admin user "bob" -> 404
+        # Non-admin user "bob" (interactive cookie) -> 404
         assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "bob"}).status_code == 404
         assert client.get(f"/api/upload/{file_id}?thumb=1", headers={"x-test-user": "bob"}).status_code == 404
         assert client.get(f"/api/upload/{file_id}/vision", headers={"x-test-user": "bob"}).status_code == 404
 
-        # Admin user "admin" -> 200
+        # Non-admin bearer token "bob" -> 404
+        bob_bearer = {"x-test-api-token": "1", "x-test-api-token-owner": "bob"}
+        assert client.get(f"/api/upload/{file_id}", headers=bob_bearer).status_code == 404
+
+        # Admin bearer token -> 404 (delegated token never inherits admin privileges on ownerless files)
+        admin_bearer = {"x-test-api-token": "1", "x-test-api-token-owner": "admin", "x-test-api-token-scopes": "chat"}
+        assert client.get(f"/api/upload/{file_id}", headers=admin_bearer).status_code == 404
+        assert client.get(f"/api/upload/{file_id}?thumb=1", headers=admin_bearer).status_code == 404
+        assert client.get(f"/api/upload/{file_id}/vision", headers=admin_bearer).status_code == 404
+        assert client.put(f"/api/upload/{file_id}/vision", headers=admin_bearer, json={"text": "Defaced"}).status_code == 404
+
+        # Admin user "admin" (interactive cookie) -> 200
         assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "admin"}).status_code == 200
         assert client.get(f"/api/upload/{file_id}?thumb=1", headers={"x-test-user": "admin"}).status_code == 200
         assert client.get(f"/api/upload/{file_id}/vision", headers={"x-test-user": "admin"}).status_code == 200
+
+
+def test_delegated_token_can_access_own_file_when_owner_is_admin(tmp_path, monkeypatch):
+    """When a file is owned by 'admin', an admin-owned bearer token with valid scope
+    can access and edit it, but a non-admin token or user cannot."""
+    from routes import upload_routes
+    from src.upload_handler import UploadHandler
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    upload_dir = tmp_path / "uploads_admin_owned"
+    upload_dir.mkdir()
+    file_id = "e" * 32 + ".png"
+    img_path = upload_dir / file_id
+    Image.new("RGB", (100, 100), "green").save(img_path)
+    (upload_dir / "uploads.json").write_text(
+        json.dumps({"admin_key": {
+            "id": file_id,
+            "path": str(img_path),
+            "name": "admin_file.png",
+            "mime": "image/png",
+            "owner": "admin",
+        }}),
+        encoding="utf-8",
+    )
+    cache_dir = upload_dir / ".vision"
+    cache_dir.mkdir()
+    cache_path = cache_dir / f"{file_id}.txt"
+    cache_path.write_text("Admin green image", encoding="utf-8")
+
+    monkeypatch.setattr(upload_routes, "router", APIRouter(prefix="/api/upload"))
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    router, _cleanup = upload_routes.setup_upload_routes(handler)
+    app = FastAPI()
+    app.state.auth_manager = SimpleNamespace(
+        is_configured=True,
+        is_admin=lambda user: user == "admin",
+    )
+
+    @app.middleware("http")
+    async def set_user(request: Request, call_next):
+        user = request.headers.get("x-test-user")
+        if user:
+            request.state.current_user = user
+        if request.headers.get("x-test-api-token"):
+            request.state.current_user = "api"
+            request.state.api_token = True
+            request.state.api_token_owner = request.headers.get("x-test-api-token-owner")
+            scopes_header = request.headers.get("x-test-api-token-scopes")
+            if scopes_header is not None:
+                request.state.api_token_scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+            else:
+                request.state.api_token_scopes = ["chat"]
+        return await call_next(request)
+
+    app.include_router(router)
+    with TestClient(app) as client:
+        # Admin's bearer token accessing its own file -> 200
+        admin_bearer = {"x-test-api-token": "1", "x-test-api-token-owner": "admin", "x-test-api-token-scopes": "chat"}
+        assert client.get(f"/api/upload/{file_id}", headers=admin_bearer).status_code == 200
+        assert client.get(f"/api/upload/{file_id}/vision", headers=admin_bearer).status_code == 200
+        resp_put = client.put(f"/api/upload/{file_id}/vision", headers=admin_bearer, json={"text": "Admin updated own"})
+        assert resp_put.status_code == 200
+        assert cache_path.read_text(encoding="utf-8") == "Admin updated own"
+
+        # Bob's bearer token accessing admin's file -> 404
+        bob_bearer = {"x-test-api-token": "1", "x-test-api-token-owner": "bob", "x-test-api-token-scopes": "chat"}
+        assert client.get(f"/api/upload/{file_id}", headers=bob_bearer).status_code == 404
+        assert client.put(f"/api/upload/{file_id}/vision", headers=bob_bearer, json={"text": "Bob deface"}).status_code == 404
+        assert cache_path.read_text(encoding="utf-8") == "Admin updated own"
+
+        # Bob's interactive session accessing admin's file -> 404
+        assert client.get(f"/api/upload/{file_id}", headers={"x-test-user": "bob"}).status_code == 404
+
+
+@pytest.mark.parametrize("scope,can_read,can_write", [
+    ("chat", True, True),
+    ("documents:write", True, True),
+    ("documents:read", True, False),
+    ("todos:read", False, False),
+    ("todos:write", False, False),
+    ("", False, False),
+])
+def test_delegated_token_scope_matrix(upload_client, monkeypatch, scope, can_read, can_write):
+    """Test token scope enforcement on legitimate owner's upload (Alice's file):
+    - chat and documents:write allow both read and write
+    - documents:read allows read but rejects write with 403
+    - unrelated scopes (todos:read, todos:write) or empty scopes reject with 403
+    - on rejected write, persisted OCR content remains untouched."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, image_path, cache_path = upload_client
+    initial_text = cache_path.read_text(encoding="utf-8")
+
+    headers = {
+        "x-test-api-token": "1",
+        "x-test-api-token-owner": "alice",
+        "x-test-api-token-scopes": scope,
+    }
+
+    # Test read operations
+    resp_dl = client.get(f"/api/upload/{file_id}", headers=headers)
+    resp_th = client.get(f"/api/upload/{file_id}?thumb=1", headers=headers)
+    resp_vr = client.get(f"/api/upload/{file_id}/vision", headers=headers)
+
+    if can_read:
+        assert resp_dl.status_code == 200
+        assert resp_th.status_code == 200
+        assert resp_vr.status_code == 200
+    else:
+        assert resp_dl.status_code == 403
+        assert resp_th.status_code == 403
+        assert resp_vr.status_code == 403
+
+    # Test write operation (OCR edit)
+    resp_ve = client.put(f"/api/upload/{file_id}/vision", headers=headers, json={"text": f"Edit by {scope}"})
+    if can_write:
+        assert resp_ve.status_code == 200
+        assert cache_path.read_text(encoding="utf-8") == f"Edit by {scope}"
+    else:
+        assert resp_ve.status_code == 403
+        # Persisted content must remain completely unchanged
+        assert cache_path.read_text(encoding="utf-8") == initial_text
+
+
+@pytest.mark.parametrize("sentinel_owner", ["api", "internal-tool", "demo", "system", ""])
+def test_delegated_token_sentinel_or_missing_owner_denied(upload_client, monkeypatch, sentinel_owner):
+    """Delegated tokens with sentinel owner names or missing owner must be rejected with 403."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, _, cache_path = upload_client
+    initial_text = cache_path.read_text(encoding="utf-8")
+
+    headers = {"x-test-api-token": "1", "x-test-api-token-scopes": "chat"}
+    if sentinel_owner:
+        headers["x-test-api-token-owner"] = sentinel_owner
+
+    resp_dl = client.get(f"/api/upload/{file_id}", headers=headers)
+    assert resp_dl.status_code == 403
+
+    resp_ve = client.put(f"/api/upload/{file_id}/vision", headers=headers, json={"text": "Defaced by sentinel"})
+    assert resp_ve.status_code == 403
+    assert cache_path.read_text(encoding="utf-8") == initial_text
+
+
+@pytest.mark.parametrize("sentinel_user", ["api", "internal-tool", "demo", "system"])
+def test_interactive_sentinel_user_denied(upload_client, monkeypatch, sentinel_user):
+    """Interactive requests claiming sentinel user identities must be rejected with 403."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    client, file_id, _, cache_path = upload_client
+
+    headers = {"x-test-user": sentinel_user}
+    assert client.get(f"/api/upload/{file_id}", headers=headers).status_code == 403
+    assert client.put(f"/api/upload/{file_id}/vision", headers=headers, json={"text": "Defaced"}).status_code == 403
+    assert cache_path.read_text(encoding="utf-8") == "A red image"
+
+
+def test_upload_post_delegated_token_authorization(tmp_path, monkeypatch):
+    """POST /api/upload with AUTH_ENABLED=true and delegated bearer tokens:
+    - Token with 'chat' or 'documents:write' succeeds and sets file owner to token owner
+    - Token with 'documents:read' is rejected with 403
+    - Token with 'todos:read' is rejected with 403
+    - Token with missing owner is rejected with 403
+    - Token with sentinel owner ('api') is rejected with 403"""
+    from routes import upload_routes
+    from src.upload_handler import UploadHandler
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    upload_dir = tmp_path / "uploads_post_token"
+    upload_dir.mkdir()
+    monkeypatch.setattr(upload_routes, "router", APIRouter(prefix="/api/upload"))
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    router, _cleanup = upload_routes.setup_upload_routes(handler)
+    app = FastAPI()
+    app.state.auth_manager = SimpleNamespace(
+        is_configured=True,
+        is_admin=lambda user: user == "admin",
+    )
+
+    @app.middleware("http")
+    async def set_user(request: Request, call_next):
+        user = request.headers.get("x-test-user")
+        if user:
+            request.state.current_user = user
+        if request.headers.get("x-test-api-token"):
+            request.state.current_user = "api"
+            request.state.api_token = True
+            request.state.api_token_owner = request.headers.get("x-test-api-token-owner")
+            scopes_header = request.headers.get("x-test-api-token-scopes")
+            if scopes_header is not None:
+                request.state.api_token_scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+            else:
+                request.state.api_token_scopes = ["chat"]
+        return await call_next(request)
+
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        # 1. Valid token with 'chat' scope
+        resp_chat = client.post(
+            "/api/upload",
+            files=[("files", ("chat.txt", io.BytesIO(b"chat content"), "text/plain"))],
+            headers={"x-test-api-token": "1", "x-test-api-token-owner": "alice", "x-test-api-token-scopes": "chat"},
+        )
+        assert resp_chat.status_code == 200
+        chat_id = resp_chat.json()["files"][0]["id"]
+        index = handler._load_upload_index()
+        rec_chat = next(v for v in index.values() if v.get("id") == chat_id)
+        assert rec_chat["owner"] == "alice"
+
+        # 2. Valid token with 'documents:write' scope
+        resp_doc = client.post(
+            "/api/upload",
+            files=[("files", ("doc.txt", io.BytesIO(b"doc content"), "text/plain"))],
+            headers={"x-test-api-token": "1", "x-test-api-token-owner": "bob", "x-test-api-token-scopes": "documents:write"},
+        )
+        assert resp_doc.status_code == 200
+        doc_id = resp_doc.json()["files"][0]["id"]
+        index = handler._load_upload_index()
+        rec_doc = next(v for v in index.values() if v.get("id") == doc_id)
+        assert rec_doc["owner"] == "bob"
+
+        # 3. Token with read-only 'documents:read' scope -> 403
+        resp_ro = client.post(
+            "/api/upload",
+            files=[("files", ("ro.txt", io.BytesIO(b"ro content"), "text/plain"))],
+            headers={"x-test-api-token": "1", "x-test-api-token-owner": "alice", "x-test-api-token-scopes": "documents:read"},
+        )
+        assert resp_ro.status_code == 403
+
+        # 4. Token with unrelated 'todos:read' scope -> 403
+        resp_unrelated = client.post(
+            "/api/upload",
+            files=[("files", ("unrelated.txt", io.BytesIO(b"content"), "text/plain"))],
+            headers={"x-test-api-token": "1", "x-test-api-token-owner": "alice", "x-test-api-token-scopes": "todos:read"},
+        )
+        assert resp_unrelated.status_code == 403
+
+        # 5. Token with missing owner -> 403
+        resp_no_owner = client.post(
+            "/api/upload",
+            files=[("files", ("no_owner.txt", io.BytesIO(b"content"), "text/plain"))],
+            headers={"x-test-api-token": "1", "x-test-api-token-scopes": "chat"},
+        )
+        assert resp_no_owner.status_code == 403
+
+        # 6. Token with sentinel owner 'api' -> 403
+        resp_sentinel = client.post(
+            "/api/upload",
+            files=[("files", ("sentinel.txt", io.BytesIO(b"content"), "text/plain"))],
+            headers={"x-test-api-token": "1", "x-test-api-token-owner": "api", "x-test-api-token-scopes": "chat"},
+        )
+        assert resp_sentinel.status_code == 403
 
 
 # ===========================================================================

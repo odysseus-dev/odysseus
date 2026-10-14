@@ -21,8 +21,8 @@ from core.database import (
     Note,
     Session as DbSession,
 )
-from src.auth_helpers import effective_user
-from src.owner_identity import auth_disabled
+from src.auth_helpers import effective_user, is_delegated_credential
+from src.owner_identity import auth_disabled, is_request_sentinel_owner
 from src.attachment_refs import attachment_refs_from_metadata
 from src.constants import GENERATED_IMAGES_DIR
 from src.path_confinement import is_inside
@@ -35,6 +35,8 @@ from src.upload_handler import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
+UPLOAD_READ_SCOPES = frozenset({"chat", "documents:read", "documents:write"})
+UPLOAD_WRITE_SCOPES = frozenset({"chat", "documents:write"})
 UPLOAD_RESPONSE_HEADERS = {"X-Content-Type-Options": "nosniff"}
 
 def _upload_ids_from_persisted_text(value: object) -> set[str]:
@@ -179,7 +181,12 @@ def setup_upload_routes(upload_handler):
 
         raise HTTPException(404, "File not found")
 
-    def _verify_upload_access(request: Request, file_owner: str | None) -> None:
+    def _verify_upload_access(
+        request: Request,
+        file_owner: str | None,
+        *,
+        write: bool = False,
+    ) -> None:
         if auth_disabled():
             return
 
@@ -191,9 +198,27 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(401, "Setup required")
 
         current_user = effective_user(request)
-        if not current_user:
+        if not current_user or is_request_sentinel_owner(current_user):
             raise HTTPException(403, "Access denied")
 
+        # Delegated credentials (bearer API tokens):
+        # Establish token owner identity but NEVER inherit interactive administrator privileges.
+        if is_delegated_credential(request):
+            token_owner = getattr(request.state, "api_token_owner", None)
+            if not token_owner or is_request_sentinel_owner(token_owner):
+                raise HTTPException(403, "API token has no valid owner")
+
+            token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+            required_scopes = UPLOAD_WRITE_SCOPES if write else UPLOAD_READ_SCOPES
+            if not token_scopes.intersection(required_scopes):
+                raise HTTPException(403, f"API token missing required scope: {' or '.join(sorted(required_scopes))}")
+
+            # Non-owners and legacy ownerless uploads are strictly forbidden for delegated tokens.
+            if file_owner is None or current_user != file_owner:
+                raise HTTPException(404, "File not found")
+            return
+
+        # Interactive session (cookie-authenticated human):
         # Owner access
         if file_owner is not None and current_user == file_owner:
             return
@@ -304,6 +329,25 @@ def setup_upload_routes(upload_handler):
             session_id = None
         if not files:
             raise HTTPException(400, "No files uploaded")
+
+        if not auth_disabled():
+            app = getattr(request, "app", None)
+            if app is not None:
+                auth_mgr = getattr(getattr(app, "state", None), "auth_manager", None)
+                if auth_mgr is None:
+                    raise HTTPException(503, "Authentication service unavailable")
+                if not getattr(auth_mgr, "is_configured", False):
+                    raise HTTPException(401, "Setup required")
+            current_user = effective_user(request)
+            if not current_user or is_request_sentinel_owner(current_user):
+                raise HTTPException(403, "Access denied")
+            if is_delegated_credential(request):
+                token_owner = getattr(request.state, "api_token_owner", None)
+                if not token_owner or is_request_sentinel_owner(token_owner):
+                    raise HTTPException(403, "API token has no valid owner")
+                token_scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+                if not token_scopes.intersection(UPLOAD_WRITE_SCOPES):
+                    raise HTTPException(403, f"API token missing required scope: {' or '.join(sorted(UPLOAD_WRITE_SCOPES))}")
             
         client_ip = request.client.host if request.client else "unknown"
         out = []
@@ -327,6 +371,8 @@ def setup_upload_routes(upload_handler):
         for u in files:
             try:
                 owner = effective_user(request)
+                if is_request_sentinel_owner(owner):
+                    owner = None
                 meta = upload_handler.save_upload(u, client_ip, owner=owner)
                 promoted_gallery_id = _promote_chat_image_to_gallery(meta, owner, session_id, gallery_id)
                 item = {
@@ -529,7 +575,7 @@ def setup_upload_routes(upload_handler):
         if not info:
             raise HTTPException(404, "File not found")
         file_owner = info.get("owner")
-        _verify_upload_access(request, file_owner)
+        _verify_upload_access(request, file_owner, write=True)
         current_user = effective_user(request)
         _resolve_upload_path(file_id)
         try:
