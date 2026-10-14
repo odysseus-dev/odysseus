@@ -6,7 +6,9 @@ import pytest
 from fastapi import HTTPException
 
 from routes import skills_routes as routes
-from services.skill_audit import evaluation, execution, jobs, models, orchestration, policy
+from services.skills import (
+    agent_runner, audit_workflow, evaluation, job_coordinator, model_selection, publication,
+)
 from src.agent_runtime.authority import RequestAuthority, bind_request_authority
 from src.tool_approvals import ToolApprovalStore
 from src.tool_capabilities import capabilities_for_action
@@ -50,7 +52,7 @@ def test_audit_model_resolution_uses_first_owner_scoped_utility_fallback(monkeyp
     monkeypatch.setattr('src.endpoint_resolver.resolve_utility_fallback_candidates', fallback)
     monkeypatch.setattr('src.llm_core.list_model_ids', served)
     monkeypatch.setattr('src.settings.get_setting', lambda key, default=None: default)
-    assert models.resolve_audit_models(owner='alice') == ('first', 'worker', {'Authorization': 'owner-key'}, None)
+    assert model_selection.resolve_audit_models(owner='alice') == ('first', 'worker', {'Authorization': 'owner-key'}, None)
     assert seen == [('primary', 'utility', 'alice'), ('fallback', 'alice')]
 
 
@@ -67,8 +69,8 @@ async def test_audit_stream_failure_closes_and_restores_inherited_authority(monk
             closed.append(asyncio.current_task())
     monkeypatch.setattr('src.agent_loop.stream_agent_loop', stream)
     with bind_request_authority(authority):
-        with pytest.raises(execution.SkillAuditUnavailable, match='offline'):
-            await execution.run_audit_arm([], 'url', 'm', {}, 'alice')
+        with pytest.raises(agent_runner.SkillAuditUnavailable, match='offline'):
+            await agent_runner.run_audit_arm([], 'url', 'm', {}, 'alice')
     assert closed == [asyncio.current_task()]
 
 
@@ -96,7 +98,7 @@ async def test_manual_exception_closes_stream_and_finishes_without_publishing(mo
                    run_arm=arm, evaluate_run=evaluate)
     monkeypatch.setattr('src.agent_loop.stream_agent_loop', stream)
     manager = Manager()
-    await execution.run_test_job(('alice', 'demo'), 'demo', 'md', 'task', 'url', 'm', {},
+    await agent_runner.run_test_job(('alice', 'demo'), 'demo', 'md', 'task', 'url', 'm', {},
                                  'alice', manager, deps=deps)
     assert closed == [asyncio.current_task()]
     assert job['status'] == 'done' and '_run' not in job and '_transcript' not in job
@@ -122,7 +124,7 @@ async def test_batch_exception_records_progress_and_finalizes_once():
     deps = replace(routes._audit_dependencies(), audit_jobs={('alice',): job}, audit_one=audit,
                    finalize_batch=lambda manager, results, owner, log: finalized.append((list(results), owner)))
     manager = Manager()
-    await orchestration.run_audit_batch(('alice',), manager, ['first', 'second'], 'url', 'm', {}, None, 'alice', deps=deps)
+    await audit_workflow.run_audit_batch(('alice',), manager, ['first', 'second'], 'url', 'm', {}, None, 'alice', deps=deps)
     assert job['status'] == 'done' and job['done'] == 2 and job['current'] is None
     assert 'task' not in job and 'finished' in job
     assert [r['result'] for r in job['results']] == ['error', 'pass']
@@ -147,7 +149,7 @@ def test_policy_preserves_threshold_and_auto_approval(enabled, confidence, verdi
     deps = replace(routes._audit_dependencies(), auto_publish_policy=lambda owner: (enabled, .85),
                    duplicate_blocker=lambda *args: None)
     manager = Manager()
-    assert policy.finalize_status(manager, 'demo', 'alice', verdict, confidence, deps=deps) == expected
+    assert publication.finalize_status(manager, 'demo', 'alice', verdict, confidence, deps=deps) == expected
     assert manager.updates == ([] if verdict == 'unknown' else [{'status': expected}])
 
 
@@ -165,7 +167,7 @@ def test_batch_duplicate_finalization_changes_only_processed_unprotected_skills(
             self.updates.append((name, fields, owner))
     deps = replace(routes._audit_dependencies(), auto_publish_policy=lambda owner: (enabled, .85))
     manager = Manager()
-    policy.finalize_batch(manager, [{'skill': 'demo', 'result': 'pass'},
+    publication.finalize_batch(manager, [{'skill': 'demo', 'result': 'pass'},
                                     {'skill': 'demo-1', 'result': 'pass'},
                                     {'skill': 'demo-3', 'result': 'approval_required'}],
                           'alice', lambda message: None, deps=deps)
@@ -259,4 +261,4 @@ def test_manual_audit_selection_preserves_published_and_builtin_rules(scope, sel
             assert owner == 'alice'
             return [{'name': 'draft', 'status': 'draft'}, {'name': 'published', 'status': 'published'},
                     {'name': 'checked', 'audit_verdict': 'pass'}, {'name': 'builtin', 'source': 'builtin'}]
-    assert jobs.select_audit_names(Manager(), 'alice', scope, selected, skip) == (names, expected_scope)
+    assert job_coordinator.select_audit_names(Manager(), 'alice', scope, selected, skip) == (names, expected_scope)

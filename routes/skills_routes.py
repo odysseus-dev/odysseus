@@ -17,14 +17,14 @@ from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
-from services.skill_audit import evaluation as _evaluation
-from services.skill_audit import execution as _execution
-from services.skill_audit import orchestration as _orchestration
-from services.skill_audit import models as _models
-from services.skill_audit import prompts as _prompts
-from services.skill_audit import policy as _policy
-from services.skill_audit import jobs as _jobs
-from services.skill_audit.dependencies import AuditDependencies
+from services.skills import evaluation as _evaluation
+from services.skills import agent_runner as _agent_runner
+from services.skills import audit_workflow as _audit_workflow
+from services.skills import model_selection as _model_selection
+from services.skills import prompts as _prompts
+from services.skills import publication as _publication
+from services.skills import job_coordinator as _job_coordinator
+from services.skills.dependencies import AuditDependencies
 from src.utility_effort import effort_for_call
 from core.middleware import require_admin
 
@@ -144,7 +144,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
 # In-memory skill-test jobs, keyed by (owner, skill_name). Runs server-side so
 # the test survives the modal being closed; the UI polls /test-status. (Not
 # persisted across restart — it's a "come back in a bit" convenience.)
-_skill_test_jobs = _execution._skill_test_jobs
+_skill_test_jobs = _agent_runner._skill_test_jobs
 
 
 async def _run_skill_test_job(
@@ -163,7 +163,7 @@ async def _run_skill_test_job(
     exact_approval=None,
     request_authority=None,
 ):
-    return await _execution.run_test_job(
+    return await _agent_runner.run_test_job(
         key, name, md, task, url, model, headers, owner, skills_manager,
         messages=messages, transcript=transcript, exact_approval=exact_approval,
         request_authority=request_authority, deps=_audit_dependencies(),
@@ -171,50 +171,50 @@ async def _run_skill_test_job(
 
 
 # ── Autonomous skill audit: test → judge → self-edit → retry → teacher → flag ──
-_skill_audit_jobs = _orchestration._skill_audit_jobs
+_skill_audit_jobs = _audit_workflow._skill_audit_jobs
 
 
-_audit_auto_publish_policy = _policy.auto_publish_policy
+_audit_auto_publish_policy = _publication.auto_publish_policy
 
 
-_skill_duplicate_blocker = _policy.duplicate_blocker
+_skill_duplicate_blocker = _publication.duplicate_blocker
 
 
 def _finalize_audit_batch(skills_manager, results: list[dict], owner, log) -> None:
-    return _policy.finalize_batch(
+    return _publication.finalize_batch(
         skills_manager, results, owner, log, deps=_audit_dependencies(),
     )
 
 
-_audit_flag_text = _policy.audit_flag_text
+_audit_flag_text = _publication.audit_flag_text
 
 
-_audit_utility_blocker = _policy.utility_blocker
+_audit_utility_blocker = _publication.utility_blocker
 
 
 def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
                            confidence: Optional[float], necessity: Optional[dict] = None,
                            verdict_data: Optional[dict] = None) -> str:
-    return _policy.finalize_status(
+    return _publication.finalize_status(
         skills_manager, name, owner, verdict, confidence, necessity, verdict_data,
         deps=_audit_dependencies(),
     )
 
 
-_apply_skill_md = _policy.apply_markdown
+_apply_skill_md = _publication.apply_markdown
 
 
-SkillAuditUnavailable = _execution.SkillAuditUnavailable
+SkillAuditUnavailable = _agent_runner.SkillAuditUnavailable
 
 
 async def _run_skill_audit_arm(messages: list[dict], url, model, headers, owner,
                                workload: str = "foreground") -> tuple[str, dict, Optional[dict]]:
-    return await _execution.run_audit_arm(messages, url, model, headers, owner, workload)
+    return await _agent_runner.run_audit_arm(messages, url, model, headers, owner, workload)
 
 
 async def _run_skill_test_once(md: str, task: str, url, model, headers, owner,
                                workload: str = "foreground") -> tuple:
-    return await _execution.run_test_once(
+    return await _agent_runner.run_test_once(
         md, task, url, model, headers, owner, workload, deps=_audit_dependencies(),
     )
 
@@ -229,7 +229,7 @@ async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, 
 
 async def _audit_one_skill(skills_manager, skill, url, model, headers,
                            teacher, owner, log, workload: str = "foreground") -> dict:
-    return await _orchestration.audit_one_skill(
+    return await _audit_workflow.audit_one_skill(
         skills_manager, skill, url, model, headers, teacher, owner, log, workload,
         deps=_audit_dependencies(),
     )
@@ -237,20 +237,20 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
 
 async def _run_audit_all_job(key, skills_manager, names, url, model, headers, teacher, owner,
                              workload: str = "foreground"):
-    return await _orchestration.run_audit_batch(
+    return await _audit_workflow.run_audit_batch(
         key, skills_manager, names, url, model, headers, teacher, owner, workload,
         deps=_audit_dependencies(),
     )
 
 
 def _resolve_audit_models(owner=None, model_spec=None, endpoint_url=None):
-    return _models.resolve_audit_models(owner, model_spec, endpoint_url)
+    return _model_selection.resolve_audit_models(owner, model_spec, endpoint_url)
 
 
 async def run_scheduled_skill_audit(skills_manager: SkillsManager,
                                     owner: Optional[str] = None,
                                     max_skills: int = 8) -> dict:
-    return await _orchestration.run_scheduled_skill_audit(
+    return await _audit_workflow.run_scheduled_skill_audit(
         skills_manager, owner, max_skills, deps=_audit_dependencies(),
     )
 
@@ -645,7 +645,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         except Exception as _e:
             logger.warning(f"Skill-test model resolve failed: {_e}")
 
-        return _jobs.start_test_job(
+        return _job_coordinator.start_test_job(
             name, md, task, url, model, headers, user, skills_manager,
             request_authority, deps=_audit_dependencies(),
         )
@@ -703,7 +703,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         if decision == "approve" and exact_approval is None:
             raise HTTPException(409, "This tool approval could not be consumed.")
-        return _jobs.continue_test_job(
+        return _job_coordinator.continue_test_job(
             job, key, name, decision, expected, exact_approval,
             skills_manager, deps=_audit_dependencies(),
         )
@@ -715,7 +715,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         skills = skills_manager.load(owner=user)
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         name = (match or {}).get("name", skill_id)
-        return _jobs.test_status(user, name, deps=_audit_dependencies())
+        return _job_coordinator.test_status(user, name, deps=_audit_dependencies())
 
     @router.post("/audit-all")
     async def audit_all_skills(request: Request):
@@ -748,10 +748,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         except ValueError as e:
             raise HTTPException(400, str(e))
 
-        names, scope = _jobs.select_audit_names(
+        names, scope = _job_coordinator.select_audit_names(
             skills_manager, user, scope, requested_names, skip_audited,
         )
-        return _jobs.start_audit_job(
+        return _job_coordinator.start_audit_job(
             key, skills_manager, names, url, model, headers, teacher, user,
             scope, deps=_audit_dependencies(),
         )
@@ -759,12 +759,12 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.get("/audit-all/status")
     async def audit_status(request: Request):
         user = _owner(request)
-        return _jobs.audit_status(user, deps=_audit_dependencies())
+        return _job_coordinator.audit_status(user, deps=_audit_dependencies())
 
     @router.post("/audit-all/cancel")
     async def audit_cancel(request: Request):
         user = _owner(request)
-        return _jobs.cancel_audit(user, deps=_audit_dependencies())
+        return _job_coordinator.cancel_audit(user, deps=_audit_dependencies())
 
     @router.post("/{skill_id}/markdown")
     async def save_skill_markdown(request: Request, skill_id: str):

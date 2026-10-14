@@ -6,7 +6,7 @@ from typing import Optional
 from services.memory.skills import SkillsManager
 from .dependencies import AuditDependencies
 
-from .execution import SkillAuditUnavailable
+from .agent_runner import SkillAuditUnavailable
 from .prompts import _skill_test_task, _skill_test_messages, _skill_baseline_messages
 
 logger = logging.getLogger("routes.skills_routes")
