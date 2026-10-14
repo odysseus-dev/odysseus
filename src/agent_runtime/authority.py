@@ -140,11 +140,14 @@ class RequestAuthority:
             raise ValueError("Malformed request authority")
         if self.resource_roots is None:
             roots = ()
-            if self.workspace:
-                try:
-                    roots = (FilesystemRoot.seal(self.workspace, owner=self.owner),)
-                except (OSError, ValueError, RuntimeError):
-                    pass  # An unresolved workspace grants no filesystem root.
+            # With no workspace, bash/python run in the agent workspace
+            # (agent_cwd), so the file tools get that same root (#6679).
+            from src import tool_execution
+            root = self.workspace or tool_execution._AGENT_WORKDIR
+            try:
+                roots = (FilesystemRoot.seal(root, owner=self.owner),)
+            except (OSError, ValueError, RuntimeError):
+                pass  # An unresolved workspace grants no filesystem root.
             object.__setattr__(self, "resource_roots", roots)
         if (not isinstance(self.resource_roots, tuple)
                 or any(not isinstance(r, FilesystemRoot) or (r.owner and r.owner != self.owner)
