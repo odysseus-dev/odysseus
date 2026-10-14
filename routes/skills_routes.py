@@ -98,7 +98,9 @@ class SkillUpdateRequest(BaseModel):
 _skill_test_task = _prompts._skill_test_task
 
 
-_skill_baseline_task = _prompts._skill_baseline_task
+def _skill_baseline_task(skill: dict) -> str:
+    """Compatibility alias using the currently bound shared task builder."""
+    return _skill_test_task(skill)
 
 
 _skill_test_messages = _prompts._skill_test_messages
@@ -260,6 +262,9 @@ def _audit_dependencies() -> AuditDependencies:
     return AuditDependencies(
         test_jobs=_skill_test_jobs,
         audit_jobs=_skill_audit_jobs,
+        test_task=_skill_test_task,
+        test_messages=_skill_test_messages,
+        baseline_messages=_skill_baseline_messages,
         evaluate_run=_eval_skill_run,
         evaluate_necessity=_eval_skill_necessity,
         evaluate_retrieval_precision=_eval_skill_retrieval_precision,

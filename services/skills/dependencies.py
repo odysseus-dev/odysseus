@@ -12,6 +12,9 @@ from typing import Callable
 class AuditDependencies:
     test_jobs: dict
     audit_jobs: dict
+    test_task: Callable
+    test_messages: Callable
+    baseline_messages: Callable
     evaluate_run: Callable
     evaluate_necessity: Callable
     evaluate_retrieval_precision: Callable

@@ -134,9 +134,12 @@ workspace confinement or request-authority enforcement in the agent runtime.
 Skill markdown and resumed transcripts remain explicitly untrusted context,
 never trusted system instructions. Audit arms suppress saved skill injection.
 Unattended runs deny encountered approval records instead of leaving reusable
-grants. An approval-required audit result preserves the skill's publication and
-confidence and directs the user to manual approval. Same-task stream closure
-preserves the originating ContextVar cleanup.
+grants. An initial approval-required audit result preserves the skill's publication
+and confidence and directs the user to manual approval. Retry handling has an
+inherited gap: an approval pause after a rewrite can still lead to demotion.
+Same-task stream closure preserves the originating ContextVar cleanup, but manual
+cancellation can retain private continuation state. These are separate hardening
+items, not guarantees supplied by the extraction.
 
 ## Model selection and evaluation
 
@@ -211,12 +214,34 @@ route helpers and audit registry. Route aliases and wrappers preserve the origin
 collaborators. Lazy model/agent imports and route-level effort injection keep
 existing offline test seams effective.
 
+The task and message callbacks are bound through `AuditDependencies` at service
+entry. Patches to route-level test tasks and test/baseline messages reach manual
+execution, approval continuation, both audit arms, worker retries and scheduled
+audits. The `_skill_baseline_task` compatibility alias delegates to the current
+route test-task builder. Execution continues to reuse one task for both arms,
+as in the original implementation; it does not independently derive a baseline
+task through that alias.
+
 `tests/fixtures/skills_api_baseline.json` records declaration order, the OpenAPI
 SHA-256 digest and structural signatures captured from pre-extraction revision
 `86b886c611338282af6d4a717246ea4e256f58df`. Signature records retain parameter
 names, order, kinds, defaults, default factories and annotations, including
 Pydantic constraint metadata. They compare typing origins and arguments instead
-of Python-version-dependent annotation representations.
+of Python-version-dependent annotation representations. The expanded records also
+pin field validation aliases, alias priority, discriminators, `validate_default`,
+rebuilt field annotations and model configuration. Field order remains visible
+through the constructor parameter sequence. Only the known builtin factories
+`list`, `tuple`, `dict`, `set` and `frozenset` are supported. Custom factories,
+including closures and factories taking validated data, fail closed without being
+executed. Unsupported metadata/configuration values also raise rather than using
+unstable representations. This is a structural contract for supported interfaces,
+not proof of behavioral equivalence for arbitrary validators or Python code.
+
+The expanded fixture was derived again from the original revision above in a
+detached scratch worktree, with the updated comparator copied in. Python 3.11
+and 3.12 produced byte-identical snapshots. The previous parameter/return records,
+all 28 interface names, all 22 endpoint declarations and the original OpenAPI
+digest were checked unchanged before accepting the new field records.
 
 `tests/fixtures/skills_openapi_baseline.json` is the same baseline's complete
 Skills-router OpenAPI document, generated with a standalone FastAPI application.
@@ -330,3 +355,9 @@ preferences adapter below transport, consolidating storage under the domain
 package, or changing duplicate/publication policies need separate designs.
 The canonical manager, skill format/lifecycle modules, provider implementations,
 agent authority enforcement and frontend contracts remain their existing owners.
+
+The [second-review correction report](skills-audit-second-review.md) records the
+restored prompt seams, independently expanded constructor baseline, actual
+validation results and a separate prioritized plan for the six inherited P2
+failure paths. Model-controlled lifecycle fields and preference-load failures
+require maintainer action before automatic rewrite/publication deployment.

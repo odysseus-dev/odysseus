@@ -9,7 +9,6 @@ import time as _time
 
 from src.prompt_security import untrusted_context_message
 from .dependencies import AuditDependencies
-from .prompts import _skill_test_messages
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +77,7 @@ def continue_test_job(job, key, name, decision, expected, exact_approval,
     # continuation context from the original untrusted skill plus the
     # accumulated transcript so repeated approvals do not lose earlier
     # approved results, while keeping every transcript byte tainted.
-    messages = _skill_test_messages(
+    messages = deps.test_messages(
         run.get("md", ""),
         job.get("task", ""),
     )

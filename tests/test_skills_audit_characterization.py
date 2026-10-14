@@ -28,6 +28,12 @@ def _value_contract(value):
         return {'empty': True}
     if value is None or type(value) in (bool, int, float, str):
         return {'type': _qualified_name(type(value)), 'value': value}
+    if type(value) in (list, tuple):
+        return {'type': _qualified_name(type(value)),
+                'items': [_value_contract(item) for item in value]}
+    if type(value) is dict and all(type(key) is str for key in value):
+        return {'type': 'builtins.dict',
+                'items': {key: _value_contract(item) for key, item in value.items()}}
     if is_dataclass(value) and not isinstance(value, type):
         return {'type': _qualified_name(type(value)), 'fields': {
             field.name: _value_contract(getattr(value, field.name))
@@ -51,24 +57,53 @@ def _annotation_contract(annotation):
     return {'type': _qualified_name(annotation)}
 
 
+def _factory_contract(factory):
+    # Names do not identify closure state, partial arguments or arbitrary code.
+    # Only these known builtin constructors have a supported default contract.
+    if not any(factory is builtin for builtin in (list, tuple, dict, set, frozenset)):
+        raise TypeError('Unsupported default factory; requires an explicit compatibility contract')
+    return _qualified_name(factory)
+
+
 def _signature_contract(target):
-    """Freeze signature structure without Python/typing annotation reprs."""
+    """Freeze supported constructor structure without executing default factories."""
     signature = inspect.signature(target)
     model_fields = getattr(target, 'model_fields', {})
     parameters = []
     for parameter in signature.parameters.values():
         field = model_fields.get(parameter.name)
         if field is not None and field.default_factory is not None:
-            # Keep both the constructor marker and the actual factory identity.
-            default = {'factory': _qualified_name(field.default_factory),
+            default = {'factory': _factory_contract(field.default_factory),
                        'marker': _qualified_name(type(parameter.default))}
         else:
             default = _value_contract(parameter.default)
         parameters.append({'name': parameter.name, 'kind': parameter.kind.name,
                            'annotation': _annotation_contract(parameter.annotation),
                            'default': default})
-    return {'parameters': parameters,
-            'return': _annotation_contract(signature.return_annotation)}
+    contract = {'parameters': parameters,
+                'return': _annotation_contract(signature.return_annotation)}
+    if model_fields:
+        # Field names can be absent from the Python signature (validation aliases).
+        # These public FieldInfo attributes affect input validation independently
+        # of the generated signature and JSON schema. Rebuilt annotations retain
+        # field metadata, including constraints and strict/union validation modes.
+        contract['model_fields'] = {
+            name: {
+                'annotation': _annotation_contract(field.rebuild_annotation()),
+                'default': ({'factory': _factory_contract(field.default_factory),
+                             'takes_validated_data': field.default_factory_takes_validated_data}
+                            if field.default_factory is not None else
+                            _value_contract(inspect.Signature.empty if field.is_required() else field.default)),
+                'validation': {attribute: _value_contract(getattr(field, attribute))
+                               for attribute in ('alias', 'alias_priority', 'validation_alias',
+                                                 'discriminator', 'validate_default')},
+            }
+            for name, field in model_fields.items()
+        }
+        # Includes inherited model settings such as validate_default and strict.
+        # Unsupported callables or values fail closed through _value_contract.
+        contract['model_config'] = _value_contract(target.model_config)
+    return contract
 
 
 def _canonical_openapi(schema):
@@ -170,6 +205,97 @@ def test_signature_contract_detects_model_changes(change):
         tags: list[str] = Field(default_factory=tuple if change == 'factory' else list)
 
     assert _signature_contract(Changed) != _signature_contract(Original)
+
+
+@pytest.mark.parametrize('validated_data', [False, True])
+def test_signature_contract_rejects_custom_factories_without_calling_them(validated_data):
+    from pydantic import BaseModel, Field
+
+    calls = []
+    def make_factory(value):
+        def plain():
+            calls.append(value)
+            return [value]
+        def with_data(data):
+            calls.append(value)
+            return [data['prefix'], value]
+        return with_data if validated_data else plain
+
+    class Before(BaseModel):
+        prefix: str = 'validated'
+        tags: list[str] = Field(default_factory=make_factory('before'))
+
+    class After(BaseModel):
+        prefix: str = 'validated'
+        tags: list[str] = Field(default_factory=make_factory('after'))
+
+    assert Before().tags != After().tags
+    assert Before.model_fields['tags'].default_factory_takes_validated_data is validated_data
+    calls.clear()
+    for model in (Before, After):
+        with pytest.raises(TypeError, match='Unsupported default factory'):
+            _signature_contract(model)
+    assert calls == []
+
+
+def test_signature_contract_detects_default_validation_outside_signature_and_openapi():
+    from pydantic import BaseModel, Field, ValidationError
+
+    class Before(BaseModel):
+        count: int = Field(default='invalid', validate_default=False)
+
+    class After(BaseModel):
+        count: int = Field(default='invalid', validate_default=True)
+
+    assert Before().count == 'invalid'
+    with pytest.raises(ValidationError):
+        After()
+    assert inspect.signature(Before) == inspect.signature(After)
+    before_schema, after_schema = Before.model_json_schema(), After.model_json_schema()
+    before_schema.pop('title')
+    after_schema.pop('title')
+    assert before_schema == after_schema
+    assert _signature_contract(Before) != _signature_contract(After)
+
+
+def test_signature_contract_detects_validation_alias_paths():
+    from pydantic import AliasPath, BaseModel, Field, ValidationError
+
+    class Before(BaseModel):
+        count: int = Field(validation_alias=AliasPath('before', 0))
+
+    class After(BaseModel):
+        count: int = Field(validation_alias=AliasPath('after', 0))
+
+    assert Before(before=[1]).count == 1
+    with pytest.raises(ValidationError):
+        After(before=[1])
+    assert inspect.signature(Before) == inspect.signature(After)
+    before_schema, after_schema = Before.model_json_schema(), After.model_json_schema()
+    before_schema.pop('title')
+    after_schema.pop('title')
+    assert before_schema == after_schema
+    assert _signature_contract(Before) != _signature_contract(After)
+
+
+@pytest.mark.parametrize('setting', ['validate_default', 'strict'])
+def test_signature_contract_detects_model_validation_configuration(setting):
+    from pydantic import BaseModel, ConfigDict, ValidationError
+
+    class Before(BaseModel):
+        model_config = ConfigDict({setting: False})
+        count: int = 'invalid' if setting == 'validate_default' else 1
+
+    class After(BaseModel):
+        model_config = ConfigDict({setting: True})
+        count: int = 'invalid' if setting == 'validate_default' else 1
+
+    data = {} if setting == 'validate_default' else {'count': '1'}
+    Before(**data)
+    with pytest.raises(ValidationError):
+        After(**data)
+    assert inspect.signature(Before) == inspect.signature(After)
+    assert _signature_contract(Before) != _signature_contract(After)
 
 
 def test_openapi_golden_is_canonical_and_matches_frozen_digest():

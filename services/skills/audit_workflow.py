@@ -7,7 +7,6 @@ from services.memory.skills import SkillsManager
 from .dependencies import AuditDependencies
 
 from .agent_runner import SkillAuditUnavailable
-from .prompts import _skill_test_task, _skill_test_messages, _skill_baseline_messages
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +102,9 @@ async def audit_one_skill(skills_manager, skill, url, model, headers,
     except Exception as e:
         log(f"{name}: retrieval precision check skipped — {e}")
 
-    task = _skill_test_task(skill)
+    task = deps.test_task(skill)
     log(f"{name}: testing…")
-    skill_messages = _skill_test_messages(md, task)
+    skill_messages = deps.test_messages(md, task)
     transcript, skill_stats, approval_required = await deps.run_arm(
         skill_messages,
         url,
@@ -141,7 +140,7 @@ async def audit_one_skill(skills_manager, skill, url, model, headers,
         baseline_task = task
         log(f"{name}: running no-skill baseline…")
         baseline_transcript, baseline_stats, baseline_approval = await deps.run_arm(
-            _skill_baseline_messages(baseline_task),
+            deps.baseline_messages(baseline_task),
             url,
             model,
             headers,

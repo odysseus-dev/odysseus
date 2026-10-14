@@ -6,8 +6,6 @@ from typing import Optional
 
 from .dependencies import AuditDependencies
 
-from .prompts import _skill_test_messages, _skill_baseline_messages
-
 logger = logging.getLogger(__name__)
 
 _skill_test_jobs: dict = {}
@@ -53,7 +51,7 @@ async def run_test_job(
             log.append({"type": "say", "text": "".join(say_buf)})
             say_buf.clear()
 
-    messages = list(messages) if isinstance(messages, list) else _skill_test_messages(md, task)
+    messages = list(messages) if isinstance(messages, list) else deps.test_messages(md, task)
     try:
         # aclosing: pausing for an approval leaves this loop early, and the
         # stream's ContextVar cleanup must run in this task, not in asyncio's
@@ -136,7 +134,7 @@ async def run_test_job(
         baseline_task = task
         log.append({"type": "agent_step", "round": "baseline"})
         baseline_transcript, baseline_stats, baseline_approval = await deps.run_arm(
-            _skill_baseline_messages(baseline_task),
+            deps.baseline_messages(baseline_task),
             url,
             model,
             headers,
@@ -266,7 +264,7 @@ async def run_audit_arm(messages: list[dict], url, model, headers, owner,
 async def run_test_once(md: str, task: str, url, model, headers, owner,
                                workload: str = "foreground", *, deps: AuditDependencies) -> tuple:
     """Run the skill once in the agent loop; return (transcript, verdict)."""
-    messages = _skill_test_messages(md, task)
+    messages = deps.test_messages(md, task)
     text, stats, approval_required = await deps.run_arm(
         messages, url, model, headers, owner, workload=workload,
     )

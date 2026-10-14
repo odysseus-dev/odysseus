@@ -639,6 +639,881 @@
       "return": {
         "type": "builtins.NoneType",
         "value": null
+      },
+      "model_fields": {
+        "name": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "origin": "typing.Union",
+              "module": "typing",
+              "arguments": [
+                {
+                  "type": "builtins.str"
+                },
+                {
+                  "type": "builtins.NoneType"
+                }
+              ]
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 80
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "description": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "origin": "typing.Union",
+              "module": "typing",
+              "arguments": [
+                {
+                  "type": "builtins.str"
+                },
+                {
+                  "type": "builtins.NoneType"
+                }
+              ]
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 200
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "category": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "type": "builtins.str"
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 40
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.str",
+            "value": "general"
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "tags": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "platforms": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "requires_toolsets": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "fallback_for_toolsets": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "when_to_use": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "origin": "typing.Union",
+              "module": "typing",
+              "arguments": [
+                {
+                  "type": "builtins.str"
+                },
+                {
+                  "type": "builtins.NoneType"
+                }
+              ]
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 2000
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "procedure": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "pitfalls": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "verification": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "status": {
+          "annotation": {
+            "type": "builtins.str"
+          },
+          "default": {
+            "type": "builtins.str",
+            "value": "draft"
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "version": {
+          "annotation": {
+            "type": "builtins.str"
+          },
+          "default": {
+            "type": "builtins.str",
+            "value": "1.0.0"
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "confidence": {
+          "annotation": {
+            "type": "builtins.float"
+          },
+          "default": {
+            "type": "builtins.float",
+            "value": 0.8
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "source": {
+          "annotation": {
+            "type": "builtins.str"
+          },
+          "default": {
+            "type": "builtins.str",
+            "value": "user"
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "teacher_model": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "session_id": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "title": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "origin": "typing.Union",
+              "module": "typing",
+              "arguments": [
+                {
+                  "type": "builtins.str"
+                },
+                {
+                  "type": "builtins.NoneType"
+                }
+              ]
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 200
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "problem": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "origin": "typing.Union",
+              "module": "typing",
+              "arguments": [
+                {
+                  "type": "builtins.str"
+                },
+                {
+                  "type": "builtins.NoneType"
+                }
+              ]
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 2000
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "solution": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "origin": "typing.Union",
+              "module": "typing",
+              "arguments": [
+                {
+                  "type": "builtins.str"
+                },
+                {
+                  "type": "builtins.NoneType"
+                }
+              ]
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 5000
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "steps": {
+          "annotation": {
+            "origin": "builtins.list",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              }
+            ]
+          },
+          "default": {
+            "factory": "builtins.list",
+            "takes_validated_data": false
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        }
+      },
+      "model_config": {
+        "type": "builtins.dict",
+        "items": {}
       }
     },
     "SkillImportUrlRequest": {
@@ -680,6 +1555,65 @@
       "return": {
         "type": "builtins.NoneType",
         "value": null
+      },
+      "model_fields": {
+        "url": {
+          "annotation": {
+            "origin": "typing.Annotated",
+            "annotation": {
+              "type": "builtins.str"
+            },
+            "metadata": [
+              {
+                "type": "annotated_types.MinLen",
+                "fields": {
+                  "min_length": {
+                    "type": "builtins.int",
+                    "value": 8
+                  }
+                }
+              },
+              {
+                "type": "annotated_types.MaxLen",
+                "fields": {
+                  "max_length": {
+                    "type": "builtins.int",
+                    "value": 2000
+                  }
+                }
+              }
+            ]
+          },
+          "default": {
+            "empty": true
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        }
+      },
+      "model_config": {
+        "type": "builtins.dict",
+        "items": {}
       }
     },
     "SkillUpdateRequest": {
@@ -1116,6 +2050,820 @@
       "return": {
         "type": "builtins.NoneType",
         "value": null
+      },
+      "model_fields": {
+        "name": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "description": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "category": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "tags": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "platforms": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "requires_toolsets": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "fallback_for_toolsets": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "when_to_use": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "procedure": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "pitfalls": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "verification": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "status": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "version": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "confidence": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.float"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "body_extra": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "title": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "problem": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "solution": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "type": "builtins.str"
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        },
+        "steps": {
+          "annotation": {
+            "origin": "typing.Union",
+            "module": "typing",
+            "arguments": [
+              {
+                "origin": "builtins.list",
+                "module": "typing",
+                "arguments": [
+                  {
+                    "type": "builtins.str"
+                  }
+                ]
+              },
+              {
+                "type": "builtins.NoneType"
+              }
+            ]
+          },
+          "default": {
+            "type": "builtins.NoneType",
+            "value": null
+          },
+          "validation": {
+            "alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "alias_priority": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validation_alias": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "discriminator": {
+              "type": "builtins.NoneType",
+              "value": null
+            },
+            "validate_default": {
+              "type": "builtins.NoneType",
+              "value": null
+            }
+          }
+        }
+      },
+      "model_config": {
+        "type": "builtins.dict",
+        "items": {}
       }
     },
     "_skill_test_task": {
