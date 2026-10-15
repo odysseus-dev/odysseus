@@ -281,7 +281,8 @@ async def test_browser_approval_application_binding_is_exact(producer, field, va
     original = authority()
     content = '{"action":"session_info"}'
     approval = approval_for(original, "private_browser", content)
-    changed = replace(original, **{field: value}, browser_sessions=(), browser_pages=())
+    # resource_roots=None re-seals the root for the changed owner.
+    changed = replace(original, **{field: value}, browser_sessions=(), browser_pages=(), resource_roots=None)
     _, result = await dispatch(changed, "private_browser", content, approval)
     assert result["exit_code"] == 1 and not approval._claimed
 
