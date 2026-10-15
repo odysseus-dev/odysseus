@@ -1720,7 +1720,11 @@ async def execute_tool_block(
             return f"{transport}: UNSUPPORTED", page_unavailable()
     # Raw global Playwright MCP has no authoritative session/page observation.
     # Its transport process and remote backend identity cannot substitute for it.
-    if transport.startswith("mcp__") and transport.rsplit("__", 1)[-1] in {
+    # Scoped to the in-container builtin browser MCP only: an operator-configured
+    # remote MCP (e.g. a user-supplied Playwright MCP bound to a real browser via
+    # the Playwright Extension) is explicitly delegated authority and must stay
+    # reachable. Match on the qualified server id, never the bare verb.
+    if transport.startswith("mcp__builtin_browser__") and transport.rsplit("__", 1)[-1] in {
         "browser_click", "browser_fill_form", "browser_type", "browser_press_key", "browser_evaluate",
         "browser_navigate", "browser_navigate_back", "browser_snapshot", "browser_take_screenshot",
         "browser_wait_for", "browser_tabs", "browser_close", "browser_run_code", "browser_network_requests",
@@ -2410,7 +2414,27 @@ async def _execute_tool_block_impl(
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
-        if mcp:
+        # Dedup: an exact-approval replay already executed this MCP tool once
+        # and recorded the result in ``_approved_mcp_results`` (populated by
+        # src/agent_loop.py around the approval path). When the model re-emits
+        # the same call on the next round (some compact routers do this even
+        # after seeing the tool result in messages), return the cached
+        # result instead of firing a second outbound request. This is the
+        # inverse direction of the model-side block — the model can call the
+        # tool freely (so the agent still sees a clean conversation), but a
+        # duplicate dispatch is dropped silently.
+        _approved_mcp_results_map: dict = {}
+        try:
+            from src.agent_loop import get_approved_mcp_results  # type: ignore
+            _approved_mcp_results_map = get_approved_mcp_results()
+        except Exception:
+            pass
+        _cached_key = (tool, (content or "").strip())
+        cached = _approved_mcp_results_map.get(_cached_key)
+        if cached is not None:
+            desc = f"mcp: {tool}"
+            result = dict(cached)
+        elif mcp:
             desc = f"mcp: {tool}"
             args, parse_error = _parse_qualified_mcp_args(tool, content)
             if parse_error:

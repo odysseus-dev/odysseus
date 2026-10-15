@@ -9,15 +9,35 @@ import json
 import logging
 import os
 import re
-import asyncio 
-from typing import Any, Dict, List, Optional, Set, Tuple
+import asyncio
+import inspect
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from src.database import McpServer, SessionLocal
+
+# Module-level singleton so extensions and tests share state with the
+# running app's McpManager. ``app.py`` also instantiates one of these —
+# that's fine; both end up pointing at the same singleton.
+_singleton: Optional["McpManager"] = None
+
+
+def get_mcp_manager() -> "McpManager":
+    """Return the process-wide McpManager singleton."""
+    global _singleton
+    if _singleton is None:
+        _singleton = McpManager()
+    return _singleton
 
 from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
 BROWSER_MCP_SERVER_ID = "builtin_browser"
+
+# In-process MCP servers (OXS extensions) need a stable sentinel for the
+# ``self._sessions.get(server) is record[2]`` check in ``resource_identity``
+# — there's no ClientSession for an in-process install. A module-level
+# ``object`` makes ``is`` stable without polluting identity semantics.
+_INPROC_SESSION = object()
 
 
 def browser_mcp_call_timeout() -> float:
@@ -162,12 +182,61 @@ class McpManager:
         # entered it. AnyIO cancel scopes must be exited by that same task.
         self._owner_shutdown_events: Dict[str, asyncio.Event] = {}
         self._owner_tasks: Dict[str, asyncio.Task] = {}
+        # server_id -> tool_name -> handler (added by OXS in-process tools)
+        self._in_process_tools: Dict[str, Dict[str, Callable]] = {}
         # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
+        # OXS in-process tool self-heal hook. Set by
+        # :func:`core.extensions.registry.set_oxs_reinstall_hook` at
+        # startup. When set, every :meth:`get_all_openai_schemas` call
+        # invokes the hook so a McpManager cache wipe that bypassed
+        # the startup auto-restore (manual disconnect, race during
+        # re-enable, OXS extension in-place upgrade) is repaired on
+        # the next agent turn. The hook itself is a no-op when the
+        # cache already matches the OXS manifest.
+        self._oxs_in_process_heal_hook: Optional[Callable[[], None]] = None
         # Identity of the actual connection, not a PID or lifecycle contract.
         self._resource_connections = {}
         self._resource_endpoints = {}
         self._resource_owners = {}
+
+        # Auto-register as the singleton if none exists yet. Lets `McpManager()`
+        # stay a valid constructor while still ensuring extensions share
+        # one manager with the running app.
+        global _singleton
+        if _singleton is None:
+            _singleton = self
+
+    def set_oxs_in_process_heal_hook(self, hook: "Callable[[], None] | None") -> None:
+        """Install (or clear) the OXS in-process tool self-heal hook.
+
+        Called by ``core.extensions.registry.set_oxs_reinstall_hook``
+        during app startup. ``hook`` is invoked from
+        :meth:`get_all_openai_schemas` to repair a McpManager cache
+        that no longer matches the OXS manifest. The hook is expected
+        to be idempotent — it's called on every public schema query,
+        not just after a wipe.
+        """
+        self._oxs_in_process_heal_hook = hook
+
+    def _ensure_oxs_in_process_tools(self) -> None:
+        """Run the OXS self-heal hook, if installed.
+
+        Safe to call on every public schema request: the hook itself
+        is a no-op when the cache matches the OXS manifest, and any
+        exception it raises is caught and logged so a broken hook can
+        never break schema generation.
+        """
+        hook = self._oxs_in_process_heal_hook
+        if hook is None:
+            return
+        try:
+            hook()
+        except Exception:
+            logger.exception(
+                "McpManager OXS in-process self-heal hook raised; "
+                "schema list may be incomplete until next call"
+            )
 
     async def connect_server(
         self,
@@ -490,6 +559,161 @@ class McpManager:
         for sid in ids:
             await self.disconnect_server(sid)
 
+    # ── In-process tools (OXS extensions) ─────────────────────────────────
+    #
+    # Plugins register tools that live in the host Python process. They do
+    # not spawn a subprocess and do not need a session. Dispatch goes
+    # through ``call_tool`` which checks ``_in_process_tools`` before the
+    # session lookup.
+
+    def register_in_process_tool(
+        self,
+        server_id: str,
+        tool_name: str,
+        *,
+        input_schema: Dict,
+        description: str,
+        handler: Callable,
+        read_only: bool = False,
+    ) -> None:
+        """Register one tool under a namespaced server.
+
+        ``handler`` is ``async def handler(arguments: dict) -> Any`` (or sync).
+        ``input_schema`` is the JSON Schema the LLM sees. ``description``
+        is what shows up next to the tool name in the function-calling UI.
+
+        ``read_only=True`` declares the tool to
+        :mod:`src.tool_capabilities` as a brokered private read. That keeps
+        the post-external-context approval gate from refusing the call as
+        "unknown/high-impact" — which is exactly what happens to OXS
+        extension tools, whose own catalog is injected as untrusted context
+        and therefore arms the gate before the first call. Results are still
+        treated as untrusted external data. The default (``False``) leaves
+        the tool unclassified so the gate keeps failing high.
+
+        Also seals a stable resource identity for the server (endpoint,
+        incarnation, owner) so the approval gate's
+        :meth:`resource_identity` returns a usable ``ExternalResource`` for
+        calls like ``mcp__<server>__<tool>``. Without this, in-process
+        extensions cannot be admitted through the sealed-approval flow
+        even though ``call_tool`` would happily dispatch them.
+        """
+        from src.agent_runtime.remote_resources import configuration_incarnation
+        from src.tool_capabilities import declare_mcp_tool_capabilities
+        from uuid import uuid4
+        if server_id not in self._in_process_tools:
+            self._in_process_tools[server_id] = {}
+        # Make sure the connection entry exists so the OpenAI schema
+        # formatter can read a server name.
+        if server_id not in self._connections:
+            self._connections[server_id] = {
+                "name": server_id,
+                "transport": "in-process",
+                "identity": "",
+            }
+        else:
+            self._connections[server_id]["transport"] = "in-process"
+        self._in_process_tools[server_id][tool_name] = {
+            "input_schema": input_schema,
+            "description": description,
+            "handler": handler,
+        }
+        # Publish the declared effect class so the approval gate can admit
+        # this tool instead of refusing it as unknown. Undeclared tools stay
+        # unknown (fail high), which is the safe default.
+        declare_mcp_tool_capabilities(
+            f"mcp__{server_id}__{tool_name}", read_only=read_only,
+        )
+        # Seal resource identity for the approval gate. Idempotent across
+        # re-registrations of the same server: only the *first* tool of a
+        # server seals the endpoint tuple so re-registration does not
+        # rotate the uuid or break a pending approval's binding.
+        endpoint_entry = (f"inproc:{server_id}", configuration_incarnation(("inproc", server_id)))
+        is_first_tool_for_server = server_id not in self._resource_endpoints
+        self._resource_endpoints[server_id] = endpoint_entry
+        self._resource_owners.setdefault(server_id, "")
+        # ``resource_identity`` checks ``self._sessions.get(server) is
+        # record[2]``. There's no real session for an in-process install,
+        # so we point both sides at the module-level sentinel.
+        self._sessions[server_id] = _INPROC_SESSION
+        if is_first_tool_for_server:
+            self._resource_connections[server_id] = (
+                endpoint_entry, uuid4().hex, _INPROC_SESSION,
+                self._resource_owners[server_id],
+            )
+        # Mirror the schema list so the ``any(row.get('name') == tool for
+        # row in self._tools.get(server, []))`` check in
+        # ``resource_identity`` succeeds for in-process tools too.
+        existing = self._tools.get(server_id) or []
+        # Dedup in case the same tool gets re-registered.
+        if not any(row.get("name") == tool_name for row in existing):
+            existing.append({
+                "name": tool_name,
+                "description": description,
+                "input_schema": input_schema,
+            })
+        self._tools[server_id] = existing
+        self._generation += 1
+
+    def unregister_in_process_tools(self, server_id: str) -> int:
+        """Remove every tool belonging to ``server_id``. Returns count."""
+        removed = len(self._in_process_tools.get(server_id, {}))
+        self._in_process_tools.pop(server_id, None)
+        # Drop the capability declarations for this server's tools so a
+        # later install cannot inherit a stale "read_only" classification.
+        try:
+            from src.tool_capabilities import undeclare_mcp_server_capabilities
+            undeclare_mcp_server_capabilities(server_id)
+        except Exception:
+            logger.debug(
+                "Could not undeclare MCP capabilities for %s", server_id,
+                exc_info=True,
+            )
+        # Tear down the resource identity sealed at install time so a
+        # re-enable re-seals with a fresh uuid and stale approvals cannot
+        # be replayed against the same address.
+        self._resource_endpoints.pop(server_id, None)
+        self._resource_connections.pop(server_id, None)
+        self._resource_owners.pop(server_id, None)
+        if self._sessions.get(server_id) is _INPROC_SESSION:
+            self._sessions.pop(server_id, None)
+        self._tools.pop(server_id, None)
+        # Clean up the connection entry we added. We leave _connections
+        # alone if it pre-existed and was modified by us — operators may
+        # have other tools there. For the in-process-only case, the entry
+        # is ours alone.
+        if self._connections.get(server_id, {}).get("transport") == "in-process":
+            # Only remove if the connection has no other indicators.
+            conn = self._connections[server_id]
+            if set(conn.keys()) <= {"name", "transport", "identity"}:
+                self._connections.pop(server_id, None)
+        self._generation += 1
+        return removed
+
+    def _format_in_process_result(self, qualified_name: str, result: Any) -> Dict:
+        """Wrap an in-process handler's result into the agent tool schema."""
+        if isinstance(result, dict):
+            if "exit_code" in result:
+                return result
+            if "error" in result:
+                # SPEC §4.3 envelopes carry more than the message:
+                # ``status_code``/``body`` tell the model whether the
+                # upstream rejected us or we failed, and extensions attach
+                # their own machine-readable markers (``blocked_by``). All
+                # of it used to be dropped here, so a handler that worked
+                # correctly still surfaced a bare string. ``ok`` stays out
+                # — it is the envelope's own marker and the MCP result
+                # already carries ``exit_code`` for the same decision.
+                return {
+                    k: v for k, v in result.items() if k != "ok"
+                } | {"exit_code": 1}
+            return {"output": result, "exit_code": 0}
+        if result is None:
+            return {"output": "", "exit_code": 0}
+        if isinstance(result, str):
+            return {"output": result, "exit_code": 0}
+        return {"output": str(result), "exit_code": 0}
+
 
     async def connect_all_enabled(self):
         db = SessionLocal()
@@ -570,9 +794,41 @@ class McpManager:
         server_id = parts[1]
         tool_name = parts[2]
 
+        # In-process tools (added via OXS extensions) take priority and
+        # bypass the subprocess session entirely.
+        in_proc = self._in_process_tools.get(server_id, {})
+        if tool_name in in_proc:
+            entry = in_proc[tool_name]
+            handler = entry.get("handler") if isinstance(entry, dict) else entry
+            try:
+                if inspect.iscoroutinefunction(handler):
+                    result = await handler(arguments or {})
+                else:
+                    result = handler(arguments or {})
+            except Exception as e:
+                logger.error(
+                    "OXS in-process tool %s failed: %s", qualified_name, e,
+                )
+                return {"error": str(e), "exit_code": 1}
+            return self._format_in_process_result(qualified_name, result)
+
         session = self._sessions.get(server_id)
         if not session:
             return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
+        # The in-process sentinel is truthy, so a tool name that is NOT in
+        # ``_in_process_tools`` used to fall through to ``_do_call`` and die
+        # with ``'object' object has no attribute 'call_tool'``. That hides
+        # the real cause (the plugin never registered that tool) behind an
+        # AttributeError from inside the manager. Say so instead.
+        if session is _INPROC_SESSION:
+            return {
+                "error": (
+                    f"Tool not found on in-process MCP server {server_id}: "
+                    f"{tool_name}. The extension did not register it — check "
+                    f"the tool's registration loop and the extension's enable log."
+                ),
+                "exit_code": 1,
+            }
 
         from src.agent_runtime.remote_resources import active_backend_operation
         bound_backend = active_backend_operation()
@@ -690,9 +946,31 @@ class McpManager:
 
         Tool names are namespaced as mcp__{server_id}__{tool_name}.
         disabled_map: optional {server_id: set_of_disabled_tool_names} to filter out.
+
+        Before building the schema list, runs the OXS in-process tool
+        self-heal hook (when registered). This is the catch-all defense
+        for the Finding-7 follow-up: a McpManager cache wipe that
+        bypassed the startup auto-restore is repaired lazily on the
+        next ``agent_loop`` query instead of leaving the LLM with a
+        ``selected_not_offered`` for the rest of the process lifetime.
+        The hook is a no-op when the cache already matches the OXS
+        manifest, so it costs nothing on the happy path.
         """
+        self._ensure_oxs_in_process_tools()
         schemas = []
+        # Server ids whose schemas live in ``_in_process_tools`` are also
+        # mirrored into ``_tools`` (so ``resource_identity`` can resolve them
+        # through the existing subprocess-style validation). Emit each such
+        # server from the in-process loop only — skipping it here prevents
+        # the model from seeing the same tool under the same qualified name
+        # twice, which providers like MiniMax reject with empty responses.
+        in_process_servers = set(self._in_process_tools.keys())
         for server_id, tools in self._tools.items():
+            # In-process OXS servers are emitted from the loop below; skip
+            # the duplicate mirror in ``_tools`` so each tool name appears
+            # exactly once in the schemas list.
+            if server_id in in_process_servers:
+                continue
             # Skip builtin Python servers — they use the code-block tool format
             # But include NPX-based builtins (like browser) which need function calling
             # Builtin email tools participate in the native Qwen contract.
@@ -722,12 +1000,49 @@ class McpManager:
                 }
                 schemas.append(schema)
 
+        # In-process tools (registered via OXS extensions) are appended.
+        for server_id, in_proc in self._in_process_tools.items():
+            disabled = (disabled_map or {}).get(server_id, set())
+            conn = self._connections.get(server_id, {})
+            server_name = conn.get("name", server_id)
+            for tool_name, tool in in_proc.items():
+                if tool_name in disabled:
+                    continue
+                qualified = f"mcp__{server_id}__{tool_name}"
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": qualified,
+                        "description": f"[MCP:{server_name}] {tool.get('description', '')}",
+                        "parameters": tool.get("input_schema", {"type": "object", "properties": {}}),
+                    },
+                })
+
         return schemas
 
     def get_all_tools(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
-        """Return a flat list of all discovered tools with server info."""
+        """Return a flat list of all discovered tools with server info.
+
+        Combines out-of-process MCP tools (self._tools, populated by
+        ``connect_all_enabled`` and friends) with in-process tools registered
+        via ``register_in_process_tool`` (e.g. OXS extension ``mcp_tools``).
+        The latter would otherwise be invisible to the agent.
+
+        In-process tools are mirrored into ``_tools`` so ``resource_identity``
+        can resolve them through the existing subprocess-style validation.
+        Skip the mirror here so each tool name appears exactly once — emitting
+        duplicates caused the tool_index lane to reject the batch (UPSERT
+        "IDs must be unique") and showed the same tool name twice in the
+        prose catalog that gets injected into the agent prompt.
+        """
         result = []
+        in_process_servers = set(self._in_process_tools.keys())
         for server_id, tools in self._tools.items():
+            # In-process OXS servers are emitted from the loop below; skip
+            # the duplicate mirror in ``_tools`` so each tool name appears
+            # exactly once in the catalog.
+            if server_id in in_process_servers:
+                continue
             conn = self._connections.get(server_id, {})
             disabled = (disabled_map or {}).get(server_id, set())
             for tool in tools:
@@ -739,6 +1054,19 @@ class McpManager:
                     "description": tool.get("description", ""),
                     "input_schema": tool.get("input_schema") or {},
                     "is_disabled": tool["name"] in disabled,
+                })
+        for server_id, tools in self._in_process_tools.items():
+            conn = self._connections.get(server_id, {})
+            disabled = (disabled_map or {}).get(server_id, set())
+            for name, tool in tools.items():
+                result.append({
+                    "server_id": server_id,
+                    "server_name": conn.get("name", server_id),
+                    "name": name,
+                    "qualified_name": f"mcp__{server_id}__{name}",
+                    "description": tool.get("description", ""),
+                    "input_schema": tool.get("input_schema") or {},
+                    "is_disabled": name in disabled,
                 })
         return result
 

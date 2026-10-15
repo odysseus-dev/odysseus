@@ -648,9 +648,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             from src.event_bus import get_task_scheduler
             scheduler = get_task_scheduler()
             if scheduler:
-                started = await scheduler.run_task_now(task.id)
+                started = scheduler.run_task_now(task.id)
                 if started:
-                    return {"response": f"Task '{task.name}' triggered", "exit_code": 0}
+                    return {"response": f"Task '{task.name}' triggered (run={started})", "exit_code": 0}
                 else:
                     return {"error": "Task is already running", "exit_code": 1}
             return {"error": "Task scheduler not available", "exit_code": 1}

@@ -38,6 +38,8 @@ import tasksModule from './js/tasks.js?v=20260914taskmodel1';
 import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
 import adminModule from './js/admin.js?v=20260929csssplit';
+import extensionsPanelModule from './js/extensionsPanel.js';
+import extensionSidebarModule from './js/extensionSidebar.js';
 import settingsModule from './js/settings.js?v=20260912writingstyle3';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
@@ -1567,6 +1569,11 @@ function initializeEventListeners() {
       }
     })
     .catch(() => {});
+
+  // Bind the admin Extensions sub-tab (Settings → Extensions). Wires the
+  // rescan button and refreshes the list each time the tab is opened.
+  extensionsPanelModule.initExtensionsPanel();
+  extensionSidebarModule.initExtensionSidebar();
 
   // (Logout handler moved to sidebar user bar above)
 

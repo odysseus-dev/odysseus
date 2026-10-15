@@ -19,6 +19,10 @@
 
 const EDGE_THRESHOLD_PX = 24;     // how close to an edge counts as "near"
 
+// Floor the workspace may be squeezed to before we refuse to reserve more.
+// Mirrors modalSnap's MIN_CHAT_WIDTH so both systems agree on "too narrow".
+const MIN_WORKSPACE_PX = 380;
+
 let _ghost = null;
 let _activeZone = null;
 let _tracking = null; // { content, startRect }
@@ -100,6 +104,186 @@ function _viewportSafeRect() {
     right: rightEdge,
     bottom: window.innerHeight - 4,
   };
+}
+
+// ── Side-zone workspace reservation ───────────────────────────────────────
+// A window snapped to `left-half` / `right-half` is pinned to that edge as a
+// full-height panel. It is position:fixed, so the workspace underneath keeps
+// its full width and half the conversation ends up buried behind the window —
+// the window "docks" but nothing else on screen reacts to it.
+//
+// Reserving the space fixes that: the chat gives up exactly the strip the
+// window occupies, so both stay usable side by side.
+//
+// This deliberately uses its own body class and custom property
+// (`tile-left-dock` / `tile-right-dock`, `--tile-*-w`) instead of reusing
+// modalSnap's `left-dock-active` / `right-dock-active`. modalSnap owns those
+// for true edge docks (email, notes), and both systems can be live at the same
+// time on different sides. Separate names mean each one releases only its own
+// reservation instead of clearing the other's.
+
+const _sideZoneOf = (name) =>
+  (name === 'left-half' ? 'left' : name === 'right-half' ? 'right' : null);
+
+// Where the workspace actually begins, in viewport pixels.
+//
+// _viewportSafeRect().left is not that: it adds a 4px gutter after the nav and
+// falls back to 4 when nothing is visible. Reserving against it leaves the
+// chat overlapping the docked window by exactly that gutter, so measure the
+// nav itself — the same edges _viewportSafeRect reserves, without the padding.
+function _workspaceLeftEdge() {
+  const sidebar = document.getElementById('sidebar');
+  const rail = document.querySelector('.icon-rail') || document.querySelector('#icon-rail');
+  let x = 0;
+  const take = (element) => {
+    if (!element || window.getComputedStyle(element).display === 'none') return;
+    const r = element.getBoundingClientRect();
+    if (r.width && r.bottom > 0 && r.top < window.innerHeight) x = Math.max(x, r.right);
+  };
+  if (sidebar && !sidebar.classList.contains('hidden')) take(sidebar);
+  take(rail);
+  return x;
+}
+
+// Visible rects of every window currently tiled against `side`.
+function _sideSnappedRects(side) {
+  const out = [];
+  document.querySelectorAll('.modal-content[data-_tile-zone], .research-pane[data-_tile-zone]')
+    .forEach((c) => {
+      if (_sideZoneOf(c.dataset._tileZone) !== side) return;
+      if (!c.isConnected || c.classList.contains('hidden')) return;
+      if (c.style.display === 'none') return;
+      const r = c.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) return;
+      out.push(r);
+    });
+  return out;
+}
+
+const _lastYield = { left: '', right: '' };
+let _yieldObserver = null;
+let _yieldRaf = 0;
+
+function _scheduleSideYield() {
+  if (_yieldRaf) return;
+  _yieldRaf = requestAnimationFrame(() => {
+    _yieldRaf = 0;
+    try { applySideDockYield(); } catch (_) {}
+  });
+}
+
+// Watch for side-tiled windows appearing/disappearing/being hidden so the
+// reservation is released when the window is closed, minimized or removed.
+//
+// Stays attached for as long as ANY window carries tile state — not just while
+// a reservation is live. A window keeps its zone while it is hidden, and
+// singleton modals (extension panel, memory, gallery) are reused: reopening
+// one brings the tile geometry back without going through _applySnap. Dropping
+// the observer at close time would leave it looking docked with the workspace
+// at full width behind it — the exact bug this exists to fix. A subtree
+// observer over the whole body is still not something to leave running for a
+// page that has never tiled anything, hence the guard on tile state existing
+// at all.
+function _syncSideYieldObserver(reserving) {
+  const hasTileState =
+    document.querySelectorAll('.modal-content[data-_tile-zone], .research-pane[data-_tile-zone]').length > 0;
+
+  if (!reserving && !hasTileState) {
+    if (_yieldObserver) {
+      _yieldObserver.disconnect();
+      _yieldObserver = null;
+    }
+    return;
+  }
+  if (_yieldObserver || typeof MutationObserver === 'undefined') return;
+  _yieldObserver = new MutationObserver(_scheduleSideYield);
+  _yieldObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  });
+}
+
+export function applySideDockYield() {
+  const docEl = document.documentElement;
+  const vw = window.innerWidth;
+  const sideAnchor = _workspaceLeftEdge();
+  const measured = {};
+  let any = false;
+
+  // Space the workspace has to give up: everything between the nav edge and
+  // the viewport right, minus the floor we refuse to go below.
+  const budget = Math.max(0, vw - sideAnchor - MIN_WORKSPACE_PX);
+
+  // Split the space each side is asking for into what we can shrink and what
+  // we cannot. A true edge dock (email, notes) belongs to modalSnap and is
+  // applied through its own CSS variable — scaling it here would compute a
+  // number nobody writes, and would quietly spend space that is still really
+  // occupied. Tile windows are ours to size, so they absorb whatever the fixed
+  // docks leave.
+  const held = { left: 0, right: 0 };   // fixed: a true edge dock already holds it
+  const asked = { left: 0, right: 0 };  // flexible: our own side-tiled windows
+
+  for (const side of ['left', 'right']) {
+    const rects = _sideSnappedRects(side);
+    const edgeVar = side === 'right' ? '--right-dock-w' : '--left-dock-w';
+    const edgePx = parseFloat(getComputedStyle(docEl).getPropertyValue(edgeVar)) || 0;
+
+    let px = 0;
+    if (rects.length) {
+      px = side === 'right'
+        ? Math.max(...rects.map((r) => vw - r.left))
+        // Measure from the workspace's natural left edge, NOT from the chat's
+        // current rect — re-measuring would compound the margin on every call
+        // and creep the workspace off-screen.
+        : Math.max(...rects.map((r) => r.right - sideAnchor));
+      px = Math.max(0, px);
+    }
+
+    held[side] = Number.isFinite(edgePx) ? Math.max(0, edgePx) : 0;
+    asked[side] = px;
+    measured[`${side}HasTile`] = rects.length > 0;
+  }
+
+  // A fixed dock on one side narrows what the other side may take. Both sides
+  // are clamped together: checking each on its own lets two side-tiled windows
+  // (extension left, memory right) each pass and meet in the middle, leaving a
+  // chat a few dozen pixels wide. Scale both by the same factor so neither one
+  // is arbitrarily starved.
+  const remaining = Math.max(0, budget - held.left - held.right);
+  const askedTotal = asked.left + asked.right;
+  if (askedTotal > remaining && askedTotal > 0) {
+    const scale = remaining / askedTotal;
+    asked.left = Math.floor(asked.left * scale);
+    asked.right = Math.floor(asked.right * scale);
+  }
+
+  for (const side of ['left', 'right']) {
+    // Never hand back less than the edge dock on this side is already holding.
+    const px = measured[`${side}HasTile`] ? Math.round(Math.max(asked[side], held[side])) : 0;
+
+    if (px > 0) {
+      any = true;
+      document.body.classList.add(`tile-${side}-dock`);
+      const value = `${px}px`;
+      // Only write on change — a redundant write mutates the style attribute
+      // and would re-trigger our own observer forever.
+      if (_lastYield[side] !== value) {
+        _lastYield[side] = value;
+        docEl.style.setProperty(`--tile-${side}-w`, value);
+      }
+    } else {
+      document.body.classList.remove(`tile-${side}-dock`);
+      if (_lastYield[side] !== '') {
+        _lastYield[side] = '';
+        docEl.style.removeProperty(`--tile-${side}-w`);
+      }
+    }
+  }
+
+  _syncSideYieldObserver(any);
+  return any;
 }
 
 function _zoneForPointer(x, y) {
@@ -211,6 +395,10 @@ function _applySnap(content, rect, zoneName) {
   content.style.setProperty('margin', '0', 'important');
   content.style.setProperty('transform', 'none', 'important');
   content.dataset._tileZone = zoneName;
+  // Side zones now push the workspace aside so the chat isn't buried under
+  // the docked window. Maximize covers the whole safe rect, so it reserves
+  // nothing.
+  applySideDockYield();
   setTimeout(() => { content.style.transition = ''; }, 250);
 }
 
@@ -229,6 +417,8 @@ function _unsnap(content) {
   if (!content.style.position) content.style.position = 'fixed';
   delete content.dataset._tilePreSnap;
   delete content.dataset._tileZone;
+  // This window is no longer occupying an edge — hand the space back.
+  applySideDockYield();
 }
 
 function _findDragTarget(e) {
@@ -330,6 +520,9 @@ function _reclampAll(animate = false) {
     c.style.setProperty('height', r.height + 'px', 'important');
     c.style.setProperty('max-height', r.height + 'px', 'important');
   });
+  // Zones just changed size/position (resize, sidebar toggle) — the workspace
+  // reservation has to follow them or the chat keeps the stale strip.
+  applySideDockYield();
 }
 
 let _reclampPending = false;

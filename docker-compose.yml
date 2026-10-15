@@ -100,6 +100,9 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Stable in-app admin bypass so /api/oxs/* can be driven from the host
+      # without a session cookie. Set via .env; auto-generated otherwise.
+      - ODYSSEUS_INTERNAL_TOKEN=${ODYSSEUS_INTERNAL_TOKEN:-}
     depends_on:
       searxng:
         condition: service_healthy

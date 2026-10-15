@@ -207,6 +207,24 @@ class TestLookupKnown:
     def test_gpt4_base(self):
         assert _lookup_known("gpt-4") == 8192
 
+    def test_mimo_v2_6_flash_not_treated_as_unknown(self):
+        """Regression: ``mimo-v2.6-*`` was missing from the table.
+
+        ``_lookup_known`` returned None, so ``budget_context_for_model`` fell
+        back to a 128k guess and the agent loop shrank its input budget to
+        ~1200 tokens — smaller than its own 60-tool schema. The loop then
+        re-read the same tool result forever and never reached the analysis
+        step. The whole MiMo V2.6 family ships a 1M-token window.
+        """
+        assert _lookup_known("mimo-v2.6-flash") == 1048576
+        assert _lookup_known("mimo-v2.6-pro") == 1048576
+        assert _lookup_known("mimo-v2.6") == 1048576
+
+    def test_mimo_v2_6_not_shadowed_by_v2_5(self):
+        """The longest matching key wins, so v2.6 never picks up v2.5's row."""
+        assert _lookup_known("mimo-v2.6-flash") == 1048576
+        assert _lookup_known("mimo-v2.5") == 1048576
+
 
 class _FakeResp:
     def __init__(self, payload, ok=True):

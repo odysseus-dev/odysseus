@@ -25,6 +25,7 @@ Odysseus is designed for **trusted users on a private network**, not public expo
 | File read / write | ✓ | ✗ |
 | Email send / read | ✓ | ✗ |
 | MCP tools | ✓ | ✗ |
+| **Extensions (OXS) install / enable / disable / uninstall** | ✓ | ✗ |
 | Calendar management | ✓ | ✗ |
 | Token / webhook management | ✓ | ✗ |
 | Model serving | ✓ | ✗ |
@@ -70,6 +71,38 @@ Two exemptions apply even when the gate is on, both deliberate:
 
 - Sources in `_CONTROL_PLANE_CONTEXT_SOURCES` (skills, runtime descriptors, the open editor document, the open email, uploaded files) are treated as control-plane metadata and still permit read-only tools.
 - A TUI run that advertises a host shell bridge and declares `unattended_mode` exempts the local execution set in `TUI_CLIENT_TOOL_NAMES`. Personal, network and deployment-local tools are never exempted.
+## Extension Trust Model (OXS)
+
+OXS is a local-first extension host that lets the admin install Python
+modules that register tools, MCP servers, webhooks, event listeners,
+scheduled task actions, and UI panels. Extensions run **in-process**
+with the same Python privileges as the Odysseus host. There is no
+per-extension sandbox beyond:
+
+- **Capability gates** on every `OXSHost` method (declarative manifest).
+- **Path traversal rejection** in `read_plugin_file`, `add_static`, and `execute_raw`.
+- **Zip-slip / symlink / device / FIFO rejection** in `verify_zip_safe`.
+- **AST tripwire** rejecting `exec` / `eval` / `compile` / `__import__` in entry-point sources.
+- **Rate limit** (10 req/s) on inbound webhooks per token.
+- **Per-token URL** with 32-byte secret + optional HMAC signature.
+
+Threats OXS does NOT defend against:
+
+- A malicious extension reading files outside its own data dir (the
+  gates are best-effort; trusted-equivalent to a pip package).
+- A malicious extension making outbound network calls (gated by an
+  allowlist in `permissions.network_outbound`).
+- Prompt injection through extension-supplied content shown in the
+  agent's tool results — that goes through the same
+  `untrusted_context_message` wrapping described above.
+
+This matches the trust model of pip-installed dependencies: the admin
+audits extensions before install. For untrusted-code marketplaces, run
+Odysseus inside a container with restricted filesystem and network
+access; OXS does not provide isolation on its own.
+
+The full threat model for OXS — including the manifest fail-closed
+contract, capability tiers, and audit log — lives in `specs/oxs.md`.
 
 ## Security Headers
 
@@ -90,3 +123,5 @@ These are open, acknowledged, and contributor help is welcome:
 3. **`src/search/` partial consolidation.** `src.search.core` and `src.search.providers` correctly alias `services.search` via `sys.modules` replacement. `analytics`, `cache`, `content`, `query`, and `ranking` are still independent copies that can drift. The SSRF regression tests in `tests/test_webhook_ssrf_resilience.py` test `src.webhook_manager` directly (separate from search), so the safety net there is intact. See #1058.
 
 4. **Token scopes are coarse.** There is no way to grant a session a subset of the owning user's privileges. Companion/mobile tokens carry either `chat` or `admin` scope with no per-capability granularity.
+
+5. **OXS extension sandbox is best-effort.** Extensions run in-process with the host Python. Capability gates, AST tripwire, and zip-slip rejection are enforced, but a malicious extension still has the privileges of the Odysseus process. Operators must vet each extension before install, or run Odysseus in a container with restricted filesystem/network.

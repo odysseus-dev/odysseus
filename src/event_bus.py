@@ -118,7 +118,7 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
                 # Fire the task
                 if _task_scheduler:
                     logger.info(f"Event '{event_name}' triggered task '{task.name}' (every {threshold})")
-                    await _task_scheduler.run_task_now(task.id)
+                    _task_scheduler.run_task_now(task.id)
                 else:
                     logger.warning(f"Event triggered task '{task.name}' but no scheduler available")
             else:

@@ -116,6 +116,27 @@ MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(D
 # init and all vector features (RAG, semantic memory, tool index) silently degrade.
 FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(DATA_DIR, "fastembed_cache")
 
+# ── OXS — Odysseus Extension System ─────────────────────────────────────────
+# Bundled extensions live in the repo (versioned). User-installed extensions
+# live in DATA_EXTENSIONS_DIR (per-instance, gitignored). Both layouts are
+# scanned by core/extensions/loader.py on startup and on rescan requests.
+EXTENSIONS_DIR = os.path.join(os.path.dirname(BASE_DIR) or ".", "extensions")
+if not os.path.isabs(EXTENSIONS_DIR):
+    EXTENSIONS_DIR = os.path.abspath(EXTENSIONS_DIR)
+DATA_EXTENSIONS_DIR = os.path.join(DATA_DIR, "extensions")
+
+# OXS state directory — install state, audit log, per-extension permission
+# grants. Created lazily by core/extensions/audit.py on first write.
+OXS_STATE_DIR = os.path.join(DATA_DIR, "oxs")
+OXS_EXTENSIONS_JSON = os.path.join(OXS_STATE_DIR, "extensions.json")
+OXS_AUDIT_LOG = os.path.join(OXS_STATE_DIR, "audit.log")
+OXS_PERMISSIONS_DIR = os.path.join(OXS_STATE_DIR, "permissions")
+
+# OXS core version range. The loader rejects any extension whose
+# `oxs_version` field does not satisfy this range.
+OXS_CORE_VERSION = "1.0.0"
+OXS_CORE_VERSION_PEP440 = ">=1.0.0,<2.0.0"
+
 # Agent tool output limits (single source of truth — imported by tool_execution.py,
 # tool_implementations.py, agent_tools.py, and any other module that needs them)
 MAX_OUTPUT_CHARS = 10_000       # cap for bash/python/web_search/web_fetch output

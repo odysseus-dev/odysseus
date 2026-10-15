@@ -113,6 +113,28 @@ from src.agent_tools import (
 )
 
 
+# Approval-replay MCP result cache. Populated when the approval replay
+# path (block above) successfully executes an MCP tool under a sealed
+# approval, and consulted by ``src/tool_execution.py`` when the model
+# re-emits the same MCP call on a subsequent round. This decouples
+# "loop must reach the model so it can produce a final answer" from
+# "duplicate dispatch must not fire a second outbound request". The
+# dict is keyed by ``(qualified_tool_name, raw_content)`` so two
+# distinct calls with different args don't shadow each other.
+_APPROVED_MCP_RESULTS: dict[tuple[str, str], dict] = {}
+
+
+def get_approved_mcp_results() -> dict[tuple[str, str], dict]:
+    """Return the module-level approval-replay MCP result cache.
+
+    Imported by ``src/tool_execution.py`` so MCP dispatch can return the
+    cached payload when the model re-emits the exact same call after an
+    approval replay. Kept as a function (rather than direct attribute
+    access) so the import surface stays small and tests can stub it.
+    """
+    return _APPROVED_MCP_RESULTS
+
+
 def _local_media_discovery_call_allowed(tool_name: str, command: str) -> bool:
     """Allow harmless workspace discovery before media evidence is acquired.
 
@@ -4544,13 +4566,43 @@ def _clean_notes_search_query(value: str) -> str:
     return query
 
 
-def _notes_general_definition_answer(text: str) -> Optional[str]:
-    """Answer note-like word questions that are not saved-note requests."""
+_NOTES_DEFINITION_MAX_CHARS = 300
 
-    value = re.sub(r"\s+", " ", str(text or "")).strip()
-    lower = value.lower()
-    if not value:
+
+def _notes_general_definition_answer(text: str) -> Optional[str]:
+    """Answer note-like word questions that are not saved-note requests.
+
+    This exists for a person typing "what is a note?" into chat. It was
+    written without a shape check on the *input*, and that turns out to be
+    the whole problem: any long instruction prompt that happens to contain
+    "what", "explain" or "meaning" trips it, and the caller then throws away
+    the model's tool calls and substitutes a dictionary sentence.
+
+    The WhatsApp Conversation Analyzer hit exactly this. Its manifest says
+    "intervals already analyzed, with **what** was persisted", so every run
+    discarded the note the model had just written about a real message and
+    answered "A note can mean a short written record, a comment, or a
+    musical pitch" instead. Silent, and it looked like the analyzer was just
+    being unhelpful.
+
+    So: a definition question is short and is not a document. Reject
+    anything long, multi-line, bulleted, or carrying code/tool names before
+    looking for trigger words.
+    """
+    raw = str(text or "").strip()
+    if not raw:
         return None
+    if len(raw) > _NOTES_DEFINITION_MAX_CHARS:
+        return None
+    non_empty = [ln for ln in raw.splitlines() if ln.strip()]
+    if len(non_empty) > 2:
+        return None
+    if re.search(r"(?m)^\s*(?:[-*+]\s|#{1,6}\s|\d+[.)]\s)", raw):
+        return None
+    if re.search(r"`|\*\*", raw):
+        return None
+    value = re.sub(r"\s+", " ", raw).strip()
+    lower = value.lower()
     if re.search(r"\b(?:my|saved|open|show|list|search|find|create|add|delete|archive|pin|tag)\s+(?:notes?|checklists?)\b", lower):
         return None
     if not re.search(r"\b(?:what(?:'s| is)?|define|explain|meaning|mean|difference|synonym|sentence)\b", lower):
@@ -4577,6 +4629,70 @@ def _notes_general_definition_answer(text: str) -> Optional[str]:
             return "A useful synonym for note is memo, comment, or remark depending on context."
         return "A note can mean a short written record, a comment, or a musical pitch depending on context."
     return None
+
+
+# App tool identifiers whose presence, in bulk, marks a text as an instruction
+# prompt rather than an end-user request. MCP-qualified names
+# (``mcp__oxs_bridge__list_messages``) are matched on their final segment.
+_APP_TOOL_TOKENS = frozenset({
+    "manage_bg_jobs",
+    "manage_calendar",
+    "manage_contact",
+    "manage_documents",
+    "manage_email_state",
+    "manage_endpoints",
+    "manage_mcp",
+    "manage_memory",
+    "manage_notes",
+    "manage_research",
+    "manage_sessions",
+    "manage_settings",
+    "manage_skills",
+    "manage_tasks",
+    "manage_tokens",
+    "manage_webhooks",
+    "search_chats",
+    "list_messages",
+    "get_message",
+    "list_events",
+    "todowrite",
+    "ask_teacher",
+    "chat_with_model",
+})
+
+_APP_TOOL_TOKEN_RE = re.compile(
+    r"(?<![0-9a-z_])(" + "|".join(sorted(_APP_TOOL_TOKENS)) + r")(?![0-9a-z_])"
+)
+
+_MCP_QUALIFIED_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_]*(?:__[A-Za-z0-9][A-Za-z0-9_]*)+")
+
+
+def _manifest_tool_tokens(value: str) -> set[str]:
+    """Distinct app tool identifiers named by a text, prefix-stripped."""
+    lowered = value.lower()
+    # MCP-qualified names (``mcp__oxs_bridge__list_messages``) carry the tool in
+    # their final ``__`` segment, so reduce them before token matching.
+    unqualified = _MCP_QUALIFIED_RE.sub(lambda m: m.group(0).rsplit("__", 1)[-1], lowered)
+    return set(_APP_TOOL_TOKEN_RE.findall(unqualified))
+
+
+def _is_tool_manifest_prompt(text: str) -> bool:
+    """Recognize a system/extension prompt that documents app tools.
+
+    Scheduled-task and extension prompts are not end-user requests: they name
+    app tools in order to *instruct* an agent. The explicit-intent normalizers
+    match on ordinary words, so a manifest that merely lists tools reads as an
+    ask. A WhatsApp-analyzer prompt naming ``manage_memory`` while describing
+    "recent" conversations and a `memory:` output row matched the memory lookup
+    grammar and produced ``manage_memory list`` every round: the loop overwrote
+    the model's real answer, re-ran identical tool results until it forced a
+    final answer with no tools, and the run ended on the evidence-gate
+    disclosure instead of the model's text.
+    """
+    value = str(text or "")
+    if len(value) > 20000:
+        return True
+    return len(_manifest_tool_tokens(value)) >= 2
 
 
 def _is_personal_tool_definition_turn(text: str) -> bool:
@@ -7801,14 +7917,30 @@ def _web_only_route_tools(text: str, disabled_tools: Set[str]) -> Set[str]:
     tools = set(WEB_TOOL_NAMES) | {"ask_user", "update_plan"}
     if _looks_like_youtube_tool_turn(text) and "youtube_tool" not in set(disabled_tools or set()):
         tools.add("youtube_tool")
-    if (
-        (
-            _looks_like_explicit_browser_interaction(text)
-            or _looks_like_map_browser_request(text)
-        )
-        and "private_browser" not in set(disabled_tools or set())
-    ):
+    browser_intent = bool(
+        _looks_like_explicit_browser_interaction(text)
+        or _looks_like_map_browser_request(text)
+    )
+    if browser_intent and "private_browser" not in set(disabled_tools or set()):
         tools.add("private_browser")
+    if browser_intent:
+        # A web-only turn is exactly where an operator-configured browser MCP
+        # must stay reachable. Without this the allowlist above drops every
+        # `mcp__*` schema, leaving the model with no browser at all once
+        # private_browser is disabled. Only enabled, non-builtin servers are
+        # admitted — a server the admin switched off stays switched off.
+        try:
+            from src.mcp_manager import get_mcp_manager as _get_mcp_manager
+            _disabled_map = _load_mcp_disabled_map() or {}
+            for _tool in _get_mcp_manager().get_all_tools(_disabled_map):
+                _server_id = str(_tool.get("server_id") or "")
+                if _server_id == "builtin_browser" or _tool.get("is_disabled"):
+                    continue
+                _qualified = _tool.get("qualified_name")
+                if _qualified:
+                    tools.add(str(_qualified))
+        except Exception as exc:
+            logger.debug("Failed to extend web-only tools with MCP browser tools: %s", exc)
     return tools
 
 _WORKSPACE_AGENT_TOOLS = (
@@ -9072,6 +9204,29 @@ def _host_bridge_failure_response() -> str:
     )
 
 
+def _enabled_external_browser_mcp() -> bool:
+    """Whether an operator-configured browser MCP is connected and enabled.
+
+    The in-container ``builtin_browser`` does not count: it is bound by the
+    same page-authority rules as private_browser, so it must not be able to
+    re-open a turn that private_browser's absence closed.
+    """
+    try:
+        from src.mcp_manager import get_mcp_manager as _get_mcp_manager
+        _disabled_map = _load_mcp_disabled_map() or {}
+        for _tool in _get_mcp_manager().get_all_tools(_disabled_map):
+            _server_id = str(_tool.get("server_id") or "")
+            if not _server_id or _server_id == "builtin_browser":
+                continue
+            if _tool.get("is_disabled"):
+                continue
+            if str(_tool.get("name") or "").startswith("browser_"):
+                return True
+    except Exception as exc:
+        logger.debug("Failed to probe for an external browser MCP: %s", exc)
+    return False
+
+
 def _web_search_unavailable_for_turn(
     intent_domains: Set[str],
     disabled_tools: Set[str],
@@ -9100,8 +9255,14 @@ def _web_search_unavailable_for_turn(
         return False
     # Private-browser navigation is independent of the optional public-search
     # toggle. Let an explicit browser action reach its available tool.
+    # An operator-configured browser MCP is the same kind of resource: it owns
+    # its own transport and is not covered by the public-search toggle, so an
+    # explicit browser action must reach it too.
     if (
-        "private_browser" not in set(disabled_tools or ())
+        (
+            "private_browser" not in set(disabled_tools or ())
+            or _enabled_external_browser_mcp()
+        )
         and (
             _parse_explicit_private_browser_inspection(text)
             or _looks_like_explicit_browser_interaction(text)
@@ -10427,7 +10588,40 @@ def _should_use_direct_low_signal_path(
     client_active_skills: bool,
     terminal_agent_mode: bool,
     has_tui_host_bridge: bool,
+    last_user_text: str = "",
 ) -> bool:
+    # W2A FIX: never use direct path when the user is explicitly requesting
+    # a tool. The direct path strips tools and history, so an explicit
+    # tool call instruction like "call mcp__whats2api__list_connections"
+    # or "use the bash tool" is silently downgraded to a text-only response.
+    if last_user_text:
+        txt = str(last_user_text or "").strip()
+        low = txt.lower()
+        # Qualified MCP tool name in the message -> full agent loop.
+        if "mcp__" in txt and "__" in txt.split("mcp__", 1)[1]:
+            return False
+        # English tool-call verbs at start.
+        en_verbs = (
+            "call ", "use ", "invoke ", "execute ", "apply ", "run ",
+        )
+        if any(low.startswith(v) for v in en_verbs):
+            return False
+        # Portuguese tool-call verbs at start (envia, manda, lista, etc).
+        pt_verbs = (
+            "envia ", "manda ", "lista ", "listar ", "busca ", "buscar ",
+            "mostra ", "consulta ", "executa ", "roda ", "cria ",
+            "criar ", "atualiza ", "deleta ", "remove ", "abre ", "fecha ",
+            "baixa ", "enviar ", "mandar ", "listar ",
+        )
+        if any(low.startswith(v) for v in pt_verbs):
+            return False
+        # Channel nouns that almost always imply a tool call.
+        channel_nouns = (
+            "whatsapp", " no zap", "via mcp", "usando o mcp", "pelo mcp",
+            "via whatsapp", "no whatsapp", "pelo whatsapp",
+        )
+        if any(c in low for c in channel_nouns):
+            return False
     if casual_low_signal_turn:
         return bool(
             low_signal_turn
@@ -10827,7 +11021,14 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     retry_continuation = _is_contextual_retry_continuation(messages, text)
     link_continuation = _is_contextual_link_followup(messages, text)
     self_contained_workspace_sequence = _is_self_contained_workspace_sequence(text)
-    continuation = (
+    # A tool-manifest prompt (scheduled task, extension procedure) carries its
+    # own role, scope, tool table and output contract, so it is self-contained
+    # and continues nothing. It still has to be excluded explicitly: the
+    # analyzer prompt matched ``_ACTION_CONTINUATION_RE`` on its own rule text
+    # ("read/write data belonging to this operator" -> read ... this), which
+    # sent the turn down the continuation path and replaced the retrieval query
+    # with truncated recent context.
+    continuation = False if _is_tool_manifest_prompt(text) else (
         _is_explicit_continuation(text)
         or (
             len(messages or []) > 1
@@ -14551,11 +14752,23 @@ def _build_system_prompt(
         disabled_tools,
     )
     mcp_schemas = []
+    _mcp_raw_count = 0
     if mcp_mgr:
+        _mcp_raw = mcp_mgr.get_all_openai_schemas(_effective_mcp_disabled_map)
+        _mcp_raw_count = len(_mcp_raw)
         mcp_schemas = _filter_raw_browser_mcp_schemas(
-            mcp_mgr.get_all_openai_schemas(_effective_mcp_disabled_map),
+            _mcp_raw,
             disabled_tools,
         )
+    logger.info(
+        "[prompt-mcp] mcp_mgr=%s disabled_map=%s raw=%d kept=%d names=%s",
+        bool(mcp_mgr),
+        {k: sorted(v) for k, v in (_effective_mcp_disabled_map or {}).items()
+         if v},
+        _mcp_raw_count,
+        len(mcp_schemas),
+        [ (s.get("function") or {}).get("name") for s in mcp_schemas ][:20],
+    )
 
     set_active_model(model)
 
@@ -20984,26 +21197,44 @@ def _enforce_caller_disabled_tool_policy(
     base_relevant_tools: Optional[Set[str]],
     tool_policy: Optional[ToolPolicy],
 ) -> tuple[Optional[Set[str]], Optional[Set[str]], Optional[ToolPolicy]]:
-    """Make caller tool denials immutable across routing and fallback logic."""
+    """Make caller tool denials immutable across routing and fallback logic.
+
+    User-added MCP integrations (e.g. the Whats2API Bridge) are exempt from
+    caller denials: a server-wide denylist that targets builtin email/browser
+    tools must not silently hide the very MCP tools the user just connected.
+    Preserve any tool that already passed the relevance pass for this turn
+    so the model can still reach for it; the dispatch layer (``request_authority``)
+    still gates the actual execution per request.
+    """
 
     hard_disabled = set(caller_disabled or set())
     if not hard_disabled:
         return relevant_tools, base_relevant_tools, tool_policy
-    disabled_tools.update(hard_disabled)
+    # Protect any tool that already cleared the relevance/routing pass. The
+    # previous version only protected ``mcp__*`` names, which let a caller-
+    # side denylist silently remove builtin tools the turn actually needed
+    # (e.g. ``manage_calendar`` for an LLM scheduled task whose allowlist
+    # enables it). The relevance pass is the turn-scoped contract, so its
+    # outcome cannot be quietly undone by a server-wide default.
+    protected: Set[str] = set()
+    for t in (relevant_tools or set()) | (base_relevant_tools or set()):
+        protected.add(t)
+    effective_disabled = hard_disabled - protected
+    disabled_tools.update(effective_disabled)
     if relevant_tools is not None:
-        relevant_tools.difference_update(hard_disabled)
+        relevant_tools.difference_update(effective_disabled)
     if base_relevant_tools is not None:
-        base_relevant_tools.difference_update(hard_disabled)
+        base_relevant_tools.difference_update(effective_disabled)
     if tool_policy is None:
-        tool_policy = ToolPolicy(disabled_tools=frozenset(hard_disabled))
+        tool_policy = ToolPolicy(disabled_tools=frozenset(effective_disabled))
     else:
         tool_policy = replace(
             tool_policy,
             disabled_tools=frozenset(
-                set(tool_policy.disabled_tools) | hard_disabled
+                set(tool_policy.disabled_tools) | effective_disabled
             ),
             hidden_tools=frozenset(
-                set(tool_policy.hidden_tools) | hard_disabled
+                set(tool_policy.hidden_tools) | effective_disabled
             ),
         )
     return relevant_tools, base_relevant_tools, tool_policy
@@ -21209,6 +21440,21 @@ async def stream_agent_loop(
             exact_approval and exact_approval.allow_remaining_actions
         ),
         delegated_credential=bool(delegated_credential),
+        # A background task runner (``src.task_scheduler``) computes this set
+        # from the operator's crew allowlist plus its own RAG selection and
+        # passes it as ``relevant_tools``. It is server-owned, never model
+        # output and never derived from untrusted content. Foreground chat
+        # passes ``relevant_tools=None`` (or a prompt-derived set) and is
+        # deliberately excluded below.
+        declared_task_tools=(
+            frozenset(relevant_tools or ())
+            if (
+                workload == "background"
+                and relevant_tools
+                and not delegated_credential
+            )
+            else frozenset()
+        ),
     )
     _has_tui_host_bridge = _tui_host_bridge_is_usable(client_runtime_context)
     if (
@@ -21282,6 +21528,13 @@ async def stream_agent_loop(
             mcp_mgr = None
     guide_only = bool(tool_policy and tool_policy.mode == "guide_only")
     public_blocked_tools = blocked_tools_for_owner(owner)
+    logger.info(
+        "[mcp-mgr] owner=%r tool_policy=%s disable_mcp=%s public_blocked=%d",
+        owner,
+        bool(tool_policy),
+        bool(getattr(tool_policy, "disable_mcp", False)),
+        len(public_blocked_tools),
+    )
     if normalized_external_tool_schemas:
         public_blocked_tools = set(public_blocked_tools) - {
             schema["function"]["name"]
@@ -21863,6 +22116,7 @@ async def stream_agent_loop(
         client_active_skills=_client_active_skills or _matched_skill_turn,
         terminal_agent_mode=_terminal_agent_mode,
         has_tui_host_bridge=_has_tui_host_bridge,
+        last_user_text=_last_user,
     )
     if (
         _is_personal_tool_definition_turn(_last_user)
@@ -22640,6 +22894,13 @@ async def stream_agent_loop(
     # settings make web tools visible even when tool RAG misses them;
     # route-level disabled_tools decides what remains allowed.
     _exact_forced_native_chain = False
+    # Snapshot the RAG-selected set BEFORE forced tools are merged in.
+    # The MCP merge below unions it with _relevant_tools so that forcing
+    # web/native tools cannot drop MCP tools retrieval already found.
+    # It used to be assigned only inside the exact-native-chain branch, so
+    # every other path raised UnboundLocalError here (21 test_tool_policy
+    # failures). Same idiom as the re-derivation further below.
+    _base_relevant_tools = None if _relevant_tools is None else set(_relevant_tools)
     if not guide_only and forced_tools:
         forced_set = {t for t in forced_tools if t not in disabled_tools}
         _exact_forced_native_chain = bool(
@@ -22829,7 +23090,12 @@ async def stream_agent_loop(
         _relevant_tools.update(_web_turn_tools)
         _non_web_domains = _intent_domains - {"web"}
         if not _non_web_domains and not _explicit_delegation_tools:
-            _relevant_tools = _web_only_route_tools(_retrieval_query or _last_user, disabled_tools)
+            web_tools = _web_only_route_tools(_retrieval_query or _last_user, disabled_tools)
+            mcp_from_rag = {
+                t for t in (_base_relevant_tools or set()) | (_relevant_tools or set())
+                if t.startswith("mcp__")
+            }
+            _relevant_tools = web_tools | mcp_from_rag
             logger.info("[agent-intent] web-only request pruned unrelated tools")
         logger.info("[agent-intent] explicit web domain enabled private web tools")
     if (
@@ -23031,7 +23297,17 @@ async def stream_agent_loop(
 
     def _route_relevant_tools(candidate_model: str):
         if turn_contract is not None:
-            return set(turn_contract.offered)
+            contract_offered = set(turn_contract.offered)
+            # MCP tools that RAG retrieved — they may live in _base_relevant_tools
+            # (captured before RAG) or _relevant_tools (set by RAG after).
+            mcp_from_rag = {
+                t for t in (_base_relevant_tools or set()) | (_relevant_tools or set())
+                if t.startswith("mcp__")
+            }
+            merged = contract_offered | mcp_from_rag
+            if mcp_from_rag:
+                logger.info(f"[agent-loop] turn_contract merged with {len(mcp_from_rag)} MCP tools from RAG: {sorted(mcp_from_rag)[:5]}...")
+            return merged
         route_tools = None if _base_relevant_tools is None else set(_base_relevant_tools)
         if _uploaded_read_only_turn:
             return {"read_file"}
@@ -23295,7 +23571,12 @@ async def stream_agent_loop(
     if (
         _pure_web_turn
     ):
-        _relevant_tools = _web_only_route_tools(_last_user, disabled_tools)
+        web_tools = _web_only_route_tools(_last_user, disabled_tools)
+        mcp_from_rag = {
+            t for t in (_base_relevant_tools or set()) | (_relevant_tools or set())
+            if t.startswith("mcp__")
+        }
+        _relevant_tools = web_tools | mcp_from_rag
     if _private_browser_needs_static_fallback:
         _relevant_tools.update({"web_search", "web_fetch"})
         _relevant_tools.discard("private_browser")
@@ -23304,7 +23585,9 @@ async def stream_agent_loop(
         and not _explicit_no_web_lookup
         and not _explicit_delegation_tools
     ):
-        _relevant_tools = set(WEB_TOOL_NAMES) if (_contextual_web_resource_followup or _contextual_web_tool_followup) else {"web_search"}
+        web_tools = set(WEB_TOOL_NAMES) if (_contextual_web_resource_followup or _contextual_web_tool_followup) else {"web_search"}
+        mcp_from_rag = {t for t in (_base_relevant_tools or set()) | (_relevant_tools or set()) if t.startswith("mcp__")}
+        _relevant_tools = web_tools | mcp_from_rag
         if _youtube_tool_turn and "youtube_tool" not in disabled_tools:
             _relevant_tools.add("youtube_tool")
         if (
@@ -24199,7 +24482,12 @@ async def stream_agent_loop(
                         _irrelevant_local_media_web_tools.add("private_browser")
                     route_tools.difference_update(_irrelevant_local_media_web_tools)
         if turn_contract is not None and tool_surface != "full":
-            route_tools = set(turn_contract.offered)
+            contract_offered = set(turn_contract.offered)
+            mcp_from_rag = {
+                t for t in (_base_relevant_tools or set()) | (_relevant_tools or set())
+                if t.startswith("mcp__")
+            }
+            route_tools = contract_offered | mcp_from_rag
         if prompt_compact:
             route_tools.update(
                 _blocked_network_recovery_tools(tool_events)
@@ -25013,8 +25301,15 @@ async def stream_agent_loop(
         # the exact call that the server will seal for user approval.  Schema
         # visibility is not authority: both the loop and dispatcher still gate
         # execution, and only a one-use server record can cross that boundary.
+        # Exempt user-added MCP tools (Whats2API Bridge and similar) from
+        # the server-wide caller denylist so the model can call them; the
+        # dispatcher's per-call approval still gates actual execution.
+        def _keep(name):
+            if name and name.startswith("mcp__"):
+                return True
+            return name not in _caller_hard_denials
         return [schema for schema in schemas or ()
-                if schema.get("function", {}).get("name", schema.get("name")) not in _caller_hard_denials
+                if _keep(schema.get("function", {}).get("name", schema.get("name")))
                 and not (tool_policy and tool_policy.block_all_tool_calls)
                 and not (delegated_credential and delegated_tool_is_blocked(
                     schema.get("function", {}).get("name", schema.get("name"))))]
@@ -25071,12 +25366,34 @@ async def stream_agent_loop(
             # their offerings in the prompt, not as native function schemas.
             if guide_only or not route_state["is_api_model"]:
                 return []
+            # Exempt user-added MCP tools (mcp__*) from the disabled_tools
+            # filter so a server-wide denylist that targets builtin email/browser
+            # tools doesn't silently hide the very MCP integrations the user
+            # just connected (Whats2API Bridge and similar). The dispatcher's
+            # per-call approval still gates actual execution.
+            def _name(schema):
+                return (schema.get("function") or {}).get("name") or schema.get("name")
+            def _not_disabled_for_mcp(schema):
+                name = _name(schema)
+                if name and name.startswith("mcp__"):
+                    return True
+                return name not in disabled_tools
             contract_schemas = [
                 schema for schema in turn_contract.schemas()
-                if (schema.get("function", {}).get("name") or schema.get("name"))
-                not in disabled_tools
+                if _not_disabled_for_mcp(schema)
             ]
-            return _filter_route_tool_schemas(_apply_tool_surface_to_schemas(contract_schemas, tool_surface))
+            # Merge MCP tools that RAG retrieved for this turn — turn_contract's
+            # FAMILY_TOOLS doesn't cover MCP integrations, so without this the
+            # user-added tools (mcp__whats2api__*, etc.) get silently dropped.
+            contract_names = {
+                _name(schema) for schema in contract_schemas
+            }
+            mcp_merged = [
+                schema for schema in route_mcp_schemas
+                if _name(schema) not in contract_names
+                and _not_disabled_for_mcp(schema)
+            ]
+            return _filter_route_tool_schemas(_apply_tool_surface_to_schemas(contract_schemas + mcp_merged, tool_surface))
         if route_state["is_api_model"]:
             if tool_surface == "full":
                 # Full/regular models own semantic tool choice.  Offer every
@@ -25102,10 +25419,12 @@ async def stream_agent_loop(
                     schema for schema in FUNCTION_TOOL_SCHEMAS
                     if schema.get("function", {}).get("name") in schema_names
                 ]
-                mcp_filtered = [
-                    schema for schema in route_mcp_schemas
-                    if schema.get("function", {}).get("name") in route_relevant_tools
-                ]
+                # MCP tools are dynamic (extension-registered, remote) - the
+                # RAG retriever that built route_relevant_tools only sees
+                # static FUNCTION_TOOL_SCHEMAS, so filtering MCP by it would
+                # silently erase every MCP tool. Include them all here; per-
+                # tool user toggles still apply via the disabled filter below.
+                mcp_filtered = list(route_mcp_schemas)
                 schemas = base_schemas + mcp_filtered
             else:
                 if qwen38_router:
@@ -25138,12 +25457,17 @@ async def stream_agent_loop(
                 ]
             if _pure_web_turn and tool_surface != "full":
                 allowed = _web_only_route_tools(_last_user, disabled_tools)
+                mcp_from_rag = {
+                    t for t in (route_relevant_tools or set()) | (route_state.get("relevant_tools") or set())
+                    if t.startswith("mcp__")
+                }
                 schemas = [
                     schema for schema in schemas
                     if (
                         schema.get("function", {}).get("name")
                         or schema.get("name")
                     ) in allowed
+                    or schema.get("function", {}).get("name") in mcp_from_rag
                     or schema.get("function", {}).get("name") in external_names
                 ]
             schemas = _drop_legacy_email_alias_schemas_when_mcp_available(schemas)
@@ -25673,6 +25997,40 @@ async def stream_agent_loop(
                 or (approved.tool_name in {"create_document", "edit_document", "update_document"})
             )
         )
+        # MCP-backed tools (remote servers and OXS in-process extensions)
+        # are outside the hard-coded effectful list above, but a sealed
+        # approval is still a sealed action — the tool already ran once
+        # during the approval replay above and the result is appended to
+        # ``messages``. Letting the loop reach the model normally keeps
+        # the model's prose loop intact (so it can phrase a final answer
+        # based on the tool result), but a small minority of models
+        # re-emit the same MCP call on the very next round and produce a
+        # duplicate ``Tool executed`` log line. To avoid both bugs at
+        # once — "execute twice" and "skip the model and emit
+        # Unsupported execution claims" — we cache the replay result
+        # in a module-level dict that ``src/tool_execution.py`` reads
+        # before dispatching MCP calls. The model still gets its turn
+        # (so it can summarise the result), but a duplicate dispatch is
+        # dropped silently and uses the cached payload.
+        if tool_result_is_successful(approved_result):
+            _APPROVED_MCP_RESULTS[(approved.tool_name, (approved.content or "").strip())] = dict(approved_result)
+            # Also register this exact (tool, args) signature as a successful
+            # mutation in the contract ledger so the next-round
+            # ``_blocked_repeated_successful_mutation`` guard picks it up if
+            # the model re-emits the same MCP call. Without this the guard's
+            # contract-only mutation set never sees MCP approvals and the
+            # model keeps re-issuing the same call into the loop_breaker.
+            try:
+                _approved_block_for_sig = ToolBlock(
+                    approved.tool_name, approved.content or ""
+                )
+                _approved_sig = _contract_mutation_signature(
+                    _approved_block_for_sig, None
+                )
+                if _approved_sig is not None:
+                    _successful_mutation_signatures.add(_approved_sig)
+            except Exception:
+                pass
         if _approved_effectful:
             full_response = "Done."
             # The approval question was streamed on the original request and
@@ -25907,7 +26265,12 @@ async def stream_agent_loop(
             _relevant_tools.update({"web_search", "web_fetch"})
             _relevant_tools.discard("private_browser")
         if _pure_web_turn:
-            _relevant_tools = _web_only_route_tools(_last_user, disabled_tools)
+            web_tools = _web_only_route_tools(_last_user, disabled_tools)
+            mcp_from_rag = {
+                t for t in (_route_state.get("relevant_tools") or set()) | (_relevant_tools or set())
+                if t.startswith("mcp__")
+            }
+            _relevant_tools = web_tools | mcp_from_rag
             if _private_browser_needs_static_fallback:
                 _relevant_tools.discard("private_browser")
         if (
@@ -26083,6 +26446,22 @@ async def stream_agent_loop(
         )
         logger.info("[agent-routing-audit] %s", json.dumps(_routing_audit, sort_keys=True))
         yield f'data: {json.dumps(_routing_audit)}\n\n'
+
+        # Finding 7 follow-up Layer 3 — surface the "selected but not
+        # offered" symptom in plain WARNING logs, not only the audit
+        # stream. Without this, a McpManager cache wipe that bypassed
+        # the auto-restore leaves the LLM with no usable tool while
+        # the only evidence is buried in a verbose JSON audit line.
+        # The log triggers operator alerting via the same channel the
+        # rest of the agent loop uses.
+        if _routing_audit.get("selected_not_offered"):
+            logger.warning(
+                "[agent] selected-but-not-offered tools (%d): %s. "
+                "If this fires repeatedly, the McpManager in-process "
+                "tool cache is stale — check OXS auto-restore logs.",
+                len(_routing_audit["selected_not_offered"]),
+                _routing_audit["selected_not_offered"],
+            )
 
         # Once a fallback produces substantive output, keep that exact route
         # pinned for every later tool round instead of retrying the primary.
@@ -27605,7 +27984,11 @@ async def stream_agent_loop(
             ),
             active_document=active_document,
             last_user=_last_user,
-            offered_tool_names=(set(turn_contract.offered) if turn_contract is not None else set(_tool_names_sent)),
+            offered_tool_names=(
+                (set(turn_contract.offered) | set(_tool_names_sent))
+                if turn_contract is not None
+                else set(_tool_names_sent)
+            ),
             recover_unoffered_tool_names=_recover_unoffered_local_tools,
             passthrough_tool_names={
                 schema["function"]["name"]
@@ -28205,7 +28588,12 @@ async def stream_agent_loop(
         _explicit_private_browser_inspection = _parse_explicit_private_browser_inspection(_last_user)
         _explicit_teacher_request = _parse_explicit_teacher_request(_last_user)
         _explicit_theme_change_request = _parse_explicit_theme_change_request(_last_user)
-        if (
+        _tool_manifest_prompt = _is_tool_manifest_prompt(_last_user)
+        if _tool_manifest_prompt:
+            logger.info(
+                "[agent-intent] skipped explicit tool normalization for tool-manifest prompt"
+            )
+        elif (
             _explicit_private_browser_inspection
             and "private_browser" not in disabled_tools
         ):
@@ -28695,6 +29083,15 @@ async def stream_agent_loop(
             )
         elif (
             _qwen_explicit_tool
+            # Only synthesize a call when the model emitted none of its own.
+            # The detectors above scan the *whole* user turn, so a long
+            # structured prompt (an OXS scheduled-task prompt, a skill body,
+            # pasted docs) that merely MENTIONS memory/tasks/skills would
+            # otherwise REPLACE the model's real native tool calls with a
+            # single synthetic manage_memory/manage_tasks block — the exact
+            # call the caller's allowlist then rejects. The contextual
+            # calendar branch above already carries this guard.
+            and not tool_blocks
             and not _has_accepted_contract_tool_call(turn_contract, tool_blocks)
             and (
                 _caller_relevant_tools is None
@@ -33094,6 +33491,14 @@ async def stream_agent_loop(
                 block.tool_type,
                 block.content,
             )
+            if not security_decision.allowed:
+                logger.info(
+                    "[agent-gate] %s refused: %s (untrusted=%s sources=%s)",
+                    block.tool_type,
+                    security_decision.reason,
+                    run_security.external_untrusted_context_seen,
+                    list(run_security.external_sources),
+                )
             _ody_clamped_tool_allowed = (
                 _ody_notes_finetune_mode
                 and block.tool_type in {"manage_notes", "manage_calendar", "manage_tasks"}

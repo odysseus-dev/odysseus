@@ -202,15 +202,43 @@ async def test_retries_and_provider_changes_do_not_recreate_authority():
     assert all(value is seen[0] for value in seen)
 
 
-def test_task_snapshot_caps_model_payload_and_rejects_changed_or_missing_state():
+def test_task_snapshot_caps_model_payload_and_rejects_mismatched_state():
     parent = authority("manage_tasks")
     with bind_request_authority(parent):
         snapshot = seal_task_authority("Run bash in the workspace", "llm", None, owner="alice")
     restored = restore_task_authority(snapshot, "Run bash in the workspace", "llm", None, owner="alice")
     assert not restored.permits(ExactOperation.normalize("bash", "pwd"))
-    for state in (None, "{}", snapshot):
-        changed = restore_task_authority(state, "a different prompt", "llm", None, owner="alice")
-        assert changed.grants == ()
+    # Mismatched snapshot — caller tries to widen the seal with a different
+    # prompt than the one stored. Authority stays empty so a model cannot
+    # escalate.
+    changed = restore_task_authority(snapshot, "a different prompt", "llm", None, owner="alice")
+    assert changed.grants == ()
+
+
+def test_missing_state_falls_back_to_create_request_authority():
+    # Extensions can mint a ScheduledTask with ``task_type="llm"`` and no
+    # pre-sealed snapshot. The fallback reuses the foreground intent path
+    # so the task gets a useful authority instead of always-empty grants.
+    fresh = restore_task_authority(None, "List my tasks", "llm", None, owner="alice")
+    assert fresh.permits(ExactOperation.normalize("manage_tasks", '{"action":"list"}'))
+    assert not fresh.permits(ExactOperation.normalize("bash", "ls"))
+
+
+def test_malformed_state_preserves_security_invariant():
+    # A snapshot that decodes to JSON but does not match the current task
+    # inputs is treated as a security violation — never widened by the
+    # fallback path. Only ``None`` and empty-string snapshots are
+    # considered "absent"; a non-empty malformed value is untrusted.
+    fresh = restore_task_authority("{}", "List my tasks", "llm", None, owner="alice")
+    assert fresh.grants == ()
+    assert not fresh.permits(ExactOperation.normalize("manage_tasks", '{"action":"list"}'))
+
+
+def test_action_task_without_snapshot_stays_empty():
+    # Non-LLM tasks still get empty grants when no snapshot is sealed —
+    # only the LLM fallback is new behavior.
+    fresh = restore_task_authority(None, "Run bash", "action", "run_local", owner="alice")
+    assert fresh.grants == ()
 
 
 def test_direct_task_ingress_seals_only_exact_builtin_action():

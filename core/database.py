@@ -145,7 +145,16 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=30000")
-        cursor.execute("PRAGMA journal_mode=WAL")
+        # DELETE journal mode, deliberately NOT WAL. The database lives on
+        # the docker-compose bind mount, and WAL's shared-memory index is
+        # not coherent across the macOS Docker Desktop FUSE mount: any
+        # external sqlite process (seeding scripts, backups, probes) can
+        # checkpoint-and-truncate the WAL without seeing the frames the
+        # app just committed, silently destroying them. The rollback
+        # journal keeps every reader and writer on the file itself and
+        # stays correct over network filesystems ("WAL does not work over
+        # a network filesystem" — sqlite.org/wal.html).
+        cursor.execute("PRAGMA journal_mode=DELETE")
         cursor.close()
 
 
@@ -624,6 +633,10 @@ class McpServer(TimestampMixin, Base):
     oauth_config = Column(Text, nullable=True)   # JSON: provider, keys_file, token_file, scopes
     disabled_tools = Column(Text, nullable=True)  # JSON array of tool names to hide from LLM
     oauth_tokens = Column(EncryptedText, nullable=True)  # JSON {tokens, client_info} for generic MCP OAuth, encrypted at rest
+    # NULL for admin-created rows; set to the OXS extension id when the row
+    # is owned by an extension. The framework uses this to clean up
+    # extension-owned rows on uninstall.
+    extension_id = Column(String, nullable=True, index=True)
 
 
 class Comparison(TimestampMixin, Base):
@@ -1059,6 +1072,26 @@ def _migrate_add_session_generation_settings_columns():
     finally:
         if conn is not None:
             conn.close()
+
+
+def _migrate_add_extension_sidebar_visible_column():
+    """Add ``sidebar_visible`` to ``extensions`` for per-extension sidebar opt-in."""
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(extensions)").fetchall()}
+        if "sidebar_visible" not in columns:
+            conn.execute("ALTER TABLE extensions ADD COLUMN sidebar_visible BOOLEAN DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"extension sidebar_visible migration failed: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
 
 def _migrate_add_document_archived_column():
     """Add `archived` to documents (soft-archive flag). Guarded + idempotent."""
@@ -1970,6 +2003,24 @@ def _migrate_add_mcp_oauth_tokens_column():
     except Exception as e:
         logging.getLogger(__name__).warning(f"oauth_tokens migration: {e}")
 
+def _migrate_add_mcp_extension_id_column():
+    """Add extension_id column to mcp_servers table if missing.
+
+    NULL for admin-created rows; set to the OXS extension id when the row is
+    owned by an extension. The registry uses this to clean up extension-owned
+    rows + their live sessions on uninstall.
+    """
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if "extension_id" not in cols:
+                conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN extension_id VARCHAR"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_servers_extension_id ON mcp_servers (extension_id)"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added extension_id column to mcp_servers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"mcp extension_id migration: {e}")
+
 def _migrate_add_task_v2_columns():
     """Add cron_expression, then_task_id, webhook_token to scheduled_tasks."""
     new_cols = {
@@ -2190,6 +2241,64 @@ class Integration(TimestampMixin, Base):
     config = Column(JSON, nullable=True)     # type-specific config
     enabled = Column(Boolean, default=True)
 
+
+class Extension(TimestampMixin, Base):
+    """An installed OXS extension.
+
+    One row per extension id. Created on install, mutated on enable/disable,
+    removed on uninstall. The append-only audit log (``OXS_AUDIT_LOG``) keeps
+    the full history; this table holds current state.
+    """
+    __tablename__ = "extensions"
+
+    id            = Column(String, primary_key=True, index=True)
+    name          = Column(String, nullable=False)
+    version       = Column(String, nullable=False)
+    oxs_version   = Column(String, nullable=False)
+    source        = Column(String, nullable=False)
+    source_path   = Column(String, nullable=False)
+    entry_point   = Column(String, nullable=False)
+    manifest_json = Column(Text, nullable=False)
+    file_hashes   = Column(JSON, nullable=True)
+    is_enabled    = Column(Boolean, default=False, index=True)
+    is_bundled    = Column(Boolean, default=False)
+    installed_by  = Column(String, nullable=True)
+    install_error = Column(Text, nullable=True)
+    last_enabled_at = Column(DateTime, nullable=True)
+    sidebar_visible = Column(Boolean, default=False, index=True)
+
+
+class ExtensionPermission(TimestampMixin, Base):
+    """Operator-granted permissions for one extension.
+
+    Safe capabilities are auto-granted on enable. Privileged capabilities are
+    recorded only after explicit operator confirmation during install.
+    """
+    __tablename__ = "extension_permissions"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    extension_id = Column(String, nullable=False, index=True)
+    capability   = Column(String, nullable=False)
+    scope        = Column(JSON, nullable=True)
+    granted_by   = Column(String, nullable=True)
+    granted_at   = Column(DateTime, default=utcnow_naive, nullable=False)
+
+
+class ExtensionAudit(Base):
+    """State-changing audit events for one extension.
+
+    Mirror of ``OXS_AUDIT_LOG`` for queryable access via the admin UI. The
+    append-only log file is the canonical source; this table is a denormalized
+    view that supports filtering and pagination without reading the file.
+    """
+    __tablename__ = "extension_audits"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    extension_id = Column(String, nullable=True, index=True)
+    event        = Column(String, nullable=False, index=True)
+    actor        = Column(String, nullable=True)
+    payload      = Column(JSON, nullable=True)
+    created_at   = Column(DateTime, default=utcnow_naive, nullable=False, index=True)
 
 
 
@@ -2424,7 +2533,9 @@ def init_db():
     _migrate_add_task_automation_columns()
     _migrate_add_task_authority_column()
     _migrate_add_disabled_tools()
+    _migrate_add_extension_sidebar_visible_column()
     _migrate_add_mcp_oauth_tokens_column()
+    _migrate_add_mcp_extension_id_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()

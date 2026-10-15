@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Whats2API Bridge</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #161a23;
+      --panel-2: #1c2030;
+      --border: #2a3043;
+      --fg: #e6e6e6;
+      --fg-dim: #9aa3b2;
+      --accent: #7ad6a3;
+      --accent-2: #f7c948;
+      --danger: #f97171;
+      --code-bg: #0b0d12;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+
+    /* App-consistent scrollbar (webkit + Firefox). */
+    *, html, body {
+      scrollbar-width: thin;
+      scrollbar-color: #3a4258 transparent;
+    }
+    *::-webkit-scrollbar { width: 10px; height: 10px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb {
+      background: #2a3043;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    *::-webkit-scrollbar-thumb:hover { background: #3a4258; background-clip: padding-box; border: 2px solid transparent; }
+    *::-webkit-scrollbar-corner { background: transparent; }
+
+    body {
+      margin: 0;
+      padding: 1.5rem 2rem;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      line-height: 1.45;
+      font-size: 13px;
+    }
+    h1 { margin: 0 0 .25rem 0; font-size: 1.4rem; }
+    h1 .badge {
+      display: inline-block;
+      margin-left: .5rem;
+      padding: .15rem .55rem;
+      border-radius: .25em;
+      background: var(--panel-2);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: .7rem;
+      vertical-align: middle;
+    }
+    h2 {
+      margin: 1.4rem 0 .6rem 0;
+      font-size: .8rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--fg-dim);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: .35rem;
+    }
+    .subtitle { color: var(--fg-dim); margin: 0 0 1.5rem 0; font-size: 12px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; margin: 0; }
+    .kv dt { color: var(--fg-dim); font-size: 11px; padding: 2px 0; }
+    .kv dd { margin: 0; font-family: var(--mono); font-size: 11px; padding: 2px 0; word-break: break-all; }
+    .kv dd.ok { color: var(--accent); }
+    .kv dd.warn { color: var(--accent-2); }
+    .kv dd.error { color: var(--danger); }
+    .placeholder { color: var(--fg-dim); opacity: 0.5; }
+    .hint { font-size: 11px; color: var(--fg-dim); margin-top: 6px; }
+    .events-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .events-table th, .events-table td {
+      padding: 4px 6px; text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .events-table th { color: var(--fg-dim); font-weight: 500; }
+    .events-table tr.empty td { text-align: center; color: var(--fg-dim); padding: 10px; }
+    pre {
+      background: var(--code-bg);
+      padding: 8px 10px; border-radius: 4px; overflow-x: auto;
+      font-family: var(--mono); font-size: 11px; color: var(--fg-dim);
+    }
+    .row { display: flex; align-items: center; gap: 8px; }
+    button {
+      background: var(--panel-2);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #232838; }
+    button.primary { background: var(--accent); color: #0b0d12; border-color: var(--accent); }
+    button.primary:hover { background: #8de2b3; }
+    button.danger { color: var(--danger); }
+    input[type="text"], input[type="number"], input[type="password"] {
+      background: var(--code-bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+      width: 100%;
+    }
+    input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--fg-dim); }
+    label.inline { flex-direction: row; align-items: center; gap: 6px; }
+    .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+    .badge-warn { color: var(--accent-2); }
+    .footer { color: var(--fg-dim); font-size: 11px; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    code { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
+    .msg { padding: 6px 10px; border-radius: 4px; font-size: 11px; margin: 6px 0; display: none; }
+    .msg.ok { background: rgba(122,214,163,0.12); color: var(--accent); display: block; }
+    .msg.err { background: rgba(249,113,113,0.12); color: var(--danger); display: block; }
+    .toolbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .toolbar .grow { flex: 1; }
+    .data-row { border-bottom: 1px solid var(--border); padding: 6px 0; font-size: 11px; }
+    .data-row:last-child { border-bottom: 0; }
+    .data-row .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--fg-dim); }
+    .data-row .actions { display: flex; gap: 4px; }
+    .data-row .text { margin: 4px 0; word-break: break-word; }
+    .data-row pre { margin: 4px 0 0; }
+    .badge-ok { color: var(--accent); }
+    .badge-warn { color: var(--accent-2); }
+    .badge-off { color: var(--fg-dim); }
+    .conn-name { color: var(--fg); font-weight: 500; }
+    .ts { font-family: var(--mono); font-size: 10px; opacity: 0.7; }
+
+    /* ── Custom toggle (replaces native browser checkbox) ──────── */
+    .toggle {
+      display: inline-flex !important;
+      flex-direction: row !important;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      color: var(--fg);
+      font-size: 12px;
+    }
+    .toggle input[type="checkbox"] {
+      position: absolute !important;
+      opacity: 0 !important;
+      width: 0 !important;
+      height: 0 !important;
+      pointer-events: none;
+      margin: 0;
+    }
+    .toggle .track {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      background: var(--panel-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      transition: background .15s ease, border-color .15s ease;
+      flex: 0 0 auto;
+      vertical-align: middle;
+    }
+    .toggle .track::after {
+      content: "";
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 14px; height: 14px;
+      background: var(--fg-dim);
+      border-radius: 50%;
+      transition: transform .18s ease, background .15s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,.5);
+    }
+    .toggle input[type="checkbox"]:checked + .track {
+      background: rgba(122, 214, 163, .22);
+      border-color: var(--accent);
+    }
+    .toggle input[type="checkbox"]:checked + .track::after {
+      transform: translateX(16px);
+      background: var(--accent);
+    }
+    .toggle input[type="checkbox"]:focus-visible + .track {
+      box-shadow: 0 0 0 2px rgba(122, 214, 163, .35);
+    }
+
+    /* ── Integrations card ─────────────────────────────────── */
+    .intg-card {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      margin-bottom: 6px;
+      align-items: center;
+    }
+    .intg-card .intg-main { min-width: 0; }
+    .intg-card .intg-title {
+      font-weight: 600; font-size: 12px;
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+    .intg-card .intg-desc { color: var(--fg-dim); font-size: 11px; }
+    .intg-card .intg-meta {
+      grid-column: 1 / -1;
+      color: var(--fg-faint, var(--fg-dim));
+      font-family: var(--mono);
+      font-size: 10px;
+      word-break: break-all;
+    }
+    .intg-card .intg-actions {
+      grid-column: 2 / 3;
+      grid-row: 1 / 2;
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .intg-row { display: flex; gap: 8px; align-items: center; }
+    .intg-empty {
+      padding: 12px;
+      text-align: center;
+      color: var(--fg-dim);
+      font-style: italic;
+      border: 1px dashed var(--border);
+      border-radius: 4px;
+    }
+    .intg-pill {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-family: var(--mono);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--fg-dim);
+    }
+    .intg-pill.on  { color: var(--accent); border-color: #2c4a36; }
+
+    /* ── MCP integration card (single whats2api integration) ────── */
+    .mcp-card {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+    }
+    .mcp-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .mcp-info { flex: 1 1 auto; min-width: 0; }
+    .mcp-actions { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 6px; }
+    .mcp-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .mcp-name .mcp-id {
+      color: var(--accent);
+      background: transparent;
+      border: 0;
+      padding: 0;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .mcp-name .mcp-name-text {
+      color: var(--fg-dim);
+      font-size: 12px;
+    }
+    .mcp-kind { color: var(--fg-dim); }
+    .mcp-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--fg-dim);
+    }
+    .mcp-meta-row { display: flex; gap: 8px; align-items: center; }
+    .mcp-meta-key {
+      display: inline-block;
+      width: 70px;
+      flex-shrink: 0;
+      color: var(--fg-faint);
+      text-transform: lowercase;
+    }
+    .mcp-meta-val { color: var(--fg); word-break: break-all; }
+    .mcp-meta-val.err { color: var(--danger); }
+    .intg-pill.enabled-on  { color: var(--accent); border-color: #2c4a36; }
+    .intg-pill.enabled-off { color: var(--accent-2); border-color: #4a3a1c; }
+    .intg-pill.off { color: var(--accent-2); border-color: #4a3a1c; }
+    .hint-baseline { font-size: 10px; color: var(--fg-dim); }
+  </style>
+</head>
+<body>
+
+  <h1>Whats2API Bridge <span class="badge">OXS extension</span> <span class="hint-baseline" style="margin-left:8px;opacity:0.5;color: var(--accent);">w2a v0.5.0</span></h1>
+  <p class="subtitle">
+    Settings, webhook URL, and a browser for the data ingested by
+    <code>/api/ext/whats2api_bridge/webhook/&lt;token&gt;</code>.
+  </p>
+
+  <div id="msg" class="msg"></div>
+
+  <!-- ── Configuration ───────────────────────────────────────────────── -->
+  <h2>Configuration</h2>
+  <section>
+    <div class="field-grid">
+      <label>Base URL (whats2api.com)
+        <input id="cfg-base_url" type="text" value="https://api.whats2api.com" />
+      </label>
+      <label>Default connection id
+        <input id="cfg-default_connection_id" type="text" value="" />
+      </label>
+      <label>Request timeout (s)
+        <input id="cfg-request_timeout_seconds" type="number" min="5" max="600" value="30" />
+      </label>
+      <label>Retention (days)
+        <input id="cfg-retention_days" type="number" min="1" max="365" value="7" />
+      </label>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <label class="toggle">
+        <input id="cfg-log_inbound_events" type="checkbox" />
+        <span class="track"></span>
+        <span>Log every inbound event into the <code>events</code> table</span>
+      </label>
+    </div>
+    <h2 style="margin-top:14px;">API token</h2>
+    <div class="field-grid">
+      <label>whats2api.com API token
+        <input id="cfg-api_token" type="password" placeholder="(unchanged)" autocomplete="off" />
+      </label>
+      <label>&nbsp;
+        <button id="cfg-show-token" type="button" style="margin-top:18px;">Show / hide</button>
+      </label>
+    </div>
+    <h2 style="margin-top:14px;">Webhook URL token</h2>
+    <div class="field-grid">
+      <label>Path token for <code>/api/ext/.../webhook/&lt;token&gt;</code>
+        <input id="cfg-webhook_url_token" type="text" placeholder="(unchanged)" autocomplete="off" />
+      </label>
+      <label>&nbsp;
+        <button id="cfg-rotate-url-token" type="button" style="margin-top:18px;">Generate random</button>
+      </label>
+    </div>
+    <div class="row" style="margin-top:14px;">
+      <button id="cfg-save" class="primary">Save configuration</button>
+      <span id="cfg-status" class="hint" style="margin-left:6px;"></span>
+    </div>
+  </section>
+
+  <!-- ── Webhook ─────────────────────────────────────────────────────── -->
+  <h2>Inbound webhook</h2>
+  <section>
+    <dl class="kv" id="webhook-info">
+      <dt>URL pattern</dt><dd><code>/api/ext/whats2api_bridge/webhook/&lt;token&gt;</code></dd>
+      <dt>Full URL (with token)</dt><dd class="placeholder dim">not installed yet — copy URL after enable</dd>
+    </dl>
+    <div class="row" style="margin-top:6px;">
+      <button id="copy-webhook">Copy URL</button>
+      <span class="hint">Paste this into your whats2api.com dashboard. Token is shown only at install.</span>
+    </div>
+  </section>
+
+  <!-- ── Data browser ───────────────────────────────────────────────── -->
+  <h2>Local data</h2>
+  <section>
+    <div class="toolbar">
+      <button class="tab-btn primary" data-tab="messages">Messages</button>
+      <button class="tab-btn" data-tab="events">Events</button>
+      <button class="tab-btn" data-tab="connections">Connections</button>
+      <span class="grow"></span>
+      <input id="browse-q" type="text" placeholder="search…" style="max-width:220px;" />
+      <button id="browse-refresh">Refresh</button>
+    </div>
+    <div id="browse-list" class="hint" style="padding:8px;">loading…</div>
+    <div id="browse-pager" class="row" style="margin-top:8px;display:none;">
+      <span class="hint" id="browse-count"></span>
+      <span class="grow"></span>
+      <button id="browse-prev">Prev</button>
+      <button id="browse-next">Next</button>
+    </div>
+  </section>
+
+  <!-- ── Conversation Analyzer ──────────────────────────────── -->
+  <h2>Conversation Analyzer</h2>
+  <section id="analyzer-section">
+    <p class="hint" style="margin: 0 0 12px 0;">
+      Periodically reads recent WhatsApp conversations and writes a
+      short review into a dedicated chat session (folder <code>Tasks</code>).
+      The agent can call <code>manage_notes</code>, <code>manage_tasks</code> and
+      <code>manage_calendar</code>; WhatsApp write tools are <strong>hard-blocked</strong> —
+      it never replies on your behalf.
+    </p>
+
+    <!-- ── Manual trigger bar (top of section, prominent) ────────────── -->
+    <!-- Operators reach for this most often while testing — keep it
+         visible, always enabled (even when the schedule is paused). The
+         endpoint checks `analyzer_enabled` server-side and surfaces a
+         clear message if the schedule is off. -->
+    <div class="row" id="analyzer-trigger-bar"
+         style="margin: 8px 0 14px 0; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; align-items: center;">
+      <button id="analyzer-run-now" class="primary"
+              title="Execute the analyzer right now (regardless of schedule). Output appears in the Tasks folder as a chat session."
+              style="padding: 6px 14px; font-weight: 600;">▶ Run scheduler now</button>
+      <span id="analyzer-status" class="hint" style="margin: 0 8px;">ready</span>
+      <span class="grow"></span>
+      <label style="display:flex; align-items:center; gap:6px; margin: 0;">
+        <input id="analyzer-enabled" type="checkbox" style="width:auto; margin:0;" />
+        <span style="color: var(--fg-dim); font-size: 12px;">Schedule on</span>
+      </label>
+    </div>
+
+    <div class="kv" style="grid-template-columns: 160px 1fr;">
+      <dt>Status</dt>
+      <dd><span id="analyzer-pill" class="intg-pill enabled-off">loading…</span></dd>
+      <dt>Last run</dt>
+      <dd id="analyzer-last-run" class="placeholder">—</dd>
+      <dt>Next run</dt>
+      <dd id="analyzer-next-run" class="placeholder">—</dd>
+      <dt>Run count</dt>
+      <dd id="analyzer-run-count" class="placeholder">—</dd>
+      <dt>Endpoint / model</dt>
+      <dd id="analyzer-endpoint" class="placeholder">—</dd>
+      <dt>Error</dt>
+      <dd id="analyzer-error" class="placeholder warn" style="display:none;"></dd>
+    </div>
+
+    <!-- ── Recent runs ──────────────────────────────────────────────── -->
+    <!-- One row per TaskRun; "Open chat" jumps to the long-lived
+         session in the Tasks folder where the full LLM conversation
+         + tool calls land. "Details" loads the run result preview
+         without leaving the page. -->
+    <div style="margin-top:14px;">
+      <div class="row" style="margin-bottom:6px;">
+        <strong style="font-size: 12px; color: var(--fg-dim);">Recent runs</strong>
+        <span class="grow"></span>
+        <button id="analyzer-refresh-runs" style="padding: 3px 10px; font-size: 11px;">Refresh</button>
+      </div>
+      <div id="analyzer-runs-list" class="hint" style="padding:4px;">
+        loading…
+      </div>
+      <div id="analyzer-run-detail" class="hint"
+           style="display:none; margin-top:8px; padding:10px; background: var(--code-bg); border-radius:4px; font-family: var(--mono); font-size: 11px; white-space: pre-wrap; max-height: 320px; overflow-y: auto;">
+      </div>
+    </div>
+
+    <div class="mcp-fields" style="margin-top:14px;">
+      <div class="grid" style="margin-top:10px;">
+        <label class="field">
+          <span class="label">Interval (minutes)</span>
+          <input id="analyzer-interval" type="number" min="5" max="720" step="1" />
+        </label>
+        <label class="field">
+          <span class="label">Lookback (hours)</span>
+          <input id="analyzer-lookback" type="number" min="1" max="168" step="1" />
+        </label>
+        <label class="field">
+          <span class="label">Min messages per chat</span>
+          <input id="analyzer-min-msg" type="number" min="1" max="50" step="1" />
+        </label>
+        <label class="field">
+          <span class="label">Model <span class="hint-baseline">(empty = operator's default)</span></span>
+          <input id="analyzer-model" type="text" placeholder="leave empty to use the default model" />
+        </label>
+        <label class="field" style="grid-column: 1 / -1;">
+          <span class="label">System prompt <span class="hint-baseline">(overrides default; {lookback_hours} and {min_messages} placeholders)</span></span>
+          <textarea id="analyzer-prompt" rows="6" style="width:100%; font-family: var(--mono); font-size: 11px;"></textarea>
+        </label>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <button id="analyzer-save" class="primary">Save configuration</button>
+        <button id="analyzer-reset-prompt" title="Restore the default prompt (overrides current).">
+          Reset prompt to default
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── MCP ──────────────────────────────────────────────── -->
+  <h2>MCP</h2>
+  <section id="mcp-section">
+    <p class="hint" style="margin: 0 0 12px 0;">
+      Connect Odysseus to the
+      <a href="https://api.whats2api.com/mcp" target="_blank" rel="noopener" style="color: var(--accent);">whats2api.com MCP server</a>.
+      Paste the API token from your
+      <a href="https://whats2api.com/dashboard" target="_blank" rel="noopener" style="color: var(--accent);">whats2api dashboard</a>
+      and click <strong>Enable MCP</strong> — URL, transport and auth are handled internally.
+    </p>
+
+    <div id="mcp-card" class="mcp-card">
+      <div class="mcp-row">
+        <div class="mcp-info">
+          <div class="mcp-name">
+            <code class="mcp-id">whats2api</code>
+            <span class="mcp-name-text">Whats2API MCP</span>
+            <span class="intg-pill mcp-kind">http</span>
+            <span class="intg-pill" id="mcp-pill-enabled">disabled</span>
+            <span class="intg-pill mcp-tools-pill" id="mcp-pill-tools" style="display:none;">0 tools</span>
+            <span class="intg-pill mcp-conn-pill" id="mcp-pill-conn" style="display:none;"></span>
+          </div>
+          <div class="mcp-meta">
+            <span class="mcp-meta-row">
+              <span class="mcp-meta-key">endpoint</span>
+              <code>https://api.whats2api.com/mcp</code>
+            </span>
+            <span class="mcp-meta-row">
+              <span class="mcp-meta-key">token</span>
+              <span id="mcp-meta-token" class="mcp-meta-val">not configured</span>
+            </span>
+            <span class="mcp-meta-row" id="mcp-meta-error-row" style="display:none;">
+              <span class="mcp-meta-key">error</span>
+              <span id="mcp-meta-error" class="mcp-meta-val err"></span>
+            </span>
+          </div>
+        </div>
+        <div class="mcp-actions">
+          <button type="button" class="btn" id="mcp-toggle" disabled>Enable MCP</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mcp-fields" id="mcp-fields" style="margin-top:14px;">
+      <label class="field">
+        <span class="label">API token <span class="hint-baseline">(<a href="https://whats2api.com/dashboard" target="_blank" rel="noopener" style="color: var(--accent);">dashboard</a> → API tokens · 64 hex chars · shown once)</span></span>
+        <div class="row-inline">
+          <input id="mcp-token-input" type="password" autocomplete="off"
+                 placeholder="paste the token from your whats2api dashboard" />
+          <button class="btn primary" type="button" id="mcp-save">Save token</button>
+        </div>
+      </label>
+      <span id="mcp-status" class="hint" style="display:block;margin-top:6px;"></span>
+    </div>
+  </section>
+
+  <p class="footer">
+    Settings &amp; data live in this extension's tables on the same SQLite
+    database the rest of Odysseus uses. Build:
+    <code>extensions/whats2api_bridge/SPEC.md</code>.
+  </p>
+
+  <script src="script.js"></script>
+</body>
+</html>

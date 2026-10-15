@@ -293,8 +293,8 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(status_code=400, detail="Not an assistant task")
         finally:
             db.close()
-        started = await task_scheduler.run_task_now(task_id)
-        return {"started": bool(started)}
+        started = task_scheduler.run_task_now(task_id)
+        return {"started": bool(started), "run_id": started}
 
     @router.get("/run-status/{task_id}")
     async def run_status(task_id: str, request: Request):

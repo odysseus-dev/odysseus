@@ -23,6 +23,49 @@ from src.turn_contract import (
     RequiredReadOperation, required_read_operation_for_request, selected_tools_for_request,
 )
 
+# Families whose tools are integrations rather than a primary product the
+# request could name ("notes", "calendar", …). ``selected_tools_for_request``
+# can only narrow by literal tool name, and an integration is usually reached
+# by its brand ("WhatsApp") instead — so these must survive narrowing.
+_TOOL_ONLY_FAMILIES = frozenset({"messaging"})
+
+# Always-on request tools. These carry no product intent — they are the
+# agent's way to ask the user a question or record a plan — so a narrowed
+# tool set that happens to omit them still admits them. ``todowrite`` is
+# deliberately absent: it is WRITE_PRIVATE, and granting it on every request
+# would hand the execution floor that
+# ``test_unknown_intent_has_no_generic_execution_floor`` exists to deny.
+_UNIVERSAL_GRANT_TOOLS = frozenset({"ask_user", "update_plan"})
+
+# Product families a request can actually name. ``messaging`` is excluded
+# because it has no product noun — it is reached by brand, not by name.
+_PRODUCT_FAMILIES = frozenset(FAMILY_TOOLS) - _TOOL_ONLY_FAMILIES
+
+
+def _named_product_families(request_text) -> frozenset[str]:
+    """Product families the request text names directly, via family or tool.
+
+    Used to decide whether a ``required_read`` intent is a focused single-tool
+    request (a real "list my memories" turn) or an incidental hit inside a
+    broader request. The word boundary matters: matching the substring "memory"
+    would false-positive on every "memories" and on tool names like
+    ``manage_memory``, which appear in the tool table of an OXS task prompt.
+    """
+    text = str(request_text or "")
+    from src.turn_contract import _FAMILY_WORDS
+    named = {
+        family
+        for family in _PRODUCT_FAMILIES
+        # Word boundary matters: a bare substring match on "memory" would
+        # fire on "memories" and on ``manage_memory`` in a tool table.
+        if re.search(rf"\b{re.escape(family)}s?\b", text, re.I)
+        or (
+            family in _FAMILY_WORDS
+            and re.search(_FAMILY_WORDS[family], text, re.I)
+        )
+    }
+    return frozenset(named)
+
 
 def _owner(value):
     return str(value or "").strip().casefold()
@@ -375,16 +418,43 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
     tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in families))
     selected = intent.selected_tools
     if selected is not None:
-        tools = tools & set(selected) if families else set(selected)
+        named = {canonical_tool(name) for name in selected}
+        # ``selected`` narrows the recognized *product* families (notes,
+        # tasks, calendar, …) to the tools the request literally named. It
+        # must not narrow the tool-only families: those have no product noun
+        # to match against, so an OXS scheduled-task prompt that names the
+        # WhatsApp bridge AND lists manage_notes/manage_tasks would otherwise
+        # intersect to just the personal tools and silently strip the very
+        # bridge tools the request asked for.
+        tool_only = set().union(*(
+            FAMILY_TOOLS.get(f, ()) for f in families & _TOOL_ONLY_FAMILIES
+        ))
+        product_scope = tools - tool_only
+        narrowed = product_scope & named
+        # Narrowing is only meaningful while the two sets overlap; a request
+        # that names tools from no recognized product family keeps them all.
+        tools = (narrowed if narrowed else product_scope) | tool_only | named
         if tools & {"web_search", "web_fetch"}:
             tools.add("private_browser")
     operation = intent.required_read
-    if operation is not None and canonical_tool(operation.tool) in {canonical_tool(n) for n in tools}:
+    if operation is None:
+        pass
+    elif len(_named_product_families(request_text)) > 1:
+        # A required-read intent narrows grants to that single read. That is
+        # right for a focused "list my memories" turn and catastrophic for a
+        # broader one: ``required_read_operation_for_request`` matches
+        # "…calendar/memory" prose and an example output line such as
+        # "memory: contact Joao - saved", so an OXS task prompt that names a
+        # bridge plus several products collapsed to one read tool and every
+        # other call returned request_authority_denied. Narrow only when the
+        # request is a single-product request.
+        operation = None
+    elif canonical_tool(operation.tool) in {canonical_tool(n) for n in tools}:
         tools = {canonical_tool(operation.tool)}
     else:
         operation = None
     grants = []
-    for name in sorted(tools | {"ask_user", "update_plan"}):
+    for name in sorted(tools | _UNIVERSAL_GRANT_TOOLS):
         name = canonical_tool(name)
         actions = inputs = None
         if name == "private_browser":
@@ -548,13 +618,31 @@ def seal_task_authority(prompt, task_type, action, *, owner=None, parent_authori
 
 
 def restore_task_authority(snapshot, prompt, task_type, action, *, owner=None, session_id=None):
-    try:
-        value = json.loads(snapshot)
-        if value["task_input"] != [prompt, task_type, action]:
-            raise ValueError("Scheduled request changed")
-        return RequestAuthority.from_dict(value["authority"]).continuation(owner=owner, session_id=session_id)
-    except (ValueError, TypeError, KeyError, AttributeError):
-        return RequestAuthority.empty(owner=owner, session_id=session_id)
+    # Snapshot present (even malformed): a stored authorization cannot be
+    # widened by passing a fresh prompt alongside a stale value. Restore
+    # the original grants only when ``task_input`` matches exactly; any
+    # decode or matching failure keeps the empty-grants behavior so a
+    # stored value cannot be quietly escalated.
+    if snapshot:
+        try:
+            value = json.loads(snapshot)
+            if value["task_input"] != [prompt, task_type, action]:
+                raise ValueError("Scheduled request changed")
+            return RequestAuthority.from_dict(value["authority"]).continuation(
+                owner=owner, session_id=session_id,
+            )
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return RequestAuthority.empty(owner=owner, session_id=session_id)
+
+    # No snapshot at all (None or empty) — OXS extensions can mint a
+    # ``ScheduledTask`` with ``task_type="llm"`` and no pre-sealed
+    # ``request_authority_json``. Replay the foreground intent path used
+    # by chat turns so the task gets sensible grants for its prompt
+    # instead of every tool call returning ``request_authority_denied``.
+    if task_type == "llm" and prompt:
+        return create_request_authority(str(prompt), owner=owner, session_id=session_id,
+            workspace=None)
+    return RequestAuthority.empty(owner=owner, session_id=session_id)
 
 
 def _background_path(job_id):

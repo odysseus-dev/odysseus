@@ -1,0 +1,169 @@
+/* oxs_admin.css — styles for the OXS admin panel.
+
+Targets the panel mounted via ``OXS_ADMIN.mount(rootId)``. Theme-friendly:
+uses CSS variables the rest of the app already defines where they exist,
+otherwise falls back to dark defaults that match the existing surface.
+*/
+
+.oxs-banner {
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  margin: 0.5rem 0;
+  background: var(--bg-secondary, #1c2030);
+  color: var(--text, #e6e6e6);
+  font-size: 0.9rem;
+}
+
+.oxs-banner-ok    { background: rgba(122, 214, 163, 0.15); color: #7ad975; }
+.oxs-banner-error { background: rgba(255, 100, 100, 0.18); color: #ff8a8a; }
+.oxs-banner-info  { background: var(--bg-secondary, #1c2030); }
+
+.oxs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.oxs-toolbar button {
+  padding: 0.35rem 0.7rem;
+  background: var(--accent, #4f7cf2);
+  color: white;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.oxs-toolbar button:hover { opacity: 0.85; }
+
+.oxs-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted, #8b94ad);
+}
+
+.oxs-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.oxs-table th,
+.oxs-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border, #2a2f3e);
+  text-align: left;
+}
+
+.oxs-table th {
+  background: var(--bg-secondary, #1c2030);
+  color: var(--text-muted, #8b94ad);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.oxs-table tr:hover { background: rgba(79, 124, 242, 0.05); }
+
+.oxs-id {
+  font-family: ui-monospace, "SF Mono", monospace;
+  color: var(--text, #e6e6e6);
+}
+
+.oxs-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.25em;
+  background: rgba(122, 214, 163, 0.18);
+  color: #7ad975;
+  font-size: 0.75rem;
+  font-family: ui-monospace, monospace;
+}
+
+.oxs-badge[title*="disabled"] { background: rgba(140, 140, 140, 0.18); color: #aaa; }
+
+.oxs-caps {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted, #8b94ad);
+}
+
+.oxs-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.oxs-actions button {
+  padding: 0.25rem 0.5rem;
+  background: var(--bg-secondary, #2a2f3e);
+  color: var(--text, #e6e6e6);
+  border: 1px solid var(--border, #3a3f4e);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.oxs-actions button:hover { background: var(--accent, #4f7cf2); color: white; }
+
+.oxs-actions button.oxs-danger { color: #ff8a8a; }
+.oxs-actions button.oxs-danger:hover { background: #ff6464; color: white; }
+
+.oxs-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.oxs-modal-inner {
+  background: var(--bg, #14181f);
+  color: var(--text, #e6e6e6);
+  border-radius: 6px;
+  padding: 1.5rem;
+  max-width: 640px;
+  width: 90%;
+  max-height: 80vh;
+  overflow: auto;
+  border: 1px solid var(--border, #2a2f3e);
+  position: relative;
+}
+
+.oxs-modal-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted, #8b94ad);
+  cursor: pointer;
+  font-size: 1.1rem;
+}
+
+.oxs-modal h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.oxs-webhook {
+  background: var(--bg-secondary, #1c2030);
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.oxs-webhook p { margin: 0.25rem 0; font-size: 0.85rem; }
+
+.oxs-token code {
+  display: inline-block;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}

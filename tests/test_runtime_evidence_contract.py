@@ -114,6 +114,22 @@ async def test_client_completion_declaration_cannot_grant_a_host_workspace(tmp_p
     assert seen == ['']
 
 
+@pytest.mark.asyncio
+async def test_empty_final_response_does_not_wipe_the_answer():
+    """A tail of empty final_response rounds must not erase the answer the
+    model already produced (the whats2api analyzer ran finished with only
+    the server's effect disclosure where the findings used to be)."""
+    @with_completion_gate
+    async def stream(messages, client_runtime_context=None):
+        yield 'data: {"delta":"No new conversation intervals."}\n\n'
+        yield 'data: {"type":"final_response","content":""}\n\n'
+        yield 'data: {"type":"final_response","content":""}\n\n'
+        yield 'data: [DONE]\n\n'
+    chunks = [chunk async for chunk in stream([], client_runtime_context={})]
+    joined = json.dumps(chunks)
+    assert "No new conversation intervals." in joined, joined
+
+
 def test_denied_and_never_dispatched_results_are_not_authoritative():
     for flags in ({'blocked': True}, {'execution_attempted': False}, {'approval_required': True}):
         ledger = EvidenceLedger.from_tool_events([

@@ -1,0 +1,837 @@
+Found 61 matches for /Reaction button|Comment button|Follow|reaction count/:
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e201]:
+                - generic [ref=f29e203]:
+                  - generic [ref=f29e215]:
+                    - generic [ref=f29e219]:
+                      ...
+                      - paragraph [ref=f29e236]: 21h
+                      - link "Michael Osas Verified Profile 3rd+":
+                        - /url: https://www.linkedin.com/in/michael-osas/
+                    - button "Follow Michael Osas" [ref=f29e240] [cursor=pointer]:
+                      - generic [ref=f29e241]: Follow
+                  - paragraph [ref=f29e245]:
+                    - generic [ref=f29e246]:
+                      - text: Is it still worth learning React in the age of AI?Claude can build a full landing page from a prompt. v0 generates component libraries in seconds. Cursor writes hooks while you describe the feature.So... why bother learning React properly?Because AI makes a strong React developer dangerous. It makes a weak one confidently wrong.I've seen developers ship AI-generated code with:→ Memory leaks from uncleaned useEffect subscriptions→ Infinite re-render loops from unstable dependencies→ Race conditions from async state updatesThe code looked right. It compiled. It even worked until it didn't.The developer had no idea why it broke because they never understood what it was doing.Calculators didn't make mathematics worthless. They made mathematicians faster.AI doesn't replace React knowledge.It rewards it.The developers who will thrive in the next 5 years are not the ones who can prompt the best. They're the ones who can read what AI generates and know immediately what's wrong with it.That requires actually understanding React.
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e201]:
+                - generic [ref=f29e203]:
+                  - generic [ref=f29e263]:
+                    ...
+                    - generic [ref=f29e273]:
+                      ...
+                      - link "1 repost" [ref=f29e279] [cursor=pointer]:
+                        ...
+                        - paragraph [ref=f29e280]:
+                          ...
+                          - generic [aria-hidden] [ref=f29e282]: 1 repost
+                  - generic [ref=f29e283]:
+                    - generic [ref=f29e284]:
+                      - 'button "Reaction button state: Like" [ref=f29e2508] [cursor=pointer]':
+                        - generic [ref=f29e288]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e753] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e201]:
+                - generic [ref=f29e2521]:
+                  - generic [ref=f29e2529]:
+                    - generic [ref=f29e2534]:
+                      - generic [ref=f29e2539]:
+                        - generic [ref=f29e2541]:
+                          - link "Arvin Nazeri 2nd Senior Software Engineer | Building scalable products & developer experiences" [ref=f29e2542] [cursor=pointer]:
+                            ...
+                            - generic [ref=f29e2543]:
+                              ...
+                              - paragraph [ref=f29e2553]: Senior Software Engineer | Building scalable products & developer experiences
+                          - paragraph [ref=f29e2555]: 4h
+                          - button [ref=f29e2557] [cursor=pointer]:
+                            - generic "Follow Arvin Nazeri" [ref=f29e2558]:
+                              - paragraph [ref=f29e2560]: Follow
+                          - button "View more options for Arvin Nazeri’s comment." [ref=f29e2561] [cursor=pointer]
+                        - paragraph [ref=f29e2568]:
+                          - generic [ref=f29e2569]: Well in few months AI can do those cleanups and performance issues in seconds good enough to ship a big product. What then?
+                        - generic [ref=f29e2572]:
+                          - generic [ref=f29e2573]:
+                            - 'button "Reaction button state: no reaction 0" [ref=f29e2576] [cursor=pointer]':
+                              - generic [ref=f29e2577]:
+                                - 'img "Reaction button state: no reaction" [ref=f29e2578]'
+                                - generic:
+                                  - paragraph:
+                                    - generic: "0"
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e201]:
+                - generic [ref=f29e2521]:
+                  - generic [ref=f29e2529]:
+                    - generic [ref=f29e2593]:
+                      - generic [ref=f29e2598]:
+                        - generic [ref=f29e2600]:
+                          - link "Sikandar Hayat, Open to work Verified Profile 2nd Full Stack + Blockchain Developer | MERN, Next.js, Solidity, Web3, DeFi | React, Node.js, Smart Contracts | Open to Remote" [ref=f29e2601] [cursor=pointer]:
+                            ...
+                            - generic [ref=f29e2602]:
+                              ...
+                              - paragraph [ref=f29e2615]: Full Stack + Blockchain Developer | MERN, Next.js, Solidity, Web3, DeFi | React, Node.js, Smart Contracts | Open to Remote
+                          - paragraph [ref=f29e2617]: 2h
+                          - button [ref=f29e2619] [cursor=pointer]:
+                            - generic "Follow Sikandar Hayat" [ref=f29e2620]:
+                              - paragraph [ref=f29e2622]: Follow
+                          - button "View more options for Sikandar Hayat’s comment." [ref=f29e2623] [cursor=pointer]
+                        - paragraph [ref=f29e2630]:
+                          - generic [ref=f29e2631]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e201]:
+                - generic [ref=f29e2521]:
+                  - generic [ref=f29e2529]:
+                    - generic [ref=f29e2593]:
+                      - generic [ref=f29e2598]:
+                        - paragraph [ref=f29e2630]:
+                          - generic [ref=f29e2631]:
+                            ...
+                            - button [aria-hidden] [ref=f29e2632] [cursor=pointer]:
+                              - generic [ref=f29e2633]: … more
+                        - generic [ref=f29e2637]:
+                          - generic [ref=f29e2638]:
+                            - 'button "Reaction button state: no reaction 0" [ref=f29e2641] [cursor=pointer]':
+                              - generic [ref=f29e2642]:
+                                - 'img "Reaction button state: no reaction" [ref=f29e2643]'
+                                - generic:
+                                  - paragraph:
+                                    - generic: "0"
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e310]:
+                - generic [ref=f29e312]:
+                  - generic [ref=f29e314]:
+                    - generic [ref=f29e318]:
+                      ...
+                      - paragraph [ref=f29e336]: Promoted
+                      - link "Dayco Verified":
+                        - /url: https://www.linkedin.com/company/daycoofficial/
+                    - button "Follow Dayco" [ref=f29e340] [cursor=pointer]:
+                      - generic [ref=f29e341]: Follow
+                    - button "Open control menu for post by Dayco" [ref=f29e345] [cursor=pointer]
+                  - paragraph [ref=f29e348]:
+                    - generic [ref=f29e349]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e310]:
+                - generic [ref=f29e312]:
+                  - generic [ref=f29e364]:
+                    ...
+                    - generic [ref=f29e374]:
+                      ...
+                      - link "14 reposts" [ref=f29e380] [cursor=pointer]:
+                        ...
+                        - paragraph [ref=f29e381]:
+                          ...
+                          - generic [aria-hidden] [ref=f29e383]: 14 reposts
+                  - generic [ref=f29e384]:
+                    - generic [ref=f29e385]:
+                      - 'button "Reaction button state: no reaction" [ref=f29e388] [cursor=pointer]':
+                        - generic [ref=f29e389]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e800] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e411]:
+                - generic [ref=f29e413]:
+                  - generic [ref=f29e425]:
+                    - generic [ref=f29e429]:
+                      ...
+                      - paragraph [ref=f29e443]: 11m
+                      - link "Krupalsinh Chavda 3rd+":
+                        - /url: https://www.linkedin.com/in/krupalsinhchavda/
+                    - button "Follow Krupalsinh Chavda" [ref=f29e447] [cursor=pointer]:
+                      - generic [ref=f29e448]: Follow
+                  - paragraph [ref=f29e452]:
+                    - generic [ref=f29e453]:
+                      - text: "MCP vs. REST API: Why it’s the wrong comparison. 🛑I see a lot of confusion lately about whether the Model Context Protocol (MCP) is going to 'replace' REST APIs. The short answer? It won't. They aren't competitors—they are complementary layers of the modern AI stack.Here is the breakdown:🔹 **REST API:** The reliable backbone. It’s built for deterministic, developer-written code. When your application knows exactly which endpoint to call and what data it needs, REST is the industry standard.🔹 **MCP (Model Context Protocol):** The intelligence layer. It’s designed for AI agents. Instead of hard-coding every interaction, MCP allows agents to dynamically discover, reason about, and invoke tools at runtime.**The Reality:** MCP usually sits *on top* of your existing REST infrastructure. It acts as a translator, allowing an AI agent to interpret your needs and then execute the necessary calls through your existing APIs.Don’t think of it as \"REST vs. MCP.\" Think of it as \"Infrastructure vs. Orchestration.\" Building for AI? Stop choosing between them and start leveraging both."
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e411]:
+                - generic [ref=f29e413]:
+                  - link "1 reaction" [ref=f29e2659] [cursor=pointer]:
+                    ...
+                    - paragraph [ref=f29e2668]:
+                      - generic [ref=f29e2669]:
+                        ...
+                        - text: "1"
+                  - generic [ref=f29e472]:
+                    - generic [ref=f29e473]:
+                      - 'button "Reaction button state: Like" [ref=f29e2671] [cursor=pointer]':
+                        - generic [ref=f29e477]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e821] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e873]:
+                  - generic [ref=f29e887]:
+                    - generic [ref=f29e892]:
+                      ...
+                      - paragraph [ref=f29e910]: 2d
+                      - link "Sthuthi B Verified Profile 3rd+":
+                        - /url: https://www.linkedin.com/in/sthuthi-b-13a82a221/
+                    - button "Follow Sthuthi B" [ref=f29e914] [cursor=pointer]:
+                      - generic [ref=f29e915]: Follow
+                  - paragraph [ref=f29e920]:
+                    - generic [ref=f29e921]:
+                      - text: A production issue recently showed how a frontend optimization can increase backend load.During high traffic, we noticed that the number of API calls was much higher than the number of active users. After tracing the requests, we found the issue in a Next.js listing page with 52 cards.Each card used <Link> to navigate to a details page. That details page used Next.js SSR and made a View Details API call. Then we noticed something we hadn't initially considered. 𝗟𝗶𝗻𝗸 𝗽𝗿𝗲𝗳𝗲𝘁𝗰𝗵𝗲𝘀 𝗿𝗼𝘂𝘁𝗲𝘀 𝗯𝘆 𝗱𝗲𝗳𝗮𝘂𝗹𝘁 𝗮𝘀 𝗮𝗻 𝗼𝗽𝘁𝗶𝗺𝗶𝘇𝗮𝘁𝗶𝗼𝗻.So when the links became eligible for prefetching, Next.js could prefetch those detail routes. Since those pages used SSR, the server-side execution also triggered the API call. That meant one listing page with 52 links could generate a significant number of additional API requests — even though the user hadn't opened any of those details pages.Nothing was broken. The pre-fetching was working as designed. The SSR was working as designed.It was the combination of the two, multiplied across 52 links, that created the unexpected load. A small frontend optimization ended up having a noticeable impact on backend traffic. Sometimes you have to trace a request all the way from the UI to the API to see the full picture.
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e873]:
+                  - generic [ref=f29e944]:
+                    ...
+                    - button "11 comments" [ref=f29e966] [cursor=pointer]:
+                      - paragraph [ref=f29e967]:
+                        ...
+                        - generic [aria-hidden] [ref=f29e969]: 11 comments
+                  - generic [ref=f29e970]:
+                    - generic [ref=f29e971]:
+                      - 'button "Reaction button state: Like" [ref=f29e2189] [cursor=pointer]':
+                        - generic [ref=f29e975]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e979] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2215]:
+                      - generic [ref=f29e2220]:
+                        - generic [ref=f29e2222]:
+                          - link "Chander Parkash Verified Profile 3rd+ 👨‍💻 Tech Influencer & Consultant @Systems Ltd. | Full-Stack Dev (Java, Spring Boot, Node.js, Nest.js, Frontends) | Docker, Kubernetes, Kafka, Redis | AWS • Azure • GCP | Open to Opportunities" [ref=f29e2223] [cursor=pointer]:
+                            ...
+                            - generic [ref=f29e2224]:
+                              ...
+                              - paragraph [ref=f29e2237]: 👨‍💻 Tech Influencer & Consultant @Systems Ltd. | Full-Stack Dev (Java, Spring Boot, Node.js, Nest.js, Frontends) | Docker, Kubernetes, Kafka, Redis | AWS • Azure • GCP | Open to Opportunities
+                          - paragraph [ref=f29e2239]: 1d
+                          - button [ref=f29e2241] [cursor=pointer]:
+                            - generic "Follow Chander Parkash" [ref=f29e2242]:
+                              - paragraph [ref=f29e2244]: Follow
+                          - button "View more options for Chander Parkash’s comment." [ref=f29e2245] [cursor=pointer]
+                        - paragraph [ref=f29e2252]:
+                          - generic [ref=f29e2253]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2215]:
+                      - generic [ref=f29e2220]:
+                        - generic [ref=f29e2258]:
+                          - generic [ref=f29e2259]:
+                            - generic [ref=f29e2260]:
+                              - 'button "Reaction button state: no reaction 1 reaction" [ref=f29e2263] [cursor=pointer]':
+                                - generic [ref=f29e2264]:
+                                  - 'img "Reaction button state: no reaction" [ref=f29e2265]'
+                                  - paragraph [ref=f29e2268]:
+                                    - generic [ref=f29e2269]:
+                                      - generic [ref=f29e2270]: 1 reaction
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2294]:
+                      - generic [ref=f29e2299]:
+                        - paragraph [ref=f29e2320]:
+                          - generic [ref=f29e2321]:
+                            ...
+                            - text: Absolutely. This was a good reminder for me too.
+                        - generic [ref=f29e2327]:
+                          - generic [ref=f29e2328]:
+                            - 'button "Reaction button state: no reaction 0" [ref=f29e2331] [cursor=pointer]':
+                              - generic [ref=f29e2332]:
+                                - 'img "Reaction button state: no reaction" [ref=f29e2333]'
+                                - generic:
+                                  - paragraph:
+                                    - generic: "0"
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2348]:
+                      - generic [ref=f29e2353]:
+                        - generic [ref=f29e2355]:
+                          - link "Devesh Mishra Verified Profile 3rd+ Software Engineer specializing in Frontend & API optimization | Build fast, scalable apps | Modernize tech stacks | Rapid prototypes for businesses | RAG pipeline | Generative AI | AWS | Cloudflare | Microservices" [ref=f29e2356] [cursor=pointer]:
+                            ...
+                            - generic [ref=f29e2357]:
+                              ...
+                              - paragraph [ref=f29e2370]: Software Engineer specializing in Frontend & API optimization | Build fast, scalable apps | Modernize tech stacks | Rapid prototypes for businesses | RAG pipeline | Generative AI | AWS | Cloudflare | Microservices
+                          - paragraph [ref=f29e2372]: 2d
+                          - button [ref=f29e2374] [cursor=pointer]:
+                            - generic "Follow Devesh Mishra" [ref=f29e2375]:
+                              - paragraph [ref=f29e2377]: Follow
+                          - button "View more options for Devesh Mishra’s comment." [ref=f29e2378] [cursor=pointer]
+                        - paragraph [ref=f29e2385]:
+                          - generic [ref=f29e2386]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2348]:
+                      - generic [ref=f29e2353]:
+                        - generic [ref=f29e2391]:
+                          - generic [ref=f29e2392]:
+                            - generic [ref=f29e2393]:
+                              - 'button "Reaction button state: no reaction 2 reactions" [ref=f29e2396] [cursor=pointer]':
+                                - generic [ref=f29e2397]:
+                                  - 'img "Reaction button state: no reaction" [ref=f29e2398]'
+                                  - paragraph [ref=f29e2401]:
+                                    - generic [ref=f29e2402]:
+                                      - generic [ref=f29e2403]: 2 reactions
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2432]:
+                      - generic [ref=f29e2437]:
+                        - generic [ref=f29e2439]:
+                          - link "Devesh Mishra Verified Profile 3rd+ Software Engineer specializing in Frontend & API optimization | Build fast, scalable apps | Modernize tech stacks | Rapid prototypes for businesses | RAG pipeline | Generative AI | AWS | Cloudflare | Microservices" [ref=f29e2440] [cursor=pointer]:
+                            ...
+                            - generic [ref=f29e2441]:
+                              ...
+                              - paragraph [ref=f29e2454]: Software Engineer specializing in Frontend & API optimization | Build fast, scalable apps | Modernize tech stacks | Rapid prototypes for businesses | RAG pipeline | Generative AI | AWS | Cloudflare | Microservices
+                          - paragraph [ref=f29e2456]: 2d
+                          - button [ref=f29e2458] [cursor=pointer]:
+                            - generic "Follow Devesh Mishra" [ref=f29e2459]:
+                              - paragraph [ref=f29e2461]: Follow
+                          - button "View more options for Devesh Mishra’s comment." [ref=f29e2462] [cursor=pointer]
+                        - paragraph [ref=f29e2469]:
+                          - generic [ref=f29e2470]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e871]:
+                - generic [ref=f29e2202]:
+                  - generic [ref=f29e2210]:
+                    - generic [ref=f29e2432]:
+                      - generic [ref=f29e2437]:
+                        - generic [ref=f29e2475]:
+                          - generic [ref=f29e2476]:
+                            - generic [ref=f29e2477]:
+                              - 'button "Reaction button state: no reaction 2 reactions" [ref=f29e2480] [cursor=pointer]':
+                                - generic [ref=f29e2481]:
+                                  - 'img "Reaction button state: no reaction" [ref=f29e2482]'
+                                  - paragraph [ref=f29e2485]:
+                                    - generic [ref=f29e2486]:
+                                      - generic [ref=f29e2487]: 2 reactions
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1004]:
+                - generic [ref=f29e1006]:
+                  - generic [ref=f29e1026]:
+                    - generic [ref=f29e1031]:
+                      ...
+                      - paragraph [ref=f29e1049]: 4d
+                      - link "Bárbara Maria Saenz Premium Profile 2nd":
+                        - /url: https://www.linkedin.com/in/barbara-maria-saenz/
+                    - button "Follow Bárbara Maria Saenz" [ref=f29e1053] [cursor=pointer]:
+                      - generic [ref=f29e1054]: Follow
+                  - paragraph [ref=f29e1061]:
+                    - generic [ref=f29e1062]:
+                      - text: 🔐 🚀
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1004]:
+                - generic [ref=f29e1006]:
+                  - generic [ref=f29e1162]:
+                    ...
+                    - generic [ref=f29e1190]:
+                      ...
+                      - link "4 reposts" [ref=f29e1196] [cursor=pointer]:
+                        ...
+                        - paragraph [ref=f29e1197]:
+                          ...
+                          - generic [aria-hidden] [ref=f29e1199]: 4 reposts
+                  - generic [ref=f29e1200]:
+                    - generic [ref=f29e1201]:
+                      - 'button "Reaction button state: no reaction" [ref=f29e1204] [cursor=pointer]':
+                        - generic [ref=f29e1205]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e1209] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1234]:
+                - generic [ref=f29e1236]:
+                  - generic [ref=f29e1238]:
+                    - generic [ref=f29e1243]:
+                      ...
+                      - paragraph [ref=f29e1261]: Promoted
+                      - link "Matheus Phillipy Campos Bento Premium Profile 2nd":
+                        - /url: https://www.linkedin.com/in/matheus-phillipy/
+                    - button "Follow Matheus Phillipy Campos Bento" [ref=f29e1265] [cursor=pointer]:
+                      - generic [ref=f29e1266]: Follow
+                    - button "Open control menu for post by Matheus Phillipy Campos Bento" [ref=f29e1271] [cursor=pointer]
+                  - paragraph [ref=f29e1277]:
+                    - generic [ref=f29e1278]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1234]:
+                - generic [ref=f29e1236]:
+                  - generic [ref=f29e1328]:
+                    ...
+                    - button "5 comments" [ref=f29e1362] [cursor=pointer]:
+                      - paragraph [ref=f29e1363]:
+                        ...
+                        - generic [aria-hidden] [ref=f29e1365]: 5 comments
+                  - generic [ref=f29e1366]:
+                    - generic [ref=f29e1367]:
+                      - 'button "Reaction button state: no reaction" [ref=f29e1370] [cursor=pointer]':
+                        - generic [ref=f29e1371]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e1375] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1400]:
+                - generic [ref=f29e1402]:
+                  - link "Gabriela Leandro and 22 others reacted" [ref=f29e1444] [cursor=pointer]:
+                    ...
+                    - paragraph [ref=f29e1473]:
+                      - generic [ref=f29e1474]:
+                        ...
+                        - generic [aria-hidden] [ref=f29e1476]: Gabriela Leandro and 22 others
+                  - generic [ref=f29e1477]:
+                    - generic [ref=f29e1478]:
+                      - 'button "Reaction button state: no reaction" [ref=f29e1481] [cursor=pointer]':
+                        - generic [ref=f29e1482]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e1486] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1511]:
+                - generic [ref=f29e1513]:
+                  - generic [ref=f29e1515]:
+                    - generic [ref=f29e1520]:
+                      - link [ref=f29e1523] [cursor=pointer]:
+                        - /url: https://www.linkedin.com/in/marciagostinho/
+                        - generic "Márcia Agostinho Premium Profile Following" [ref=f29e1525]:
+                          - paragraph [ref=f29e1528]: Márcia Agostinho
+                          - paragraph [ref=f29e1530]:
+                            - generic [ref=f29e1531]: • Following
+                      - paragraph [ref=f29e1536]: A mente por trás do SIM nas vagas Dev | Coloco seu LinkedIn e CV no topo da triagem com estratégia validada | Recolocação Tech do Estágio ao Diretor
+                      - link [ref=f29e1540] [cursor=pointer]:
+                        - /url: https://www.linkedin.com/services/page/b16659343a79a577aa/
+                        - paragraph [ref=f29e1541]: View my services
+                      - paragraph [ref=f29e1543]: 3h
+                      - link "Márcia Agostinho Premium Profile Following":
+                        - /url: https://www.linkedin.com/in/marciagostinho/
+                    - button "Open control menu for post by Márcia Agostinho" [ref=f29e1544] [cursor=pointer]
+                    - button "Hide post by Márcia Agostinho" [ref=f29e1548] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1511]:
+                - generic [ref=f29e1513]:
+                  - generic [ref=f29e1604]:
+                    ...
+                    - generic [ref=f29e1623]:
+                      ...
+                      - link "2 reposts" [ref=f29e1629] [cursor=pointer]:
+                        ...
+                        - paragraph [ref=f29e1630]:
+                          ...
+                          - generic [aria-hidden] [ref=f29e1632]: 2 reposts
+                  - generic [ref=f29e1633]:
+                    - generic [ref=f29e1634]:
+                      - 'button "Reaction button state: Like" [ref=f29e2685] [cursor=pointer]':
+                        - generic [ref=f29e1638]: Like
+                      - button "Open reactions menu":
+                        - generic [ref=f29e1642] [cursor=pointer]
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1511]:
+                - generic [ref=f29e2698]:
+                  - generic [ref=f29e2706]:
+                    - generic [ref=f29e2711]:
+                      - generic [ref=f29e2716]:
+                        - generic [ref=f29e2745]:
+                          - generic [ref=f29e2746]:
+                            - generic [ref=f29e2747]:
+                              - 'button "Reaction button state: no reaction 1 reaction" [ref=f29e2750] [cursor=pointer]':
+                                - generic [ref=f29e2751]:
+                                  - 'img "Reaction button state: no reaction" [ref=f29e2752]'
+                                  - paragraph [ref=f29e2755]:
+                                    - generic [ref=f29e2756]:
+                                      - generic [ref=f29e2757]: 1 reaction
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1511]:
+                - generic [ref=f29e2698]:
+                  - generic [ref=f29e2706]:
+                    - generic [ref=f29e2777]:
+                      - generic [ref=f29e2782]:
+                        - generic [ref=f29e2784]:
+                          - link "Jéssica Barbosa Verified Profile 2nd Account Manager | Onboarding | Customer Success|" [ref=f29e2785] [cursor=pointer]:
+                            ...
+                            - generic [ref=f29e2786]:
+                              ...
+                              - paragraph [ref=f29e2799]: Account Manager | Onboarding | Customer Success|
+                          - paragraph [ref=f29e2801]: 2h
+                          - button [ref=f29e2803] [cursor=pointer]:
+                            - generic "Follow Jéssica Barbosa" [ref=f29e2804]:
+                              - paragraph [ref=f29e2806]: Follow
+                          - button "View more options for Jéssica Barbosa’s comment." [ref=f29e2807] [cursor=pointer]
+                        - generic [ref=f29e2812]:
+                          - paragraph [ref=f29e2815]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1511]:
+                - generic [ref=f29e2698]:
+                  - generic [ref=f29e2706]:
+                    - generic [ref=f29e2777]:
+                      - generic [ref=f29e2782]:
+                        - generic [ref=f29e2822]:
+                          - generic [ref=f29e2823]:
+                            - generic [ref=f29e2824]:
+                              - 'button "Reaction button state: no reaction 3 reactions" [ref=f29e2827] [cursor=pointer]':
+                                - generic [ref=f29e2828]:
+                                  - 'img "Reaction button state: no reaction" [ref=f29e2829]'
+                                  - paragraph [ref=f29e2832]:
+                                    - generic [ref=f29e2833]:
+                                      - generic [ref=f29e2834]: 3 reactions
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - region "Primary content" [ref=f29e169]:
+            - list [ref=f29e170]:
+              - listitem [ref=f29e1511]:
+                - generic [ref=f29e2698]:
+                  - generic [ref=f29e2706]:
+                    - generic [ref=f29e2864]:
+                      - generic [ref=f29e2869]:
+                        - generic [ref=f29e2888]:
+                          ...
+                          - button "Show translation" [ref=f29e2897] [cursor=pointer]
+                        - generic [ref=f29e2902]:
+                          - generic [ref=f29e2903]:
+                            - 'button "Reaction button state: no reaction 0" [ref=f29e2906] [cursor=pointer]':
+                              - generic [ref=f29e2907]:
+                                - 'img "Reaction button state: no reaction" [ref=f29e2908]'
+                                - generic:
+                                  - paragraph:
+                                    - generic: "0"
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - complementary "Aside" [ref=f29e500]:
+            - generic [ref=f29e501]:
+              - generic [ref=f29e502]:
+                - generic [ref=f29e558]:
+                  - link [ref=f29e560] [cursor=pointer]:
+                    - generic [ref=f29e561]:
+                      - generic [ref=f29e563]:
+                        - paragraph [ref=f29e566]: Samara Quevedo
+                        - paragraph [ref=f29e568]: A próxima Geração do RH para PMEs | Ensino como tecnologia, operação e gestão de pessoas se conectam para modernizar o RH
+                        - button "Follow Samara Quevedo" [ref=f29e571]:
+                          - generic [ref=f29e572]: Follow
+                  - link [ref=f29e576] [cursor=pointer]:
+                    - /url: https://www.linkedin.com/in/mariana-mavila/
+                    - generic [ref=f29e577]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - complementary "Aside" [ref=f29e500]:
+            - generic [ref=f29e501]:
+              - generic [ref=f29e502]:
+                - generic [ref=f29e558]:
+                  - link [ref=f29e576] [cursor=pointer]:
+                    - generic [ref=f29e577]:
+                      - generic [ref=f29e579]:
+                        - paragraph [ref=f29e582]: Mariana Mavila
+                        - paragraph [ref=f29e584]: Connecting top talent with global opportunities | ex-McKinsey | ex-VP Marketplace | IESE MBA
+                        - button "Follow Mariana Mavila" [ref=f29e587]:
+                          - generic [ref=f29e588]: Follow
+                  - link [ref=f29e592] [cursor=pointer]:
+                    - /url: https://www.linkedin.com/company/stack-vagas/
+                    - generic [ref=f29e593]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - complementary "Aside" [ref=f29e500]:
+            - generic [ref=f29e501]:
+              - generic [ref=f29e502]:
+                - generic [ref=f29e558]:
+                  - link [ref=f29e592] [cursor=pointer]:
+                    - generic [ref=f29e593]:
+                      - generic [ref=f29e595]:
+                        - paragraph [ref=f29e598]: Stack Vagas
+                        - paragraph [ref=f29e600]: Company • Technology, Information and Internet
+                        - button "Follow Stack Vagas" [ref=f29e603]:
+                          - generic [ref=f29e604]: Follow
+                  - link "View all recommendations" [ref=f29e608] [cursor=pointer]:
+                    - /url: /mynetwork/discover-hub/
+              - generic [ref=f29e613]:
+
+----
+
+- generic [ref=f29e2]:
+  - generic [ref=f29e4]:
+    - generic [ref=f29e9]:
+      - main [ref=f29e94]:
+        - generic [ref=f29e96]:
+          - complementary "Aside" [ref=f29e500]:
+            - generic [ref=f29e501]:
+              - generic [ref=f29e613]:
+                - iframe [ref=f29e851]:
+                  - generic [ref=f30e3]:
+                    - generic [ref=f30e25]:
+                      - link [ref=f30e26] [cursor=pointer]:
+                        ...
+                        - heading "PEAK by HMS Networks" [level=2] [ref=f30e27]
+                      - paragraph [ref=f30e29]: Artur, level up your Automotive Testing!
+                      - paragraph [ref=f30e31]: Get daily news on in-vehicle network technologies!
+                      - link "Follow" [ref=f30e32] [cursor=pointer]:
+                        - /url: https://www.linkedin.com/li/tscp/sct?destinationUrl=http%3A%2F%2Fwww.linkedin.com%2Fcompany%2F93531941%3FisFollowingPage%3Dtrue&trackingEvent=%5B%7B%22eventInfo%22%3A%7B%22appId%22%3A%22com.linkedin.ads.rendering.d_web%22%2C%22eventName%22%3A%22SponsoredRightRailContentActionEvent%22%2C%22topicName%22%3A%22SponsoredRightRailContentActionEvent%22%7D%2C%22eventBody%22%3A%7B%22sponsoredEventHeader%22%3A%7B%22encryptedTrackingData%22%3A%22CwEAAAGhEUEGFVCb5dwLERhoNmeYm2gTZWWuXf8jZp88LdtHzt6bj9qz06kM7cEouzNhuq7h5D3I3juTHeHc5AmOSBle974Oi9m-Saf_TvGm1MzjQXJhpXjqrFNYAMWeEliR3kKJGrUeXjzu9Y0jsFFtWBJcvvijS7hkbPVtgm-TZmTrmv9vJuHYVkKnedLzCD7unTq9wDBnvJCXDure5VdgjAQYpqHw91PUzhoaVcoDeaE_dNJhiad_KPtZ-OXvKNv6L5yc991A8la1iQez3e1Y_vEkFr9usKTWPGb8JF4pB2DvPTV0x7wmyZuZaWks2GwFbLdZMOSVhyD6kIZD3iaMcghmz_ZM2dnVGqhJ3xQb21hRINpzaDkTJUKoaX0YQ6A2Z2EvAQ1mx8J-l8N0V9II7fDxrKP5MpPT2av4NHp3Sh4VB8AXnkQKXktt76_CEsSy21Ma5ia-BB_2ix6lJ85h2a4mI59fFsvSt7QKs9W-FR7zVkRo3u20WVIFbz4_zkQJ2hSBQmrVNd1G6lYo7zhNSMSoI4pWXru83kzZ0eTkkKaYEjNMCGTl1tQhyrChbbEiKKsri2sp44brMYL8tlhd7sRDed7N0nXu7bm1UaQ1DrgEhM1dtDP-vv0_02EplnHLAFTgB6sEKAJds6_gnpNc-h4CDgu1q4yehYCXI9lniJRnXIcV5s7DUygQVsy-6pLYQrl0yegmTk65bimNf6_QB0awCMEm5w8bWd3r_Iw0xcProsoIiuC2iKV2nnn3YlV9tamNRkfjgE58-iMXXOc4X-yIcvkRi7YCE9VqmLYl-0EEn0QHbW1ToiP5IVLuBIDPugoHfVUKJX4BW38aLzo_n_D7qp3Mz57oC0lzVKM1S0Cx91nq40dqeqBe8SsNeA4q_GGwCfJ130Erfr-MxEy-WIApFdRDqD9f6eiVj16wLAOWLNgJ6zgo9YP6b2dJRHbhqmGZHCdQr9yNDd3gjSEgxAiRgloNwPWew22iNfK5RAfzA98u5tIcREdD8EswsPWvNHN_a__O2o6Vv6BQFc6GaQhqGPrcTw8Cm-tfzuOFw8qMjutvIrYSiaoSSMJKAIoIjh94lZkBJJ6o9OWrKuxGOw7Qs7wN0n2BwSUyZ78RTeT2hDnxLHx_R2WQ9cAsvbytq4veEmV-NcrgOsw4coVcMY3MgMYesYXXQaliex8rWVa6cPzY6y6oNcS0Ur_E_Q3-Wnohh7HgEB3OND80G-SsP57d8PJ8LEPy%22%7D%2C%22header%22%3A%7B%22pageInstance%22%3A%7B%22pageUrn%22%3A%22urn%3Ali%3Apage%3Ad_flagship3_feed%22%2C%22trackingId%22%3A%22af6d635c-151f-464b-b116-b3310ab2a525%22%7D%2C%22time%22%3A1791290836472%2C%22version%22%3A%220.0.0%22%7D%2C%22requestHeader%22%3A%7B%22pageKey%22%3A%22d_flagship3_feed%22%2C%22interfaceLocale%22%3A%22en-US%22%7D%7D%7D%5D&csrfToken=ajax%3A2616786867044976708
+                - generic [ref=f29e616]:
+                  - generic [ref=f29e617]:
+                    - link [ref=f29e618] [cursor=pointer]:

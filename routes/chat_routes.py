@@ -3571,11 +3571,34 @@ def setup_chat_routes(
             ) else ()),
         )
         if exact_tool_approval is not None:
-            from src.agent_runtime.authority import RequestAuthority
+            from dataclasses import replace
+            from src.agent_runtime.authority import RequestAuthority, OperationGrant
+            from src.turn_contract import canonical_tool
             _request_authority = (
                 exact_tool_approval.pending.request_authority
                 or RequestAuthority.empty(owner=_user, session_id=session, workspace=workspace)
             ).restrict(tool_policy)
+            # The pending authority is sealed from request text, which (like the
+            # turn contract) does not map user intent to MCP tools — so the
+            # approved MCP tool is absent from its grants and the single-use
+            # exact claim is the only thing that ever admits it. A task or
+            # chat-session approval explicitly promises the sealed action can
+            # repeat without re-entering the gate, so grant the approved tool
+            # itself (and seal its backend, which MCP resolution derives from
+            # the manager rather than request text) for the continuation.
+            # Single-action scope keeps the one-shot claim and earns neither.
+            if exact_tool_approval.allow_remaining_actions:
+                from src.agent_runtime.remote_resources import seal_backends
+                _approved_tool = canonical_tool(exact_tool_approval.pending.tool_name)
+                if all(g.tool != _approved_tool for g in _request_authority.grants):
+                    _request_authority = replace(
+                        _request_authority,
+                        grants=(*_request_authority.grants, OperationGrant(_approved_tool)),
+                        backend_resources=tuple(dict.fromkeys(
+                            (*(_request_authority.backend_resources or ()),
+                             *seal_backends((_approved_tool,), owner=_request_authority.owner)),
+                        )),
+                    )
         _turn_contract = None
         # Image models execute directly, not through the text-agent inventory.
         # Keep the permission policy above, but do not apply routing omissions
@@ -3804,9 +3827,9 @@ def setup_chat_routes(
             # contract explicitly offers.  User/global denials cannot be
             # restored here because resolve_turn_contract filtered them out.
             disabled_tools.difference_update(_turn_contract.offered)
-            tool_policy = build_effective_tool_policy(
-                disabled_tools=disabled_tools, last_user_message=message,
-            )
+        tool_policy = build_effective_tool_policy(
+            disabled_tools=disabled_tools, last_user_message=message,
+        )
         research_blocked_by_policy = bool(
             tool_policy.blocks("trigger_research")
             or tool_policy.blocks("manage_research")

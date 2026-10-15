@@ -288,8 +288,15 @@ def with_completion_gate(func):
                     if kind == 'final_response':
                         if first_answer_at is None:
                             first_answer_at = perf_counter()
-                        answer = str(data.get('content') or '')
-                        has_final = True
+                        # An empty final_response must not wipe an answer
+                        # already collected: some runs emit the real answer
+                        # and then a tail of empty replacements (thinking-only
+                        # rounds), which used to erase the answer and leave
+                        # only the server's effect disclosure in the result.
+                        content = str(data.get('content') or '')
+                        if content.strip() or not answer.strip():
+                            answer = content
+                            has_final = True
                         answer_events.append(data)
                         continue
                     if 'delta' in data or isinstance(data.get('thinking'), str):

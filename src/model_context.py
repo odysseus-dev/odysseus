@@ -226,6 +226,14 @@ KNOWN_CONTEXT_WINDOWS = {
     'nous-hermes': 131072,
 
     # --- Xiaomi ---
+    # Order matters: ``_lookup_known`` prefers the LONGEST matching key, but
+    # only when it finds one at all. An unlisted ``mimo-v2.6-*`` used to miss
+    # the table entirely and fall back to a 128k guess, which shrank the agent
+    # input budget below the size of its own tool schema and turned every
+    # scheduled task into a non-terminating re-read loop.
+    'mimo-v2.6-pro': 1048576,
+    'mimo-v2.6-flash': 1048576,
+    'mimo-v2.6': 1048576,
     'mimo-v2.5-pro': 1048576,
     'mimo-v2.5': 1048576,
 

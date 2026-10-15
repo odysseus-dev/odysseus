@@ -99,6 +99,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
+        # OXS extension static files + ext-api routes — mounted under
+        # ``/ext-static/<id>/`` and ``/ext-api/<id>/`` by the extensions
+        # loader so each extension can ship its own UI. The parent SPA
+        # embeds these in iframes from the Extension info modal, so the
+        # global DENY must NOT apply.
+        is_extension_panel = (
+            path.startswith("/ext-static/") or path.startswith("/ext-api/")
+        )
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -128,6 +136,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
+                "frame-ancestors 'self'"
+            )
+        elif is_extension_panel:
+            # Same-origin framing so the parent SPA can embed the
+            # extension's own panel HTML in an iframe. We keep
+            # X-Content-Type-Options / Referrer-Policy / Permissions-Policy
+            # from the default branch above.
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'unsafe-inline' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self'; "
+                "frame-src 'self'; "
                 "frame-ancestors 'self'"
             )
         else:

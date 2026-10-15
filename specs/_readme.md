@@ -1,6 +1,6 @@
 # Specs DocumentMap
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@local | 2026-10-07
 
 This folder is the compact implementation-truth map for humans and coding agents working on Odysseus. Read this file first, then open only the subsystem specs that match the work.
 
@@ -67,6 +67,8 @@ project documentation.
 - [integrations.md](integrations.md): Codex/Claude scoped APIs, companion pairing, webhooks, external agent access.
 - [shell-mcp.md](shell-mcp.md): shell execution, background jobs, MCP manager, built-in MCP servers.
 - [settings-admin.md](settings-admin.md): settings, preferences, presets, backup/import/export, diagnostics, admin wipe.
+- [oxs.md](oxs.md): OXS extension host — manifest schema, capability gates, lifecycle hooks, storage isolation, inbound webhooks, MCP tool bridge, event bus, scheduled task actions, static mounts, admin REST surface.
+- [oxs_status.md](oxs_status.md): OXS implementation status — test counts, coverage, delta in core, known gaps.
 - [testing-devops.md](testing-devops.md): pytest, JS tests, Docker, scripts, requirements, local dev expectations.
 
 ## Cross-Cutting Spec Update Triggers
@@ -75,7 +77,7 @@ Use these triggers only during explicit spec-maintenance work or a PR that
 intentionally includes specs. For ordinary work and code review, use the same
 list to choose which specs to read and where to report drift.
 
-- New route file or route prefix: update [runtime.md](runtime.md) and the owning subsystem spec.
+- New route file or route prefix: update [runtime.md](runtime.md) and the owning subsystem spec. OXS lives under `routes/oxs_api.py` (admin surface) and the inbound webhook router mounted directly on the app — extensions should not need new route files; they register routes through `host.add_route`.
 - New SQLAlchemy model, column migration, durable JSON/local store, data directory, backup/import domain, or non-SQL persistence behavior: update [persistence.md](persistence.md) and the owning subsystem spec.
 - New tool, tool schema, agent prompt rule, or tool security behavior: update [agent-tools.md](agent-tools.md) and [context-building.md](context-building.md) if it adds model context.
 - New MCP runtime/config/built-in behavior: update [shell-mcp.md](shell-mcp.md), [agent-tools.md](agent-tools.md), and [context-building.md](context-building.md) when MCP tool results enter model context.

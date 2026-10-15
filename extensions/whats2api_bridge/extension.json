@@ -1,0 +1,249 @@
+{
+  "id": "whats2api_bridge",
+  "name": "Whats2API Bridge",
+  "version": "0.5.2",
+  "oxs_version": ">=1.0.0,<2.0.0",
+  "python_deps": [],
+  "author": {
+    "name": "algoz098",
+    "url": "https://github.com/algoz098",
+    "email": ""
+  },
+  "license": "AGPL-3.0-or-later",
+  "repository": "https://github.com/odysseus-dev/odysseus/tree/main/extensions/whats2api_bridge",
+  "description": "WhatsApp via whats2api.com \u2014 list/start/stop sessions, send messages and reactions, and ingest every inbound event (messages.upsert, connection.update, group-participants.update, ...) through an OXS webhook.",
+  "entry_point": "plugin:register",
+  "hooks": [
+    "on_install",
+    "on_enable",
+    "on_disable",
+    "on_uninstall"
+  ],
+  "capabilities": {
+    "data": true,
+    "tools": true,
+    "routes": true,
+    "mcp_tools": true,
+    "webhooks_in": true,
+    "webhooks_out": true,
+    "events_sub": [
+      "oxs.rescan"
+    ],
+    "events_fire": [
+      "whats2api.message.received",
+      "whats2api.message.sent",
+      "whats2api.connection.update",
+      "whats2api.group.update",
+      "whats2api.presence.update",
+      "whats2api.call"
+    ],
+    "ui_panel": true,
+    "static": [
+      {
+        "url_prefix": "/ext-static/whats2api_bridge",
+        "directory": "ui"
+      }
+    ],
+    "settings_read": true
+  },
+  "permissions": {
+    "network_outbound": [
+      "https://api.whats2api.com"
+    ],
+    "filesystem_data_subpath": [
+      "cache"
+    ]
+  },
+  "privileged_permissions": {},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "api_token": {
+        "type": "string",
+        "title": "API token",
+        "description": "Long-lived API token from the whats2api.com dashboard (Dashboard \u2192 API Tokens). Shown only once at creation. 64 hex chars.",
+        "minLength": 8,
+        "maxLength": 256
+      },
+      "base_url": {
+        "type": "string",
+        "title": "API base URL",
+        "default": "https://api.whats2api.com",
+        "description": "Override only if you proxy whats2api.com. Must start with https://.",
+        "pattern": "^https://[A-Za-z0-9._\\-/]+$"
+      },
+      "default_connection_id": {
+        "type": "string",
+        "title": "Default connection ID",
+        "description": "Optional connection to use when a tool call omits connection_id.",
+        "maxLength": 128
+      },
+      "request_timeout_seconds": {
+        "type": "integer",
+        "title": "HTTP timeout",
+        "default": 30,
+        "minimum": 1,
+        "maximum": 300
+      },
+      "retention_days": {
+        "type": "integer",
+        "title": "Event log retention (days)",
+        "default": 7,
+        "minimum": 1,
+        "maximum": 365
+      },
+      "log_inbound_events": {
+        "type": "boolean",
+        "title": "Persist every inbound event",
+        "default": true,
+        "description": "If true, every whats2api event is stored in the events table."
+      },
+      "inbound_webhook_key": {
+        "type": "string",
+        "title": "Inbound webhook key (DEPRECATED \u2014 kept for back-compat, no UI exposure)",
+        "description": "Legacy field, no longer read or enforced. Exists only so old settings files load without error.",
+        "maxLength": 256
+      },
+      "webhook_url_token": {
+        "type": "string",
+        "title": "Webhook URL token",
+        "description": "User-defined token that replaces the auto-generated <token> in /api/ext/whats2api_bridge/webhook/<token>. Type any string; only URL-safe characters (A\u2013Z, a\u2013z, 0\u20139, '-', '_') are accepted because the value goes into the URL path. Persisted to data/extensions/whats2api_bridge/inbound_webhook_token (mode 0600) and survives restarts; takes effect on the dispatcher immediately after save.",
+        "pattern": "^[A-Za-z0-9_-]*$",
+        "maxLength": 1024
+      },
+      "analyzer_enabled": {
+        "type": "boolean",
+        "title": "Conversation Analyzer \u2014 enable",
+        "default": false,
+        "description": "When true, a periodic scheduled task runs in the background, reads recent WhatsApp conversations, and produces a chat-session summary the operator can review (manage_notes / manage_tasks / manage_calendar). WhatsApp write tools are blocked \u2014 the agent never replies for you."
+      },
+      "analyzer_interval_minutes": {
+        "type": "integer",
+        "title": "Conversation Analyzer \u2014 interval (minutes)",
+        "default": 30,
+        "minimum": 5,
+        "maximum": 720,
+        "description": "How often the analyzer runs while enabled. 30 is a sane default; lower values hit the LLM more often."
+      },
+      "analyzer_lookback_hours": {
+        "type": "integer",
+        "title": "Conversation Analyzer \u2014 lookback (hours)",
+        "default": 24,
+        "minimum": 1,
+        "maximum": 168,
+        "description": "Time window the analyzer inspects on each run. 24 = past day."
+      },
+      "analyzer_min_messages": {
+        "type": "integer",
+        "title": "Conversation Analyzer \u2014 min messages per chat",
+        "default": 3,
+        "minimum": 1,
+        "maximum": 50,
+        "description": "Skip chats with fewer than N messages in the lookback window. Cuts noise."
+      },
+      "analyzer_endpoint_id": {
+        "type": "string",
+        "title": "Conversation Analyzer \u2014 endpoint ID",
+        "description": "Model endpoint to use (e.g. 'default', an OpenAI endpoint, a local Ollama). Empty = use the default endpoint configured in Settings \u2192 Models.",
+        "maxLength": 128
+      },
+      "analyzer_model": {
+        "type": "string",
+        "title": "Conversation Analyzer \u2014 model",
+        "description": "Model name on the chosen endpoint. Empty = endpoint default.",
+        "maxLength": 256
+      },
+      "analyzer_prompt": {
+        "type": "string",
+        "title": "Conversation Analyzer \u2014 system prompt",
+        "description": "Custom instructions for the analyzer. The placeholder {lookback_hours} is replaced with the configured lookback. Leave default for sane behavior.",
+        "maxLength": 8192
+      }
+    },
+    "additionalProperties": false,
+    "required": [
+      "api_token",
+      "base_url"
+    ]
+  },
+  "data_schema": {
+    "connections": {
+      "columns": {
+        "id": "TEXT PRIMARY KEY",
+        "name": "TEXT",
+        "engine": "TEXT",
+        "phone": "TEXT",
+        "status": "TEXT",
+        "owner_id": "TEXT",
+        "raw_json": "TEXT",
+        "updated_at": "INTEGER NOT NULL"
+      },
+      "indexes": [
+        [
+          "status"
+        ],
+        [
+          "owner_id"
+        ]
+      ]
+    },
+    "messages": {
+      "columns": {
+        "id": "TEXT PRIMARY KEY",
+        "connection_id": "TEXT NOT NULL",
+        "direction": "TEXT NOT NULL",
+        "remote_jid": "TEXT",
+        "from_me": "TEXT",
+        "chat_jid": "TEXT",
+        "sender_jid": "TEXT",
+        "push_name": "TEXT",
+        "text": "TEXT",
+        "message_type": "TEXT",
+        "ts": "INTEGER NOT NULL",
+        "raw_json": "TEXT"
+      },
+      "indexes": [
+        [
+          "connection_id",
+          "ts"
+        ],
+        [
+          "chat_jid",
+          "ts"
+        ],
+        [
+          "direction"
+        ]
+      ],
+      "unique": [
+        [
+          "id"
+        ]
+      ]
+    },
+    "events": {
+      "columns": {
+        "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+        "event_name": "TEXT NOT NULL",
+        "connection_id": "TEXT",
+        "user_id": "TEXT",
+        "received_at": "INTEGER NOT NULL",
+        "raw_json": "TEXT"
+      },
+      "indexes": [
+        [
+          "event_name",
+          "received_at"
+        ],
+        [
+          "connection_id",
+          "received_at"
+        ]
+      ]
+    }
+  },
+  "file_hashes": {
+    "plugin.py": "sha256:beaba711fe4f723c3dc2e410c45deac693550f15778bb7a2f7e60fd8569e4529",
+    "ui/index.html": "sha256:1e7e72d980788c5b3fb1e953c95c0ee9fe1c20634578ba43d0b654f72f81d42a"
+  }
+}

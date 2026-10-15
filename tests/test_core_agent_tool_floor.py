@@ -24,6 +24,29 @@ def test_caller_disabled_tools_are_removed_and_execution_blocked():
         None,
     )
 
+    # Once a tool has cleared the relevance/routing pass for this turn the
+    # caller-side denylist cannot quietly remove it. The dispatch layer
+    # (request_authority) still gates actual execution; this policy only
+    # decides what the model can see offered for the turn.
+    assert disabled == set()
+    assert relevant == {"bash", "manage_calendar"}
+    assert base == {"host_shell", "manage_calendar"}
+
+
+def test_caller_disabled_tools_not_in_relevant_are_still_removed():
+    from src.agent_loop import _enforce_caller_disabled_tool_policy
+
+    disabled = set()
+    # ``manage_calendar`` is not in the relevance set for this turn, so a
+    # caller policy can still prune it from the surfaced offer.
+    relevant, base, policy = _enforce_caller_disabled_tool_policy(
+        {"manage_calendar"},
+        disabled,
+        {"bash"},
+        {"host_shell"},
+        None,
+    )
+
     assert disabled == {"manage_calendar"}
     assert relevant == {"bash"}
     assert base == {"host_shell"}

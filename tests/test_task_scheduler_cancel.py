@@ -134,7 +134,11 @@ def test_cancel_keeps_event_loop_responsive_during_database_lock(tmp_path, monke
     from src.task_scheduler import TaskScheduler
 
     holder = sqlite3.connect(tmp_path / 'tasks.db', check_same_thread=False)
-    assert holder.execute('PRAGMA journal_mode').fetchone()[0] == 'wal'
+    # The suite pins DELETE journal mode (core/database.py): WAL's shm
+    # index is incoherent over the docker bind mount and external sqlite
+    # processes could truncate the app's committed frames. The lock
+    # scenario below is journal-mode independent.
+    assert holder.execute('PRAGMA journal_mode').fetchone()[0] == 'delete' 
     heartbeat = threading.Event()
     progress_before_release = []
     def release_lock():
@@ -209,7 +213,7 @@ def test_running_task_cancel_keeps_event_loop_responsive_during_database_lock(tm
 
     async def drive():
         scheduler = TaskScheduler(None)
-        assert await scheduler.run_task_now('running-task')
+        assert scheduler.run_task_now('running-task')
         await asyncio.wait_for(started.wait(), timeout=2)
         pending = scheduler._task_handles['running-task']
         holder.execute('BEGIN EXCLUSIVE')
@@ -229,3 +233,65 @@ def test_running_task_cancel_keeps_event_loop_responsive_during_database_lock(tm
         task = db.get(ScheduledTask, 'running-task')
         assert task.status == 'active'
         assert task.next_run > datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def test_run_task_now_returns_synchronous_string_run_id(tmp_path, monkeypatch):
+    """run_task_now should be synchronous and return the freshly-minted
+    TaskRun.id (a UUID string), not a coroutine or True/False, so extension
+    error-reporting channels can capture the id without unwrapping."""
+    session_local, ScheduledTask, TaskRun = _setup_db(tmp_path, monkeypatch)
+    from src.task_scheduler import TaskScheduler
+    monkeypatch.setenv('BACKGROUND_TASK_FOREGROUND_GATE', 'false')
+    from src.agent_runtime.authority import seal_task_authority
+    with session_local() as db:
+        db.add(ScheduledTask(id='id-task', owner='alice', name='Id Roundtrip',
+            task_type='action', action='fixture_wait', status='active',
+            request_authority_json=seal_task_authority('', 'action', 'fixture_wait', owner='alice')))
+        db.commit()
+
+    async def no_execute(*args, **kwargs):
+        # Avoid running the full execute path in this unit test. We only
+        # care that the synchronous row creation + dispatch happened.
+        await asyncio.Event().wait()
+    monkeypatch.setattr('src.task_scheduler.TaskScheduler._execute_task', no_execute)
+
+    async def drive():
+        scheduler = TaskScheduler(None)
+        run_id = scheduler.run_task_now('id-task', force=True)
+        assert isinstance(run_id, str)
+        return run_id
+
+    run_id = asyncio.run(drive())
+    with session_local() as db:
+        row = db.query(TaskRun).filter_by(task_id='id-task').one()
+        assert row.id == run_id
+        assert row.status == 'queued'
+
+
+def test_run_task_now_dedupes_concurrent_triggers(tmp_path, monkeypatch):
+    """A second trigger while the first is in flight should return None
+    (the dedupe hint), not double-dispatch the same task."""
+    session_local, ScheduledTask, _ = _setup_db(tmp_path, monkeypatch)
+    from src.task_scheduler import TaskScheduler
+    from src.agent_runtime.authority import seal_task_authority
+    monkeypatch.setenv('BACKGROUND_TASK_FOREGROUND_GATE', 'false')
+    with session_local() as db:
+        db.add(ScheduledTask(id='dedupe-task', owner='alice', name='dedupe',
+            task_type='action', action='fixture_wait', status='active',
+            request_authority_json=seal_task_authority('', 'action', 'fixture_wait', owner='alice')))
+        db.commit()
+
+    async def no_execute(*args, **kwargs):
+        await asyncio.Event().wait()
+    monkeypatch.setattr('src.task_scheduler.TaskScheduler._execute_task', no_execute)
+
+    async def drive():
+        scheduler = TaskScheduler(None)
+        # Run inside a loop so the create_task dispatch has somewhere to land.
+        first_id = scheduler.run_task_now('dedupe-task')
+        assert isinstance(first_id, str)
+        # The executing set now contains the task, so a second manual
+        # trigger must report None instead of dispatching a second run.
+        second_id = scheduler.run_task_now('dedupe-task')
+        assert second_id is None
+    asyncio.run(drive())

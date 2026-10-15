@@ -8,6 +8,11 @@ import logging
 import hashlib
 import threading
 import re
+
+# Matches ASCII whitespace + Unicode whitespace + format chars.
+_UNICODE_WS_RE = re.compile(
+    r"[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u2060-\u2064\ufeff]+"
+)
 import os
 import math
 import ipaddress
@@ -211,14 +216,25 @@ def _stream_timeout(read_timeout) -> httpx.Timeout:
     return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=30.0, pool=5.0)
 
 
+# First-SSE-event budget for hosted providers.  Generous enough for a
+# reasoning model that thinks before its first chunk, tight enough that one
+# silent upstream cannot pin a scheduled run open for an hour.
+_FIRST_TOKEN_TIMEOUT_HOSTED_S = 180.0
+
+
 def _first_token_timeout(url: str, stream_timeout: int) -> float:
     """Return a bounded first-event budget for local streaming endpoints.
 
     A provider can accept a request with HTTP 200 and then never emit an SSE
-    event.  The normal read timeout is intentionally generous for slow tokens,
-    but that makes this particular failure look like a hung agent.  Keep the
-    watchdog local-only and configurable so hosted providers retain their
-    existing behavior.
+    event.  The read timeout is an *inactivity* timeout, so an upstream that
+    dribbles a byte every few minutes never trips it and the round -- and with
+    it the whole scheduled run -- stays ``running`` for as long as the socket
+    lives.  A real analyzer run was held 51 minutes that way (988s on the
+    primary, then a 1990s stall on the fallback provider).
+
+    Bound the first event for every endpoint, not just local ones.  Hosted
+    reasoning models legitimately think for a while before the first SSE
+    event, so the default is generous and always clamped by ``stream_timeout``.
     """
     raw = os.getenv("ODYSSEUS_FIRST_TOKEN_TIMEOUT", "").strip()
     if raw:
@@ -229,7 +245,7 @@ def _first_token_timeout(url: str, stream_timeout: int) -> float:
         return max(0.0, min(value, float(stream_timeout)))
     if _is_managed_stream_endpoint(url):
         return min(60.0, float(stream_timeout))
-    return 0.0
+    return min(_FIRST_TOKEN_TIMEOUT_HOSTED_S, float(stream_timeout))
 
 
 # Cache for LLM responses
@@ -1066,6 +1082,38 @@ async def httpx_post_kimi_aware_async(client, url: str, headers: Optional[Dict],
     return last
 
 
+# OpenCode Go rejects requests that lack a stable `x-opencode-session` header
+# (see https://opencode.ai/docs/go/#where-can-i-use-it) — the header is how the
+# gateway routes a conversation to a consistent backend for prompt caching.
+# A fixed per-installation id keeps every turn of every chat on one session.
+OPENCODE_GO_SESSION_ID = "45fea9db-a314-4fbd-b5e4-9b0434a0cdd3"
+# Go asks clients to identify themselves with a real agent user agent rather
+# than a generic HTTP-library default.
+OPENCODE_GO_USER_AGENT = "odysseus/1.0"
+
+
+def _opencode_variant(url: str) -> Optional[str]:
+    """Return "go" / "zen" when *url* is an OpenCode API host, else None.
+
+    Unlike ``_host_match``, this also inspects the path: OpenCode Go and Zen
+    share the ``opencode.ai`` host and are only distinguished by their
+    ``/zen/go`` vs ``/zen`` path prefix.
+    """
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return None
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host != "opencode.ai" and not host.endswith(".opencode.ai"):
+        return None
+    path = (parsed.path or "").rstrip("/")
+    if path.startswith("/zen/go"):
+        return "go"
+    if path.startswith("/zen"):
+        return "zen"
+    return None
+
+
 def _detect_provider(url: str) -> str:
     """Detect the API provider from a configured endpoint URL.
 
@@ -1079,9 +1127,10 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
-    if _host_match(url, "opencode.ai/zen/go"):
+    oc = _opencode_variant(url)
+    if oc == "go":
         return "opencode-go"
-    if _host_match(url, "opencode.ai/zen"):
+    if oc == "zen":
         return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
@@ -1313,6 +1362,11 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
         from src.copilot import copilot_headers
         for k, v in copilot_headers(None).items():
             h.setdefault(k, v)
+    if provider == "opencode-go":
+        # Go 401s without a stable x-opencode-session header; setdefault keeps
+        # any request-specific value a caller already put in `headers`.
+        h.setdefault("x-opencode-session", OPENCODE_GO_SESSION_ID)
+        h.setdefault("User-Agent", OPENCODE_GO_USER_AGENT)
     return h
 
 
@@ -1325,8 +1379,9 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
-    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
-    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
+    _oc = _opencode_variant(url)
+    if _oc == "go": return "OpenCode Go"
+    if _oc == "zen": return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
@@ -4129,9 +4184,13 @@ async def _stream_candidate_with_context_recovery(
                         event_data = json.loads(chunk[6:])
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass
+                # W2A FIX: strip Unicode whitespace/format chars (U+2063
+                # invisible separator, zero-width, NBSP, etc.) so responses
+                # like "\u2063" (model emitted only invisible chars) are
+                # treated as no substantive output and trigger fallback/retry.
                 substantive = (
                     isinstance(event_data.get("delta"), str)
-                    and bool(event_data["delta"].strip())
+                    and bool(_UNICODE_WS_RE.sub("", event_data["delta"]))
                 ) or (
                     event_data.get("type") == "tool_calls"
                     and bool(event_data.get("calls"))
@@ -4616,8 +4675,10 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
                 delta = event_data.get("delta")
                 event_type = event_data.get("type")
+                # W2A FIX: same Unicode-strip check (see other variant).
                 substantive = (
-                    isinstance(delta, str) and bool(delta.strip())
+                    isinstance(delta, str)
+                    and bool(_UNICODE_WS_RE.sub("", delta))
                 ) or (
                     event_type == "tool_calls"
                     and bool(event_data.get("calls"))

@@ -40,6 +40,20 @@ FAMILY_TOOLS = {
     "transcription": frozenset({"transcribe_media"}),
     "media_inspection": frozenset({"inspect_media"}),
     "ocr": frozenset({"extract_text"}),
+    "messaging": frozenset({
+        "mcp__whats2api__list_connections",
+        "mcp__whats2api__get_connection",
+        "mcp__whats2api__send_message",
+        "mcp__whats2api__send_reaction",
+        "mcp__whats2api__mark_read",
+        "mcp__whats2api__send_presence",
+        "mcp__whats2api__is_on_whatsapp",
+        "mcp__oxs_whats2api_bridge__get_analysis_queue",
+        "mcp__oxs_whats2api_bridge__list_messages",
+        "mcp__oxs_whats2api_bridge__get_message",
+        "mcp__oxs_whats2api_bridge__list_events",
+        "mcp__oxs_whats2api_bridge__list_connections_local",
+    }),
 }
 
 # Retrieval is selection, not authorization. A normal agent turn must retain
@@ -120,6 +134,7 @@ _FAMILY_WORDS = {
     "sessions": r"\b(?:sessions?|chats?|conversations?)\b",
     "ui": r"\b(?:panels?|themes?|toggles?|sidebar)\b",
     "ocr": r"\b(?:ocr|extract|read|recognize|transcribe)\b.{0,32}\b(?:text|words?|labels?|numbers?|digits?|screenshot|scan|image)\b|文字|文本|字幕|编号|数字|标签|票据",
+    "messaging": r"\b(?:whats(?:app|2api(?:_bridge)?)|wpp|zap(?:s|ear|eira)?|api\s+do\s+(?:zap|whats))\b|oxs_whats2api_bridge",
 }
 _FUZZY_FAMILY_TERMS = {
     "calendar": ("calendar", "event", "meeting", "appointment", "agenda"),
@@ -1039,9 +1054,25 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         if re.search(r"\b(?:preview|render|open)\b[^.\n]{0,100}\b(?:page|html|browser)\b", raw_text, re.I):
             tools.add("private_browser")
         return frozenset(tools)
+    # Literal tool names a request may pin. Widening this beyond the original
+    # three must stay conservative: each entry is a personal-data product that
+    # ``requested_capabilities`` also recognizes by noun, so naming one here
+    # never widens scope past a family the request already matched. It only
+    # stops the narrowing step in ``create_request_authority`` from discarding
+    # a matched family whose tool the request named but this tuple omitted —
+    # which is how an OXS analyzer prompt that names ``manage_memory`` lost its
+    # memory writes to ``request_authority_denied``.
+    #
+    # ``search_chats`` must stay in the tuple for the same reason: it shares
+    # the ``memory`` family with ``manage_memory``, so a request naming both
+    # lost ``search_chats`` to narrowing even though it named it literally.
+    _NARROWABLE_TOOL_VOCABULARY = (
+        "manage_notes", "manage_calendar", "manage_tasks", "manage_memory",
+        "search_chats",
+    )
     explicitly_named = {
         name
-        for name in ("manage_notes", "manage_calendar", "manage_tasks")
+        for name in _NARROWABLE_TOOL_VOCABULARY
         if re.search(
             rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])",
             raw_text,
@@ -4776,6 +4807,25 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         family for family, pattern in _FAMILY_WORDS.items()
         if re.search(pattern, scope_text, re.I)
     }
+    # "messaging" is a tool-only family (remote/local MCP tools with no
+    # primary-product noun in the request). Grant it as soon as the user
+    # names the integration; do not require an action verb, since phrases
+    # such as "usando o mcp do whats2api envie uma msg" lead with a
+    # gerund and would otherwise fall through to an empty set.
+    # The user named the messaging integration; grant the family. This
+    # also covers explicit tool-name requests (mcp__whats2api__*) and
+    # informal pt-BR phrasings ("manda um whats").
+    #
+    # Additive, not exclusive: an OXS scheduled-task prompt routinely names
+    # the bridge AND the personal products it must persist into ("read
+    # WhatsApp, then save notes/tasks/memory"). Returning only {"messaging"}
+    # used to strip those, so ``create_request_authority`` granted no write
+    # tool at all and every persistence call came back
+    # ``request_authority_denied``. The previously-matched families are kept.
+    if "messaging" in newly_named_families or re.search(
+        r"\bmcp__(?:oxs_)?whats2api(?:_bridge)?__\w+\b", text, re.I,
+    ):
+        return frozenset({"messaging"}) | newly_named_families
     established_family = immediately_established_family(text, history)
     if established_family and not newly_named_families:
         return frozenset({established_family})
@@ -6303,7 +6353,15 @@ class TurnContract:
                 raise ValueError("Required read operation must be available or explicitly unavailable")
 
     def permits(self, name: str) -> bool:
-        return canonical_tool(name) in {canonical_tool(n) for n in self.offered}
+        raw = str(name or "")
+        # MCP tools are offered by the tool index + caller policy, not by the
+        # built-in turn contract (whose schema inventory covers core
+        # built-ins only). Execution-time checks still enforce tool policy
+        # and disabled lists after this gate, so MCP calls remain subject to
+        # user/server denials.
+        if raw.startswith("mcp__"):
+            return True
+        return canonical_tool(raw) in {canonical_tool(n) for n in self.offered}
 
     def schemas(self) -> list[dict]:
         # Return copies: compact/full model formatting must not mutate the contract.

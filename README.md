@@ -49,6 +49,7 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 ## Features
 
 - **Chat + Agents** — local/API models, tools, MCP, files, shell, skills, and memory.
+- **Extensions (OXS)** — local-first extension host with capability gates, isolated per-extension storage, MCP tools, webhooks, event bus, scheduled task actions, and admin UI. See `specs/oxs.md` and `extensions/README.md`.
 - **Cookbook** — hardware-aware model recommendations, downloads, and serving.
 - **Deep Research** — multi-step web research with source reading and report generation.
 - **Compare** — blind side-by-side model testing and synthesis.

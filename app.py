@@ -289,6 +289,9 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        # OXS extension inbound webhooks — token in path is the credential,
+        # token check happens inside the route handler.
+        _re.compile(r"^/api/ext/[^/]+/webhook/[^/]+/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -893,6 +896,22 @@ app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_m
 from routes.api_token_routes import setup_api_token_routes
 app.include_router(setup_api_token_routes())
 
+# OXS — Odysseus Extension System
+from core.extensions import ExtensionRegistry
+from routes.oxs_api import setup_oxs_api_routes, setup_oxs_inbound_webhooks
+oxs_registry = ExtensionRegistry(
+    bundled_dir=os.path.abspath(os.path.join(os.path.dirname(__file__) or ".", "extensions")),
+    user_dir=os.path.join(DATA_DIR, "extensions"),
+)
+oxs_registry.bind_app(app)
+app.include_router(setup_oxs_api_routes(oxs_registry))
+app.include_router(setup_oxs_inbound_webhooks())
+# Finding 7 follow-up Layer 1 — wire the lazy self-heal hook so any
+# McpManager cache wipe that bypassed the startup auto-restore is
+# repaired on the next ``get_all_openai_schemas`` call. Idempotent;
+# safe to run before any agent turn.
+oxs_registry.install_oxs_in_process_heal_hook()
+
 logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
@@ -1125,13 +1144,94 @@ def _docker_default_gateway_ip() -> str:
     except Exception:
         return ""
     return ""
-
 # ========= LIFECYCLE =========
+
+
+def _repair_sqlite_corruption_if_needed() -> None:
+    """Repair a corrupt ``app.db`` from a sidecar copy before the
+    startup event runs.
+
+    A SQLite ``database disk image is malformed`` error after a hard
+    crash leaves the persisted ``extensions.is_enabled`` unreadable,
+    which makes the OXS auto-restore silently fall back to "enable
+    everything" and lose explicit opt-outs. This helper detects the
+    condition via a no-op read and, when triggered, swaps the main
+    DB for a readable sidecar in priority order:
+
+      1. ``app.db.before-repair`` — the framework's last-known-good copy
+      2. ``app.db.corrupt`` — the previous-but-one state
+
+    The swap is a file copy (atomic on POSIX via ``os.replace``),
+    not a re-import — keeps the active ``SessionLocal`` engine
+    pointing at the new file on the next open. A loud WARNING is
+    logged so operators can investigate the root cause; the swap is
+    silent on the happy path.
+    """
+    db_path = os.path.join(DATA_DIR, "app.db")
+    if not os.path.exists(db_path):
+        return
+    try:
+        import sqlite3 as _sqlite
+        _conn = _sqlite.connect(db_path)
+        try:
+            _conn.execute("SELECT 1").fetchone()
+        finally:
+            _conn.close()
+        return
+    except Exception as _exc:
+        logger.warning(
+            "SQLite integrity check on %s failed: %s; "
+            "attempting to recover from a sidecar",
+            db_path, _exc,
+        )
+
+    for sidecar in ("app.db.before-repair", "app.db.corrupt"):
+        sidecar_path = os.path.join(DATA_DIR, sidecar)
+        if not os.path.exists(sidecar_path):
+            continue
+        try:
+            import sqlite3 as _sqlite
+            _sconn = _sqlite.connect(sidecar_path)
+            try:
+                _sconn.execute("SELECT 1").fetchone()
+            finally:
+                _sconn.close()
+        except Exception:
+            logger.warning("Sidecar %s is also unreadable; skipping", sidecar_path)
+            continue
+        try:
+            import shutil
+            shutil.copy2(sidecar_path, db_path)
+            logger.warning(
+                "SQLite corruption detected on %s; "
+                "repaired from sidecar %s. Investigate the original "
+                "failure (likely a hard crash during WAL write).",
+                db_path, sidecar_path,
+            )
+            return
+        except Exception:
+            logger.exception("Failed to swap %s for %s", db_path, sidecar_path)
+            return
+    logger.error(
+        "SQLite corruption detected on %s and no readable sidecar "
+        "exists; the OXS auto-restore will fall back to "
+        "enable-everything. Manual intervention required.",
+        db_path,
+    )
+
 
 @asynccontextmanager
 async def _lifespan(app):
     """Modern lifespan context manager replacing deprecated @app.on_event."""
     # ── STARTUP ──
+    # Layer 2 of the Finding-7 follow-up: repair a corrupt ``app.db``
+    # BEFORE the startup event runs. A SQLite corruption (typically
+    # ``database disk image is malformed`` after a hard crash) leaves
+    # the persisted ``extensions.is_enabled`` unreadable, which makes
+    # the OXS auto-restore silently fall back to "enable everything".
+    # If a recoverable sidecar (``app.db.before-repair`` or
+    # ``app.db.corrupt``) is present, prefer it.
+    _repair_sqlite_corruption_if_needed()
     await _startup_event()
     yield
     # ── SHUTDOWN ──
@@ -1200,6 +1300,30 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
 
+    # OXS extensions — re-enable anything that was enabled at last shutdown.
+    # In-process MCP registrations live in process memory, so without this
+    # every ``mcp__oxs_*`` tool the LLM still sees in its schema would
+    # silently start returning ``MCP server not connected: oxs_*`` after a
+    # container restart, which is the exact "tools" on this bug (the
+    # extension's MCP tools vanish on restart). We run it after the MCP
+    # task so the McpManager is ready to receive register_in_process_tool.
+    #
+    # Finding 7: this used to be fire-and-forget, which let scheduled LLM
+    # tasks fire from the task scheduler before the in-process tool
+    # cache was re-populated. Await it here so the cache is hot before
+    # the first request — the find_7 self-heal on enable() covers the
+    # post-registration gap if it ever reopens.
+    async def _startup_oxs_extensions():
+        try:
+            await asyncio.to_thread(oxs_registry.restore_enabled_state)
+        except BaseException as e:
+            logger.warning(
+                f"OXS extension auto-enable failed (non-critical): "
+                f"{type(e).__name__}: {e}"
+            )
+
+    await _startup_oxs_extensions()
+
     # Semantic tool selection is part of the agent serving contract. Initialize
     # it in a background thread by default so startup remains nonblocking while
     # harness deployments can wait for the explicit readiness state.
@@ -1264,6 +1388,29 @@ async def _startup_event():
                     await asyncio.sleep(300)  # Back off on error
 
         _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
+
+    # Finding 7 follow-up Layer 4 — periodic watchdog that re-runs the
+    # OXS in-process tool self-heal every 60s. The McpManager's lazy
+    # self-heal hook (Layer 1) covers the path where an LLM turn
+    # triggers the rebuild; this layer covers the window where no turn
+    # is running but the cache drifted (e.g. a manual
+    # ``mcp_manager.disconnect_server`` followed by an idle period).
+    # Off by default to keep the test/dev loop quiet; enable with
+    # ``ODYSSEUS_OXS_WATCHDOG=1`` in production.
+    _oxs_watchdog_enabled = str(os.getenv("ODYSSEUS_OXS_WATCHDOG", "")).lower() in {"1", "true", "yes", "on"}
+    if _oxs_watchdog_enabled:
+        async def _oxs_watchdog_loop():
+            # Stagger slightly so the periodic check doesn't run in
+            # lockstep with the OXS self-heal hook on the first turn.
+            await asyncio.sleep(30)
+            while True:
+                try:
+                    await asyncio.to_thread(oxs_registry._reinstall_orphan_mcp_tools)
+                except Exception as _exc:
+                    logger.warning(f"OXS watchdog loop error: {_exc}")
+                await asyncio.sleep(60)
+
+        _startup_tasks.append(asyncio.create_task(_oxs_watchdog_loop()))
 
     async def _ensure_default_tasks():
         # Create/reconcile default automation tasks + personal assistant for every user.

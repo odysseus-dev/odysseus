@@ -1427,6 +1427,20 @@ body.right-dock-active .chat-container,
 body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   margin-right: var(--right-dock-w, 0px);
 }
+/* Windows snapped to a side zone by tileManager (left-half / right-half).
+   They are pinned to the edge exactly like an edge-docked panel, so the
+   workspace has to give up the strip they cover — otherwise the window
+   "docks" while the chat stays full width underneath it and half the
+   conversation is unusable. Kept separate from left/right-dock-active above
+   because modalSnap owns those, and both can be live at once (an edge-docked
+   email on the left, a tiled gallery on the right). */
+body.tile-right-dock .chat-container,
+body.tile-right-dock:not(.email-doc-split-active) .doc-editor-pane {
+  margin-right: var(--tile-right-w, 0px);
+}
+body.tile-left-dock:not(.email-doc-split-active) .chat-container {
+  margin-left: var(--tile-left-w, 0px);
+}
 .modal.modal-right-docked {
   align-items: stretch;
   justify-content: flex-end;

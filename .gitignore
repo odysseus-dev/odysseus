@@ -123,3 +123,8 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# pytest-cov output (regenerated on every test run)
+.coverage
+.coverage.*
+htmlcov/

@@ -945,10 +945,11 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             _require_admin_for_task_action(user, task.task_type, task.action)
         finally:
             db.close()
-        started = await task_scheduler.run_task_now(task_id, force=force)
+        started = task_scheduler.run_task_now(task_id, force=force)
         if not started:
             raise HTTPException(409, "Task is already running")
-        return {"ok": True, "message": "Task triggered" + (" in parallel" if force else "")}
+        return {"ok": True, "message": "Task triggered" + (" in parallel" if force else ""),
+                "run_id": started}
 
     @router.post("/{task_id}/stop")
     async def stop_task_now(request: Request, task_id: str):
@@ -1142,10 +1143,10 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(403, f"Action '{task.action}' requires admin privileges")
         finally:
             db.close()
-        started = await task_scheduler.run_task_now(task_id)
+        started = task_scheduler.run_task_now(task_id)
         if not started:
             raise HTTPException(409, "Task is already running")
-        return {"ok": True, "message": "Task triggered via webhook"}
+        return {"ok": True, "message": "Task triggered via webhook", "run_id": started}
 
     @router.post("/{task_id}/webhook-regenerate")
     async def regenerate_webhook(request: Request, task_id: str):

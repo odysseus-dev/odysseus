@@ -1,0 +1,55 @@
+{
+  "id": "hello-odysseus",
+  "name": "hello-odysseus",
+  "version": "1.0.0",
+  "oxs_version": ">=1.0.0,<2.0.0",
+  "python_deps": [],
+  "author": {
+    "name": "OXS Reference",
+    "url": "https://github.com/odysseus-dev/odysseus",
+    "email": ""
+  },
+  "license": "AGPL-3.0-or-later",
+  "repository": "https://github.com/odysseus-dev/odysseus/tree/main/extensions/hello-odysseus",
+
+  "entry_point": "plugin:register",
+  "hooks": ["on_install", "on_enable", "on_disable", "on_uninstall"],
+
+  "capabilities": {
+    "static":          [{"url_prefix": "/ext-static/hello-odysseus", "directory": "ui"}],
+    "events_sub":      ["oxs.rescan"],
+    "events_fire":     ["hello.greet"],
+    "settings_read":   true
+  },
+
+  "permissions": {
+    "settings_read": "oxs.extensions.hello-odysseus.*"
+  },
+
+  "privileged_permissions": {},
+
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "greeting": {
+        "type": "string",
+        "default": "hello",
+        "maxLength": 64,
+        "description": "Word to use in the hello.greet event payload"
+      },
+      "log_level": {
+        "type": "string",
+        "enum": ["debug", "info", "warning", "error"],
+        "default": "info"
+      }
+    },
+    "additionalProperties": false
+  },
+
+  "data_schema": {},
+
+  "file_hashes": {
+    "plugin.py": "sha256:a49d8a1019a23338bbeb494b9b5a8c3f060f362b0f525c5056d75f568aa0a603",
+    "ui/index.html": "sha256:da10e0ca95fc47e0d384858eebcba5109e387778d1f78dbf58163b6fddeafb87"
+  }
+}

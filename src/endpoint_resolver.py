@@ -14,7 +14,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from core.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider, _host_match, _is_kimi_code_url, KIMI_CODE_USER_AGENT, _ollama_api_root
+from src.llm_core import _detect_provider, _host_match, _is_kimi_code_url, KIMI_CODE_USER_AGENT, OPENCODE_GO_SESSION_ID, OPENCODE_GO_USER_AGENT, _ollama_api_root
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +434,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
     if _is_kimi_code_url(base):
         headers.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
+    if provider == "opencode-go":
+        headers.setdefault("x-opencode-session", OPENCODE_GO_SESSION_ID)
+        headers.setdefault("User-Agent", OPENCODE_GO_USER_AGENT)
     return headers
 
 

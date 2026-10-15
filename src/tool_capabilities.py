@@ -311,6 +311,60 @@ _BROWSER_MCP_READ_TOOLS = frozenset(
     }
 )
 
+# Capabilities an MCP server (or an OXS extension) explicitly declared for one
+# of its tools. Keyed by the qualified ``mcp__<server>__<tool>`` name.
+#
+# Without a declaration an MCP tool is *unknown*, and the post-external-context
+# gate refuses unknown tools ("fail high"). That default is right for arbitrary
+# servers, but it interacts badly with OXS: the tool catalog itself is injected
+# as untrusted control-plane context (``source="MCP tools"``), which arms the
+# gate, after which every tool the extension just advertised is blocked and a
+# scheduled task can only report "requested an exact action after untrusted
+# context". Extensions that know their tool is read-only declare it here so the
+# gate can admit the call while still treating the *result* as untrusted data.
+_MCP_DECLARED_CAPABILITIES: dict[str, ToolCapabilities] = {}
+
+_MCP_READ_CAPABILITIES = _capabilities(
+    ToolEffect.READ_PRIVATE,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+
+
+def declare_mcp_tool_capabilities(
+    qualified_name: str,
+    *,
+    read_only: bool = False,
+) -> None:
+    """Declare the effects of one MCP tool so the approval gate can classify it.
+
+    ``read_only=True`` records a brokered private read whose result is still
+    treated as untrusted external data. Anything else (the default) leaves the
+    tool unclassified so ``capabilities_for_tool`` keeps failing high.
+    """
+    if not isinstance(qualified_name, str) or not qualified_name.startswith("mcp__"):
+        return
+    if read_only:
+        _MCP_DECLARED_CAPABILITIES[qualified_name] = _MCP_READ_CAPABILITIES
+    else:
+        _MCP_DECLARED_CAPABILITIES.pop(qualified_name, None)
+
+
+def undeclare_mcp_tool_capabilities(qualified_name: str) -> None:
+    """Drop a declaration made by :func:`declare_mcp_tool_capabilities`."""
+    if isinstance(qualified_name, str):
+        _MCP_DECLARED_CAPABILITIES.pop(qualified_name, None)
+
+
+def undeclare_mcp_server_capabilities(server_id: str) -> int:
+    """Drop every declaration belonging to ``server_id``. Returns the count."""
+    if not isinstance(server_id, str) or not server_id:
+        return 0
+    prefix = f"mcp__{server_id}__"
+    stale = [name for name in _MCP_DECLARED_CAPABILITIES if name.startswith(prefix)]
+    for name in stale:
+        _MCP_DECLARED_CAPABILITIES.pop(name, None)
+    return len(stale)
+
 
 def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
     """Return deterministic capabilities; malformed and unknown tools fail high."""
@@ -326,6 +380,9 @@ def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
             return capabilities
     if tool_name in _BROWSER_MCP_READ_TOOLS:
         return _BROWSER_MCP_READ_CAPABILITIES
+    declared = _MCP_DECLARED_CAPABILITIES.get(tool_name)
+    if declared is not None:
+        return declared
     return _UNKNOWN_CAPABILITIES
 
 
@@ -779,6 +836,16 @@ class ToolRunSecurityContext:
     # The bypass affects only this automatic gate; current tool policy, ownership,
     # workspace confinement, and execution/sandbox restrictions still apply.
     approval_gate_bypassed: bool = False
+    # Tools a *server-owned* background task runner declared for this run —
+    # the operator's crew allowlist plus the task's RAG selection, never
+    # model output and never untrusted content. The untrusted-context gate
+    # exists to stop a live user from being manipulated into authorizing an
+    # action they would not have chosen; a scheduled task has no user in the
+    # loop, so without this the gate can only ever fail the task permanently
+    # ("run this task interactively" — which a cron can never do). Declared
+    # scope is honored for background workloads only, and every other gate
+    # (tool policy, ownership, request authority, sandbox) still applies.
+    declared_task_tools: frozenset[str] = field(default_factory=frozenset)
     # Driven by a bearer API token, not a person at a browser. Privileged
     # tools are refused outright and no approval can lift that.
     delegated_credential: bool = False
@@ -832,6 +899,17 @@ class ToolRunSecurityContext:
         if self.approval_gate_bypassed:
             return ToolGateDecision(True)
         if isinstance(tool_name, str) and tool_name in self.unattended_tools:
+            return ToolGateDecision(True)
+        if (
+            isinstance(tool_name, str)
+            and tool_name in self.declared_task_tools
+            and not self.delegated_credential
+        ):
+            # Server-declared background-task scope. See the field comment:
+            # a scheduled task cannot answer an approval card, so the gate
+            # would otherwise turn every legitimate unattended read/write
+            # into a permanent failure. Ownership, tool policy, request
+            # authority and the sandbox are checked independently of this.
             return ToolGateDecision(True)
         if not self.external_untrusted_context_seen:
             return ToolGateDecision(True)

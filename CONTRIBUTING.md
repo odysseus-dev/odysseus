@@ -104,6 +104,8 @@ Don't hardcode values that the project already exposes through a constant or a h
 
 If you need a value that has no constant or helper yet, add it to `src/constants.py` (the single source of truth for paths and config; `core/constants.py` only re-exports it for backward compatibility) and import it, rather than repeating a literal across files.
 
+**OXS extensions:** if you are adding a new extension under `extensions/<id>/`, follow the author guide in `extensions/README.md`. New files for an extension must include valid `file_hashes` in `extension.json` (run `python -c "from core.extensions.security import compute_extension_hashes; import json; print(json.dumps(compute_extension_hashes('extensions/<id>'), indent=2))"` to generate them). Capability declarations are validated by the manifest schema in `core/extensions/manifest_schema.py`; consult it before adding capabilities you don't recognise.
+
 **Commits:** use [Conventional Commits](https://www.conventionalcommits.org), `type(scope): summary` (e.g. `fix(search): ...`, `feat(notes): ...`, `docs(contributing): ...`). Common types: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`, `ci`. Keep the subject short and imperative; put the "why" in the body when it isn't obvious.
 
 ## Issue Reports
