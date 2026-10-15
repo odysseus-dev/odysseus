@@ -16,6 +16,13 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
+  // Stops iOS focus-zoom on every field; iOS still allows pinch-zoom, other platforms would not.
+  (function(){
+    var ua = navigator.userAgent || '';
+    var isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    var vp = document.querySelector('meta[name="viewport"]');
+    if (isIOS && vp) vp.setAttribute('content', vp.getAttribute('content') + ', maximum-scale=1');
+  })();
   (function(){
     try {
       var t = JSON.parse(localStorage.getItem('odysseus-theme'));
