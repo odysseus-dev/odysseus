@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { ggufIncludePattern, includeText } from './cookbookGguf.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -87,14 +88,8 @@ function _ggufDownloadSource(model, backend) {
   return null;
 }
 
-function _ggufIncludePattern(model, source) {
-  if (source?.file) return source.file;
-  if (model?.quant) return `*${model.quant}*`;
-  return '*.gguf';
-}
-
 function _ggufDisplayPartFromInclude(include) {
-  const clean = String(include || '').replace(/\*/g, '');
+  const clean = includeText(include);
   const parts = clean.split('/').filter(Boolean);
   const file = parts[parts.length - 1] || clean;
   const dir = parts.length > 1 ? parts[parts.length - 2] : '';
@@ -139,7 +134,7 @@ export function _buildDownloadCmd(model, backend) {
       cmd = _missingGgufCommand(model);
     } else {
       const repo = ggufSource?.repo || model.name;
-      const includePattern = backend === 'llamacpp' ? _ggufIncludePattern(model, ggufSource) : null;
+      const includePattern = backend === 'llamacpp' ? ggufIncludePattern(model, ggufSource) : null;
       const includeArg = includePattern ? `, allow_patterns=["${includePattern.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]` : '';
       // Reflect the server's download target in the preview (matches the real
       // download path built server-side). '' = default HF cache.
@@ -482,7 +477,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const repo = backend === 'ollama'
     ? (model.ollama || model.ollama_name || model.name)
     : (ggufSource?.repo || model.quant_repo || model.name);
-  const include = backend === 'llamacpp' ? _ggufIncludePattern(model, ggufSource) : null;
+  const include = backend === 'llamacpp' ? ggufIncludePattern(model, ggufSource) : null;
 
   _syncEnvFromPanel(panel);
 
