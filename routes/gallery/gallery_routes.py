@@ -1485,6 +1485,11 @@ def setup_gallery_routes() -> APIRouter:
                         "size": f"{int(body.get('width') or source_png.width)}x{int(body.get('height') or source_png.height)}",
                         "n": "1",
                     }
+                    # Editor inpaint knobs (strength slider, remove's 0.99,
+                    # feather). Servers that don't know them ignore them.
+                    for key in ("strength", "feather"):
+                        if body.get(key) is not None:
+                            data[key] = str(body[key])
                     r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), data=data, files=files)
                     if r.status_code == 200:
                         result = r.json()
