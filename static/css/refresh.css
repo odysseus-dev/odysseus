@@ -1,0 +1,613 @@
+/* ============================================================
+   Odysseus redesign: shared styling layer over the theme tokens.
+   Loaded after style.css. Every value below derives from the five
+   theme colors (--bg, --fg, --panel, --border, --red), so built-in
+   and custom themes all get the same hierarchy:
+   three text tiers, hairline edges, neutral selection, one accent.
+   ============================================================ */
+
+:root {
+  --text-2: color-mix(in srgb, var(--fg) 72%, var(--bg));
+  /* --fg-muted is used ~100 times in style.css but was never defined, so
+     those colors silently fell back to the parent's. */
+  --fg-muted: var(--text-2);
+  --text-3: color-mix(in srgb, var(--fg) 58%, var(--bg));
+  --line: color-mix(in srgb, var(--fg) 8%, transparent);
+  --line-2: color-mix(in srgb, var(--fg) 13%, transparent);
+  --hover: color-mix(in srgb, var(--fg) 5%, transparent);
+  --press: color-mix(in srgb, var(--fg) 9%, transparent);
+  --raise: var(--input-bg, var(--panel));
+  --raise-2: color-mix(in srgb, var(--fg) 9%, var(--input-bg, var(--panel)));
+  --accent-soft: color-mix(in srgb, var(--red) 15%, transparent);
+  /* Fill for text-bearing primary buttons: white label clears AA 4.5:1
+     (plain --red only reaches ~3.2:1). Same recipe as login.html. */
+  --accent-fill: color-mix(in srgb, var(--red) 78%, #000);
+  --hi: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+  --float: 0 1px 2px rgb(0 0 0 / .22), 0 14px 36px -10px rgb(0 0 0 / .45);
+  --r-sm: 6px;
+  --r: 8px;
+  --r-lg: 12px;
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --spring: cubic-bezier(.2, .9, .25, 1.15);
+  /* Motion scale: one curve, three speeds. Exits use --dur-1. */
+  --dur-1: 120ms;   /* hover, press, color */
+  --dur-2: 180ms;   /* menus, popovers, toggles */
+  --dur-3: 240ms;   /* modals, sheets, messages */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --r-menu: 10px;   /* = item radius 6 + menu padding 4 */
+  /* Default font (theme.js keeps it in sync with the font setting). */
+  --font-family: 'Fira Code', monospace;
+  --font-code: 'Fira Code', ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+/* Light themes need stronger tiers: a fixed mix toward a light background
+   fades faster than toward a dark one. theme.js sets data-scheme. */
+:root[data-scheme="light"] {
+  --text-2: color-mix(in srgb, var(--fg) 84%, var(--bg));
+  --text-3: color-mix(in srgb, var(--fg) 66%, var(--bg));
+}
+:root[data-scheme="light"] .msg a { color: color-mix(in srgb, var(--red) 70%, var(--fg)); }
+
+::selection { background: color-mix(in srgb, var(--red) 28%, transparent); }
+
+/* Scrollbars are passive chrome: neutral thumb, no track, no accent. */
+html { scrollbar-color: color-mix(in srgb, var(--fg) 22%, transparent) transparent; }
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--fg) 20%, transparent);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--fg) 34%, transparent); }
+}
+
+/* ── Sidebar ───────────────────────────────────────────── */
+
+.sidebar { border-right-color: var(--line); }
+
+/* Rows are quiet until hovered; the current row gets a neutral fill.
+   The accent is kept for actions and on-states, not navigation. */
+.list-item,
+.models-row {
+  border-radius: var(--r);
+  transition: background .12s, color .12s;
+}
+.list-item span { color: var(--text-2); transition: color .12s; }
+.list-item:hover,
+.models-row:hover { background: var(--hover); border-color: transparent; }
+.list-item:hover span { color: var(--fg); }
+.list-item.active,
+.list-item.active-session { background: var(--press); border-color: transparent; }
+.list-item.active span,
+.list-item.active-session span { color: var(--fg); }
+.list-item:focus-visible { border-color: transparent; box-shadow: 0 0 0 2px var(--red); }
+
+@media (min-width: 769px) {
+  :root:not(.density-compact) .sidebar .list-item { min-height: 28px; }
+  #workspace-section .list-item { padding: 8px 8px; }
+  /* Header padding is 2px tighter than rows, so an 8px gap lands label text on the rows' x. */
+  .section-header-flex .section-title { gap: 8px; }
+}
+
+.section-header-flex { border-radius: var(--r); }
+.section-header-flex:hover { background: var(--hover); }
+.section-header-flex .section-title { color: var(--text-3); font-weight: 500; }
+.section-header-flex:hover .section-title { color: var(--text-2); }
+/* Sidebar hierarchy: rows > group eyebrows (small caps).
+   Groups are separated by space, not by size: more room above a group
+   than between its rows. */
+#email-section, #workspace-section, #tools-section { margin-top: 12px; }
+/* Email opens the inbox: it is a destination, so it reads as a row. */
+#email-section .section-title {
+  font-family: var(--font-family);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-2);
+}
+#email-section .section-header-flex:hover .section-title { color: var(--fg); }
+#email-section .section-icon { width: 14px; height: 14px; }
+#sidebar-new-chat-btn .grow { color: var(--fg); font-weight: 500; }   /* the one primary action */
+/* Drop the inline pixel nudges on these two rows so every label shares one x. */
+:is(#sidebar-new-chat-btn, #sidebar-search-btn) > :is(svg, .grow) { left: 0 !important; }
+.user-bar-name { font-weight: 500; color: var(--text-2); }   /* quieter than navigation */
+@media (max-width: 768px) {
+  /* Eyebrow rows don't need a full 48px; 40px keeps a comfortable tap target. */
+  .section-header-flex { height: 40px !important; padding: 0 10px !important; }
+  #email-section .section-header-flex { height: 48px !important; }
+  #email-section .section-title { font-size: 14px !important; }
+  .user-bar-name { font-size: 13px; }
+  /* Match the 14px row icons so every label starts on the same x. */
+  .section-icon, .sidebar-action-icon { width: 14px !important; height: 14px !important; }
+  .section-header-flex .section-title { gap: 10px !important; }
+  #email-section, #workspace-section, #tools-section { margin-top: 16px; }
+}
+
+.sidebar-user-bar { border-top: 1px solid var(--line); }
+.user-bar-avatar { background: var(--red); color: #fff; }
+.user-bar-btn { opacity: 1; color: var(--text-2); border-radius: var(--r); }
+.user-bar-btn:hover { opacity: 1; color: var(--fg); background: var(--hover); }
+.user-bar-actions { display: flex; align-items: center; gap: 2px; }
+
+/* ── Top bar ───────────────────────────────────────────── */
+
+.chat-meta-overlay { color: var(--text-2); }
+.chat-meta-overlay:hover { color: var(--fg); }
+
+/* ── Empty state ───────────────────────────────────────── */
+
+#welcome-screen .welcome-name {
+  font-size: 2rem;
+  font-weight: 600;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: var(--fg);
+}
+#welcome-screen .welcome-boat { width: 1em; height: 1em; margin-right: .3em; vertical-align: -0.2em; }
+#welcome-screen .welcome-sub { color: var(--text-2); opacity: 1; }
+#welcome-screen .welcome-tip { color: var(--text-3); opacity: .8; }
+
+.incognito-btn {
+  opacity: 1;
+  color: var(--text-2);
+  border-color: var(--line-2);
+  border-radius: var(--r);
+  transition: background .12s, color .12s, border-color .12s;
+}
+.incognito-btn:hover { opacity: 1; color: var(--fg); background: var(--hover); }
+.incognito-btn.active { color: var(--red); border-color: transparent; background: var(--accent-soft); }
+
+.welcome-starters {
+  /* 2×2 so it fits the narrow welcome block even with a side panel open. */
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  justify-content: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+.welcome-starter {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: none;
+  color: var(--text-2);
+  font: 500 12px var(--font-family);
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s, transform .12s;
+}
+.welcome-starter svg { color: var(--red); flex: none; }
+.welcome-starter:hover { background: var(--hover); color: var(--fg); border-color: var(--line-2); }
+.welcome-starter:active { transform: scale(.97); }
+.welcome-starter:focus-visible { outline: 2px solid var(--red); outline-offset: 1px; }
+@media (max-height: 760px), (max-width: 768px) {
+  .welcome-starters { display: none; }
+}
+/* Where the starters show, they replace the rotating tip (same job, more room). */
+@media (min-height: 761px) and (min-width: 769px) {
+  #welcome-screen .welcome-tip { display: none; }
+}
+
+/* ── Composer ──────────────────────────────────────────── */
+
+.chat-input-bar {
+  border-color: var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--hi), var(--float);
+  transition: border-color .15s, box-shadow .15s, margin .3s ease, max-width .3s ease;
+}
+/* The composer is focused most of the time, so focus is a neutral lift,
+   not an accent ring; the accent stays meaningful for Nobody / plan mode. */
+.chat-input-bar:focus-within {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  box-shadow: var(--hi), 0 0 0 3px var(--hover), var(--float);
+}
+.chat-input-bar textarea#message { font-family: var(--font-family) !important; }
+.chat-input-bar textarea#message::placeholder { color: var(--text-3); }
+
+.input-icon-btn { opacity: 1; color: var(--text-2); border-radius: var(--r); }
+.input-icon-btn:hover { opacity: 1; color: var(--fg); background: var(--hover); }
+.input-icon-btn.expanded { color: var(--fg); background: var(--press); }
+.input-icon-btn.active { color: var(--red); background: var(--accent-soft); }
+.input-icon-btn:active,
+.send-btn:active { transform: scale(.94); }
+
+/* Segmented Agent / Chat switch: inset track, raised sliding thumb. */
+.mode-toggle {
+  border: none;
+  border-radius: var(--r);
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.mode-toggle::before {
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  height: auto;
+  width: calc(50% - 2px);
+  border-radius: calc(var(--r) - 2px);
+  background: var(--raise-2);
+  box-shadow: var(--hi), 0 1px 2px rgb(0 0 0 / .25), 0 0 0 1px var(--line);
+  transition: transform .32s var(--spring);
+}
+.mode-toggle.mode-toggle-three::before { width: calc(33.3333% - 1.3333px); }
+.mode-toggle-btn { color: var(--text-2); }
+.mode-toggle-btn.active,
+.mode-toggle-btn[aria-pressed="true"] { color: var(--fg); }
+@media (max-width: 768px) {
+  .mode-toggle,
+  .mode-toggle::before { border-radius: 10px; }
+}
+
+.send-btn {
+  border-radius: var(--r);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .2), 0 1px 2px rgb(0 0 0 / .2);
+  transition: filter .15s, transform .12s;
+}
+.send-btn:hover { filter: brightness(1.06); }
+
+.model-picker-btn { border-radius: var(--r-sm); color: var(--text-2); }
+.model-picker-btn:hover { border-color: var(--line-2); background: var(--hover); color: var(--fg); }
+
+/* ── Messages ──────────────────────────────────────────── */
+
+.msg-user,
+.msg-ai { font-family: var(--font-family); }
+.msg :is(pre, code, kbd, samp) { font-family: var(--font-code); }
+.msg-user {
+  border-color: var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--hi);
+}
+.msg-ai { border-color: transparent; }
+
+/* Prose gets emphasis from weight, not hue. Syntax colors stay inside code
+   blocks; links carry the accent, mixed toward the text color so they keep
+   AA contrast on both light and dark themes. */
+.msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 { color: var(--fg); letter-spacing: -.01em; }
+.msg strong, .msg b { color: var(--fg); font-weight: 600; }
+.msg em, .msg i { color: inherit; }
+.msg strong em, .msg em strong,
+.msg b i, .msg i b,
+.msg b em, .msg em b,
+.msg strong i, .msg i strong { color: var(--fg); }
+.msg code:not(pre code) {
+  color: var(--fg);
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: 5px;
+}
+.msg li::marker { color: var(--text-3); }
+.msg a {
+  color: color-mix(in srgb, var(--red) 80%, var(--fg));
+  border-bottom-color: color-mix(in srgb, var(--red) 35%, transparent);
+}
+.msg a:hover { border-bottom-color: currentColor; }
+.msg th { color: var(--text-2); font-weight: 500; }
+.msg blockquote { color: var(--text-2); }
+
+/* ── Buttons ───────────────────────────────────────────────
+   Three families, one radius. Selectors stay single-class so the
+   app's own .active / :disabled rules (two classes) still win. */
+
+/* Neutral: a raised surface with a hairline edge. */
+.confirm-btn-secondary,
+.admin-btn-sm,
+.cookbook-btn,
+.theme-io-btn {
+  background: var(--raise);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  box-shadow: var(--hi);
+  color: var(--fg);
+  opacity: 1;
+}
+.confirm-btn-secondary:hover,
+.admin-btn-sm:hover,
+.cookbook-btn:hover,
+.theme-io-btn:hover { background: var(--raise-2); border-color: var(--line-2); color: var(--fg); }
+
+/* Quiet: toolbar and toggle buttons. Full opacity with a softer text
+   color (opacity dimmed the edge and the label together and failed contrast). */
+.memory-toolbar-btn,
+.task-toggle-btn,
+.gallery-select-btn {
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  color: var(--text-2);
+  opacity: 1;
+}
+.memory-toolbar-btn:hover,
+.task-toggle-btn:hover,
+.gallery-select-btn:hover { background: var(--hover); border-color: var(--line-2); color: var(--fg); }
+.memory-toolbar-btn.active,
+.task-toggle-btn.active,
+.gallery-select-btn.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--red);
+  font-weight: inherit;
+}
+
+/* Primary: the one filled action per surface. */
+.confirm-btn-primary,
+.admin-btn-add,
+.cal-btn-primary,
+.email-send-btn {
+  background: var(--accent-fill);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .2), 0 1px 2px rgb(0 0 0 / .2);
+  color: #fff;
+}
+.confirm-btn-primary:hover,
+.admin-btn-add:hover,
+.cal-btn-primary:hover,
+.email-send-btn:hover { background: color-mix(in srgb, var(--red) 70%, #000); border-color: transparent; }
+
+.confirm-btn { padding: 5px 14px; border-radius: var(--r); }
+.confirm-btn-danger,
+.admin-btn-delete { border-radius: var(--r); }
+
+/* Icon buttons: readable at rest, lifted on hover. */
+.doc-action-icon-btn { opacity: 1; color: var(--text-3); border-radius: var(--r-sm); }
+.doc-action-icon-btn:hover { opacity: 1; color: var(--fg); background: var(--hover); }
+.icon-rail-btn { color: var(--text-2); border-radius: var(--r); }
+.icon-rail-btn:hover { color: var(--fg); background: var(--hover); }
+
+/* Controls that were dimmed with opacity: full opacity, softer color.
+   Active tabs keep their own accent rule. */
+.hamburger-btn { opacity: 1; color: var(--hamburger-color, var(--text-2)); }
+.icon-rail-btn,
+.memory-tab,
+.vis-reset-btn,
+.theme-adv-clear-btn { opacity: 1; }
+.memory-tab,
+.vis-reset-btn,
+.theme-adv-clear-btn { color: var(--text-2); }
+.memory-tab:hover,
+.vis-reset-btn:hover,
+.theme-adv-clear-btn:hover { color: var(--fg); }
+.session-bulk-btn { opacity: .8; }
+
+/* Small inline buttons that still used 4px corners. */
+#model-picker-add-models-btn,
+#cancel-rename-session,
+#save-session-name,
+#group-add-btn,
+.char-expand-btn { border-radius: var(--r-sm); }
+
+/* Secondary text that was dimmed with opacity (2-3:1 on dark) now uses the
+   text tiers, so it stays legible and states still read. Ranked from the
+   audit: Calendar, Tasks, panel headers, Settings. */
+.cal-weekday,
+.cal-quickadd-hint,
+.cal-empty,
+.tasks-clock { opacity: 1; color: var(--text-3); }
+.cal-day-num,
+.research-setting-label { opacity: 1; color: var(--text-2); }
+button.cal-view-btn,
+button.cal-today-btn { opacity: 1; color: var(--text-2); }
+.cal-view-btn:hover,
+button.cal-today-btn:hover { opacity: 1; color: var(--fg); }
+.cal-view-btn.active { color: var(--fg); }
+/* Paused tasks stay visibly paused, but readable. */
+.memory-item.task-paused { opacity: .72; }
+
+/* Counts and hints that scripts dim inline: !important only here, scoped by id/class. */
+#memory-count, #skills-count, #memory-count-h2, #skills-count-h2,
+#email-lib-stats, #doclib-stats, #gallery-stats, #research-stats,
+#tasks-tab-count, #tasks-head-count,
+#session-select-all-label, #harmony-accent-hex,
+.memory-empty span, .memory-item-meta, .theme-fd-label, .hwfit-manual-note { opacity: 1 !important; color: var(--text-3); }
+.admin-toggle-sub { opacity: 1 !important; color: var(--text-2); }
+#group-add-btn { opacity: 1 !important; color: var(--text-2); }
+#group-add-btn:hover { color: var(--fg); }
+
+/* Shared press and keyboard-focus states. */
+:is(.confirm-btn, .admin-btn-sm, .admin-btn-add, .admin-btn-delete, .cookbook-btn, .theme-io-btn,
+    .memory-toolbar-btn, .task-toggle-btn, .gallery-select-btn, .cal-btn-primary, .email-send-btn,
+    .doc-action-icon-btn, .icon-rail-btn, .user-bar-btn):active { transform: scale(.97); }
+:is(.confirm-btn, .admin-btn-sm, .admin-btn-add, .admin-btn-delete, .cookbook-btn, .theme-io-btn,
+    .memory-toolbar-btn, .task-toggle-btn, .gallery-select-btn, .cal-btn-primary, .email-send-btn,
+    .doc-action-icon-btn, .icon-rail-btn, .user-bar-btn, .input-icon-btn, .send-btn,
+    .mode-toggle-btn, .model-picker-btn, .incognito-btn):focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 1px;
+}
+
+/* ── Menus and dialogs ─────────────────────────────────── */
+
+
+:is(.dropdown-item, .overflow-menu-item, .export-dropdown-item) {
+  border-radius: var(--r-sm);
+  transition: background .12s, color .12s;
+}
+.dropdown-item { border-bottom-color: transparent; }
+.modal-content { border-color: var(--line-2); box-shadow: var(--hi), var(--float); }
+@media (min-width: 769px) { .modal-content { border-radius: var(--r-lg); } }
+/* Window titles: neutral text, coral icon. The accent stays for actions. */
+.modal-header h4 { color: var(--fg); }
+.modal-header h4 > svg:first-child { color: var(--red); }
+
+
+/* ── Consistency: menus, inputs, motion ────────────────────
+   Every menu and popover shares one edge, corner and shadow, and opens
+   the same way. Lists generated from style.css (single-class selectors,
+   so the app's own state rules still win). */
+:is(.add-pane-dropdown, .adm-provider-menu, .chat-context-popup, .cmp-eval-menu, .cookbook-gpu-popup, .cookbook-srv-color-menu, .cp-popover, .ctx-detail-popup, .ctx-popup, .doc-overflow-menu, .dropdown, .email-dropdown, .email-filter-menu, .email-more-menu, .email-odysseus-attach-menu, .export-dropdown-menu, .gallery-detail-menu, .ge-edge-menu, .ge-filter-menu, .ge-fx-popup, .ge-image-menu, .ge-inpaint-popup, .ge-layers-merge-menu, .ge-merge-menu, .ge-resize-menu, .ge-save-menu, .ge-transform-popup, .hwfit-engine-menu, .hwfit-usecase-menu, .md-toolbar-overflow-menu, .memory-item-dropdown, .memory-sort-menu, .model-picker-menu, .msg-overflow-menu, .note-reminder-menu, .overflow-menu, .pane-model-dropdown, .recipient-chip-popover, .research-run-mode-popover, .skill-kebab-menu, .slash-autocomplete-popup, .sort-dropdown) {
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-menu);
+  box-shadow: var(--hi), var(--float);
+  animation-duration: var(--dur-2);
+  animation-timing-function: var(--ease-out);
+  overscroll-behavior: contain;
+}
+:is(.add-pane-search, .cal-input, .cal-search-input, .cookbook-edit-textarea, .doc-find-input, .doc-language-select, .doc-tab-title-input, .email-folder-select, .gallery-detail-name-input, .gallery-editor-drafts-search, .gallery-tab-rename-input, .gallery-tag-input, .ge-edge-input, .ge-inpaint-popup-input, .ge-layer-name-input, .ge-text-input, .ge-transform-popup-input, .mcp-tools-search, .memory-edit-cat-select, .memory-item-edit-input, .note-reminder-date-input, .pdf-export-input, .session-rename-input, .settings-system-logs-search, .settings-system-logs-select) { border-radius: var(--r-sm); }
+
+/* Interactive feedback: one speed and curve everywhere (was 24 durations,
+   80-500ms, and 14 easings including overshoot springs). */
+:is(button, [role="button"], a, input, select, textarea, label,
+    .list-item, .models-row, .section-header-flex,
+    .dropdown-item, .overflow-menu-item, .export-dropdown-item) {
+  transition-duration: var(--dur-1) !important;
+  transition-timing-function: var(--ease-out) !important;
+}
+.overflow-menu-item { animation-duration: var(--dur-2); animation-timing-function: var(--ease-out); }
+.modal-content,
+.msg { animation-duration: var(--dur-3); animation-timing-function: var(--ease-out); }
+
+
+/* Empty state settles quickly, without the bounce. */
+.welcome-name { animation-duration: var(--dur-3); animation-timing-function: var(--ease-out); }
+#welcome-screen { animation-duration: var(--dur-3); transition-duration: var(--dur-3); transition-timing-function: var(--ease-out); }
+
+
+/* ── Icons ───────────────────────────────────────────────
+   One stroke weight (2), one size per role (14px in rows, 16px in icon
+   buttons). Color follows the row's text instead of a fixed 50% opacity;
+   coral marks only the primary action and the current place. */
+#sidebar :is(.list-item[id^="tool-"], #sidebar-search-btn, #sidebar-new-chat-btn) > svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+  opacity: 1 !important;
+  color: var(--text-3);
+  stroke: currentColor;   /* base sets an explicit coral stroke */
+  transition: color var(--dur-1) var(--ease-out);
+}
+#sidebar :is(.list-item[id^="tool-"], #sidebar-search-btn):hover > svg { color: var(--fg); }
+#sidebar .list-item[id^="tool-"].active > svg,
+#sidebar #sidebar-new-chat-btn > svg { color: var(--red); }
+#sidebar .section-icon { color: var(--text-3); stroke: currentColor; width: 12px; height: 12px; }
+/* Right-side row controls (+, chevron, sort) share one 20px box, one 12px
+   icon and one quiet color; they were three sizes, weights and brightnesses. */
+.sidebar :is(.list-item-plus-btn, .section-collapse-btn, .section-header-btn) {
+  height: 20px !important;
+  min-width: 20px !important;
+  padding: 0 4px !important;
+  left: 0;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  opacity: 1;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+.sidebar :is(.list-item-plus-btn, .section-collapse-btn, .section-header-btn):hover { color: var(--fg); background: var(--hover); }
+.sidebar :is(.list-item-plus-icon, .section-collapse-chevron, .sort-icon) {
+  width: 12px !important;
+  height: 12px !important;
+  stroke-width: 2;
+}
+.sidebar .section-collapse-btn .section-collapse-chevron { opacity: 1; }
+.sidebar .section-collapse-btn { width: 20px !important; padding: 0 !important; } /* centre chevrons on the + icons' axis */
+/* Chevron turns with the click, not after the accordion settles. */
+.section-collapse-chevron { transition: transform var(--dur-2) var(--ease-out), opacity var(--dur-1); }
+.section.will-collapse .section-collapse-chevron { transform: rotate(-90deg); }
+.chat-input-bar .input-icon-btn svg { stroke-width: 2; }
+
+/* ── Fonts ─────────────────────────────────────────────────
+   Everything uses --font-family (Fira Code by default), so the font
+   setting (incl. OpenDyslexic) reaches every surface; some windows used to
+   hard-code their own face and ignore it. Code always stays monospace. */
+body,
+.modal-content,
+.notes-pane,
+.doc-version-panel,
+.email-reader-body,
+.doc-email-richbody,
+.doclib-card-action-btn { font-family: var(--font-family); }
+/* Machine things (models, numbers, times, keys) and labels: same face,
+   but without ligatures or faked weights. */
+.section-header-flex .section-title,
+.model-picker-btn,
+.msg .role,
+.msg-footer,
+.chat-meta-count,
+.session-cost-display,
+.chat-context-pill,
+.tasks-clock,
+.cal-day-num,
+[id$="-count"],
+[id$="-stats"],
+time,
+kbd,
+.badge,
+.meta {
+  font-family: var(--font-family);
+  font-variant-ligatures: none;   /* no -> arrows in interface text */
+  font-synthesis: none;           /* use a real face, never a faked bold */
+  letter-spacing: normal;
+}
+/* The wordmark keeps the original logo face (Fira Code 600, open tracking)
+   regardless of the font setting: it is the logo. */
+.sidebar-brand-title,
+#welcome-screen .welcome-name {
+  font-family: 'Fira Code', monospace;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+/* Settings group labels are the same kind of element as the sidebar's
+   group labels: same eyebrow style, full opacity (was dimmed to 35%). */
+.settings-sidebar-label {
+  font-family: var(--font-family);
+  font-variant-ligatures: none;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  opacity: 1;
+  color: var(--text-2);   /* sits on a lighter surface than the sidebar */
+}
+/* Settings navigation: quiet items, current item marked like the sidebar
+   (full text + coral icon); coral text failed contrast on light themes. */
+.settings-nav-item { color: var(--text-2); }
+.settings-nav-item:hover { color: var(--fg); }
+.settings-nav-item.active { color: var(--fg); }
+.settings-nav-item.active svg { color: var(--red); }
+/* Quiet aside inside a heading, e.g. "Add Local Models (Endpoint)". */
+.heading-hint { color: var(--text-3); font-weight: 400; font-size: .82em; }
+/* Group labels as small structural eyebrows. */
+.section-header-flex .section-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+@media (max-width: 768px) { .section-header-flex .section-title { font-size: 11.5px !important; } }
+
+/* ── Quality of life ───────────────────────────────────── */
+:root { accent-color: var(--red); }            /* checkboxes, radios, ranges, progress */
+select { color-scheme: inherit; }              /* follow the theme (theme.js), not always dark */
+input, textarea, [contenteditable="true"] { caret-color: var(--red); }
+:where(input, textarea)::placeholder { opacity: 1; }
+:is(button, [role="button"], a, label, summary, .list-item) {
+  -webkit-tap-highlight-color: transparent;    /* no grey flash on tap */
+  touch-action: manipulation;                   /* no double-tap zoom delay */
+}
+button:disabled, button[disabled] { cursor: not-allowed; }
+.modal-content { overscroll-behavior: contain; } /* scrolling a window never scrolls the page */
+.modal-content :is(h1, h2, h3) { text-wrap: balance; }
+.badge, .meta, time, .cal-day-num, .tasks-clock,
+[id$="-count"], [id$="-stats"], [class*="-count"] { font-variant-numeric: tabular-nums; }
+
+/* Menu rows: one height in every menu (was six paddings, 6-8 x 8-14px). */
+.dropdown-item, .export-dropdown-item, .overflow-menu-item,
+.sort-dropdown-item, .note-reminder-menu-item, .ge-fx-menu-item {
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-toggle::before,
+  .welcome-starter,
+  .send-btn,
+  .input-icon-btn { transition: none; }
+  .section.section-just-expanded :is(.list-item, .models-row, .date-section-header),
+  .welcome-name, .msg, .modal-content { animation: none; }
+}

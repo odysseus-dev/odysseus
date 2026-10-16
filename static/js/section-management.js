@@ -25,62 +25,48 @@ export function initSectionCollapse(Storage) {
       section.classList.add('collapsed');
     }
 
+    // Accordion: animate the section's height between its open and collapsed
+    // sizes so the rows below glide instead of snapping. The target state is
+    // tracked separately from the .collapsed class, so a click mid-animation
+    // reverses smoothly from the current height.
     function toggleCollapse() {
-      const wasCollapsed = section.classList.contains('collapsed');
-      const willCollapse = !wasCollapsed;
+      const target = section._collapseTarget ?? section.classList.contains('collapsed');
+      const willCollapse = !target;
+      section._collapseTarget = willCollapse;
       const state = Storage.getJSON('section-collapsed') || {};
       state[section.id] = willCollapse;
       Storage.setJSON('section-collapsed', state);
 
-      // Always clear any in-flight animation classes from a previous toggle
-      // so back-to-back clicks restart cleanly. Bump a generation token so
-      // any callback still pending from a superseded toggle becomes a no-op.
-      section.classList.remove('section-just-expanded', 'section-just-collapsing');
+      section._heightAnim?.cancel();
       const gen = (section._collapseGen = (section._collapseGen || 0) + 1);
+      const from = section.getBoundingClientRect().height;
+      section.classList.toggle('collapsed', willCollapse);
+      const to = section.getBoundingClientRect().height;
+      const settle = () => {
+        if (section._collapseGen !== gen) return; // a newer click owns the section now
+        section.classList.toggle('collapsed', willCollapse);
+        section.classList.remove('will-collapse');
+        section.style.overflow = '';
+        section._collapseTarget = undefined;
+      };
+      if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) { settle(); return; }
 
-      if (willCollapse) {
-        // Domino-out: play the fade/slide-down on the row children BEFORE
-        // actually adding .collapsed (which hides them via display:none),
-        // then lock in collapse once the cascade finishes.
-        //
-        // We wait on the REAL animations (getAnimations) rather than a fixed
-        // timeout. Different sections animate different rows — .list-item in
-        // most, .models-row in #models-section — so any hard-coded duration
-        // either stalls with a dead pause (when the selector matches nothing,
-        // as it did for #models-section) or guesses the wrong length. Force a
-        // reflow first so the keyframes restart from the top.
-        // eslint-disable-next-line no-unused-expressions
-        section.offsetHeight;
-        section.classList.add('section-just-collapsing');
-
-        const lockCollapsed = () => {
-          if (section._collapseGen !== gen) return; // superseded by a newer toggle
-          section.classList.remove('section-just-collapsing');
-          section.classList.add('collapsed');
-        };
-        // Only the domino-out keyframes gate the collapse — ignore unrelated
-        // (and possibly infinite, e.g. spinners) animations in the subtree.
-        const dominoOut = section.getAnimations({ subtree: true })
-          .filter(a => a.animationName === 'section-domino-out');
-        if (dominoOut.length === 0) {
-          lockCollapsed(); // nothing to animate — collapse now, no dead pause
-        } else {
-          Promise.allSettled(dominoOut.map(a => a.finished)).then(lockCollapsed);
-          // Safety net: if an animation never settles (e.g. element removed),
-          // still lock in the collapse so the section can't get stuck open.
-          setTimeout(lockCollapsed, 600);
+      // Keep the rows rendered while the section shrinks; lock in at the end.
+      if (willCollapse) section.classList.remove('collapsed');
+      section.classList.toggle('will-collapse', willCollapse);
+      section.style.overflow = 'hidden';
+      const timing = { duration: 200, easing: 'cubic-bezier(.2, .8, .2, 1)' };
+      const anim = section._heightAnim = section.animate({ height: [`${from}px`, `${to}px`] }, timing);
+      for (const row of section.children) {
+        if (!row.classList.contains('section-header-flex')) {
+          row.animate({ opacity: willCollapse ? [1, 0] : [0, 1] }, timing);
         }
-      } else {
-        // Expand path — remove .collapsed and replay the inbound domino.
-        section.classList.remove('collapsed');
-        // eslint-disable-next-line no-unused-expressions
-        section.offsetHeight;
-        section.classList.add('section-just-expanded');
-        setTimeout(() => {
-          if (section._collapseGen !== gen) return; // superseded by a newer toggle
-          section.classList.remove('section-just-expanded');
-        }, 700);
       }
+      // Commit on finish, with a timer as the safety net: if the finish event
+      // never arrives (cancelled, or a background tab that isn't rendering),
+      // the stale target would make the next click toggle the wrong way.
+      anim.onfinish = settle;
+      setTimeout(settle, timing.duration + 50);
     }
 
     // Click title to collapse/expand

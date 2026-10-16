@@ -121,7 +121,7 @@
 @keyframes admin-spin {
   to { transform: rotate(360deg); }
 }
-.admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
+.admin-rag-item .admin-btn-delete { font-size: 11px; padding: 2px 6px; }
 /* Cookbook's cached-model list: NO inner-scroll cap. Two nested scroll
    surfaces (this + the outer .admin-card) trapped the wheel so an expanded
    serve panel couldn't be reached on tall content. Let the outer
@@ -502,7 +502,7 @@
 }
 .hwfit-toolbar .hwfit-server-select { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
-.hwfit-toolbar .hwfit-engine { min-width: 0; width: 86px; flex-shrink: 0; font-size: 10px; }
+.hwfit-toolbar .hwfit-engine { min-width: 0; width: 86px; flex-shrink: 0; font-size: 11px; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
 .hwfit-advanced-panel .hwfit-engine-menu {
   min-width: 132px;
@@ -544,7 +544,7 @@
 }
 .hwfit-row:has(.hwfit-dl-dot):hover { opacity: 0.9; }
 .hwfit-row:has(.hwfit-dl-dot) .hwfit-dl-dot { opacity: 1; }
-.hwfit-header .hwfit-name { font-size: 9px; }
+.hwfit-header .hwfit-name { font-size: 11px; }
 .hwfit-sortable { cursor: pointer; user-select: none; }
 .hwfit-c-params { width: 42px; }
 .hwfit-c-quant  { width: 52px; }
@@ -1282,13 +1282,13 @@ details.hwfit-serve-advanced label:has(.hwfit-sf[data-field="vllm_kv_cache_dtype
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.5;
 }
 .settings-search-empty {
   padding: 8px;
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
   opacity: 0.55;
 }

@@ -105,7 +105,7 @@
   height: 22px;
   display: inline-flex;
   align-items: center;
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 8px;
 }
 /* Library tab panels — Chats / Archive / Research / Documents share the
@@ -206,7 +206,7 @@
 #doclib-panel-archive .doclib-chip {
   display: inline-flex;
   align-items: center;
-  font-size: 9px;
+  font-size: 11px;
   padding: 0 8px;
   border-radius: 10px;
 }
@@ -568,7 +568,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   }
 #email-lib-modal .email-attachment-chip {
     padding: 1px 6px !important;
-    font-size: 10px !important;
+    font-size: 11px !important;
     max-width: min(240px, calc(100vw - 44px)) !important;
     line-height: 18px !important;
   }
@@ -700,7 +700,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
   color: var(--accent, var(--red));
-  font-size: 9px;
+  font-size: 11px;
   flex-shrink: 0;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -717,7 +717,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
-  font-size: 9px;
+  font-size: 11px;
   text-align: left;
   flex-shrink: 0;
   min-width: 52px;
@@ -730,7 +730,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   min-width: 60px;
   width: 100px;
   max-width: 100px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   flex-shrink: 0;
   text-align: left;
@@ -738,7 +738,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-card-time {
   flex-shrink: 0;
   opacity: 0.5;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   min-width: 50px;
   text-align: left;
@@ -753,7 +753,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   position: relative;
   padding: 8px 12px;
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 9.5px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--code-fg, var(--hl-fg, var(--fg)));
   border-top: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
@@ -809,7 +809,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   justify-content: center;
   gap: 4px;
   box-sizing: border-box;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
   background: none;
@@ -843,7 +843,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-color: #ff4d4d;
 }
 .doclib-card-expanded-actions > .doclib-card-action-btn {
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
 }
 /* Push the Open/Clone group to the right edge of the action bar — Delete
@@ -859,7 +859,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-btn-hint {
   font-weight: normal;
   opacity: 0.35;
-  font-size: 8px;
+  font-size: 11px;
   min-width: 58px;
   padding: 0 8px;
   box-sizing: border-box;
@@ -978,7 +978,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
   color: var(--fg-muted);
@@ -1063,7 +1063,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 8px;
   border-radius: 4px;
   background: none;
@@ -1121,7 +1121,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border-left-color: color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
 }
 .doclib-chat-preview-messages .doclib-chat-msg-role {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1166,7 +1166,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 .doclib-chat-msg-model {
   display: inline-block;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1182,7 +1182,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-chat-bubble-body p:first-child { margin-top: 0; }
 .doclib-chat-bubble-body p:last-child { margin-bottom: 0; }
 .doclib-chat-bubble-body pre {
-  font-size: 10px;
+  font-size: 11px;
   margin: 4px 0;
   padding: 6px 8px;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
@@ -1190,7 +1190,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   overflow-x: auto;
 }
 .doclib-chat-bubble-body code {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 4px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);

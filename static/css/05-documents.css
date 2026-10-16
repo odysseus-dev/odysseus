@@ -360,7 +360,7 @@
   outline: none;
 }
 .doc-tab-lang {
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.5;
 }
 .doc-tab-close {
@@ -417,7 +417,7 @@
   opacity: 0.55;
   cursor: pointer;
   padding: 0 2px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   transition: opacity 0.1s, color 0.1s;
   flex-shrink: 0;
@@ -473,7 +473,7 @@
 .doc-tab-lang svg { display: block; }
 
 .doc-tab-version {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   padding: 1px 6px;
   cursor: pointer;
@@ -669,7 +669,7 @@
   position: relative;
   top: 0;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 20px 2px 8px;
   height: 22px;
   /* Fixed width so the right-anchored chevron doesn't shift when the selected
@@ -694,7 +694,7 @@
   color: var(--fg);
   border: none;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
   height: 22px;
   cursor: pointer;
@@ -739,7 +739,7 @@
 .doc-fontsize-levels i {
   font-style: normal;
   font-weight: 700;
-  font-size: 7px;
+  font-size: 11px;
   /* Bare --accent is undefined in this codebase, was falling back to the
      hardcoded blue #4a9eff — use the real theme accent. */
   color: var(--accent-primary, var(--red));
@@ -863,7 +863,7 @@
   transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
 .md-view-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1;
 }
@@ -1236,7 +1236,7 @@
   line-height: 1;
 }
 .doc-pdf-sign-label {
-  font-size: 6.5px;
+  font-size: 11px;
   letter-spacing: 0.3px;
   margin-top: 0;
   opacity: 1;
@@ -1784,9 +1784,9 @@ mark.doc-find-mark.current {
 .doc-font-m .doc-line-numbers { font-size: 13px !important; }
 .doc-font-l .doc-editor-textarea,
 .doc-font-l .doc-editor-highlight,
-.doc-font-l .doc-line-numbers { font-size: 15px !important; }
-.doc-email-richbody.doc-font-m { font-size: 15px !important; }
-.doc-email-richbody.doc-font-l { font-size: 17px !important; }
+.doc-font-l .doc-line-numbers { font-size: 16px !important; }
+.doc-email-richbody.doc-font-m { font-size: 16px !important; }
+.doc-email-richbody.doc-font-l { font-size: 18px !important; }
 /* Markdown base text should match chat text color, not code color */
 .doc-editor-highlight .language-markdown {
   color: var(--fg) !important;
@@ -2238,14 +2238,14 @@ mark.doc-find-mark.current {
 }
 .diff-toolbar-status {
   opacity: 0.5;
-  font-size: 10px;
+  font-size: 11px;
   margin-right: auto;
 }
 .diff-toolbar-btn {
   background: none;
   border: 1px solid var(--border);
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 10px;
   border-radius: 4px;
   cursor: pointer;
@@ -2458,7 +2458,7 @@ mark.doc-find-mark.current {
   overflow-y: auto;
   padding: 8px 12px;
   font-family: 'Fira Code', monospace;
-  font-size: 0.85rem;
+  font-size: 14px;
   line-height: 1.5;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -2470,7 +2470,7 @@ mark.doc-find-mark.current {
   display: flex;
   gap: 10px;
   padding: 4px 0 8px;
-  font-size: 0.8rem;
+  font-size: 13px;
   font-weight: 600;
 }
 .diff-stat-del { color: var(--warn); }
@@ -2497,7 +2497,7 @@ mark.doc-find-mark.current {
 .doc-diff-sep {
   text-align: center;
   padding: 2px 0;
-  font-size: 0.7rem;
+  font-size: 12px;
   opacity: 0.3;
   color: var(--fg);
 }
@@ -2595,7 +2595,7 @@ mark.doc-find-mark.current {
   color: var(--fg);
 }
 .doc-version-source {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg);
   opacity: 0.5;
   background: color-mix(in srgb, var(--fg) 6%, transparent);
@@ -2603,7 +2603,7 @@ mark.doc-find-mark.current {
   border-radius: 4px;
 }
 .doc-version-time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg);
   opacity: 0.4;
   margin-left: auto;
@@ -2619,7 +2619,7 @@ mark.doc-find-mark.current {
   background: none;
   border: 1px solid var(--border);
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
   cursor: pointer;
@@ -2631,7 +2631,7 @@ mark.doc-find-mark.current {
 }
 /* "latest" badge */
 .doc-version-latest {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
@@ -2640,7 +2640,7 @@ mark.doc-find-mark.current {
 }
 /* Diff preview lines — small and muted so they don't dominate the item. */
 .doc-version-diff {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   opacity: 0.8;
   margin-top: 2px;
@@ -2850,7 +2850,7 @@ body:has(.compare-active) .hamburger-btn { display: none !important; }
   background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
   color: var(--accent, var(--red));
 }
-.theme-opacity-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.theme-opacity-label { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .theme-opacity-wrap > svg { flex-shrink: 0; opacity: 0.7; }
 .theme-opacity-wrap input[type="range"] {
   width: 92px;

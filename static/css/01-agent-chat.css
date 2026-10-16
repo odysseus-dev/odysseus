@@ -403,7 +403,7 @@ body.bg-pattern-ascii-fireflies {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--fg);
       opacity: 0.7;
@@ -414,7 +414,7 @@ body.bg-pattern-ascii-fireflies {
     #user-bar-avatar { position: relative; left: -4px; }
 
     .user-bar-name {
-      font-size: 9.75px;
+      font-size: 11px;
       font-weight: 500;
       color: var(--fg);
       opacity: 0.8;
@@ -1129,7 +1129,7 @@ body.bg-pattern-ascii-fireflies {
       flex: 1; cursor: pointer; user-select: none;
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
-      font-size: 10px; font-weight: 400; font-family: inherit;
+      font-size: 11px; font-weight: 400; font-family: inherit;
       /* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
          Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
          in a fixed-height (29px) header, so this adds headroom without reflow. */
@@ -1480,7 +1480,7 @@ body.bg-pattern-ascii-fireflies {
     .item-drag-handle {
       cursor: grab;
       opacity: 0.4;
-      font-size: 10px;
+      font-size: 11px;
       padding: 0 4px;
       user-select: none;
       letter-spacing: -2px;
@@ -1659,7 +1659,7 @@ body.bg-pattern-ascii-fireflies {
       margin: 0;
       height: 24px;
       padding: 0 8px;
-      font-size: 9px;
+      font-size: 11px;
     }
     /* Inline "+" action on a tool/section row (Library → new document,
        Email → compose). Sizing forced + min-* zeroed so the mobile
@@ -1709,7 +1709,7 @@ body.bg-pattern-ascii-fireflies {
       opacity: 0;
       pointer-events: none;
       white-space: nowrap;
-      font-size: 9.5px;
+      font-size: 11px;
       line-height: 1;
       letter-spacing: 0.02em;
       transition: opacity 0.18s ease, transform 0.22s ease;
@@ -1733,7 +1733,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .list-item span {
       color: var(--fg);
-      font-size: 9.75px;
+      font-size: 11px;
     }
     .grow {
       flex: 1;
@@ -1941,14 +1941,14 @@ body.bg-pattern-ascii-fireflies {
       color: var(--brand-color, var(--red));
     }
     #welcome-screen .welcome-sub {
-      font-size:0.85rem;
+      font-size:14px;
       color:color-mix(in srgb, var(--fg) 60%, transparent);
       opacity:0.6;
       line-height:1.5;
       max-width:300px;
     }
     #welcome-screen .welcome-version {
-      font-size:0.7rem;
+      font-size:12px;
       opacity:0.25;
       margin-top:12px;
       pointer-events:none;
@@ -2024,7 +2024,7 @@ body.bg-pattern-ascii-fireflies {
         right: 36px;
       }
       #welcome-screen .welcome-name { font-size:1.8rem; }
-      #welcome-screen .welcome-sub { font-size:0.8rem; }
+      #welcome-screen .welcome-sub { font-size:13px; }
       .chat-container.welcome-active .chat-input-bar {
         margin-bottom:0;
         margin-left:0;
@@ -2251,7 +2251,7 @@ body.bg-pattern-ascii-fireflies {
       border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
       color: var(--accent, var(--red));
       background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
-      font-size: 8px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.03em;
@@ -2338,7 +2338,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .rag-similarity {
       color: color-mix(in srgb, var(--fg) 50%, transparent);
-      font-size: 10px;
+      font-size: 11px;
       margin-left: 6px;
     }
     .rag-snippet {
@@ -2355,13 +2355,13 @@ body.bg-pattern-ascii-fireflies {
       border-radius: 4px;
       color: color-mix(in srgb, var(--fg) 50%, transparent);
       cursor: pointer;
-      font-size: 10px;
+      font-size: 11px;
       padding: 1px 5px;
     }
     .rag-file-delete:hover { color: var(--fg); border-color: var(--fg); }
     .rag-file-size {
       color: color-mix(in srgb, var(--fg) 50%, transparent);
-      font-size: 10px;
+      font-size: 11px;
       margin-left: 4px;
     }
     .rag-upload-zone {
@@ -2379,7 +2379,7 @@ body.bg-pattern-ascii-fireflies {
       color: var(--red);
     }
     .msg .timestamp {
-      font-size: 10px;
+      font-size: 11px;
       color: color-mix(in srgb, var(--fg) 45%, transparent);
       margin-top: 4px;
       text-align: right;
@@ -2466,7 +2466,7 @@ body.bg-pattern-ascii-fireflies {
 	      border-radius: 999px;
 	      background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--input-bg, var(--panel)));
 		      color: var(--accent, var(--red));
-		      font-size: 10px;
+		      font-size: 11px;
 		      font-weight: 700;
 		      line-height: 1;
 		      transition: opacity 0.22s ease, transform 0.22s ease;
@@ -3227,7 +3227,7 @@ body.bg-pattern-ascii-fireflies {
       background: transparent;
       color: color-mix(in srgb, var(--fg) 35%, transparent);
       font-family: inherit;
-      font-size: 0.7rem;
+      font-size: 12px;
       font-weight: 400;
       line-height: 1;
       cursor: pointer;
@@ -3997,7 +3997,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .msg:hover .copy-btn { opacity:1; }
     .role-timestamp {
-      font-size:0.7rem; color:var(--color-muted-alt); font-weight:normal; margin-left:6px;
+      font-size:12px; color:var(--color-muted-alt); font-weight:normal; margin-left:6px;
     }
     .msg-footer {
       display:flex; align-items:center; gap:6px;
@@ -4056,7 +4056,7 @@ body.bg-pattern-ascii-fireflies {
       color: var(--ctx-color);
     }
     .ctx-ring-pct {
-      font-size: 0.7rem;
+      font-size: 12px;
       font-weight: 600;
       line-height: 1;
     }
@@ -4071,7 +4071,7 @@ body.bg-pattern-ascii-fireflies {
       box-shadow: 0 4px 20px rgba(0,0,0,0.4);
       min-width: 220px;
       max-width: 280px;
-      font-size: 0.85rem;
+      font-size: 14px;
       color: var(--fg);
     }
     .ctx-bar-wrap {
@@ -4095,7 +4095,7 @@ body.bg-pattern-ascii-fireflies {
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--fg);
-      font-size: 0.8rem;
+      font-size: 13px;
       cursor: pointer;
       transition: border-color 0.15s, color 0.15s;
     }
@@ -4120,7 +4120,7 @@ body.bg-pattern-ascii-fireflies {
       background: var(--panel);
       border: 1px solid var(--border);
       color: var(--fg);
-      font-size: 0.7rem;
+      font-size: 12px;
       padding: 2px 8px;
       border-radius: 10px;
       cursor: pointer;
@@ -4191,7 +4191,7 @@ body.bg-pattern-ascii-fireflies {
     .footer-delete-btn:hover { color: var(--red); }
     .regen-btn {
       background:none; border:none;
-      color:var(--color-muted-alt); font-size:1.1rem; cursor:pointer;
+      color:var(--color-muted-alt); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -4199,7 +4199,7 @@ body.bg-pattern-ascii-fireflies {
     .regen-btn:hover { color:var(--accent); }
     .fork-btn {
       background:none; border:none;
-      color:var(--color-muted-alt); font-size:1.1rem; cursor:pointer;
+      color:var(--color-muted-alt); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -4207,7 +4207,7 @@ body.bg-pattern-ascii-fireflies {
     .fork-btn:hover { color:var(--accent); }
     .msg-action-btn {
       background:none; border:none;
-      color:var(--muted, var(--color-muted-alt)); font-size:1.1rem; cursor:pointer;
+      color:var(--muted, var(--color-muted-alt)); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -4223,7 +4223,7 @@ body.bg-pattern-ascii-fireflies {
     .msg-delete-btn { position:relative; top:1px; }
     .msg-delete-btn:hover { color:var(--red); }
     .msg-more-btn {
-      font-size:0.7rem; letter-spacing:0.5px;
+      font-size:12px; letter-spacing:0.5px;
     }
     .msg-overflow-menu {
       position:fixed;
@@ -4244,7 +4244,7 @@ body.bg-pattern-ascii-fireflies {
       border:none;
       border-bottom:1px solid color-mix(in srgb, var(--border) 40%, transparent);
       color:var(--fg);
-      font-size:0.8rem;
+      font-size:13px;
       padding:5px 8px;
       border-radius:4px;
       cursor:pointer;
@@ -4476,7 +4476,7 @@ body.bg-pattern-ascii-fireflies {
       border:1px solid var(--border);
       border-radius:8px;
       padding:9px 12px 10px;
-      font-size:0.78rem;
+      font-size:13px;
       color:var(--fg);
       box-shadow:0 8px 24px rgba(0,0,0,0.4);
       min-width:280px;
@@ -4538,7 +4538,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .edit-btn {
       background:none; border:none;
-      color:var(--color-muted-alt); font-size:1.1rem; cursor:pointer;
+      color:var(--color-muted-alt); font-size:18px; cursor:pointer;
       padding:2px 6px; border-radius:4px;
       transition: color .15s;
       line-height:1;
@@ -4547,7 +4547,7 @@ body.bg-pattern-ascii-fireflies {
     .edit-textarea {
       width:100%; background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
-      padding:8px; font-family:inherit; font-size:0.95rem;
+      padding:8px; font-family:inherit; font-size:16px;
       resize:vertical; outline:none;
       min-height:80px;
     }
@@ -4555,7 +4555,7 @@ body.bg-pattern-ascii-fireflies {
     .edit-save-btn, .edit-cancel-btn {
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
-      padding:4px 12px; cursor:pointer; font-size:0.8rem;
+      padding:4px 12px; cursor:pointer; font-size:13px;
       display:inline-flex; align-items:center; justify-content:center; gap:5px;
     }
     .edit-save-btn:hover { background:var(--panel); }
@@ -4688,7 +4688,7 @@ body.bg-pattern-ascii-fireflies {
     pre.pre-compact .run-code {
       height: 20px;
       padding: 0;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 500;
       line-height: 20px;
       top: 3px;
@@ -5026,7 +5026,7 @@ body.bg-pattern-ascii-fireflies {
       flex:1;
       display:flex;
       align-items:center;
-      font-size: 9.75px;
+      font-size: 11px;
     }
     .model-fav-btn {
       width: 8px; height: 8px;
@@ -5064,7 +5064,7 @@ body.bg-pattern-ascii-fireflies {
       background: var(--bg);
       color: var(--fg);
       font-family: inherit;
-      font-size: 0.8rem;
+      font-size: 13px;
       outline: none;
       box-sizing: border-box;
       transition: border-color 0.15s;
@@ -5076,7 +5076,7 @@ body.bg-pattern-ascii-fireflies {
       color: color-mix(in srgb, var(--fg) 30%, transparent);
     }
     .models-row button {
-      font-size: 9px;
+      font-size: 11px;
       height: 24px;
       padding: 0 8px;
     }
@@ -5164,7 +5164,7 @@ body.bg-pattern-ascii-fireflies {
         min-height: 44px;
       }
       .sidebar-brand-title {
-        font-size: 1.2rem;
+        font-size: 18px;
         left: 0 !important;
       }
       /* Sidebar inner — bigger spacing */
@@ -5254,7 +5254,7 @@ body.bg-pattern-ascii-fireflies {
       /* Incognito — smaller on mobile */
       .incognito-btn {
         padding: 4px 10px;
-        font-size: 10px;
+        font-size: 11px;
       }
       /* Keep the active Nobody indicator inside the chat header on mobile.
          Pinning it next to the hamburger made it collide with the title/splash
@@ -5779,7 +5779,7 @@ body.bg-pattern-ascii-fireflies {
       .email-reader-tab-modal .reader-btn-label,
       .email-window-modal .reader-btn-label {
         display: inline-block !important;
-        font-size: 8.5px !important;
+        font-size: 11px !important;
         font-weight: 500 !important;
         line-height: 1 !important;
         letter-spacing: 0.02em !important;
@@ -5942,7 +5942,7 @@ body.bg-pattern-ascii-fireflies {
          mobile too — those have no mobile enlargement, so neither should
          these (otherwise the doc footer reads in a larger/different font). */
       .doclib-card-action-btn {
-        font-size: 10px;
+        font-size: 11px;
         padding: 3px 8px;
       }
       /* On phones, keep Delete explicit while the other secondary actions
@@ -6416,7 +6416,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .styled-confirm-box .modal-header { margin-bottom:4px; }
     .styled-confirm-box .modal-body p {
-      margin:8px 0 12px; color:var(--fg); font-size:0.92rem; line-height:1.45;
+      margin:8px 0 12px; color:var(--fg); font-size:14px; line-height:1.45;
       white-space:pre-line;
     }
     .styled-confirm-box .modal-footer {
@@ -6427,18 +6427,18 @@ body.bg-pattern-ascii-fireflies {
       .styled-confirm-box {
         width: 85vw;
         padding: 12px 16px;
-        font-size: 0.88rem;
+        font-size: 14px;
         border-radius: 12px;
       }
-      .styled-confirm-box .modal-header h4 { font-size: 0.9rem; }
-      .styled-confirm-box .modal-body p { font-size: 0.85rem; margin: 6px 0 10px; }
+      .styled-confirm-box .modal-header h4 { font-size: 14px; }
+      .styled-confirm-box .modal-body p { font-size: 14px; margin: 6px 0 10px; }
       .styled-confirm-box .modal-footer { gap: 10px; }
       .styled-confirm-box .confirm-btn {
         flex: 1;
         /* More bottom than top padding nudges the label up ~2px so it isn't
            sitting low in the taller mobile buttons. */
         padding: 8px 12px 12px;
-        font-size: 0.85rem;
+        font-size: 14px;
         border-radius: 8px;
         text-align: center;
       }
@@ -6446,7 +6446,7 @@ body.bg-pattern-ascii-fireflies {
     .confirm-btn {
       /* Asymmetric padding nudges the label UP ~2px from where it was (more
          bottom than top padding), so the confirm-dialog text isn't sitting low. */
-      padding:3px 16px 5px; border-radius:4px; font-size:0.85rem;
+      padding:3px 16px 5px; border-radius:4px; font-size:14px;
       cursor:pointer; border:1px solid var(--border);
       font-family:inherit;
     }
@@ -6528,13 +6528,13 @@ body.bg-pattern-ascii-fireflies {
       white-space:nowrap;
     }
     .cookbook-gguf-delete-main {
-      font-size:0.86rem;
+      font-size:14px;
       color:var(--fg);
     }
     .cookbook-gguf-delete-path {
       grid-column:2;
       margin-top:-2px;
-      font-size:0.74rem;
+      font-size:12px;
       opacity:0.58;
     }
         /* Styled prompt — text-input dialog (used in place of window.prompt) */
@@ -6565,7 +6565,7 @@ body.bg-pattern-ascii-fireflies {
       background:var(--bg);
       color:var(--fg);
       font:inherit;
-      font-size:0.95rem;
+      font-size:16px;
       outline:none;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
@@ -6575,7 +6575,7 @@ body.bg-pattern-ascii-fireflies {
     }
     @media (max-width:768px) {
       .styled-prompt-box { width: 85vw; }
-      .styled-prompt-input { font-size: 0.9rem; padding: 10px 12px; }
+      .styled-prompt-input { font-size: 14px; padding: 10px 12px; }
     }
     /* Scroll navigation buttons */
     .scroll-nav-btn {
@@ -6808,7 +6808,7 @@ body.bg-pattern-ascii-fireflies {
       background: var(--bg);
       color: var(--fg);
       font-family: 'Fira Code', monospace;
-      font-size: 10.2px; /* 15% smaller than 12px */
+      font-size: 11px; /* 15% smaller than 12px */
       cursor: pointer;
       transition: all 0.2s ease;
     }
@@ -7026,7 +7026,7 @@ body.bg-pattern-ascii-fireflies {
       min-height: 0;
     }
     .vis-hint {
-      font-size: 10px;
+      font-size: 11px;
       color: color-mix(in srgb, var(--fg) 30%, transparent);
       font-weight: 400;
       margin-left: 2px;
@@ -7103,7 +7103,7 @@ body.bg-pattern-ascii-fireflies {
       border-radius: 10px;
       padding: 12px 14px 10px;
       width: 240px;
-      font-size: 0.78rem;
+      font-size: 13px;
       line-height: 1.5;
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32);
       opacity: 0;
@@ -7132,7 +7132,7 @@ body.bg-pattern-ascii-fireflies {
       padding: 3px 12px;
       cursor: pointer;
       font-family: inherit;
-      font-size: 0.72rem;
+      font-size: 12px;
       opacity: 0.85;
       transition: opacity 0.15s, background 0.15s;
     }
@@ -7172,7 +7172,7 @@ body.bg-pattern-ascii-fireflies {
       left: 8px;
       background: var(--red);
       color: var(--bg);
-      font-size: 0.7rem;
+      font-size: 12px;
       padding: 2px 8px;
       border-radius: 4px;
       white-space: nowrap;
@@ -7193,7 +7193,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .generated-image:hover { transform: scale(1.02); }
     .generated-image-caption {
-      font-size: 0.8rem;
+      font-size: 13px;
       opacity: 0.5;
       margin-top: 6px;
       font-style: italic;
@@ -7202,19 +7202,19 @@ body.bg-pattern-ascii-fireflies {
 
     /* Setup wizard */
     .setup-wizard { padding: 16px; max-width: 500px; }
-    .setup-wizard .setup-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
-    .setup-wizard .setup-label { font-size: 0.85rem; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
+    .setup-wizard .setup-title { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
+    .setup-wizard .setup-label { font-size: 14px; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
     .setup-wizard .setup-presets { display: flex; flex-wrap: wrap; gap: 8px; }
     .setup-wizard .setup-preset-btn {
       padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
+      font-size: 14px; transition: all 0.2s;
     }
     .setup-wizard .setup-preset-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
     .setup-wizard .setup-input {
       display: block; width: 100%; padding: 8px 12px; margin-bottom: 8px;
       background: var(--panel); border: 1px solid var(--border);
-      border-radius: 6px; color: var(--fg); font-size: 0.85rem; box-sizing: border-box;
+      border-radius: 6px; color: var(--fg); font-size: 14px; box-sizing: border-box;
     }
     .setup-wizard .setup-input:focus { border-color: var(--red); outline: none; }
     .setup-wizard .setup-connect-btn {
@@ -7222,12 +7222,12 @@ body.bg-pattern-ascii-fireflies {
       border: none; border-radius: 6px; cursor: pointer; font-weight: 600; margin-top: 4px;
     }
     .setup-wizard .setup-connect-btn:hover { opacity: 0.9; }
-    .setup-wizard .setup-status { font-size: 0.8rem; margin-top: 8px; color: var(--fg); opacity: 0.7; }
+    .setup-wizard .setup-status { font-size: 13px; margin-top: 8px; color: var(--fg); opacity: 0.7; }
     .setup-wizard .setup-model-list { display: flex; flex-wrap: wrap; gap: 8px; }
     .setup-wizard .setup-model-btn {
       padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
+      font-size: 14px; transition: all 0.2s;
     }
     .setup-wizard .setup-model-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
     .setup-wizard .setup-step.hidden { display: none; }
@@ -7286,7 +7286,7 @@ body.bg-pattern-ascii-fireflies {
 
     .dropdown-item .menu-text h4 {
       margin: 0;
-      font-size: 12.5px;
+      font-size: 13px;
       font-weight: 500;
       color: var(--fg);
       line-height: 1.3;
@@ -7294,7 +7294,7 @@ body.bg-pattern-ascii-fireflies {
 
     .dropdown-item .menu-text p {
       margin: 0;
-      font-size: 10.5px;
+      font-size: 11px;
       color: var(--color-subheader);
       line-height: 1.3;
     }
@@ -7336,7 +7336,7 @@ body.bg-pattern-ascii-fireflies {
     }
     .dropdown-item-compact .dropdown-shortcut {
       margin-left: auto;
-      font-size: 9.5px;
+      font-size: 11px;
       opacity: 0.35;
       font-weight: 400;
     }
@@ -7566,7 +7566,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: none;
     }
     .search-group-header {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--color-subheader);
       text-transform: uppercase;
@@ -7587,7 +7587,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       background: color-mix(in srgb, var(--red) 10%, transparent);
     }
     .search-result-role {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       color: var(--color-subheader);
       flex-shrink: 0;
@@ -7602,7 +7602,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       white-space: nowrap;
     }
     .search-result-time {
-      font-size: 10px;
+      font-size: 11px;
       color: color-mix(in srgb, var(--fg) 35%, transparent);
       flex-shrink: 0;
       white-space: nowrap;
@@ -7641,7 +7641,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .theme-swatch {
       border: 2px solid var(--border); border-radius: 8px; cursor: pointer;
-      padding: 5px; text-align: center; font-size: 0.65rem; color: var(--fg);
+      padding: 5px; text-align: center; font-size: 11px; color: var(--fg);
       transition: border-color 0.15s, transform 0.15s;
     }
     .theme-swatch:hover { transform: scale(1.06); }
@@ -7682,7 +7682,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .color-row input.cp-swatch-input:focus { outline: 1px solid var(--red); outline-offset: 1px; }
     .color-reset-btn {
       width: 24px; height: 24px; border: none; background: none; cursor: pointer;
-      color: var(--fg); opacity: 0; font-size: 1.15rem; padding: 0; line-height: 1;
+      color: var(--fg); opacity: 0; font-size: 18px; padding: 0; line-height: 1;
       transition: opacity 0.15s, color 0.15s; flex-shrink: 0; pointer-events: none;
       position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     }
@@ -7772,7 +7772,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-import-area {
       width: 100%; margin-top: 6px; padding: 6px 8px;
       border: 1px solid var(--border); border-radius: 6px;
-      background: var(--bg); color: var(--fg); font-size: 0.7rem;
+      background: var(--bg); color: var(--fg); font-size: 12px;
       font-family: inherit; resize: vertical; min-height: 48px;
     }
     .theme-import-area:focus { outline: none; border-color: var(--red); }

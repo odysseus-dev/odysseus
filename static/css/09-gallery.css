@@ -40,7 +40,7 @@
   align-items: center;
   padding: 4px 10px;
   gap: 6px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.35;
   text-transform: uppercase;
@@ -188,7 +188,7 @@
   font-size: 1rem;
 }
 .gallery-stats {
-  font-size: 10px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
   margin-bottom: 4px;
 }
@@ -224,7 +224,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent, var(--red));
   pointer-events: none;
@@ -401,9 +401,9 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-ai-chip {
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
-  border-radius: 10px; padding: 3px 8px; font-size: 10px;
+  border-radius: 10px; padding: 3px 8px; font-size: 11px;
   color: var(--fg); opacity: 0.8;
-  font: inherit; font-size: 10px;
+  font: inherit; font-size: 11px;
   cursor: pointer;
   transition: background 0.12s, opacity 0.12s, border-color 0.12s;
 }
@@ -426,7 +426,7 @@ body.gallery-selecting .gallery-dl-btn,
   border-color: color-mix(in srgb, var(--fg) 35%, transparent);
 }
 .gallery-aitag-mark {
-  font-size: 8px;
+  font-size: 11px;
   opacity: 0.55;
   color: var(--accent, var(--red));
 }
@@ -534,13 +534,13 @@ body.gallery-selecting .gallery-dl-btn,
   white-space: nowrap;
 }
 .attach-vision-model {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent, var(--red));
   opacity: 0.85;
   margin-top: 3px;
 }
 .attach-image-name {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   margin-top: 1px;
 }
@@ -599,7 +599,7 @@ body.gallery-selecting .gallery-dl-btn,
   resize: vertical; outline: none;
 }
 .vision-editor-text:focus { border-color: var(--accent-primary, var(--red)); }
-.vision-editor-hint { font-size: 10.5px; opacity: 0.55; line-height: 1.4; }
+.vision-editor-hint { font-size: 11px; opacity: 0.55; line-height: 1.4; }
 .vision-editor-actions {
   display: flex; gap: 8px; justify-content: flex-end;
   margin-top: 4px;
@@ -781,7 +781,7 @@ body.gallery-selecting .gallery-dl-btn,
   color: #fff;
 }
 .gallery-card-prompt {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -792,7 +792,7 @@ body.gallery-selecting .gallery-dl-btn,
   align-items: center;
   gap: 6px;
   margin-top: 2px;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.8;
 }
 .gallery-card-model {
@@ -1165,7 +1165,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .gallery-detail-section label {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.6;
   margin-bottom: 3px;
@@ -1233,7 +1233,7 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg);
   cursor: pointer;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 3px 10px;
   border-radius: 4px;
   transition: border-color 0.15s, color 0.15s;
@@ -1279,7 +1279,7 @@ body.gallery-selecting .gallery-dl-btn,
   }
   .gallery-select-btn {
     padding: 6px 8px 8px;
-    font-size: 9px;
+    font-size: 11px;
     flex-shrink: 0;
     /* Push Select to the far right of the single-row toolbar, regardless
        of its DOM position (sits between search and the dropdowns). */
