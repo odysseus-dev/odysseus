@@ -31,21 +31,43 @@ for spec in $SPECS; do
   name="${spec%%==*}"
   ver="${spec##*==}"
   # pip download builds metadata (and trips the same bug), so fetch the raw
-  # sdist URL from the PyPI JSON API instead.
-  url="$(python - "$name" "$ver" <<'PY'
-import json, sys, urllib.request
-name, ver = sys.argv[1], sys.argv[2]
-data = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/{name}/{ver}/json"))
-for f in data["urls"]:
-    if f["packagetype"] == "sdist":
-        print(f["url"]); break
+  # sdist URL from the PyPI JSON API instead.  Use curl with retries to
+  # survive transient TLS / network failures that urllib cannot recover from.
+  metadata="${name}-${ver}.json"
+  curl --fail --silent --show-error --location \
+    --retry 8 \
+    --retry-delay 3 \
+    --retry-max-time 120 \
+    --retry-all-errors \
+    "https://pypi.org/pypi/${name}/${ver}/json" \
+    -o "$metadata"
+
+  url="$(python - "$metadata" <<'PY'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+
+for item in data["urls"]:
+    if item["packagetype"] == "sdist":
+        print(item["url"])
+        break
 else:
-    sys.exit(f"no sdist found for {name}=={ver}")
+    raise SystemExit("no sdist found")
 PY
-)"
+  )"
+  rm -f "$metadata"
+
   echo ">> fetching ${name} ${ver}: ${url}"
-  curl -fsSL "$url" -o "${name}.tar.gz"
+  curl --fail --silent --show-error --location \
+    --retry 8 \
+    --retry-delay 3 \
+    --retry-max-time 120 \
+    --retry-all-errors \
+    "$url" \
+    -o "${name}.tar.gz"
   tar xzf "${name}.tar.gz"
+  rm -f "${name}.tar.gz"
 done
 
 echo ">> patching get_version()"
