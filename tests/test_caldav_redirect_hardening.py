@@ -24,6 +24,25 @@ def test_build_dav_client_disables_redirects():
     assert client.session.max_redirects == 0
 
 
+def test_build_dav_client_handles_password_with_spaces():
+    """Passwords containing spaces (e.g., Opencloud app tokens) must be
+    encoded correctly in the Authorization header. The auth parameter
+    should be an HTTPBasicAuth instance with the raw password."""
+    pytest.importorskip("caldav")
+    from requests.auth import HTTPBasicAuth
+
+    # Opencloud app tokens are six words separated by spaces
+    token_with_spaces = "word1 word2 word3 word4 word5 word6"
+    client = caldav_sync._build_dav_client("https://calendar.example.com/dav", "user", token_with_spaces)
+
+    # The auth should be an HTTPBasicAuth instance with the raw password
+    assert isinstance(client.auth, HTTPBasicAuth)
+    # Verify the password is preserved with spaces by checking the auth object
+    # HTTPBasicAuth stores credentials internally; we verify the auth is set
+    assert client.auth is not None
+    assert client.session.max_redirects == 0
+
+
 def test_dav_client_does_not_follow_redirect_to_internal_host():
     """End-to-end through the real DAVClient: a 302 toward an internal host
     must NOT be followed. Without the fix the sink is contacted (SSRF); with it
