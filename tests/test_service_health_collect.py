@@ -137,3 +137,170 @@ def test_collect_aggregate_deadline_yields_controlled_result(monkeypatch):
     net = [s for s in out["services"] if s["name"] != "chromadb"]
     assert all(s["status"] == sh.DOWN and s["meta"].get("error") == "timeout"
                for s in net)
+
+
+# ── Discovery failure is not "disabled" (#6154) ──
+#
+# `_gather_inputs()` fails soft to an empty inventory, and every probe reads an
+# empty inventory as `disabled`. Without a record of *why* it is empty, a broken
+# integrations file / email store / endpoint DB is reported as an intentionally
+# unconfigured subsystem — and, with the rest disabled, `overall: "ok"`.
+
+def _boom(*_a, **_k):
+    raise RuntimeError("secret-bearing detail: postgres://u:p@db/x")
+
+
+def test_gather_inputs_records_each_failed_source(monkeypatch):
+    import core.database
+    import routes.email_helpers
+    import src.integrations
+    import src.settings
+
+    monkeypatch.setattr(src.settings, "load_settings", lambda: {"a": 1})
+    monkeypatch.setattr(src.integrations, "load_integrations", _boom)
+    monkeypatch.setattr(routes.email_helpers, "_list_email_accounts", _boom)
+    monkeypatch.setattr(core.database, "SessionLocal", _boom)
+
+    out = sh._gather_inputs()
+    assert out["settings"] == {"a": 1}
+    assert set(out["failed"]) == {"integrations", "accounts", "endpoints"}
+    # Controlled categories only — never the exception text.
+    assert set(out["failed"].values()) <= set(sh._ERROR_DETAIL)
+    assert "postgres" not in repr(out)
+
+
+def test_gather_inputs_reports_no_failures_when_sources_load(monkeypatch):
+    import core.database
+    import routes.email_helpers
+    import src.integrations
+    import src.settings
+
+    class _DB:
+        def query(self, *_a):
+            return self
+
+        def filter(self, *_a):
+            return self
+
+        def all(self):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(src.settings, "load_settings", lambda: {})
+    monkeypatch.setattr(src.integrations, "load_integrations", lambda: [])
+    monkeypatch.setattr(routes.email_helpers, "_list_email_accounts", lambda: [])
+    monkeypatch.setattr(core.database, "SessionLocal", lambda: _DB())
+
+    assert sh._gather_inputs()["failed"] == {}
+
+
+@pytest.mark.parametrize("source,service", [
+    ("settings", "searxng"),
+    ("integrations", "ntfy"),
+    ("accounts", "email"),
+    ("endpoints", "providers"),
+])
+def test_failed_source_is_not_reported_as_disabled(monkeypatch, source, service):
+    import asyncio
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {"search_provider": "disabled"},
+        "integrations": [], "accounts": [], "endpoints": [],
+        "failed": {source: "network_error"},
+    })
+    out = asyncio.run(sh.collect_service_health(None, None))
+    entry = next(s for s in out["services"] if s["name"] == service)
+    assert entry["status"] != sh.DISABLED
+    assert entry["meta"]["error"] == sh.CONFIG_SOURCE_ERROR
+    assert entry["meta"]["source"] == source
+    assert entry["meta"]["source_error"] == "network_error"
+    # A failed source must reach the aggregate verdict.
+    assert out["overall"] != sh.OK
+    assert set(out) == {"overall", "services", "timestamp"}
+
+
+def test_all_sources_failing_cannot_report_overall_ok(monkeypatch):
+    # The exact shape from the report: settings loads and says search is off,
+    # the other three sources raise. Before the fix this was overall "ok" with
+    # five "disabled" entries.
+    import asyncio
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {"search_provider": "disabled"},
+        "integrations": [], "accounts": [], "endpoints": [],
+        "failed": {"integrations": "error", "accounts": "error",
+                   "endpoints": "error"},
+    })
+    out = asyncio.run(sh.collect_service_health(None, None))
+    by_name = {s["name"]: s for s in out["services"]}
+    assert out["overall"] == sh.DEGRADED
+    # Loaded-and-genuinely-empty still reads as disabled.
+    assert by_name["searxng"]["status"] == sh.DISABLED
+    for name in ("ntfy", "email", "providers"):
+        assert by_name[name]["status"] == sh.DEGRADED
+
+
+def test_empty_inventory_without_failure_stays_disabled(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {"search_provider": "disabled"},
+        "integrations": [], "accounts": [], "endpoints": [], "failed": {},
+    })
+    out = asyncio.run(sh.collect_service_health(_Store(True), _Store(True)))
+    assert out["overall"] == sh.OK
+    assert all(s["status"] == sh.DISABLED
+               for s in out["services"] if s["name"] != "chromadb")
+
+
+def test_one_failed_source_still_probes_the_others(monkeypatch):
+    # A broken endpoint DB must not stop ntfy/email from being probed.
+    import asyncio
+    probed = []
+
+    def _probe(name):
+        def _fn(*_a, **_k):
+            probed.append(name)
+            return sh._svc(name, sh.OK, "probed")
+        return _fn
+
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {}, "integrations": [], "accounts": [], "endpoints": [],
+        "failed": {"endpoints": "timeout"},
+    })
+    monkeypatch.setattr(sh, "searxng_health", _probe("searxng"))
+    monkeypatch.setattr(sh, "ntfy_health", _probe("ntfy"))
+    monkeypatch.setattr(sh, "email_health", _probe("email"))
+    monkeypatch.setattr(sh, "providers_health", _probe("providers"))
+
+    out = asyncio.run(sh.collect_service_health(None, None))
+    assert sorted(probed) == ["email", "ntfy", "searxng"]
+    assert "providers" not in probed
+    by_name = {s["name"]: s for s in out["services"]}
+    assert by_name["providers"]["status"] == sh.DEGRADED
+    assert by_name["ntfy"]["status"] == sh.OK
+
+
+def test_source_failure_entry_carries_no_raw_detail(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {}, "integrations": [], "accounts": [], "endpoints": [],
+        "failed": {"accounts": "auth_or_protocol_error"},
+    })
+    out = asyncio.run(sh.collect_service_health(None, None))
+    entry = next(s for s in out["services"] if s["name"] == "email")
+    assert entry["detail"] == (
+        "Could not read configuration (configuration source could not be read).")
+    assert set(entry["meta"]) == {"error", "source", "source_error"}
+
+
+def test_collect_tolerates_inputs_without_a_failed_key(monkeypatch):
+    # `_gather_inputs()` is monkeypatched in a number of existing tests (and by
+    # anything calling the collector with a stub); a payload predating `failed`
+    # must still probe normally rather than raise.
+    import asyncio
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {"search_provider": "disabled"},
+        "integrations": [], "accounts": [], "endpoints": [],
+    })
+    out = asyncio.run(sh.collect_service_health(_Store(True), _Store(True)))
+    assert out["overall"] == sh.OK
