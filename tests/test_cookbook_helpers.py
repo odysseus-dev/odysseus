@@ -937,6 +937,109 @@ def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
     assert by_repo["Qwen/Qwen3.6-35B"]["path"] == str(hf_cache)
 
 
+def test_cached_model_scan_includes_macos_library_caches(tmp_path):
+    """#5978: macOS HF downloads often land under ~/Library/Caches/huggingface/hub.
+    Serve must list them without requiring a manual ~/.cache symlink.
+    """
+    home = tmp_path / "home"
+    mac_hub = home / "Library" / "Caches" / "huggingface" / "hub"
+    model = mac_hub / "models--typhoon-ai--typhoon2.5-qwen3-30b-a3b-gguf"
+    snap = model / "snapshots" / "8aa0ece"
+    snap.mkdir(parents=True)
+    gguf = snap / "typhoon2.5-qwen3-30b-a3b-q4_k_m.gguf"
+    gguf.write_bytes(b"gguf-bytes")
+    # Empty Linux-style cache so only the macOS path can produce the hit.
+    (home / ".cache" / "huggingface" / "hub").mkdir(parents=True)
+
+    scan_py = tmp_path / "scan_macos_hf.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env.pop("HF_HOME", None)
+    env.pop("HUGGINGFACE_HUB_CACHE", None)
+    env.pop("HF_HUB_CACHE", None)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    key = "typhoon-ai/typhoon2.5-qwen3-30b-a3b-gguf"
+    assert key in by_repo
+    assert by_repo[key]["path"] == str(mac_hub)
+    assert by_repo[key]["is_gguf"] is True
+    assert by_repo[key]["size_bytes"] == len(b"gguf-bytes")
+
+
+def test_cached_model_scan_hf_home_pointing_at_hub_dir(tmp_path):
+    """Users sometimes set HF_HOME to the hub directory itself, not its parent."""
+    hub = tmp_path / "Library" / "Caches" / "huggingface" / "hub"
+    model = hub / "models--acme--direct-hub"
+    (model / "snapshots" / "rev").mkdir(parents=True)
+    (model / "snapshots" / "rev" / "config.json").write_text("{}", encoding="utf-8")
+    (model / "snapshots" / "rev" / "model.safetensors").write_bytes(b"w")
+
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    scan_py = tmp_path / "scan_hf_home_hub.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    env = dict(os.environ)
+    env["HOME"] = str(empty_home)
+    env["HF_HOME"] = str(hub)
+    env.pop("HUGGINGFACE_HUB_CACHE", None)
+    env.pop("HF_HUB_CACHE", None)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    assert "acme/direct-hub" in by_repo
+    assert by_repo["acme/direct-hub"]["path"] == str(hub)
+
+
+def test_cached_model_scan_model_dir_with_hf_hub_layout(tmp_path):
+    """Custom modelDirs that are HF hub caches (models--*) must still list models.
+    scan_dir alone skips models-- entries; the scanner must also run scan_hf.
+    """
+    hub_layout = tmp_path / "custom-hf-hub"
+    model = hub_layout / "models--org--widget-gguf"
+    snap = model / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "widget.gguf").write_bytes(b"gguf")
+
+    scan_py = tmp_path / "scan_model_dir_hub.py"
+    scan_py.write_text(
+        _cached_model_scan_script([str(hub_layout)]),
+        encoding="utf-8",
+    )
+    empty_home = tmp_path / "home"
+    empty_home.mkdir()
+    env = dict(os.environ)
+    env["HOME"] = str(empty_home)
+    env.pop("HF_HOME", None)
+    env.pop("HUGGINGFACE_HUB_CACHE", None)
+    env.pop("HF_HUB_CACHE", None)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    assert "org/widget-gguf" in by_repo
+    assert by_repo["org/widget-gguf"]["path"] == str(hub_layout)
+    assert by_repo["org/widget-gguf"]["is_gguf"] is True
+
+
 # ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
 
 def test_pip_install_no_cache_injects_flag():
