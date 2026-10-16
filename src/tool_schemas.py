@@ -1138,7 +1138,7 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "model": {"type": "string", "description": "Teacher model name (e.g. 'claude-sonnet-4') or 'auto' for configured default"},
+                    "model": {"type": "string", "description": "Teacher model name (e.g. 'claude-sonnet-4') or 'auto'. Ignored when a teacher model is configured in settings."},
                     "problem": {"type": "string", "description": "Describe the problem or question you need help with"}
                 },
                 "required": ["problem"]
