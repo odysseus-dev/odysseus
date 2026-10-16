@@ -11,7 +11,7 @@
  *   Ctrl+D         deselect (clears wand + lasso)
  *   Ctrl+S         save (Shift = save as / export to gallery)
  *   Ctrl+Shift+T   open resize popup
- *   Ctrl+Alt+T     start free transform
+ *   Ctrl+T         start free transform (Ctrl+Alt+T also works)
  *   Ctrl+Alt+Shift+I invert selection (Ctrl+Alt+I also works)
  *   Ctrl+Alt+J     new empty layer
  *   Ctrl/Cmd+J     copy selected pixels to a layer, or duplicate the layer
@@ -20,6 +20,7 @@
  *   Ctrl+C/X       copy / cut the selected surface (image clipboard
  *                  + internal clipboard, preserving its document offset)
  *   Ctrl+V         (handled by the paste event listener)
+ *   Ctrl+ / - / 0  zoom in / out / fit (overrides browser zoom)
  *   Tool keys (V, B, E, L, …) → toolbar click
  *   Hold Space     temporarily pan without changing the active tool
  *   [ / ]          shrink / grow brush size proportionally
@@ -81,6 +82,12 @@ export function wireKeyboardShortcuts(deps) {
     target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' ||
     target.tagName === 'SELECT' || target.isContentEditable
   );
+  // A focused range/checkbox/button widget is still an <input>, but it is not
+  // a text field: Delete/Backspace there should fall through to the editor
+  // (e.g. delete the selected layer) instead of being swallowed.
+  const isNonTextInput = (target) => target && target.tagName === 'INPUT' && (
+    !['text', 'search', 'email', 'url', 'password', 'number', 'tel'].includes(target.type)
+  );
 
   const releaseTemporaryPan = () => setTemporaryPan?.(false);
   document.addEventListener('keyup', (e) => {
@@ -93,7 +100,10 @@ export function wireKeyboardShortcuts(deps) {
     if (!state.editorOpen || e.defaultPrevented || e.isComposing) return;
     if (e.target?.closest?.('#styled-confirm-overlay')) return;
     // Fields and text layers own native editing, including undo and clipboard.
-    if (isTypingTarget(e.target)) return;
+    // Let Delete/Backspace out of non-text widgets (range/checkbox/button) so
+    // they still delete the selected layer.
+    if (isTypingTarget(e.target) &&
+        !(isNonTextInput(e.target) && (e.key === 'Delete' || e.key === 'Backspace'))) return;
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === 'Backspace') {
       e.preventDefault();
       e.stopPropagation();
@@ -175,7 +185,9 @@ export function wireKeyboardShortcuts(deps) {
         return;
       }
       if (e.shiftKey && e.key === 'T') { e.preventDefault(); e.stopPropagation(); resizeCustomPrompt(); return; }
-      if (e.altKey && e.code === 'KeyT') { e.preventDefault(); e.stopPropagation(); startTransform(); return; }
+      // Ctrl/Cmd+T — free transform (Photoshop). Ctrl+Shift+T stays the canvas
+      // resize prompt and Ctrl+Alt+T remains a legacy alias.
+      if (!e.shiftKey && e.code === 'KeyT') { e.preventDefault(); e.stopPropagation(); startTransform(); return; }
       // Ctrl+Alt+Shift+I (or the previous Ctrl+Alt+I) inverts the selection. Uses e.code so
       // Alt-modified key values (e.g. `ˆ` on Mac with Option+I)
       // don't break the match.
@@ -242,10 +254,30 @@ export function wireKeyboardShortcuts(deps) {
       }
       // Ctrl+V handled by the paste event listener.
       if (e.key === 'v') { /* no-op here */ }
+      // Ctrl/Cmd +/- zoom the canvas in/out and Ctrl+0 fits — overriding the
+      // browser's page zoom (we own the shortcut inside the editor).
+      if (e.key === '+' || e.key === '=' || e.code === 'Equal' || e.code === 'NumpadAdd') {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('ge-zoom-in')?.click();
+        return;
+      }
+      if (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('ge-zoom-out')?.click();
+        return;
+      }
+      if (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') {
+        e.preventDefault();
+        e.stopPropagation();
+        document.getElementById('ge-zoom-100')?.click();
+        return;
+      }
       return;
     }
     // Tool shortcuts (only when not typing in an input).
-    if (isTypingTarget(e.target)) return;
+    if (isTypingTarget(e.target) && !isNonTextInput(e.target)) return;
 
     // Delete pixels for a selection, otherwise delete the selected layer(s).
     // Clipboard shortcuts above retain ownership of Ctrl/Cmd+X and C.
@@ -282,11 +314,28 @@ export function wireKeyboardShortcuts(deps) {
       toggleQuickMask?.();
       return;
     }
+    // Photoshop-compatible colour keys (tool shortcuts use neither): X swaps
+    // the foreground/background colours, D resets them to black/white.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      const colorKey = e.key.toLowerCase();
+      if (colorKey === 'x') {
+        e.preventDefault();
+        e.stopPropagation();
+        window.geSwapColors?.();
+        return;
+      }
+      if (colorKey === 'd') {
+        e.preventDefault();
+        e.stopPropagation();
+        window.geResetColors?.();
+        return;
+      }
+    }
     const toolId = toolKeyMap[e.key.toLowerCase()];
     if (toolId) {
       e.preventDefault();
       e.stopPropagation();
-      const toolBtn = toolbar.querySelector(`[data-tool="${toolId}"]`);
+      const toolBtn = toolbar.querySelector(`[data-tool="${toolId}"]`) || toolbar.querySelector(`[data-tool-option="${toolId}"]`);
       if (toolBtn) toolBtn.click();
       return;
     }

@@ -1,9 +1,10 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
 test('text edits directly on canvas and remains retained after reopen', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('.ge-tool-btn[data-tool="text"]').click();
+  await selectTool(page, 'text');
   await page.locator('#ge-text-frame-width').fill('260');
   const canvas = await page.locator('.ge-main-canvas').boundingBox();
   await page.mouse.click(canvas.x + canvas.width * 0.2, canvas.y + canvas.height * 0.2);
@@ -42,7 +43,7 @@ test('text edits directly on canvas and remains retained after reopen', async ({
 test('text paragraph controls remain usable in a narrow phone viewport', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 700 });
   await openBlankEditor(page, { width: 240, height: 180 }, 'Mobile text layout E2E');
-  await page.locator('.ge-tool-btn[data-tool="text"]').click();
+  await selectTool(page, 'text');
   const section = page.locator('#ge-text-section');
   await expect(section).toBeVisible();
   expect(await section.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
@@ -52,7 +53,7 @@ test('text paragraph controls remain usable in a narrow phone viewport', async (
 
 test('rectangle ellipse line and polygon remain editable shape layers', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('.ge-tool-btn[data-tool="shape"]').click();
+  await selectTool(page, 'shape');
   await expect(page.locator('#ge-shape-section')).toBeVisible();
 
   const types = ['rectangle', 'ellipse', 'line', 'polygon'];
@@ -77,7 +78,7 @@ test('rectangle ellipse line and polygon remain editable shape layers', async ({
   const polygon = current.layers.find(layer => layer.kind === 'shape' && layer.shape.type === 'polygon');
   expect(polygon.shape).toMatchObject({ sides: 7, strokeWidth: 6, cornerRadius: 14 });
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   const originalWidth = Number(await page.locator('#ge-transform-w').inputValue());
   await page.locator('#ge-transform-w').fill(String(originalWidth + 40));
   await page.locator('#ge-transform-apply').click();
@@ -94,7 +95,7 @@ test('rectangle ellipse line and polygon remain editable shape layers', async ({
 
 test('gradient shape fill remains editable after reopening the project', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('.ge-tool-btn[data-tool="shape"]').click();
+  await selectTool(page, 'shape');
   await expect(page.locator('#ge-shape-gradient-add-stop')).toBeHidden();
   await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.65, y: 0.55 });
   await page.locator('#ge-shape-gradient-angle').evaluate((angle) => {
@@ -140,7 +141,7 @@ test('gradient shape fill remains editable after reopening the project', async (
 
 test('shape gradients retain added stops through editing and reopen', async ({ page }) => {
   await openBlankEditor(page, { width: 360, height: 240 }, 'Multi-stop gradient E2E');
-  await page.locator('.ge-tool-btn[data-tool="shape"]').click();
+  await selectTool(page, 'shape');
   await dragOnCanvas(page, { x: 0.15, y: 0.2 }, { x: 0.75, y: 0.65 });
   await page.locator('#ge-shape-fill-type').selectOption('linear-gradient');
   await page.evaluate(() => {
@@ -220,7 +221,7 @@ test('shape gradient stop normalization keeps imported endpoints bounded', async
 
 test('gradient tool paints a reversible drag on the active layer', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Gradient tool E2E');
-  await page.locator('.ge-tool-btn[data-tool="gradient"]').click();
+  await selectTool(page, 'gradient');
   await expect(page.locator('#ge-gradient-section')).toBeVisible();
 
   await page.evaluate(() => {
@@ -309,7 +310,7 @@ test('gradient tool paints a reversible drag on the active layer', async ({ page
 
 test('radial gradient remains retained and survives reopen', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Radial gradient E2E');
-  await page.locator('.ge-tool-btn[data-tool="gradient"]').click();
+  await selectTool(page, 'gradient');
   await page.locator('#ge-gradient-type').selectOption('radial-gradient');
   await page.evaluate(() => {
     const start = document.getElementById('ge-gradient-start');

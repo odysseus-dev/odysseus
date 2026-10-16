@@ -41,8 +41,14 @@ export function transformedLayerGeometry(snapshot, sourceBounds, target) {
   const centerY = target.centerY + relativeX * sin + relativeY * cos;
   const scaledWidth = snapshot.width * scaleX;
   const scaledHeight = snapshot.height * scaleY;
-  const width = Math.max(1, Math.round(scaledWidth * absCos + scaledHeight * absSin));
-  const height = Math.max(1, Math.round(scaledWidth * absSin + scaledHeight * absCos));
+  const skewX = target.skewX || 0;
+  const skewY = target.skewY || 0;
+  const perspectiveX = target.perspectiveX || 0;
+  const perspectiveY = target.perspectiveY || 0;
+  const skewPadX = Math.abs(Math.tan(skewX * Math.PI / 180)) * scaledHeight;
+  const skewPadY = Math.abs(Math.tan(skewY * Math.PI / 180)) * scaledWidth;
+  const width = Math.max(1, Math.round(scaledWidth * absCos + scaledHeight * absSin + skewPadX));
+  const height = Math.max(1, Math.round(scaledWidth * absSin + scaledHeight * absCos + skewPadY));
   return {
     scaleX,
     scaleY,
@@ -50,6 +56,10 @@ export function transformedLayerGeometry(snapshot, sourceBounds, target) {
     signedScaleY,
     rotation: target.rotation,
     radians,
+    skewX,
+    skewY,
+    perspectiveX,
+    perspectiveY,
     width,
     height,
     centerX,
@@ -94,6 +104,8 @@ export function planLayerTransform(editorState, snapshots, sourceBounds, target,
   const numericTarget = [
     target?.width, target?.height, target?.rotation,
     target?.centerX, target?.centerY,
+    target?.skewX ?? 0, target?.skewY ?? 0,
+    target?.perspectiveX ?? 0, target?.perspectiveY ?? 0,
   ].every(Number.isFinite);
   if (!numericTarget || target.width < 1 || target.height < 1) {
     return { ok: false, reason: 'Transform values must be finite positive numbers.' };

@@ -1,9 +1,10 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers');
 
 test('selection boundary animates, moves independently, and supports Quick Mask', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Selection workflow');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.55, y: 0.55 });
 
   const initial = await editorState(page);
@@ -46,7 +47,7 @@ test('selection boundary animates, moves independently, and supports Quick Mask'
 
 test('marquee supports exact fixed-size and fixed-ratio geometry', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Precise marquee');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
 
   await page.locator('#ge-marquee-constraint').selectOption('size');
   await page.locator('#ge-marquee-width').fill('80');
@@ -54,7 +55,7 @@ test('marquee supports exact fixed-size and fixed-ratio geometry', async ({ page
   await page.locator('#ge-marquee-height').fill('60');
   await page.locator('#ge-marquee-height').blur();
   const box = await page.locator('.ge-main-canvas').boundingBox();
-  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.75);
+  await page.mouse.click(Math.round(box.x + box.width * 0.8), Math.round(box.y + box.height * 0.75));
   await expect.poll(async () => (await editorState(page)).selection?.bounds).toEqual({ x: 240, y: 180, width: 80, height: 60 });
 
   await page.locator('#ge-marquee-clear').click();
@@ -72,7 +73,7 @@ test('marquee supports exact fixed-size and fixed-ratio geometry', async ({ page
 
 test('transform selection moves, scales, rotates, cancels, and preserves layer pixels', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Transform selection');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.2, y: 0.25 }, { x: 0.5, y: 0.55 });
   const original = await editorState(page);
   const originalLayer = original.layers.find(layer => layer.id === original.activeLayerId);
@@ -128,7 +129,7 @@ test('transform selection moves, scales, rotates, cancels, and preserves layer p
 
 test('named selections support reselect, load, delete, and server-draft reopen', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Saved selections');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.15, y: 0.2 }, { x: 0.5, y: 0.6 });
   const original = (await editorState(page)).selection;
 
@@ -178,4 +179,57 @@ test('named selections support reselect, load, delete, and server-draft reopen',
   const mobileMenu = await page.locator('#ge-selection-menu').boundingBox();
   expect(mobileMenu.x).toBeGreaterThanOrEqual(0);
   expect(mobileMenu.x + mobileMenu.width).toBeLessThanOrEqual(390);
+});
+
+test('marquee released over the right panel commits a clamped selection', async ({ page }) => {
+  await openBlankEditor(page, { width: 320, height: 240 }, 'Marquee overshoot');
+  await selectTool(page, 'marquee');
+  const setup = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    const rect = state.mainCanvas.getBoundingClientRect();
+    const panel = document.querySelector('.ge-right-panel');
+    const panelBox = panel ? panel.getBoundingClientRect() : null;
+    return {
+      document: { width: state.imgWidth, height: state.imgHeight },
+      start: { x: rect.left + rect.width * 0.2, y: rect.top + rect.height * 0.2 },
+      panelPoint: panelBox
+        ? { x: panelBox.left + panelBox.width / 2, y: rect.top + rect.height * 0.6 }
+        : null,
+    };
+  });
+  expect(setup.panelPoint, 'right panel must be visible on desktop').toBeTruthy();
+
+  await page.mouse.move(setup.start.x, setup.start.y);
+  await page.mouse.down();
+  // Drag straight onto the right panel. The window mousemove guard must
+  // keep the raw rect from extending off-canvas, and the release must
+  // commit a clamped selection rather than discard it.
+  await page.mouse.move(setup.panelPoint.x, setup.panelPoint.y, { steps: 12 });
+  await page.mouse.up();
+
+  const result = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    if (!state.wandMask) return { active: false };
+    const data = state.wandMask.getContext('2d')
+      .getImageData(0, 0, state.wandMask.width, state.wandMask.height).data;
+    let left = state.wandMask.width, top = state.wandMask.height, right = -1, bottom = -1;
+    for (let y = 0; y < state.wandMask.height; y += 1) {
+      for (let x = 0; x < state.wandMask.width; x += 1) {
+        if (data[(y * state.wandMask.width + x) * 4 + 3] < 1) continue;
+        left = Math.min(left, x); top = Math.min(top, y);
+        right = Math.max(right, x); bottom = Math.max(bottom, y);
+      }
+    }
+    return { active: true, left, top, right, bottom, width: state.wandMask.width, height: state.wandMask.height };
+  });
+  expect(result.active).toBe(true);
+  expect(result.right).toBeGreaterThanOrEqual(result.left);
+  expect(result.bottom).toBeGreaterThanOrEqual(result.top);
+  // Clamped: never beyond the document edge on any side.
+  expect(result.left).toBeGreaterThanOrEqual(0);
+  expect(result.top).toBeGreaterThanOrEqual(0);
+  expect(result.right).toBeLessThan(result.width);
+  expect(result.bottom).toBeLessThan(result.height);
+  expect(result.right - result.left).toBeGreaterThan(0);
+  expect(result.bottom - result.top).toBeGreaterThan(0);
 });

@@ -1,9 +1,10 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { openBlankEditor } = require('./helpers');
 
 test('transform frame exposes eight accurate handles and supports edge resize', async ({ page }) => {
   await openBlankEditor(page, { width: 640, height: 480 }, 'Transform frame');
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('.ge-transform-popup')).toBeVisible();
 
   const frame = await page.evaluate(async () => {
@@ -43,7 +44,7 @@ test('transform frame exposes eight accurate handles and supports edge resize', 
 
 test('rotated edge resize follows the frame axis and keeps its opposite edge anchored', async ({ page }) => {
   await openBlankEditor(page, { width: 640, height: 480 }, 'Rotated transform frame');
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await page.locator('#ge-transform-rot').fill('90');
 
   const frame = await page.evaluate(async () => {
@@ -84,7 +85,7 @@ test('rotated edge resize follows the frame axis and keeps its opposite edge anc
 
 test('rotated frame moves only from its visible interior and supports keyboard nudging', async ({ page }) => {
   await openBlankEditor(page, { width: 640, height: 480 }, 'Transform interaction');
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await page.locator('#ge-transform-rot').fill('45');
 
   const frame = await page.evaluate(async () => {
@@ -182,14 +183,14 @@ test('transform previews remain source-derived and reject unsafe allocations', a
     return { width: layer.canvas.width, height: layer.canvas.height, hash: hash >>> 0 };
   });
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   const originalWidth = Number(await page.locator('#ge-transform-w').inputValue());
   await page.locator('#ge-transform-w').fill(String(Math.round(originalWidth * 1.8)));
   await page.locator('#ge-transform-w').fill(String(Math.round(originalWidth * 1.35)));
   const afterSequentialPreviews = await layerSnapshot();
   await page.locator('#ge-transform-cancel-btn').click();
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await page.locator('#ge-transform-w').fill(String(Math.round(originalWidth * 1.35)));
   const afterDirectPreview = await layerSnapshot();
   expect(afterSequentialPreviews).toEqual(afterDirectPreview);
@@ -214,7 +215,7 @@ test('mobile touch input can grab every transform handle', async ({ browser, bro
   const page = await context.newPage();
   try {
     await openBlankEditor(page, { width: 640, height: 480 }, 'Mobile transform handles');
-    await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+    await selectTool(page, 'transform');
     await expect(page.locator('.ge-transform-popup')).toBeVisible();
     const cdp = await context.newCDPSession(page);
     const ids = ['tl', 't', 'tr', 'r', 'br', 'b', 'bl', 'l', 'rot'];
@@ -317,4 +318,51 @@ test('mobile touch input can grab every transform handle', async ({ browser, bro
   } finally {
     await context.close();
   }
+});
+
+test('transform handle keeps tracking when the pointer crosses the right panel', async ({ page }) => {
+  await openBlankEditor(page, { width: 640, height: 480 }, 'Transform overshoot');
+  await selectTool(page, 'transform');
+  await expect(page.locator('.ge-transform-popup')).toBeVisible();
+
+  const setup = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    const { transformFrameGeometry } = await import('/static/js/editor/transform-frame-geometry.js');
+    const geometry = transformFrameGeometry({
+      centerX: state.transformCenter.x,
+      centerY: state.transformCenter.y,
+      width: state.transformPendingW,
+      height: state.transformPendingH,
+      rotation: state.transformPendingRot,
+    }, { zoom: state.zoom });
+    const right = geometry.resizeHandles.find(handle => handle.id === 'r');
+    const rect = state.mainCanvas.getBoundingClientRect();
+    const panel = document.querySelector('.ge-right-panel');
+    const panelBox = panel ? panel.getBoundingClientRect() : null;
+    return {
+      width: state.transformPendingW,
+      handle: {
+        x: rect.left + right.x * rect.width / state.mainCanvas.width,
+        y: rect.top + right.y * rect.height / state.mainCanvas.height,
+      },
+      // A point safely inside the right panel (editor chrome).
+      panelPoint: panelBox
+        ? { x: panelBox.left + panelBox.width / 2, y: rect.top + rect.height / 2 }
+        : null,
+    };
+  });
+  expect(setup.panelPoint, 'right panel must be visible on desktop').toBeTruthy();
+
+  await page.mouse.move(setup.handle.x, setup.handle.y);
+  await page.mouse.down();
+  // Resize far to the right, ending over the right panel. The handle must
+  // keep tracking across chrome — an overshoot must not freeze the drag.
+  await page.mouse.move(setup.panelPoint.x, setup.panelPoint.y, { steps: 12 });
+  await page.mouse.up();
+
+  const after = await page.evaluate(async () => {
+    const { state } = await import('/static/js/editor/state.js');
+    return state.transformPendingW;
+  });
+  expect(after).toBeGreaterThan(setup.width);
 });

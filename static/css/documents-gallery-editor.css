@@ -978,3 +978,342 @@ body.doc-find-active mark.doc-find-mark.current {
   color: var(--accent, var(--red));
   vertical-align: -2px;
 }
+
+/* Colour chips: every pickable colour input renders as a circle, regardless of
+   the container it sits in (options bar .ge-text-field, Character panel,
+   gradient stops, export matte, etc.). Forced with !important so parent
+   input[type="color"] rules can't square them off. */
+input.ge-color-picker,
+input.ge-color-picker.cp-swatch-input,
+.ge-text-field input.ge-color-picker,
+.ge-swatch input.ge-color-picker,
+.ge-filter-row input.ge-color-picker,
+.ge-gradient-color-row input.ge-color-picker {
+  border-radius: 50% !important;
+}
+input.ge-color-picker::-webkit-color-swatch {
+  border: 0 !important;
+  border-radius: 50% !important;
+}
+input.ge-color-picker::-moz-color-swatch {
+  border: 0 !important;
+  border-radius: 50% !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Editor theme alignment: map the editor's controls onto the app's design
+   tokens (static/css/00-tokens.css) so the editor matches the rest of the
+   product. No new colours — only the shared CSS variables.
+--------------------------------------------------------------------------- */
+
+/* Checkboxes + radios → the app's circular dot (see 17-research.css). */
+body.ge-editor-open input[type="checkbox"],
+body.ge-editor-open input[type="radio"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  cursor: pointer;
+  position: relative;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+body.ge-editor-open input[type="checkbox"]:checked,
+body.ge-editor-open input[type="radio"]:checked {
+  background: var(--fg);
+  border-color: var(--fg);
+}
+body.ge-editor-open input[type="checkbox"]:focus-visible,
+body.ge-editor-open input[type="radio"]:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 1px;
+}
+
+/* Selects → the app's select tokens. */
+body.ge-editor-open select {
+  background: var(--select-bg, var(--bg));
+  color: var(--select-fg, var(--fg));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+body.ge-editor-open select option {
+  background: var(--select-option-bg, var(--panel));
+  color: var(--select-option-fg, var(--fg));
+}
+body.ge-editor-open select option:checked,
+body.ge-editor-open select option:hover {
+  background: var(--select-option-active-bg, var(--panel));
+}
+body.ge-editor-open select:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 1px;
+}
+
+/* Text / number inputs → token background, border and focus ring. */
+body.ge-editor-open input[type="text"],
+body.ge-editor-open input[type="number"],
+body.ge-editor-open input[type="search"],
+body.ge-editor-open textarea {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+body.ge-editor-open input[type="text"]:focus-visible,
+body.ge-editor-open input[type="number"]:focus-visible,
+body.ge-editor-open input[type="search"]:focus-visible,
+body.ge-editor-open textarea:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 1px;
+}
+
+/* Range sliders → the app's accent. */
+body.ge-editor-open input[type="range"] {
+  accent-color: var(--accent, var(--red));
+}
+
+/* Scrollbars → the app's 8px red-thumb recipe (00-tokens.css). */
+body.ge-editor-open * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--red) var(--panel);
+}
+body.ge-editor-open *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+body.ge-editor-open *::-webkit-scrollbar-track {
+  background: var(--panel);
+}
+body.ge-editor-open *::-webkit-scrollbar-thumb {
+  background-color: var(--red);
+  border-radius: 4px;
+  border: 2px solid var(--panel);
+}
+body.ge-editor-open *::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--red) 80%, white);
+}
+
+/* ---------------------------------------------------------------------------
+   Editor theme alignment (part 2): buttons, segmented toggles, tabs, list
+   rows, panel headers, badges, focus rings, number fields and colour-picker
+   chrome mapped onto the app's shared design tokens. Existing tokens only —
+   no new colours, and no geometry beyond colour / border / radius / focus.
+--------------------------------------------------------------------------- */
+
+/* The editor references two secondary / muted variables that the app token
+   layer never defines; map them onto the real tokens so every
+   var(--fg-muted) / var(--bg-secondary) editor rule resolves. */
+body.ge-editor-open {
+  --fg-muted: var(--color-muted);
+  --bg-secondary: var(--panel);
+}
+
+/* Buttons → the app's `.cal-btn` recipe (5px radius; the primary button
+   uses the accent fill with a --bg foreground instead of a hard-coded #fff). */
+body.ge-editor-open .ge-btn {
+  border-radius: 5px;
+}
+body.ge-editor-open .ge-btn-primary {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+  color: var(--bg);
+}
+body.ge-editor-open .ge-btn-primary:hover {
+  background: var(--accent, var(--red));
+  opacity: 0.9;
+}
+body.ge-editor-open .ge-win-close:hover {
+  background: var(--accent, var(--red));
+  color: var(--bg);
+}
+
+/* Segmented / option toggles, command palette and channel rows → the app's
+   accent token (--red) instead of the editor's blue #4c8bf5 fallback. */
+body.ge-editor-open .ge-opt-mode.active,
+body.ge-editor-open .ge-crop-preset.active,
+body.ge-editor-open .ge-command-item.active,
+body.ge-editor-open .ge-command-item:hover {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+  color: var(--bg);
+}
+body.ge-editor-open .ge-channel-row.active,
+body.ge-editor-open .ge-dock-tabs-menu-item:hover,
+body.ge-editor-open .ge-filter-menu .dropdown-item-compact:focus-visible,
+body.ge-editor-open .ge-view-menu .dropdown-item-compact:focus-visible,
+body.ge-editor-open .ge-window-menu .dropdown-item-compact:focus-visible,
+body.ge-editor-open .ge-help-menu .dropdown-item-compact:focus-visible,
+body.ge-editor-open .ge-3d-menu .dropdown-item-compact:focus-visible,
+body.ge-editor-open .ge-plugins-menu .dropdown-item-compact:focus-visible {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+}
+body.ge-editor-open .ge-sam-brush-add.active,
+body.ge-editor-open .ge-sam-brush-subtract.active,
+body.ge-editor-open .ge-actions-controls .ge-btn.active {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+
+/* Tabs → the app tab convention: the active tab's underline is the accent. */
+body.ge-editor-open .ge-dock-tab.active {
+  border-bottom-color: var(--accent, var(--red));
+}
+
+/* Colour-picker chrome → the token accent instead of the blue fallback. */
+body.ge-editor-open .ge-swatch.active {
+  outline-color: var(--accent, var(--red));
+}
+
+/* Badges / status pills → the app's --bg foreground on an accent fill. */
+body.ge-editor-open .ge-tool-clear {
+  color: var(--bg);
+}
+
+/* Panel headers → the app's muted section-title token. */
+body.ge-editor-open .ge-panel-title,
+body.ge-editor-open .ge-info-label {
+  color: var(--color-muted);
+}
+
+/* Focus rings → the app's 1px --red ring (matching the earlier input/select
+   block) on the controls that previously fell back to the UA outline. */
+body.ge-editor-open .ge-btn:focus-visible,
+body.ge-editor-open .ge-tool-btn:focus-visible,
+body.ge-editor-open .ge-doc-tab:focus-visible,
+body.ge-editor-open .ge-history-row:focus-visible,
+body.ge-editor-open .ge-swatch:focus-visible,
+body.ge-editor-open .ge-opt-mode:focus-visible,
+body.ge-editor-open .ge-stepper button:focus-visible {
+  outline: 1px solid var(--red);
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------------
+   Editor theme alignment (part 3): the setup / preflight checklist and the
+   remaining checkbox list-row / badge chrome mapped onto the app's shared
+   design tokens. Existing tokens only — no new colours, and no geometry beyond
+   colour / border / radius / focus. Scoped to body.ge-editor-open.
+--------------------------------------------------------------------------- */
+
+/* Checklist card + rows → the app's panel / border / muted tokens. */
+body.ge-editor-open .ge-preflight-card {
+  background: var(--panel);
+  color: var(--fg);
+  border-color: var(--border);
+}
+body.ge-editor-open .ge-preflight-head p,
+body.ge-editor-open .ge-preflight-hint,
+body.ge-editor-open .ge-preflight-detail,
+body.ge-editor-open .ge-preflight-remember,
+body.ge-editor-open .ge-preflight-close {
+  color: var(--color-muted);
+}
+body.ge-editor-open .ge-preflight-close:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+body.ge-editor-open .ge-preflight-row {
+  background: color-mix(in srgb, var(--panel) 92%, var(--fg) 4%);
+  border-color: var(--border);
+}
+body.ge-editor-open .ge-preflight-row.is-done {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+body.ge-editor-open .ge-preflight-row.is-todo {
+  border-color: var(--red);
+}
+body.ge-editor-open .ge-preflight-row.is-optional {
+  border-color: color-mix(in srgb, var(--accent-warm) 45%, var(--border));
+}
+
+/* Row badges → the semantic tokens (done = green, todo = red, optional = warm). */
+body.ge-editor-open .ge-preflight-badge {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+body.ge-editor-open .ge-preflight-row.is-done .ge-preflight-badge {
+  background: color-mix(in srgb, var(--green) 20%, transparent);
+  color: var(--green);
+}
+body.ge-editor-open .ge-preflight-row.is-todo .ge-preflight-badge {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  color: var(--red);
+}
+body.ge-editor-open .ge-preflight-row.is-optional .ge-preflight-badge {
+  background: color-mix(in srgb, var(--accent-warm) 16%, transparent);
+  color: var(--accent-warm);
+}
+body.ge-editor-open .ge-preflight-opt {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--color-muted);
+}
+
+/* Checklist actions / footer → token buttons and borders. */
+body.ge-editor-open .ge-preflight-act {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--border);
+  color: var(--fg);
+}
+body.ge-editor-open .ge-preflight-act:hover {
+  background: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+body.ge-editor-open .ge-preflight-foot {
+  border-top-color: var(--border);
+}
+body.ge-editor-open .ge-preflight-summary {
+  color: var(--green);
+}
+body.ge-editor-open .ge-preflight-start {
+  background: var(--accent, var(--red));
+  color: var(--bg);
+}
+body.ge-editor-open .ge-preflight-start:hover {
+  background: var(--accent, var(--red));
+  opacity: 0.9;
+}
+body.ge-editor-open .ge-setup-btn {
+  border-color: var(--border);
+  color: var(--color-muted);
+}
+body.ge-editor-open .ge-setup-btn:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: var(--fg);
+}
+
+/* The options-bar checkbox overrode the shared dot with a square + a drawn
+   ::after tick; force it back to the app's 14px circular dot (part 1). */
+body.ge-editor-open .ge-opt input[type="checkbox"],
+body.ge-editor-open .ge-opt input[type="radio"] {
+  border-radius: 50%;
+  border-width: 1.5px;
+}
+body.ge-editor-open .ge-opt input[type="checkbox"]:checked,
+body.ge-editor-open .ge-opt input[type="radio"]:checked {
+  background: var(--fg);
+  border-color: var(--fg);
+}
+body.ge-editor-open .ge-opt input[type="checkbox"]:checked::after {
+  content: none;
+}
+
+/* Remaining list-row / thumbnail chrome → panel + border + muted tokens. */
+body.ge-editor-open .ge-history-row-dot {
+  background: var(--color-muted);
+}
+body.ge-editor-open .ge-layer-inline-thumb {
+  background: var(--panel);
+  border-color: var(--border);
+}
+body.ge-editor-open .ge-channel-row,
+body.ge-editor-open .ge-channel-name {
+  color: var(--fg);
+}
+body.ge-editor-open .ge-channel-eye {
+  color: var(--color-muted);
+}

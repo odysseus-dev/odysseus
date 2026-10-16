@@ -2,6 +2,7 @@
 
 import { drawLayerStack, drawLayerStackAsync } from './layer-clipping.js';
 import { renderEffects, renderEffectsAsync } from './effects.js';
+import { blendDraw } from './blend-modes.js';
 
 function groupMap(editorState) {
   return new Map((editorState.layerGroups || []).map(group => [group.id, group]));
@@ -390,9 +391,9 @@ export function drawGroupedLayers(ctx, editorState, renderLayer, renderAdjustmen
         // raw member fallback loses masks, blending, and group effects.
         editorState.groupCompositeCanvases.set(group.id, groupOutput);
       }
-      target.globalAlpha = group.opacity;
-      target.globalCompositeOperation = group.blendMode || 'source-over';
-      target.drawImage(groupOutput, 0, 0);
+      target.globalAlpha = 1;
+      target.globalCompositeOperation = 'source-over';
+      blendDraw(target, groupOutput, group.blendMode, group.opacity, 0, 0);
     }
     flushLayers();
     target.globalAlpha = 1;
@@ -497,9 +498,9 @@ export async function drawGroupedLayersAsync(ctx, editorState, renderLayer, rend
       if (groupOutput.width && groupOutput.height) {
         editorState.groupCompositeCanvases.set(group.id, groupOutput);
       }
-      target.globalAlpha = group.opacity;
-      target.globalCompositeOperation = group.blendMode || 'source-over';
-      target.drawImage(groupOutput, 0, 0);
+      target.globalAlpha = 1;
+      target.globalCompositeOperation = 'source-over';
+      blendDraw(target, groupOutput, group.blendMode, group.opacity, 0, 0);
     }
     await flushLayers();
     target.globalAlpha = 1;

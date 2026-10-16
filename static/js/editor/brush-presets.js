@@ -4,6 +4,7 @@ const BUILT_INS = [
   { id: 'soft-round', name: 'Soft Round', size: 80, opacity: 100, flow: 35, softness: 100, spacing: 12, smoothing: 25, blendMode: 'source-over' },
   { id: 'hard-round', name: 'Hard Round', size: 24, opacity: 100, flow: 100, softness: 0, spacing: 18, smoothing: 15, blendMode: 'source-over' },
   { id: 'detail', name: 'Detail', size: 6, opacity: 100, flow: 70, softness: 20, spacing: 10, smoothing: 55, blendMode: 'source-over' },
+  { id: 'pixel-1px', name: 'Pixel', size: 1, opacity: 100, flow: 100, softness: 0, spacing: 1, smoothing: 0, blendMode: 'source-over', pixel: true },
 ];
 
 export function loadBrushPresets(storage = globalThis.localStorage) {
@@ -31,6 +32,7 @@ export function captureBrushPreset(state, name) {
     spacing: state.brushSpacing,
     smoothing: state.brushSmoothing,
     blendMode: state.brushBlendMode,
+    pixel: !!state.brushPixel,
   };
 }
 
@@ -43,4 +45,6 @@ export function applyBrushPreset(state, preset) {
   state.brushSpacing = preset.spacing;
   state.brushSmoothing = preset.smoothing;
   state.brushBlendMode = preset.blendMode || 'source-over';
+  state.brushPixel = !!preset.pixel;
 }
+

@@ -38,9 +38,14 @@ export function normalizeConstrainedSelectionRect(start, end, width, height, opt
   if (mode === 'size') {
     const w = Math.max(1, Math.min(width, Math.round(Number(options.fixedWidth) || 1)));
     const h = Math.max(1, Math.min(height, Math.round(Number(options.fixedHeight) || 1)));
+    // Snap the anchor to whole document pixels so a fixed-size marquee
+    // never straddles a pixel column/row (which antialiases into a
+    // 1px-taller selection on the trailing edge).
+    const ax = Math.round(sx);
+    const ay = Math.round(sy);
     return {
-      x: Math.max(0, Math.min(width - w, sx)),
-      y: Math.max(0, Math.min(height - h, sy)),
+      x: Math.max(0, Math.min(width - w, ax)),
+      y: Math.max(0, Math.min(height - h, ay)),
       w,
       h,
     };
@@ -67,11 +72,14 @@ export function normalizeConstrainedSelectionRect(start, end, width, height, opt
   const scale = Math.min(1, availableW / Math.max(w, 0.0001), availableH / Math.max(h, 0.0001));
   w *= scale;
   h *= scale;
+  // Snap the anchor origin to whole document pixels, but keep w/h derived
+  // exactly from the ratio so the aspect stays exact (rounding w and h
+  // independently would drift the ratio).
   return {
-    x: signX < 0 ? sx - w : sx,
-    y: signY < 0 ? sy - h : sy,
-    w,
-    h,
+    x: Math.round(signX < 0 ? sx - w : sx),
+    y: Math.round(signY < 0 ? sy - h : sy),
+    w: Math.max(1, w),
+    h: Math.max(1, h),
   };
 }
 

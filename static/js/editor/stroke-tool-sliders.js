@@ -92,6 +92,10 @@ export function wireStrokeToolSliders({ onPresetApplied } = {}) {
   document.getElementById('ge-pressure-opacity')?.addEventListener('change', e => { state.pressureOpacity = e.target.checked; });
   document.getElementById('ge-pressure-flow')?.addEventListener('change', e => { state.pressureFlow = e.target.checked; });
   document.getElementById('ge-eyedropper-sample')?.addEventListener('change', e => { state.eyedropperSample = e.target.value; });
+  document.getElementById('ge-eyedropper-sample-size')?.addEventListener('change', e => {
+    const size = Math.max(1, Math.round(Number(e.target.value) || 1));
+    state.eyedropperSampleSize = size;
+  });
 
   let presets = loadBrushPresets();
   const presetSelect = document.getElementById('ge-brush-preset');

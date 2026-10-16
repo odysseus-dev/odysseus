@@ -50,6 +50,10 @@ export const state = {
   transformPendingRot: 0,
   transformPendingFlipH: false,
   transformPendingFlipV: false,
+  transformPendingSkewX: 0,
+  transformPendingSkewY: 0,
+  transformPendingPerspX: 0,
+  transformPendingPerspY: 0,
   transformAspectLock: true,
   // Keep raster transforms source-backed unless the user explicitly opts out
   // in the Transform popup.
@@ -84,6 +88,9 @@ export const state = {
   wandMode: 'replace',
   wandLiveRetune: false,
   wandLastSeed: null,
+  // Quick Selection brush size (px) and Color Range fuzziness (0-200).
+  quickSelectBrushSize: 24,
+  colorRangeFuzz: 40,
   // Cached layer pixel data (getImageData is O(pixels) — expensive for
   // 4K layers; invalidated when the active layer changes).
   wandSrcCache: null,
@@ -110,6 +117,13 @@ export const state = {
   brushSpacing: 15,
   brushSmoothing: 25,
   brushBlendMode: 'source-over',
+  // Pixel brush: when true, the Brush/Eraser stamp crisp 1px hard pixels
+  // (integer fillRect + Bresenham line, no anti-aliasing) instead of a
+  // soft/feathered circle. Set by the "Pixel 1px" brush preset.
+  brushPixel: false,
+  // Paint Bucket: colour tolerance (0-255) for the flood fill. 0 fills only
+  // exactly-matching pixels; higher values spill across anti-aliased edges.
+  bucketTolerance: 32,
   gradientStart: '#e06c75',
   gradientMid: '#808080',
   gradientMidPosition: 50,
@@ -127,6 +141,9 @@ export const state = {
   pressureOpacity: false,
   pressureFlow: true,
   eyedropperSample: 'composite',
+  // Photoshop eyedropper "Sample Size": 1 = Point Sample, 3/5/11/31/51 =
+  // N-by-N average. Anything > 1 averages a square block under the cursor.
+  eyedropperSampleSize: 1,
   // Clone-stamp source point (set via Alt-click or double-tap). Null
   // means no source picked yet — clicking with the clone tool no-ops
   // until a source is set.
@@ -141,6 +158,10 @@ export const state = {
   // original, not the in-progress stamp ring.
   cloneSourceSnapshot: null,
   cloneSourceLayerId: null,
+  // Patch tool — live drag offset (pixels) from the selection to the
+  // source region; applied on pointer-up.
+  patchDx: 0,
+  patchDy: 0,
   // Where Clone / Healing reads pixels from. Keep the existing active-layer
   // behavior as the default; composite sampling is useful for retouching a
   // visible result while painting on a separate layer.
@@ -224,6 +245,9 @@ export const state = {
   cropEnd: null,
   cropRect: null,
   cropAspectLock: null,
+  // Chosen crop aspect preset ('free' | 'original' | 'W:H'). Locks new crop
+  // drags to the ratio and is applied to an existing crop rect.
+  cropAspectPreset: 'free',
   // True while the user drags the inside of an already-finished crop
   // rect to reposition it.
   cropMoving: false,
@@ -234,6 +258,12 @@ export const state = {
   // is in progress or staged.
   lassoPoints: [],
   lassoActive: false,
+  // Magnetic lasso sub-mode: snap dragged points to the strongest
+  // local luminance gradient within `lassoMagneticWidth` px when the
+  // edge exceeds `lassoMagneticContrast` (0-100).
+  lassoMagnetic: false,
+  lassoMagneticWidth: 12,
+  lassoMagneticContrast: 20,
 
   // ── Marquee selection ──
   marqueeShape: 'rectangle',
@@ -299,10 +329,18 @@ export const state = {
   gridSize: 16,
   snapEnabled: false,
   snapToGrid: false,
+  // Move-tool auto-select: OFF by default (Photoshop parity). When on, a
+  // Move-tool mousedown picks the topmost visible unlocked layer (or its
+  // group) under the pointer; Ctrl/Cmd+mousedown does it temporarily.
+  autoSelectLayer: false,
+  autoSelectTarget: 'layer',
   guides: { vertical: [], horizontal: [] },
   // Document dimensions in canvas pixels.
   imgWidth: 0,
   imgHeight: 0,
+  // Document color mode and bit depth (metadata; canvas is RGBA8).
+  colorMode: 'rgb',
+  bitDepth: 8,
   // Gallery image id this editor session is editing, or null for
   // blank-canvas drafts.
   imageId: null,
@@ -342,6 +380,10 @@ export const state = {
   // this invalidates a frame when the popup closes or changes layers.
   adjPreviewLayer: null,
   historyPanelEl: null,
+  // Named snapshots (Photoshop-style restore points). Each entry is an
+  // independent value snapshot { _snapshotId, _label, _ts, ... } that
+  // survives later edits and undo-stack trimming.
+  historySnapshots: [],
   // Custom brush-cursor overlay element (circle following the mouse).
   cursorEl: null,
   // Hover-preview thumbnail floating element (singleton, repositioned).
@@ -352,6 +394,7 @@ export const state = {
   // ── Draft persistence ──
   draftId: null,
   draftName: '',
+  documentId: null,
   persistTimer: null,
   // Current PUT/POST promise so concurrent saves can chain.
   persistInFlight: null,

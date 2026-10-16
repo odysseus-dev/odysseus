@@ -128,13 +128,39 @@ export function wireSelectionControls({
     document.getElementById('ge-lasso-grow-label').textContent = e.target.value + 'px';
     composite();
   });
+  const syncLassoMagneticRows = () => {
+    const on = !!state.lassoMagnetic;
+    const widthRow = document.getElementById('ge-lasso-mag-width-row');
+    const contrastRow = document.getElementById('ge-lasso-mag-contrast-row');
+    if (widthRow) widthRow.style.display = on ? '' : 'none';
+    if (contrastRow) contrastRow.style.display = on ? '' : 'none';
+    const toggle = document.getElementById('ge-lasso-magnetic');
+    if (toggle) {
+      toggle.classList.toggle('active', on);
+      toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  };
+  document.getElementById('ge-lasso-magnetic')?.addEventListener('click', () => {
+    state.lassoMagnetic = !state.lassoMagnetic;
+    syncLassoMagneticRows();
+  });
+  document.getElementById('ge-lasso-mag-width')?.addEventListener('input', (e) => {
+    state.lassoMagneticWidth = parseInt(e.target.value, 10) || 12;
+    const lbl = document.getElementById('ge-lasso-mag-width-label');
+    if (lbl) lbl.textContent = state.lassoMagneticWidth + 'px';
+  });
+  document.getElementById('ge-lasso-mag-contrast')?.addEventListener('input', (e) => {
+    state.lassoMagneticContrast = parseInt(e.target.value, 10);
+    const lbl = document.getElementById('ge-lasso-mag-contrast-label');
+    if (lbl) lbl.textContent = state.lassoMagneticContrast + '%';
+  });
+  syncLassoMagneticRows();
   document.getElementById('ge-lasso-delete')?.addEventListener('click', () => {
     if (state.lassoPoints.length >= 3 && !state.lassoActive) lassoDeleteSelection();
     else if (state.wandMask) wandDeleteSelection();
   });
   document.getElementById('ge-lasso-copy')?.addEventListener('click', () => {
-    if (state.lassoPoints.length >= 3 && !state.lassoActive) lassoCopyToLayer();
-    else if (state.wandMask) wandCopyToNewLayer();
+    if ((state.lassoPoints.length >= 3 && !state.lassoActive) || state.wandMask) lassoCopyToLayer();
   });
   document.getElementById('ge-lasso-mask')?.addEventListener('click', () => {
     if (state.lassoPoints.length >= 3 && !state.lassoActive) lassoToMask();
@@ -181,6 +207,11 @@ export function wireSelectionControls({
     const wp = document.getElementById('ge-wand-tol-preview');
     if (wp) wp.style.opacity = (state.wandTolerance / 100).toFixed(2);
     if (state.wandLiveRetune) retuneWand();
+  });
+  document.getElementById('ge-bucket-tolerance')?.addEventListener('input', (e) => {
+    state.bucketTolerance = Math.max(0, Math.min(255, parseInt(e.target.value, 10) || 0));
+    const blbl = document.getElementById('ge-bucket-tolerance-label');
+    if (blbl) blbl.textContent = state.bucketTolerance;
   });
 
   // Wand mode segmented toggle (New / Add / Subtract).

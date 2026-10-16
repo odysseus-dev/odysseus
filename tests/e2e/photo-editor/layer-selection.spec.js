@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
 test('Ctrl-click thumbnail shows pixel selection even after outlines were hidden', async ({ page }) => {
@@ -133,19 +134,19 @@ test('Ctrl/Cmd+J duplicates the active layer through the layer panel path', asyn
 
 test('move tool can auto-select the topmost visible layer under the pointer', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Auto-select E2E');
-  await page.locator('.ge-tool-btn[data-tool="shape"]').click();
+  await selectTool(page, 'shape');
   await dragOnCanvas(page, { x: 0.25, y: 0.25 }, { x: 0.75, y: 0.75 });
   const shape = (await editorState(page)).layers.find(layer => layer.kind === 'shape');
   expect(shape).toBeTruthy();
 
   await page.locator('.ge-layer-item[data-layer-id]').filter({ hasText: 'Background' }).first().click();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await expect(page.locator('.ge-auto-select-option')).toBeVisible();
   await page.locator('.ge-auto-select-option').click();
   await expect(page.locator('#ge-auto-select-layer')).toBeChecked();
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('.ge-auto-select-option')).toBeHidden();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await expect(page.locator('.ge-auto-select-option')).toBeVisible();
   const box = await page.locator('.ge-main-canvas').boundingBox();
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
@@ -163,7 +164,7 @@ test('multi-selected layers move together and support history-backed bulk action
   expect((await editorState(page)).selectedLayerIds).toHaveLength(2);
   await expect(page.locator('#ge-layer-selection-bar')).toBeVisible();
 
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await dragOnCanvas(page, { x: 0.42, y: 0.42 }, { x: 0.52, y: 0.50 });
   let current = await editorState(page);
   const edit = current.layers.find(layer => layer.name === 'Edit');
@@ -236,7 +237,7 @@ test('layer groups composite, lock, collapse, undo, and survive server reopen', 
   await page.locator('.ge-layer-group-row .ge-layer-lock-btn').click();
 
   await page.locator('.ge-layer-group-row').click();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await dragOnCanvas(page, { x: 0.40, y: 0.40 }, { x: 0.52, y: 0.48 });
   current = await editorState(page);
   expect(current.layers[0].offset).toEqual(current.layers[1].offset);
@@ -260,7 +261,7 @@ test('layer groups composite, lock, collapse, undo, and survive server reopen', 
   await expect(page.locator('.ge-layer-item.grouped')).toHaveCount(0);
 
   await page.locator('.ge-layer-group-row').click();
-  await page.locator('#ge-layer-tools button[title="Ungroup layers"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Ungroup layers"]').click();
   expect((await editorState(page)).groups).toHaveLength(0);
   await page.locator('#ge-undo').click();
   expect((await editorState(page)).groups).toHaveLength(1);
@@ -318,7 +319,7 @@ test('nested groups preserve hierarchy, ancestor locks, collapse, and server reo
   await expect(page.locator('.ge-layer-group-row')).toHaveCount(2);
 
   await page.locator(`.ge-layer-group-row[data-group-id="${outer.id}"]`).click();
-  await page.locator('#ge-layer-tools button[title="Ungroup layers"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Ungroup layers"]').click();
   current = await editorState(page);
   expect(current.groups).toHaveLength(1);
   expect(current.groups[0]).toMatchObject({ id: inner.id, parentId: null });

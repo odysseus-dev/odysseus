@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { editorState, flattenedPixelDigest, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
 async function patternedPng(page, width, height, colors) {
@@ -30,12 +31,12 @@ test('placed image transforms from source, replaces in place, rasterizes, and re
   const sourceHash = imported.placed.sourcePixelHash;
 
   const row = page.locator(`.ge-layer-item[data-layer-id="${imported.id}"]`);
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
+  await selectTool(page, 'transform');
   const originalWidth = Number(await page.locator('#ge-transform-w').inputValue());
   await page.locator('#ge-transform-w').fill(String(Math.round(originalWidth / 2)));
   await page.locator('#ge-transform-apply').click();
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await page.locator('#ge-transform-w').fill(String(originalWidth));
   await page.locator('#ge-transform-apply').click();
 
@@ -48,7 +49,7 @@ test('placed image transforms from source, replaces in place, rasterizes, and re
 
   const replacement = await patternedPng(page, 20, 40, ['#111111', '#f8f8f8', '#ff00aa']);
   const replaceChooserPromise = page.waitForEvent('filechooser');
-  await page.locator('#ge-layer-tools button[title="Replace placed image"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Replace placed image"]').click();
   const replaceChooser = await replaceChooserPromise;
   await replaceChooser.setFiles({ name: 'replacement.png', mimeType: 'image/png', buffer: replacement });
   await expect.poll(async () => {
@@ -62,7 +63,7 @@ test('placed image transforms from source, replaces in place, rasterizes, and re
   expect(replaced.masks[0]).toEqual(beforeReplaceMask);
 
   const beforeRasterize = await flattenedPixelDigest(page);
-  await page.locator('#ge-layer-tools button[title="Rasterize placed layer"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Rasterize placed layer"]').click();
   const rasterized = (await editorState(page)).layers.find(layer => layer.id === imported.id);
   expect(rasterized.kind).toBe('raster');
   expect(rasterized.placed).toBeNull();
@@ -92,11 +93,11 @@ test('raster layers can be converted to editable sources without changing pixels
 
   await expect.poll(async () => (await editorState(page)).layers.filter(layer => layer.kind === 'placed').length).toBe(1);
   const placed = (await editorState(page)).layers.find(layer => layer.kind === 'placed');
-  await page.locator('#ge-layer-tools button[title="Rasterize placed layer"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Rasterize placed layer"]').click();
   const raster = (await editorState(page)).layers.find(layer => layer.id === placed.id);
   const before = { pixelHash: raster.pixelHash, size: raster.size, offset: raster.offset };
 
-  await page.locator('#ge-layer-tools button[title="Convert to editable source"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Convert to editable source"]').click();
   await expect.poll(async () => (await editorState(page)).layers.find(layer => layer.id === placed.id).kind).toBe('placed');
   const converted = (await editorState(page)).layers.find(layer => layer.id === placed.id);
   expect(converted.placed.sourceSize).toEqual(before.size);
@@ -139,7 +140,7 @@ test('duplicating a placed layer copies its source independently', async ({ page
   await expect.poll(async () => (await editorState(page)).layers.filter(layer => layer.kind === 'placed').length).toBe(1);
   const original = (await editorState(page)).layers.find(layer => layer.kind === 'placed');
   await page.locator(`.ge-layer-item[data-layer-id="${original.id}"]`).click();
-  await page.locator('#ge-layer-tools button[title="Duplicate layer"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Duplicate layer"]').click();
   await expect.poll(async () => (await editorState(page)).layers.filter(layer => layer.kind === 'placed').length).toBe(2);
   const sourceOwnership = await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
@@ -165,10 +166,10 @@ test('raster transforms preserve source pixels by default and can opt out', asyn
   await expect.poll(async () => (await editorState(page)).layers.filter(layer => layer.kind === 'placed').length).toBe(1);
 
   const placed = (await editorState(page)).layers.find(layer => layer.kind === 'placed');
-  await page.locator('#ge-layer-tools button[title="Rasterize placed layer"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Rasterize placed layer"]').click();
   const rasterBeforeTransform = (await editorState(page)).layers.find(layer => layer.id === placed.id);
   const sourceHash = rasterBeforeTransform.pixelHash;
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('#ge-transform-preserve-source')).toBeChecked();
   await page.locator('#ge-transform-w').fill('84');
   await page.locator('#ge-transform-apply').click();
@@ -191,8 +192,8 @@ test('raster transforms can explicitly replace source pixels', async ({ page, re
   await expect.poll(async () => (await editorState(page)).layers.filter(layer => layer.kind === 'placed').length).toBe(1);
 
   const placed = (await editorState(page)).layers.find(layer => layer.kind === 'placed');
-  await page.locator('#ge-layer-tools button[title="Rasterize placed layer"]').click();
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Rasterize placed layer"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('#ge-transform-preserve-source')).toBeChecked();
   await page.locator('#ge-transform-preserve-source').uncheck();
   await page.locator('#ge-transform-w').fill('60');

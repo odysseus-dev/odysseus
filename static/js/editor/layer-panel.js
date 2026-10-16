@@ -506,7 +506,7 @@ export function createLayerPanelRenderer(deps) {
 
   async function deleteLayers(layers) {
     const targets = layers.filter(layer => state.layers.includes(layer));
-    if (!targets.length || targets.length >= state.layers.length) return false;
+    if (!targets.length) return false;
     if (targets.some(layer => layer.isBase) && uiModule?.styledConfirm) {
       const ok = await uiModule.styledConfirm(
         `Delete ${targets.length === 1 ? 'the original photo layer' : `${targets.length} selected layers, including the original`}? Ctrl+Z brings ${targets.length === 1 ? 'it' : 'them'} back.`,
@@ -521,8 +521,10 @@ export function createLayerPanelRenderer(deps) {
     state.layers = state.layers.filter(layer => !ids.has(layer.id));
     for (const id of ids) state.layerOffsets.delete(id);
     normalizeLayerClipping(state);
+    // Deleting every layer is allowed — the document becomes an empty canvas.
     const fallback = state.layers[state.layers.length - 1];
-    selectOnlyLayer(state, fallback.id);
+    if (fallback) selectOnlyLayer(state, fallback.id);
+    else { state.activeLayerId = null; state.selectedLayerIds = []; state.activeGroupId = null; }
     state.maskCanvas = null;
     state.maskCtx = null;
     composite();
@@ -1089,6 +1091,38 @@ export function createLayerPanelRenderer(deps) {
         });
       }
     }
+    // Header opacity control (Photoshop-style Blend/Opacity row).
+    const headerOpacity = document.getElementById('ge-layer-header-opacity');
+    if (headerOpacity) {
+      headerOpacity.disabled = !selectedLayer && !selectedGroup;
+      headerOpacity.value = String(Math.round((selectedGroup?.opacity ?? selectedLayer?.opacity ?? 1) * 100));
+      if (!headerOpacity.dataset.wired) {
+        headerOpacity.dataset.wired = 'true';
+        let headerOpacitySaved = false;
+        headerOpacity.addEventListener('input', () => {
+          const next = Math.max(0, Math.min(1, (parseInt(headerOpacity.value, 10) || 0) / 100));
+          const activeGroup = normalizeLayerGroups(state).find(group => group.id === state.activeGroupId);
+          if (activeGroup) {
+            if (Math.abs(activeGroup.opacity - next) < 0.0001) return;
+            if (!headerOpacitySaved) { saveState(`Change opacity of group "${activeGroup.name}"`); headerOpacitySaved = true; }
+            activeGroup.opacity = next;
+            composite();
+            return;
+          }
+          const active = state.layers.find(layer => layer.id === state.activeLayerId);
+          if (!active) return;
+          const targets = rowTargets(active);
+          if (targets.every(layer => Math.abs(layer.opacity - next) < 0.0001)) return;
+          if (!headerOpacitySaved) {
+            saveState(targets.length > 1 ? `Change opacity of ${targets.length} layers` : `Change opacity of "${active.name}"`);
+            headerOpacitySaved = true;
+          }
+          for (const layer of targets) layer.opacity = next;
+          composite();
+        });
+        headerOpacity.addEventListener('change', () => { headerOpacitySaved = false; });
+      }
+    }
     // Mobile bottom-sheet peek height — header + N rows, capped so a
     // 20-layer document doesn't get a peek that eats the canvas.
     const panel = document.querySelector('.ge-right-panel');
@@ -1098,10 +1132,20 @@ export function createLayerPanelRenderer(deps) {
         const firstRow = list.querySelector('.ge-layer-item');
         const headerH = header ? header.offsetHeight : 52;
         const rowH = firstRow ? firstRow.offsetHeight : 36;
+        // The Blend/Opacity row sits between the header and the list — it is
+        // not part of the header, so its height must be counted too (control
+        // kit restyling can grow it), or the footer's add/fx/delete row falls
+        // below the peek and off the phone viewport.
+        const blendRow = panel.querySelector('.ge-layer-blend-row');
+        const blendH = blendRow ? blendRow.offsetHeight : 0;
+        // Action tools now live in a footer below the list — include its
+        // height so the mobile peek still exposes the add/fx/delete row.
+        const footer = panel.querySelector('.ge-layers-footer');
+        const footerH = footer ? footer.offsetHeight : 0;
         const allRows = list.querySelectorAll('.ge-layer-item').length;
         const MAX_ROWS = 2;
         const rows = Math.min(allRows, MAX_ROWS);
-        panel.style.setProperty('--peek-height', `${headerH + rows * rowH + 6}px`);
+        panel.style.setProperty('--peek-height', `${headerH + blendH + rows * rowH + footerH + 6}px`);
       });
     }
     list.innerHTML = '';
