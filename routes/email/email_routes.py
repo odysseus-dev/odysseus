@@ -26,12 +26,14 @@ import re
 import html
 import io
 import zipfile
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from html.parser import HTMLParser as _HTMLParser
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from email.message import EmailMessage
+from email import policy as email_policy
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -4183,6 +4185,190 @@ def setup_email_routes():
             zip_buf,
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+        )
+
+    @router.post("/messages-download-bulk")
+    async def download_bulk_messages(request: Request, owner: str = Depends(require_owner)):
+        """Export selected original email messages as .eml files in a ZIP."""
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        messages = payload.get("messages") if isinstance(payload, dict) else None
+        if not isinstance(messages, list) or not messages:
+            raise HTTPException(status_code=400, detail="No emails selected")
+        if len(messages) > 250:
+            raise HTTPException(status_code=400, detail="Too many emails selected")
+
+        category = str(payload.get("category") or "selected").strip().lower()
+        category = re.sub(r"[^a-z0-9_-]+", "-", category).strip("-") or "selected"
+        selected_dates = sorted({
+            str(row.get("date") or "").strip()
+            for row in messages if isinstance(row, dict)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(row.get("date") or "").strip())
+        })
+        date_span = ""
+        if selected_dates:
+            date_span = selected_dates[0] if len(selected_dates) == 1 else f"{selected_dates[0]} - {selected_dates[-1]}"
+        export_folder = f"emails-{category}" + (f" ({date_span})" if date_span else "")
+
+        zip_buf = io.BytesIO()
+        used_names: set[str] = set()
+        exported = 0
+        skipped = 0
+        single_export: tuple[str, bytes] | None = None
+
+        def _email_filename(row: dict, uid: str) -> str:
+            date = str(row.get("date") or "").strip()
+            date = date if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else ""
+            subject = str(row.get("subject") or "email").strip()
+            subject = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]+', "_", subject)
+            subject = re.sub(r"\s+", " ", subject).strip(" .")[:100] or "email"
+            safe_uid = re.sub(r"[^A-Za-z0-9_-]+", "_", uid).strip("_") or "message"
+            prefix = f"{date} - " if date else ""
+            return _safe_attachment_zip_name(f"{prefix}{subject} - {safe_uid}.eml", "email.eml")
+
+        def _fixture_message_bytes(fixture: dict, uid: str, folder: str) -> bytes:
+            msg = EmailMessage()
+            sender_name = str(fixture.get("from_name") or "").strip()
+            sender_address = str(fixture.get("from_address") or "").strip()
+            sender = email.utils.formataddr((sender_name, sender_address)) if sender_address else sender_name
+            for key, value in (
+                ("From", sender),
+                ("To", fixture.get("to") or owner),
+                ("Subject", fixture.get("subject") or "(no subject)"),
+                ("Message-ID", fixture.get("message_id") or f"<fixture-{uid}@mail.local>"),
+            ):
+                clean_value = re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+                if clean_value:
+                    msg[key] = clean_value
+            raw_date = str(fixture.get("date") or "").strip()
+            if raw_date:
+                try:
+                    parsed_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                    if parsed_date.tzinfo is None:
+                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                except Exception:
+                    try:
+                        parsed_date = email.utils.parsedate_to_datetime(raw_date)
+                    except Exception:
+                        parsed_date = None
+                if parsed_date is not None:
+                    msg["Date"] = email.utils.format_datetime(parsed_date)
+            msg.set_content(str(fixture.get("body") or ""))
+            for attachment in fixture.get("attachments") or []:
+                try:
+                    index = int(attachment.get("index"))
+                    source = _fixture_attachment_source(uid, index, owner, folder)
+                    if not source:
+                        continue
+                    _row, raw_attachment = source
+                    content_type = str(raw_attachment.get("content_type") or "application/octet-stream")
+                    maintype, _, subtype = content_type.partition("/")
+                    if not subtype:
+                        maintype, subtype = "application", "octet-stream"
+                    msg.add_attachment(
+                        str(raw_attachment.get("content") or "").encode("utf-8"),
+                        maintype=maintype,
+                        subtype=subtype,
+                        filename=str(raw_attachment.get("filename") or attachment.get("filename") or f"attachment-{index}"),
+                    )
+                except Exception:
+                    logger.debug("Skipping malformed fixture email attachment uid=%s", uid, exc_info=True)
+            return msg.as_bytes(policy=email_policy.SMTP)
+
+        remote_groups: dict[tuple[str | None, str], dict[str, tuple[str, dict]]] = {}
+        with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for row in messages:
+                if not isinstance(row, dict):
+                    skipped += 1
+                    continue
+                uid = str(row.get("uid") or "").strip()
+                if not uid:
+                    skipped += 1
+                    continue
+                folder = str(row.get("folder") or "INBOX").strip() or "INBOX"
+                account_id = str(row.get("account_id") or row.get("account") or "").strip() or None
+                fixture = _fixture_email_read(uid, folder, owner)
+                if fixture is not None and not fixture.get("error"):
+                    filename = _email_filename(row, uid)
+                    unique_name = filename
+                    suffix = 2
+                    while unique_name.lower() in used_names:
+                        unique_name = f"{Path(filename).stem}-{suffix}.eml"
+                        suffix += 1
+                    used_names.add(unique_name.lower())
+                    message_bytes = _fixture_message_bytes(fixture, uid, folder)
+                    zf.writestr(f"{export_folder}/{unique_name}", message_bytes)
+                    single_export = (unique_name, message_bytes)
+                    exported += 1
+                    continue
+                if not re.fullmatch(r"\d+", uid):
+                    skipped += 1
+                    continue
+                group = remote_groups.setdefault((account_id, folder), {})
+                group.setdefault(uid, (_email_filename(row, uid), row))
+
+            # Fetch original RFC822 data in batches and store it byte-for-byte.
+            for (account_id, folder), rows_by_uid in remote_groups.items():
+                rows = list(rows_by_uid.items())
+                try:
+                    with _imap(account_id, owner=owner) as conn:
+                        conn.select(_q(folder), readonly=True)
+                        for batch_start in range(0, len(rows), 20):
+                            batch = rows[batch_start:batch_start + 20]
+                            wanted = {uid: filename for uid, (filename, _row) in batch}
+                            uid_set = ",".join(wanted).encode()
+                            status, msg_data = _imap_uid_fetch(conn, uid_set, "(UID RFC822)")
+                            if status != "OK" or not msg_data:
+                                skipped += len(batch)
+                                continue
+                            found: set[str] = set()
+                            for meta, raw_message in _group_uid_fetch_records(msg_data):
+                                uid = _uid_from_fetch_meta(meta)
+                                if uid not in wanted or not raw_message:
+                                    continue
+                                filename = wanted[uid]
+                                unique_name = filename
+                                suffix = 2
+                                while unique_name.lower() in used_names:
+                                    unique_name = f"{Path(filename).stem}-{suffix}.eml"
+                                    suffix += 1
+                                used_names.add(unique_name.lower())
+                                message_bytes = bytes(raw_message)
+                                zf.writestr(f"{export_folder}/{unique_name}", message_bytes)
+                                single_export = (unique_name, message_bytes)
+                                found.add(uid)
+                                exported += 1
+                            skipped += len(batch) - len(found)
+                except Exception as exc:
+                    skipped += len(rows)
+                    logger.warning("Bulk email export skipped mailbox folder=%s account=%s count=%s: %s", folder, account_id, len(rows), exc)
+
+        if exported <= 0:
+            raise HTTPException(status_code=404, detail="No selected emails could be exported")
+        if len(messages) == 1 and single_export:
+            filename, message_bytes = single_export
+            return StreamingResponse(
+                io.BytesIO(message_bytes),
+                media_type="message/rfc822",
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"email.eml\"; filename*=UTF-8''{quote(filename, safe='')}",
+                    "X-Exported-Emails": "1",
+                    "X-Skipped-Emails": str(skipped),
+                },
+            )
+        zip_buf.seek(0)
+        zip_name = _safe_attachment_zip_name(f"{export_folder}.zip", "selected-emails.zip")
+        logger.info("Bulk email export complete owner=%s selected=%s exported=%s skipped=%s", owner, len(messages), exported, skipped)
+        return StreamingResponse(
+            zip_buf,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{zip_name}"',
+                "X-Exported-Emails": str(exported),
+                "X-Skipped-Emails": str(skipped),
+            },
         )
 
     @router.get("/inline-image/{uid}")

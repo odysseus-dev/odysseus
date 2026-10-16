@@ -1122,7 +1122,130 @@ function _filenameFromContentDisposition(header) {
   return bare ? bare[1].trim() : '';
 }
 
-export async function _exportSelectedAttachments() {
+let _emailHtml2PdfReady = null;
+async function _loadEmailHtml2Pdf() {
+  if (window.html2pdf) return;
+  if (!_emailHtml2PdfReady) {
+    _emailHtml2PdfReady = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/static/lib/html2pdf.bundle.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Could not load PDF exporter'));
+      document.head.appendChild(script);
+    });
+  }
+  try {
+    await _emailHtml2PdfReady;
+  } catch (error) {
+    _emailHtml2PdfReady = null;
+    throw error;
+  }
+}
+
+async function _downloadSelectedEmailPdf(messages) {
+  if (messages.length > 20) throw new Error('PDF export supports up to 20 emails at a time');
+  await _loadEmailHtml2Pdf();
+
+  const loaded = new Array(messages.length);
+  let nextIndex = 0;
+  const readWorker = async () => {
+    while (nextIndex < messages.length) {
+      const index = nextIndex++;
+      const message = messages[index];
+      const account = message.account_id ? `&account_id=${encodeURIComponent(message.account_id)}` : '';
+      const url = `${API_BASE}/api/email/read/${encodeURIComponent(message.uid)}?folder=${encodeURIComponent(message.folder || 'INBOX')}${account}&mark_seen=false&full=true`;
+      const response = await fetch(url, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`Could not load "${message.subject || 'email'}" (HTTP ${response.status})`);
+      const data = await response.json();
+      if (data?.error) throw new Error(data.error);
+      loaded[index] = { message, data };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, messages.length) }, readWorker));
+
+  const page = document.createElement('div');
+  page.className = 'email-export-pdf';
+  page.style.cssText = 'width:794px;box-sizing:border-box;padding:38px;background:#fff;color:#171717;font:12px/1.55 Arial,Helvetica,sans-serif;';
+  const style = document.createElement('style');
+  style.textContent = `
+    .email-export-pdf-message { page-break-after: always; break-after: page; }
+    .email-export-pdf-message:last-child { page-break-after: auto; break-after: auto; }
+    .email-export-pdf-message h1 { margin: 0 0 18px; font-size: 20px; line-height: 1.3; overflow-wrap: anywhere; }
+    .email-export-pdf-fields { margin: 0 0 20px; padding: 0 0 14px; border-bottom: 1px solid #d8d8d8; }
+    .email-export-pdf-field { display: flex; gap: 10px; margin: 3px 0; overflow-wrap: anywhere; }
+    .email-export-pdf-label { width: 54px; flex: 0 0 54px; color: #666; }
+    .email-export-pdf-body { overflow-wrap: anywhere; word-break: break-word; }
+    .email-export-pdf-body img { max-width: 100%; }
+    .email-export-pdf-body a { color: #135f9b; text-decoration: underline; }
+    .email-export-pdf-body blockquote { margin-left: 12px; padding-left: 10px; border-left: 2px solid #ccc; color: #555; }
+    .email-export-pdf-body pre { white-space: pre-wrap; }
+  `;
+  page.appendChild(style);
+
+  const addField = (parent, label, value) => {
+    if (!value) return;
+    const row = document.createElement('div');
+    row.className = 'email-export-pdf-field';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'email-export-pdf-label';
+    labelEl.textContent = label;
+    const valueEl = document.createElement('span');
+    valueEl.textContent = value;
+    row.append(labelEl, valueEl);
+    parent.appendChild(row);
+  };
+
+  for (const { message, data } of loaded) {
+    const article = document.createElement('article');
+    article.className = 'email-export-pdf-message';
+    const subject = String(data.subject || message.subject || '(no subject)');
+    const title = document.createElement('h1');
+    title.textContent = subject;
+    article.appendChild(title);
+
+    const fields = document.createElement('div');
+    fields.className = 'email-export-pdf-fields';
+    const from = data.from_name && data.from_address
+      ? `${data.from_name} <${data.from_address}>`
+      : data.from_name || data.from_address;
+    addField(fields, 'From', from);
+    addField(fields, 'To', data.to);
+    addField(fields, 'Cc', data.cc);
+    addField(fields, 'Date', data.date_display || data.date || message.date);
+    article.appendChild(fields);
+
+    const body = document.createElement('div');
+    body.className = 'email-export-pdf-body';
+    const safeBody = new DOMParser().parseFromString(_safeRenderEmailBody(data), 'text/html');
+    safeBody.querySelectorAll('img').forEach(img => {
+      const placeholder = safeBody.createElement('span');
+      placeholder.textContent = img.alt ? `[Image: ${img.alt}]` : '[Inline image omitted]';
+      img.replaceWith(placeholder);
+    });
+    body.innerHTML = safeBody.body.innerHTML;
+    body.querySelectorAll('details').forEach(detail => { detail.open = true; });
+    article.appendChild(body);
+    page.appendChild(article);
+  }
+
+  const safeBaseName = messages.length === 1
+    ? String(loaded[0]?.data?.subject || messages[0]?.subject || 'email').replace(/[^\p{L}\p{N} ._-]+/gu, '_').trim().slice(0, 100) || 'email'
+    : 'selected-emails';
+  try {
+    await window.html2pdf().set({
+      margin: 10,
+      filename: `${safeBaseName}.pdf`,
+      image: { type: 'jpeg', quality: 0.92 },
+      html2canvas: { scale: 1.6, useCORS: false, backgroundColor: '#fff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    }).from(page).save();
+  } finally {
+    page.remove();
+  }
+}
+
+async function _exportSelectedBundle(kind) {
   const messages = _selectedEmailExportPayload();
   if (!messages.length) {
     showToast('Select emails first');
@@ -1150,8 +1273,15 @@ export async function _exportSelectedAttachments() {
     if (deleteBtn) deleteBtn.disabled = true;
     if (cancelBtn) cancelBtn.disabled = true;
     if (selectAll) selectAll.disabled = true;
-    if (countEl) countEl.textContent = `Exporting attachments from ${messages.length}…`;
-    const res = await fetch(`${API_BASE}/api/email/attachments-download-bulk`, {
+    const isEmailExport = kind === 'emails';
+    const isPdfExport = kind === 'pdf';
+    if (countEl) countEl.textContent = `${isPdfExport ? 'Creating PDF' : 'Exporting'} ${isPdfExport ? 'from' : isEmailExport ? 'emails from' : 'attachments from'} ${messages.length}…`;
+    if (isPdfExport) {
+      await _downloadSelectedEmailPdf(messages);
+      showToast(`Exported ${messages.length} email${messages.length === 1 ? '' : 's'} as PDF`);
+      return;
+    }
+    const res = await fetch(`${API_BASE}/api/email/${isEmailExport ? 'messages' : 'attachments'}-download-bulk`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1169,12 +1299,21 @@ export async function _exportSelectedAttachments() {
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const blob = await res.blob();
-    const filename = _filenameFromContentDisposition(res.headers.get('Content-Disposition')) || 'selected-email-attachments.zip';
+    const filename = _filenameFromContentDisposition(res.headers.get('Content-Disposition'))
+      || (isEmailExport
+        ? (messages.length === 1 ? 'selected-email.eml' : 'selected-emails.zip')
+        : 'selected-email-attachments.zip');
     _downloadBlob(blob, filename);
-    showToast(`Exported attachments from ${messages.length} selected email${messages.length === 1 ? '' : 's'}`);
+    const exported = Number(res.headers.get('X-Exported-Emails')) || messages.length;
+    const skipped = Number(res.headers.get('X-Skipped-Emails')) || 0;
+    showToast(skipped
+      ? `Exported ${exported} email${exported === 1 ? '' : 's'}; ${skipped} unavailable`
+      : isEmailExport
+        ? `Exported ${exported} email${exported === 1 ? '' : 's'} as ${exported === 1 ? 'an .eml file' : '.eml files'}`
+        : `Exported attachments from ${messages.length} selected email${messages.length === 1 ? '' : 's'}`);
   } catch (err) {
-    console.error('Failed to export selected email attachments:', err);
-    showToast(err?.message || 'Failed to export attachments');
+    console.error(`Failed to export selected email ${kind}:`, err);
+    showToast(err?.message || (kind === 'emails' ? 'Failed to export emails' : 'Failed to export attachments'));
   } finally {
     if (busySpinner) busySpinner.destroy();
     if (actionsBtn) {
@@ -1188,6 +1327,18 @@ export async function _exportSelectedAttachments() {
     if (countEl) countEl.textContent = originalCountText;
     _updateBulkBar();
   }
+}
+
+export async function _exportSelectedEmails() {
+  return _exportSelectedBundle('emails');
+}
+
+export async function _exportSelectedEmailPdf() {
+  return _exportSelectedBundle('pdf');
+}
+
+export async function _exportSelectedAttachments() {
+  return _exportSelectedBundle('attachments');
 }
 
 // URL-suffix helper — appends &account_id=... when an account is actively selected.

@@ -41,18 +41,18 @@ def test_email_bulk_read_unread_checks_backend_success_before_syncing_cache():
     assert "_libCacheWriteBack()" in src
 
 
-def test_email_bulk_export_attachments_is_ui_only_selected_context():
+def test_email_bulk_exports_messages_and_attachments_from_selected_context():
     frontend = email_library_source()
     backend = _EMAIL_ROUTES.read_text(encoding="utf-8")
-    export_src = frontend[
-        frontend.index("async function _exportSelectedAttachments()"):
-        frontend.index("\n}\n\n// URL-suffix helper", frontend.index("async function _exportSelectedAttachments()")) + 3
-    ]
+    export_src = _function_source("_exportSelectedBundle")
     payload_src = _function_source("_selectedEmailExportPayload")
 
+    assert "Export Emails" in frontend
+    assert "Email file (.eml)" in frontend
+    assert "_exportSelectedEmailPdf" in frontend
     assert "Export Attachments" in frontend
     assert "All in view" in frontend
-    assert "/api/email/attachments-download-bulk" in export_src
+    assert "${isEmailExport ? 'messages' : 'attachments'}-download-bulk" in export_src
     assert "method: 'POST'" in export_src
     assert "res.blob()" in export_src
     assert "account_id: String(em.account_id || state._libAccountId || '')" in payload_src
@@ -62,6 +62,25 @@ def test_email_bulk_export_attachments_is_ui_only_selected_context():
     assert "Download visible attachments from selected emails as one zip archive." in backend
     assert "_fixture_email_read(uid, folder, owner)" in backend
     assert "_is_likely_signature_image_attachment(att)" in backend
+
+    assert '@router.post("/messages-download-bulk")' in backend
+    assert '"(UID RFC822)"' in backend
+    assert "msg.as_bytes(policy=email_policy.SMTP)" in backend
+    assert 'media_type="message/rfc822"' in backend
+    assert '"X-Exported-Emails"' in backend
+
+
+def test_email_bulk_pdf_export_reads_without_marking_read_and_sanitizes_body():
+    frontend = email_library_source()
+    pdf_src = _function_source("_downloadSelectedEmailPdf")
+    menu_src = js_function_source("_showBulkActionsMenu", frontend)
+
+    assert "mark_seen=false&full=true" in pdf_src
+    assert "_safeRenderEmailBody(data)" in pdf_src
+    assert "new DOMParser()" in pdf_src
+    assert "window.html2pdf()" in pdf_src
+    assert "up to 20 emails" in pdf_src
+    assert "PDF" in menu_src
 
 
 def test_fixture_tag_filter_supports_receipt_tag_flow():
