@@ -2849,6 +2849,7 @@ def _create_email_draft_document(
                     content=existing.current_content,
                     summary="Updated by email MCP draft tool",
                     source="ai",
+                    is_autosave=False,
                 )
                 db.add(ver)
                 db.commit()
@@ -2895,6 +2896,7 @@ def _create_email_draft_document(
             content=content,
             summary="Created by email MCP draft tool",
             source="ai",
+            is_autosave=False,
         )
         db.add(doc)
         db.add(ver)
