@@ -21,6 +21,7 @@ from routes.session_routes import (
     _reject_compact_during_active_run,
     _verify_session_owner,
 )
+from core.guard_deco import content_type, usage_monitor
 from routes.chat_helpers import strip_tui_local_context
 
 logger = logging.getLogger(__name__)
@@ -400,6 +401,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         }
 
     @router.post("/api/session/{session_id}/truncate")
+    @content_type(["application/json"])
     async def truncate_session(request: Request, session_id: str):
         _verify_session_owner(request, session_id)
         try:
@@ -466,6 +468,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, str(e))
 
     @router.post("/api/session/{session_id}/message")
+    @content_type(["application/json"])
     async def add_message(request: Request, session_id: str):
         """Add a message to a session (for slash command persistence)."""
         _verify_session_owner(request, session_id)
@@ -484,6 +487,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(404, "Session not found")
 
     @router.post("/api/session/{session_id}/delete-messages")
+    @content_type(["application/json"])
     async def delete_messages(request: Request, session_id: str):
         """Delete specific messages by DB ID (or legacy index)."""
         _verify_session_owner(request, session_id)
@@ -564,6 +568,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, str(e))
 
     @router.post("/api/session/{session_id}/edit-message")
+    @content_type(["application/json"])
     async def edit_message(request: Request, session_id: str):
         """Edit the content of a message by its database ID."""
         _verify_session_owner(request, session_id)
@@ -674,6 +679,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, str(e))
 
     @router.post("/api/session/{session_id}/update-last-meta")
+    @content_type(["application/json"])
     async def update_last_meta(request: Request, session_id: str):
         """Merge metadata into the last assistant message (e.g. save variants)."""
         _verify_session_owner(request, session_id)
@@ -725,6 +731,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, str(e))
 
     @router.post("/api/session/{session_id}/merge-last-assistant")
+    @content_type(["application/json"])
     async def merge_last_assistant(request: Request, session_id: str):
         """Merge the last two assistant messages into one (for continue)."""
         _verify_session_owner(request, session_id)
@@ -819,6 +826,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, str(e))
 
     @router.post("/api/session/{session_id}/fork")
+    @content_type(["application/json"])
     async def fork_session(request: Request, session_id: str):
         """Create a new session with messages copied up to keep_count."""
         _verify_session_owner(request, session_id)
@@ -1115,6 +1123,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             db.close()
 
     @router.post("/api/session/{session_id}/compact")
+    @usage_monitor(10, 3600, "log")
     async def compact_session(request: Request, session_id: str):
         """Manually trigger context compaction for a session."""
         _verify_session_owner(request, session_id)

@@ -21,7 +21,7 @@ described as a switch that turns something off, the read rejects `0`, `false`,
 `no` and `off` and treats everything else as on. The `Default` column is the
 value the code falls back to when the variable is unset, quoted from the source.
 
-The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to set, and 36 that are internal - sentinels, fixture switches, capture hooks and development tooling. The internal ones are listed too, in their own section, so this page can be checked against the source mechanically.
+The source tree reads **124** `ODYSSEUS_*` variables: 88 an operator may want to set, and 36 that are internal - sentinels, fixture switches, capture hooks and development tooling. The internal ones are listed too, in their own section, so this page can be checked against the source mechanically.
 
 > This page is generated. Edit `scripts/generate_env_reference.py` and
 > re-run it; `tests/test_env_reference.py` enforces that the committed page
@@ -173,6 +173,18 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 | `ODYSSEUS_INTERNAL_BASE` | *unset* | `src/constants.py` | Base URL the in-app tool layer uses for loopback HTTP calls. Set it when the app is not reachable at the port it thinks it is bound to. |
 | `ODYSSEUS_INTERNAL_TOKEN` | *unset* | `core/middleware.py` | Security-relevant. Token that lets the in-app tool layer reach admin-gated routes over loopback. Unset generates a fresh per-process token, which is what you want unless something outside the process needs the same value. |
 
+### Security perimeter
+
+| Variable | Default | Read in | What it does |
+|---|---|---|---|
+| `ODYSSEUS_GUARD_BLOCK_CLOUDS` | `'false'` | `core/guard.py` | Comma list of cloud providers whose published IP ranges are blocked at the perimeter; empty means no cloud blocking. |
+| `ODYSSEUS_GUARD_BLOCK_COUNTRIES` | *unset* | `core/guard.py` | Comma list of ISO country codes to geo-deny; needs ODYSSEUS_GUARD_GEOIP_DB and is ignored without it. |
+| `ODYSSEUS_GUARD_EMERGENCY` | `'false'` | `core/guard.py` | Starts the perimeter in emergency lock-down: only loopback is served until the flag is cleared. |
+| `ODYSSEUS_GUARD_ENABLED` | `'false'` | `core/guard.py` | Master switch for the optional guard-core perimeter (rate-limit ceilings, WAF/recon detection, honeypot auto-ban, per-route caps). Off by default; enabling it requires `pip install -r requirements-optional.txt`. |
+| `ODYSSEUS_GUARD_GEOIP_DB` | `''` | `core/guard.py` | Path to a MaxMind GeoLite2/GeoIP2 country .mmdb backing the country block list; a missing or unreadable file disables country blocking with a warning. |
+| `ODYSSEUS_GUARD_PASSIVE` | `'true'` | `core/guard.py` | Defaults to true: the perimeter only logs what it would block. Set to false to enforce once the passive log is clean for your traffic. |
+| `ODYSSEUS_GUARD_TRUSTED_PROXIES` | *unset* | `core/guard.py` | Comma list of proxy CIDRs allowed to set X-Forwarded-For; the client IP is resolved through them, and a threshold ban targeting one of them is refused so the perimeter cannot ban its own proxy. |
+
 ### Integrations (Claude, Codex)
 
 | Variable | Default | Read in | What it does |
@@ -265,7 +277,7 @@ reads three ways, because no single pattern covers the codebase:
   lines, so one read lives inside a string literal.
 
 The three passes are not redundancy. A line-based grep for a direct
-`os.environ.get("ODYSSEUS_...` call finds 87 of the 117 variables on this
+`os.environ.get("ODYSSEUS_...` call finds 92 of the 124 variables on this
 page. What it misses is reads through an env-reader helper, reads whose call
 spans more than one line, reads whose variable name is held in a module
 constant, and reads through a mapping passed in as an argument - which is the
