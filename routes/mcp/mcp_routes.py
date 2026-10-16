@@ -126,6 +126,21 @@ def _is_legacy_google_flow(identifier: str) -> bool:
         db.close()
 
 
+def _parse_args_json(args) -> list:
+    """Parse the Args form field. It is not defaulted on a parse failure: an
+    unparseable value is silently discarded downstream (stdio spawns with an
+    empty argv), so the caller must be told instead."""
+    if not args:
+        return []
+    try:
+        parsed = json.loads(args)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "args must be valid JSON, e.g. [\"-y\", \"pkg\"]")
+    if not isinstance(parsed, list):
+        raise HTTPException(400, "args must be a JSON array, e.g. [\"-y\", \"pkg\"]")
+    return parsed
+
+
 def setup_mcp_routes(mcp_manager: McpManager):
     """Setup MCP routes with the provided manager."""
 
@@ -193,18 +208,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         if transport == "http" and not url:
             raise HTTPException(400, "url is required for HTTP transport")
 
-        # Parse JSON fields. args is not defaulted on a parse failure: an
-        # unparseable value is silently discarded downstream (stdio spawns
-        # with an empty argv), so the caller must be told instead.
-        if args:
-            try:
-                parsed_args = json.loads(args)
-            except json.JSONDecodeError:
-                raise HTTPException(400, "args must be valid JSON, e.g. [\"-y\", \"pkg\"]")
-            if not isinstance(parsed_args, list):
-                raise HTTPException(400, "args must be a JSON array, e.g. [\"-y\", \"pkg\"]")
-        else:
-            parsed_args = []
+        parsed_args = _parse_args_json(args)
         try:
             parsed_env = json.loads(env) if env else {}
         except json.JSONDecodeError:
@@ -369,6 +373,86 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 await mcp_manager.disconnect_server(server_id)
 
             return {"id": server_id, "is_enabled": enabled}
+        finally:
+            db.close()
+
+    @router.put("/servers/{server_id}")
+    async def update_server(
+        server_id: str,
+        request: Request,
+        name: str = Form(None),
+        command: str = Form(None),
+        args: str = Form(None),
+        env: str = Form(None),
+        url: str = Form(None),
+    ):
+        """Edit a server's config in place. The id is kept, so tool names
+        (mcp__<id>__<tool>) and every setting that refers to them stay valid,
+        unlike delete + re-add (#6328). Omitted fields keep their value; the
+        transport and OAuth config are not editable here."""
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv:
+                raise HTTPException(404, "Server not found")
+
+            if name is not None:
+                name = name.strip()
+                if not name:
+                    raise HTTPException(400, "name must not be empty")
+                srv.name = name
+            oauth_cfg = json.loads(srv.oauth_config) if srv.oauth_config else None
+            if srv.transport == "stdio":
+                if command is not None:
+                    command = command.strip()
+                    if not command:
+                        raise HTTPException(400, "command is required for stdio transport")
+                    srv.command = command
+                if args is not None:
+                    srv.args = json.dumps(_parse_args_json(args))
+                if env is not None:
+                    # Unlike add, a bad value is rejected rather than replaced
+                    # with {}: an edit must not silently wipe stored secrets.
+                    try:
+                        parsed_env = json.loads(env) if env.strip() else {}
+                    except json.JSONDecodeError:
+                        raise HTTPException(400, "env must be valid JSON, e.g. {\"KEY\": \"value\"}")
+                    if not isinstance(parsed_env, dict):
+                        raise HTTPException(400, "env must be a JSON object, e.g. {\"KEY\": \"value\"}")
+                    _apply_mcp_oauth_env(parsed_env, oauth_cfg)
+                    srv.env = json.dumps(parsed_env)
+            elif url is not None:
+                url = url.strip()
+                if not url:
+                    raise HTTPException(400, f"url is required for {srv.transport} transport")
+                srv.url = url
+            db.commit()
+
+            connected = False
+            if srv.is_enabled:
+                await mcp_manager.disconnect_server(server_id)
+                if not (oauth_cfg and _mcp_oauth_token_missing(oauth_cfg)):
+                    connected = await mcp_manager.connect_server(
+                        server_id=server_id,
+                        name=srv.name,
+                        transport=srv.transport,
+                        command=srv.command,
+                        args=json.loads(srv.args) if srv.args else [],
+                        env=json.loads(srv.env) if srv.env else {},
+                        url=srv.url,
+                    )
+            status = mcp_manager.get_server_status(server_id)
+            return {
+                "id": server_id,
+                "name": srv.name,
+                "connected": connected,
+                "status": status.get("status", "disconnected"),
+                "tool_count": status.get("tool_count", 0),
+                "error": status.get("error"),
+                "auth_url": status.get("auth_url"),
+                "needs_auth": status.get("status") == "needs_auth",
+            }
         finally:
             db.close()
 
