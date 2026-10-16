@@ -819,7 +819,7 @@ class TaskScheduler:
         finally:
             db.close()
 
-    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True):
+    async def _execute_task(self, task_id: str, *, bypass_model_slot: bool = False, release_executing: bool = True, manual: bool = False):
         # Create the run record with status="queued" BEFORE waiting on the
         # semaphore so the UI can show that a manually-triggered task is in
         # line behind another. Once we acquire the slot, flip to "running"
@@ -851,7 +851,7 @@ class TaskScheduler:
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=not bypass_model_slot,
+                    gate_foreground=not bypass_model_slot and not manual,
                 )
                 return
 
@@ -860,7 +860,7 @@ class TaskScheduler:
                     task_id,
                     run_id,
                     release_executing=release_executing,
-                    gate_foreground=True,
+                    gate_foreground=not manual,
                 )
         except asyncio.CancelledError:
             # If cancellation happens while queued behind the semaphore,
@@ -2384,13 +2384,17 @@ class TaskScheduler:
     async def run_task_now(self, task_id: str, *, force: bool = False):
         """Manually trigger a task execution."""
         if force:
-            asyncio.create_task(self._execute_task(task_id, bypass_model_slot=True, release_executing=False))
+            asyncio.create_task(self._execute_task(
+                task_id, bypass_model_slot=True, release_executing=False, manual=True))
             return True
         async with self._executing_guard():
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
-        asyncio.create_task(self._execute_task(task_id))
+        # A run the person just asked for is foreground work. Gating it on
+        # foreground activity would let the very request that started it
+        # count as activity and abort the run.
+        asyncio.create_task(self._execute_task(task_id, manual=True))
         return True
 
     async def stop_task(self, task_id: str) -> bool:
