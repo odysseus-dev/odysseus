@@ -587,6 +587,27 @@ export function buildAttachCards(attachments) {
         imgWrap.appendChild(label);
       }
       attachWrap.appendChild(imgWrap);
+    } else if (att.id && ((att.mime || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(att.name || ''))) {
+      // An uploaded video plays in the bubble instead of being a download
+      // card. Only once uploaded (att.id) — an optimistic bubble keeps the plain
+      // card until updateMessageAttachments swaps the real id in.
+      const vidWrap = document.createElement('div');
+      vidWrap.className = 'attach-video-preview';
+      vidWrap.dataset.fileId = att.id;
+      const vid = document.createElement('video');
+      vid.className = 'chat-video';
+      vid.src = `/api/upload/${att.id}`;
+      vid.controls = true;
+      vid.preload = 'metadata';
+      vid.playsInline = true;
+      vidWrap.appendChild(vid);
+      if (att.name) {
+        const label = document.createElement('div');
+        label.className = 'attach-image-name';
+        label.textContent = att.name;
+        vidWrap.appendChild(label);
+      }
+      attachWrap.appendChild(vidWrap);
     } else {
       // Non-image file card
       const card = document.createElement('div');
