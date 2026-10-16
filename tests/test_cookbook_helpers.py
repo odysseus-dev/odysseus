@@ -769,6 +769,223 @@ def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     assert 'Install Vulkan (libvulkan-dev) / ROCm for AMD GPUs or CUDA tooling for NVIDIA' in script
 
 
+_LLAMA_RELEASE_BASE = "https://github.com/ggml-org/llama.cpp/releases/download/b9001"
+_LLAMA_RELEASE_ASSETS = [
+    f"{_LLAMA_RELEASE_BASE}/cudart-llama-b9001-bin-ubuntu-cuda-12.8-x64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/cudart-llama-b9001-bin-ubuntu-cuda-13.4-x64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/llama-b9001-bin-ubuntu-arm64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/llama-b9001-bin-ubuntu-cuda-13.4-arm64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/llama-b9001-bin-ubuntu-cuda-13.4-x64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/llama-b9001-bin-ubuntu-cuda-12.8-x64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/llama-b9001-bin-ubuntu-vulkan-x64.tar.gz",
+    f"{_LLAMA_RELEASE_BASE}/llama-b9001-bin-ubuntu-x64.tar.gz",
+]
+_PREBUILT_ROOT = ".local/share/odysseus/llama-cpp-prebuilt"
+
+_linux_x86_64_only = pytest.mark.skipif(
+    sys.platform != "linux" or os.uname().machine != "x86_64",
+    reason="prebuilt lookup only targets Linux x86_64",
+)
+
+
+def _llama_prebuilt_sandbox(tmp_path, *, api_ok=True, list_cudart=True, server_runs=True, extra_assets=()):
+    """Fake HOME plus stubs for nvidia-smi/curl (serving a llama.cpp release
+    listing and tarballs shaped like the real prerelease assets) and for
+    git/cmake/sudo, so a fallback to the source build fails fast instead of
+    compiling anything. PATH is pinned so host tools (a real nvcc or
+    llama-server) cannot leak in."""
+    import tarfile
+
+    home = tmp_path / "home"
+    fakebin = tmp_path / "fakebin"
+    assets = tmp_path / "assets"
+    for d in (home, fakebin, assets):
+        d.mkdir(exist_ok=True)
+
+    def _tarball(name, top, files):
+        src = tmp_path / "src" / top
+        src.mkdir(parents=True, exist_ok=True)
+        for fname, body in files.items():
+            (src / fname).write_text(body)
+        with tarfile.open(assets / name, "w:gz") as tf:
+            tf.add(src, arcname=top)
+
+    # The stub reports a CUDA device only when the runtime sits beside it,
+    # mirroring how the real CUDA backend loads via RUNPATH=$ORIGIN.
+    server = (
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f"  --version) exit {0 if server_runs else 1};;\n"
+        '  --list-devices) [ -e "$(dirname "$0")/libcudart.so.12" ] && echo "  CUDA0: Fake GPU (8192 MiB, 8000 MiB free)"; exit 0;;\n'
+        "esac\n"
+    )
+    _tarball(
+        "llama-b9001-bin-ubuntu-cuda-12.8-x64.tar.gz",
+        "llama-b9001",
+        {"llama-server": server, "libggml-cuda.so": ""},
+    )
+    _tarball(
+        "cudart-llama-b9001-bin-ubuntu-cuda-12.8-x64.tar.gz",
+        "cudart-llama-b9001-bin-ubuntu-cuda-12.8-x64",
+        {"libcudart.so.12": "", "libcublas.so.12": ""},
+    )
+
+    listed = list(extra_assets) + [u for u in _LLAMA_RELEASE_ASSETS if list_cudart or "/cudart-" not in u]
+    listing = "\n".join(f'      "browser_download_url": "{u}"' for u in listed)
+    stubs = {
+        "nvidia-smi": '#!/bin/sh\necho "GPU 0: NVIDIA GeForce RTX 3060 Ti (UUID: GPU-x)"\n',
+        "git": "#!/bin/sh\nexit 1\n",
+        "cmake": "#!/bin/sh\nexit 1\n",
+        "sudo": "#!/bin/sh\nexit 1\n",
+        "curl": (
+            "#!/bin/bash\n"
+            f'echo "$*" >> "{tmp_path}/curl.log"\n'
+            "out=''; url=''\n"
+            'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2;; http*) url="$1"; shift;; *) shift;; esac; done\n'
+            'case "$url" in\n'
+            f"  *api.github.com*) {'' if api_ok else 'exit 22;'} cat <<'EOF'\n{listing}\nEOF\n  ;;\n"
+            f'  *) [ -f "{assets}/${{url##*/}}" ] || exit 22; cp "{assets}/${{url##*/}}" "$out";;\n'
+            "esac\n"
+        ),
+    }
+    for name, body in stubs.items():
+        (fakebin / name).write_text(body)
+        (fakebin / name).chmod(0o755)
+
+    lines = []
+    _append_llama_cpp_linux_accel_build_lines(lines)
+    script = "NPROC=1\n" + "\n".join(lines) + '\necho "HAVE_PREBUILT=$_odysseus_have_prebuilt"\n'
+    env = {"HOME": str(home), "PATH": f"{fakebin}:/usr/bin:/bin", "LANG": "C.UTF-8"}
+    return home, script, env
+
+
+def _run_prebuilt(tmp_path, script, env):
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=60)
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_installs_cuda_build_with_its_runtime(tmp_path):
+    home, script, env = _llama_prebuilt_sandbox(tmp_path)
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    assert "HAVE_PREBUILT=1" in result.stdout, result.stdout + result.stderr
+    install_dir = home / _PREBUILT_ROOT / "cuda/llama-b9001"
+    # CUDA 12.x is preferred over 13.x, and the cudart archive is never
+    # mistaken for the server build.
+    assert "llama-b9001-bin-ubuntu-cuda-12.8-x64.tar.gz" in result.stdout
+    assert (home / "bin/llama-server").resolve() == install_dir / "llama-server"
+    # The runtime libs sit beside llama-server so its $ORIGIN RUNPATH finds them.
+    assert (install_dir / "libcudart.so.12").exists()
+    assert (install_dir / "libcublas.so.12").exists()
+    assert (install_dir.parent / ".complete").read_text().strip().endswith("cuda-12.8-x64.tar.gz")
+    assert not list((home / _PREBUILT_ROOT).glob(".staging*"))
+    # The source checkout is only needed when no prebuilt matched.
+    assert not (home / "llama.cpp").exists()
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_reuses_cached_build_without_network(tmp_path):
+    home, script, env = _llama_prebuilt_sandbox(tmp_path)
+    _run_prebuilt(tmp_path, script, env)
+    # A container recreate drops ~/bin but keeps the ~/.local volume.
+    (home / "bin/llama-server").unlink()
+    (tmp_path / "curl.log").unlink()
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    assert "HAVE_PREBUILT=1" in result.stdout, result.stdout + result.stderr
+    assert "Reusing cached prebuilt llama-server" in result.stdout
+    assert (home / "bin/llama-server").exists()
+    assert not (tmp_path / "curl.log").exists()
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_prefers_newest_release_that_ships_cudart(tmp_path):
+    # A release still uploading may list the CUDA build before its runtime.
+    newer = "https://github.com/ggml-org/llama.cpp/releases/download/b9002/llama-b9002-bin-ubuntu-cuda-12.8-x64.tar.gz"
+    home, script, env = _llama_prebuilt_sandbox(tmp_path, extra_assets=[newer])
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    assert "HAVE_PREBUILT=1" in result.stdout, result.stdout + result.stderr
+    assert "b9002" not in (tmp_path / "curl.log").read_text()
+    assert (home / _PREBUILT_ROOT / "cuda/llama-b9001/libcudart.so.12").exists()
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_without_cuda_runtime_warns_and_is_not_cached(tmp_path):
+    home, script, env = _llama_prebuilt_sandbox(tmp_path, list_cudart=False)
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    # Still usable (on CPU) for this launch, but never reused as a finished
+    # CUDA install, so Rebuild llama.cpp engine retries the runtime.
+    assert "HAVE_PREBUILT=1" in result.stdout, result.stdout + result.stderr
+    assert "prebuilt CUDA backend did not load" in result.stdout
+    assert (home / "bin/llama-server").exists()
+    assert not (home / _PREBUILT_ROOT / "cuda/.complete").exists()
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_that_cannot_run_falls_back_to_source_build(tmp_path):
+    home, script, env = _llama_prebuilt_sandbox(tmp_path, server_runs=False)
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    assert "HAVE_PREBUILT=\n" in result.stdout, result.stdout + result.stderr
+    assert "does not run on this host" in result.stdout
+    assert not (home / "bin/llama-server").exists()
+    assert not (home / _PREBUILT_ROOT / "cuda").exists()
+    # The (stubbed, failing) clone was attempted, and the build steps did
+    # not run from the caller's cwd.
+    assert "llama.cpp source checkout is missing" in result.stdout
+    assert not (tmp_path / "build").exists()
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_reports_unreachable_release_api(tmp_path):
+    home, script, env = _llama_prebuilt_sandbox(tmp_path, api_ok=False)
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    assert "HAVE_PREBUILT=\n" in result.stdout, result.stdout + result.stderr
+    assert "Could not list llama.cpp releases" in result.stdout
+    assert not (home / "bin/llama-server").exists()
+
+
+@_linux_x86_64_only
+def test_llama_cpp_prebuilt_is_skipped_for_native_rocm_toolchain(tmp_path):
+    home, script, env = _llama_prebuilt_sandbox(tmp_path)
+    env["ROCM_PATH"] = str(tmp_path / "rocm")
+
+    result = _run_prebuilt(tmp_path, script, env)
+
+    assert "skipping the prebuilt so llama-server is built natively with HIP" in result.stdout
+    assert not (tmp_path / "curl.log").exists()
+    assert "ROCm/HIP detected — building llama-server with HIP support" in result.stdout
+
+
+def test_llama_cpp_prebuilt_lists_prereleases_not_latest():
+    lines = []
+    _append_llama_cpp_linux_accel_build_lines(lines)
+    script = "\n".join(lines)
+
+    assert "releases?per_page=" in script
+    assert "releases/latest" not in script
+
+
+def test_llama_cpp_source_clone_happens_only_after_prebuilt_misses():
+    lines = []
+    _append_llama_cpp_linux_accel_build_lines(lines)
+    script = "\n".join(lines)
+    routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    # A slow or wedged clone must not run ahead of (and block) the prebuilt path.
+    assert script.index('if [ -z "$_odysseus_have_prebuilt" ]; then') < script.index("git clone --depth 1")
+    assert "cd ~ && [ -d llama.cpp ] || git clone" not in routes_src
+
+
 def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     cmd = _llama_cpp_rebuild_cmd()
 
@@ -776,6 +993,8 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     # links/creates, so the next serve recompiles from source.
     assert 'rm -f "$HOME/bin/llama-server"' in cmd
     assert 'rm -rf "$HOME/llama.cpp/build"' in cmd
+    assert '"$HOME/.local/share/odysseus/llama-cpp-prebuilt"' in cmd
+    assert 'rm -f "$HOME/.config/odysseus-llama-cpp-env"' in cmd
     # Recreates ~/bin so a never-served host does not error on a missing dir.
     assert 'mkdir -p "$HOME/bin"' in cmd
     # Diagnosis-only on the destructive side: it must not install or fetch.
