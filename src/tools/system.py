@@ -849,32 +849,41 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "path is required (e.g. '/api/cookbook/gpus')", "exit_code": 1}
     if not path.startswith("/"):
         path = "/" + path
-    if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
+    # Check the path the server will route, not the raw string: httpx resolves
+    # dot segments and the server percent-decodes, so "/api/x/../shell/exec" or
+    # "/api/%73hell/exec" would otherwise pass the prefix checks below.
+    try:
+        routed_path = httpx.URL(f"{base}{path}").path
+    except httpx.InvalidURL:
+        return {"error": f"Invalid path: {path}", "exit_code": 1}
+    if any(seg in (".", "..") for seg in routed_path.split("/")):
+        return {"error": f"Path must not contain '.' or '..' segments: {path}", "exit_code": 1}
+    if any(routed_path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Sensitive endpoints are off-limits via app_api.", "exit_code": 1}
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         return {"error": f"Unsupported method: {method}", "exit_code": 1}
-    if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
-        if "/api/email/accounts" in path:
+    if any(method == m and routed_path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+        if "/api/email/accounts" in routed_path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
-        if "/api/cookbook/packages/install" in path:
+        if "/api/cookbook/packages/install" in routed_path:
             return {"error": "Don't POST /api/cookbook/packages/install via app_api — package installation is host code execution. Use the dedicated Cookbook dependency UI/flow instead.", "exit_code": 1}
-        if "/api/cookbook/rebuild-engine" in path:
+        if "/api/cookbook/rebuild-engine" in routed_path:
             return {"error": "Don't POST /api/cookbook/rebuild-engine via app_api — engine rebuild mutates local or remote host state. Use the dedicated Cookbook UI/flow instead.", "exit_code": 1}
-        if "/api/cookbook/kill-pid" in path:
+        if "/api/cookbook/kill-pid" in routed_path:
             return {"error": "Don't POST /api/cookbook/kill-pid via app_api — process signalling is host control. Use the dedicated Cookbook stop/diagnostic flow instead.", "exit_code": 1}
-        if "/api/model/download" in path:
+        if "/api/model/download" in routed_path:
             return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the venv env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
-        if "/api/model/serve" in path:
+        if "/api/model/serve" in routed_path:
             return {"error": "Don't POST /api/model/serve directly — use the `serve_model` or `serve_preset` tool (handles host resolution, env_prefix, and cookbook tracking).", "exit_code": 1}
-        if "/api/research/start" in path:
+        if "/api/research/start" in routed_path:
             return {"error": "Don't POST /api/research/start directly — use the `trigger_research` tool (it surfaces the session in the Deep Research sidebar).", "exit_code": 1}
-        if "/api/search" in path:
+        if "/api/search" in routed_path:
             return {"error": "Don't hit /api/search via app_api — use the `web_search` tool for online lookups, or `web_fetch` for a specific URL.", "exit_code": 1}
-        if "/api/notes" in path:
+        if "/api/notes" in routed_path:
             return {"error": "Don't hit /api/notes via app_api — use the `manage_notes` tool. It accepts natural-language due_date ('11pm today', 'tomorrow at 9am'), fires reminders from the due_date itself (no separate calendar event), and uses the caller's timezone. The raw endpoint requires ISO-UTC + a separate calendar event, both of which the agent tends to get wrong.", "exit_code": 1}
-        if "/api/calendar/events" in path:
+        if "/api/calendar/events" in routed_path:
             return {"error": "Don't hit /api/calendar/events via app_api — use the `manage_calendar` tool. It handles tz-aware natural-language datetimes and reminder_minutes correctly. If the user wants a note + reminder, prefer `manage_notes` with due_date — it bundles both.", "exit_code": 1}
         return {"error": f"{method} {path} is blocked — it overwrites the whole cookbook state file. Use list_serve_presets / serve_preset / serve_model instead.", "exit_code": 1}
 
