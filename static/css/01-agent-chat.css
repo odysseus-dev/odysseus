@@ -2336,6 +2336,20 @@ body.bg-pattern-ascii-fireflies {
       border-radius: 4px;
       border-left: 2px solid var(--red);
     }
+    /* Provenance chips (project/org) for a RAG source. Reuses the --fg mixes
+       the surrounding .rag-* rules use, so no new palette. */
+    .rag-source-tag {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 0 6px;
+      font-size: 10px;
+      line-height: 16px;
+      border-radius: 8px;
+      vertical-align: middle;
+      color: color-mix(in srgb, var(--fg) 65%, transparent);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+    }
     .rag-similarity {
       color: color-mix(in srgb, var(--fg) 50%, transparent);
       font-size: 10px;
