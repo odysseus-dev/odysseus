@@ -58,7 +58,30 @@ def _get_carddav_config():
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
         "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
         "password": password,
+        "google_account_id": settings.get("carddav_google_account_id", ""),
     }
+
+
+_GOOGLE_CARDDAV_URL = "https://www.googleapis.com/carddav/v1/principals/{}/lists/default"
+
+
+def _carddav_auth(cfg: Dict):
+    """httpx auth for the CardDAV server. A config linked to a Google email
+    account authenticates as that account: with its app password when it is a
+    Gmail account set up with one, otherwise with its bearer token (#4908).
+    The link is admin-only global config, validated when saved."""
+    if cfg.get("google_account_id"):
+        from routes.email_helpers import gmail_app_password, google_oauth_token
+        app_login = gmail_app_password(cfg["google_account_id"], "")
+        if app_login:
+            return app_login
+        token = google_oauth_token(cfg["google_account_id"], "")
+
+        def bearer(request):
+            request.headers["Authorization"] = f"Bearer {token}"
+            return request
+        return bearer
+    return (cfg["username"], cfg["password"]) if cfg["username"] else None
 
 
 def _carddav_configured(cfg: Optional[Dict] = None) -> bool:
@@ -366,16 +389,29 @@ _ADDRESSBOOK_QUERY = (
     '<C:filter/>'
     '</C:addressbook-query>'
 )
+# Google treats the empty filter above as "match nothing". FN is mandatory in
+# every vCard, so filtering on its presence matches all cards there too.
+_ADDRESSBOOK_QUERY_FN = _ADDRESSBOOK_QUERY.replace(
+    '<C:filter/>', '<C:filter><C:prop-filter name="FN"/></C:filter>'
+)
 
 
 def _fetch_via_report(cfg, auth):
     """Try a CardDAV REPORT addressbook-query — returns contacts WITH an
     `href` field, or None if the server doesn't support it / errors."""
+    for query in (_ADDRESSBOOK_QUERY, _ADDRESSBOOK_QUERY_FN):
+        out = _report_query(cfg, auth, query)
+        if out:
+            return out
+    return None
+
+
+def _report_query(cfg, auth, query):
     from defusedxml import ElementTree as ET
     try:
         r = httpx.request(
             "REPORT", cfg["url"],
-            content=_ADDRESSBOOK_QUERY.encode("utf-8"),
+            content=query.encode("utf-8"),
             headers={"Content-Type": "application/xml; charset=utf-8", "Depth": "1"},
             auth=auth, timeout=_CARDDAV_TIMEOUT,
         )
@@ -455,9 +491,7 @@ def _fetch_contacts(force=False, owner: Optional[str] = None):
 
     try:
         cfg["url"] = _carddav_base_url(cfg)
-        auth = None
-        if cfg["username"]:
-            auth = (cfg["username"], cfg["password"])
+        auth = _carddav_auth(cfg)
         # Preferred path: REPORT gives us hrefs for reliable edit/delete.
         contacts = _fetch_via_report(cfg, auth)
         if contacts is None:
@@ -534,9 +568,7 @@ def _create_contact(name: str, email: str = "", address: str = "", phones: Optio
     vcard = _build_vcard(name, email, contact_uid, address=address, phones=phone_list)
     try:
         url = _carddav_base_url(cfg) + "/" + contact_uid + ".vcf"
-        auth = None
-        if cfg["username"]:
-            auth = (cfg["username"], cfg["password"])
+        auth = _carddav_auth(cfg)
         r = httpx.put(
             url,
             data=vcard.encode("utf-8"),
@@ -597,7 +629,7 @@ def _import_vcards(text: str) -> Dict:
     except ValueError as e:
         logger.warning("CardDAV import URL rejected: %s", e)
         return {"imported": 0, "failed": 0, "total": 0, "error": str(e)}
-    auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
+    auth = _carddav_auth(cfg)
     # Split into individual cards. re.split drops the BEGIN line, so we
     # re-add it. Normalize CRLF.
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -800,7 +832,7 @@ def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], a
     # filename != UID); falls back to the <uid>.vcf guess.
     try:
         url = _resolve_resource_url(uid)
-        auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
+        auth = _carddav_auth(cfg)
         r = httpx.put(
             url,
             data=vcard.encode("utf-8"),
@@ -833,7 +865,7 @@ def _delete_contact(uid: str, owner: Optional[str] = None) -> bool:
 
     try:
         url = _resolve_resource_url(uid)
-        auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
+        auth = _carddav_auth(cfg)
         r = httpx.delete(url, auth=auth, timeout=10)
         if r.status_code in (200, 204, 404):
             # Invalidate cache so the next fetch sees the server truth.
@@ -996,8 +1028,25 @@ def setup_contacts_routes():
         return cfg
 
     @router.put("/config")
-    async def update_config(data: dict, _admin: str = Depends(require_admin)):
+    async def update_config(data: dict, request: Request, _admin: str = Depends(require_admin)):
         settings = _load_settings()
+        if "carddav_google_account_id" in data:
+            gid = str(data["carddav_google_account_id"] or "").strip()
+            if gid:
+                from routes.email_helpers import gmail_app_password, google_oauth_email
+                from src.auth_helpers import require_user
+                owner = require_user(request)
+                email = google_oauth_email(gid, owner)
+                if not email:
+                    app_login = gmail_app_password(gid, owner)
+                    email = app_login[0] if app_login else ""
+                if not email:
+                    raise HTTPException(400, "Pick a Gmail account (app password or Google sign-in)")
+                settings.update(carddav_google_account_id=gid, carddav_password="",
+                                carddav_url=_GOOGLE_CARDDAV_URL.format(email), carddav_username=email)
+                data = {}
+            else:
+                settings.pop("carddav_google_account_id", None)
         for key in ("carddav_url", "carddav_username", "carddav_password"):
             if key in data:
                 if key == "carddav_url" and str(data[key] or "").strip():
