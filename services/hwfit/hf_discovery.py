@@ -210,9 +210,11 @@ def _entry_from_collection_item(collection, item, source):
     if repo_prefix and not repo_id.startswith(repo_prefix):
         return None
     raw_params = item.get("numParameters") or 0
-    active = None
+    # Read the name even when HF gives a total: it is the only source of the
+    # MoE active size (e.g. "-35B-A3B"), which the speed estimate depends on.
+    name_params, active = _parse_params_from_name(repo_id)
     if not raw_params:
-        raw_params, active = _parse_params_from_name(repo_id)
+        raw_params = name_params
     param_label, raw_params = _format_params(raw_params)
     if not raw_params:
         return None
