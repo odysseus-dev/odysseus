@@ -63,6 +63,22 @@ def setup_diagnostics_routes(
             logger.error(f"DB stats error: {e}")
             raise HTTPException(500, "Failed to retrieve database statistics")
 
+    @router.get("/api/diagnostics/storage")
+    async def get_storage_diagnostics(request: Request) -> Dict[str, Any]:
+        """Read-only storage/bloat report (issue #4889, report-only slice).
+
+        Per-table sizes, largest ``chat_messages.content`` rows, inline-media
+        row count, FTS size, upload-directory size, and suspected orphaned
+        uploads. Never deletes, vacuums, or rewrites anything.
+        """
+        require_admin(request)
+        try:
+            from src.storage_diagnostics import collect_storage_report
+            return collect_storage_report()
+        except Exception as e:
+            logger.error(f"Storage diagnostics error: {e}")
+            raise HTTPException(500, "Failed to build storage diagnostics report")
+
     @router.get("/api/rag/stats")
     async def get_rag_stats(request: Request) -> Dict[str, Any]:
         require_admin(request)
