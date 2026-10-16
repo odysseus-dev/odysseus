@@ -1,14 +1,8 @@
-"""Outbound URL safety checks (SSRF hardening).
+"""Outbound URL safety checks to prevent SSRF against internal/cloud services.
 
-Run before the server makes a request to a *user-supplied* URL — e.g. the custom
-embedding endpoint set via ``POST /api/embeddings/endpoint``, which then triggers
-an outbound ``httpx`` call.
-
-Odysseus is local-first: pointing the embedding endpoint at a loopback or LAN
-address (a local vLLM / llama.cpp / Ollama server) is a normal, intended setup.
-So this guard does **not** blanket-block private addresses by default — that would
+Odysseus is local-first by default: connecting to a locally hosted embedding
+service (Ollama on 11434, LocalAI, vLLM, LM Studio) or a LAN endpoint does not
 break the primary use case. What it *always* rejects:
-
   - a non-HTTP(S) scheme (``file://``, ``gopher://``, ``ftp://`` …), and
   - the link-local range (``169.254.0.0/16`` / ``fe80::/10``), i.e. the cloud
     instance-metadata SSRF credential-exfil vector — nobody serves embeddings
@@ -57,6 +51,11 @@ _SHARED_ADDRESS_SPACE_V4 = ipaddress.ip_network("100.64.0.0/10")
 # membership test excludes and which stays rejected as reserved.
 _NAT64_WELL_KNOWN_PREFIX_V6 = ipaddress.ip_network("64:ff9b::/96")
 
+_LOCALHOST_NAMES = frozenset({"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"})
+
+# Well-known cloud instance metadata endpoints that do not sit in link-local (e.g. Alibaba Cloud 100.100.100.200).
+_METADATA_IPS = {ipaddress.ip_address("100.100.100.200")}
+
 
 def _nat64_well_known_embedded_ipv4(
     ip: ipaddress._BaseAddress,
@@ -92,7 +91,7 @@ def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[st
             if reason:
                 return f"NAT64 translated destination blocked: {reason}"
             return None
-    if ip.is_link_local:
+    if ip.is_link_local or ip in _METADATA_IPS:
         return f"link-local address blocked (SSRF metadata risk): {ip}"
     # IPv6 loopback is also reserved; its policy must match IPv4 loopback.
     if ip.is_loopback:
@@ -160,9 +159,99 @@ def check_outbound_url(
     return True, "ok"
 
 
+def _is_localhost_name(host: str) -> bool:
+    h = host.lower().rstrip(".")
+    return h in _LOCALHOST_NAMES or h.endswith(".localhost")
+
+
+def check_outbound_host(
+    host: str,
+    *,
+    block_private: bool = False,
+    resolver: Optional[Callable[[str], List[str]]] = None,
+    unresolved: str = "reject",
+) -> Tuple[bool, str]:
+    """Validate a bare user-supplied hostname / IP literal (no scheme).
+
+    Companion to :func:`check_outbound_url` for protocols that take a host
+    and port rather than a URL — IMAP, SMTP, CalDAV/CardDAV hosts, database
+    DSNs. Same policy: link-local / multicast / reserved / unspecified
+    addresses are always rejected (cloud metadata SSRF), private / loopback
+    only when ``block_private`` is set. ``localhost`` spellings are treated as
+    loopback without a DNS round-trip.
+
+    ``unresolved`` controls what happens when a hostname does not resolve:
+
+    - ``"reject"`` (default, fail-closed like ``check_outbound_url``);
+    - ``"allow"``: pass it through. Use this only where the very next step
+      is a connect that will surface the same DNS failure to the user, so
+      an offline host or a flaky resolver does not turn into a spurious
+      "blocked" error. IP literals and localhost names are still classified
+      without DNS, so the metadata / loopback cases are covered either way.
+    """
+    if not isinstance(host, str):
+        return False, "host must be a string"
+    host = host.strip()
+    if not host:
+        return False, "host is required"
+    # A bare host never carries a scheme, path, userinfo, port or whitespace.
+    # Anything of the sort is either a copy/paste mistake or an attempt to
+    # smuggle a target past the check; reject rather than guess.
+    if any(ch.isspace() for ch in host) or any(ch in host for ch in "/\\@?#"):
+        return False, "host must be a bare hostname or IP address"
+    literal = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    if ":" in literal:
+        # Only an IPv6 literal may contain colons; "host:port" is rejected.
+        try:
+            ip = ipaddress.ip_address(literal.split("%")[0])
+        except ValueError:
+            return False, "host must be a bare hostname or IP address"
+        reason = _classify(ip, block_private=block_private)
+        return (False, reason) if reason else (True, "ok")
+    try:
+        ip = ipaddress.ip_address(literal)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        reason = _classify(ip, block_private=block_private)
+        return (False, reason) if reason else (True, "ok")
+    if _is_localhost_name(host):
+        if block_private:
+            return False, f"private/shared/loopback address blocked: {host}"
+        return True, "ok"
+
+    resolve = resolver or _default_resolver
+    try:
+        raw_ips = resolve(host)
+    except Exception as e:
+        if unresolved == "allow":
+            return True, "unresolved (deferred to connect)"
+        return False, f"host does not resolve: {e}"
+    saw_ip = False
+    for raw in raw_ips or []:
+        if not isinstance(raw, str):
+            continue
+        try:
+            resolved = ipaddress.ip_address(raw.split("%")[0])
+        except ValueError:
+            continue
+        saw_ip = True
+        reason = _classify(resolved, block_private=block_private)
+        if reason:
+            return False, reason
+    if not saw_ip:
+        if unresolved == "allow":
+            return True, "unresolved (deferred to connect)"
+        return False, "host does not resolve to an IP"
+    return True, "ok"
+
 
 class OutboundAddressBlocked(PermissionError):
     """A non-HTTP outbound host resolves into a disallowed address range."""
+
+
+# Alias for backward-compatibility with tests and callers expecting SSRFBlockedError
+SSRFBlockedError = OutboundAddressBlocked
 
 
 def connect_outbound_tcp(
@@ -184,18 +273,88 @@ def connect_outbound_tcp(
     metadata/private space. TLS callers keep wrapping the returned socket with
     ``server_hostname=host``, so SNI and certificate checks are unchanged.
     """
-    resolve = resolver or socket.getaddrinfo
-    infos = resolve(host, port, 0, socket.SOCK_STREAM)
-    for _family, _type, _proto, _canon, sockaddr in infos:
-        ip = ipaddress.ip_address(str(sockaddr[0]).split("%")[0])
+    if not isinstance(host, str):
+        raise ValueError("host must be a string")
+    host = host.strip()
+    if not host:
+        raise ValueError("host is required")
+    if any(ch.isspace() for ch in host) or any(ch in host for ch in "/\\@?#"):
+        raise ValueError("host must be a bare hostname or IP address")
+
+    clean_host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    port = int(port or 0)
+
+    # If clean_host is an IP literal and no custom resolver is injected,
+    # evaluate directly and connect.
+    ip = None
+    if ":" in clean_host:
+        try:
+            ip = ipaddress.ip_address(clean_host.split("%")[0])
+        except ValueError:
+            pass
+    else:
+        try:
+            ip = ipaddress.ip_address(clean_host)
+        except ValueError:
+            pass
+
+    if ip is not None and resolver is None:
         reason = _classify(ip, block_private=block_private)
         if reason:
             raise OutboundAddressBlocked(reason)
+        family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT and timeout is not None:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect((str(ip), port))
+            return sock
+        except Exception:
+            sock.close()
+            raise
+
+    resolve = resolver or socket.getaddrinfo
+    try:
+        infos = resolve(clean_host, port, 0, socket.SOCK_STREAM)
+    except TypeError:
+        # Resolver expects single host argument returning list of IP strings
+        raw_ips = resolve(clean_host)
+        infos = []
+        for raw in raw_ips or []:
+            try:
+                raw_ip = ipaddress.ip_address(str(raw).split("%")[0])
+                af = socket.AF_INET6 if raw_ip.version == 6 else socket.AF_INET
+                infos.append((af, socket.SOCK_STREAM, 6, "", (str(raw_ip), port)))
+            except ValueError:
+                continue
+
+    if infos and isinstance(infos[0], str):
+        raw_ips = infos
+        infos = []
+        for raw in raw_ips:
+            try:
+                raw_ip = ipaddress.ip_address(str(raw).split("%")[0])
+                af = socket.AF_INET6 if raw_ip.version == 6 else socket.AF_INET
+                infos.append((af, socket.SOCK_STREAM, 6, "", (str(raw_ip), port)))
+            except ValueError:
+                continue
+
+    if not infos:
+        raise socket.gaierror(socket.EAI_NONAME, f"{host} did not resolve to an address")
+
+    for _family, _type, _proto, _canon, sockaddr in infos:
+        ip_addr = ipaddress.ip_address(str(sockaddr[0]).split("%")[0])
+        reason = _classify(ip_addr, block_private=block_private)
+        if reason:
+            raise OutboundAddressBlocked(reason)
+
     last_error: Optional[OSError] = None
     for family, socktype, proto, _canon, sockaddr in infos:
         sock = socket.socket(family, socktype, proto)
         try:
-            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:  # same contract as create_connection
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT and timeout is not None:
                 sock.settimeout(timeout)
             if source_address:
                 sock.bind(source_address)
@@ -207,3 +366,29 @@ def connect_outbound_tcp(
     if last_error is not None:
         raise last_error
     raise socket.gaierror(socket.EAI_NONAME, f"{host} did not resolve to an address")
+
+
+def safe_create_connection(
+    address: Tuple[str, int],
+    timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+    source_address: Optional[Tuple[str, int]] = None,
+    *,
+    block_private: bool = True,
+    resolver: Optional[Callable] = None,
+) -> socket.socket:
+    """Establish a TCP connection guaranteed not to connect to prohibited IP addresses.
+
+    Guards against DNS rebinding (TOCTOU) by resolving the hostname once, validating
+    EVERY returned address against the SSRF policy, and connecting directly to the
+    validated IP address. The caller retains the original hostname for TLS SNI and
+    certificate verification.
+    """
+    host, port = address
+    return connect_outbound_tcp(
+        host,
+        port,
+        timeout=timeout,
+        block_private=block_private,
+        source_address=source_address,
+        resolver=resolver,
+    )

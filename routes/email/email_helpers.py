@@ -36,9 +36,15 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
+from contextvars import ContextVar
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
-from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
+from src.url_safety import (
+    OutboundAddressBlocked,
+    connect_outbound_tcp,
+    safe_create_connection,
+    SSRFBlockedError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +172,9 @@ def _smtp_security_mode(cfg: dict) -> str:
 # Raised when a mail host resolves into a denied range (see _mail_private_blocked).
 MailServerAddressBlocked = OutboundAddressBlocked
 
+_current_mail_owner: ContextVar[Optional[str]] = ContextVar("_current_mail_owner", default=None)
+_current_block_private: ContextVar[Optional[bool]] = ContextVar("_current_block_private", default=None)
+
 
 def _mail_private_blocked(owner: str | None) -> bool:
     """Whether private/loopback/shared mail destinations are denied for *owner*.
@@ -187,68 +196,112 @@ def _mail_private_blocked(owner: str | None) -> bool:
     return not owner_is_admin_or_single_user((owner or "").strip() or None)
 
 
+_mail_host_block_private = _mail_private_blocked
+
+
+def _effective_block_private(block_private: Optional[bool] = None) -> bool:
+    if block_private is not None:
+        return block_private
+    bp = _current_block_private.get()
+    if bp is not None:
+        return bp
+    owner = _current_mail_owner.get()
+    return _mail_private_blocked(owner)
+
+
 def _mail_socket_timeout(timeout):
     return socket._GLOBAL_DEFAULT_TIMEOUT if timeout is None else timeout
 
 
-class _PolicyIMAP4(imaplib.IMAP4):
-    """IMAP4 whose socket comes from connect_outbound_tcp.
+_OrigIMAP4 = imaplib.IMAP4
+_OrigIMAP4_SSL = imaplib.IMAP4_SSL
+_OrigSMTP = smtplib.SMTP
+_OrigSMTP_SSL = smtplib.SMTP_SSL
+
+
+class _PolicyIMAP4(_OrigIMAP4):
+    """IMAP4 whose socket comes from safe_create_connection.
 
     The mail host is resolved once and connected to only at the addresses the
     address policy approved, so DNS rebinding between check and connect is
     impossible. STARTTLS still verifies against ``self.host``.
     """
 
-    def __init__(self, host, port, *, block_private: bool, timeout=None):
-        self._block_private = block_private
-        super().__init__(host, port, timeout=timeout)
+    def __init__(self, *args, block_private: bool | None = None, **kwargs):
+        if block_private is not None or getattr(self, "_block_private", None) is None:
+            self._block_private = _effective_block_private(block_private)
+        _OrigIMAP4.__init__(self, *args, **kwargs)
 
     def _create_socket(self, timeout):
         if timeout is not None and not timeout:
             raise ValueError("Non-blocking socket (timeout=0) is not supported")
-        return connect_outbound_tcp(
-            self.host, self.port, timeout=_mail_socket_timeout(timeout), block_private=self._block_private,
+        bp = getattr(self, "_block_private", None)
+        if bp is None:
+            bp = _effective_block_private(None)
+        return safe_create_connection(
+            (self.host, self.port),
+            timeout=_mail_socket_timeout(timeout),
+            block_private=bp,
         )
 
 
-class _PolicyIMAP4_SSL(imaplib.IMAP4_SSL):
+class _PolicyIMAP4_SSL(_OrigIMAP4_SSL, _PolicyIMAP4):
     """IMAP4_SSL over a policy-checked socket; TLS SNI/verification use the hostname."""
 
-    def __init__(self, host, port, *, block_private: bool, timeout=None, ssl_context=None):
-        self._block_private = block_private
-        super().__init__(host, port, ssl_context=ssl_context, timeout=timeout)
+    def __init__(self, *args, block_private: bool | None = None, **kwargs):
+        self._block_private = _effective_block_private(block_private)
+        _OrigIMAP4_SSL.__init__(self, *args, **kwargs)
 
     def _create_socket(self, timeout):
         sock = _PolicyIMAP4._create_socket(self, timeout)
         return self.ssl_context.wrap_socket(sock, server_hostname=self.host)
 
 
-class _PolicySMTP(smtplib.SMTP):
-    """SMTP whose socket comes from connect_outbound_tcp (see _PolicyIMAP4)."""
+class _PolicySMTP(_OrigSMTP):
+    """SMTP whose socket comes from safe_create_connection (see _PolicyIMAP4)."""
 
-    def __init__(self, host="", port=0, *, block_private: bool, **kwargs):
-        self._block_private = block_private
-        super().__init__(host, port, **kwargs)
+    def __init__(self, *args, block_private: bool | None = None, **kwargs):
+        if block_private is not None or getattr(self, "_block_private", None) is None:
+            self._block_private = _effective_block_private(block_private)
+        _OrigSMTP.__init__(self, *args, **kwargs)
 
     def _get_socket(self, host, port, timeout):
         if timeout is not None and not timeout:
             raise ValueError("Non-blocking socket (timeout=0) is not supported")
-        return connect_outbound_tcp(
-            host, port, timeout=timeout, block_private=self._block_private,
-            source_address=self.source_address,
+        bp = getattr(self, "_block_private", None)
+        if bp is None:
+            bp = _effective_block_private(None)
+        return safe_create_connection(
+            (host, port),
+            timeout=timeout,
+            block_private=bp,
+            source_address=getattr(self, "source_address", None),
         )
 
 
-class _PolicySMTP_SSL(smtplib.SMTP_SSL):
+class _PolicySMTP_SSL(_OrigSMTP_SSL, _PolicySMTP):
     """SMTP_SSL over a policy-checked socket; TLS SNI/verification use the hostname."""
 
-    def __init__(self, host="", port=0, *, block_private: bool, **kwargs):
-        self._block_private = block_private
-        super().__init__(host, port, **kwargs)
+    def __init__(self, *args, block_private: bool | None = None, **kwargs):
+        self._block_private = _effective_block_private(block_private)
+        _OrigSMTP_SSL.__init__(self, *args, **kwargs)
 
     def _get_socket(self, host, port, timeout):
         sock = _PolicySMTP._get_socket(self, host, port, timeout)
-        return self.context.wrap_socket(sock, server_hostname=self._host)
+        server_hostname = getattr(self, "_host", None) or host
+        return self.context.wrap_socket(sock, server_hostname=server_hostname)
+
+
+SafeIMAP4 = _PolicyIMAP4
+SafeIMAP4_SSL = _PolicyIMAP4_SSL
+SafeSMTP = _PolicySMTP
+SafeSMTP_SSL = _PolicySMTP_SSL
+
+# Bind module-level constructors to safe implementations so connections are protected by default.
+imaplib.IMAP4 = SafeIMAP4
+imaplib.IMAP4_SSL = SafeIMAP4_SSL
+smtplib.SMTP = SafeSMTP
+smtplib.SMTP_SSL = SafeSMTP_SSL
 
 
 def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
@@ -269,23 +322,32 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
             smtp.login(user, password)
 
     security = _smtp_security_mode(cfg)
-    block_private = _mail_private_blocked(cfg.get("owner"))
+    owner = cfg.get("owner")
+    block_private = _mail_private_blocked(owner)
 
-    if security == "ssl":
-        with _PolicySMTP_SSL(host, port, timeout=timeout, block_private=block_private) as smtp:
+    token_owner = _current_mail_owner.set(owner)
+    token_bp = _current_block_private.set(block_private)
+    try:
+        if security == "ssl":
+            with _PolicySMTP_SSL(host, port, timeout=timeout, block_private=block_private) as smtp:
+                _auth_smtp(smtp)
+                smtp.sendmail(from_addr, recipients, message)
+            return
+
+        with _PolicySMTP(host, port, timeout=timeout, block_private=block_private) as smtp:
+            if security == "starttls":
+                smtp.starttls()
             _auth_smtp(smtp)
             smtp.sendmail(from_addr, recipients, message)
-        return
-
-    with _PolicySMTP(host, port, timeout=timeout, block_private=block_private) as smtp:
-        if security == "starttls":
-            smtp.starttls()
-        _auth_smtp(smtp)
-        smtp.sendmail(from_addr, recipients, message)
+    finally:
+        _current_mail_owner.reset(token_owner)
+        _current_block_private.reset(token_bp)
 
 
 def _friendly_email_auth_error(protocol: str, host: str, error: object) -> str:
     """Return a clearer setup error for known provider auth policies."""
+    if isinstance(error, MailServerAddressBlocked):
+        return str(error)
     raw = str(error or "")
     lower = raw.lower()
     host_lower = (host or "").lower()
@@ -1305,42 +1367,56 @@ def _open_imap_connection(
     timeout: int = _IMAP_TIMEOUT_SECONDS,
     ssl_context=None,
     owner: str | None = None,
+    block_private: bool | None = None,
 ):
     """Open an IMAP connection using the configured security mode.
 
     `owner` is the principal the destination is judged for
     (see _mail_private_blocked)."""
     port = int(port or 993)
-    block_private = _mail_private_blocked(owner)
-    if starttls:
-        conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
-        try:
-            if ssl_context:
-                conn.starttls(ssl_context=ssl_context)
-            else:
-                conn.starttls()
-        except Exception:
-            # Don't leak the open plain socket if the STARTTLS upgrade is
-            # rejected; close it before propagating. (#3174)
-            try:
-                conn.shutdown()
-            except Exception:
-                pass
-            raise
-    elif port == 993:
-        kwargs = {"ssl_context": ssl_context} if ssl_context else {}
-        conn = _PolicyIMAP4_SSL(host, port, timeout=timeout, block_private=block_private, **kwargs)
-    else:
-        conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
+    if block_private is None:
+        block_private = _mail_private_blocked(owner)
+    token_owner = None
+    token_bp = None
+    if owner is not None:
+        token_owner = _current_mail_owner.set(owner)
+    if block_private is not None:
+        token_bp = _current_block_private.set(block_private)
     try:
-        conn.sock.settimeout(timeout)
-    except Exception:
-        pass
-    # Raise the IMAP line-length limit from the default 1 MB to 50 MB so that
-    # large mailboxes (tens of thousands of messages) don't crash with
-    # "got more than 1000000 bytes" on UID SEARCH ALL.  (#2883)
-    imaplib._MAXLINE = 50_000_000
-    return conn
+        if starttls:
+            conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
+            try:
+                if ssl_context:
+                    conn.starttls(ssl_context=ssl_context)
+                else:
+                    conn.starttls()
+            except Exception:
+                # Don't leak the open plain socket if the STARTTLS upgrade is
+                # rejected; close it before propagating. (#3174)
+                try:
+                    conn.shutdown()
+                except Exception:
+                    pass
+                raise
+        elif port == 993:
+            kwargs = {"ssl_context": ssl_context} if ssl_context else {}
+            conn = _PolicyIMAP4_SSL(host, port, timeout=timeout, block_private=block_private, **kwargs)
+        else:
+            conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
+        try:
+            conn.sock.settimeout(timeout)
+        except Exception:
+            pass
+        # Raise the IMAP line-length limit from the default 1 MB to 50 MB so that
+        # large mailboxes (tens of thousands of messages) don't crash with
+        # "got more than 1000000 bytes" on UID SEARCH ALL.  (#2883)
+        imaplib._MAXLINE = 50_000_000
+        return conn
+    finally:
+        if token_bp is not None:
+            _current_block_private.reset(token_bp)
+        if token_owner is not None:
+            _current_mail_owner.reset(token_owner)
 
 def _imap_connect(account_id: str | None = None, owner: str = "",
                   timeout: int = _IMAP_TIMEOUT_SECONDS):
@@ -1366,33 +1442,40 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
     # The last branch is critical: previously this fell into IMAP4_SSL
     # for any non-STARTTLS port, which would fail the TLS handshake on
     # plain local servers (Dovecot on 31143, etc.).
-    conn = _open_imap_connection(
-        cfg["imap_host"],
-        cfg["imap_port"],
-        starttls=bool(cfg.get("imap_starttls")),
-        timeout=timeout,
-        owner=cfg.get("owner"),
-    )
+    effective_owner = cfg.get("owner") or owner
+    token_owner = _current_mail_owner.set(effective_owner)
+    token_bp = _current_block_private.set(_mail_private_blocked(effective_owner))
     try:
-        if cfg.get("oauth_provider") == "google":
-            token = _get_valid_google_token(cfg.get("account_id"), cfg)
-            if not token:
-                raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
-            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
-        else:
-            conn.login(cfg["imap_user"], cfg["imap_password"])
-    except Exception:
-        # A failed AUTHENTICATE (e.g. an Office 365 app password on an
-        # MFA-enabled tenant, #3174, or an expired/revoked OAuth token)
-        # otherwise orphans the already-connected socket; close it before
-        # propagating so a misconfigured account can't leak one descriptor
-        # per retry / background poller pass.
+        conn = _open_imap_connection(
+            cfg["imap_host"],
+            cfg["imap_port"],
+            starttls=bool(cfg.get("imap_starttls")),
+            timeout=timeout,
+            owner=effective_owner,
+        )
         try:
-            conn.shutdown()
+            if cfg.get("oauth_provider") == "google":
+                token = _get_valid_google_token(cfg.get("account_id"), cfg)
+                if not token:
+                    raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+                conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+            else:
+                conn.login(cfg["imap_user"], cfg["imap_password"])
         except Exception:
-            pass
-        raise
-    return conn
+            # A failed AUTHENTICATE (e.g. an Office 365 app password on an
+            # MFA-enabled tenant, #3174, or an expired/revoked OAuth token)
+            # otherwise orphans the already-connected socket; close it before
+            # propagating so a misconfigured account can't leak one descriptor
+            # per retry / background poller pass.
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
+            raise
+        return conn
+    finally:
+        _current_mail_owner.reset(token_owner)
+        _current_block_private.reset(token_bp)
 
 
 from contextlib import contextmanager
