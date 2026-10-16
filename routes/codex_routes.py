@@ -144,6 +144,31 @@ def _find_endpoint(router: APIRouter | None, method: str, path: str):
     return None
 
 
+def _find_app_endpoint(routes, method: str, path: str, prefix: str = ""):
+    """Find a route endpoint on the app by method + full path.
+
+    FastAPI >= 0.14x no longer flattens ``include_router`` into ``app.routes``;
+    it keeps an ``_IncludedRouter`` wrapper per router, so descend into its
+    ``original_router`` (joining any include prefix). Older FastAPI versions
+    expose flat ``APIRoute`` entries and match on the first loop.
+    """
+    for route in routes or []:
+        if prefix + (getattr(route, "path", None) or "") == path and method in (getattr(route, "methods", None) or set()):
+            return route.endpoint
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            ctx = getattr(route, "include_context", None)
+            found = _find_app_endpoint(
+                getattr(inner, "routes", []),
+                method,
+                path,
+                prefix + (getattr(ctx, "prefix", "") or ""),
+            )
+            if found is not None:
+                return found
+    return None
+
+
 def _clamp_pagination(offset: Any, limit: Any, *, default_limit: int = 50, max_limit: int = 50) -> tuple[int, int]:
     try:
         parsed_offset = int(0 if offset in (None, "") else offset)
@@ -673,12 +698,7 @@ def setup_codex_routes(
         serve_endpoint = _find_endpoint(None, "POST", "/api/model/serve")
         # Fall back to importing from the cookbook router registered on app.
         if serve_endpoint is None:
-            from fastapi import FastAPI
-            app: FastAPI = request.app
-            for route in app.routes:
-                if getattr(route, "path", None) == "/api/model/serve" and "POST" in getattr(route, "methods", set()):
-                    serve_endpoint = route.endpoint
-                    break
+            serve_endpoint = _find_app_endpoint(request.app.routes, "POST", "/api/model/serve")
         if serve_endpoint is None:
             raise HTTPException(503, "model serve endpoint unavailable")
         return await serve_endpoint(request, req)
@@ -745,12 +765,7 @@ def setup_codex_routes(
             params["platform"] = srv["platform"]
         cached_endpoint = _find_endpoint(None, "GET", "/api/model/cached")
         if cached_endpoint is None:
-            from fastapi import FastAPI
-            app: FastAPI = request.app
-            for route in app.routes:
-                if getattr(route, "path", None) == "/api/model/cached" and "GET" in getattr(route, "methods", set()):
-                    cached_endpoint = route.endpoint
-                    break
+            cached_endpoint = _find_app_endpoint(request.app.routes, "GET", "/api/model/cached")
         if cached_endpoint is None:
             raise HTTPException(503, "model cached endpoint unavailable")
         # The endpoint reads host/model_dir/ssh_port/platform as kwargs.
@@ -823,12 +838,7 @@ def setup_codex_routes(
             raise HTTPException(400, f"Preset payload invalid: {exc}")
         serve_endpoint = _find_endpoint(None, "POST", "/api/model/serve")
         if serve_endpoint is None:
-            from fastapi import FastAPI
-            app: FastAPI = request.app
-            for route in app.routes:
-                if getattr(route, "path", None) == "/api/model/serve" and "POST" in getattr(route, "methods", set()):
-                    serve_endpoint = route.endpoint
-                    break
+            serve_endpoint = _find_app_endpoint(request.app.routes, "POST", "/api/model/serve")
         if serve_endpoint is None:
             raise HTTPException(503, "model serve endpoint unavailable")
         return await serve_endpoint(request, req)
