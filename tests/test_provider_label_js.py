@@ -52,3 +52,15 @@ def _provider_label(url: str) -> str | None:
 ])
 def test_provider_label_neutral_for_loopback(url, expected):
     assert _provider_label(url) == expected
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+@pytest.mark.parametrize("url,expected", [
+    ("https://api.conifer.build/v1", "Conifer"),
+    ("https://conifer.build/v1", "Conifer"),
+    ("https://API.CONIFER.BUILD/v1", "Conifer"),
+    ("https://conifer.build.attacker.example/v1", "conifer.build.attacker.example"),
+])
+def test_provider_label_conifer(url, expected):
+    assert _provider_label(url) == expected
+
