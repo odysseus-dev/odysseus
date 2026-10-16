@@ -724,8 +724,13 @@ def _check_serve_binary(seg: str) -> None:
     if not tokens:
         return
     env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-    first = next((t for t in tokens if not env_re.match(t)), "")
+    idx = next((i for i, t in enumerate(tokens) if not env_re.match(t)), len(tokens))
+    first = tokens[idx] if idx < len(tokens) else ""
     base = os.path.basename(first)
+    # The vLLM/SGLang Dependencies recipes install with `uv pip install …
+    # --torch-backend auto`. Allow uv for that subcommand only, not `uv run`.
+    if base == "uv" and tokens[idx + 1:idx + 3] == ["pip", "install"]:
+        return
     if base not in _SERVE_CMD_ALLOWLIST:
         raise HTTPException(
             400,

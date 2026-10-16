@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 import pytest
@@ -1026,3 +1027,36 @@ def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
     ]:
         with pytest.raises(HTTPException):
             _validate_serve_cmd(cmd)
+
+
+def _dependency_recipe_pip_commands():
+    src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbook-deps-recipes.js").read_text(encoding="utf-8")
+    return re.findall(r"pip:\s*\{\s*commands:\s*\['((?:[^'\\]|\\.)*)'\]\s*\}", src)
+
+
+def test_validate_serve_cmd_accepts_single_line_dependency_recipes():
+    # The Dependencies recipe "Run" button posts these to /api/model/serve.
+    cmds = _dependency_recipe_pip_commands()
+    assert 'uv pip install -U vllm --torch-backend auto' in cmds
+    assert 'uv pip install -U "sglang[all]" --torch-backend auto' in cmds
+    for cmd in cmds:
+        assert _validate_serve_cmd(cmd) == cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "uv run python -c 'print(1)'",
+    "uv tool install ruff",
+    "uv pip uninstall vllm",
+    "uv",
+])
+def test_validate_serve_cmd_allows_uv_only_for_pip_install(cmd):
+    with pytest.raises(HTTPException):
+        _validate_serve_cmd(cmd)
+
+
+def test_dependency_recipe_run_sends_a_valid_pip_repo_id():
+    # A pip-install repo_id must match the server's package-spec regex; the old
+    # "<backend> setup" value had a space and every Run got "Invalid pip package name".
+    src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbook.js").read_text(encoding="utf-8")
+    assert "repo_id: `${backend}-setup`," in src
+    assert "repo_id: `${backend} setup`" not in src
