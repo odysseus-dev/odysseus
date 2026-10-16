@@ -7,7 +7,7 @@ import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
-import { topPortalZ } from './toolWindowZOrder.js';
+import { topPortalZ, topToolWindowZ } from './toolWindowZOrder.js';
 import sessionModule from './sessions.js';
 import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
 
@@ -2193,6 +2193,18 @@ function _makeGalleryDraggable(content) {
 // Re-export the manager for the rail click handler
 import * as Modals from './modalManager.js';
 
+// Escape belongs to whatever is stacked on top. False while the Ctrl+K search
+// palette or another tool window sits above the Gallery, so Esc closes that
+// layer instead of navigating or closing the Gallery underneath it.
+function _galleryOwnsEscape() {
+  const search = document.getElementById('search-overlay');
+  if (search && !search.classList.contains('hidden')) return false;
+  const modal = document.getElementById('gallery-modal');
+  const z = modal ? parseInt(getComputedStyle(modal).zIndex, 10) : NaN;
+  if (!Number.isFinite(z)) return true;
+  return topToolWindowZ({ exclude: modal, floor: z }) <= z;
+}
+
 export function openGallery() {
   // If already minimized — restore in place, preserve all state
   if (Modals.isRegistered('gallery-modal') && Modals.isMinimized('gallery-modal')) {
@@ -3056,6 +3068,7 @@ export function openGallery() {
         e.stopImmediatePropagation();
         return;
       }
+      if (!_galleryOwnsEscape()) return;
       const detail = document.getElementById('gallery-detail');
       if (detail && detail.style.display !== 'none') {
         // Click Back so Esc and the visible button always do the same thing —
