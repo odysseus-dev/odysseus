@@ -68,6 +68,7 @@ def _row(index: int, message: dict[str, Any]) -> dict[str, Any]:
         })
     return {
         "uid": str(message.get("uid") or _uid(index)),
+        "message_id": str(message.get("message_id") or ""),
         "account": str(message.get("account") or "fixture"),
         "account_email": str(message.get("account_email") or message.get("to") or ""),
         "account_id": str(message.get("account_id") or "fixture"),
@@ -78,6 +79,16 @@ def _row(index: int, message: dict[str, Any]) -> dict[str, Any]:
         "folder": str(message.get("folder") or "INBOX"),
         "attachments": attachments,
         "has_attachments": bool(attachments),
+        "summary": str(message.get("summary") or message.get("body") or ""),
+    }
+
+
+def _account_matches(message: dict[str, Any], account: str | None) -> bool:
+    selector = str(account or "").strip().casefold()
+    return not selector or selector in {
+        str(message.get("account") or "fixture").strip().casefold(),
+        str(message.get("account_email") or message.get("to") or "").strip().casefold(),
+        str(message.get("account_id") or "fixture").strip().casefold(),
     }
 
 
@@ -108,9 +119,16 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
 
     bare = tool.removeprefix("mcp__email__")
     if bare == "list_email_accounts":
+        accounts = {}
+        for index, message in enumerate(messages):
+            row = _row(index, message)
+            identity = (row["account_id"], row["account"], row["account_email"])
+            accounts.setdefault(identity, {"id": row["account_id"], "name": row["account"],
+                                            "email": row["account_email"], "default": not accounts})
         return {
-            "accounts": [{"id": "fixture", "name": "Fixture mailbox", "default": True}],
-            "output": "Fixture mailbox (default)",
+            "accounts": list(accounts.values()),
+            "output": "\n".join(f"{row['name']} <{row['email']}> ({row['id']})" for row in accounts.values())
+                      or "No fixture email accounts found.",
             "exit_code": 0,
         }
 
@@ -121,14 +139,7 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
         rows = [
             _row(i, m) for i, m in enumerate(messages)
             if _matches(m, query) and _folder_matches(m.get("folder"), folder)
-            and (
-                not account
-                or account in {
-                    str(m.get("account") or "").strip().casefold(),
-                    str(m.get("account_email") or "").strip().casefold(),
-                    str(m.get("account_id") or "").strip().casefold(),
-                }
-            )
+            and _account_matches(m, account)
         ]
         limit = args.get("max_results", args.get("limit", 20))
         try:
@@ -139,11 +150,7 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
             return {"output": "No emails found.", "emails": [], "exit_code": 0}
         output_lines = [f"Found {len(rows)} email(s):", ""]
         for index, r in enumerate(rows, start=1):
-            source = next(
-                (m for i, m in enumerate(messages) if _uid(i) == r["uid"]),
-                {},
-            )
-            summary = str(source.get("summary") or source.get("body") or "").strip()
+            summary = r["summary"].strip()
             output_lines.extend([
                 f"{index}. **{r['subject']}**",
                 f"   From: {r['from']}",
@@ -159,15 +166,19 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
 
     if bare == "read_email":
         uid = str(args.get("uid") or "")
+        message_id = str(args.get("message_id") or "")
         folder = str(args.get("folder") or "INBOX")
-        try:
-            index = int(uid) - 1
-        except (TypeError, ValueError):
-            index = -1
-        if index < 0 or index >= len(messages) or not _folder_matches(messages[index].get("folder"), folder):
-            return {"error": f"Email UID {uid} not found.", "exit_code": 1}
-        message = messages[index]
-        row = _row(index, message)
+        if not uid and not message_id:
+            return {"error": "read_email requires a UID or Message-ID.", "exit_code": 1}
+        matches = [(m, _row(i, m)) for i, m in enumerate(messages)
+                   if _folder_matches(m.get("folder"), folder) and _account_matches(m, args.get("account"))
+                   and (not uid or str(m.get("uid") or _uid(i)) == uid)
+                   and (not message_id or str(m.get("message_id") or "") == message_id)]
+        if not matches:
+            return {"error": f"Email UID/Message-ID {uid or message_id} not found.", "exit_code": 1}
+        if len(matches) != 1:
+            return {"error": "Email identity is ambiguous; specify its account and folder.", "exit_code": 1}
+        message, row = matches[0]
         output = (
             f"UID: {row['uid']}\nSubject: {row['subject']}\nFrom: {row['from']}\n"
             f"Date: {row['date']}\n\n{message.get('body') or ''}"
@@ -185,6 +196,7 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
         all_messages = _messages()
         owner_value = str(owner or "").strip()
         visible_index = -1
+        matches = []
         for original in all_messages:
             if owner_value and original.get("owner") and original.get("owner") != owner_value:
                 continue
@@ -193,6 +205,13 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
                 continue
             if not _folder_matches(original.get("folder"), folder):
                 continue
+            if not _account_matches(original, args.get("account")):
+                continue
+            matches.append(original)
+        if len(matches) > 1:
+            return {"error": "Email identity is ambiguous; specify its account and folder.", "exit_code": 1}
+        if matches:
+            original = matches[0]
             if bare == "archive_email":
                 original["folder"] = "Archive"
                 action = "Archived"

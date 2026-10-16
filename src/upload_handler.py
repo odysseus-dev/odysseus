@@ -63,78 +63,17 @@ INTERNAL_UPLOAD_URL_RE = re.compile(
     r"([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)"
     r"(?=$|[\s\"'<>\[\](){},;!?:&#]|\.(?![A-Za-z0-9]))"
 )
-# `<!--\s*pdf(?:_form)?_source\b[^>]*\bupload_id=["'](id)["'][^>]*-->` and
-# `\[Attachment:[^\]\r\n]*\|\s*id=(id)(?:\s*\||\s*\])` are matched by the
-# forward-only scanners below. As single regexes, every opener in a run with no
-# closing `>` / `]` rescanned to the end of that run: O(n^2) on chat content,
-# which is unbounded on persisted assistant output (CodeQL py/polynomial-redos).
-_PDF_SOURCE_OPEN_RE = re.compile(r"<!--\s*pdf(?:_form)?_source\b", re.IGNORECASE)
-_PDF_SOURCE_ID_RE = re.compile(
-    r"\bupload_id=[\"']([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)[\"']",
+PDF_SOURCE_UPLOAD_RE = re.compile(
+    r"<!--\s*pdf(?:_form)?_source\b[^>]*\bupload_id="
+    r"[\"']([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)[\"'][^>]*-->",
     re.IGNORECASE,
 )
-_ATTACHMENT_REFERENCE_OPEN_RE = re.compile(r"\[Attachment:", re.IGNORECASE)
-_ATTACHMENT_REFERENCE_STOP_RE = re.compile(r"[\]\r\n]")
-_ATTACHMENT_REFERENCE_TAIL_RE = re.compile(
-    r"\|\s*id=([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)(?:\s*\||\s*\])",
+ATTACHMENT_REFERENCE_LINE_RE = re.compile(
+    r"\[Attachment:[^\]\r\n]*\|\s*id="
+    r"([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)"
+    r"(?:\s*\||\s*\])",
     re.IGNORECASE,
 )
-
-
-def _pdf_source_upload_ids(value: str) -> list[str]:
-    """IDs from `<!-- pdf_source ... upload_id="<id>" ... -->` comments.
-
-    Every opener before the next `>` shares that `>`: the comment matches only
-    if `--` sits right before it, and then with the last `upload_id=` (the
-    greedy `[^>]*` backtracks from the right). Otherwise all of those openers
-    fail together, so the scan resumes after the `>`.
-    """
-    found: list[str] = []
-    pos = 0
-    while True:
-        opener = _PDF_SOURCE_OPEN_RE.search(value, pos)
-        if opener is None:
-            return found
-        close = value.find(">", opener.end())
-        if close < 0:
-            return found
-        if value[close - 2:close] == "--":
-            last = None
-            for last in _PDF_SOURCE_ID_RE.finditer(value, opener.end(), close):
-                pass
-            if last is not None:
-                found.append(last.group(1))
-        pos = close + 1
-
-
-def _attachment_reference_ids(value: str) -> list[str]:
-    """IDs from `[Attachment: name | id=<id> | ...]` reference lines.
-
-    The label scan stops at the first `]`/CR/LF, so every opener before that
-    stop shares it and can only use the last `|` (scanning right to left)
-    whose tail matches. If none does, all of those openers fail together and
-    the scan resumes at the stop.
-    """
-    found: list[str] = []
-    pos = 0
-    while True:
-        opener = _ATTACHMENT_REFERENCE_OPEN_RE.search(value, pos)
-        if opener is None:
-            return found
-        stop = _ATTACHMENT_REFERENCE_STOP_RE.search(value, opener.end())
-        end = stop.start() if stop else len(value)
-        tail = None
-        pipe = value.rfind("|", opener.end(), end)
-        while pipe >= 0:
-            tail = _ATTACHMENT_REFERENCE_TAIL_RE.match(value, pipe)
-            if tail is not None:
-                break
-            pipe = value.rfind("|", opener.end(), pipe)
-        if tail is None:
-            pos = end
-        else:
-            found.append(tail.group(1))
-            pos = tail.end()
 
 
 def is_valid_upload_id(upload_id: str) -> bool:
@@ -171,8 +110,8 @@ def extract_internal_upload_ids(value: Any) -> set[str]:
         return set()
     return (
         set(INTERNAL_UPLOAD_URL_RE.findall(value))
-        | set(_pdf_source_upload_ids(value))
-        | set(_attachment_reference_ids(value))
+        | set(PDF_SOURCE_UPLOAD_RE.findall(value))
+        | set(ATTACHMENT_REFERENCE_LINE_RE.findall(value))
     )
 
 

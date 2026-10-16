@@ -17,8 +17,6 @@ import base64
 import time
 import imaplib
 import smtplib
-import socket
-import ssl
 import email as email_mod
 import email.header
 import email.utils
@@ -38,7 +36,6 @@ from typing import Optional, List
 
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
-from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
 
 logger = logging.getLogger(__name__)
 
@@ -163,94 +160,6 @@ def _smtp_security_mode(cfg: dict) -> str:
     return "ssl"
 
 
-# Raised when a mail host resolves into a denied range (see _mail_private_blocked).
-MailServerAddressBlocked = OutboundAddressBlocked
-
-
-def _mail_private_blocked(owner: str | None) -> bool:
-    """Whether private/loopback/shared mail destinations are denied for *owner*.
-
-    Link-local (cloud metadata), multicast, reserved and unspecified addresses
-    are always denied (src/url_safety.py). Private ranges are where a mail
-    tester or saved account becomes an internal-network probe, so they are
-    only allowed for an admin or in single-user mode (AUTH_ENABLED=false), the
-    same principals trusted with host-level tools. Operators of multi-user
-    deployments with a LAN mail server opt in with EMAIL_ALLOW_PRIVATE_IPS=true;
-    EMAIL_BLOCK_PRIVATE_IPS=true denies private ranges for everyone.
-    """
-    if os.getenv("EMAIL_BLOCK_PRIVATE_IPS", "").strip().lower() == "true":
-        return True
-    if os.getenv("EMAIL_ALLOW_PRIVATE_IPS", "").strip().lower() == "true":
-        return False
-    from src.tool_security import owner_is_admin_or_single_user
-
-    return not owner_is_admin_or_single_user((owner or "").strip() or None)
-
-
-def _mail_socket_timeout(timeout):
-    return socket._GLOBAL_DEFAULT_TIMEOUT if timeout is None else timeout
-
-
-class _PolicyIMAP4(imaplib.IMAP4):
-    """IMAP4 whose socket comes from connect_outbound_tcp.
-
-    The mail host is resolved once and connected to only at the addresses the
-    address policy approved, so DNS rebinding between check and connect is
-    impossible. STARTTLS still verifies against ``self.host``.
-    """
-
-    def __init__(self, host, port, *, block_private: bool, timeout=None):
-        self._block_private = block_private
-        super().__init__(host, port, timeout=timeout)
-
-    def _create_socket(self, timeout):
-        if timeout is not None and not timeout:
-            raise ValueError("Non-blocking socket (timeout=0) is not supported")
-        return connect_outbound_tcp(
-            self.host, self.port, timeout=_mail_socket_timeout(timeout), block_private=self._block_private,
-        )
-
-
-class _PolicyIMAP4_SSL(imaplib.IMAP4_SSL):
-    """IMAP4_SSL over a policy-checked socket; TLS SNI/verification use the hostname."""
-
-    def __init__(self, host, port, *, block_private: bool, timeout=None, ssl_context=None):
-        self._block_private = block_private
-        super().__init__(host, port, ssl_context=ssl_context, timeout=timeout)
-
-    def _create_socket(self, timeout):
-        sock = _PolicyIMAP4._create_socket(self, timeout)
-        return self.ssl_context.wrap_socket(sock, server_hostname=self.host)
-
-
-class _PolicySMTP(smtplib.SMTP):
-    """SMTP whose socket comes from connect_outbound_tcp (see _PolicyIMAP4)."""
-
-    def __init__(self, host="", port=0, *, block_private: bool, **kwargs):
-        self._block_private = block_private
-        super().__init__(host, port, **kwargs)
-
-    def _get_socket(self, host, port, timeout):
-        if timeout is not None and not timeout:
-            raise ValueError("Non-blocking socket (timeout=0) is not supported")
-        return connect_outbound_tcp(
-            host, port, timeout=timeout, block_private=self._block_private,
-            source_address=self.source_address,
-        )
-
-
-class _PolicySMTP_SSL(smtplib.SMTP_SSL):
-    """SMTP_SSL over a policy-checked socket; TLS SNI/verification use the hostname."""
-
-    def __init__(self, host="", port=0, *, block_private: bool, **kwargs):
-        self._block_private = block_private
-        super().__init__(host, port, **kwargs)
-
-    def _get_socket(self, host, port, timeout):
-        sock = _PolicySMTP._get_socket(self, host, port, timeout)
-        return self.context.wrap_socket(sock, server_hostname=self._host)
-
-
 def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
     """Send through SMTP using the configured transport security mode."""
     host = cfg["smtp_host"]
@@ -269,15 +178,14 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
             smtp.login(user, password)
 
     security = _smtp_security_mode(cfg)
-    block_private = _mail_private_blocked(cfg.get("owner"))
 
     if security == "ssl":
-        with _PolicySMTP_SSL(host, port, timeout=timeout, block_private=block_private) as smtp:
+        with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
             _auth_smtp(smtp)
             smtp.sendmail(from_addr, recipients, message)
         return
 
-    with _PolicySMTP(host, port, timeout=timeout, block_private=block_private) as smtp:
+    with smtplib.SMTP(host, port, timeout=timeout) as smtp:
         if security == "starttls":
             smtp.starttls()
         _auth_smtp(smtp)
@@ -314,39 +222,6 @@ def _friendly_email_auth_error(protocol: str, host: str, error: object) -> str:
             "accounts cannot be added with this password form."
         )
     return raw[:200]
-
-
-# Bound at import: callers (and tests) may swap out imaplib.IMAP4 itself.
-_IMAP_ABORT = imaplib.IMAP4.abort
-
-
-def _mail_connection_test_error(protocol: str, host: str, error: BaseException) -> str:
-    """User-facing result for a failed IMAP/SMTP connection test.
-
-    Transport failures are reported by category, never with the peer's own
-    bytes: a non-mail service answering on the chosen host/port would
-    otherwise have its banner echoed back (an internal-service fingerprinting
-    oracle). Errors from a server that does speak the protocol (login/auth
-    rejections) keep their text via _friendly_email_auth_error, since that is
-    what the user needs to fix their settings.
-    """
-    if isinstance(error, MailServerAddressBlocked):
-        return f"{protocol} server address is not allowed by this server's network policy"
-    if isinstance(error, (_IMAP_ABORT, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected)):
-        return f"{protocol} server did not respond like an {protocol} server"
-    if isinstance(error, ssl.SSLCertVerificationError):
-        return f"{protocol} TLS certificate verification failed"
-    if isinstance(error, ssl.SSLError):
-        return f"{protocol} TLS handshake failed; check the port and security setting"
-    if isinstance(error, (socket.timeout, TimeoutError)):
-        return f"{protocol} connection timed out"
-    if isinstance(error, ConnectionRefusedError):
-        return f"{protocol} connection refused"
-    if isinstance(error, socket.gaierror):
-        return f"{protocol} server name could not be resolved"
-    if isinstance(error, OSError) and not isinstance(error, smtplib.SMTPException):
-        return f"{protocol} connection failed"
-    return _friendly_email_auth_error(protocol, host, error)
 
 
 def _strip_think(text: str) -> str:
@@ -810,21 +685,18 @@ def _ensure_sender_signatures_table(conn):
         _lg.getLogger(__name__).warning(f"sender_signatures owner-migration skipped: {_mig_e}")
 
 
-def attachment_extract_dir(folder: str, uid: str, *, owner: str, account_id: str | None) -> Path:
-    """Containment-safe extraction directory for one message's attachments.
+def attachment_extract_dir(folder: str, uid: str) -> Path:
+    """Containment-safe extraction directory for an attachment.
 
-    IMAP UIDs are small per-mailbox counters, so `folder_uid` alone put every
-    user's and every account's "INBOX 42" in one directory, where extractions
-    overwrote each other by filename (a path handed to one user's agent could
-    then hold another user's attachment). See src.mail_attachment_paths: the
-    directory is keyed by (owner, account, folder, uid) and contained in
-    ATTACHMENTS_DIR whatever `folder`/`uid` hold."""
-    from src.mail_attachment_paths import attachment_scope_dir
-
-    try:
-        return attachment_scope_dir(ATTACHMENTS_DIR, folder, uid, owner=owner, account_id=account_id)
-    except ValueError:
+    `folder` and `uid` are user-controlled (query/path params). Flatten them to
+    a single safe path segment so a value like folder='../../tmp' can't escape
+    ATTACHMENTS_DIR, then assert containment as belt-and-suspenders."""
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", f"{folder}_{uid}") or "_"
+    target = (ATTACHMENTS_DIR / key).resolve()
+    base = ATTACHMENTS_DIR.resolve()
+    if target != base and base not in target.parents:
         raise HTTPException(400, "Invalid attachment location")
+    return target
 
 
 def _init_scheduled_db():
@@ -1205,8 +1077,6 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                 cfg = {
                     "account_id": row.id,
                     "account_name": row.name,
-                    # Principal for the outbound mail address policy.
-                    "owner": row.owner or owner or "",
                     "smtp_host": row.smtp_host or "",
                     "smtp_port": int(row.smtp_port or 465),
                     "smtp_security": _smtp_security_mode({"smtp_security": getattr(row, "smtp_security", ""), "smtp_port": row.smtp_port}),
@@ -1240,7 +1110,6 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
     cfg = {
         "account_id": resolved_id,
         "account_name": "legacy",
-        "owner": owner or "",
         "smtp_host": settings.get("smtp_host", os.environ.get("SMTP_HOST", "")),
         "smtp_port": int(settings.get("smtp_port", os.environ.get("SMTP_PORT", "465")) or 465),
         "smtp_security": _smtp_security_mode({
@@ -1304,16 +1173,11 @@ def _open_imap_connection(
     starttls: bool,
     timeout: int = _IMAP_TIMEOUT_SECONDS,
     ssl_context=None,
-    owner: str | None = None,
 ):
-    """Open an IMAP connection using the configured security mode.
-
-    `owner` is the principal the destination is judged for
-    (see _mail_private_blocked)."""
+    """Open an IMAP connection using the configured security mode."""
     port = int(port or 993)
-    block_private = _mail_private_blocked(owner)
     if starttls:
-        conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
         try:
             if ssl_context:
                 conn.starttls(ssl_context=ssl_context)
@@ -1329,9 +1193,9 @@ def _open_imap_connection(
             raise
     elif port == 993:
         kwargs = {"ssl_context": ssl_context} if ssl_context else {}
-        conn = _PolicyIMAP4_SSL(host, port, timeout=timeout, block_private=block_private, **kwargs)
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout, **kwargs)
     else:
-        conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
     try:
         conn.sock.settimeout(timeout)
     except Exception:
@@ -1371,7 +1235,6 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
         cfg["imap_port"],
         starttls=bool(cfg.get("imap_starttls")),
         timeout=timeout,
-        owner=cfg.get("owner"),
     )
     try:
         if cfg.get("oauth_provider") == "google":
