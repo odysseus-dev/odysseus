@@ -4571,7 +4571,13 @@ import { invalidateSettings } from './appConfig.js';
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews
-                const _ub = document.querySelector('#chat-history .msg-user:last-of-type');
+                // The LAST .msg-user, not `.msg-user:last-of-type` —
+                // :last-of-type is about the element TYPE, and the streaming
+                // reply <div> is already the last div in #chat-history by the
+                // time this event arrives, so that selector matched nothing and
+                // the "Vision: <model>" label only appeared after a reload.
+                const _ubs = document.querySelectorAll('#chat-history .msg-user');
+                const _ub = _ubs[_ubs.length - 1];
                 if (_ub) {
                   const _aw = _ub.querySelector('.attach-cards');
                   if (_aw) {
