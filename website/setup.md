@@ -399,6 +399,17 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 If `python` points at an older interpreter, use `py -3.12` (or another installed
 3.11+ version) for the venv step.
 
+**Desktop App Wrapper & Control Panel:**
+
+To build a standalone Windows desktop app with one-click Start/Stop server controls, system tray management, and a Desktop shortcut:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-windows-app.ps1
+```
+
+Double-click `Odysseus.exe` or your Desktop shortcut to open the Control Panel.
+
+
 **Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and
 does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env`
 alone leaves the native Windows server on loopback. Pass the launcher's
