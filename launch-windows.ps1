@@ -9,9 +9,6 @@
   Usage:
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -Port 7000 -BindHost 127.0.0.1
-
-  Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
-  intentionally want other devices on your LAN to reach it.
 #>
 param(
     [int]$Port = 7000,
@@ -66,7 +63,11 @@ function Find-GitBash {
 Write-Step "Checking for Python"
 function Get-PythonVersionText($launcher, $launcherArgs) {
     try {
-        return (& $launcher @launcherArgs -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
+        $output = & $launcher @launcherArgs -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $output) { return $null }
+        $candidate = ($output | Select-Object -Last 1).ToString().Trim()
+        if ($candidate -match '^\d+\.\d+\.\d+$') { return $candidate }
+        return $null
     } catch {
         return $null
     }
@@ -113,9 +114,28 @@ if ($pyExe -like "*WindowsApps*python.exe") {
     }
 }
 
+# Graceful fallback: If Python still isn't found, use winget instead of legacy py install
 if (-not $pyExe) {
-    Fail "Couldn't find Python 3.11+ for Windows setup. Install Python 3.11+ (or open the Python launcher with 'py -3.11') from https://www.python.org/downloads/, then re-run this script."
+    Write-Host "Python 3.11+ not found. Attempting automatic installation via winget..." -ForegroundColor Yellow
+    winget install -e --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements 2>$null
+    
+    # Refresh environment path variables for the current session
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        $pyVersion = Get-PythonVersionText $pyLauncher.Source @("-3.11")
+        if ($pyVersion) {
+            $pyExe = $pyLauncher.Source
+            $pyArgs = @("-3.11")
+        }
+    }
 }
+
+if (-not $pyExe) {
+    Fail "Couldn't find or install Python 3.11+. Please install Python 3.11+ from https://www.python.org/downloads/, then re-run this script."
+}
+
 $pythonLabel = ("Using Python {0}: {1} {2}" -f $pyVersion, $pyExe, ($pyArgs -join ' ')).TrimEnd()
 Write-Host $pythonLabel
 
@@ -140,7 +160,7 @@ Write-Step "Running first-time setup"
 & $venvPy setup.py
 if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
-# 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
+# 5. Friendly note about Git Bash
 if (-not (Find-GitBash)) {
     Write-Host ""
     Write-Host "NOTE: Git Bash (bash.exe) was not found on PATH." -ForegroundColor Yellow
@@ -162,10 +182,7 @@ if (Test-Path $cudaBase) {
     }
 }
 
-# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
-# -Port only reaches uvicorn as a flag. Everything that builds a URL for this
-# instance - internal_api_base(), companion pairing, the MCP OAuth callback -
-# reads APP_PORT, so set it too or they all assume 7000.
+# 7. Start the server
 $env:APP_PORT = $Port
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
