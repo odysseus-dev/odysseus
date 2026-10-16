@@ -1,0 +1,128 @@
+# Coolify Compose resource: paste this entire file into Coolify.
+# IPv6 egress network must exist on the server (already created for this setup):
+# docker network create --ipv6 odysseus-egress
+# Log in as admin using SERVICE_PASSWORD_ODYSSEUS from Environment Variables.
+# Configure the Odysseus domain with target port 7000.
+# Configure model providers in the app after login. For optional settings,
+# check the main .env.example and add the variables you need:
+# https://github.com/odysseus-dev/odysseus/blob/main/.env.example
+services:
+  odysseus:
+    # Pull the published image; no build runs on the deployment server.
+    image: ghcr.io/odysseus-dev/odysseus:latest
+    volumes:
+      - app_data:/app/data
+      - app_logs:/app/logs
+      # Cookbook remote-server SSH identity. Odysseus can generate a key here;
+      # add the shown public key to each remote server's authorized_keys.
+      - app_ssh:/app/.ssh
+      # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
+      # container, so persist its HuggingFace cache in a named volume.
+      - app_huggingface:/app/.cache/huggingface
+      # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
+      # land under /app/.local for the odysseus user. Persist them so a
+      # container recreate does not silently remove installed serve engines.
+      - app_local:/app/.local
+    environment:
+      # Check the .env.example file for more optionnal settings
+      # (https://github.com/odysseus-dev/odysseus/blob/dev/.env.example)
+      - SERVICE_URL_ODYSSEUS_7000
+      - SEARXNG_INSTANCE=http://searxng:8080
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+      - AUTH_ENABLED=true
+      - ODYSSEUS_ADMIN_PASSWORD=${SERVICE_PASSWORD_ODYSSEUS}
+      - ALLOWED_ORIGINS=${SERVICE_URL_ODYSSEUS_7000}
+      - OAUTH_REDIRECT_BASE_URL=${SERVICE_URL_ODYSSEUS_7000}
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:7000/api/health"]
+      interval: 30s
+      timeout: 6s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  chromadb:
+    image: docker.io/chromadb/chroma:latest
+    volumes:
+      # The image runs `chroma run /config.yaml`, whose persist_path is "/data".
+      # It declares no VOLUME, so anything written outside a mount lives in the
+      # container's writable layer and dies with it. /chroma/chroma is where
+      # pre-1.0 images kept the store; mounting there now catches nothing.
+      - chromadb-data:/data
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/8000"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  searxng:
+    # Pinned, not :latest — odysseus waits on searxng's healthcheck
+    # (depends_on: condition: service_healthy), so a broken upstream `latest`
+    # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
+    # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
+    # Bump this deliberately after verifying a newer tag boots clean.
+    image: docker.io/searxng/searxng:2026.9.25-12f8b6515@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        # Initialize a fresh volume with JSON search enabled for Odysseus.
+        # Retain settings and the secret across subsequent deployments.
+        if [ ! -s /etc/searxng/settings.yml ]; then
+          : "$${SEARXNG_SECRET:?Coolify must generate SERVICE_PASSWORD_64_SEARXNG}"
+          printf 'use_default_settings: true\nserver:\n  secret_key: "%s"\nsearch:\n  formats:\n    - html\n    - json\n' "$$SEARXNG_SECRET" > /etc/searxng/settings.yml
+        fi
+        exec /usr/local/searxng/entrypoint.sh
+    volumes:
+      - searxng-data:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET=${SERVICE_PASSWORD_64_SEARXNG}
+    # The official searxng image runs as the non-root `searxng` user, but its
+    # entrypoint still needs to chown /etc/searxng on first boot, drop privs via
+    # su-exec, and (with our wrapper above) write settings.yml into the named
+    # volume. Without these capabilities the wrapper aborts at the redirection
+    # with EACCES and the container fails its healthcheck with permission
+    # errors during setup. Mirrors the cap set recommended by the upstream
+    # searxng-docker compose file. See issue #721.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  ntfy:
+    image: docker.io/binwiederhier/ntfy
+    command: serve
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    environment:
+      - NTFY_BASE_URL=http://ntfy
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 -T 5 -O - http://127.0.0.1:80/v1/health | grep -Eq '\"healthy\"[[:space:]]*:[[:space:]]*true'"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
