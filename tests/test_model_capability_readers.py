@@ -1,6 +1,6 @@
 import src.model_capabilities as mc
 import src.model_capability_readers as readers
-from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter
+from src.model_capability_readers import generic_openai, google, llamacpp, lmstudio, ollama, openai, openrouter, orcarouter
 from src.model_capability_readers.base import (
     VENDOR_GENERIC_OPENAI,
     VENDOR_GOOGLE,
@@ -9,6 +9,7 @@ from src.model_capability_readers.base import (
     VENDOR_OLLAMA,
     VENDOR_OPENAI,
     VENDOR_OPENROUTER,
+    VENDOR_ORCAROUTER,
     detect_vendor,
     stable_model_id_for,
 )
@@ -22,6 +23,7 @@ def test_detect_vendor_uses_endpoint_kind_then_host_and_common_local_ports():
     assert detect_vendor("https://example.test/v1", endpoint_kind="ollama") == VENDOR_OLLAMA
     assert detect_vendor("http://127.0.0.1:8080", endpoint_kind="llama_cpp") == VENDOR_LLAMACPP
     assert detect_vendor("https://openrouter.ai/api/v1") == VENDOR_OPENROUTER
+    assert detect_vendor("https://api.orcarouter.ai/v1") == VENDOR_ORCAROUTER
     assert detect_vendor("https://api.openai.com/v1") == VENDOR_OPENAI
     assert detect_vendor("https://generativelanguage.googleapis.com/v1beta/openai") == VENDOR_GOOGLE
     assert detect_vendor("http://127.0.0.1:11434") == VENDOR_OLLAMA
@@ -34,6 +36,7 @@ def test_detect_vendor_requires_a_dns_label_boundary():
     assert detect_vendor("https://api.openai.com./v1") == VENDOR_OPENAI
     assert detect_vendor("https://notopenai.com/v1") == VENDOR_GENERIC_OPENAI
     assert detect_vendor("https://fakeopenrouter.ai/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("https://fakeorcarouter.ai/v1") == VENDOR_GENERIC_OPENAI
     assert detect_vendor("https://notgoogleapis.com/v1") == VENDOR_GENERIC_OPENAI
     assert detect_vendor("https://evilanthropic.com/v1") == VENDOR_GENERIC_OPENAI
     assert detect_vendor("https://fakeollama.com/v1") == VENDOR_GENERIC_OPENAI
@@ -653,3 +656,59 @@ def test_llamacpp_props_payload_reports_unsupported_modalities_without_model_lis
         mc.CAP_VISION: mc.ASSERTION_UNSUPPORTED,
         mc.CAP_AUDIO_INPUT: mc.ASSERTION_UNSUPPORTED,
     }
+
+
+def test_orcarouter_reader_maps_rich_architecture_and_supported_parameters():
+    records = orcarouter.records_from_payload(
+        {
+            "data": [
+                {
+                    "id": "google/gemini-vision",
+                    "name": "Gemini Vision",
+                    "architecture": {"modality": "text+image->text"},
+                    "supported_parameters": [
+                        "tools",
+                        "response_format",
+                        "reasoning",
+                        "include_reasoning",
+                        "parallel_tool_calls",
+                        "temperature",
+                        "top_p",
+                        "seed",
+                    ],
+                    "context_length": 1048576,
+                    "top_provider": {"max_completion_tokens": 65536},
+                },
+            ],
+        }
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.vendor == VENDOR_ORCAROUTER
+    assert record.model_id == "google/gemini-vision"
+    assert record.stable_model_id == "orcarouter|global|google/gemini-vision"
+    assert record.capability.family == mc.FAMILY_CHAT
+    assert mc.CAP_TOOL_CALL in record.capability.capabilities
+    assert mc.CAP_JSON_MODE in record.capability.capabilities
+    assert mc.CAP_REASONING in record.capability.capabilities
+    assert mc.CAP_VISION in record.capability.capabilities
+    assert dict(record.capability.limits)["context_tokens"] == 1048576
+    assert dict(record.capability.limits)["output_tokens"] == 65536
+    assert {c.control for c in record.deterministic_controls} >= {
+        mc.CONTROL_TEMPERATURE,
+        mc.CONTROL_TOP_P,
+        mc.CONTROL_SEED,
+    }
+
+
+def test_orcarouter_reader_falls_back_to_identity_only_for_flat_shape():
+    records = orcarouter.records_from_payload(
+        {"data": [{"id": "shape-only-model", "object": "model"}]}
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.vendor == VENDOR_ORCAROUTER
+    assert record.capability.family == mc.FAMILY_UNKNOWN
+    assert record.capability.capabilities == ()
