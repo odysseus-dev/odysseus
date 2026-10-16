@@ -20,6 +20,7 @@ from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
 from routes._validators import validate_remote_host, validate_ssh_port
+from core.database import SessionLocal, ScheduledTask
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -249,6 +250,41 @@ def setup_codex_routes(
         if label:
             args["label"] = label
         return await do_manage_notes(json.dumps(args), owner=owner)
+
+    @router.get("/automation-monitoring")
+    async def automation_monitoring(request: Request):
+        owner = _scope_owner(request, TODO_READ_SCOPES)
+
+        db = SessionLocal()
+        try:
+            tasks = (
+                db.query(ScheduledTask)
+                .filter(ScheduledTask.owner == owner)
+                .order_by(ScheduledTask.next_run.asc())
+                .all()
+            )
+
+            return {
+                "tasks": [
+                    {
+                        "id": task.id,
+                        "name": task.name,
+                        "status": task.status,
+                        "next_run": (
+                            task.next_run.isoformat() + "Z"
+                            if task.next_run else None
+                        ),
+                        "last_run": (
+                            task.last_run.isoformat() + "Z"
+                            if task.last_run else None
+                        ),
+                        "run_count": task.run_count,
+                    }
+                    for task in tasks
+                ]
+            }
+        finally:
+            db.close()
 
     @router.post("/todos")
     async def manage_todos(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
