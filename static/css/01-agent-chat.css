@@ -6423,6 +6423,13 @@ body.bg-pattern-ascii-fireflies {
       display:flex; justify-content:flex-end; gap:8px; padding-top:6px;
       border-top:1px solid var(--border); margin-top:4px;
     }
+    /* The global `button { height:32px }` would hold a wrapped label (e.g.
+       "Delete chat and images") to one line's height, so its second line
+       spills out below the button. Let confirm buttons grow to fit; 32px
+       stays the minimum, so single-line buttons look the same. */
+    .styled-confirm-box .confirm-btn {
+      height:auto; min-height:32px;
+    }
     @media (max-width:768px) {
       .styled-confirm-box {
         width: 85vw;
