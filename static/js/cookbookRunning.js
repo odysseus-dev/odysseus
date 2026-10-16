@@ -1126,6 +1126,77 @@ export function _tmuxIsAliveCheck(task) {
   return inner;
 }
 
+async function _runCookbookShellCommand(command) {
+  const response = await _fetchWithTimeout('/api/shell/exec', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command }),
+  });
+  if (!response.ok) throw new Error(`Shell command failed (${response.status})`);
+  const result = await response.json();
+  if (result.exit_code === -1) throw new Error(result.stderr || 'Shell command failed');
+  return result;
+}
+
+async function _probeCookbookSession(task) {
+  if (_isWindows(task)) return 'unknown';
+  const result = await _runCookbookShellCommand(_tmuxIsAliveCheck(task));
+  const output = String(result.stdout || '').trim();
+  if (output === 'ALIVE') return 'alive';
+  if (output === 'DEAD') return 'dead';
+  return 'unknown';
+}
+
+async function _stopCookbookTaskSession(task, outputText) {
+  const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+  if (ollamaUnload) {
+    try { await _runCookbookShellCommand(ollamaUnload); } catch (_) { /* best-effort unload */ }
+  }
+
+  try { await _runCookbookShellCommand(_tmuxGracefulKill(task)); } catch (_) { /* probe decides whether escalation is needed */ }
+
+  if (_isWindows(task)) return true; // Windows stop command already force-kills the process tree.
+  let state;
+  try { state = await _probeCookbookSession(task); } catch (_) { return false; }
+  if (state === 'dead') return true;
+  if (state !== 'alive') return false;
+
+  try { await _runCookbookShellCommand(_tmuxForceKill(task)); } catch (_) { /* verify below */ }
+  try { state = await _probeCookbookSession(task); } catch (_) { return false; }
+  return state === 'dead';
+}
+
+async function _stopCookbookTaskCard(el, task) {
+  if (!el || el._stopInProgress) return false;
+  el._stopInProgress = true;
+  if (el._abort) el._abort.abort();
+  const badge = el.querySelector('.cookbook-task-status');
+  const originalStatus = task.status || 'running';
+  if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
+  el.dataset.status = 'stopping';
+  _updateTask(task.sessionId, { _userStopped: true });
+  const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
+
+  let stopped = false;
+  try { stopped = await _stopCookbookTaskSession(task, outputText); } catch (_) { stopped = false; }
+  if (!stopped) {
+    el._stopInProgress = false;
+    el.dataset.status = originalStatus;
+    if (badge) {
+      badge.textContent = _statusLabel(originalStatus, task.type);
+      badge.className = `cookbook-task-status cookbook-task-${originalStatus}`;
+    }
+    try { uiModule.showToast(`Could not verify that ${task.name || 'the task'} stopped. It remains in the list so you can retry.`, 'error'); } catch (_) {}
+    return false;
+  }
+
+  if (task.type === 'serve' && task.payload) {
+    _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
+  }
+  _animateOutThenRemove(el, task.sessionId);
+  return true;
+}
+
 function _shQuote(value) {
   return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
 }
@@ -2336,26 +2407,31 @@ export function _renderRunningTab() {
     });
   });
 
-  // Wire "Stop all" buttons — stop every running task on that server.
+  // Wire "Stop all" buttons — await and verify every active task on that server.
   group.querySelectorAll('[data-stop-server]').forEach(btn => {
     if (btn._bound) return;
     btn._bound = true;
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();  // don't toggle the section collapse
       const host = btn.dataset.stopServer;
-      const running = _loadTasks().filter(t => _taskServerKey(t) === host && t.status === 'running');
-      if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
-      if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
-      // Mark every task as user-stopped BEFORE firing the kills so that the
-      // download auto-retry logic never restarts a task the user just stopped.
-      running.forEach(t => _updateTask(t.sessionId, { _userStopped: true }));
-      // Reuse each task's own Stop action so it does the full teardown
-      // (send C-c, drop the endpoint, mark stopped) consistently.
-      running.forEach(t => {
-        const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
-        el?.querySelector('.cookbook-task-action-stop')?.click();
-      });
-      uiModule.showToast(`Stopped ${running.length} task${running.length > 1 ? 's' : ''} on ${_serverName(host)}`);
+      const terminalStatuses = new Set(['done', 'completed', 'stopped', 'cancelled', 'canceled']);
+      const active = _loadTasks().filter(t =>
+        _taskServerKey(t) === host && t.sessionId && !terminalStatuses.has(String(t.status || '').toLowerCase())
+      );
+      if (!active.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
+      if (!await window.styledConfirm(`Stop ${active.length} active task${active.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
+
+      let stopped = 0;
+      let failed = 0;
+      // Process each task to completion before moving on. This avoids
+      // overlapping shell/SSH commands and guarantees every task is checked.
+      for (const task of active) {
+        const el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+        if (await _stopCookbookTaskCard(el, task)) stopped += 1;
+        else failed += 1;
+      }
+      const summary = `Stopped ${stopped} of ${active.length} task${active.length === 1 ? '' : 's'} on ${_serverName(host)}${failed ? `; ${failed} still need attention` : ''}.`;
+      uiModule.showToast(summary, failed ? 'error' : undefined);
     });
   });
 
@@ -2925,40 +3001,7 @@ export function _renderRunningTab() {
 
     // Wire stop
     el.querySelector('.cookbook-task-action-stop').addEventListener('click', async () => {
-      // Abort the reconnect loop before sending kill so that a DOWNLOAD_FAILED
-      // marker written by the shell wrapper (on SIGINT/non-zero exit) cannot
-      // trigger an auto-retry after a manual stop.
-      if (el._abort) el._abort.abort();
-      const badge = el.querySelector('.cookbook-task-status');
-      if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
-      el.dataset.status = 'stopped';
-      _updateTask(task.sessionId, { _userStopped: true });
-      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
-      // Drop the model endpoint so the picker stops listing it.
-      if (task.type === 'serve' && task.payload) {
-        _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
-      }
-      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
-      if (ollamaUnload) {
-        try {
-          await _fetchWithTimeout('/api/shell/exec', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: ollamaUnload }),
-          });
-        } catch {}
-      }
-      // Gracefully stop (C-c, then kill the session) so it's fully down...
-      try {
-        await _fetchWithTimeout('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
-      } catch {}
-      // ...then smoothly fade/slide the card out and auto-remove it — no manual
-      // ⋮ → Remove needed.
-      _animateOutThenRemove(el, task.sessionId);
+      await _stopCookbookTaskCard(el, task);
     });
 
     // Wire kill — awaits the SSH/tmux kill and verifies the session is
