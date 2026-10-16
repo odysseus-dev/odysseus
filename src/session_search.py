@@ -67,13 +67,32 @@ def _snippet(content: str, query: str, radius: int = 60) -> str:
     if not query:
         return content[: radius * 2]
 
-    idx = content.lower().find(query.lower())
-    if idx == -1:
+    match_start = -1
+    match_length = 0
+    lowered_content = content.lower()
+    for candidate in _query_terms(query):
+        idx = lowered_content.find(candidate.lower())
+        if idx != -1 and (match_start == -1 or idx < match_start):
+            match_start = idx
+            match_length = len(candidate)
+
+    if match_start == -1:
         return content[: radius * 2]
 
-    start = max(0, idx - radius)
-    end = min(len(content), idx + len(query) + radius)
+    start = max(0, match_start - radius)
+    end = min(len(content), match_start + match_length + radius)
     return ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
+
+
+def _query_terms(query: str) -> list[str]:
+    """Return meaningful quoted phrases and tokens in user-entered order."""
+    terms: list[str] = []
+    for match in re.finditer(r'"([^"]+)"|[\w][\w._-]*', query, flags=re.UNICODE):
+        term = match.group(1) if match.group(1) is not None else match.group(0).strip("._-")
+        term = term.strip()
+        if term:
+            terms.append(term)
+    return terms
 
 
 def _sanitize_fts_query(query: str) -> str | None:
