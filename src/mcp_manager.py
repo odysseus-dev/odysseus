@@ -209,6 +209,16 @@ class McpManager:
 
     async def _connect_stdio(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:
         """Connect to an MCP server via stdio transport."""
+        ready = asyncio.get_running_loop().create_future()
+        owner = asyncio.create_task(
+            self._own_stdio_connection(server_id, name, command, args, env, ready)
+        )
+        self._owner_tasks[server_id] = owner
+        return await ready
+
+    async def _own_stdio_connection(self, server_id, name, command, args, env, ready):
+        """Own a stdio transport for its lifetime in one task."""
+        stack = None
         try:
             from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
@@ -221,58 +231,45 @@ class McpManager:
             )
 
             stack = AsyncExitStack()
-            registered = False
+            transport = await stack.enter_async_context(stdio_client(server_params))
+            read_stream, write_stream = transport
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
-            try:
-                transport = await stack.enter_async_context(stdio_client(server_params))
-                read_stream, write_stream = transport
-                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            await session.initialize()
+            tools_result = await session.list_tools()
 
-                await session.initialize()
-                tools_result = await session.list_tools()
+            tools = []
+            for tool in tools_result.tools:
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                    "annotations": getattr(tool, "annotations", None),
+                })
 
-                tools = []
-                for tool in tools_result.tools:
-                    tools.append({
-                        "name": tool.name,
-                        "description": tool.description or "",
-                        "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
-                        # MCP tool annotations (readOnlyHint / destructiveHint) drive
-                        # plan-mode read-only gating. Absent on many servers, so we
-                        # fall back to a name heuristic in mcp_tool_is_readonly().
-                        "annotations": getattr(tool, "annotations", None),
-                    })
+            # Extract identity hints from env vars (e.g. email address, API name)
+            # so tool descriptions can distinguish between multiple instances.
+            identity_hints = []
+            for k, v in (env or {}).items():
+                k_lower = k.lower()
+                if any(x in k_lower for x in ["email_address", "account", "user", "username"]):
+                    identity_hints.append(v)
+            identity = ", ".join(identity_hints) if identity_hints else ""
 
-                # Extract identity hints from env vars (e.g. email address, API name)
-                # so tool descriptions can distinguish between multiple instances of
-                # the same MCP server (e.g. two email accounts).
-                identity_hints = []
-                for k, v in (env or {}).items():
-                    k_lower = k.lower()
-                    if any(x in k_lower for x in ["email_address", "account", "user", "username"]):
-                        identity_hints.append(v)
-                identity = ", ".join(identity_hints) if identity_hints else ""
-
-                self._sessions[server_id] = session
-                self._register_resource_connection(server_id, session)
-                self._stacks[server_id] = stack
-                self._tools[server_id] = tools
-                self._connections[server_id] = {
-                    "status": "connected",
-                    "name": name,
-                    "transport": "stdio",
-                    "tool_count": len(tools),
-                    "identity": identity,
-                }
-
-                registered = True
-
-            finally:
-                if not registered:
-                    await stack.aclose()
+            self._sessions[server_id] = session
+            self._register_resource_connection(server_id, session)
+            self._stacks[server_id] = stack
+            self._tools[server_id] = tools
+            self._connections[server_id] = {
+                "status": "connected", "name": name, "transport": "stdio",
+                "tool_count": len(tools), "identity": identity,
+            }
 
             logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via stdio")
-            return True
+            shutdown = asyncio.Event()
+            self._owner_shutdown_events[server_id] = shutdown
+            ready.set_result(True)
+            await shutdown.wait()
 
         except ImportError:
             logger.warning("MCP package not installed. Install with: pip install mcp")
@@ -281,7 +278,22 @@ class McpManager:
                 "error": "mcp package not installed",
                 "name": name,
             }
-            return False
+            if not ready.done():
+                ready.set_result(False)
+        except Exception as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+            else:
+                logger.warning(f"Error in MCP server owner {server_id}: {exc}")
+        finally:
+            if stack is not None:
+                try:
+                    await stack.aclose()
+                except Exception as exc:
+                    logger.warning(f"Error closing MCP server {server_id}: {exc}")
+            self._owner_shutdown_events.pop(server_id, None)
+            if self._owner_tasks.get(server_id) is asyncio.current_task():
+                self._owner_tasks.pop(server_id, None)
 
     async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
         """Connect to an MCP server via SSE transport."""
@@ -472,6 +484,10 @@ class McpManager:
         ``AsyncExitStack``. On shutdown this task closes the stack in its
         ``finally`` block, satisfying AnyIO's cancel-scope ownership rule.
         """
+        owner = self._owner_tasks.get(server_id)
+        if owner is not None and owner is not asyncio.current_task():
+            await owner
+            return
         event = asyncio.Event()
         self._owner_shutdown_events[server_id] = event
         self._owner_tasks[server_id] = asyncio.current_task()
