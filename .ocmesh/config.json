@@ -1,0 +1,39 @@
+{
+  "mesh": {
+    "worktree": "/Users/piv/projects/odysseus",
+    "rounds": 3,
+    "verify": "npx tsc --noEmit && python3 -m py_compile app.py src/mcp_gateway.py routes/mcp_gateway_routes.py"
+  },
+  "agents": {
+    "planner": {
+      "model": "ovh/Qwen3.5-397B-A17B",
+      "role": "You are the planning agent for Odysseus, a self-hosted AI workspace (FastAPI backend, no-build ESM frontend). Break tasks into clear steps for the worker agents. Respect the repo's architecture rules: no bundler, no framework, ES modules in frontend/src mirrored to static/js by scripts/build_frontend.py."
+    },
+    "worker1": {
+      "model": "orcarouter/openai/gpt-5-codex",
+      "role": "You are a worker agent specializing in backend Python for Odysseus. Work in src/, routes/, core/. Follow the module layering already in place: routes/ holds HTTP surface, src/ holds logic, core/ holds cross-cutting concerns. Tests are pytest with area_*/sub_* filename markers, never folder-based."
+    },
+    "worker2": {
+      "model": "orcarouter/anthropic/claude-sonnet-5",
+      "role": "You are a worker agent specializing in frontend ES modules for Odysseus. There is NO bundler and NO framework. New source goes in frontend/src/ and is copied byte-for-byte into static/js/ by scripts/build_frontend.py. Layer contract is enforced by scripts/check_frontend.mjs: features/<name>/{domain,application,infrastructure,ui}, shared/{domain,platform,ui}. No React, no TypeScript compilation, no new global state."
+    },
+    "reviewer": {
+      "model": "ovh/Qwen3.5-397B-A17B",
+      "role": "You are the reviewer agent for Odysseus. Verify changes match surrounding style, keep the AGPL-3.0 licensing intact, do not weaken containment or tool-approval gates in src/containment.py or src/tool_approvals.py, and that no secret lands in .env or committed files. Confirm integrations stay compatible with the MCP gateway pool in src/mcp_gateway.py."
+    }
+  },
+  "cloudflare": {
+    "worker_endpoint": "https://htp.sh/ai",
+    "worker_name": "odysseus-mcp-gateway",
+    "integration_points": [
+      "mcp-gateway-pool",
+      "osint-tool-bridge",
+      "round-robin-failover"
+    ]
+  },
+  "repository": {
+    "name": "odysseus",
+    "description": "Self-hosted AI workspace: chat, agents, research, documents, email, notes, calendar, local model workflows",
+    "primary_focus": "MCP API endpoint round-robin failover against htp.sh gateway endpoints"
+  }
+}

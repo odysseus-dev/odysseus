@@ -50,3 +50,12 @@ markitdown[docx,pptx,xlsx,xls]==0.1.6
 
 # Photoshop PSD opening / flattened previews / layer inspection.
 psd-tools
+
+# AWS Bedrock as an OSINT GEOINT backend (ODYSSEUS_OSINT_BACKEND=bedrock).
+# Only needed if you route osint_locate through Bedrock instead of the gateway;
+# the default backend needs none of this. Credentials are resolved by boto3's
+# own provider chain, so static keys, short-lived AWS_SESSION_TOKEN credentials
+# from STS, and IRSA/instance-profile roles all work without extra config here.
+# See specs/model-providers/bedrock.md for why this is a direct Converse API
+# call rather than a provider entry in src/llm_core.py.
+boto3

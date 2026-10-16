@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "odysseus-edge-optimizer",
+  "main": "src/index.js",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // workers.dev only. Binds no route on htp.sh, which serves live
+  // production (still-firefly-7b67ebk on /, hackdeplanet Pages on crime.htp.sh).
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "vars": {
+    "ORIGIN_HOST": "htp.sh",
+    "ENABLE_CACHE": "0",
+    "MAX_UPLOAD_SIZE": "524288000"
+  }
+}

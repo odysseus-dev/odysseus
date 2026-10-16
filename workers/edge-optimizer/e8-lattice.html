@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E8 · Live Root Lattice</title>
+<!--
+  No-build page: open the file directly, no server, no bundler.
+  Matches the City IP Map stack (single file, vanilla JS, canvas mesh).
+
+  Renders the 240 roots of E8 as a live connection lattice: 112 integer
+  roots (56 pairs) + 128 half-integer roots (64 pairs), projected from R8 to
+  the plane and animated as a network graph.
+-->
+<style>
+  :root{
+    --bg:#05080c; --panel:#0a1018; --line:#14202e; --fg:#d6e4f0;
+    --dim:#5a7184; --accent:#38e0c8; --accent2:#ff6b8a; --warn:#ffc857;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+    overflow:hidden;
+  }
+  canvas{display:block; position:fixed; inset:0}
+  #hud{position:fixed; top:0; left:0; right:0; padding:10px 14px;
+       display:flex; gap:18px; align-items:baseline; flex-wrap:wrap;
+       pointer-events:none; text-shadow:0 1px 3px #000}
+  #hud b{color:var(--accent); font-weight:600; letter-spacing:.14em}
+  .stat{color:var(--dim)}
+  .stat i{color:var(--fg); font-style:normal}
+  #panel{position:fixed; right:10px; top:44px; width:212px;
+         background:rgba(10,16,24,.88); border:1px solid var(--line);
+         padding:10px 12px; backdrop-filter:blur(6px)}
+  #panel h2{margin:0 0 8px; font-size:10px; letter-spacing:.2em;
+            color:var(--dim); font-weight:600}
+  #panel label{display:flex; justify-content:space-between; gap:8px;
+               margin:6px 0; color:var(--dim)}
+  #panel input[type=range]{width:100%}
+  #panel .row{display:flex; gap:6px; margin-top:8px}
+  button{flex:1; background:var(--panel); color:var(--accent);
+         border:1px solid var(--line); padding:5px; cursor:pointer;
+         font:inherit; letter-spacing:.1em}
+  button:hover{border-color:var(--accent)}
+  button[aria-pressed="true"]{background:var(--accent); color:#04121a}
+  #legend{position:fixed; left:14px; bottom:12px; color:var(--dim)}
+  #legend span{display:inline-flex; align-items:center; gap:6px; margin-right:16px}
+  #legend i{width:8px; height:8px; border-radius:50%; display:inline-block}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Animated E8 root lattice"></canvas>
+
+<div id="hud">
+  <b>E8 · ROOT LATTICE</b>
+  <span class="stat">roots <i id="s-roots">240</i></span>
+  <span class="stat">nodes <i id="s-nodes">0</i></span>
+  <span class="stat">edges <i id="s-edges">0</i></span>
+  <span class="stat">fps <i id="s-fps">0</i></span>
+</div>
+
+<div id="panel">
+  <h2>PROJECTION</h2>
+  <label>θ <span id="v-theta">0.62</span>
+    <input id="theta" type="range" min="0" max="6.28" step="0.01" value="0.62"></label>
+  <label>φ <span id="v-phi">0.90</span>
+    <input id="phi" type="range" min="0" max="3.14" step="0.01" value="0.90"></label>
+  <label>spin <span id="v-spin">0.18</span>
+    <input id="spin" type="range" min="0" max="1.5" step="0.01" value="0.18"></label>
+  <label>links <span id="v-links">1.50</span>
+    <input id="links" type="range" min="0" max="4" step="0.05" value="1.5"></label>
+  <div class="row">
+    <button id="tgl" aria-pressed="true">PAUSE</button>
+    <button id="reset">RESET</button>
+  </div>
+</div>
+
+<div id="legend">
+  <span><i style="background:#38e0c8"></i>integer roots — 56 nodes / 112 roots</span>
+  <span><i style="background:#ff6b8a"></i>half-integer — 64 nodes / 128 roots</span>
+</div>
+
+<script type="module">
+// ---------------------------------------------------------------------------
+// E8 root system.
+//
+// 240 roots in R8, in three families:
+//   1. ±e_i ± e_j                    -> 4 * C(8,2) = 112 integer roots
+//   2. (1/2)(±e_1 ± ... ± e_8)       -> 2^8 / 2 = 128 half-integer roots
+// Every root has norm sqrt(2); roots come in +/- pairs, so 120 lines.
+// ---------------------------------------------------------------------------
+
+const N = 8;
+
+/** All 240 roots, as Float64Array of length 16 (8 x,y,z pairs). */
+function buildRoots() {
+  const out = [];
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      for (const si of [1, -1]) for (const sj of [1, -1]) {
+        const v = new Array(N).fill(0);
+        v[i] = si; v[j] = sj;
+        out.push({ v, half: false });
+      }
+    }
+  }
+  // (1/2)(±1, ±1, ..., ±1) restricted to an EVEN number of minus signs.
+  // The parity constraint is what makes this 2^7 = 128 instead of 2^8 = 256.
+  // It must be parity over all 8 signs — fixing v[0] positive is NOT the same
+  // condition, and yields inner products of ±1/5 and ±3/2 that are not a
+  // root system at all.
+  for (let mask = 0; mask < 256; mask++) {
+    const v = new Array(N);
+    let minuses = 0;
+    for (let k = 0; k < N; k++) {
+      const neg = (mask >> k) & 1;
+      v[k] = neg ? -0.5 : 0.5;
+      if (neg) minuses++;
+    }
+    if (minuses % 2 === 0) out.push({ v, half: true });
+  }
+  return out;
+}
+
+const ROOTS = buildRoots();
+// One node per +/- pair: keep whichever representative we saw first, using
+// the sign-normalised key so a root and its negative collapse to one node.
+const PAIRS = (() => {
+  const seen = new Set(), reps = [];
+  for (const r of ROOTS) {
+    const key = r.v.map((c) => (c * 2).toFixed(0)).join(",");
+    const negKey = r.v.map((c) => (-c * 2).toFixed(0)).join(",");
+    if (seen.has(key)) continue;
+    seen.add(key); seen.add(negKey);
+    reps.push(r);
+  }
+  return reps;
+})();
+
+const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+const norm = (a) => Math.sqrt(dot(a, a));
+
+// --- edges: shortest root-to-root distance, the Coxeter adjacency ---------
+function buildGraph(threshold) {
+  const n = PAIRS.length;
+  const pos = PAIRS.map((r) => r.v);
+  const edges = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      // Roots are stored as +/- pairs, so compare against both signs.
+      const a = pos[i], b = pos[j], nb = pos[j].map((c) => -c);
+      const d = Math.min(norm(a.map((c, k) => c - b[k])),
+                         norm(a.map((c, k) => c - nb[k])));
+      if (d <= threshold) edges.push([i, j, d]);
+    }
+  }
+  return edges;
+}
+
+let THRESHOLD = 1.5;
+let EDGES = buildGraph(THRESHOLD);
+
+// --- projection: R8 -> 2D, animated ---------------------------------------
+function project(v, theta, phi) {
+  // Two fixed orthonormal-ish frames give a stable, non-degenerate spread.
+  const x = v[0] + 0.35 * v[1] - 0.2 * v[6];
+  const y = v[2] + 0.35 * v[3] - 0.2 * v[7];
+  const z = v[4] + 0.35 * v[5] - 0.2 * v[0];
+  const ca = Math.cos(theta), sa = Math.sin(theta);
+  const cb = Math.cos(phi), sb = Math.sin(phi);
+  const x1 = x * ca - y * sa;
+  const y1 = x * sa + y * ca;
+  const y2 = y1 * cb - z * sb;
+  const depth = y1 * sb + z * cb;
+  return [x1, y2, depth];
+}
+
+// --- render loop ----------------------------------------------------------
+const cvs = document.getElementById("c");
+const ctx = cvs.getContext("2d", { alpha: false });
+let W = 0, H = 0, DPR = 1;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cvs.width = W * DPR; cvs.height = H * DPR;
+  cvs.style.width = W + "px"; cvs.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener("resize", resize);
+resize();
+
+let theta = 0.62, phi = 0.90, spin = 0.18, running = true;
+let frames = 0, fpsT = performance.now();
+
+function draw(now) {
+  const t = now / 1000;
+  if (running) { theta += spin * 0.004; phi += spin * 0.0016; }
+
+  ctx.fillStyle = "#05080c";
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H / 2;
+  const scale = Math.min(W, H) * 0.33;
+
+  // project once per frame, reuse for edges and nodes (no per-edge work)
+  const pts = PAIRS.map((r) => {
+    const [x, y, z] = project(r.v, theta, phi);
+    return { x: cx + x * scale, y: cy + y * scale, z,
+             half: r.half, pulse: 0.5 + 0.5 * Math.sin(t * 1.6 + r.v[0] * 3) };
+  });
+
+  ctx.lineWidth = 1;
+  for (let i = 0; i < EDGES.length; i++) {
+    const [a, b, d] = EDGES[i];
+    const p = pts[a], q = pts[b];
+    const alpha = Math.max(0.04, 0.3 - d * 0.12);
+    ctx.strokeStyle = `rgba(56,224,200,${alpha.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const depth = (p.z + 4) / 8;           // 0..1 for size/opacity
+    const r = (p.half ? 2.2 : 2.8) * (0.6 + depth * 0.9) + p.pulse * 0.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = p.half
+      ? `rgba(255,107,138,${(0.25 + depth * 0.7).toFixed(3)})`
+      : `rgba(56,224,200,${(0.35 + depth * 0.65).toFixed(3)})`;
+    ctx.fill();
+  }
+
+  frames++;
+  if (now - fpsT > 500) {
+    document.getElementById("s-fps").textContent =
+      Math.round((frames * 1000) / (now - fpsT));
+    frames = 0; fpsT = now;
+  }
+  document.getElementById("s-nodes").textContent = PAIRS.length;
+  document.getElementById("s-edges").textContent = EDGES.length;
+  requestAnimationFrame(draw);
+}
+
+// --- controls -------------------------------------------------------------
+const bind = (id, label, fmt, fn) => {
+  const el = document.getElementById(id);
+  const out = document.getElementById(label);
+  el.addEventListener("input", () => {
+    const v = parseFloat(el.value);
+    out.textContent = fmt(v);
+    fn(v);
+  });
+};
+bind("theta", "v-theta", (v) => v.toFixed(2), (v) => { theta = v; });
+bind("phi", "v-phi", (v) => v.toFixed(2), (v) => { phi = v; });
+bind("spin", "v-spin", (v) => v.toFixed(2), (v) => { spin = v; });
+bind("links", "v-links", (v) => v.toFixed(2), (v) => {
+  THRESHOLD = v;
+  EDGES = buildGraph(THRESHOLD);
+});
+
+document.getElementById("tgl").addEventListener("click", (e) => {
+  running = !running;
+  e.target.textContent = running ? "PAUSE" : "PLAY";
+  e.target.setAttribute("aria-pressed", String(running));
+});
+document.getElementById("reset").addEventListener("click", () => {
+  theta = 0.62; phi = 0.90;
+  document.getElementById("theta").value = theta;
+  document.getElementById("phi").value = phi;
+});
+
+document.getElementById("s-roots").textContent = ROOTS.length;
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

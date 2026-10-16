@@ -1,0 +1,16 @@
+{
+  "name": "odysseus-edge-optimizer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --exclude integration.test.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test:integration": "vitest run integration.test.js",
+    "test:all": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0",
+    "wrangler": "^4.0.0"
+  }
+}

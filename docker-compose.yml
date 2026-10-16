@@ -41,6 +41,11 @@ services:
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      # MCP gateway pool. Empty by default: set ODYSSEUS_GATEWAY_URLS to
+      # enable round-robin failover across MCP API gateway origins.
+      - ODYSSEUS_GATEWAY_URLS=${ODYSSEUS_GATEWAY_URLS:-}
+      - ODYSSEUS_GATEWAY_TIMEOUT=${ODYSSEUS_GATEWAY_TIMEOUT:-30}
+      - ODYSSEUS_GATEWAY_ALLOW_PRIVATE=${ODYSSEUS_GATEWAY_ALLOW_PRIVATE:-}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
       - COMPANION_BASE_URL=${COMPANION_BASE_URL:-}

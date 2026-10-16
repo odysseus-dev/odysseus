@@ -1,0 +1,57 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "god-router",
+  "main": "src/index.js",
+  "compatibility_date": "2025-01-01",
+  "observability": { "enabled": true },
+
+  // Workers Static Assets: dashboard.html and e8-lattice.html stay real files
+  // that can be opened and edited locally, rather than being inlined into the
+  // bundle as strings.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Assets are never served directly: the router decides every path, so an
+    // unmatched request gets the router's 404 page rather than a bare 404
+    // from the asset server.
+    //
+    // `run_worker_first` is what actually enforces that. Without it the asset
+    // server wins any request whose path matches an asset — including by
+    // extensionless resolution, so /dashboard was served straight from
+    // dashboard.html and bypassed the router entirely (no X-Router, and
+    // cache-control came back as the asset default `max-age=0, must-revalidate`
+    // rather than the router's `max-age=60`). It only appeared to work because
+    // no asset matched /lattice, so that one did reach the worker.
+    //
+    // true = every request goes to the worker, which decides for itself.
+    "run_worker_first": true,
+    "not_found_handling": "none"
+  },
+
+  // Keep the workers.dev URL available as well, so the router is reachable
+  // even if the zone route below is shadowed by something else.
+  "workers_dev": true,
+
+  "vars": {
+    "UPSTREAM": "https://htp.sh",
+    "APP_UPSTREAM": "https://odysseus-origin.htp.sh"
+  },
+
+  // A ROUTE, not a custom domain.
+  //
+  // The zone already has `*.htp.sh/*` -> still-firefly-7b67ebk. A custom
+  // domain on god.htp.sh was registered but the wildcard route won, so the
+  // hostname served the htp.sh homepage instead of this router. A route for
+  // the specific host is more specific than the wildcard and takes precedence.
+  //
+  // Additive: it adds one pattern and removes nothing. htp.sh root, /ai,
+  // /osint and /osint/gods-eye keep their existing owners.
+  "routes": [
+    { "pattern": "god.htp.sh/*", "zone_name": "htp.sh" },
+    // /god/... viewer aliases on the apex. Narrow on purpose: x.ai, osint,
+    // maps, api and ai keep their existing owners.
+    { "pattern": "htp.sh/god/osint/*", "zone_name": "htp.sh" },
+    { "pattern": "htp.sh/god/osint/gods-eye-viewer", "zone_name": "htp.sh" },
+    { "pattern": "htp.sh/god/os/int/gods-eye-viewer", "zone_name": "htp.sh" }
+  ]
+}

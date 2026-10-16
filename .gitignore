@@ -42,6 +42,14 @@ node_modules/
 services/node_modules/
 services/data/
 
+# Cloudflare Workers local state
+# .wrangler/ holds miniflare's local D1/KV/R2 sqlite databases and the
+# esbuild bundle it writes on every `wrangler dev`. None of it is source, and
+# the sqlite -wal/-shm files change on every local run.
+.wrangler/
+workers/*/.wrangler/
+.dev.vars
+
 # IDE / Editor
 .aider*
 .claude/

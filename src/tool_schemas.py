@@ -30,6 +30,7 @@ _BINARY_VISUAL_MEDIA_SUFFIXES = {
 _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "get_weather": ("location",),
+    "osint_locate": ("image_base64", "image", "data"),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -353,6 +354,20 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {"location": {"type": "string", "description": "City or place, optionally with region/country"}},
                 "required": ["location"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "osint_locate",
+            "description": "Geolocate an image with a vision model. Give it the image as base64 (or a data: URI) and it returns lat/lon, a confidence, a radius, and the visual clues it used. Use for 'where was this photo taken', to check an image against a claimed location, or to sanity-check a scene. NOT for reading text in an image (use extract_text) or for looking up a place by name (use get_weather/web_search).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_base64": {"type": "string", "description": "The image encoded as base64, or a data: URI. JPEG, PNG, GIF, BMP, WebP or TIFF, up to 8 MB."}
+                },
+                "required": ["image_base64"]
             }
         }
     },

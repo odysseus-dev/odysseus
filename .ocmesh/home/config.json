@@ -1,0 +1,8 @@
+{
+  "//": "Per-project ocmesh REGISTRY config. ocmesh reads $OCMESH_CONFIG_DIR (set by scripts/ocmesh-debug.sh to this directory), NOT the repo's .ocmesh/config.json. Only keys the CLI actually reads are listed here; unknown keys are ignored, so the mesh/agents/cloudflare sections in the parent file are documentation for agents, not runtime config.",
+  "oc_bin": "~/.opencode/bin/opencode",
+  "providers_order": "nvidia,opencode,orcarouter,ollama-cloud",
+  "nvidia_discovery": "1",
+  "refresh": "300",
+  "exclude": "^(?!.*(qwen|gpt|claude|gemini|llama|mistral|codestral|deepseek)).*$"
+}

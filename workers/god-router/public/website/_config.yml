@@ -1,0 +1,10 @@
+title: Odysseus
+description: A self-hosted AI workspace for chat, agents, tools, and local models.
+theme: jekyll-theme-primer
+
+plugins:
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: true
