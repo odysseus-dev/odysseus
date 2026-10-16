@@ -202,9 +202,25 @@ def _infer_use_case(repo_id, pipeline_tag):
     return "general"
 
 
+# HF collections mix in models no Cookbook LLM backend can serve (vision
+# encoders, time-series forecasters, image/video generators). Image models
+# have their own registry, so keep these out of the LLM catalog.
+_NON_LLM_PIPELINE_TAGS = frozenset({
+    "time-series-forecasting",
+    "zero-shot-image-classification",
+    "image-classification",
+    "image-feature-extraction",
+    "text-to-image",
+    "image-to-video",
+    "text-to-video",
+})
+
+
 def _entry_from_collection_item(collection, item, source):
     repo_id = item.get("id") or ""
     if item.get("type") != "model" or not repo_id:
+        return None
+    if (item.get("pipeline_tag") or "").strip().lower() in _NON_LLM_PIPELINE_TAGS:
         return None
     repo_prefix = source.get("repo_prefix")
     if repo_prefix and not repo_id.startswith(repo_prefix):
