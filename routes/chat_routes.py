@@ -4546,6 +4546,9 @@ def setup_chat_routes(
                 _agent_round_endpoint_ids = {1: _agent_actual_endpoint_id}
                 _agent_round_endpoint_labels = {1: _agent_actual_endpoint_label}
                 _terminal_saved = False
+                # (response, metrics) of a successfully saved reply whose
+                # post-response tasks still have to run at [DONE].
+                _post_response_pending = None
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -4750,6 +4753,7 @@ def setup_chat_routes(
                                     data["requested_model"] = _requested_model
                                     yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "agent_terminal":
+                                    _post_response_pending = None
                                     terminal_metadata = _render_state.metadata(data.get("data"))
                                     if thinking_mode == "off":
                                         terminal_metadata.pop("thinking", None)
@@ -4850,6 +4854,7 @@ def setup_chat_routes(
                                             incognito=incognito,
                                         )
                                         _terminal_saved = True
+                                        _post_response_pending = (_saveable_no_tool_response, _metrics_to_save)
                                         if _saved_id:
                                             yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
                                     yield f'data: {json.dumps(_metrics_event)}\n\n'
@@ -4894,9 +4899,16 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                _post_response_pending = (_response_to_save, _metrics_to_save)
+                            # The reply may have been saved here or already at
+                            # its metrics event (#6655); either way, run the
+                            # post-response tasks once.
+                            if _post_response_pending is not None:
+                                _post_text, _post_metrics = _post_response_pending
+                                _post_response_pending = None
                                 run_post_response_tasks(
-                                    sess, session_manager, session, message, _response_to_save,
-                                    _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                                    sess, session_manager, session, message, _post_text,
+                                    _post_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                                             agent_rounds=_agent_rounds,

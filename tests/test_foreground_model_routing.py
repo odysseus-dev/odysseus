@@ -816,6 +816,59 @@ async def test_chat_stream_route_does_not_save_or_postprocess_terminal_agent_err
 
 
 @pytest.mark.asyncio
+async def test_agent_reply_saved_at_metrics_still_runs_post_response_tasks_once(monkeypatch):
+    # A no-tool agent reply is saved when its metrics event arrives; [DONE]
+    # must still run post-response tasks (auto-title, memory, webhooks) (#6655).
+    captured = {}
+    chunks = [
+        'data: {"delta": "Tomatoes need sun."}\n\n',
+        f'data: {json.dumps({"type": "metrics", "data": {"output_tokens": 5}})}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    endpoint = _chat_stream_endpoint(
+        monkeypatch,
+        "agent",
+        captured,
+        agent_chunks=chunks,
+        capture_completion=True,
+    )
+
+    response = await endpoint(_RouteRequest("agent"))
+    emitted = [chunk async for chunk in response.body_iterator]
+
+    assert "data: [DONE]\n\n" in emitted
+    assert len(captured["saved"]) == 1
+    assert len(captured.get("post_processed", [])) == 1
+    post_args, _post_kwargs = captured["post_processed"][0]
+    assert post_args[4] == "Tomatoes need sun."
+    assert post_args[5]["output_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_agent_reply_saved_at_metrics_then_failed_is_not_post_processed(monkeypatch):
+    captured = {}
+    chunks = [
+        'data: {"delta": "Tomatoes need sun."}\n\n',
+        f'data: {json.dumps({"type": "metrics", "data": {"output_tokens": 5}})}\n\n',
+        f'data: {json.dumps({"type": "agent_terminal", "data": {"failed": True, "failure": {"status": 500}}})}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    endpoint = _chat_stream_endpoint(
+        monkeypatch,
+        "agent",
+        captured,
+        agent_chunks=chunks,
+        capture_completion=True,
+    )
+
+    response = await endpoint(_RouteRequest("agent"))
+    [chunk async for chunk in response.body_iterator]
+
+    assert len(captured["saved"]) == 1
+    assert "post_processed" not in captured
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_status", "expected_status", "expected_message"),
     [
