@@ -27509,16 +27509,25 @@ async def stream_agent_loop(
                                 if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
                                     _streamed_tool_markup += _delta_text
                                     if not _streamed_tool_markup_complete(_streamed_tool_markup):
-                                        continue
-                                    _visible_markup_tail = strip_tool_blocks(
-                                        _streamed_tool_markup,
-                                        skip_fenced=True,
-                                    ).strip()
-                                    _streamed_tool_markup = ""
-                                    if not _visible_markup_tail:
-                                        continue
-                                    _delta_text = _visible_markup_tail
-                                    data["delta"] = _delta_text
+                                        if _streamed_tool_markup_starts(_streamed_tool_markup):
+                                            continue
+                                        # False alarm: a bare "<" (e.g. ``x < 2``) looked like
+                                        # a tag prefix, but the buffer can no longer become a
+                                        # tool tag. Release it as prose instead of holding the
+                                        # rest of the answer forever.
+                                        _delta_text = _streamed_tool_markup
+                                        _streamed_tool_markup = ""
+                                        data["delta"] = _delta_text
+                                    else:
+                                        _visible_markup_tail = strip_tool_blocks(
+                                            _streamed_tool_markup,
+                                            skip_fenced=True,
+                                        ).strip()
+                                        _streamed_tool_markup = ""
+                                        if not _visible_markup_tail:
+                                            continue
+                                        _delta_text = _visible_markup_tail
+                                        data["delta"] = _delta_text
                             full_response += _delta_text
                         if not _suppress_unavailable_web_delta:
                             _qwen_buffered_route = bool(
