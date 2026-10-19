@@ -11,6 +11,7 @@ import { modelColor } from './chatRenderer.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
+import { isVisionModel } from './cookbookVision.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
 // Shared state/functions injected by init()
@@ -3332,6 +3333,16 @@ function _rerenderCachedModels() {
         });
         serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
         const launchTarget = _selectedServeTarget(panel);
+        // A vision model must never be launched on mlx_lm: it accepts no
+        // images, so the serve would come up healthy and silently useless.
+        // Checked against the MODEL, not the backend dropdown — mlx_vlm is not
+        // among the selectable backends, so the dropdown defaults a vision
+        // model back to plain MLX, which is exactly the trap being closed.
+        if (serveState.backend === 'mlx_vlm' || (serveState.backend === 'mlx' && isVisionModel(m))) {
+          _restoreLaunchBtn();
+          uiModule.showToast('This is a vision model: it needs mlx-vlm, which is not available yet. mlx_lm.server accepts no images, so this launch is refused rather than started blind.', 9000);
+          return;
+        }
         if (serveState.backend === 'llamacpp' && serveState.vision && !/(?:^|\s)(?:--mmproj|--clip_model_path)\b/.test(launchCmd)) {
           _restoreLaunchBtn();
           uiModule.showToast('Vision is checked, but no mmproj projector is in the launch command. Refresh cached models after downloading mmproj, or add --mmproj manually.', 8000);

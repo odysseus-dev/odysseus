@@ -33,6 +33,7 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
 } from './cookbookServe.js';
 
+import { isVisionModel } from './cookbookVision.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
@@ -513,6 +514,9 @@ export function _detectBackend(model) {
     return { backend: 'diffusers', label: 'Diffusers' };
   }
   if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
+    // Vision models must not land on mlx_lm.server: it takes no images, so the
+    // model would come up looking healthy with no way to pass it a picture.
+    if (isVisionModel(model)) return { backend: 'mlx_vlm', label: 'MLX VLM' };
     return { backend: 'mlx', label: 'MLX' };
   }
   const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
@@ -541,6 +545,7 @@ export function _detectBackend(model) {
   // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
+    if (isVisionModel(model)) return { backend: 'mlx_vlm', label: 'MLX VLM' };
     return { backend: 'mlx', label: 'MLX' };
   }
 

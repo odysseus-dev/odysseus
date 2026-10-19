@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from routes._validators import validate_remote_host, validate_ssh_port
+from services.hwfit.vision import vision_modality
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -1497,6 +1498,11 @@ def setup_cookbook_routes() -> APIRouter:
 	                    "is_diffusion": m.get("is_diffusion", False),
 	                    "is_video": m.get("is_video", False),
 	                    "is_adapter": m.get("is_adapter", False),
+	                    # Models scanned off disk carry no pipeline_tag, so the
+	                    # name marker is the only vision signal available here.
+	                    # Without it a VLM already on disk would still be routed
+	                    # to the text-only mlx_lm server.
+	                    "modality": vision_modality(m),
 	                }
                 if m.get("is_local_dir"):
                     entry["is_local_dir"] = True
