@@ -23,7 +23,9 @@ const _RECIPES = [
     label: 'MiniMax M2 / M2.7',
     match: (m) => /minimax[-_]?m\s?2(\.7)?/i.test(m || ''),
     variants: {
-      pip:    { commands: ['uv pip install -U vllm --torch-backend auto'] },
+      // flash-attn stays on the 2.x/3.x line: the 4.x rewrite drops the
+      // flash_attn.ops API vLLM's Qwen/Gemma vision code imports (#500).
+      pip:    { commands: ['uv pip install -U vllm "flash-attn<4" --torch-backend auto'] },
       docker: { commands: ['docker pull vllm/vllm-openai:latest'] },
     },
   },
@@ -33,7 +35,7 @@ const _RECIPES = [
     label: 'Any vLLM model',
     match: () => true,
     variants: {
-      pip:    { commands: ['uv pip install -U vllm --torch-backend auto'] },
+      pip:    { commands: ['uv pip install -U vllm "flash-attn<4" --torch-backend auto'] },
       docker: { commands: ['docker pull vllm/vllm-openai:latest'] },
     },
   },

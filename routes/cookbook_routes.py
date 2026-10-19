@@ -56,6 +56,7 @@ from routes.cookbook_helpers import (
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
+    _append_vllm_flash_attn_pin,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _append_pip_install_runner_lines, _pip_install_command_without_break_system_packages,
@@ -548,6 +549,16 @@ def setup_cookbook_routes() -> APIRouter:
                 r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
                 "vLLM is not installed or not in PATH on this server.",
                 [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
+            ),
+            (
+                # flash-attn 4.x dropped the legacy flash_attn.ops API that
+                # vLLM's Qwen3.x/Gemma vision rotary code imports (#500).
+                r"No module named ['\"]flash_attn\.ops['\"]|flash_attn\.ops\.triton",
+                "flash-attn was resolved to the incompatible v4 rewrite: its kernels moved to flash_attn.cute.* and vLLM's Qwen/Gemma vision code imports the legacy flash_attn.ops API.",
+                [
+                    {"label": "downgrade flash-attn to the compatible 2.x/3.x line on this server", "op": "dependency", "package": "flash-attn<4"},
+                    {"label": "switch to the standalone vllm/vllm-openai container (it bundles a compatible flash-attn)", "op": "manual"},
+                ],
             ),
             (
                 r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops|libnvrtc\.so)|"
@@ -2061,6 +2072,11 @@ def setup_cookbook_routes() -> APIRouter:
             # pip cache so they don't fail mid-build with "No space left" (#1219)
             # and leave the dep installed-but-unusable (#1459).
             req.cmd = _pip_install_no_cache(req.cmd)
+            # vllm installs get an explicit compatible flash-attn ceiling so pip
+            # can't resolve flash-attn into the 4.x rewrite that breaks
+            # vLLM's Qwen/Gemma vision rotary import (#500). Caller-pinned
+            # flash-attn specs are honored as-is.
+            req.cmd = _append_vllm_flash_attn_pin(req.cmd)
             # Accept common aliases and enforce server extras for llama-cpp so
             # `python -m llama_cpp.server` has all runtime dependencies.
             # CRITICAL: the lookbehind / lookahead must also exclude `/` so

@@ -179,6 +179,47 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+# flash-attn v4 is a ground-up rewrite: the kernels moved to ``flash_attn.cute.*``
+# and the legacy ``flash_attn.ops`` API is gone. vLLM's Qwen3.x / Gemma vision
+# code still imports that API (`from flash_attn.ops.triton.rotary import
+# apply_rotary`, vllm/model_executor/layers/rotary_embedding/common.py), so when
+# pip resolves flash-attn into the 4.x lineage (``flash_attn_4 4.0.0b15`` — the
+# only lineage with prebuilt wheels on some fresh CUDA-13 images) serving those
+# models dies at engine init with ``ModuleNotFoundError: No module named
+# 'flash_attn.ops'`` (#500). vLLM works without flash-attn entirely (native
+# installs fall back to the TRITON_ATTN backend), so the compatible fix is to
+# hold flash-attn on the 2.x/3.x line: same trick the Cookbook already uses for
+# the transformers ``kernels<0.15`` mismatch.
+VLLM_FLASH_ATTN_PIN = "flash-attn>=2,<4"
+
+# A plain vllm requirement token — bare or with an extras bracket — not part of
+# a larger word/URL (e.g. not `vllm.entrypoints`, `vllm/...` or `vllm-serve`).
+_VLLM_REQ_TOKEN_RE = re.compile(r"^vllm(?:\[[^\]\s]+\])?$")
+
+
+def _append_vllm_flash_attn_pin(cmd: str) -> str:
+    """Attach a compatible flash-attn ceiling to pip installs of vllm.
+
+    Applied to every pip-install command received by /api/model/serve (the
+    Dependencies panel, pip-update/pip-reinstall repair tasks and install
+    recipes all go through the route), so pip cannot silently resolve
+    flash-attn into the incompatible 4.x lineage while installing vllm.
+    Commands that already reference flash-attn (the diagnosis downgrade
+    repair, or a user's own pin) are left untouched — the caller wins.
+    Idempotent; leaves non-vllm and non-install commands unchanged. The spec
+    is emitted double-quoted so bash/PowerShell never treat ``<`` as a
+    redirect, matching the existing ``"kernels<0.15"`` convention.
+    """
+    if not cmd or "pip install" not in cmd:
+        return cmd
+    if "flash-attn" in cmd or "flash_attn" in cmd:
+        return cmd
+    tokens = [token.strip("'\"") for token in cmd.split()]
+    if not any(_VLLM_REQ_TOKEN_RE.fullmatch(token) for token in tokens):
+        return cmd
+    return f"{cmd} \"{VLLM_FLASH_ATTN_PIN}\""
+
+
 def _pip_install_no_cache(cmd: str) -> str:
     """Add ``--no-cache-dir`` to a pip install command.
 
@@ -1345,6 +1386,17 @@ def _diagnose_serve_output(text: str) -> dict | None:
             r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
             "vLLM is not installed or not in PATH on this server.",
             [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
+        ),
+        (
+            # flash-attn 4.x rewrote everything under flash_attn.cute.* and
+            # dropped the legacy flash_attn.ops API that vLLM's Qwen3.x/Gemma
+            # vision rotary code imports (#500).
+            r"No module named ['\"]flash_attn\.ops['\"]|flash_attn\.ops\.triton",
+            "flash-attn was resolved to the incompatible v4 rewrite: its kernels moved to flash_attn.cute.* and vLLM's Qwen/Gemma vision code imports the legacy flash_attn.ops API.",
+            [
+                {"label": "downgrade flash-attn to the compatible 2.x/3.x line on this server", "op": "dependency", "package": "flash-attn<4"},
+                {"label": "switch to the standalone vllm/vllm-openai container (it bundles a compatible flash-attn)", "op": "manual"},
+            ],
         ),
         (
             r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops|libnvrtc\.so)|"
