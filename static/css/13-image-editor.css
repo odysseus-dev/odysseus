@@ -2787,7 +2787,7 @@
   .ge-selection-menu,
   .ge-filter-menu {
     position: fixed;
-    top: 44px;
+    top: calc(44px + env(safe-area-inset-top, 0px));
     right: 8px;
     z-index: 500;
     max-width: calc(100vw - 16px);

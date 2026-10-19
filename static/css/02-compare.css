@@ -308,14 +308,27 @@
         max-height: 90dvh !important;
         height: auto !important;
       }
-      /* Anchor those modals to the top so the full height is usable */
+      /* Email modal content has position:fixed (set by JS bottom:0),
+         so the parent's padding-top doesn't shift it. Set top +
+         padding-top so the *entire* slideover (rounded corners included)
+         shifts below the status bar. */
+      #email-lib-modal .modal-content {
+        top: env(safe-area-inset-top, 0px) !important;
+      }
+      #notes-pane {
+        top: env(safe-area-inset-top, 0px) !important;
+      }
+      /* Anchor those modals to the top so the full height is usable,
+         but shift below the iOS status bar / dynamic island. */
+      #memory-modal,
+      #settings-modal,
       #cookbook-modal,
       #calendar-modal,
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
       #tasks-modal {
-        padding-top: 0 !important;
+        padding-top: env(safe-area-inset-top, 0px) !important;
         align-items: stretch !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the

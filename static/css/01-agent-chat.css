@@ -5082,7 +5082,7 @@ body.bg-pattern-ascii-fireflies {
     }
     @media (max-width:768px){
       .box { max-height:none; }
-      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
+      .chat-container { padding:10px; flex:1; margin-top:0; padding-top:calc(42px + env(safe-area-inset-top, 0px)); min-height:0; }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
       .send-btn { width:48px; height:48px !important; border-radius:12px; }
       .send-btn svg { width:22px; height:22px; }
@@ -5158,9 +5158,9 @@ body.bg-pattern-ascii-fireflies {
       .sidebar:not(.hidden) {
         overscroll-behavior: auto;
       }
-      /* Sidebar header — room for hamburger */
+      /* Sidebar header — room for hamburger + safe area for notched devices */
       .sidebar-header {
-        padding: 18px 12px 8px 12px;
+        padding: calc(18px + env(safe-area-inset-top, 0px)) 12px 8px 12px;
         min-height: 44px;
       }
       .sidebar-brand-title {
@@ -5223,7 +5223,7 @@ body.bg-pattern-ascii-fireflies {
       .section-header-flex h4::before {
         height: 18px;
       }
-      /* Compact top bar on mobile — align with sidebar header */
+      /* Compact top bar on mobile — align with sidebar header + safe area */
       .chat-top-bar {
         padding: 1px 8px;
         min-height: 14px;
@@ -5315,7 +5315,7 @@ body.bg-pattern-ascii-fireflies {
       .hamburger-btn {
         width: 44px;
         height: 44px;
-        top: 6px;
+        top: env(safe-area-inset-top, 0px);
         left: auto !important;
         right: 4px !important;
         -webkit-tap-highlight-color: transparent;
@@ -5330,7 +5330,7 @@ body.bg-pattern-ascii-fireflies {
       .mobile-new-chat-btn {
         display: flex;
         position: fixed;
-        top: 12px;
+        top: calc(12px + env(safe-area-inset-top, 0px));
         left: 8px;
         z-index: 210;
         width: 32px;
