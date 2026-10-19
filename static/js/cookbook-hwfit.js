@@ -1643,11 +1643,6 @@ export function _expandModelRow(row, modelData) {
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
   if (modelData.is_image_gen) {
     html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="Download + run as an image endpoint">Run Image</button>`;
-  } else if (backend === 'mlx_vlm') {
-    // Downloading is useful and safe; launching is not offered yet because no
-    // MLX vision server is wired up. Serving it with mlx_lm would start a
-    // text-only server that silently cannot take the image.
-    html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
   } else {
     html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="Download + launch with smart defaults">Run</button>`;
     html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
@@ -1656,7 +1651,11 @@ export function _expandModelRow(row, modelData) {
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
   } else if (backend === 'mlx_vlm') {
-    html += `<div class="hwfit-panel-note">Vision model: it takes an image as input, which <code>mlx_lm.server</code> cannot accept. MLX vision serving needs <code>mlx-vlm</code>, which isn't wired up yet \u2014 launching is disabled rather than starting a text-only server that quietly ignores images. Downloading works.</div>`;
+    const _vlmBase = `Vision model: served with <code>mlx_vlm.server</code>, which takes images \u2014 <code>mlx_lm.server</code> does not. It needs <code>mlx-vlm</code> in the launch Python; because mlx-vlm requires a newer <code>mlx</code> than the main venv pins, point the Venv field at a venv that has it.`;
+    const _vlmStatus = modelData.vlm_verified
+      ? ` This checkpoint has answered a question about an image on this host.`
+      : ` Declaring image input is not proof this checkpoint works: once it is serving, confirm it with <code>scripts/smoke_mlx_vlm.py</code>.`;
+    html += `<div class="hwfit-panel-note">${_vlmBase}${_vlmStatus}</div>`;
   } else if (_requiresAcceleratorBackend(modelData)) {
     // Only show the "needs CUDA/ROCm" note when the host doesn't already have
     // one. With a visible CUDA/ROCm accelerator the note is noise — the user
@@ -1718,15 +1717,6 @@ export function _expandModelRow(row, modelData) {
       const _qrBackendDetect = _detectBackend(modelData);
       const _qrRunBackend = _qrBackendDetect.backend || 'vllm';
       const _qrPort = _nextAvailablePort();
-
-      // Vision models have no MLX server to go to yet. The Run button isn't
-      // rendered for them, so this only fires if a launch is reached some
-      // other way — and it must refuse rather than fall through to mlx_lm,
-      // which would start a text-only server that can't take the image.
-      if (_qrRunBackend === 'mlx_vlm') {
-        uiModule.showToast('This is a vision model: serving it needs mlx-vlm, which is not available yet. mlx_lm.server accepts no images.', 9000);
-        return;
-      }
 
       // ─── Pre-launch: stop colliding serves on the same port ───────
       // Different ports coexist fine (e.g. vLLM on 8000 + Qwen VL on

@@ -752,8 +752,8 @@ function _backendChoicesForTarget(target) {
     return [['llamacpp','llama.cpp'],['diffusers','Diffusers']];
   }
   return _isMetal()
-    ? [['mlx','MLX'],['mlx_image','MLX Image'],['llamacpp','llama.cpp'],['ollama','Ollama']]
-    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['mlx','MLX'],['mlx_image','MLX Image'],['diffusers','Diffusers']];
+    ? [['mlx','MLX'],['mlx_vlm','MLX VLM'],['mlx_image','MLX Image'],['llamacpp','llama.cpp'],['ollama','Ollama']]
+    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['mlx','MLX'],['mlx_vlm','MLX VLM'],['mlx_image','MLX Image'],['diffusers','Diffusers']];
 }
 
 function _dependencyPkgForServeBackend(backend, modelName = '') {
@@ -767,6 +767,7 @@ function _dependencyPkgForServeBackend(backend, modelName = '') {
     sglang: 'sglang',
     llamacpp: 'llama_cpp',
     mlx: 'mlx_lm',
+    mlx_vlm: 'mlx_vlm',
     mlx_image: 'mflux',
     diffusers: 'diffusers',
   };
@@ -821,6 +822,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
     sglang: 'sglang',
     llamacpp: 'llama_cpp',
     mlx: 'mlx_lm',
+    mlx_vlm: 'mlx_vlm',
     mlx_image: 'mflux',
     diffusers: 'diffusers',
   };
@@ -3335,12 +3337,11 @@ function _rerenderCachedModels() {
         const launchTarget = _selectedServeTarget(panel);
         // A vision model must never be launched on mlx_lm: it accepts no
         // images, so the serve would come up healthy and silently useless.
-        // Checked against the MODEL, not the backend dropdown — mlx_vlm is not
-        // among the selectable backends, so the dropdown defaults a vision
-        // model back to plain MLX, which is exactly the trap being closed.
-        if (serveState.backend === 'mlx_vlm' || (serveState.backend === 'mlx' && isVisionModel(m))) {
+        // Checked against the MODEL, not just the dropdown, because the
+        // dropdown's default can land a vision model on plain MLX.
+        if (serveState.backend === 'mlx' && isVisionModel(m)) {
           _restoreLaunchBtn();
-          uiModule.showToast('This is a vision model: it needs mlx-vlm, which is not available yet. mlx_lm.server accepts no images, so this launch is refused rather than started blind.', 9000);
+          uiModule.showToast('This is a vision model: mlx_lm.server accepts no images. Pick the MLX VLM backend instead — refusing rather than starting a server that would quietly ignore the image.', 9000);
           return;
         }
         if (serveState.backend === 'llamacpp' && serveState.vision && !/(?:^|\s)(?:--mmproj|--clip_model_path)\b/.test(launchCmd)) {

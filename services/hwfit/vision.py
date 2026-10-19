@@ -33,6 +33,8 @@ without passing through either Python path. The two lists are pinned together
 by tests/test_cookbook_vision_marker_parity.py.
 """
 
+import json
+import os
 import re
 
 VISION_PIPELINE_TAG = "image-text-to-text"
@@ -90,3 +92,34 @@ def is_vision_model(entry):
 def vision_modality(entry):
     """"vision" or "text" — the value that goes on the row as `modality`."""
     return "vision" if is_vision_model(entry) else "text"
+
+
+_VERIFIED_CACHE = {"mtime": None, "models": {}}
+
+
+def verified_vlm_models():
+    """Checkpoints that have actually answered a question about an image here.
+
+    Written only by scripts/smoke_mlx_vlm.py, after a real round trip. Declaring
+    image input and surviving a load are not the same thing, and a server that
+    came up healthy proves neither — so this stays separate from `modality`,
+    which is what the model claims.
+
+    Missing file means nothing has been verified yet, which is not an error.
+    """
+    try:
+        from src.constants import DATA_DIR
+        path = os.path.join(DATA_DIR, "mlx_vlm_verified.json")
+        mtime = os.path.getmtime(path)
+    except Exception:
+        _VERIFIED_CACHE.update({"mtime": None, "models": {}})
+        return {}
+    if _VERIFIED_CACHE["mtime"] != mtime:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            models = data if isinstance(data, dict) else {}
+        except Exception:
+            models = {}
+        _VERIFIED_CACHE.update({"mtime": mtime, "models": models})
+    return _VERIFIED_CACHE["models"]
