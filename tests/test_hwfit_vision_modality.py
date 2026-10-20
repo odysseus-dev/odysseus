@@ -13,6 +13,7 @@ derived at runtime from whether mlx-vlm is installed in the launch interpreter.
 
 from services.hwfit.fit import analyze_model
 from services.hwfit.models import _normalize_model_entry, get_models
+from services.hwfit.vision import vision_modality
 
 
 def _metal_system():
@@ -106,3 +107,41 @@ def test_vision_detection_does_not_leak_into_the_bulk_of_the_catalog():
     rows = get_models()
     vision = [m for m in rows if m.get("modality") == "vision"]
     assert 0 < len(vision) < len(rows) / 3
+
+
+# ── The containing directory is not the model ──
+#
+# `path` never carries the model's identity: the HF-cache scan sets it to the
+# cache root, the local-directory scan sets it to the PARENT of the model
+# folder (the folder's own name is repo_id), Ollama rows set it to the literal
+# "ollama", and no catalog row has the field at all. Matching the vision marker
+# against it therefore reads a user's folder naming as if it were model
+# metadata — in both directions.
+
+
+def test_a_directory_name_does_not_make_a_text_model_vision():
+    for folder in (
+        "/Users/x/vision-models",
+        "/Users/x/llava-experiments",
+        "/mnt/vl/models",
+        "/data/pixtral-tests",
+        "/srv/vision",
+    ):
+        entry = {"repo_id": "Qwen3-8B-4bit", "path": folder}
+        assert vision_modality(entry) != "vision", folder
+
+
+def test_a_directory_name_does_not_suppress_a_real_vision_model():
+    # The worse direction: a folder called "skip-vision-archive" would send a
+    # genuine VLM back to the text-only server — the exact bug this module
+    # exists to prevent, reintroduced by how the user names a directory.
+    entry = {"repo_id": "Qwen2.5-VL-3B-Instruct-4bit", "path": "/Users/x/skip-vision-archive"}
+    assert vision_modality(entry) == "vision"
+
+
+def test_the_model_s_own_identity_is_still_read_from_repo_id():
+    # Local rows identify the model by repo_id — that must keep working, or
+    # dropping `path` would trade one hole for another.
+    assert vision_modality({"repo_id": "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"}) == "vision"
+    assert vision_modality({"repo_id": "Qwen2.5-VL-7B-Instruct-8bit",
+                            "path": "/Users/x/models"}) == "vision"

@@ -66,10 +66,20 @@ _SKIP_RE = re.compile(r"skip[-_.]vision", re.IGNORECASE)
 
 
 def _names(entry):
-    """Every field a model row might identify itself by."""
+    """Every field a model row identifies ITSELF by.
+
+    `path` is deliberately excluded. It never carries the model's identity: the
+    HF-cache scan sets it to the cache root, the local-directory scan to the
+    parent of the model folder (the folder's own name is repo_id), Ollama rows
+    to the literal "ollama", and catalog rows have no such field. Matching the
+    marker against it would read how someone named a directory as if it were
+    model metadata — a folder called "vision-models" would flag every text
+    model inside it, and one called "skip-vision-archive" would send a genuine
+    VLM back to the text-only server, which is the bug this module prevents.
+    """
     if not isinstance(entry, dict):
         return ""
-    parts = [entry.get("name"), entry.get("repo_id"), entry.get("id"), entry.get("path")]
+    parts = [entry.get("name"), entry.get("repo_id"), entry.get("id")]
     return " ".join(str(p) for p in parts if p)
 
 

@@ -106,10 +106,26 @@ def test_skip_vision_is_an_explicit_opt_out():
                     "pipeline_tag": "image-text-to-text"}) is False
 
 
-def test_repo_id_and_path_are_inspected_too():
-    # Cached/local rows identify the model by repo_id or path, not name.
+def test_repo_id_is_inspected_too():
+    # Cached/local rows identify the model by repo_id, not name.
     assert _vision({"repo_id": "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"}) is True
-    assert _vision({"path": "/models/mlx-community/Qwen2.5-VL-7B-Instruct-8bit"}) is True
+
+
+def test_the_containing_directory_is_not_the_model():
+    # `path` never carries the model's identity: the HF-cache scan sets it to
+    # the cache root, the local-directory scan to the PARENT of the model
+    # folder (the folder's own name is repo_id), Ollama rows to the literal
+    # "ollama", and catalog rows have no such field. Reading the marker there
+    # turns a user's folder naming into model metadata, in both directions —
+    # and the suppressing direction sends a genuine VLM back to the text-only
+    # server, which is the bug this module exists to prevent.
+    assert _vision({"repo_id": "Qwen3-8B-4bit", "path": "/Users/x/vision-models"}) is False
+    assert _vision({"repo_id": "Llama-3.3-70B-Instruct-4bit", "path": "/mnt/vl/models"}) is False
+    assert _vision({"repo_id": "Qwen2.5-VL-3B-Instruct-4bit",
+                    "path": "/Users/x/skip-vision-archive"}) is True
+    # An explicit opt-out in the model's own id still wins.
+    assert _vision({"repo_id": "mlx-community/Molmo-7B-D-0924-8bit-skip-vision",
+                    "path": "/Users/x/models"}) is False
 
 
 def test_malformed_input_is_not_vision():

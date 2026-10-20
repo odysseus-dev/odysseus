@@ -40,9 +40,16 @@ const _MARKER_RE = new RegExp(`(?:^|[-_./])(${VISION_NAME_MARKERS.join('|')})(?:
 // Published with the vision tower removed — a text model despite the name.
 const _SKIP_RE = /skip[-_.]vision/i;
 
+// Every field a model row identifies ITSELF by. `path` is deliberately
+// excluded: it is the containing directory, not the model — the HF-cache scan
+// sets it to the cache root and the local-directory scan to the parent of the
+// model folder, whose own name is repo_id. Matching the marker there would
+// read how someone named a directory as if it were model metadata: a folder
+// called "vision-models" would flag every text model inside it, and one called
+// "skip-vision-archive" would send a genuine VLM back to the text-only server.
 function _names(model) {
   if (!model || typeof model !== 'object') return '';
-  return [model.name, model.repo_id, model.id, model.path]
+  return [model.name, model.repo_id, model.id]
     .filter(v => v != null && v !== '')
     .map(String)
     .join(' ');
