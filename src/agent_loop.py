@@ -24415,6 +24415,28 @@ async def stream_agent_loop(
                 route_messages,
                 f"The user's terse links/sources follow-up refers to this public web topic: {_link_topic}. Call web_search for that topic.",
             )
+        # Wissensbasis (personal docs) in den Agent-Prompt einfügen.
+        # Der Chat-Prozessor macht das bereits; dieser Pfad hat es nicht.
+        try:
+            if _last_user and str(_last_user).strip() and not guide_only and not plan_mode:
+                from src.rag_manager import RAGManager
+                _rag_hits = RAGManager().search(str(_last_user), k=5, owner=owner) or []
+                _rag_hits = [h for h in _rag_hits if float(h.get("similarity", 0) or 0) >= 0.35][:3]
+                if _rag_hits:
+                    _rag_parts = []
+                    for _h in _rag_hits:
+                        _fname = (_h.get("metadata") or {}).get("filename", "unbekannt")
+                        _rag_parts.append("[" + str(_fname) + "]\n" + str(_h.get("document", ""))[:1500])
+                    _rag_text = "\n\n---\n\n".join(_rag_parts)[:4000]
+                    _prepend_agent_directive(
+                        route_messages,
+                        "Relevante Auszüge aus der Wissensbasis des Nutzers. Beantworte die Frage nur "
+                        "aus diesen Auszügen, nenne den Dateinamen, und schreibe 'nicht im Text', wenn "
+                        "die Auszüge die Frage nicht beantworten.\n\n" + _rag_text,
+                    )
+                    logger.info("[agent-rag] %d Treffer in den Prompt eingefügt", len(_rag_hits))
+        except Exception as _rag_err:
+            logger.warning("[agent-rag] Wissensbasis-Suche fehlgeschlagen: %s", _rag_err)
         if _contextual_weather_status_followup and not guide_only:
             _prepend_agent_directive(
                 route_messages,
