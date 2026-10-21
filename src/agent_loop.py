@@ -8760,11 +8760,22 @@ _EXPLICIT_WORKSPACE_REFERENCE_RE = re.compile(
     r"|\b(?:this|current|active)\s+(?:workspace|repo|project)\b",
     re.IGNORECASE,
 )
+# Words that follow "on"/"from" in ordinary prose ("on friday", "from yesterday",
+# "on anything") and so never name a machine.
+_NOT_A_MACHINE_NAME = (
+    r"(?:this|that|these|those|my|your|our|the|a|an|it|them|him|her|us|me|you|"
+    r"anything|anyone|anybody|something|someone|somebody|everything|everyone|"
+    r"nothing|none|nobody|each|all|both|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"today|tomorrow|yesterday|tonight|now|then|here|there|"
+    r"what|which|who|whom|where|when|how|why|"
+    r"on|from|to|of|in|for|with|about|at|by|and|or)(?![a-z0-9_.-])"
+)
 _LOCAL_COMPUTER_REFERENCE_RE = re.compile(
     r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b"
     r"|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"
-    r"|\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b)(?:[a-z][a-z0-9_.-]{1,31})\b",
+    r"|\b(?:on|from)\s+(?!" + _NOT_A_MACHINE_NAME + r")(?:[a-z][a-z0-9_.-]{1,31})\b",
     re.IGNORECASE,
 )
 _LOCAL_NETWORK_REFERENCE_RE = re.compile(
