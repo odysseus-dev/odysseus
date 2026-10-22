@@ -4,8 +4,13 @@
 # the final image / Cookbook never has to compile the broken sdists. See
 # docker/build-realesrgan-wheels.sh for the full rationale.
 FROM python:3.14-slim AS realesrgan-wheels
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+COPY scripts/check_ca_trust.py /usr/local/bin/check-ca-trust.py
+RUN python /usr/local/bin/check-ca-trust.py --system
+COPY requirements-bootstrap.txt /tmp/requirements-bootstrap.txt
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r /tmp/requirements-bootstrap.txt \
+    && python /usr/local/bin/check-ca-trust.py --python
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
@@ -28,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
+    ca-certificates \
     git \
     nodejs \
     npm \
@@ -47,6 +53,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1 \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Refresh both Python trust bundles before installing application dependencies.
+# System roots also serve web fetches, webhooks, curl, and Node's OpenSSL mode.
+COPY scripts/check_ca_trust.py /usr/local/bin/check-ca-trust.py
+RUN python /usr/local/bin/check-ca-trust.py --system
+COPY requirements-bootstrap.txt /tmp/requirements-bootstrap.txt
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: --no-deps -r /tmp/requirements-bootstrap.txt \
+    && python /usr/local/bin/check-ca-trust.py --python
+ENV NODE_OPTIONS=--use-openssl-ca \
+    GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=/etc/ssl/certs/ca-certificates.crt
+
+# Chromium has a separate root store. Distrust the compromised intermediate
+# public keys explicitly, including cross-signs, without waiting for CRL updates.
+COPY docker/chromium-emudhra.json /etc/chromium/policies/managed/odysseus-emudhra.json
 
 # Private browser automation wrapper used by the native `private_browser` tool.
 # Chromium is installed above, so agent-browser can drive the existing browser
@@ -107,6 +127,10 @@ RUN pip install --no-cache-dir python-magic==0.4.27
 COPY --from=realesrgan-wheels /wheels/ /tmp/odysseus-wheels/
 RUN pip install --no-cache-dir --no-deps /tmp/odysseus-wheels/*.whl \
     && rm -rf /tmp/odysseus-wheels
+
+# Check gRPC's effective defaults after all Python dependencies are installed.
+# Its wheel can retain affected roots even when pip/certifi are current.
+RUN python /usr/local/bin/check-ca-trust.py --system --python --grpc
 
 # Copy app code
 COPY . .

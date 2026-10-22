@@ -25,6 +25,8 @@ import {
   _animateEmailCardRemoval,
   _clearDoneResponseTagsLocal,
   _emailMutationQuery,
+  _exportSelectedEmailPdf,
+  _exportSelectedEmails,
   _exportSelectedAttachments,
   _findSiblingEmailCard,
   _fitEmailDropdown,
@@ -585,7 +587,10 @@ export function _showBulkActionsMenu(anchor) {
   const _unreadIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
   const _doneIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const _exportIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+  const _emailIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>';
+  const _pdfIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 15h8M8 18h5"/></svg>';
   const items = [
+    { label: 'Export Emails', icon: _exportIco, submenu: true },
     { label: 'Export Attachments', icon: _exportIco, action: () => _exportSelectedAttachments() },
     { label: 'Done', icon: _doneIco, action: () => _bulkAction('done') },
     { label: 'Mark Read', icon: _readIco, action: () => _bulkAction('read') },
@@ -594,8 +599,45 @@ export function _showBulkActionsMenu(anchor) {
   for (const a of items) {
     const it = document.createElement('div');
     it.className = 'dropdown-item-compact' + (a.danger ? ' dropdown-item-danger' : '');
-    it.innerHTML = `<span class="dropdown-icon">${a.icon}</span><span>${a.label}</span>`;
-    it.addEventListener('click', (e) => { e.stopPropagation(); close(); a.action(); });
+    it.className += a.submenu ? ' email-bulk-submenu-trigger' : '';
+    it.innerHTML = `<span class="dropdown-icon">${a.icon}</span><span>${a.label}</span>${a.submenu ? '<span style="margin-left:auto;opacity:0.55;">›</span>' : ''}`;
+    it.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (a.submenu) {
+        dropdown.replaceChildren();
+        const back = document.createElement('div');
+        back.className = 'dropdown-item-compact email-bulk-submenu-back';
+        back.innerHTML = '<span style="opacity:.65;margin-right:4px;">‹</span><span>Export Emails</span>';
+        back.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          close();
+          _showBulkActionsMenu(anchor);
+        });
+        dropdown.appendChild(back);
+        const divider = document.createElement('div');
+        divider.className = 'dropdown-divider';
+        dropdown.appendChild(divider);
+        const options = [
+          { label: 'Email file (.eml)', icon: _emailIco, action: _exportSelectedEmails },
+          { label: 'Print / save PDF', icon: _pdfIco, action: _exportSelectedEmailPdf },
+        ];
+        for (const option of options) {
+          const child = document.createElement('div');
+          child.className = 'dropdown-item-compact';
+          child.innerHTML = `<span class="dropdown-icon">${option.icon}</span><span>${option.label}</span>`;
+          child.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            close();
+            option.action();
+          });
+          dropdown.appendChild(child);
+        }
+        _fitEmailDropdown(dropdown, anchor.getBoundingClientRect());
+        return;
+      }
+      close();
+      a.action();
+    });
     dropdown.appendChild(it);
   }
   // Mobile-only Cancel — matches the per-card and sidebar dropdowns.

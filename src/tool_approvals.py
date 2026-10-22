@@ -415,9 +415,24 @@ class ToolApprovalStore:
             backend_operation = BoundBackendOperation(backend,
                 request_authority.request_id if request_authority is not None else "",
                 _normalized_owner(owner), str(session_id or ""), operation.transport_tool, operation.input)
-            from src.agent_runtime.process_resources import needs_process_binding, resolve_process_operation
+            from src.agent_runtime.process_resources import (
+                LAUNCH_TOOLS, needs_process_binding, resolve_process_operation, seal_launch_scope)
             if request_authority is not None and needs_process_binding(operation, backend):
-                process_operation = resolve_process_operation(request_authority, operation, backend)
+                process_authority = request_authority
+                if (not request_authority.inherited and operation.tool in LAUNCH_TOOLS
+                        and not any(s.backend == backend for s in request_authority.launch_scopes)):
+                    # Launch scopes exist only for granted bash/python, but the
+                    # approval exists to admit an ungranted one. Seal its launch
+                    # boundary now, in the request's workspace, the same way an
+                    # ungranted filesystem action gets its root below (#6635).
+                    roots = request_authority.resource_roots
+                    if not roots and workspace:
+                        roots = (FilesystemRoot.seal(workspace, owner=_normalized_owner(owner)),)
+                    if len(roots) == 1:
+                        from dataclasses import replace
+                        process_authority = replace(
+                            request_authority, launch_scopes=(seal_launch_scope(backend, roots[0]),))
+                process_operation = resolve_process_operation(process_authority, operation, backend)
             from src.browser_identity import native_browser, resolve_browser_operation
             if native_browser(operation, backend):
                 if request_authority is None:

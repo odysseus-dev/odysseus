@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.notes_source import notes_source
+
 _REPO = Path(__file__).resolve().parents[1]
 
 
@@ -26,7 +28,13 @@ def oauth_return_source():
 
 @pytest.fixture(scope="module")
 def notes():
-    return (_REPO / "static" / "js" / "notes.js").read_text(encoding="utf-8")
+    return notes_source("ui/panel", "ui/toolbar", "infrastructure/http")
+
+
+@pytest.fixture(scope="module")
+def sync_block(notes):
+    block = notes[notes.index("async function _syncTodo"):]
+    return block[:block.index("function wireToolbar")]
 
 
 # ── Integration card ──────────────────────────────────────────────
@@ -93,27 +101,22 @@ def test_the_sync_button_is_hidden_until_an_account_is_connected(notes):
 
 def test_sync_pushes_before_pulling(notes):
     """A pull alone would strand a task created here while offline."""
-    assert "/api/notes/sync?direction=both" in notes
+    assert "/api/notes/sync?direction=${direction}" in notes
+    assert "api.syncTodo('both')" in notes
 
 
-def test_sync_refreshes_the_board_afterwards(notes):
-    block = notes[notes.index("async function _syncTodo"):]
-    block = block[:block.index("async function _saveNote")]
-    assert "await _fetchNotes();" in block
-    assert "_renderNotes();" in block
+def test_sync_refreshes_the_board_afterwards(sync_block):
+    assert "await _fetchNotes();" in sync_block
+    assert "_renderNotes();" in sync_block
 
 
-def test_sync_reports_errors_rather_than_claiming_success(notes):
-    block = notes[notes.index("async function _syncTodo"):]
-    block = block[:block.index("async function _saveNote")]
-    assert "if (data.errors.length)" in block
-    assert "uiModule.showError" in block
+def test_sync_reports_errors_rather_than_claiming_success(sync_block):
+    assert "if (data.errors.length)" in sync_block
+    assert "uiModule.showError" in sync_block
 
 
-def test_overlapping_syncs_are_ignored(notes):
-    block = notes[notes.index("async function _syncTodo"):]
-    block = block[:block.index("async function _saveNote")]
-    assert "if (_todoSyncRunning) return;" in block
+def test_overlapping_syncs_are_ignored(sync_block):
+    assert "if (_todoSyncRunning) return;" in sync_block
 
 
 def test_both_direction_counts_are_added_up(notes):
@@ -131,11 +134,9 @@ def test_opening_notes_syncs_in_the_background(notes):
     assert "_syncTodo(true);" in notes
 
 
-def test_the_open_time_sync_is_silent(notes):
+def test_the_open_time_sync_is_silent(sync_block):
     """It redraws only when something moved, so opening Notes does not flash
     the board or toast a sync nobody asked for."""
-    block = notes[notes.index("async function _syncTodo"):]
-    block = block[:block.index("async function _saveNote")]
-    assert "if (interactive || data.tasks > 0 || data.deleted > 0)" in block
-    assert "if (!interactive) return;" in block
-    assert "if (interactive) uiModule.showError" in block
+    assert "if (interactive || data.tasks > 0 || data.deleted > 0)" in sync_block
+    assert "if (!interactive) return;" in sync_block
+    assert "if (interactive) uiModule.showError" in sync_block

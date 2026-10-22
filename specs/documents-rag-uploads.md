@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -10,8 +10,7 @@ This spec covers file/document context, document storage, and vector retrieval i
 - `routes/upload_routes.py`, `routes/personal_routes.py`, `routes/embedding_routes.py`, canonical `routes/document/document_routes.py` and `routes/document/document_helpers.py`, plus their top-level compatibility shims;
 - chat attachment paths in `routes/chat_routes.py`, `routes/chat_helpers.py`, `src/chat_handler.py`, and `src/chat_processor.py`;
 - `core/session_manager.py`, `src/attachment_refs.py`, `src/upload_handler.py`,
-  `src/upload_limits.py`, and the public reference contract in
-  `docs/attachments.md`;
+  `src/upload_limits.py`, and the public reference contract in `website/attachments.md`;
 - `src/document_processor.py`, `src/document_actions.py`, `src/personal_docs.py`, and `src/markitdown_runtime.py`;
 - `src/rag_singleton.py`, `src/rag_vector.py`, `src/rag_manager.py`, `src/chroma_client.py`, `src/embeddings.py`, and `src/embedding_lanes.py`;
 - PDF/form helpers in `src/pdf_runtime.py`, `src/pdf_forms.py`, and `src/pdf_form_doc.py`;
@@ -54,45 +53,17 @@ Chat does not own attachment extraction. Runtime flow:
 - `src.document_processor.build_user_content()` produces model-ready text, PDF text, Office/EPUB text when MarkItDown or the DOCX fallback is available, image/multimodal blocks, truncation, and PDF/Office auto-document updates;
 - chat streams attachment, PDF-created `doc_update`, and `rag_sources` events where applicable.
 
-Extensionless image and audio attachments derive their data-URI subtype from
-the detected MIME type, so `image/png` and `audio/mpeg` uploads do not become
-invalid `data:image/;base64` or `data:audio/;base64` blocks when the filename
-has no extension.
+Extensionless image and audio attachments derive their data-URI subtype from the detected MIME type, so `image/png` and `audio/mpeg` uploads do not become invalid `data:image/;base64` or `data:audio/;base64` blocks when the filename has no extension.
 
 ## Durable References And Cleanup
 
-`src.attachment_refs` owns the stable `attachment_ref` shape used outside raw
-upload storage: attachment id, name, MIME type, size, and optional checksum,
-creation time, dimensions, vision text/model, and gallery id. Live provider
-calls may still receive multimodal data URLs for the current turn, but durable
-chat content is normalized to readable text plus compact reference lines.
-Structured references remain in message attachment metadata, and chat FTS
-triggers omit inline media while startup migration scrubs legacy indexed data
-URLs.
+`src.attachment_refs` owns the stable `attachment_ref` shape used outside raw upload storage: attachment id, name, MIME type, size, and optional checksum, creation time, dimensions, vision text/model, and gallery id. Live provider calls may still receive multimodal data URLs for the current turn, but durable chat content is normalized to readable text plus compact reference lines. Structured references remain in message attachment metadata, and chat FTS triggers omit inline media while startup migration scrubs legacy indexed data URLs.
 
-Agent/tool manifests expose `odysseus://attachment/<id>` with
-`read_policy: "owner_checked_upload"`. A compatibility filesystem path is
-included only after owner-aware upload resolution, upload-root confinement, and
-tool-readable-root checks; the stable contract for external tools is the URI
-and attachment id, not host layout.
+Agent/tool manifests expose `odysseus://attachment/<id>` with `read_policy: "owner_checked_upload"`. A compatibility filesystem path is included only after owner-aware upload resolution, upload-root confinement, and tool-readable-root checks; the stable contract for external tools is the URI and attachment id, not host layout.
 
-Writers reserve referenced uploads before committing durable state. This
-includes session message append/replace and history rewrites, document
-create/update and native document edits, note route/tool create/update,
-calendar/event route/tool create/update, and attachment-bearing session
-updates. A missing or wrong-owner reference aborts before destructive
-replacement and surfaces a route conflict or tool error. Reservations serialize
-with cleanup through the upload-index lock and refresh access time.
+Writers reserve referenced uploads before committing durable state. This includes session message append/replace and history rewrites, document create/update and native document edits, note route/tool create/update, calendar/event route/tool create/update, and attachment-bearing session updates. A missing or wrong-owner reference aborts before destructive replacement and surfaces a route conflict or tool error. Reservations serialize with cleanup through the upload-index lock and refresh access time.
 
-Admin cleanup first scans chat content and attachment metadata, current and
-versioned documents including PDF markers, gallery filenames/hashes, note
-image/color/content/checklist fields, and calendar color/description/location
-fields. Reference discovery or index-integrity failure aborts cleanup; the
-lower-level API removes nothing without both completed id and hash snapshots.
-Only expired, unreferenced files with coherent id/path/owner/checksum/timestamp
-metadata are candidates. Matching index rows are persisted away before byte
-deletion and restored if deletion fails. This lock is process-local, so the
-documented race protection assumes the current single-worker deployment.
+Admin cleanup first scans chat content and attachment metadata, current and versioned documents including PDF markers, gallery filenames/hashes, note image/color/content/checklist fields, and calendar color/description/location fields. Reference discovery or index-integrity failure aborts cleanup; the lower-level API removes nothing without both completed id and hash snapshots. Only expired, unreferenced files with coherent id/path/owner/checksum/timestamp metadata are candidates. Matching index rows are persisted away before byte deletion and restored if deletion fails. This lock is process-local, so the documented race protection assumes the current single-worker deployment.
 
 ## Living Documents And PDF
 
@@ -100,19 +71,13 @@ documented race protection assumes the current single-worker deployment.
 
 `static/js/documentLibrary.js` owns local library state after archive/delete actions, including total counts and language chips. Server route truth still owns durable document state.
 
-`static/js/document.js` owns the browser document editor and markdown preview. Preview rendering applies code highlighting when highlight.js is present, renders Mermaid diagrams when the Mermaid runtime is available, refreshes after AI edits, and discards pending AI diffs before switching the active document.
+`static/js/document.js` owns the browser document editor, a sanitized rich-text editing view and Markdown source/preview. Preview rendering applies code highlighting when highlight.js is present, renders Mermaid diagrams when the Mermaid runtime is available, refreshes after AI edits, and discards pending AI diffs before switching the active document.
 
 Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. HTTP and native-agent document writers owner-reserve any internal upload/PDF references before persisting new current content or versions. Native document tool outputs include metadata that the browser can use to open/update the editor if a later stream update is missed. Those callers must preserve document owner, attachment, and version semantics.
 
 After external/workspace-untrusted context, a proposed document mutation is sealed into an exact approval with document id, current version, content digest, tool content, owner/session, and workspace. Approval continuation re-reads and verifies those fields before consuming the one-use authorization, so an intervening edit cannot apply a stale approved patch to new content.
 
-Email draft documents are a first-class document language. Create/update paths
-detect the `To`/`Subject`/header shape, coerce language to `email`, and preserve
-protected reply/forward headers such as `In-Reply-To`, `References`,
-`X-Source-UID`, `X-Source-Folder`, attachment headers, and quoted/original
-history when model or UI edits replace the draft body. Creating a draft for the
-same source UID/folder in the same session updates the active draft instead of
-creating a duplicate.
+Email draft documents are a first-class document language. Create/update paths detect the `To`/`Subject`/header shape, coerce language to `email`, and preserve protected reply/forward headers such as `In-Reply-To`, `References`, `X-Source-UID`, `X-Source-Folder`, attachment headers, and quoted/original history when model or UI edits replace the draft body. Creating a draft for the same source UID/folder in the same session updates the active draft instead of creating a duplicate.
 
 `Document` rows own current content and owner. `DocumentVersion` rows own immutable snapshots. Document access should be owner-filtered, not session-id-only; the session document listing path still needs regression coverage for per-document owner filtering after the session owner check.
 
@@ -163,7 +128,7 @@ Some non-route tool/script paths can index ownerless or arbitrary directories an
 ## Optional And Degraded Behavior
 
 - ChromaDB/FastEmbed are default installed dependencies, but Chroma can be offline or unreachable.
-- Native Chroma defaults to `localhost:8100`; Docker uses the `chromadb:8000` compose service and persistent Chroma storage.
+- Native Chroma defaults to `localhost:8100`; Docker uses the `chromadb:8000` compose service with `chromadb-data:/data` in all three Compose variants. Pre-fix containers can hold live vectors in their writable layer; preserve/rescue that data before recreation using `docs/chromadb-volume-migration.md`.
 - HTTP embeddings can fall back to FastEmbed; when both lanes exist, lane separation avoids Chroma dimension conflicts.
 - MarkItDown is optional for Office/EPUB extraction; chat attachments and personal directory indexing have clear degraded behavior, while direct RAG upload does not share the same extraction path.
 - PyMuPDF is optional, unlocks PDF form/render/fill paths, and carries AGPL implications when installed.
@@ -186,13 +151,33 @@ Concrete enforcement points include:
 
 Extracted attachment text is currently appended into the user message rather than wrapped as a separate untrusted-context message. That is current behavior and a prompt-injection hardening gap.
 
-Bearer-token callers are not a scoped document/upload API surface today. Routes that treat token-authenticated users as owners need explicit scope/effective-user policy before they are considered safe token APIs.
+Browser document routes still need explicit bearer-token scope/effective-user policy. Upload endpoints have their own delegated owner/scope gates described below; that contract does not extend to every document/PDF/RAG route.
 
 ## Testing Coverage
 
 Existing useful coverage includes upload owner scope, upload IDs, upload atomicity, durable attachment reference normalization, message/document/note/calendar write reservations, fail-closed reference-aware cleanup, attachment budgets, `.nix` text upload handling, upload/PDF security regressions, Docker `libmagic`/`python-magic` upload detection, RAG owner fallback, Chroma fast-fail, MarkItDown runtime, PDF runtime, document-library counter updates, and selected document helper behavior.
 
 Route-level coverage is thinner for document CRUD, PDF import/render/export/fill, direct RAG upload, embedding admin/security behavior, and RAG unavailable states.
+
+## Preserved Originals And Document Views
+
+`POST /api/documents/import-docx` requires document privilege, verifies any supplied session owner, stores the original through `UploadHandler`, extracts Markdown, and creates a `docx` document with a `docx_source` upload marker. `GET /api/document/{doc_id}/render-docx` checks document and source-upload visibility, uses Mammoth to return an HTML fragment for client sanitization, and returns 503 when Mammoth is absent. The frontend supplies a paper preview while extracted text remains available for editing/search/model context.
+
+`GET /api/document/{doc_id}/convert-original/{target}` converts preserved DOCX to PDF or PDF to DOCX directly with host LibreOffice/soffice, after document privilege, ownership, and source-upload checks. It uses a temporary output directory and isolated LibreOffice profile in a worker thread with a 120-second subprocess timeout; it does not convert from extracted Markdown. Missing LibreOffice returns 503, timeout 504, and unsuccessful output 502.
+
+Markdown documents can open `GET /api/document/{doc_id}/visual-report`, reusing `src.visual_report.generate_visual_report()` after document ownership validation. ZIP export recognizes email drafts as `.eml` and converts their header/body separator into an RFC-style blank line. The frontend document graph now also includes `documentOutline.js` and `documentStats.js`.
+
+## Editing And Export Boundaries
+
+Rich-text editing mirrors a textarea and supports formatting, checklists, images and tables through sanitized contenteditable content. Internal markers are removed from export; converting rich text/Markdown into simple DOCX paragraphs is lossy and does not preserve arbitrary Word layout. Browser PDF export uses a script-disabled print iframe with same-origin/modal allowances, waits for fonts/styles/images/math and cleans up afterward; server PDF rendering and preserved-original LibreOffice conversion are separate paths.
+
+Per-document save queues serialize requests and track edit revisions so intervening edits remain marked dirty; this does not promise that every cached response body preserves a newer in-memory edit. Restoring the editor targets the exact active document. Suggestions apply only when the exact find text is unique, report partial applied/unapplied suggestion IDs and retain unapplied review state; server-saved edits suppress duplicate frontend application. Protected email envelope/history remains distinct from editable draft content. PDF/signed-reply preparation still has late async ownership/account edge cases requiring targeted checks.
+
+## Upload Authentication And Delegated Scopes
+
+`routes/upload_routes.py` explicitly bypasses upload ownership/auth-service gates only when auth is disabled, including after accounts were configured. With auth enabled, missing auth manager returns 503, an unconfigured manager returns 401, and missing/request-sentinel identity returns 403. Reads, thumbnails and vision reads/edits use `_verify_upload_access()` before confined path access. Interactive owners may access their uploads; verified interactive admins may access other owners and legacy ownerless uploads. Delegated tokens never inherit that administrator override and require an actual token owner matching a non-null file owner.
+
+Delegated creation and OCR edits require any of `chat` or `documents:write`; downloads/thumbnails/OCR reads accept any of `chat`, `documents:read`, `documents:write`. Missing/unrelated scopes and invalid token owners fail with 403; owner mismatch/ownerless token access uses 404. POST saves effective owner attribution and clears request-sentinel owners. No-login anonymous uploads can remain null-owned and become interactive-admin-only after auth is enabled. Size/type/filename/path validation remains active in no-login mode; these gates do not replace the global authentication middleware.
 
 ## Current Gaps
 
@@ -201,5 +186,5 @@ Route-level coverage is thinner for document CRUD, PDF import/render/export/fill
 - Chat RAG can remain degraded after startup even if personal routes later initialize the RAG singleton.
 - PyMuPDF-dependent routes do not all share the same optional-runtime helper/error behavior.
 - Signed-reply preparation needs owner-scoped source email account/signature regression coverage.
-- Document/upload routes need explicit bearer-token scope/effective-user policy.
+- Browser document/PDF/RAG routes need explicit bearer-token scope/effective-user policy beyond the upload endpoint contract above.
 - User-facing document/PDF/RAG route matrices need more regression coverage for owner denial, admin gates, unavailable services, and degraded optional dependencies.

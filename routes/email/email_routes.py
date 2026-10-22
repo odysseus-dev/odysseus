@@ -25,13 +25,16 @@ import json
 import re
 import html
 import io
+import tempfile
 import zipfile
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 from html.parser import HTMLParser as _HTMLParser
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from email.message import EmailMessage
+from email import policy as email_policy
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -97,6 +100,7 @@ _SERVER_OWNED_OAUTH_FIELDS = {
     "oauth_refresh_token",
     "oauth_token_expiry",
 }
+_CACHE_HOOKS: dict = {"invalidate_list": None}
 
 
 def _normalized_mail_host(value) -> str:
@@ -777,6 +781,23 @@ def _uid_exists(conn, uid: str, *, strict: bool = False) -> bool:
         return False
 
 
+def _uid_has_deleted_flag(conn, uid: str) -> bool:
+    r"""Return True if message already carries \Deleted flag."""
+    try:
+        status, data = conn.uid("FETCH", _uid_bytes(uid), "(FLAGS)")
+        if status == "OK" and data:
+            for part in data:
+                if not part:
+                    continue
+                meta = part[0] if isinstance(part, tuple) else part
+                meta_b = meta if isinstance(meta, bytes) else str(meta).encode()
+                if rb"\Deleted" in meta_b:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def _resolve_current_email_uid(conn, uid: str, message_id: str | None = None) -> str:
     """Resolve a stale cached UID by the message's stable RFC Message-ID."""
     uid = str(uid or "").strip()
@@ -823,8 +844,13 @@ def _message_id_chain(*values: str) -> list[str]:
 
 
 def _uid_from_fetch_meta(meta_b: bytes) -> str:
-    m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
+    m = re.search(rb"\bUID\s+(\d+)\b", meta_b, re.IGNORECASE)
     return m.group(1).decode() if m else ""
+
+
+def _size_from_fetch_meta(meta_b: bytes) -> int | None:
+    m = re.search(rb"\bRFC822\.SIZE\s+(\d+)\b", meta_b, re.IGNORECASE)
+    return int(m.group(1)) if m else None
 
 
 def _parse_list_unsubscribe_header(value: str | None) -> list[dict]:
@@ -2036,6 +2062,12 @@ def setup_email_routes():
         delete, move) so the UI doesn't show stale read/unread counts for up to
         the 8s TTL after a manual flag change. With no args, clears everything.
         """
+        hook = _CACHE_HOOKS.get("invalidate_list")
+        if hook:
+            try:
+                hook(account_id, folder)
+            except Exception:
+                pass
         if account_id is None and folder is None:
             _LIST_CACHE.clear()
             return
@@ -4366,6 +4398,414 @@ def setup_email_routes():
             headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
         )
 
+    @router.post("/messages-download-bulk")
+    async def download_bulk_messages(request: Request, owner: str = Depends(require_owner)):
+        """Export selected original email messages as .eml files in a ZIP."""
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        messages = payload.get("messages") if isinstance(payload, dict) else None
+        if not isinstance(messages, list) or not messages:
+            raise HTTPException(status_code=400, detail="No emails selected")
+        if len(messages) > 250:
+            raise HTTPException(status_code=400, detail="Too many emails selected")
+
+        category = str(payload.get("category") or "selected").strip().lower()
+        category = re.sub(r"[^a-z0-9_-]+", "-", category).strip("-") or "selected"
+        selected_dates = sorted({
+            str(row.get("date") or "").strip()
+            for row in messages if isinstance(row, dict)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(row.get("date") or "").strip())
+        })
+        date_span = ""
+        if selected_dates:
+            date_span = selected_dates[0] if len(selected_dates) == 1 else f"{selected_dates[0]} - {selected_dates[-1]}"
+        export_folder = f"emails-{category}" + (f" ({date_span})" if date_span else "")
+
+        # 512 MiB safety cap prevents unbounded memory growth when exporting
+        # many large messages.
+        max_total_bytes = 512 * 1024 * 1024
+        max_message_bytes = 64 * 1024 * 1024
+        spool_threshold_bytes = 32 * 1024 * 1024
+        used_names: set[str] = set()
+        exported = 0
+        skipped = 0
+        total_bytes = 0
+        validated_accounts: set[str] = set()
+
+        def _email_filename(row: dict, uid: str) -> str:
+            date = str(row.get("date") or "").strip()
+            date = date if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else ""
+            subject = str(row.get("subject") or "email").strip()
+            subject = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]+', "_", subject)
+            subject = re.sub(r"\s+", " ", subject).strip(" .")[:100] or "email"
+            safe_uid = re.sub(r"[^A-Za-z0-9_-]+", "_", uid).strip("_") or "message"
+            prefix = f"{date} - " if date else ""
+            return _safe_attachment_zip_name(f"{prefix}{subject} - {safe_uid}.eml", "email.eml")
+
+        def _fixture_message_bytes(fixture: dict, uid: str, folder: str) -> bytes:
+            msg = EmailMessage()
+            sender_name = str(fixture.get("from_name") or "").strip()
+            sender_address = str(fixture.get("from_address") or "").strip()
+            sender = email.utils.formataddr((sender_name, sender_address)) if sender_address else sender_name
+            for key, value in (
+                ("From", sender),
+                ("To", fixture.get("to") or owner),
+                ("Subject", fixture.get("subject") or "(no subject)"),
+                ("Message-ID", fixture.get("message_id") or f"<fixture-{uid}@mail.local>"),
+            ):
+                clean_value = re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+                if clean_value:
+                    msg[key] = clean_value
+            raw_date = str(fixture.get("date") or "").strip()
+            if raw_date:
+                try:
+                    parsed_date = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                    if parsed_date.tzinfo is None:
+                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                except Exception:
+                    try:
+                        parsed_date = email.utils.parsedate_to_datetime(raw_date)
+                    except Exception:
+                        parsed_date = None
+                if parsed_date is not None:
+                    msg["Date"] = email.utils.format_datetime(parsed_date)
+            msg.set_content(str(fixture.get("body") or ""))
+            for attachment in fixture.get("attachments") or []:
+                try:
+                    index = int(attachment.get("index"))
+                    source = _fixture_attachment_source(uid, index, owner, folder)
+                    if not source:
+                        continue
+                    _row, raw_attachment = source
+                    content_type = str(raw_attachment.get("content_type") or "application/octet-stream")
+                    maintype, _, subtype = content_type.partition("/")
+                    if not subtype:
+                        maintype, subtype = "application", "octet-stream"
+                    msg.add_attachment(
+                        str(raw_attachment.get("content") or "").encode("utf-8"),
+                        maintype=maintype,
+                        subtype=subtype,
+                        filename=str(raw_attachment.get("filename") or attachment.get("filename") or f"attachment-{index}"),
+                    )
+                except Exception:
+                    logger.debug("Skipping malformed fixture email attachment uid=%s", uid, exc_info=True)
+            return msg.as_bytes(policy=email_policy.SMTP)
+
+        # Optimization: single message exports return raw .eml directly without ZIP compression.
+        if len(messages) == 1:
+            row = messages[0]
+            if not isinstance(row, dict):
+                raise HTTPException(status_code=404, detail="No selected emails could be exported")
+            uid = str(row.get("uid") or "").strip()
+            if not uid:
+                raise HTTPException(status_code=404, detail="No selected emails could be exported")
+            folder = str(row.get("folder") or "INBOX").strip() or "INBOX"
+            account_id = str(row.get("account_id") or row.get("account") or "").strip() or None
+            if account_id:
+                _assert_owns_account(account_id, owner)
+
+            filename = _email_filename(row, uid)
+            message_bytes: bytes | None = None
+
+            fixture = _fixture_email_read(uid, folder, owner)
+            if fixture is not None and not fixture.get("error"):
+                message_bytes = _fixture_message_bytes(fixture, uid, folder)
+            elif re.fullmatch(r"\d+", uid):
+                try:
+                    with _imap(account_id, owner=owner) as conn:
+                        conn.select(_q(folder), readonly=True)
+                        uid_b = uid.encode()
+                        st_sz, sz_data = None, None
+                        try:
+                            st_sz, sz_data = _imap_uid_fetch(conn, uid_b, "(UID RFC822.SIZE)")
+                        except Exception as sz_err:
+                            logger.warning("Single message size preflight query error for uid=%s: %s", uid, sz_err)
+
+                        if st_sz != "OK":
+                            logger.warning("Single message size preflight status=%s for uid=%s", st_sz, uid)
+                            raise HTTPException(status_code=502, detail="Unable to verify email size safety")
+
+                        if not sz_data:
+                            # Message does not exist in mailbox (missing mail)
+                            raise HTTPException(status_code=404, detail="No selected emails could be exported")
+
+                        sz: int | None = None
+                        for item in sz_data:
+                            meta = item[0] if isinstance(item, tuple) else item
+                            if isinstance(meta, bytes):
+                                u = _uid_from_fetch_meta(meta)
+                                if u == uid:
+                                    sz = _size_from_fetch_meta(meta)
+                                    break
+
+                        if sz is None or sz < 0:
+                            logger.warning("Single message size preflight returned invalid/malformed size for uid=%s", uid)
+                            raise HTTPException(status_code=502, detail="Invalid email size metadata from server")
+
+                        if sz > max_message_bytes or sz > max_total_bytes:
+                            raise HTTPException(status_code=413, detail="Export too large")
+
+                        # Preflight size safety established; perform RFC822 fetch.
+                        st, msg_data = _imap_uid_fetch(conn, uid_b, "(UID RFC822)")
+                        if st == "OK" and msg_data:
+                            for meta, raw in _group_uid_fetch_records(msg_data):
+                                if _uid_from_fetch_meta(meta) == uid and raw:
+                                    message_bytes = bytes(raw)
+                                    break
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    logger.warning("Single email export failed for uid=%s folder=%s: %s", uid, folder, exc)
+
+            if not message_bytes:
+                raise HTTPException(status_code=404, detail="No selected emails could be exported")
+
+            if len(message_bytes) > max_message_bytes or len(message_bytes) > max_total_bytes:
+                raise HTTPException(status_code=413, detail="Export too large")
+
+            return StreamingResponse(
+                io.BytesIO(message_bytes),
+                media_type="message/rfc822",
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"email.eml\"; filename*=UTF-8''{quote(filename, safe='')}",
+                    "X-Exported-Emails": "1",
+                    "X-Skipped-Emails": "0",
+                },
+            )
+
+        seen_items: set[tuple[str | None, str, str]] = set()
+        remote_groups: dict[tuple[str | None, str], dict[str, tuple[str, dict]]] = {}
+        spooled_file = tempfile.SpooledTemporaryFile(max_size=spool_threshold_bytes, mode="w+b")
+        response_started = False
+        try:
+            with zipfile.ZipFile(spooled_file, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for row in messages:
+                    if not isinstance(row, dict):
+                        skipped += 1
+                        continue
+                    uid = str(row.get("uid") or "").strip()
+                    if not uid:
+                        skipped += 1
+                        continue
+                    folder = str(row.get("folder") or "INBOX").strip() or "INBOX"
+                    account_id = str(row.get("account_id") or row.get("account") or "").strip() or None
+                    if account_id and account_id not in validated_accounts:
+                        _assert_owns_account(account_id, owner)
+                        validated_accounts.add(account_id)
+
+                    item_key = (account_id, folder, uid)
+                    if item_key in seen_items:
+                        skipped += 1
+                        continue
+                    seen_items.add(item_key)
+
+                    fixture = _fixture_email_read(uid, folder, owner)
+                    if fixture is not None and not fixture.get("error"):
+                        filename = _email_filename(row, uid)
+                        unique_name = filename
+                        suffix = 2
+                        while unique_name.lower() in used_names:
+                            unique_name = f"{Path(filename).stem}-{suffix}.eml"
+                            suffix += 1
+                        used_names.add(unique_name.lower())
+                        message_bytes = _fixture_message_bytes(fixture, uid, folder)
+                        if len(message_bytes) > max_message_bytes:
+                            raise HTTPException(status_code=413, detail="Export too large")
+                        total_bytes += len(message_bytes)
+                        if total_bytes > max_total_bytes:
+                            raise HTTPException(status_code=413, detail="Export too large")
+                        try:
+                            zf.writestr(f"{export_folder}/{unique_name}", message_bytes)
+                        except Exception as zip_err:
+                            logger.error("ZIP entry write failed for fixture: %s", zip_err)
+                            raise HTTPException(status_code=500, detail="Failed to create export archive")
+                        exported += 1
+                        continue
+                    if not re.fullmatch(r"\d+", uid):
+                        skipped += 1
+                        continue
+                    group = remote_groups.setdefault((account_id, folder), {})
+                    group.setdefault(uid, (_email_filename(row, uid), row))
+
+                preflight_error: HTTPException | None = None
+
+                # Fetch original RFC822 data in batches and store it byte-for-byte.
+                # Note on IMAP memory-safety: Python's standard imaplib buffers socket responses into
+                # memory before returning literals to application code. Preflight verification ensures
+                # we do not intentionally fetch messages exceeding limits, but an untrusted or non-compliant
+                # IMAP server sending unexpectedly large literals cannot be bounded at the transport level
+                # without custom socket streaming. Post-fetch checks guard application-level storage.
+                for (account_id, folder), rows_by_uid in remote_groups.items():
+                    rows = list(rows_by_uid.items())
+                    remaining_rows = len(rows)
+                    try:
+                        with _imap(account_id, owner=owner) as conn:
+                            conn.select(_q(folder), readonly=True)
+
+                            # Size preflight query to catch oversized exports early and bound batch sizes.
+                            uid_set_all = ",".join(uid for uid, _ in rows).encode()
+                            st_sz, sz_data = None, None
+                            try:
+                                st_sz, sz_data = _imap_uid_fetch(conn, uid_set_all, "(UID RFC822.SIZE)")
+                            except Exception as sz_err:
+                                logger.warning("IMAP size preflight query failed for folder=%s: %s", folder, sz_err)
+
+                            if st_sz != "OK":
+                                logger.warning("IMAP size preflight status=%s for folder=%s account=%s", st_sz, folder, account_id)
+                                preflight_error = HTTPException(status_code=502, detail="Unable to verify email size safety")
+                                skipped += remaining_rows
+                                remaining_rows = 0
+                                continue
+
+                            if not sz_data:
+                                # All requested UIDs in this mailbox are missing on server
+                                skipped += remaining_rows
+                                remaining_rows = 0
+                                continue
+
+                            reported_sizes: dict[str, int | None] = {}
+                            for item in sz_data:
+                                meta = item[0] if isinstance(item, tuple) else item
+                                if isinstance(meta, bytes):
+                                    u = _uid_from_fetch_meta(meta)
+                                    if u:
+                                        reported_sizes[u] = _size_from_fetch_meta(meta)
+
+                            # Categorize requested UIDs
+                            malformed_uids = [
+                                uid for uid, _ in rows
+                                if uid in reported_sizes and (reported_sizes[uid] is None or reported_sizes[uid] < 0)
+                            ]
+                            if malformed_uids:
+                                logger.warning("IMAP size preflight returned invalid/malformed size for uids=%s in folder=%s", malformed_uids, folder)
+                                preflight_error = HTTPException(status_code=502, detail="Invalid email size metadata from server")
+                                skipped += remaining_rows
+                                remaining_rows = 0
+                                continue
+
+                            # Identify missing mail (requested UIDs not returned in preflight)
+                            missing_uids = {uid for uid, _ in rows if uid not in reported_sizes}
+                            if missing_uids:
+                                skipped += len(missing_uids)
+                                remaining_rows -= len(missing_uids)
+                                rows = [item for item in rows if item[0] not in missing_uids]
+
+                            if not rows:
+                                continue
+
+                            size_by_uid: dict[str, int] = {
+                                uid: reported_sizes[uid] for uid, _ in rows
+                            }
+
+                            for u, s in size_by_uid.items():
+                                if s > max_message_bytes:
+                                    raise HTTPException(status_code=413, detail="Export too large")
+                            if total_bytes + sum(size_by_uid.values()) > max_total_bytes:
+                                raise HTTPException(status_code=413, detail="Export too large")
+
+                            # Form batches with at most 20 messages and capped at 10 MiB payload.
+                            batches: list[list[tuple[str, tuple[str, dict]]]] = []
+                            cur_batch: list[tuple[str, tuple[str, dict]]] = []
+                            cur_batch_bytes = 0
+                            max_batch_bytes = 10 * 1024 * 1024
+                            for item in rows:
+                                uid_val = item[0]
+                                sz = size_by_uid[uid_val]
+                                if cur_batch and (
+                                    len(cur_batch) >= 20 or
+                                    (cur_batch_bytes + sz > max_batch_bytes)
+                                ):
+                                    batches.append(cur_batch)
+                                    cur_batch = []
+                                    cur_batch_bytes = 0
+                                cur_batch.append(item)
+                                cur_batch_bytes += sz
+                            if cur_batch:
+                                batches.append(cur_batch)
+
+                            for batch in batches:
+                                wanted = {uid: filename for uid, (filename, _row) in batch}
+                                uid_set = ",".join(wanted).encode()
+                                status, msg_data = _imap_uid_fetch(conn, uid_set, "(UID RFC822)")
+                                if status != "OK" or not msg_data:
+                                    skipped += len(batch)
+                                    remaining_rows -= len(batch)
+                                    continue
+                                found: set[str] = set()
+                                for meta, raw_message in _group_uid_fetch_records(msg_data):
+                                    uid = _uid_from_fetch_meta(meta)
+                                    if not uid or uid not in wanted or not raw_message:
+                                        continue
+                                    if uid in found:
+                                        # P2: Reject duplicate IMAP response records for an already-processed UID
+                                        logger.debug("Ignoring duplicate IMAP FETCH record for uid=%s in folder=%s", uid, folder)
+                                        continue
+                                    filename = wanted[uid]
+                                    unique_name = filename
+                                    suffix = 2
+                                    while unique_name.lower() in used_names:
+                                        unique_name = f"{Path(filename).stem}-{suffix}.eml"
+                                        suffix += 1
+                                    used_names.add(unique_name.lower())
+                                    message_bytes = bytes(raw_message)
+                                    if len(message_bytes) > max_message_bytes:
+                                        raise HTTPException(status_code=413, detail="Export too large")
+                                    total_bytes += len(message_bytes)
+                                    if total_bytes > max_total_bytes:
+                                        raise HTTPException(status_code=413, detail="Export too large")
+                                    try:
+                                        zf.writestr(f"{export_folder}/{unique_name}", message_bytes)
+                                    except Exception as zip_err:
+                                        logger.error("ZIP entry write failed for remote message: %s", zip_err)
+                                        raise HTTPException(status_code=500, detail="Failed to create export archive")
+                                    found.add(uid)
+                                    exported += 1
+                                    remaining_rows -= 1
+                                missing = len(batch) - len(found)
+                                skipped += len(batch) - len(found)
+                                remaining_rows -= missing
+                    except HTTPException:
+                        raise
+                    except Exception as exc:
+                        skipped += remaining_rows
+                        logger.warning("Bulk email export skipped mailbox folder=%s account=%s count=%s: %s", folder, account_id, remaining_rows, exc)
+
+            if preflight_error is not None:
+                raise preflight_error
+
+            if exported <= 0:
+                raise HTTPException(status_code=404, detail="No selected emails could be exported")
+
+            spooled_file.seek(0)
+            zip_name = _safe_attachment_zip_name(f"{export_folder}.zip", "selected-emails.zip")
+            logger.info("Bulk email export complete owner=%s selected=%s exported=%s skipped=%s", owner, len(messages), exported, skipped)
+
+            def _iter_spooled(f, chunk_size=64 * 1024):
+                try:
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    f.close()
+
+            response_started = True
+            return StreamingResponse(
+                _iter_spooled(spooled_file),
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{zip_name}"',
+                    "X-Exported-Emails": str(exported),
+                    "X-Skipped-Emails": str(skipped),
+                },
+            )
+        finally:
+            if not response_started:
+                spooled_file.close()
+
     @router.get("/inline-image/{uid}")
     async def inline_image(
         uid: str,
@@ -4969,6 +5409,7 @@ def setup_email_routes():
             return {"success": False, "error": "No email UIDs provided", "deleted_uids": [], "failed_uids": []}
         deleted_uids = []
         failed_uids = []
+        trash_folder = None
         try:
             with _imap(account_id, owner=owner) as conn:
                 select_status, _ = conn.select(_q(folder), readonly=False)
@@ -4984,7 +5425,8 @@ def setup_email_routes():
                             trash_folder = "Trash"
                     except Exception:
                         pass
-                pending_expunge = False
+                pending_expunge = []
+                preexisting_deleted = set()
                 for uid in uids:
                     try:
                         if not _uid_exists(conn, uid):
@@ -4994,32 +5436,75 @@ def setup_email_routes():
                         if status != "OK":
                             copy_status, _ = conn.uid("COPY", _uid_bytes(uid), _q(trash_folder))
                             if copy_status != "OK":
-                                # Keep deletion reliable even when this IMAP
-                                # server has no writable Trash folder.
-                                store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
-                                if store_status != "OK":
-                                    failed_uids.append(uid)
-                                    continue
-                                pending_expunge = True
-                            else:
-                                store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
-                                if store_status != "OK":
-                                    failed_uids.append(uid)
-                                    continue
-                                pending_expunge = True
+                                # Bulk Delete means move to Trash. Never remove
+                                # the original without a recoverable Trash copy.
+                                failed_uids.append(uid)
+                                continue
+                            if _uid_has_deleted_flag(conn, uid):
+                                preexisting_deleted.add(uid)
+                            store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
+                            if store_status != "OK":
+                                failed_uids.append(uid)
+                                continue
+                            # Keep the local index until the server confirms
+                            # that the copied originals have been removed.
+                            pending_expunge.append(uid)
+                            continue
                         deleted_uids.append(uid)
                         _email_index_delete(owner, account_id, folder, uid)
                     except Exception:
                         failed_uids.append(uid)
                         logger.debug("Bulk email delete failed for uid=%s", uid, exc_info=True)
                 if pending_expunge:
-                    conn.expunge()
-            if deleted_uids:
-                _invalidate_list_cache(account_id, folder)
-            return {"success": True, "deleted_uids": deleted_uids, "failed_uids": failed_uids}
+                    expunge_ok = False
+                    # Attempt selective RFC 4315 UID EXPUNGE so unrelated messages
+                    # carrying \Deleted in the selected mailbox are never expunged.
+                    # Mailbox-wide EXPUNGE is strictly avoided to eliminate TOCTOU races
+                    # where concurrent clients mark unrelated messages \Deleted.
+                    try:
+                        uid_set_bytes = _uid_bytes(",".join(pending_expunge))
+                        uid_exp_status, _ = conn.uid("EXPUNGE", uid_set_bytes)
+                        if uid_exp_status == "OK":
+                            expunge_ok = True
+                    except Exception:
+                        logger.debug("Selective UID EXPUNGE failed", exc_info=True)
+                        expunge_ok = False
+
+                    if expunge_ok:
+                        for uid in pending_expunge:
+                            deleted_uids.append(uid)
+                            _email_index_delete(owner, account_id, folder, uid)
+                    else:
+                        # Prioritize preservation over cleanup: unflag \Deleted from our
+                        # copied messages so future EXPUNGE operations do not destroy them.
+                        # Do not remove a pre-existing \Deleted flag present before this operation.
+                        for uid in pending_expunge:
+                            if uid not in preexisting_deleted:
+                                try:
+                                    conn.uid("STORE", _uid_bytes(uid), "-FLAGS", "\\Deleted")
+                                except Exception:
+                                    pass
+                        failed_uids.extend(pending_expunge)
+            if not deleted_uids:
+                return {"success": False, "error": "Failed to delete requested emails", "deleted_uids": [], "failed_uids": failed_uids}
+            res = {"success": True, "deleted_uids": deleted_uids, "failed_uids": failed_uids}
+            if failed_uids:
+                res["error"] = "Mail operation partially failed"
+            return res
         except Exception as e:
             logger.error(f"Failed to bulk delete emails: {e}")
-            return {"success": False, "error": "Mail operation failed", "deleted_uids": deleted_uids, "failed_uids": [u for u in uids if u not in deleted_uids]}
+            failed_all = [u for u in uids if u not in deleted_uids]
+            return {
+                "success": bool(deleted_uids),
+                "error": "Mail operation failed" if not deleted_uids else "Mail operation partially failed",
+                "deleted_uids": deleted_uids,
+                "failed_uids": failed_all,
+            }
+        finally:
+            if deleted_uids:
+                _invalidate_list_cache(account_id, folder)
+                if trash_folder:
+                    _invalidate_list_cache(account_id, trash_folder)
 
     @router.delete("/odysseus/reminders")
     async def delete_odysseus_reminder_emails(
@@ -6147,7 +6632,12 @@ def setup_email_routes():
                 },
             ]
 
-            style = await llm_call_async(url, model, messages, headers=headers, max_tokens=2048)
+            from src.utility_effort import effort_for_call
+
+            style = await llm_call_async(
+                url, model, messages, headers=headers, max_tokens=2048,
+                reasoning_effort=effort_for_call(url, model, owner),
+            )
             style = _strip_think(style or "")
             if not style:
                 return {"success": False, "error": "LLM failed to generate style description"}
@@ -6231,6 +6721,7 @@ def setup_email_routes():
                     headers=req_headers,
                     max_tokens=8192,
                     timeout=180,
+                    owner=owner,
                 )
             except Exception as e:
                 logger.warning(
@@ -6352,6 +6843,8 @@ def setup_email_routes():
             if not candidates:
                 return {"success": False, "error": "No LLM endpoint configured"}
 
+            from src.utility_effort import candidate_effort_factory
+
             content = await llm_call_async_with_fallback(
                 candidates,
                 messages=[
@@ -6379,6 +6872,7 @@ def setup_email_routes():
                 temperature=0.2,
                 max_tokens=8192,
                 timeout=180,
+                candidate_request_factory=candidate_effort_factory(owner),
             )
             model = candidates[0][1] if candidates else ""
             content = (content or "").strip()

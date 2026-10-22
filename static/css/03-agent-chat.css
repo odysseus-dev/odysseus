@@ -410,8 +410,8 @@ button.hamburger {
 /* Agent indicator */
 #agent-indicator {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  top: calc(20px + var(--safe-top));
+  right: calc(20px + var(--safe-right));
   background: var(--sidebar-bg, var(--panel));
   color: var(--fg);
   border: 1px solid var(--border);
@@ -894,7 +894,7 @@ button.hamburger {
 /* Recording indicator */
 #recording-indicator {
   position: fixed;
-  top: 10px;
+  top: calc(10px + var(--safe-top));
   left: 0;
   right: 0;
   background: rgba(0, 0, 0, 0.8);

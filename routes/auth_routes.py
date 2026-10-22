@@ -15,6 +15,7 @@ from pathlib import Path
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
+from src.auth_helpers import _auth_disabled
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src.settings import (
@@ -128,6 +129,21 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     def _get_current_user(request: Request) -> Optional[str]:
         token = request.cookies.get(SESSION_COOKIE)
         return auth_manager.get_username_for_token(token)
+
+    def _require_admin_user(request: Request) -> Optional[str]:
+        """Resolve the current user, enforcing admin access.
+
+        Honors AUTH_ENABLED=false the same way core.middleware.require_admin
+        does: when the operator has explicitly disabled auth (e.g. behind a
+        reverse proxy that handles login), there is no session user, and
+        admin-gated app configuration must stay reachable.
+        """
+        user = _get_current_user(request)
+        if _auth_disabled():
+            return user
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        return user
 
     @router.post("/setup")
     async def first_run_setup(body: SetupRequest, request: Request):
@@ -718,9 +734,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/features")
     async def set_features(request: Request):
         """Admin only: update feature toggles."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         current = _load_features()
         for key in current:
@@ -738,16 +752,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         for keybinds + TTS prefs, so it stays callable without admin."""
         user = _get_current_user(request)
         settings = without_retired_settings(_load_settings())
-        if user and auth_manager.is_admin(user):
+        if _auth_disabled() or (user and auth_manager.is_admin(user)):
             return settings
         return scrub_settings(settings)
 
     @router.post("/settings")
     async def set_settings(request: Request):
         """Admin only: update app settings."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         current = _load_settings()
         # Per-key validation for numeric settings: coerce to int and clamp to a
@@ -780,9 +792,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         file: UploadFile = File(...),
     ):
         """Infer the general prose style from one user-supplied document."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        user = _require_admin_user(request)
         filename = Path(file.filename or "sample.txt").name
         suffix = Path(filename).suffix.lower()
         allowed = {
@@ -861,9 +871,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.get("/integrations")
     async def list_integrations_route(request: Request):
         """List all integrations (admin only, keys masked)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         items = load_integrations()
         # Mask API keys for frontend display
         safe = [mask_integration_secret(item) for item in items]
@@ -877,9 +885,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/integrations")
     async def create_integration(request: Request):
         """Create a new integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         item = add_integration(body)
         return {"ok": True, "integration": mask_integration_secret(item)}
@@ -887,9 +893,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.put("/integrations/{integration_id}")
     async def update_integration_route(integration_id: str, request: Request):
         """Update an existing integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         item = update_integration(integration_id, body)
         if not item:
@@ -899,9 +903,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.delete("/integrations/{integration_id}")
     async def delete_integration_route(integration_id: str, request: Request):
         """Delete an integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         ok = delete_integration(integration_id)
         if not ok:
             raise HTTPException(404, "Integration not found")
@@ -910,9 +912,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/integrations/{integration_id}/test")
     async def test_integration_route(integration_id: str, request: Request):
         """Test connectivity to an integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         integ = get_integration(integration_id)
         if not integ:
             raise HTTPException(404, "Integration not found")

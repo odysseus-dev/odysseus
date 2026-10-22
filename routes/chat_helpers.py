@@ -551,6 +551,7 @@ async def auto_name_session(session_manager, sess):
     try:
         from src.llm_core import llm_call_async
         from src.task_endpoint import resolve_task_endpoint
+        from src.utility_effort import effort_for_call
 
         # Find first user message
         first_msg = ""
@@ -603,6 +604,7 @@ async def auto_name_session(session_manager, sess):
             max_tokens=64,
             headers=t_headers,
             timeout=15,
+            reasoning_effort=effort_for_call(t_url, t_model, owner, sess),
         )
 
         title = title.strip().strip('"\'').strip()
@@ -1010,6 +1012,7 @@ async def build_chat_context(
     chat_processor,
     message: str,
     session_id: str,
+    selected_notes_context: str | None = None,
     preset_id=None,
     att_ids: list = None,
     use_web=None,
@@ -1181,6 +1184,23 @@ async def build_chat_context(
     # Inject pre-fetched search context (compare mode)
     if search_context and allow_tool_preprocessing and not casual_low_signal:
         preface.append(untrusted_context_message("prefetched search context", search_context))
+
+    # Inject selected notes as context
+    if selected_notes_context:
+        selected_notes_context = (
+            "The following selected notes and todos are reference context explicitly chosen "
+            "by the user. Use them directly when relevant to the user's request. Do not "
+            "ask for permission to use this context, and do not call note-management "
+            "tools just to retrieve the same notes; use those tools only for a requested "
+            "change or when this context is insufficient.\n\n"
+            + selected_notes_context
+        )
+        preface.append(
+            untrusted_context_message(
+                "Selected notes and todos",
+                selected_notes_context,
+            )
+        )
 
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:

@@ -325,6 +325,26 @@ def _task_structured_schedule(args, fallback_time=None):
             'cron_expression': f'{parsed.minute} {parsed.hour} * * {cron_days}'}
 
 
+def _admin_task_action_denied(owner: Optional[str], task_type: Optional[str], action_name: Optional[str]) -> Optional[Dict]:
+    """Apply the shared admin-only task-action policy to a tool call.
+
+    ``POST /api/tasks`` and the scheduler both refuse ``run_local``,
+    ``run_script``, ``ssh_command`` and ``cookbook_serve`` action tasks for
+    owners without admin task privileges (``src.task_action_policy``).
+    Those actions reach ``subprocess.run(shell=True)`` / SSH with no sandbox,
+    so the model-facing tool must apply the same policy at create/edit/
+    resume/run time instead of storing a task the scheduler will only pause
+    later. Returns the tool error dict to hand back, or None when allowed.
+    """
+    from src.task_action_policy import (
+        is_admin_only_task_action,
+        owner_has_admin_task_privileges,
+    )
+    if is_admin_only_task_action(task_type, action_name) and not owner_has_admin_task_privileges(owner):
+        return {"error": f"Action '{action_name}' requires admin privileges", "exit_code": 1}
+    return None
+
+
 async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_tasks tool calls: CRUD on scheduled tasks."""
     import uuid as _uuid
@@ -462,6 +482,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "Prompt is required for llm/research tasks", "exit_code": 1}
             if task_type == "action" and not args.get("action_name"):
                 return {"error": "action_name is required for action tasks", "exit_code": 1}
+            denied = _admin_task_action_denied(owner, task_type, args.get("action_name"))
+            if denied:
+                return denied
 
             # Compute next_run for schedule triggers
             next_run = None
@@ -524,6 +547,14 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             # reach it. `list` already scopes to an exact owner match.
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
+
+            # Check the policy against the task as it would be after the
+            # edit, so an llm task can't be flipped into a shell action.
+            next_task_type = args["task_type"] if args.get("task_type") is not None else task.task_type
+            next_action = args["action_name"] if args.get("action_name") is not None else task.action
+            denied = _admin_task_action_denied(owner, next_task_type, next_action)
+            if denied:
+                return denied
 
             if 'weekdays' in args or 'day_of_month' in args:
                 clock = task.scheduled_time
@@ -624,6 +655,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if action == "pause":
                 task.status = "paused"
             else:
+                denied = _admin_task_action_denied(owner, task.task_type, task.action)
+                if denied:
+                    return denied
                 task.status = "active"
                 if (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
@@ -644,6 +678,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 return error
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
+            denied = _admin_task_action_denied(owner, task.task_type, task.action)
+            if denied:
+                return denied
 
             from src.event_bus import get_task_scheduler
             scheduler = get_task_scheduler()

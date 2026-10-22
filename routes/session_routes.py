@@ -509,6 +509,7 @@ def setup_session_routes(
                     "has_documents": s.id in doc_session_ids,
                     "has_images": s.id in img_session_ids,
                     "mode": s.mode,
+                    "thinking_mode": s.thinking_mode or "off",
                     "message_count": s.message_count or 0,
                 })
         finally:
@@ -1042,6 +1043,7 @@ def setup_session_routes(
                     "id": s.id,
                     "name": s.name,
                     "model": s.model,
+                    "thinking_mode": s.thinking_mode or "off",
                     "message_count": s.message_count or 0,
                     "created_at": s.created_at.isoformat() if s.created_at else None,
                     "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -1238,9 +1240,16 @@ def setup_session_routes(
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
 
         owner = getattr(session, "owner", None) or effective_user(request)
-        url, model, headers = resolve_endpoint("utility", owner=owner)
+        url, model, headers = resolve_endpoint(
+            "utility",
+            fallback_url=getattr(session, "endpoint_url", None),
+            fallback_model=getattr(session, "model", None),
+            fallback_headers=getattr(session, "headers", None),
+            owner=owner,
+        )
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
@@ -1268,6 +1277,7 @@ def setup_session_routes(
                 max_tokens=1024,
                 headers=headers,
                 timeout=60,
+                reasoning_effort=effort_for_call(url, model, owner, session),
             )
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)
@@ -1311,6 +1321,7 @@ def setup_session_routes(
         users can clean junk without spending tokens.
         """
         from src.llm_core import llm_call
+        from src.utility_effort import effort_for_call
         user = effective_user(request)
         single_user_mode = not user and _auth_disabled()
         user_sessions = session_manager.get_sessions_for_user(user)
@@ -1483,7 +1494,8 @@ def setup_session_routes(
             # reasoning model spends tokens thinking first — 4096 truncated the
             # JSON mid-output, so it never parsed ("invalid JSON for auto-sort").
             raw = llm_call(url, model, [{"role": "user", "content": prompt}],
-                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120,
+                           reasoning_effort=effort_for_call(url, model, user))
             logger.info(f"Auto-sort raw response ({len(raw)} chars): {raw[:300]}")
             # Extract JSON from response — handle markdown fences, leading text,
             # reasoning-model <think> blocks, and trailing commas.
