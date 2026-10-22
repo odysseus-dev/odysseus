@@ -56,8 +56,10 @@ markitdown[docx,pptx,xlsx,xls]==0.1.6
 # 8.0.2 is the functional floor: it resolves per-route config through Starlette's
 # trailing-slash redirect, gives middleware-generated 403/429 pages an explicit
 # text/plain Content-Type, and floors guard-core>=4.1.0. 8.0.3 is the Guard-Core
-# org metadata release (PyPI URLs and links moved; no code changes).
-fastapi-guard>=8.0.3
+# org metadata release (PyPI URLs and links moved; no code changes). 8.1.2 is the
+# current release and floors guard-core>=4.4.0; the rest of 8.1.x adds and fixes the
+# pure-ASGI middleware, which this app does not use (app.py installs SecurityMiddleware).
+fastapi-guard>=8.1.2
 # guard-core >= 4.0.0 redacts authorization, proxy-authorization, cookie and
 # x-api-key (plus query-string and body secrets) as [REDACTED] on every guard
 # log line, event and hook payload, closing the leak where 3.17.0 wrote those
@@ -100,9 +102,12 @@ fastapi-guard>=8.0.3
 # and per-function behavioral counters, and a colliding id stamped by a different
 # decorator instance can no longer select a sibling's config - load-bearing for
 # core/guard_deco.py stacks. 4.3.2 is the Guard-Core org metadata release.
-# Verified against 4.3.2 with fastapi-guard 8.0.3 (2026-10-10): the full perimeter
+# 4.4.0 scans the Cookie header one name=value pair at a time, so a logged-in
+# session cookie is no longer rejected as a command-separator false positive, and
+# caps the regex scan CPU time of a single request (detection_max_scan_seconds).
+# Verified against 4.4.0 with fastapi-guard 8.1.2 (2026-10-23): the full perimeter
 # suite (15 tests) passes unchanged.
-guard-core>=4.3.2
+guard-core>=4.4.0
 # GeoIP country lookup for ODYSSEUS_GUARD_BLOCK_COUNTRIES (needs a MaxMind
 # GeoLite2/GeoIP2 country .mmdb pointed to by ODYSSEUS_GUARD_GEOIP_DB). Only
 # used when country blocking is enabled.

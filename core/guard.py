@@ -247,9 +247,9 @@ if GUARD_ENABLED:
         # commands in this AI workspace and would otherwise trip the WAF on
         # normal use. One central allowlist: guard-core matches these names in
         # JSON bodies at any depth, in x-www-form-urlencoded fields, and in
-        # multipart text parts, so it covers every route. Since guard-core 3.13
-        # multipart file parts are scanned too (filename and decodable payload),
-        # which is why the upload routes carry @no_waf.
+        # multipart text parts, so it covers every route. The guard-core floor in
+        # requirements-optional.txt also scans multipart file parts (filename and
+        # decodable payload), which is why the upload routes carry @no_waf.
         # Credentials are excluded outright: a strong password is random bytes
         # and must never be pattern-matched (";rm" inside one blocked login).
         excluded_detection_body_fields={
