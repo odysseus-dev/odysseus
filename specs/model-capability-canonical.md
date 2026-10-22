@@ -1,6 +1,6 @@
 # Canonical Provider And Model Capability Layer
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-14
 
 ## Scope
 
@@ -15,14 +15,9 @@ This spec covers the implementation introduced on current `dev` in:
 - regression coverage in `tests/test_model_capabilities.py` and
   `tests/test_model_capability_readers.py`.
 
-The layer normalizes already-fetched JSON-compatible values. It performs no
-network I/O, does not shape provider requests, does not persist its output, and
-does not authorize model or tool use. No production caller currently consumes
-the canonical records outside this package; runtime integration remains later
-work.
+The layer normalizes already-fetched JSON-compatible values. It performs no network I/O, does not shape provider requests, does not persist its output, and does not authorize model or tool use. No production caller currently consumes the canonical records outside this package; runtime integration remains later work.
 
-There is no `src/provider_capability_schemas.py`, capability-specific
-diagnostics module, or runtime model-quirk registry on current `dev`.
+There is no `src/provider_capability_schemas.py`, capability-specific diagnostics module, or runtime model-quirk registry on current `dev`.
 
 ## Layer Boundaries
 
@@ -47,9 +42,7 @@ diagnostics module, or runtime model-quirk registry on current `dev`.
   capability object, assertions, deterministic controls, and optional raw
   provider evidence.
 
-Provider transport support and per-model support are separate facts. Request
-and response adapters remain in `src.llm_core` and related provider modules.
-Model-specific observations remain in [model-quirks.md](model-quirks.md).
+Provider transport support and per-model support are separate facts. Request and response adapters remain in `src.llm_core` and related provider modules. Model-specific observations remain in [model-quirks.md](model-quirks.md).
 
 ## Current Serialized Shapes
 
@@ -70,20 +63,13 @@ Model-specific observations remain in [model-quirks.md](model-quirks.md).
 }
 ```
 
-`ModelCapabilityRecord.to_dict()` wraps that value with `vendor`, `model_id`,
-`stable_model_id`, `display_name`, `capability_assertions`, and
-`deterministic_controls`. It does not currently emit a schema version or the
-flat `provider`/`model`/`features`/`controls` shape. Raw provider fields are
-included only when the caller passes `include_raw=True`.
+`ModelCapabilityRecord.to_dict()` wraps that value with `vendor`, `model_id`, `stable_model_id`, `display_name`, `capability_assertions`, and `deterministic_controls`. It does not currently emit a schema version or the flat `provider`/`model`/`features`/`controls` shape. Raw provider fields are included only when the caller passes `include_raw=True`.
 
-Endpoint configuration can explicitly map `model_type=llm` to chat and
-`model_type=image` to image generation. Missing or unrecognized endpoint types
-stay unknown rather than silently becoming chat-capable in this schema layer.
+Endpoint configuration can explicitly map `model_type=llm` to chat and `model_type=image` to image generation. Missing or unrecognized endpoint types stay unknown rather than silently becoming chat-capable in this schema layer.
 
 ## Identity And Reader Dispatch
 
-`records_from_payload()` selects a reader from an explicit `vendor`, or from
-`detect_vendor(base_url, endpoint_kind)` when no vendor is supplied.
+`records_from_payload()` selects a reader from an explicit `vendor`, or from `detect_vendor(base_url, endpoint_kind)` when no vendor is supplied.
 
 Current detection order and behavior are:
 
@@ -94,11 +80,7 @@ Current detection order and behavior are:
 
 These are normalization hints, not authorization. Hostname checks accept an exact domain or its dot-delimited subdomains after lowercasing and removing a trailing dot, so names such as `notopenai.com` do not match `openai.com`; local-port mappings remain intentionally covered by tests. Callers must not treat any result as proof of endpoint trust.
 
-Implemented reader modules are `generic_openai`, `openai`, `openrouter`,
-`google`, `llamacpp`, `ollama`, and `lmstudio`. Anthropic, Hugging Face,
-SGLang, and vLLM have placeholder vendor IDs but currently dispatch through the
-generic identity-only reader. Other explicitly supplied vendor strings are
-also preserved while using that generic reader.
+Implemented reader modules are `generic_openai`, `openai`, `openrouter`, `google`, `llamacpp`, `ollama`, and `lmstudio`. Anthropic, Hugging Face, SGLang, and vLLM have placeholder vendor IDs but currently dispatch through the generic identity-only reader. Other explicitly supplied vendor strings are also preserved while using that generic reader.
 
 Stable model identity is scoped in this order:
 
@@ -108,15 +90,9 @@ Stable model identity is scoped in this order:
 
 ## Generic Identity-Only Contract
 
-The generic reader accepts mapping payloads containing `data[]` or `models[]`.
-Each item must itself be a mapping and provide `id`, `name`, or `model`.
-Bare-list payloads and `key`/`slug`-only items are not accepted by the current
-implementation.
+The generic reader accepts mapping payloads containing `data[]` or `models[]`. Each item must itself be a mapping and provide `id`, `name`, or `model`. Bare-list payloads and `key`/`slug`-only items are not accepted by the current implementation.
 
-The reader deliberately returns unknown family, modalities, capabilities, and
-controls. It preserves the raw item on the in-memory record but does not parse
-type/task fields, descriptions, ownership, supported-parameter lists,
-capability-looking booleans, or token limits.
+The reader deliberately returns unknown family, modalities, capabilities, and controls. It preserves the raw item on the in-memory record but does not parse type/task fields, descriptions, ownership, supported-parameter lists, capability-looking booleans, or token limits.
 
 ## Provider-Native Readers
 
@@ -136,22 +112,13 @@ capability-looking booleans, or token limits.
   served model. It records tool/streaming claims, explicit unsupported
   vision/audio assertions, controls, and runtime/training/size limits.
 
-Readers tolerate non-object entries and unknown fields where their helpers
-permit it. They do not infer authoritative capability from model IDs or display
-names.
+Readers tolerate non-object entries and unknown fields where their helpers permit it. They do not infer authoritative capability from model IDs or display names.
 
 ## Evidence Semantics
 
-The canonical vocabulary includes admin override, endpoint configuration,
-provider reader, Cookbook/Hugging Face, maintained registries, heuristic,
-probe, and unknown sources. It also defines explicit, provider-reported,
-registry, heuristic, and unknown confidence values.
+The canonical vocabulary includes admin override, endpoint configuration, provider reader, Cookbook/Hugging Face, maintained registries, heuristic, probe, and unknown sources. It also defines explicit, provider-reported, registry, heuristic, and unknown confidence values.
 
-Those tokens make evidence representable; current `dev` does not implement a
-global precedence, merge, expiry, or conflict-resolution engine. Assertions
-generated by readers are usually `claimed`; a `CapabilityProbeResult` maps pass
-to verified, fail to unsupported, and partial to claimed at the scope carried
-by that object.
+Those tokens make evidence representable; current `dev` does not implement a global precedence, merge, expiry, or conflict-resolution engine. Assertions generated by readers are usually `claimed`; a `CapabilityProbeResult` maps pass to verified, fail to unsupported, and partial to claimed at the scope carried by that object.
 
 ## Tests
 
@@ -164,6 +131,8 @@ Focused tests pin:
 - assertion, deterministic-control, and probe-result shapes;
 - OpenRouter, Google, Ollama, LM Studio, and llama.cpp mappings;
 - negative cases that avoid name-based media/capability inference.
+
+The provider detector has narrow production consumers in `src/ai_interaction.py` and `routes/gallery/gallery_routes.py` for selecting OpenRouter media request behavior. `ModelCapabilityRecord` normalization remains disconnected from runtime model discovery and request builders; helper reuse must not be described as full canonical integration.
 
 ## Current Gaps
 

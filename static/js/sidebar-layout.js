@@ -75,12 +75,15 @@ export function initSidebarLayout(Storage, opts) {
     _setSidebarModeClasses(mode);
   }
 
+  // Phones in landscape get the desktop layout, but the icon rail is too small to use there
+  const _phoneLandscape = window.matchMedia('(pointer: coarse) and (max-height: 500px)');
+
   function _syncRailSideCore() {
     const sidebar = document.getElementById('sidebar');
     if (!iconRail) return;
     const isRight = sidebar.classList.contains('right-side');
     const sidebarHidden = sidebar.classList.contains('hidden');
-    const railHidden = iconRail.classList.contains('rail-hidden');
+    const railHidden = iconRail.classList.contains('rail-hidden') || _phoneLandscape.matches;
     const isMobileMini = iconRail.classList.contains('mobile-mini');
     iconRail.classList.toggle('right-side', isRight);
     // On mobile mini mode, JS already set inline styles — don't touch
@@ -118,6 +121,7 @@ export function initSidebarLayout(Storage, opts) {
   // Set initial reference and expose globally
   _syncRailSideFn = _syncRailSideCore;
   window.syncRailSide = syncRailSide;
+  _phoneLandscape.addEventListener('change', () => syncRailSide());
 
   // Restore sidebar side preference
   if (Storage.get(Storage.KEYS.SIDEBAR_SIDE) === 'right') {

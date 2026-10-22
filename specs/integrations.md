@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -80,17 +80,11 @@ The Cookbook scoped-agent surface currently exposes `cookbook:read` and `cookboo
 
 `src.integrations` owns generic API integration presets, `data/integrations.json`, API-key encryption/decryption, secret masking, plaintext-key migration, enabled integration prompt text, and `execute_api_call()`.
 
-`routes.auth_routes` owns admin-only HTTP CRUD/test routes for these integrations. Presets are public metadata. The ntfy test route is special: it publishes a real test notification to the configured reminder topic instead of only probing server health.
+`routes.auth_routes` owns HTTP CRUD/test routes for these integrations, requiring an admin unless auth is explicitly disabled. Presets are public metadata. The ntfy test route is special: it publishes a real test notification to the configured reminder topic instead of only probing server health.
 
 `api_call` is the agent/tool execution path for configured integrations. It is blocked for non-admin/public users by tool security, accepts only relative paths, uses the admin-configured base URL/auth settings, and returns truncated external responses to the model, including a sentinel when long JSON lists are shortened. Admin-authored integration descriptions are prompt context; external responses remain untrusted data.
 
-`execute_api_call()` normalizes base URLs to HTTP(S) scheme, hostname, and
-path-only values, rejects request paths that are not relative absolute paths
-(`/...`) or that carry schemes/fragments, treats `/` as the base URL without
-appending an extra slash, and checks the final URL through `src.url_safety`.
-Link-local/metadata targets are always rejected; setting
-`INTEGRATION_API_BLOCK_PRIVATE_IPS=true` also rejects loopback/RFC1918/private
-addresses for operators who do not need LAN integrations.
+`execute_api_call()` normalizes base URLs to HTTP(S) scheme, hostname, and path-only values, rejects request paths that are not relative absolute paths (`/...`) or that carry schemes/fragments, treats `/` as the base URL without appending an extra slash, and checks the final URL through `src.url_safety`. Link-local/metadata targets are always rejected; setting `INTEGRATION_API_BLOCK_PRIVATE_IPS=true` also rejects loopback/RFC1918/private addresses for operators who do not need LAN integrations.
 
 After validation, `execute_api_call()` pins the outbound connection to the validated IP snapshot while preserving the configured URL, Host header, TLS server name, and redirect policy. DNS cannot select a different destination between SSRF validation and transport.
 
@@ -159,8 +153,7 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 - Missing or corrupt `data/integrations.json` loads as an empty list; non-object rows are ignored.
 - Plaintext generic integration API keys migrate to encrypted storage on load.
 - Webhook delivery has no retry/backoff queue; the persisted state is last status or sanitized last error.
-- Webhook URLs are validated at create and delivery time, redirects are disabled,
-  and delivery connects to the IP set validated immediately before the request.
+- Webhook URLs are validated at create and delivery time, redirects are disabled, and delivery connects to the IP set validated immediately before the request.
 - Companion LAN detection is best-effort and falls back to local host/port defaults unless a valid `COMPANION_BASE_URL` is configured.
 - `ODYSSEUS_URL` must be reachable from the external coding agent; no Docker/native URL rewrite is performed.
 
@@ -182,12 +175,30 @@ Current targeted coverage includes API-token CRUD basics, chat-scoped `/api/mode
 
 The integration audit also ran the targeted venv subset covering those areas with 52 passing tests and one warning.
 
+## Bound External Backends
+
+Tool-backed integration calls consume `src.agent_runtime.remote_resources` backend identity. `src.integrations.execute_api_call()` refuses a bound call when the saved integration identity differs from the admitted resource; a changed configuration cannot silently inherit an earlier approval. MCP and client/host bridges have their own producer/configuration identities and do not gain permission from advertised schemas.
+
+Scoped Cookbook adapters reject internal-tool transport/header calls instead of treating internal owner attribution as an external scoped credential. In auth-disabled mode they still require the native local-operator boundary before borrowing endpoint functions. Public API-token scopes remain distinct from browser admin and internal-loopback authority.
+
+## Adapter Admission Limits
+
+Generic `app_api` refuses decoded `/api/codex/cookbook` selectors before dispatch, so it cannot wrap the dedicated scoped adapter to borrow its permissions. Integration requests preserve their explicit query/body inputs and owner/backend binding; an observed `api_call` response is an external acknowledgement, not sealed proof of remote poststate. Public scoped credentials, browser admin access and native local operator admission remain separate boundaries.
+
+## App Configuration Compatibility
+
+Integration list/create/update/delete/connectivity-test handlers in `routes/auth_routes.py` use `_require_admin_user()`: explicit disabled-auth operator mode is admitted without a session, while auth-enabled access still requires an admin. Integration listing continues masking keys. This app-configuration exception does not relax user-store administration or scoped external API authorization.
+
+## Delegated Upload Access
+
+`routes/upload_routes.py` applies a separate delegated-token owner/scope gate to browser-compatible upload endpoints. `chat` or `documents:write` permits creation/OCR edits; either of those or `documents:read` permits download/thumbnail/OCR reads. Scope is an any-of intersection, not a requirement for every listed scope. Tokens remain confined to their actual owner's non-null-owned files even when the owner is an interactive admin; invalid/missing/sentinel token identity fails closed. This supplements global token middleware rather than changing other scoped API contracts.
+
 ## Current Gaps
 
 - Codex/Claude scoped routes, owner restoration, degraded 503 behavior, plugin zip contents, and helper-script path refusal need focused regression tests.
 - Token profile/update behavior and Settings agent-token scope toggles need direct coverage.
 - Codex Cookbook scopes need continued Settings, route-check, and `ALLOWED_SCOPES` regression coverage.
-- Generic integration HTTP CRUD/test routes, `execute_api_call()` auth modes, response shaping, and frontend Settings/Admin flows need direct coverage.
+- Generic integration route fixtures cover CRUD/test admission with auth enabled and disabled, using substituted stores and network calls. Live notification delivery, `execute_api_call()` auth modes, response shaping, and frontend Settings/Admin integration still need broader coverage.
 - `do_manage_tokens()` does not match `/api/tokens` semantics for `ody_` prefix, owner, scopes, and cache invalidation.
 - `do_manage_webhooks()` bypasses route behavior and does not cover signing-secret parity.
 - Companion read endpoints should either require `chat` scope or be documented as an explicit scope-policy exception.

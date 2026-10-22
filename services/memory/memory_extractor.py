@@ -331,6 +331,7 @@ async def extract_and_store(
 
     try:
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
 
         # Get last N messages from session
         messages = session.get_context_messages()
@@ -404,6 +405,9 @@ async def extract_and_store(
                 # enough once thinking has room.
                 max_tokens=4096,
                 headers=headers,
+                reasoning_effort=effort_for_call(
+                    endpoint_url, model, getattr(session, "owner", None), session
+                ),
             )
 
             # Parse JSON, tolerating reasoning-model noise (<think> blocks, a
@@ -559,6 +563,7 @@ async def update_persona_memory(
 
     try:
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
         from src.text_helpers import strip_think
 
         custom = {}
@@ -607,6 +612,9 @@ async def update_persona_memory(
             temperature=0.1,
             max_tokens=1200,
             headers=headers,
+            reasoning_effort=effort_for_call(
+                endpoint_url, model, getattr(session, "owner", None), session
+            ),
         )
 
         updated = strip_think(str(raw or ""), prose=True, prompt_echo=True).strip()
@@ -643,6 +651,7 @@ async def audit_memories(
     """
     try:
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
 
         existing = memory_manager.load(owner=owner)
         if not existing:
@@ -691,6 +700,7 @@ async def audit_memories(
             # Bound the call so the Tidy whirlpool can't spin indefinitely on a
             # slow/large generation.
             timeout=120,
+            reasoning_effort=effort_for_call(endpoint_url, model, owner),
         )
 
         # Parse the JSON list, tolerating reasoning-model noise: <think> blocks,

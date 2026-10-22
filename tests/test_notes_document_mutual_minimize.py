@@ -1,3 +1,4 @@
+from tests.helpers.notes_source import notes_source
 from pathlib import Path
 from tests.helpers.document_source import document_source
 
@@ -6,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_opening_notes_minimizes_open_document():
-    script = (ROOT / "static/js/notes.js").read_text()
+    script = notes_source("ui/panel")
 
     assert "window.documentModule?.isPanelOpen?.()" in script
     assert "window.documentModule.closePanel('down')" in script

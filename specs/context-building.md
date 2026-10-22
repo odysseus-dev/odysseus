@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-15
 
 ## Scope
 
@@ -9,10 +9,10 @@ This spec covers model-context construction in:
 - `src/chat_processor.py`;
 - `src/chat_handler.py` and `src/youtube_handler.py`;
 - `routes/chat_helpers.py` and context injection in `routes/chat_routes.py`;
-- `src/agent_loop.py`;
+- `src/agent_loop.py`, `src/clean_agent_preview.py`, `src/turn_contract.py`, and `src/agent_runtime/context_resolution.py`;
+- `src/media_ingress.py`, `src/agent_tools/media_tools.py`, and `src/email_attachment_text.py`;
 - `src/tool_execution.py`;
-- `src/attachment_refs.py` and uploaded-file manifest construction in
-  `routes/chat_helpers.py`;
+- `src/attachment_refs.py` and uploaded-file manifest construction in `routes/chat_helpers.py`;
 - `src/tool_policy.py`;
 - `src/prompt_security.py`;
 - `src/tool_capabilities.py`, `src/tool_approval_scopes.py`, and `src/tool_approvals.py`;
@@ -53,12 +53,9 @@ Current untrusted context sources include:
 - emails and attachments;
 - tool output from external/user-controlled data.
 
-Live multimodal provider blocks can contain data URLs, but persisted and
-tool-facing context uses stable attachment references. Tool manifests carry an
-`odysseus://attachment/<id>` URI and owner-checked read policy; local paths are
-compatibility data added only after owner and root-confinement checks. Persisted
-chat context keeps readable text/reference lines rather than reinserting raw
-media bytes into later turns or search state.
+Live multimodal provider blocks can contain data URLs, but persisted and tool-facing context uses stable attachment references. Tool manifests carry an `odysseus://attachment/<id>` URI and owner-checked read policy; local paths are compatibility data added only after owner and root-confinement checks. Persisted chat context keeps readable text/reference lines rather than reinserting raw media bytes into later turns or search state.
+
+`/api/chat_stream` accepts explicitly selected Notes/Todos through the JSON form field `selected_note_ids`. `routes.chat_routes._parse_selected_note_ids()` limits the encoded field to 8192 characters and the array to 50 nonempty string IDs of at most 128 characters, deduplicating valid IDs and returning `400` for malformed input. The route queries only rows whose `Note.owner` exactly matches `effective_user(request)`; missing or other-owner IDs contribute no context. Titles, content, note type, and checklist item state are formatted by `_format_selected_notes_context()` and passed to `routes.chat_helpers.build_chat_context()` as an untrusted "Selected notes and todos" preface. Selection supplies reference data, not tool authority; the preface discourages redundant retrieval or permission requests just to read those same supplied notes.
 
 ## URL, Search, And Tool-Derived Context
 
@@ -103,6 +100,24 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 - uploaded-file manifest/reference context for agent tools and later chat turns;
 - `src.tool_execution` for `web_search`, `web_fetch`, file, shell, MCP, and other tool outputs;
 - `src.deep_research` and research handlers for search/fetch/extract flows used by research jobs, with fetched webpage text wrapped before extraction and analyzed URLs tracked separately from source snippets.
+
+## Effective Context And Media Evidence
+
+Compact preview preparation resolves the effective context window once through `src.agent_runtime.context_resolution`; terminal metrics use that stored resolution and do not trigger new discovery. Runtime-confirmed, provider-advertised, operator-declared, static-table, and unknown evidence remain distinct, with conflicts recorded. Operator declarations can cap stronger evidence; unknown is represented as zero rather than an invented known limit. Metadata probing has a three-second preparation deadline, caches remote observations, and re-probes local serving processes. Legacy chat/agent budgeting remains a separate compatibility path.
+
+`src.context_compactor` trims context and prunes multimodal images. Session memory-injection and skill-injection toggles independently control preface construction; memory extraction is a separate session setting. `src.skill_index` semantically ranks native skills using an already-ready ToolIndex embedding lane, with lexical fallback, while `search_chats` retrieves owner-scoped historical messages instead of making all history ambient context.
+
+`src.media_ingress` limits file counts, source/encoded bytes, image dimensions/pixels, document characters, video frames, and probe/extraction time. Native media tools return observed media/text evidence through the same untrusted-result path; filenames and model guesses do not establish inspected image/video content. `src.email_attachment_text` supplies shared attachment text extraction for mail context.
+
+## Resolution And Embedding Limits
+
+`src.agent_runtime.context_resolution.ContextResolution` binds effective context evidence to the resolved endpoint/model before compact preparation shapes history. The stored resolution feeds terminal metrics without another discovery call. A legacy shaping default does not turn unknown evidence into a known limit; a bare integer cannot supply typed provenance. Metadata requests use the turn's provider headers only at configured or server-resolved provider origins, without credential-following redirects, and endpoint URLs stay out of serialized resolution metrics. Remote observations cache for 600 seconds, failures for 60 seconds, while local servers are re-probed.
+
+`src.embeddings` accepts an explicit `FASTEMBED_THREADS` integer from 1 through 256 and raises for malformed or out-of-range values rather than silently changing the requested execution setting. This controls embedding setup, not proof of a ready vector service.
+
+## Compact Source Projection
+
+Compact editor/email preparation can use current memory and bounded prior-source references without importing arbitrary hidden document bodies. The email classifier supplies dependency evidence for the selected path, not a general model-routing authority. Document edits are bounded batches with per-edit outcomes: a saved `doc_update` is distinct from an unapplied suggestion, exact unique-text matching can reject an ambiguous suggestion, and partial success does not mean every proposed edit was saved.
 
 ## Current Gaps
 

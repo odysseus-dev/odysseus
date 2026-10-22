@@ -1372,6 +1372,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename
                 img_path.write_bytes(base64.b64decode(img.get("b64_json")))
+                if owner:
+                    from src.generated_images import register_generated_image
+                    register_generated_image(filename, owner)
                 image_url = f"/api/generated-image/{filename}"
                 image_id = _save_to_gallery(filename)
 
@@ -1392,6 +1395,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         filename = f"{uuid.uuid4().hex[:12]}.png"
                         img_path = img_dir / filename
                         img_path.write_bytes(dl_resp.content)
+                        if owner:
+                            from src.generated_images import register_generated_image
+                            register_generated_image(filename, owner)
                         image_url = f"/api/generated-image/{filename}"
                         image_id = _save_to_gallery(filename)
                     else:
@@ -1537,6 +1543,9 @@ async def do_edit_image(
         img_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex[:12]}{suffix}"
         (img_dir / filename).write_bytes(image_bytes)
+        if owner:
+            from src.generated_images import register_generated_image
+            register_generated_image(filename, owner)
         return f"/api/generated-image/{filename}", _save_edited_image_to_gallery(filename)
 
     async def _try_local_img2img_fallback(client: httpx.AsyncClient) -> Optional[Dict[str, Any]]:
