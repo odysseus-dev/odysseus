@@ -160,6 +160,10 @@ DEFAULT_SETTINGS = {
     # Ordered fallback chain for the Utility model (summarization, naming,
     # tidy actions, etc.).
     "utility_model_fallbacks": [],
+    # Opt-in reasoning effort for utility/background LLM calls. Empty keeps the
+    # provider default; a value is sent only to utility-chain candidates whose
+    # model advertises that level.
+    "utility_reasoning_effort": "",
     "teacher_model": "",
     "teacher_enabled": False,
     "teacher_tier2_enabled": False,
@@ -290,6 +294,7 @@ _PER_USER_KEYS = {
     # got injected into the chat composer on first open.
     "default_endpoint_id", "default_model",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
+    "utility_reasoning_effort",
     "research_endpoint_id", "research_model",
 }
 

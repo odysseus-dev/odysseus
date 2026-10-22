@@ -96,6 +96,41 @@ _PUBLIC_PREVIEW_TOOL_ERRORS = {message: message for message in (
 )}
 
 
+def _schema_argument_hint(args, schema):
+    """Describe a schema mismatch from the schema and the call's own arguments.
+
+    Rebuilt from a fresh validation rather than read off the caught exception,
+    so nothing the exception carries can reach the model.
+    """
+    if not isinstance(schema, dict):
+        return ''
+    try:
+        validator = jsonschema.validators.validator_for(schema)(schema)
+        error = jsonschema.exceptions.best_match(validator.iter_errors(args))
+    except jsonschema.exceptions.SchemaError:
+        return ''
+    if error is None:
+        return ''
+    location = '.'.join(str(part) for part in error.absolute_path)[:80]
+    field = f"'{location}' " if location else ''
+    if error.validator == 'required' and isinstance(error.instance, dict):
+        missing = [str(name) for name in error.validator_value if name not in error.instance]
+        prefix = f'{location}.' if location else ''
+        hint = 'Missing required argument: ' + ', '.join(f"'{prefix}{name}'" for name in missing) + '.'
+    elif error.validator == 'type':
+        expected = error.validator_value
+        expected = ' or '.join(expected) if isinstance(expected, list) else str(expected)
+        hint = f'Argument {field}must be of type {expected}.'
+    elif error.validator == 'enum':
+        allowed = ', '.join(str(value) for value in error.validator_value[:12])
+        hint = f'Argument {field}must be one of: {allowed}.'
+    elif error.validator == 'additionalProperties':
+        hint = 'Remove arguments the offered tool schema does not define.'
+    else:
+        return ''
+    return f'{hint} Correct the call using the offered tool schema.'
+
+
 def _public_preview_tool_error(exc, *, execution_attempted=False):
     """Keep useful domain guidance while withholding arbitrary diagnostics."""
     if execution_attempted:
@@ -6782,6 +6817,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     result, desc, policy_denied, block = None, name, False, None
                     args = {}
                     execution_attempted = False
+                    # Guidance a preview validator authored for this call. It
+                    # is the only failure text returned verbatim; exception
+                    # text goes through _public_preview_tool_error.
+                    validator_error = ''
                     call_signature = None
                     semantic_scope = None
                     try:
@@ -6840,11 +6879,12 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             prior_outcome = browser_navigation_outcomes.get(requested_url)
                             if requested_url and prior_outcome and prior_outcome[1] >= 2:
                                 calls += 1
-                                raise ValueError(
+                                validator_error = (
                                     f'Opening {requested_url} twice reached the same page '
                                     f'({prior_outcome[0]}). Do not repeat it; use the current '
                                     'page evidence or a different navigation strategy.'
                                 )
+                                raise ValueError(validator_error)
                         if tool_type == 'web_search':
                             web_search_attempts += 1
                             if not native_workspace_enabled and web_search_attempts > 3:
@@ -6938,6 +6978,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     'This exact invalid call was repeated after two validation failures; '
                                     'the tool is disabled for this turn.'
                                 )
+                            validator_error = semantic_error
                             raise ValueError(semantic_error)
                         if canonical(name) == 'bash':
                             command = str(args.get('command') or '')
@@ -6946,6 +6987,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 calls += 1
                                 suppressed_tool_until_round['bash'] = round_number + 1
                                 round_recovery_messages.append(sensitive_error)
+                                validator_error = sensitive_error
                                 raise ValueError(sensitive_error)
                             misused_native_tool = shell_native_tool_command_misuse(
                                 command, round_offered,
@@ -6959,6 +7001,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     'with its offered schema.'
                                 )
                                 round_recovery_messages.append(recovery)
+                                validator_error = recovery
                                 raise ValueError(recovery)
                         semantic_scope = semantic_repeat_scope(name, args)
                         if (
@@ -7015,10 +7058,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if canonical(name) in permanently_suppressed_tools:
                             calls += 1
                             terminal_suppression_violation = True
-                            raise ValueError(
+                            validator_error = (
                                 f'{name} was disabled after repeated identical calls; '
                                 'no further execution was attempted.'
                             )
+                            raise ValueError(validator_error)
                         success_repeat_limit = (
                             private_browser_success_repeat_limit(args)
                             if tool_type == 'private_browser' else 1
@@ -7111,6 +7155,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             )
                             if artifact_code_error:
                                 round_recovery_messages.append(artifact_code_error)
+                                validator_error = artifact_code_error
                                 raise ValueError(artifact_code_error)
                         decision = evaluate_preview_call(
                             name, args, latest_user,
@@ -7316,8 +7361,13 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         logging.getLogger(__name__).warning(
                             'Clean v3 tool call failed: %s', exc, exc_info=True,
                         )
+                        if not validator_error and isinstance(exc, jsonschema.ValidationError) and schema:
+                            validator_error = _schema_argument_hint(args, schema['function']['parameters'])
                         result = {
-                            'error': _public_preview_tool_error(exc, execution_attempted=execution_attempted),
+                            'error': (
+                                validator_error if validator_error and not execution_attempted
+                                else _public_preview_tool_error(exc, execution_attempted=execution_attempted)
+                            ),
                             'error_category': 'tool_execution_error' if execution_attempted else 'invalid_tool_arguments',
                             'exit_code': 1,
                         }

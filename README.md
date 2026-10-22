@@ -1,4 +1,6 @@
-<h1 align="center">Odysseus</h1>
+<p align="center">
+  <img src="assets/branding/odysseus-wordmark.png" alt="Odysseus" width="238">
+</p>
 
 <p align="center">
   A self-hosted AI workspace for chat, agents, research, documents, email, notes, calendar, and local model workflows.
@@ -13,6 +15,10 @@
 
 <p align="center">
   <a href="https://repology.org/project/odysseus-ai/versions"><img src="https://repology.org/badge/vertical-allrepos/odysseus-ai.svg" alt="Packaging status"></a>
+</p>
+
+<p align="center">
+  <img src="assets/branding/odysseus-browser.jpg" alt="Odysseus interface">
 </p>
 
 ---
@@ -53,7 +59,7 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 
 ## Demo
 
-The [Odysseus landing page](https://odysseus-dev.github.io/odysseus/) gives a text-only overview of each feature. Its source lives under [`website/`](website/).
+A full hover-to-play tour lives on the [Odysseus landing page](https://odysseus-dev.github.io/odysseus/). Its source lives under [`website/`](website/).
 
 ## Contributing
 
@@ -68,15 +74,33 @@ Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled
 
 Deployment details are in the [setup guide](website/setup.md#security-notes).
 
-## Star History
+## Community & Growth
 
-<a href="https://star-history.dera.page/#odysseus-dev/odysseus&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
- </picture>
-</a>
+<p align="center">
+  <a href="https://trendshift.io/repositories/43167">
+      <a href="https://trendshift.io/repositories/43167?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-43167" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/43167/monthly" alt="odysseus-dev%2Fodysseus | Trendshift" width="230"/></a>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://star-history.dera.page/#odysseus-dev/odysseus&type=date&legend=top-left">
+    <picture>
+      <source
+        media="(prefers-color-scheme: dark)"
+        srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left"
+      />
+      <source
+        media="(prefers-color-scheme: light)"
+        srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left"
+      />
+      <img
+        src="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left"
+        alt="Odysseus GitHub star history"
+        width="100%"
+      />
+    </picture>
+  </a>
+</p>
 
 ## License
 

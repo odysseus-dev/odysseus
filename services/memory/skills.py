@@ -674,6 +674,7 @@ class SkillsManager:
         *,
         active_toolsets: Optional[List[str]] = None,
         platform: Optional[str] = None,
+        local_model: Optional[bool] = None,
     ) -> List[Dict]:
         """Return the `[{name, description, category, status}]` list the
         agent sees in its system prompt.
@@ -710,6 +711,11 @@ class SkillsManager:
             # Platform gating
             if platform and s.get("platforms") and platform not in s["platforms"]:
                 continue
+            # remote-only tag: hide from local/private-endpoint models. Big
+            # on-demand reference lookups overwhelm small local contexts.
+            # local_model=None (API listings, UI) never gates.
+            if local_model and "remote-only" in (s.get("tags") or []):
+                continue
             # requires_toolsets: hide unless every required toolset is active.
             # active_toolsets=None means the caller doesn't know the active
             # set (API listings, chat preface) — don't gate in that case;
@@ -745,6 +751,7 @@ class SkillsManager:
         min_confidence: float = 0.0,
         available_toolsets: Optional[Iterable[str]] = None,
         platform: Optional[str] = None,
+        published_only: bool = False,
     ) -> List[Dict]:
         if skills is None:
             skills = self.load_all()
@@ -775,9 +782,15 @@ class SkillsManager:
                 if not skill.get("platforms") or platform in skill.get("platforms", [])
             ]
         # Prompt injection is fail-closed for user skills. Built-ins are
-        # shipped procedures; every other skill needs a passing audit and a
-        # confidence score at the user's current threshold.
-        if min_confidence > 0:
+        # shipped procedures. With Auto-approve OFF (published_only), the
+        # user's publish is the approval; otherwise a skill needs a passing
+        # audit and a confidence score at the user's current threshold.
+        if published_only:
+            skills = [
+                s for s in skills
+                if s.get("source") == "builtin" or s.get("status") == "published"
+            ]
+        elif min_confidence > 0:
             def _passes(s):
                 if s.get("source") == "builtin":
                     return True

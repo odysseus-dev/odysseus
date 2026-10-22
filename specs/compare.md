@@ -1,6 +1,6 @@
 # Compare
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -40,11 +40,9 @@ Frontend compare behavior is split by responsibility:
 - `panes.js` and `stream.js` own paired response rendering;
 - `vote.js` and `scoreboard.js` own voting and history display.
 
-Compare panes can receive `ask_user` or tool-approval controls from the shared chat stream. `static/js/compare/stream.js` routes those controls into the main chat renderer/control plane, pauses pane completion/autograding while a choice is pending, and can resume the pane after the user decision; compare orchestration keeps its busy state until those continuations settle.
+Compare panes can receive `ask_user` or tool-approval controls from the shared chat stream. `static/js/compare/stream.js` renders shared choice controls inside the originating pane history, pauses pane completion/autograding while a choice is pending, and resumes only while the pane session still matches. Continuation waits for the originating controller to release the pane, restores the card after a ten-second timeout, and refuses to send a stale choice into a replacement controller; compare orchestration keeps its busy state until those continuations settle.
 
-Mobile compare layout collapses multi-pane grids to a single column so panes
-remain readable on narrow screens while the desktop grid still uses the
-selected column count.
+Mobile compare uses selectable pane tabs and one visible active pane; desktop retains the selected multi-column grid. Pane add/remove/shuffle paths keep active-tab and session/settings indices aligned.
 
 ## Ownership Boundaries
 
@@ -68,6 +66,14 @@ Compare frontend code is part of the app DOM security surface. Current stream/se
 - Compare streams inherit chat's opt-in, eligible-pre-output-only foreground fallback and provider-normalized SSE events, but compare frontend handling for errors and model/endpoint route transitions is thinner than chat's stream path.
 - Shared legacy `ModelEndpoint.owner == NULL` rows remain visible through owner filters. Legacy `Comparison.owner == NULL` rows are not treated as shared for authenticated vote/delete/history flows.
 - `/api/compare/start` and `/{comp_id}/vote` remain implemented but are not the active frontend path.
+
+## Per-Pane Generation Controls
+
+`static/js/compare/panes.js` owns per-pane inference controls and saves `thinking_mode`, `temperature_override`, and `max_tokens_override` to `/api/session/{id}/generation-settings`. The backend session/provider path owns the actual generation semantics. Pane creation initializes overrides, removal and shuffle preserve index alignment, and mandatory-thinking model controls are disabled where identified. `stream.js` renders response statistics including token/latency/context/cost metrics and the thinking-off indicator; compare header statistics open a compact details popup.
+
+## Shared Celebration Renderer
+
+`static/js/compare/vote.js` imports and reexports `spawnConfetti` from `static/js/shared/ui/confetti.js`, published from `frontend/src/shared/ui/confetti.js`. Notes imports the shared renderer directly; voting no longer owns its implementation. Vote behavior and callers retain the compatibility export.
 
 ## Current Gaps
 

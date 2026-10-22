@@ -176,6 +176,41 @@ def test_native_file_tools_hide_control_plane_hardlink_alias(tmp_path, monkeypat
     assert ":1:LIVE_ADMIN_SESSION" not in grep_result["output"]
 
 
+def test_native_file_tools_take_one_control_plane_snapshot_per_scan(tmp_path, monkeypatch):
+    """The deny check must not rebuild the control-plane snapshot per entry.
+
+    Each rebuild stats every protected state file, so a per-entry rebuild made
+    a 5,000-file grep about seven times slower and timed out near 20k files.
+    """
+    resources = importlib.import_module("src.agent_runtime.resources")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _configure_test_data_tree(monkeypatch, data_dir)["AGENT_WORKSPACE_DIR"]
+    for index in range(3):
+        directory = workspace / f"d{index}"
+        directory.mkdir(parents=True)
+        for item in range(20):
+            (directory / f"f{item}.txt").write_text("NEEDLE\n" if item == 0 else "x\n")
+    snapshots = []
+    original = resources._control_plane_snapshot
+
+    def counting_snapshot():
+        snapshots.append(1)
+        return original()
+
+    monkeypatch.setattr(resources, "_control_plane_snapshot", counting_snapshot)
+    for tool, args, expected in (
+        (LsTool(), {"path": str(workspace / "d0")}, "f19.txt"),
+        (GlobTool(), {"pattern": "**/*.txt", "path": str(workspace)}, "f19.txt"),
+        (GrepTool(), {"pattern": "NEEDLE", "path": str(workspace)}, "f0.txt:1:NEEDLE"),
+    ):
+        snapshots.clear()
+        result = asyncio.run(tool.execute(json.dumps(args), {}))
+        assert expected in result.get("output", ""), result
+        # One fresh check resolves the search root; the walk shares one more.
+        assert len(snapshots) <= 2, (type(tool).__name__, len(snapshots))
+
+
 def test_blocks_app_state_on_a_case_insensitive_filesystem():
     """On default macOS a case-variant path opens the same file, and realpath
     does not canonicalise case there the way it does on Windows.
@@ -331,7 +366,9 @@ def test_allows_files_in_the_agent_workspace():
     (PERSONAL_UPLOADS_DIR,
      "indexed into personal docs by routes/personal_routes.py, and listed as "
      "an absolute path by manage_rag"),
-])
+# The directories live under a per-worker data dir, so they cannot be test ids:
+# xdist requires every worker to collect the same names.
+], ids=["uploads", "mail_attachments", "personal", "personal_uploads"])
 def test_allows_user_content_the_app_hands_to_the_model(directory, why):
     """Carving these out is not convenience. The app gives the model these
     paths and tells it to read them, so denying them breaks the feature."""

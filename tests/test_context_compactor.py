@@ -311,7 +311,14 @@ class TestMaybeCompactFourthMessage:
 
         cc.get_context_length = lambda url, model: context_length
         cc.llm_call_async = _fake_summary
-        cc.resolve_endpoint = lambda which, owner=None: (None, None, None)
+        def fake_resolve_endpoint(which, **kwargs):
+            assert which == "utility"
+            assert kwargs["fallback_url"] == "http://local/v1/chat/completions"
+            assert kwargs["fallback_model"] == "local-model"
+            assert kwargs["fallback_headers"] == {}
+            return None, None, None
+
+        cc.resolve_endpoint = fake_resolve_endpoint
         cc._update_session_history = lambda *a, **k: None
         try:
             return asyncio.run(
