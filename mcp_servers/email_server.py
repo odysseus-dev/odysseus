@@ -391,12 +391,13 @@ def _load_config(account: str | None = None) -> dict:
         cfg["smtp_user"] = row["smtp_user"] or cfg["smtp_user"]
         cfg["smtp_password"] = _decrypt(row["smtp_password"]) if row["smtp_password"] else cfg["smtp_password"]
         cfg["from_address"] = row["from_address"] or row["imap_user"] or cfg["from_address"]
-        cfg["signature"] = row["signature"] or ""
-        cfg["signature_enabled"] = bool(
-            True if row["signature_enabled"] is None else row["signature_enabled"]
-        )
-        cfg["signature_image"] = row["signature_image"] or ""
-        cfg["signature_image_mime"] = row["signature_image_mime"] or ""
+        # Signature columns are fork-local; rows from older schemas or other
+        # account sources may omit them, so default like the SQL fallbacks.
+        cfg["signature"] = row.get("signature") or ""
+        signature_enabled = row.get("signature_enabled")
+        cfg["signature_enabled"] = bool(True if signature_enabled is None else signature_enabled)
+        cfg["signature_image"] = row.get("signature_image") or ""
+        cfg["signature_image_mime"] = row.get("signature_image_mime") or ""
     else:
         # Legacy fallback: settings.json flat keys
         try:
