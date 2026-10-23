@@ -14,6 +14,24 @@ RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: --
 COPY docker/build-realesrgan-wheels.sh /usr/local/bin/build-realesrgan-wheels.sh
 RUN bash /usr/local/bin/build-realesrgan-wheels.sh /wheels
 
+# ---- numpy-wheel: portable numpy for pre-x86-64-v2 amd64 CPUs ----
+# Upstream numpy wheels target x86-64-v2 (SSE4.1/SSE4.2/POPCNT) and die with
+# SIGILL (exit 132) on older amd64 CPUs. Building from sdist with
+# cpu-baseline=none removes that requirement without giving up runtime SIMD
+# dispatch: numpy still compiles its dispatched kernels and selects them at
+# runtime. arm64 is unaffected and uses the prebuilt wheel.
+FROM python:3.14-slim AS numpy-wheel
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential gfortran pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+RUN ARCH="$(dpkg --print-architecture)" \
+    && if [ "$ARCH" = "amd64" ]; then \
+         pip wheel --no-cache-dir --no-binary=numpy \
+           -Csetup-args=-Dcpu-baseline=none -w /wheels numpy; \
+       else \
+         pip wheel --no-cache-dir -w /wheels numpy; \
+       fi
+
 FROM python:3.14-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
@@ -111,6 +129,12 @@ WORKDIR /app
 # are opt-in so the default image stays MIT-core; see requirements-optional.txt.
 ARG INSTALL_OPTIONAL=false
 COPY requirements.txt requirements-optional.txt ./
+# Install the portable numpy built above before requirements.txt. Landing it
+# first means pip sees numpy as already satisfied and leaves it alone, so the
+# unpinned `numpy` in requirements.txt stays the single version of record.
+COPY --from=numpy-wheel /wheels /tmp/numpy-wheel
+RUN pip install --no-cache-dir --no-deps /tmp/numpy-wheel/numpy-*.whl \
+    && rm -rf /tmp/numpy-wheel
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
