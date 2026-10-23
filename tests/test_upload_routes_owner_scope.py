@@ -315,6 +315,26 @@ def test_put_vision_text_allows_same_owner_to_write_cache(tmp_path, monkeypatch)
     ) == "edited alice text"
 
 
+def test_put_vision_text_clears_the_generated_caption_marker(tmp_path, monkeypatch):
+    handler, alice_id, _bob_id, upload_dir = _make_upload_store(tmp_path, monkeypatch)
+    put_vision_text = _upload_endpoints(handler, monkeypatch)["put_vision_text"]
+    cache_dir = upload_dir / ".vision"
+    cache_dir.mkdir(exist_ok=True)
+    (cache_dir / f"{alice_id}.txt").write_text("generated", encoding="utf-8")
+    marker = cache_dir / f"{alice_id}.txt.autogen"
+    marker.write_text("1", encoding="utf-8")
+
+    asyncio.run(
+        put_vision_text(
+            _Request(user="alice", auth_manager=_AuthManager(), body={"text": "corrected"}),
+            alice_id,
+        )
+    )
+
+    assert not marker.exists()
+    assert (cache_dir / f"{alice_id}.txt").read_text(encoding="utf-8") == "corrected"
+
+
 def test_download_file_survives_corrupted_uploads_json(tmp_path, monkeypatch):
     # A truncated/corrupt uploads.json must not 500 the download endpoint —
     # metadata simply becomes unavailable and the file is still served.
