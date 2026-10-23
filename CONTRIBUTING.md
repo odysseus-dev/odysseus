@@ -31,6 +31,16 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+The source tree is not mounted into the container: the `Dockerfile` copies the code
+in with `COPY . .`, and the compose file only mounts `./data`, `./logs` and the
+model caches. So after editing a `.py` or `.js` file, `docker compose restart`
+reuses the existing image and your change silently does not appear. Rebuild:
+
+```bash
+docker compose up -d --build            # normal case, reuses the layer cache
+docker compose build --no-cache odysseus && docker compose up -d   # if the cache looks stale
+```
+
 Manual development uses Python 3.11+:
 
 ```bash
