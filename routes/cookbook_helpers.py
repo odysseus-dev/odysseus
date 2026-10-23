@@ -485,10 +485,20 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "        if not p: return",
         "        p = os.path.expanduser(p)",
         "        if p not in candidates: candidates.append(p)",
+        "    # Explicit hub-cache env vars (huggingface_hub prefers these).",
         "    add(os.environ.get('HUGGINGFACE_HUB_CACHE'))",
+        "    add(os.environ.get('HF_HUB_CACHE'))",
         "    hf_home = os.environ.get('HF_HOME')",
-        "    if hf_home: add(os.path.join(hf_home, 'hub'))",
+        "    if hf_home:",
+        "        # Standard layout is $HF_HOME/hub.",
+        "        add(os.path.join(hf_home, 'hub'))",
+        "        # Some users set HF_HOME to the hub directory itself",
+        "        # (…/huggingface/hub). Keep that path scannable too.",
+        "        add(hf_home)",
         "    add('~/.cache/huggingface/hub')",
+        "    # macOS (and several HF/Xet clients) default under Library/Caches.",
+        "    # Without this, downloads land there but Serve never lists them.",
+        "    add('~/Library/Caches/huggingface/hub')",
         "    # Docker images mount ./data/huggingface at /app/.cache/huggingface.",
         "    # When HOME is /root, expanduser() misses that persisted cache.",
         "    add('/app/.cache/huggingface/hub')",
@@ -576,9 +586,13 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
+        # Custom modelDirs may be either plain model folders or a full HF hub
+        # cache (models--*). scan_dir skips models-- entries; scan_hf handles them.
+        lines.append(f"scan_hf(normalize_model_dir({model_dir!r}))")
         lines.append(f"scan_dir({model_dir!r})")
     lines.append("print(json.dumps(models))")
     return "\n".join(lines) + "\n"
+
 
 
 def _ps_squote(v: str) -> str:
