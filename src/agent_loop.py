@@ -23961,11 +23961,14 @@ async def stream_agent_loop(
                 budget_is_explicit,
                 hard_max=hard_max,
             )
-            if candidate_context <= 8192:
+            if 0 < candidate_context <= 8192:
                 # Small local servers often tokenize chat wrappers and tool
                 # results much more generously than our rough estimator. Keep
                 # substantial headroom for those wrappers and generation so a
                 # follow-up tool round cannot exceed the server's n_ctx.
+                # 0 means the window is unknown, which already gets the
+                # conservative default budget; clamping it as well cut every
+                # request to 1200 tokens and dropped open documents (#6678).
                 effective_budget = min(
                     effective_budget,
                     max(1200, int(candidate_context * 0.40)),
