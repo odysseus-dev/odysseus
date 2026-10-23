@@ -13,7 +13,12 @@ from src.settings import load_settings, save_settings, load_features, save_featu
 logger = logging.getLogger(__name__)
 
 
-def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
+def setup_backup_routes(
+    memory_manager,
+    preset_manager,
+    skills_manager,
+    memory_vector=None,
+) -> APIRouter:
     router = APIRouter(tags=["backup"])
 
     @router.get("/api/export")
@@ -86,6 +91,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                 raise HTTPException(
                     503, "Memory store is temporarily unreadable — nothing was imported."
                 )
+            original = list(existing)
             # Dedup against THIS user's own memories only. Using every tenant's
             # rows (load_all) meant a memory whose text matched any other
             # user's was silently skipped, so the importing user lost their own
@@ -104,7 +110,49 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                 existing.append(mem)
                 existing_texts.add(mem["text"].strip().lower())
                 added += 1
+            if added and memory_vector is not None and not getattr(memory_vector, "healthy", False):
+                raise HTTPException(
+                    503,
+                    "Memory vector store is unavailable — nothing was imported.",
+                )
+
+            # Preserve the optional-vector route contract used by lightweight
+            # deployments and import callers.  Such callers still persist the
+            # authoritative JSON store; vector synchronization is performed
+            # only when a vector dependency was injected.
             memory_manager.save(existing)
+            try:
+                # The vector collection is shared by every owner. Rebuilding
+                # only the importing user's rows would erase every other
+                # tenant, so always use the complete persisted corpus.
+                if added and memory_vector is not None:
+                    memory_vector.rebuild(existing, strict=True)
+            except Exception as e:
+                logger.error("Memory vector rebuild failed; rolling back import: %s", e)
+                restore_errors = []
+                try:
+                    memory_manager.save(original)
+                except Exception as restore_error:
+                    restore_errors.append(f"JSON restore failed: {restore_error}")
+                try:
+                    memory_vector.rebuild(original, strict=True)
+                except Exception as restore_error:
+                    restore_errors.append(f"vector restore failed: {restore_error}")
+                if restore_errors:
+                    logger.critical(
+                        "Memory import compensation failed: %s",
+                        "; ".join(restore_errors),
+                    )
+                    detail = (
+                        "Memory vector rebuild failed and rollback was incomplete — "
+                        "persisted memory and vector state may be inconsistent."
+                    )
+                else:
+                    detail = "Memory vector rebuild failed — the import was rolled back."
+                raise HTTPException(
+                    503,
+                    detail,
+                )
             imported.append(f"{added} memories")
 
         # ── Skills ──
