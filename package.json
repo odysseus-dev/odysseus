@@ -12,8 +12,8 @@
     "test:photo-editor:webkit": "PHOTO_EDITOR_E2E_BROWSER=webkit playwright test --config tests/e2e/playwright.config.js"
   },
   "devDependencies": {
-    "@antithesishq/bombadil": "^0.7.0",
-    "@playwright/test": "^1.62.1",
+    "@antithesishq/bombadil": "^0.7.9",
+    "@playwright/test": "^1.64.1",
     "acorn": "8.19.0"
   }
 }
