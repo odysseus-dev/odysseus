@@ -8,6 +8,11 @@ import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import {
+  isModelDownloadTask,
+  MODEL_DOWNLOAD_COMPLETED_EVENT,
+  modelDownloadCompletedDetail,
+} from './cookbookModelCache.js';
 import { portOf, nextFreePort } from './cookbookPorts.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
@@ -957,10 +962,14 @@ export function _addTask(sessionId, name, type, payload) {
 function _updateTask(sessionId, updates) {
   const tasks = _loadTasks();
   const task = tasks.find(t => t.sessionId === sessionId);
+  const completedModelDownload = isModelDownloadTask(task)
+    && !['done', 'completed'].includes(task.status || '')
+    && ['done', 'completed'].includes(updates.status || '');
   if (task) {
     Object.assign(task, updates);
     _saveTasks(tasks);
   }
+  if (completedModelDownload) _notifyModelDownloadCompleted(task);
   if ('status' in updates || '_unreachable' in updates) {
     _refreshServerDots();
   }
@@ -974,6 +983,13 @@ function _updateTask(sessionId, updates) {
       if (uptime) uptime.style.display = 'none';
     }
   }
+}
+
+function _notifyModelDownloadCompleted(task) {
+  if (!isModelDownloadTask(task) || typeof document === 'undefined') return;
+  document.dispatchEvent(new CustomEvent(MODEL_DOWNLOAD_COMPLETED_EVENT, {
+    detail: modelDownloadCompletedDetail(task),
+  }));
 }
 
 function _refreshDepsAfterInstall(task) {
@@ -4229,6 +4245,7 @@ async function _pollBackgroundStatus() {
       const localTasks = _loadTasks();
       let changed = false;
       const completedDeps = [];
+      const completedModelDownloads = [];
       const localIds = new Set(localTasks.map(t => t.sessionId).filter(Boolean));
       for (const live of tasks) {
         const sid = live?.session_id;
@@ -4237,7 +4254,7 @@ async function _pollBackgroundStatus() {
         const liveStatus = live.status === 'completed' ? 'done' : (live.status || 'running');
         const name = live.model || sid;
         const remoteHost = live.remote && live.remote !== 'local' ? live.remote : '';
-        localTasks.push(_redactTaskForStorage({
+        const adoptedTask = _redactTaskForStorage({
           id: sid,
           sessionId: sid,
           name,
@@ -4253,7 +4270,11 @@ async function _pollBackgroundStatus() {
           },
           remoteHost,
           _adoptedExternally: true,
-        }));
+        });
+        localTasks.push(adoptedTask);
+        if (['done', 'completed'].includes(liveStatus) && isModelDownloadTask(adoptedTask)) {
+          completedModelDownloads.push(adoptedTask);
+        }
         localIds.add(sid);
         changed = true;
       }
@@ -4294,6 +4315,9 @@ async function _pollBackgroundStatus() {
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
+          if (['done', 'completed'].includes(nextStatus) && isModelDownloadTask(task)) {
+            completedModelDownloads.push(task);
+          }
         }
         if (serveReady && !task._serveReady) {
           updates._serveReady = true;
@@ -4333,6 +4357,7 @@ async function _pollBackgroundStatus() {
           _showDiagnosis(el, task._backendDiagnosis, task.output || '');
         }
         completedDeps.forEach(t => _refreshDepsAfterInstall(t));
+        completedModelDownloads.forEach(t => _notifyModelDownloadCompleted(t));
       }
     } catch (_) { /* non-fatal: background status should never break polling */ }
 
