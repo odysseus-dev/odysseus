@@ -1293,7 +1293,7 @@ def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) ->
         if error:
             parts.append(f"Last probe error: {error}.")
         parts.append("Check that Ollama is running and that the base URL is correct.")
-        parts.append("For native/local installs, use http://localhost:11434/v1.")
+        parts.append("For native/local installs, use http://127.0.0.1:11434/v1.")
         parts.append("For Docker, use http://host.docker.internal:11434/v1 when Ollama runs on the host.")
         parts.append("Run `ollama list` to confirm at least one model is installed.")
         return " ".join(parts)
