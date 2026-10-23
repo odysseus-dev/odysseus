@@ -149,6 +149,14 @@ function safeLinkUrl(rawUrl) {
 
 function linkHtml(text, url) {
   const safeUrl = safeLinkUrl(url);
+  // A link to a generated video plays inline. The linked-embed shape
+  // `[![clip](X.mp4)](X.mp4)` arrives here with the <video> the image pass
+  // already built as its text — keep that one rather than escaping it.
+  const videoUrl = _generatedVideoUrl(safeUrl);
+  if (videoUrl) {
+    if (/^<video class="chat-video" [^<>]*><\/video>$/.test(text)) return text;
+    return videoHtml(videoUrl, text);
+  }
   const safeText = escapeHtml(text);
   if (!safeUrl) return safeText;
   if (safeUrl.startsWith('#')) {
@@ -294,9 +302,33 @@ function moreListPayloadFromHref(href) {
   return _moreListPayloads.get(`${match[1]}:${match[2]}`) || '';
 }
 
+// Generated videos are served from the same /api/generated-image/ route
+// as images, but an <img> cannot play them — the clip showed as a broken
+// image. Only our own origin's generated-media route is played inline; any
+// other video URL stays an ordinary link/image, as before.
+const _GENERATED_VIDEO_PATH_RE = /^\/api\/generated-image\/[^/]+\.(?:mp4|webm|mov|m4v)$/i;
+
+function _generatedVideoUrl(safeUrl) {
+  if (!safeUrl || safeUrl.startsWith('#')) return '';
+  try {
+    const parsed = new URL(safeUrl, window.location.origin);
+    if (parsed.origin !== window.location.origin) return '';
+    return _GENERATED_VIDEO_PATH_RE.test(parsed.pathname) ? parsed.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function videoHtml(url, label) {
+  const safeLabel = label ? ` title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"` : '';
+  return `<video class="chat-video" src="${escapeHtml(url)}"${safeLabel} controls preload="metadata" playsinline></video>`;
+}
+
 function imageHtml(alt, url, title) {
   const safeUrl = safeLinkUrl(url);
   if (!safeUrl || safeUrl.startsWith('#')) return escapeHtml(alt || '');
+  const videoUrl = _generatedVideoUrl(safeUrl);
+  if (videoUrl) return videoHtml(videoUrl, title || alt);
   const safeAlt = escapeHtml(alt || '');
   const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
   return `<img src="${escapeHtml(safeUrl)}" alt="${safeAlt}"${safeTitle} loading="lazy" decoding="async">`;
@@ -1043,9 +1075,9 @@ export function mdToHtml(src, opts) {
     return placeholder;
   });
 
-  // ALSO preserve <a>/<img> tags the same way (they're now in the HTML from
-  // markdown conversion)
-  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?)>/gi, (match) => {
+  // ALSO preserve <a>/<img>/<video> tags the same way (they're now in the
+  // HTML from markdown conversion)
+  s = s.replace(/<(?:a\s+[^>]*>.*?<\/a|img\s+[^>]*?|video\s+[^>]*><\/video)>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
     allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
     return placeholder;
