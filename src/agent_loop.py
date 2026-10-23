@@ -14062,6 +14062,25 @@ def _strip_agent_injected_messages(messages: List[Dict]) -> List[Dict]:
     return stripped
 
 
+def _build_personal_rag_directive(hits: List[Dict[str, Any]], min_similarity: float = 0.35,
+                                  max_hits: int = 3, max_chars: int = 4000) -> Optional[str]:
+    """Format personal-knowledge-base hits as an agent directive, or None if no hit qualifies."""
+    selected = [h for h in hits if float(h.get("similarity", 0) or 0) >= min_similarity][:max_hits]
+    if not selected:
+        return None
+    parts = []
+    for h in selected:
+        fname = (h.get("metadata") or {}).get("filename", "unbekannt")
+        parts.append("[" + str(fname) + "]\n" + str(h.get("document", ""))[:1500])
+    rag_text = "\n\n---\n\n".join(parts)[:max_chars]
+    return (
+        "\n\n[Wissensbasis, relevante Auszüge]\n"
+        "Beantworte die Frage ausschließlich aus diesen Auszügen. Nenne den Dateinamen. "
+        "Schreibe 'nicht im Text', wenn die Auszüge die Frage nicht beantworten.\n\n"
+        + rag_text
+    )
+
+
 def _prepend_agent_directive(messages: List[Dict], directive: str) -> List[Dict]:
     """Attach a route-independent directive to the generated agent prompt."""
 
@@ -24415,6 +24434,21 @@ async def stream_agent_loop(
                 route_messages,
                 f"The user's terse links/sources follow-up refers to this public web topic: {_link_topic}. Call web_search for that topic.",
             )
+        # Wissensbasis (personal docs) in den Agent-Prompt einfügen.
+        # Der Chat-Prozessor macht das bereits; dieser Pfad hat es nicht.
+        try:
+            if _last_user and str(_last_user).strip() and not guide_only and not plan_mode:
+                from src.rag_manager import RAGManager
+                _rag_hits = RAGManager().search(str(_last_user), k=5, owner=owner) or []
+                _rag_directive = _build_personal_rag_directive(_rag_hits)
+                if _rag_directive:
+                    for _m in reversed(route_messages):
+                        if _m.get("role") == "user" and isinstance(_m.get("content"), str):
+                            _m["content"] = _m["content"] + "\n\n" + _rag_directive
+                            break
+                    logger.info("[agent-rag] %d Treffer in den Prompt eingefügt", min(len(_rag_hits), 3))
+        except Exception as _rag_err:
+            logger.warning("[agent-rag] Wissensbasis-Suche fehlgeschlagen: %s", _rag_err)
         if _contextual_weather_status_followup and not guide_only:
             _prepend_agent_directive(
                 route_messages,
