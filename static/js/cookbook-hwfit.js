@@ -1603,8 +1603,12 @@ function _syncHostFromScanDropdown() {
   if (!ss || ss.value == null) return _envState.remoteHost || '';
   let host = '';
   if (ss.value === 'local') {
+    const local = _serverByVal('local');
     _envState.remoteHost = '';
     _envState.remoteServerKey = '';
+    _envState.env = local?.env || 'none';
+    _envState.envPath = local?.envPath || '';
+    _envState.platform = local?.platform || _envState.hostPlatform || '';
   } else {
     const s = _serverByVal(ss.value);
     if (s) {
@@ -2428,8 +2432,12 @@ export function _hwfitInit() {
     // dropdown still showed odysseus. The user's selection must only change via
     // an explicit dropdown pick. Here we just refresh env/path if we can match
     // the current host; otherwise leave remoteHost untouched.
-    const sel = _serverByVal(_envState.remoteServerKey || _envState.remoteHost);
-    if (sel) { _envState.env = sel.env; _envState.envPath = sel.envPath; }
+    const sel = _serverByVal(_envState.remoteServerKey || _envState.remoteHost || 'local');
+    if (sel) {
+      _envState.env = sel.env || 'none';
+      _envState.envPath = sel.envPath || '';
+      _envState.platform = sel.platform || (!_envState.remoteHost ? (_envState.hostPlatform || '') : '');
+    }
     _persistEnvState();
   }
 
@@ -2606,8 +2614,23 @@ export function _hwfitInit() {
         // (inline — _applyServerSelection lives in cookbook.js and isn't imported here).
         const _dk = _envState.defaultServer;
         if (_dk) {
-          if (_dk === 'local') { _envState.remoteHost = ''; _envState.remoteServerKey = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
-          else { const _s = _serverByVal(_dk); if (_s) { _envState.remoteHost = _s.host; _envState.remoteServerKey = _serverKey(_s); _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
+          if (_dk === 'local') {
+            const _local = _serverByVal('local');
+            _envState.remoteHost = '';
+            _envState.remoteServerKey = '';
+            _envState.env = _local?.env || 'none';
+            _envState.envPath = _local?.envPath || '';
+            _envState.platform = _local?.platform || _envState.hostPlatform || '';
+          } else {
+            const _s = _serverByVal(_dk);
+            if (_s) {
+              _envState.remoteHost = _s.host;
+              _envState.remoteServerKey = _serverKey(_s);
+              _envState.env = _s.env || 'none';
+              _envState.envPath = _s.envPath || '';
+              _envState.platform = _s.platform || '';
+            }
+          }
           _persistEnvState();
           document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
             if (sel && sel.tagName === 'SELECT') sel.value = _currentServerValue();
@@ -2903,10 +2926,12 @@ export function _hwfitInit() {
     serverSelect.addEventListener('change', () => {
       const val = serverSelect.value;
       if (val === 'local') {
+        const local = _serverByVal('local');
         _envState.remoteHost = '';
         _envState.remoteServerKey = '';
-        _envState.env = 'none';
-        _envState.envPath = '';
+        _envState.env = local?.env || 'none';
+        _envState.envPath = local?.envPath || '';
+        _envState.platform = local?.platform || _envState.hostPlatform || '';
       } else {
         const s = _serverByVal(val);
         if (s) {
