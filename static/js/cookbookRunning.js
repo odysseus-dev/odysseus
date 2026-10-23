@@ -1292,8 +1292,12 @@ async function _stopTaskFromElement(el, task, { showFailure = true } = {}) {
   if (task.type === 'serve' && task.payload) {
     _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
   }
-  if (el) _animateOutThenRemove(el, task.sessionId);
-  else _removeTask(task.sessionId);
+  if (el) {
+    _disposeTaskCard(el);
+    _animateOutThenRemove(el, task.sessionId);
+  } else {
+    _removeTask(task.sessionId);
+  }
   return true;
 }
 
