@@ -192,6 +192,7 @@ def setup_webhook_routes(
         "groq": "https://api.groq.com/openai/v1",
         "together": "https://api.together.xyz/v1",
         "openrouter": "https://openrouter.ai/api/v1",
+        "orcarouter": "https://api.orcarouter.ai/v1",
         "ollama": "https://ollama.com/api",
         "opencode-zen": "https://opencode.ai/zen/v1",
         "opencode-go": "https://opencode.ai/zen/go/v1",

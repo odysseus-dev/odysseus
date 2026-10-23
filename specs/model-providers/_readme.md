@@ -36,6 +36,7 @@ Current reader dispatch does not infer a provider from payload shape. It uses an
 - [openai.md](openai.md): identity-only Models API plus Chat/Responses dialects.
 - [openai-compatible.md](openai-compatible.md): generic compatible catalog and runtime dialect boundaries.
 - [openrouter.md](openrouter.md): rich architecture, modalities, parameters, and limits.
+- [orcarouter.md](orcarouter.md): rich architecture, modalities, parameters, and limits.
 - [google.md](google.md): native paginated Gemini Models API and GenerateContent.
 - [ollama.md](ollama.md): `/api/tags`, `/api/show`, native chat, and OpenAI compatibility.
 - [lm-studio.md](lm-studio.md): native v1 catalog/chat, explicit v0 compatibility, and OpenAI compatibility.
