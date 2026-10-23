@@ -1,14 +1,17 @@
 """Gallery routes — browsable library for photos and AI-generated images."""
 
 import os
+import asyncio
 import base64
+import gc
 import hashlib
 import io
 import logging
 import re
+import time
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -34,6 +37,241 @@ _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
 
 
+def _rss_mb() -> float:
+    """Current process RSS in MB (from /proc; -1.0 when unavailable)."""
+    try:
+        with open("/proc/self/status", "r") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024.0, 1)
+    except Exception:
+        pass
+    return -1.0
+
+
+def _image_op_log_rss(op: str, phase: str) -> None:
+    logger.info("image-op %s %s rss_mb=%.1f", op, phase, _rss_mb())
+
+
+def _local_image_models_enabled() -> bool:
+    """Whether GB-scale local image models may be loaded IN-PROCESS.
+
+    Default OFF: loading rembg/SAM/OWL-ViT/Real-ESRGAN in the web process
+    routinely OOM-kills memory-constrained hosts. Enable with
+    ``ODYSSEUS_ALLOW_LOCAL_IMAGE_MODELS=1`` or point ``ODYSSEUS_IMAGE_OPS_BASE``
+    at a remote service that implements the same ``/api/image/*`` endpoints.
+    """
+    return os.getenv("ODYSSEUS_ALLOW_LOCAL_IMAGE_MODELS", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _remote_image_ops_base() -> str:
+    return (os.getenv("ODYSSEUS_IMAGE_OPS_BASE", "") or "").strip().rstrip("/")
+
+
+def _outpaint_timeout() -> float:
+    """Provider timeout for the outpaint/extend proxy.
+
+    Tall extensions can take up to ~330 s (the provider's own timeout is
+    900 s), so the proxy waits 900 s by default — otherwise a long extend is
+    cut off at the proxy. Override with ``ODYSSEUS_IMAGE_OUTPAINT_TIMEOUT``.
+    """
+    try:
+        return float(os.getenv("ODYSSEUS_IMAGE_OUTPAINT_TIMEOUT", "900") or 900)
+    except (TypeError, ValueError):
+        return 900.0
+
+
+def _unload_image_models() -> None:
+    """Drop lazily-loaded torch models so their RAM returns to the OS."""
+    if not _SAM_STATE and not _GROUNDING_STATE:
+        return
+    _SAM_STATE.clear()
+    _GROUNDING_STATE.clear()
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    gc.collect()
+    _image_op_log_rss("models", "unloaded")
+
+
+async def _route_heavy_image_op(path: str, body: dict, *, label: str):
+    """Proxy a heavy image op to the remote ops service when configured, else
+    run it in-process only when explicitly enabled.
+
+    Returns the remote JSON on success, or ``None`` to signal the caller should
+    run it in-process; raises HTTPException(503) with a clear message otherwise
+    so the app never loads a GB-scale model on a memory-constrained host.
+    """
+    base = _remote_image_ops_base()
+    if base:
+        _image_op_log_rss(label, f"proxy->{base}")
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=300) as client:
+                resp = await client.post(base + path, json=body)
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning("image-op %s remote %s -> %s", label, path, resp.status_code)
+            raise HTTPException(
+                503,
+                f"{label} is temporarily unavailable (remote service returned {resp.status_code}).",
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("image-op %s remote %s failed: %s", label, path, exc)
+            raise HTTPException(
+                503,
+                f"{label} is temporarily unavailable (remote service unreachable).",
+            ) from exc
+    if _local_image_models_enabled():
+        return None
+    raise HTTPException(503, f"{label} is temporarily unavailable on this server.")
+
+
+def _xywh_to_xyxy(bbox):
+    """Convert a remote image-ops [x, y, w, h] bbox to this app's [x1,y1,x2,y2]."""
+    try:
+        x, y, w, h = (float(v) for v in bbox)
+        return [int(x), int(y), int(x + w), int(y + h)]
+    except Exception:
+        return bbox
+
+
+async def _remote_remove_background(body: dict):
+    """Proxy background removal to the remote ops service (seneca contract).
+
+    Endpoint: POST {base}/v1/images/remove-background (multipart: image,
+    optional hint_mask, model, return_mask). Returns {"image": <b64 RGBA PNG>}
+    to match this route's local response shape, or None when the caller should
+    run in-process (local models explicitly enabled); raises 503 otherwise.
+    """
+    base = _remote_image_ops_base()
+    if not base:
+        if _local_image_models_enabled():
+            return None
+        raise HTTPException(503, "Background removal is temporarily unavailable on this server.")
+    img_bytes = _b64_bytes(body.get("image"))
+    hint_bytes = None
+    if body.get("hint_mask"):
+        hint_bytes = _b64_bytes(body.get("hint_mask"), label="hint_mask")
+    _image_op_log_rss("remove-bg", f"proxy->{base}")
+    try:
+        import httpx
+
+        files = {"image": ("image.png", img_bytes, "image/png")}
+        if hint_bytes:
+            files["hint_mask"] = ("hint.png", hint_bytes, "image/png")
+        data = {"model": str(body.get("model") or ""), "return_mask": "true"}
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(base + "/v1/images/remove-background", files=files, data=data)
+        if resp.status_code == 200:
+            payload = resp.json()
+            items = payload.get("data") or []
+            if not items or not items[0].get("b64_json"):
+                raise HTTPException(503, "Background removal is temporarily unavailable (remote returned no image).")
+            out = {"image": items[0]["b64_json"]}
+            if items[0].get("mask_b64"):
+                out["mask"] = items[0]["mask_b64"]
+            if items[0].get("bbox"):
+                out["bbox"] = items[0]["bbox"]
+            return out
+        raise HTTPException(
+            503, f"Background removal is temporarily unavailable (remote service returned {resp.status_code})."
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("image-op remove-bg remote failed: %s", exc)
+        raise HTTPException(503, "Background removal is temporarily unavailable (remote service unreachable).") from exc
+
+
+async def _remote_smart_mask(body: dict):
+    """Proxy SAM/grounding masking to the remote ops service (seneca contract).
+
+    Endpoint: POST {base}/v1/images/mask (multipart: image + one of prompt/box/
+    points). Returns {"mask": <b64 L PNG>, "bbox": [...], "model", "device"} to
+    match this route's local response shape, or None when the caller should run
+    in-process; raises 503 otherwise.
+    """
+    base = _remote_image_ops_base()
+    if not base:
+        if _local_image_models_enabled():
+            return None
+        raise HTTPException(503, "Smart mask is temporarily unavailable on this server.")
+    img_bytes = _b64_bytes(body.get("image"))
+    points = body.get("points") or []
+    box = body.get("box")
+    text = (body.get("text") or body.get("query") or "").strip()
+    if not points and not box and not text:
+        raise HTTPException(400, "Provide at least one point, box, or object text")
+    _image_op_log_rss("mask", f"proxy->{base}")
+    try:
+        import httpx
+
+        data: Dict[str, Any] = {}
+        if text:
+            data["prompt"] = text
+        if box:
+            try:
+                x1, y1, x2, y2 = (float(v) for v in box)
+                data["box"] = ",".join(str(int(v)) for v in (x1, y1, x2 - x1, y2 - y1))
+            except Exception as exc:
+                raise HTTPException(400, "Box must be [x1, y1, x2, y2]") from exc
+        if points:
+            import json as _json
+
+            data["points"] = _json.dumps(
+                [[float(p["x"]), float(p["y"]), int(p.get("label", 1))] for p in points]
+            )
+        if body.get("multimask") is not None:
+            data["multimask"] = str(bool(body.get("multimask"))).lower()
+        if body.get("dilate_px") is not None:
+            data["dilate_px"] = str(int(body.get("dilate_px")))
+        files = {"image": ("image.png", img_bytes, "image/png")}
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(base + "/v1/images/mask", files=files, data=data)
+        if resp.status_code == 200:
+            payload = resp.json()
+            masks = payload.get("masks") or []
+            candidates = [m for m in masks if m.get("b64_json")]
+            if not candidates:
+                # Empty selection is a normal 200 outcome (never a 400): the
+                # editor shows a "nothing selected" message and changes nothing.
+                return {
+                    "mask": None,
+                    "bbox": None,
+                    "masks": [],
+                    "model": payload.get("model") or "sam+grounding",
+                    "device": payload.get("device", ""),
+                    "error": "Nothing selected for that selection.",
+                }
+            best = max(candidates, key=lambda m: float(m.get("score") or 0.0))
+            return {
+                "mask": best["b64_json"],
+                "bbox": _xywh_to_xyxy(best.get("bbox")),
+                "label": best.get("label"),
+                "masks": masks,
+                "model": payload.get("model") or "sam+grounding",
+                "device": payload.get("device", ""),
+            }
+        raise HTTPException(
+            503, f"Smart mask is temporarily unavailable (remote service returned {resp.status_code})."
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("image-op mask remote failed: %s", exc)
+        raise HTTPException(503, "Smart mask is temporarily unavailable (remote service unreachable).") from exc
+
+
 def _b64_to_pil_image(image_b64: str, *, mode: str = "RGBA"):
     if not image_b64:
         raise HTTPException(400, "Missing image")
@@ -50,10 +288,77 @@ def _b64_to_pil_image(image_b64: str, *, mode: str = "RGBA"):
         raise HTTPException(400, "Invalid image") from exc
 
 
+def _b64_bytes(value: str, *, label: str = "image") -> bytes:
+    """Decode raw base64 OR a ``data:image/...;base64,`` URL to bytes.
+
+    The image-edit tools post data URLs, while the browser posts raw base64,
+    so every decode site must accept both.
+    """
+    if not value:
+        raise HTTPException(400, f"Missing {label}")
+    text = str(value)
+    if "," in text and text.split(",", 1)[0].startswith("data:"):
+        text = text.split(",", 1)[1]
+    try:
+        return base64.b64decode(text)
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid {label}") from exc
+
+
 def _pil_image_to_b64(img, *, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
     img.save(buf, format=fmt)
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _prepare_local_edit(src_b64, mask_b64, max_side):
+    """Decode/normalize/cap an edit's inputs to PNG bytes at a model-friendly size.
+
+    CPU-bound (a 4000x3000 decode+resize is ~0.2 s); run it via a thread off the
+    event loop. Returns (source_png_bytes, mask_png_bytes, model_w, model_h, orig_size).
+    """
+    from PIL import Image
+
+    img_bytes = _b64_bytes(src_b64)
+    source_png = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+    if mask_b64:
+        mask_bytes = _b64_bytes(mask_b64, label="mask")
+        mask_png = Image.open(io.BytesIO(mask_bytes)).convert("L")
+    else:
+        mask_png = Image.new("L", source_png.size, 255)
+    orig_size = source_png.size
+    if max(orig_size) > max_side:
+        scale = float(max_side) / max(orig_size)
+        model_w = max(16, int(round(orig_size[0] * scale / 16.0)) * 16)
+        model_h = max(16, int(round(orig_size[1] * scale / 16.0)) * 16)
+    else:
+        model_w, model_h = orig_size
+    if (model_w, model_h) != orig_size:
+        source_work = source_png.resize((model_w, model_h), Image.LANCZOS)
+        mask_work = mask_png.resize((model_w, model_h), Image.LANCZOS)
+    else:
+        source_work, mask_work = source_png, mask_png
+    src_buf = io.BytesIO()
+    source_work.save(src_buf, format="PNG")
+    mask_buf = io.BytesIO()
+    mask_work.save(mask_buf, format="PNG")
+    return src_buf.getvalue(), mask_buf.getvalue(), model_w, model_h, orig_size
+
+
+def _restore_local_b64(raw_b64, orig_size, model_size):
+    """Resize a provider result b64 back to the original dimensions (CPU-bound)."""
+    if tuple(model_size) == tuple(orig_size):
+        return raw_b64
+    from PIL import Image
+
+    try:
+        im = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
+        im = im.resize(tuple(orig_size), Image.LANCZOS)
+        ob = io.BytesIO()
+        im.save(ob, format="PNG")
+        return base64.b64encode(ob.getvalue()).decode("ascii")
+    except Exception:
+        return raw_b64
 
 
 def _load_sam_backend():
@@ -301,7 +606,61 @@ def _first_visible_image_endpoint(db, owner: str | None):
         for ep in endpoints:
             if getattr(ep, "owner", None) == owner:
                 return ep
-    return endpoints[0] if endpoints else None
+    if endpoints:
+        return endpoints[0]
+    # Fallback: the image model may live on a *mixed* endpoint (model_type !=
+    # "image"), e.g. qwen-image-edit / gpt-image-1 on a shared OpenAI-compatible
+    # gateway or a diffusion server registered as "chat". Chat image generation
+    # already resolves its model by name across every enabled endpoint, so the
+    # editor must find the same model here instead of reporting "no endpoint".
+    return _first_mixed_image_endpoint(db, owner)
+
+
+def _first_mixed_image_endpoint(db, owner: str | None):
+    """Best-effort image endpoint when no image-only endpoint is registered.
+
+    Returns an enabled, owner-visible endpoint whose configured model list
+    includes an image-generation model, preferring the admin's configured
+    ``image_model`` when it is one of them.
+    """
+    import json
+    from src.auth_helpers import owner_filter
+    from src.image_model_ids import looks_like_image_generation_model
+
+    preferred = ""
+    try:
+        from src.settings import load_settings
+        preferred = str((load_settings() or {}).get("image_model") or "").strip()
+    except Exception:
+        preferred = ""
+
+    query = owner_filter(
+        db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True),  # noqa: E712
+        ModelEndpoint,
+        owner,
+    )
+    fallback = None
+    for ep in query.all():
+        if getattr(ep, "model_type", None) == "image":
+            continue
+        models = set()
+        for field in ("cached_models", "pinned_models"):
+            try:
+                values = getattr(ep, field, None) or []
+                values = json.loads(values) if isinstance(values, str) else values
+                models.update(v for v in values if isinstance(v, str))
+            except (TypeError, ValueError):
+                pass
+        matches = {m for m in models if looks_like_image_generation_model(m)}
+        if not matches:
+            continue
+        if preferred and preferred in matches:
+            return ep
+        if owner and getattr(ep, "owner", None) == owner:
+            return ep
+        if fallback is None:
+            fallback = ep
+    return fallback
 
 
 def _visible_image_endpoint_for_base(db, base: str, owner: str | None, model: str = ""):
@@ -358,6 +717,92 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
         if ir.status_code == 200:
             return base64.b64encode(ir.content).decode()
     return None
+
+
+def _resolve_image_op_endpoint(db, owner, requested_base: str, chosen_model: str = "") -> Tuple[str, Optional[str]]:
+    """Resolve the provider base (with /v1) + api_key for a self-hosted image op.
+
+    Mirrors inpaint_proxy: a client-supplied base must map to a registered,
+    owner-visible image endpoint (no direct use of request-body URLs).
+    """
+    if requested_base:
+        ep = _visible_image_endpoint_for_base(db, requested_base, owner, chosen_model)
+        if not ep:
+            raise HTTPException(403, "Choose a registered image endpoint")
+    else:
+        ep = _first_visible_image_endpoint(db, owner)
+        if not ep:
+            raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
+    base = ep.base_url.rstrip("/")
+    if not base.endswith("/v1"):
+        base += "/v1"
+    return base, ep.api_key
+
+
+async def _forward_seneca_image_op(
+    base: str,
+    api_key: Optional[str],
+    provider_path: str,
+    image_bytes: bytes,
+    fields: Dict[str, str],
+    *,
+    label: str,
+    timeout: float = 300.0,
+) -> Dict[str, Any]:
+    """POST a single-image multipart op to the provider and return ``{image}``.
+
+    The provider returns OpenAI-style ``{data:[{b64_json|url}]}`` or a raw
+    ``{image}``. ``request_id`` in ``fields`` keys the provider's progress route.
+    """
+    import httpx
+
+    url = base.rstrip("/") + provider_path
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    files = {"image": ("source.png", image_bytes, "image/png")}
+    _t0 = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(url, data=fields, files=files, headers=headers)
+        _provider_ms = (time.perf_counter() - _t0) * 1000.0
+    except httpx.TimeoutException:
+        raise HTTPException(504, f"{label} timed out ({int(timeout)}s)")
+    except Exception as exc:
+        logger.warning("%s provider call failed: %s", label, exc)
+        raise HTTPException(503, f"{label} is temporarily unavailable (remote service unreachable).")
+    if r.status_code != 200:
+        logger.warning("%s provider status %s", label, r.status_code)
+        detail = f"{label} failed"
+        try:
+            j = r.json()
+            if isinstance(j, dict) and (j.get("error") or j.get("detail")):
+                detail = str(j.get("error") or j.get("detail"))[:200]
+        except Exception:
+            pass
+        raise HTTPException(r.status_code if r.status_code in (400, 404, 422) else 502, detail)
+    result = r.json()
+    raw_b64: Optional[str] = None
+    used_model = ""
+    if isinstance(result, dict):
+        used_model = str(result.get("model") or "")
+        data = result.get("data")
+        if isinstance(data, list) and data:
+            item = data[0] or {}
+            raw_b64 = item.get("b64_json") or None
+            if not raw_b64 and item.get("url"):
+                raw_b64 = await _fetch_result_image_b64(item["url"])
+        if not raw_b64 and result.get("image"):
+            raw_b64 = result["image"]
+    if not raw_b64:
+        raise HTTPException(502, "Image endpoint returned no image")
+    logger.info(
+        "%s timing model_ms=%.1f total_ms=%.1f request_id=%s",
+        label, _provider_ms,
+        (time.perf_counter() - _t0) * 1000.0, fields.get("request_id") or "-",
+    )
+    payload: Dict[str, Any] = {"image": raw_b64}
+    if used_model:
+        payload["model"] = used_model
+    return payload
 
 
 def setup_gallery_routes() -> APIRouter:
@@ -602,7 +1047,7 @@ def setup_gallery_routes() -> APIRouter:
 
         # Use img2img endpoint if available, otherwise upscale via canvas on client
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(f"{base_url}/images/upscale", json={
                     "image": b64, "scale": scale,
                 })
@@ -645,7 +1090,7 @@ def setup_gallery_routes() -> APIRouter:
             base_url += "/v1"
 
         try:
-            async with httpx.AsyncClient(timeout=180) as client:
+            async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(f"{base_url}/images/generations", json={
                     "prompt": prompt,
                     "image": b64,
@@ -1291,6 +1736,10 @@ def setup_gallery_routes() -> APIRouter:
             if not ok:
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
+        # Optional client-supplied id so GET /api/image/edit-progress can poll the
+        # provider's step progress for this op. Ignored by providers that do not
+        # implement the progress contract.
+        progress_request_id = (body.get("request_id") or "").strip()
         api_key = None
         if not requested_base:
             db = SessionLocal()
@@ -1338,8 +1787,10 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(500, "Pillow not installed on server")
 
             try:
-                img_bytes = base64.b64decode(body["image"])
-                mask_bytes = base64.b64decode(body["mask"])
+                img_bytes = _b64_bytes(body.get("image"))
+                if not body.get("mask"):
+                    raise HTTPException(400, "A mask is required for OpenAI-compatible image edits")
+                mask_bytes = _b64_bytes(body.get("mask"), label="mask")
                 source_png = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
                 mask_png = Image.open(io.BytesIO(mask_bytes)).convert("L")  # luminance
                 # Build OpenAI mask: RGBA where alpha=255 means keep, 0 means regenerate.
@@ -1390,7 +1841,11 @@ def setup_gallery_routes() -> APIRouter:
             }
             headers = {"Authorization": f"Bearer {api_key}"}
             try:
-                async with httpx.AsyncClient(timeout=120) as client:
+                logger.debug(
+                    "inpaint_proxy provider edit -> prompt=%r model=%r size=%r base=%s",
+                    body.get("prompt", ""), oa_model, size, base,
+                )
+                async with httpx.AsyncClient(timeout=300) as client:
                     if is_openrouter:
                         # Reference-based editing, then composite locally so
                         # pixels outside the user's mask remain unchanged.
@@ -1410,7 +1865,16 @@ def setup_gallery_routes() -> APIRouter:
                         r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
                         logger.error("inpaint_proxy OpenAI edit: status %s", r.status_code)
-                        raise HTTPException(r.status_code, "OpenAI edit failed")
+                        _detail = "OpenAI edit failed"
+                        try:
+                            _j = r.json()
+                            if isinstance(_j, dict):
+                                _detail = _j.get("error") or _j.get("detail") or _detail
+                                if isinstance(_detail, dict):
+                                    _detail = _detail.get("message") or _detail
+                        except Exception:
+                            pass
+                        raise HTTPException(r.status_code, f"{_detail} (provider HTTP {r.status_code})")
                     result = r.json()
                     raw_b64 = None
                     if result.get("data"):
@@ -1441,13 +1905,16 @@ def setup_gallery_routes() -> APIRouter:
                         blended = Image.composite(generated, source_png, mask_png)
                         out_buf = io.BytesIO()
                         blended.save(out_buf, format="PNG")
-                        return {"image": base64.b64encode(out_buf.getvalue()).decode()}
+                        return {"image": base64.b64encode(out_buf.getvalue()).decode(), "model": oa_model}
                     except Exception as comp_err:
                         # Never return a full-image edit when masking fails.
                         logger.warning(f"Inpaint compose failed: {comp_err}")
                         raise HTTPException(502, "Could not apply the edit within the selected region")
             except httpx.TimeoutException:
-                raise HTTPException(504, "OpenAI inpaint timed out (120s)")
+                raise HTTPException(504, "OpenAI inpaint timed out (300s)")
+            except httpx.TransportError as exc:
+                logger.warning("inpaint_proxy: OpenAI endpoint unreachable: %s", exc)
+                raise HTTPException(502, f"Image server unreachable ({base}): {type(exc).__name__}")
 
         # Self-hosted diffusion server path. Newer Odysseus image
         # wrappers expose the OpenAI-compatible /v1/images/edits
@@ -1459,45 +1926,96 @@ def setup_gallery_routes() -> APIRouter:
             # supports multiple models per process. Harmless if ignored.
             if chosen_model:
                 body["model"] = chosen_model
-            async with httpx.AsyncClient(timeout=240) as client:
+            async with httpx.AsyncClient(timeout=300) as client:
+                _t0 = time.perf_counter()
+                _restore_ms = [0.0]
                 try:
                     import base64, io
                     from PIL import Image
 
-                    img_bytes = base64.b64decode(body["image"])
-                    mask_bytes = base64.b64decode(body["mask"])
-                    # Normalize both inputs to PNG bytes. Local MLX and
-                    # Diffusers wrappers expect white mask pixels to mean
-                    # "edit this region", which matches the editor's mask.
-                    source_png = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-                    mask_png = Image.open(io.BytesIO(mask_bytes)).convert("L")
-                    src_buf = io.BytesIO()
-                    source_png.save(src_buf, format="PNG")
-                    mask_buf = io.BytesIO()
-                    mask_png.save(mask_buf, format="PNG")
+                    # Decode/resize/encode off the event loop: a 4000x3000 input
+                    # costs ~0.2 s of CPU that would otherwise block every other
+                    # request (and stack under concurrent edits).
+                    _max_side = int(os.getenv("ODYSSEUS_IMAGE_EDIT_MAX_SIDE", "768") or 768)
+                    _src_png, _mask_png, _model_w, _model_h, _orig_size = await asyncio.to_thread(
+                        _prepare_local_edit, body.get("image"), body.get("mask"), _max_side
+                    )
                     files = {
-                        "image": ("source.png", src_buf.getvalue(), "image/png"),
-                        "mask": ("mask.png", mask_buf.getvalue(), "image/png"),
+                        "image": ("source.png", _src_png, "image/png"),
+                        "mask": ("mask.png", _mask_png, "image/png"),
                     }
                     data = {
                         "model": chosen_model or body.get("model") or "",
                         "prompt": body.get("prompt", ""),
-                        "size": f"{int(body.get('width') or source_png.width)}x{int(body.get('height') or source_png.height)}",
+                        "size": f"{_model_w}x{_model_h}",
                         "n": "1",
                     }
+                    if progress_request_id:
+                        data["request_id"] = progress_request_id
+                    # Let the caller's step budget through up to a cap (quality
+                    # edits such as removal/background-replacement/expand pass 8
+                    # on purpose); only fall back to a moderate default when no
+                    # count is requested. The size cap above is what keeps the
+                    # op responsive.
+                    _max_steps = int(os.getenv("ODYSSEUS_IMAGE_EDIT_MAX_STEPS", "8") or 8)
+                    if body.get("steps"):
+                        try:
+                            data["steps"] = str(min(max(1, int(body["steps"])), _max_steps))
+                        except (TypeError, ValueError):
+                            data["steps"] = "4"
+                    else:
+                        data["steps"] = "4"
+
+                    async def _restore_b64(_raw: str) -> str:
+                        """Resize a provider PNG b64 back to the original size (off-loop)."""
+                        if (_model_w, _model_h) == _orig_size:
+                            return _raw
+                        _rs = time.perf_counter()
+                        try:
+                            return await asyncio.to_thread(
+                                _restore_local_b64, _raw, _orig_size, (_model_w, _model_h)
+                            )
+                        finally:
+                            _restore_ms[0] += (time.perf_counter() - _rs) * 1000.0
+                    logger.debug(
+                        "inpaint_proxy self-hosted /images/edits -> prompt=%r model=%r "
+                        "size=%r steps=%r endpoint=%s",
+                        data.get("prompt"), data.get("model"), data.get("size"),
+                        data.get("steps"), base,
+                    )
+                    _prep_ms = (time.perf_counter() - _t0) * 1000.0
+
+                    def _finish(_payload: Dict[str, Any]) -> Dict[str, Any]:
+                        # model_ms is the provider round-trip (its own queue +
+                        # diffusion time); prep_ms is our decode/resize; restore_ms
+                        # is resizing the result back. total_ms is the whole op.
+                        logger.info(
+                            "inpaint-proxy timing prep_ms=%.1f model_ms=%.1f restore_ms=%.1f "
+                            "total_ms=%.1f size=%s steps=%s model=%s request_id=%s",
+                            _prep_ms, _provider_ms[0], _restore_ms[0],
+                            (time.perf_counter() - _t0) * 1000.0,
+                            data.get("size"), data.get("steps"), data.get("model"),
+                            progress_request_id or "-",
+                        )
+                        return _payload
+
+                    _t_post = time.perf_counter()
                     r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), data=data, files=files)
+                    _provider_ms = [(time.perf_counter() - _t_post) * 1000.0]
                     if r.status_code == 200:
                         result = r.json()
+                        _used_model = result.get("model") if isinstance(result, dict) else None
+                        _used_model = _used_model or data.get("model") or ""
                         if isinstance(result, dict) and result.get("data"):
                             item = result["data"][0]
                             if item.get("b64_json"):
-                                return {"image": item["b64_json"]}
+                                return _finish({"image": await _restore_b64(item["b64_json"]), "model": _used_model})
                             if item.get("url"):
                                 raw_b64 = await _fetch_result_image_b64(item["url"])
                                 if raw_b64:
-                                    return {"image": raw_b64}
+                                    return _finish({"image": await _restore_b64(raw_b64), "model": _used_model})
                         if isinstance(result, dict) and result.get("image"):
-                            return {"image": result["image"]}
+                            return _finish({"image": await _restore_b64(result["image"]), "model": _used_model})
                         raise HTTPException(502, "Image edit endpoint returned no image")
                     if r.status_code not in (404, 405):
                         logger.warning("inpaint_proxy self-hosted edits: status %s", r.status_code)
@@ -1528,15 +2046,157 @@ def setup_gallery_routes() -> APIRouter:
                 r = await client.post(_join_checked_gallery_endpoint(base, "/images/inpaint"), json=body)
                 if r.status_code != 200:
                     logger.error("inpaint_proxy diffusion: status %s", r.status_code)
-                    raise HTTPException(r.status_code, "Inpaint request failed")
+                    detail = "Inpaint request failed"
+                    try:
+                        j = r.json()
+                        if isinstance(j, dict):
+                            detail = j.get("detail") or j.get("error") or detail
+                    except Exception:
+                        pass
+                    raise HTTPException(r.status_code, f"{detail} (provider HTTP {r.status_code})")
                 return r.json()
         except httpx.TimeoutException:
             raise HTTPException(504, "Inpaint request timed out (240s)")
+        except httpx.TransportError as exc:
+            logger.warning("inpaint_proxy: image endpoint unreachable: %s", exc)
+            raise HTTPException(502, f"Image server unreachable ({base}): {type(exc).__name__}")
         except HTTPException:
             raise
         except Exception:
             logger.exception("inpaint_proxy: request failed")
             raise HTTPException(502, "Inpaint request failed")
+
+    async def _resolve_and_decode(body: Dict[str, Any], user):
+        """Shared prep for the seneca single-image ops: validate endpoint + decode.
+
+        Returns (base, api_key, image_bytes, chosen_model). The base64 decode
+        runs off the event loop (large images).
+        """
+        requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
+        if requested_base:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                requested_base,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
+        chosen_model = (body.pop("_model", "") or "").strip()
+        db = SessionLocal()
+        try:
+            base, api_key = _resolve_image_op_endpoint(db, user, requested_base, chosen_model)
+        finally:
+            db.close()
+        image_bytes = await asyncio.to_thread(_b64_bytes, body.get("image"))
+        return base, api_key, image_bytes, chosen_model
+
+    @router.post("/api/image/replace-background")
+    async def replace_background(request: Request):
+        """Proxy seneca's subject-mask background replacement (~/v1/images/replace-background)."""
+        user = require_privilege(request, "can_generate_images")
+        body = await request.json()
+        base, api_key, image_bytes, chosen_model = await _resolve_and_decode(body, user)
+        fields: Dict[str, str] = {
+            "prompt": str(body.get("prompt") or ""),
+            "steps": str(body.get("steps") or 4),
+        }
+        if body.get("request_id"):
+            fields["request_id"] = str(body["request_id"]).strip()
+        if body.get("harmonise") is not None:
+            fields["harmonise"] = "true" if body.get("harmonise") else "false"
+        if body.get("shadow") is not None:
+            fields["shadow"] = "true" if body.get("shadow") else "false"
+        if chosen_model:
+            fields["model"] = chosen_model
+        return await _forward_seneca_image_op(
+            base, api_key, "/images/replace-background", image_bytes, fields,
+            label="replace-background",
+        )
+
+    @router.post("/api/image/outpaint")
+    async def outpaint(request: Request):
+        """Proxy seneca's canvas outpaint/extend (~/v1/images/outpaint, alias /extend)."""
+        user = require_privilege(request, "can_generate_images")
+        body = await request.json()
+        base, api_key, image_bytes, chosen_model = await _resolve_and_decode(body, user)
+        fields: Dict[str, str] = {
+            "prompt": str(body.get("prompt") or ""),
+            "steps": str(body.get("steps") or 4),
+        }
+        for key in ("ratio", "size", "context"):
+            if body.get(key) is not None and str(body.get(key)) != "":
+                fields[key] = str(body[key])
+        if body.get("request_id"):
+            fields["request_id"] = str(body["request_id"]).strip()
+        if chosen_model:
+            fields["model"] = chosen_model
+        return await _forward_seneca_image_op(
+            base, api_key, "/images/outpaint", image_bytes, fields,
+            label="outpaint", timeout=_outpaint_timeout(),
+        )
+
+    @router.post("/api/image/extend")
+    async def outpaint_extend(request: Request):
+        """Alias of /api/image/outpaint (the provider exposes /outpaint as /extend too)."""
+        return await outpaint(request)
+
+    @router.get("/api/image/edit-progress")
+    async def edit_progress(request: Request):
+        """Poll a running image edit's provider-side step progress.
+
+        Contract v1 (image-op progress): the provider exposes
+        ``GET /v1/images/progress/{request_id}`` -> ``{stage, step, steps,
+        eta_s, progress}``. This proxy resolves the configured image endpoint
+        (owner-scoped) and returns that JSON, or ``{"available": false}`` when
+        the provider has no progress route yet, so the client can keep an
+        indeterminate bar without breaking.
+        """
+        import httpx
+        user = require_privilege(request, "can_generate_images")
+        request_id = (request.query_params.get("request_id") or "").strip()
+        if not request_id:
+            raise HTTPException(400, "Missing request_id")
+        # request_id is spliced into the outbound URL, so it must be a safe token
+        # (no path separators/host chars). The base itself is a DB-validated row.
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", request_id):
+            raise HTTPException(400, "Invalid request_id")
+        requested_base = (request.query_params.get("base") or "").strip().rstrip("/")
+        endpoint_id = (request.query_params.get("endpoint_id") or "").strip()
+        db = SessionLocal()
+        try:
+            ep = None
+            if endpoint_id:
+                ep = owner_filter(
+                    db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id),
+                    ModelEndpoint, user,
+                ).first()
+            if ep is None and requested_base:
+                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+            if ep is None:
+                ep = _first_visible_image_endpoint(db, user)
+            if ep is None:
+                return {"available": False, "reason": "no image endpoint configured"}
+            base = ep.base_url.rstrip("/")
+        finally:
+            db.close()
+        if not base.endswith("/v1"):
+            base += "/v1"
+        # Dynamic path segment (validated token above), so not routed through
+        # _join_checked_gallery_endpoint's exact-match whitelist.
+        url = f"{base}/images/progress/{request_id}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(url)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, dict):
+                    data.setdefault("available", True)
+                    return data
+                return {"available": True, "progress": data}
+            return {"available": False, "status": r.status_code}
+        except Exception as exc:
+            logger.debug("edit-progress poll failed: %s", exc)
+            return {"available": False, "reason": "provider unreachable"}
 
     # ---- POST /api/image/harmonize — proper img2img call ----
     # Earlier version routed through inpaint with a full-white mask, but
@@ -1689,10 +2349,10 @@ def setup_gallery_routes() -> APIRouter:
             headers["Authorization"] = f"Bearer {api_key}"
 
         last_err = None
-        # Cold-start SDXL inpaint can take 60-90s on first request (loading
-        # weights to GPU). 240s gives headroom for both that and a full
-        # 1024×1024 inference pass on slower setups.
-        async with httpx.AsyncClient(timeout=240) as client:
+        # Cold-start image servers can take 90-110s for a full pass (and
+        # 60-90s more on first request while weights load to GPU). 300s gives
+        # headroom for both on slower setups.
+        async with httpx.AsyncClient(timeout=300) as client:
             for path, kind, payload in candidates:
                 _effective_base = base_root if path.startswith("/sdapi") else base
                 target = _join_checked_gallery_endpoint(_effective_base, path)
@@ -1755,7 +2415,7 @@ def setup_gallery_routes() -> APIRouter:
         from PIL import Image, ImageFilter
         import base64, io
 
-        img_bytes = base64.b64decode(image_b64)
+        img_bytes = _b64_bytes(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
         # Unsharp mask: radius=2, percent=amount*200, threshold=3
@@ -1776,6 +2436,9 @@ def setup_gallery_routes() -> APIRouter:
         image_b64 = body.get("image")
         if not image_b64:
             raise HTTPException(400, "No image provided")
+        _proxied = await _route_heavy_image_op("/api/image/denoise", body, label="AI denoise")
+        if _proxied is not None:
+            return _proxied
         try:
             strength = float(body.get("strength", 0.5))
         except Exception:
@@ -1788,7 +2451,7 @@ def setup_gallery_routes() -> APIRouter:
         except ImportError:
             raise HTTPException(500, "Server missing a required dependency")
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
-        img_bytes = base64.b64decode(image_b64)
+        img_bytes = _b64_bytes(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
             patch_realesrgan_torchvision_compat()
@@ -1827,6 +2490,9 @@ def setup_gallery_routes() -> APIRouter:
         image_b64 = body.get("image")
         if not image_b64:
             raise HTTPException(400, "No image provided")
+        _proxied = await _route_heavy_image_op("/api/image/upscale-local", body, label="AI upscale")
+        if _proxied is not None:
+            return _proxied
         try:
             scale = int(body.get("scale", 2))
         except Exception:
@@ -1838,7 +2504,7 @@ def setup_gallery_routes() -> APIRouter:
             import numpy as np
         except ImportError:
             raise HTTPException(500, "Server missing a required dependency")
-        img_bytes = base64.b64decode(image_b64)
+        img_bytes = _b64_bytes(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
             patch_realesrgan_torchvision_compat()
@@ -1865,6 +2531,68 @@ def setup_gallery_routes() -> APIRouter:
             logger.warning("AI upscale failed", exc_info=True)
             return {"error": "AI upscale failed"}
 
+    # ---- POST /api/image/generate ----
+    @router.post("/api/image/generate")
+    async def generate_image(request: Request):
+        """Text-to-image generation for the editor's Quick Edit 'Image' mode.
+
+        Generates a brand-new image from a prompt using the admin-configured
+        image model, returned as base64 so the client can drop it in as a layer.
+        """
+        import json as _json
+        user = require_privilege(request, "can_generate_images")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        prompt = str((body or {}).get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(400, "A prompt is required")
+        try:
+            width = int((body or {}).get("width") or 0)
+            height = int((body or {}).get("height") or 0)
+        except (TypeError, ValueError):
+            width = height = 0
+        if height > width:
+            size = "1024x1536"
+        elif width > height:
+            size = "1536x1024"
+        else:
+            size = "1024x1024"
+        try:
+            from src.ai_interaction import do_generate_image
+        except Exception:
+            raise HTTPException(502, "Image generation is unavailable")
+        content = _json.dumps({"prompt": prompt, "size": size})
+        result = await do_generate_image(content, owner=user, incognito=True)
+        if not isinstance(result, dict) or result.get("error"):
+            msg = (result.get("error") if isinstance(result, dict) else None) or "Image generation failed"
+            low = str(msg).lower()
+            # Plain-language status codes the editor maps to fixed messages:
+            #   503 -> generation is switched off on the server
+            #   502 -> the image server could not be reached (or failed)
+            if "disabled" in low or "switched off" in low or "not enabled" in low:
+                raise HTTPException(503, "Image generation is switched off on the server at the moment.")
+            if "timed out" in low or "timeout" in low:
+                raise HTTPException(504, f"Image server timed out: {msg}")
+            if "connection" in low or "connect" in low or "unreachable" in low:
+                raise HTTPException(502, f"Image server unreachable: {msg}")
+            # A configured image model that cannot be resolved means its endpoint
+            # did not answer, i.e. the image server is down, not a bad prompt.
+            if "no endpoint found with image model" in low:
+                raise HTTPException(502, f"Image server unreachable: {msg}")
+            raise HTTPException(502, msg)
+        image_url = result.get("image_url") or ""
+        b64 = image_url.split(",", 1)[1] if image_url.startswith("data:") else image_url
+        if not b64:
+            raise HTTPException(502, "Image generation returned no image")
+        return {
+            "image": b64,
+            "prompt": prompt,
+            "model": result.get("image_model"),
+            "size": result.get("image_size") or size,
+        }
+
     # ---- POST /api/image/remove-bg ----
     @router.post("/api/image/mask")
     async def smart_mask(request: Request):
@@ -1876,6 +2604,9 @@ def setup_gallery_routes() -> APIRouter:
         """
         require_privilege(request, "can_generate_images")
         body = await request.json()
+        _proxied = await _remote_smart_mask(body)
+        if _proxied is not None:
+            return _proxied
         image = _b64_to_pil_image(body.get("image") or "", mode="RGB")
         points = body.get("points") or []
         box = body.get("box")
@@ -1889,6 +2620,7 @@ def setup_gallery_routes() -> APIRouter:
         if not points and not box:
             raise HTTPException(400, "Provide at least one point, box, or object text")
 
+        _image_op_log_rss("mask", "start")
         backend = _load_sam_backend()
         torch = backend["torch"]
         processor = backend["processor"]
@@ -1985,6 +2717,8 @@ def setup_gallery_routes() -> APIRouter:
             }
             if grounded:
                 result["grounding"] = grounded
+            _image_op_log_rss("mask", "end")
+            _unload_image_models()
             return result
         except HTTPException:
             raise
@@ -2010,11 +2744,14 @@ def setup_gallery_routes() -> APIRouter:
         body = await request.json()
         image_b64 = body.get("image")
         hint_b64 = body.get("hint_mask")
+        _proxied = await _remote_remove_background(body)
+        if _proxied is not None:
+            return _proxied
 
         from PIL import Image
         import base64, io
 
-        img_bytes = base64.b64decode(image_b64)
+        img_bytes = _b64_bytes(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
         W, H = img.size
 
@@ -2022,7 +2759,7 @@ def setup_gallery_routes() -> APIRouter:
         bbox = None
         if hint_b64:
             try:
-                hint_bytes = base64.b64decode(hint_b64)
+                hint_bytes = _b64_bytes(hint_b64, label="hint_mask")
                 hint = Image.open(io.BytesIO(hint_bytes)).convert("L")
                 # Resize the hint to match if dimensions disagree
                 if hint.size != img.size:
@@ -2046,6 +2783,7 @@ def setup_gallery_routes() -> APIRouter:
         else:
             crop = img
 
+        _image_op_log_rss("remove-bg", "start")
         try:
             from rembg import remove
             from starlette.concurrency import run_in_threadpool
@@ -2061,6 +2799,9 @@ def setup_gallery_routes() -> APIRouter:
                 cut = tmp
             except Exception:
                 return {"error": "No background removal model available. Install rembg: pip install rembg"}
+        finally:
+            _image_op_log_rss("remove-bg", "end")
+            _unload_image_models()
 
         # Compose the cropped result back into a full-size transparent canvas.
         if bbox:
@@ -2100,11 +2841,13 @@ def setup_gallery_routes() -> APIRouter:
         from PIL import Image, ImageFilter, ImageEnhance
         import numpy as np
 
-        img_bytes = base64.b64decode(image_b64)
+        img_bytes = _b64_bytes(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
         # Try GFPGAN first (AI face restoration)
         try:
+            if not _local_image_models_enabled():
+                raise ImportError("local image models disabled")
             from gfpgan import GFPGANer
             import cv2
 

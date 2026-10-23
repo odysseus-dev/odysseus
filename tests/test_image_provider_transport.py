@@ -33,6 +33,38 @@ def test_native_generation_respects_admin_disable(monkeypatch):
     assert 'disabled' in result['error']
 
 
+@pytest.mark.parametrize('editing', [False, True])
+def test_incognito_images_never_write_gallery_or_files(image_transport, editing):
+    configure, source, requests, rows = image_transport
+    configure('https://openrouter.ai/api/v1')
+    if editing:
+        result = asyncio.run(ai_interaction.do_edit_image(
+            'Private edit', str(source), model_spec='openai/gpt-5-image',
+            owner='alice', session_id='private-chat', incognito=True))
+    else:
+        result = asyncio.run(ai_interaction.do_generate_image(
+            'Private image\nopenai/gpt-5-image', owner='alice',
+            session_id='private-chat', incognito=True))
+    assert 'error' not in result
+    assert result['image_url'].startswith('data:image/png;base64,')
+    assert base64.b64decode(result['image_url'].split(',', 1)[1]) == source.read_bytes()
+    assert not result['image_id']
+    assert not rows
+    assert not (source.parent / 'generated').exists()
+
+
+def test_incognito_url_image_is_not_persisted(image_transport, monkeypatch):
+    configure, source, requests, rows = image_transport
+    configure('https://api.openai.com/v1', body={'data': [{'url': 'https://example.com/output.png'}]})
+    monkeypatch.setattr(httpx, 'get', lambda *args, **kwargs: httpx.Response(200, content=source.read_bytes()))
+    monkeypatch.setattr('src.url_safety.check_outbound_url', lambda *args, **kwargs: (True, ''))
+    result = asyncio.run(ai_interaction.do_generate_image(
+        'Private image\nopenai/gpt-5-image', owner='alice', incognito=True))
+    assert result['image_url'].startswith('data:image/png;base64,')
+    assert not rows
+    assert not (source.parent / 'generated').exists()
+
+
 @pytest.fixture
 def image_transport(monkeypatch, tmp_path):
     rows = []
