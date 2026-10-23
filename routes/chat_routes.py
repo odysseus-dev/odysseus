@@ -5082,6 +5082,7 @@ def setup_chat_routes(
         request: Request,
         q: str = Query("", min_length=0),
         limit: int = Query(20, ge=1, le=100),
+        project_id: str = Query("", min_length=0),
     ) -> List[Dict[str, Any]]:
         if not q or not q.strip():
             return []
@@ -5095,6 +5096,7 @@ def setup_chat_routes(
                 owner=_user,
                 restrict_owner=_user is not None,
                 include_legacy_owner=False,
+                project_id=(project_id or "").strip() or None,
             )
         ]
 

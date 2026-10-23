@@ -728,6 +728,10 @@ app.include_router(setup_session_routes(
     skills_manager=skills_manager,
 ))
 
+# Projects
+from routes.project_routes import setup_project_routes
+app.include_router(setup_project_routes(session_manager))
+
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe.admin_wipe_routes import setup_admin_wipe_routes
 app.include_router(setup_admin_wipe_routes(session_manager))
