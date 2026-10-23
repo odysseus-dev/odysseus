@@ -40,6 +40,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "write_file": ("path",),
     "edit_file": ("path",),
     "apply_patch": ("patch_text", "patchText", "patch"),
+    "generate_image": ("prompt",),
     "host_shell": ("command",),
 }
 
