@@ -58,6 +58,20 @@ def test_styled_confirm_cancel_or_close_label_is_shifted_without_moving_button()
     assert "top:2px;" in rule
 
 
+def test_styled_confirm_buttons_grow_to_fit_wrapped_labels():
+    # The global `button { height:32px }` held a two-line label (e.g.
+    # "Delete chat and images") to one line's height, so its second line
+    # rendered below the button. Confirm buttons must be allowed to grow,
+    # with 32px kept as the minimum.
+    css = app_css()
+
+    assert re.search(r"(^|\n)\s*button\s*\{\s*height:32px;", css)
+    rule_start = css.index(".styled-confirm-box .confirm-btn {")
+    rule = css[rule_start:rule_start + 120]
+    assert "height:auto;" in rule
+    assert "min-height:32px;" in rule
+
+
 def test_styled_dialogs_manage_focus():
     # A dialog is only really accessible if it restores focus to the trigger on
     # close and traps Tab while open. Both styledConfirm and styledPrompt should
