@@ -192,12 +192,17 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
     "/api/memory/audit",    # retains own 120s LLM inactivity timeout
 )
+# Per-session routes that wait on an LLM call: /api/session/<id>/compact
+# summarizes the conversation, which takes longer than 45s on a slow local model.
+_TIMEOUT_EXEMPT_SESSION_SUFFIXES = ("/compact",)
 
 
 class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         path = request.url.path or ""
         if any(path.startswith(p) for p in _TIMEOUT_EXEMPT_PREFIXES):
+            return await call_next(request)
+        if path.startswith("/api/session/") and path.endswith(_TIMEOUT_EXEMPT_SESSION_SUFFIXES):
             return await call_next(request)
         try:
             return await _asyncio.wait_for(call_next(request), timeout=REQUEST_HARD_TIMEOUT)
