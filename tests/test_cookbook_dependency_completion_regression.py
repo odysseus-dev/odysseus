@@ -522,8 +522,12 @@ def test_ollama_catalog_lookup_is_single_flight_and_checks_http_status():
 def test_bulk_task_clear_uses_shared_card_disposer():
     source = _read("static/js/cookbookRunning.js")
 
-    assert "toRemove.forEach(t => {\n        const el = document.querySelector(`.cookbook-task[data-task-id=\"${t.sessionId}\"]`);\n        if (el) {\n          _disposeTaskCard(el);" in source
-    assert "_disposeTaskCard(el);\n            el.remove();" in source
+    stop_helper = source[source.index("async function _stopTaskFromElement"):source.index("async function _taskSessionOwnershipConfirmed")]
+    bulk_clear = source[source.index("// Wire clear all buttons"):source.index("// Wire \"Stop all\" buttons")]
+
+    assert "await _stopTaskFromElement(el, t" in bulk_clear
+    assert "_disposeTaskCard(el);" in stop_helper
+    assert stop_helper.index("_disposeTaskCard(el);") < stop_helper.index("_animateOutThenRemove(el, task.sessionId)")
 
 
 def test_task_card_disposer_cancels_mobile_long_press():
