@@ -26,7 +26,8 @@ const HISTORY_PAGE_LIMIT_DESKTOP = 24;
 
 const SIDEBAR_MAX_VISIBLE = 10;
 const FOLDER_MAX_VISIBLE = 5;
-let _showAllSessions = false;
+const SHOW_ALL_SESSIONS_KEY = 'odysseus-sessions-show-all';
+let _showAllSessions = Storage.get(SHOW_ALL_SESSIONS_KEY) === '1';
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
 let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
 const DATE_SECTION_COLLAPSE_KEY = 'ody-session-date-section-collapsed';
@@ -1368,6 +1369,7 @@ function _renderSessionListImpl() {
       toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         _showAllSessions = !_showAllSessions;
+        Storage.set(SHOW_ALL_SESSIONS_KEY, _showAllSessions ? '1' : '0');
         renderSessionList();
       });
       _frag.appendChild(toggleBtn);
@@ -1613,6 +1615,7 @@ function _renderSessionListImpl() {
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       _showAllSessions = !_showAllSessions;
+      Storage.set(SHOW_ALL_SESSIONS_KEY, _showAllSessions ? '1' : '0');
       renderSessionList();
     });
     unfiledTarget.appendChild(toggleBtn);
