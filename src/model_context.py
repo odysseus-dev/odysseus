@@ -405,6 +405,16 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
 
+    # Ollama's OpenAI catalog omits serving limits. Probe its native metadata
+    # before the family-name fallback (e.g. a 32K Qwen alias is not 128K).
+    if configured_kind not in ("api", "proxy"):
+        from src.ollama_metadata import ollama_context_length
+
+        ollama_ctx = ollama_context_length(endpoint_url, model)
+        if ollama_ctx:
+            logger.info(f"Ollama reports context window for {model}: {ollama_ctx}")
+            return ollama_ctx, True
+
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
     # metadata (or the default) over downloading the full catalog.

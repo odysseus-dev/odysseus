@@ -8328,8 +8328,8 @@ def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
     """Return True for local Ollama's OpenAI-compatible /v1 surface.
 
     Ollama's /v1 endpoint accepts the OpenAI chat shape, but model-level tool
-    streaming is uneven. Some local models terminate after a token when schemas
-    are present. Keep native schemas opt-in via ModelEndpoint.supports_tools.
+    streaming is uneven. Probe model capabilities in Auto mode and preserve
+    the textual fallback when the server cannot report tool support.
     """
     try:
         parsed = urlparse(endpoint_url or "")
@@ -8458,6 +8458,10 @@ def _agent_route_tool_mode(
     ))
     is_ollama_native = _is_ollama_native_url(endpoint_url or "")
     ollama_openai_compat = _is_ollama_openai_compat_url(endpoint_url or "")
+    if endpoint_supports is None and (is_ollama_native or ollama_openai_compat):
+        from src.ollama_metadata import ollama_tool_support
+
+        endpoint_supports = ollama_tool_support(endpoint_url, model, headers)
     if endpoint_supports is True:
         is_api_model = True
     elif (
@@ -27572,6 +27576,31 @@ async def stream_agent_loop(
             _round_first_event_logged,
             _round_first_token_logged,
         )
+        # Some Ollama runners advertise tools but stop after an opening word
+        # with schemas attached. Reuse the existing transport recovery once;
+        # a complete short reply such as "Done" is still a valid answer.
+        if (
+            (_is_ollama_native or _ollama_openai_compat)
+            and _is_api_model and _tool_names_sent and not native_tool_calls
+            and not guide_only and max_tokens > 1
+            and round_response.strip().casefold() in {"the", "a", "an", "i", "here", "this", "it"}
+        ):
+            _finalize_round_usage()
+            full_response = _drop_rejected_round_response(full_response, round_response)
+            await _candidate_capability_recovery(0, endpoint_url, model, headers, None)
+            if _intent_domains == {"web"} and any(
+                event.get("tool") == "web_fetch" and event.get("exit_code") == 0
+                for event in tool_events
+            ):
+                _force_answer = True
+                messages.append({"role": "system", "content": (
+                    "The page has already been fetched. Answer the user's request "
+                    "from that tool result now. Do not call more tools."
+                )})
+            yield f'data: {json.dumps({"type": "final_response", "content": full_response})}\n\n'
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
+
         _finalize_round_usage()
         _normalized_doc_round = (
             _normalize_stream_document_fences(
