@@ -1068,6 +1068,10 @@ def _resolve_tool_path(raw_path: str) -> str:
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
     expanded = os.path.expanduser(str(raw_path).strip())
+    # Relative paths resolve where bash/python run (agent_cwd), not against
+    # the server's cwd, which is outside the allowed roots (#6679).
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(_AGENT_WORKDIR, expanded)
     resolved = os.path.realpath(expanded)
 
     if _is_app_state_path(resolved):
