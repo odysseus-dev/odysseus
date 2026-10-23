@@ -532,10 +532,19 @@ def needs_auto_name(name: str) -> bool:
         return True
     if name.startswith("Chat:") or name == "Chat":
         return True
-    # Default frontend name: "modelname HH:MM:SS AM/PM"
-    if re.match(r"^.+ \d{1,2}:\d{2}:\d{2}(\s*(AM|PM))?$", name, re.IGNORECASE):
+    # Default frontend name: "modelname <time>", where <time> is the browser's
+    # toLocaleTimeString(): "8:35:24 AM" (en-US), "8.35.24" (fi-FI),
+    # "8:05:09 p.m." (es-MX), "上午8:35:24" (zh-TW), "٨:٣٥:٢٤ ص" (ar-EG).
+    if _DEFAULT_SESSION_NAME_RE.match(name):
         return True
     return False
+
+
+# A locale's AM/PM marker: "AM", "a.m.", "ч.", "ص", "上午", "오전".
+_DAY_PERIOD = r"[^\W\d_][^\s\d]{0,4}"
+_DEFAULT_SESSION_NAME_RE = re.compile(
+    rf"^.+ (?:{_DAY_PERIOD}\s?)?\d{{1,2}}([:.])\d{{2}}\1\d{{2}}(?:\s?{_DAY_PERIOD})?$"
+)
 
 
 def fallback_session_title(text: str, *, max_words: int = 6) -> str:
