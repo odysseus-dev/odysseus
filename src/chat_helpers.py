@@ -71,6 +71,13 @@ _VISION_MODEL_KEYWORDS = (
 # Catches the "*-VL-*" / "*VL*" family not covered by a literal keyword above
 # (e.g. Qwen2.5-VL and various tags): a standalone "vl" token, plus "vlm".
 _VISION_VL_RE = re.compile(r'(?<![a-z])vl(?![a-z])|vlm')
+# OpenAI flagships from GPT-5 on are all multimodal, and new point releases ship
+# faster than this list gets updated — enumerating them is what broke gpt-5.x
+# (every "gpt-5*" name fell through and the image was silently dropped, the same
+# failure as #124/#1274). Match the generation number instead so future tags work
+# without a code change. Deliberately starts at 5: plain "gpt-4"/"gpt-3.5" are not
+# vision-capable, and the vision-capable GPT-4 tags are listed literally above.
+_VISION_GPT_GEN_RE = re.compile(r'gpt-(?:[5-9]|\d{2,})')
 
 
 def is_vision_model(model_name: str) -> bool:
@@ -82,6 +89,8 @@ def is_vision_model(model_name: str) -> bool:
     """
     m = (model_name or "").lower()
     if any(kw in m for kw in _VISION_MODEL_KEYWORDS):
+        return True
+    if _VISION_GPT_GEN_RE.search(m):
         return True
     return bool(_VISION_VL_RE.search(m))
 

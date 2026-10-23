@@ -47,3 +47,21 @@ def test_new_keywords_do_not_overmatch_text_models():
     # The added families must not flag their text-only siblings.
     for name in ["gemma2:9b", "gemma:7b", "llama3.3", "mistral-small", "phi-3-mini"]:
         assert not is_vision_model(name), f"{name!r} should not be flagged as vision"
+
+
+def test_recognizes_gpt5_and_later_generations():
+    # The hosted keyword list stopped at gpt-4.5, so every GPT-5 tag fell through
+    # and the attachment was swapped for a caption before it reached the model.
+    # Matched by generation number so future releases don't need a code change.
+    for name in [
+        "gpt-5.6-sol", "gpt-5", "gpt-5.2", "gpt-5.2-pro", "gpt-5.2-codex",
+        "gpt-5-mini", "gpt-6", "gpt-10.1",
+    ]:
+        assert is_vision_model(name), f"{name!r} should be detected as vision-capable"
+
+
+def test_gpt_generation_match_does_not_catch_older_text_models():
+    # Vision-capable GPT-4 tags are listed literally; the bare/older ones are not
+    # multimodal and must stay unflagged.
+    for name in ["gpt-4", "gpt-3.5-turbo", "gpt-3.5", "gpt2"]:
+        assert not is_vision_model(name), f"{name!r} should not be flagged as vision"
