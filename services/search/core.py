@@ -42,6 +42,7 @@ from .providers import (
     google_pse_search,
     tavily_search,
     serper_search,
+    you_com_search,
     _get_search_settings,
     _get_provider_key,
     _get_result_count,
@@ -122,6 +123,8 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
         return tavily_search(query, count, time_filter)
     elif provider_name == "serper":
         return serper_search(query, count, time_filter)
+    elif provider_name == "you_com":
+        return you_com_search(query, count, time_filter)
     return []
 
 

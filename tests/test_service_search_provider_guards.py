@@ -112,12 +112,14 @@ def test_service_safesearch_values_match_provider_contract(monkeypatch):
     assert providers._safesearch_for("duckduckgo_html") == "1"
     assert providers._safesearch_for("google_pse") == "active"
     assert providers._safesearch_for("serper") == "active"
+    assert providers._safesearch_for("you_com") == "strict"
 
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "off"})
     assert providers._safesearch_for("searxng") == "0"
     assert providers._safesearch_for("brave") == "off"
     assert providers._safesearch_for("duckduckgo_lib") == "off"
     assert providers._safesearch_for("duckduckgo_html") == "-2"
+    assert providers._safesearch_for("you_com") == "off"
     assert providers._safesearch_for("google_pse") is None
     assert providers._safesearch_for("serper") is None
 
