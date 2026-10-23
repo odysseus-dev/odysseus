@@ -32,6 +32,7 @@ project documentation.
 ## Working Rules
 
 - Start here before substantial work.
+- For an explicit latest-`dev` specs reconciliation, follow the [Odysseus specs maintenance skill](../.agents/skills/odysseus-specs-maintenance/SKILL.md) and start from [the last completed checkpoint](last_specs_check.txt).
 - Read the related subsystem spec before changing code in that area. For cross-cutting work, include the owning domain spec plus route/runtime, auth/security, persistence, frontend, tool/context, integration, and testing/devops specs as applicable.
 - Treat specs as read-only context during ordinary project work, PR review, and code review. Do not edit specs unless the user explicitly asks for spec work or the current PR intentionally includes spec changes.
 - During explicit spec-maintenance work, update the related spec when source inspection shows behavior, ownership, security boundaries, data shape, import paths, or implementation contracts have changed.
