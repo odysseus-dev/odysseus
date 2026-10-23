@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from core.database import SessionLocal, Note
 from core.middleware import INTERNAL_TOOL_USER
 from src.auth_helpers import require_user
+from core.guard_deco import content_type, suspicious_frequency
 from src.constants import DATA_DIR
 from src.upload_handler import reserve_upload_references
 from sqlalchemy.orm.attributes import flag_modified
@@ -652,6 +653,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- CREATE ---
     @router.post("")
+    @content_type(["application/json"])
     def create_note(request: Request, body: NoteCreate):
         user = _owner(request)
         _reserve_note_uploads(
@@ -707,6 +709,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- UPDATE ---
     @router.put("/{note_id}")
+    @content_type(["application/json"])
     def update_note(request: Request, note_id: str, body: NoteUpdate):
         user = _owner(request)
         db = SessionLocal()
@@ -847,6 +850,8 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- FIRE REMINDER ---
     @router.post("/fire-reminder")
+    @content_type(["application/json"])
+    @suspicious_frequency(0.5, 60, "log")
     async def fire_reminder(request: Request):
         """Dispatch a reminder according to user settings.
 
@@ -905,6 +910,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
 
     # --- REORDER NOTES ---
     @router.post("/reorder")
+    @content_type(["application/json"])
     async def reorder_notes(request: Request):
         """Update sort_order for a list of note IDs in the order provided."""
         user = _owner(request)
