@@ -6488,9 +6488,13 @@ body.bg-pattern-ascii-fireflies {
     }
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
-    #styled-confirm-ok {
-      position: relative;
-      top: 2px;
+    /* Nudge the OK and alternate labels like the Cancel label below, without
+       moving the buttons: moving #styled-confirm-ok itself left it 2px below
+       Cancel and the alternate button. */
+    #styled-confirm-ok .styled-confirm-btn-label,
+    #styled-confirm-alt .styled-confirm-btn-label {
+      position:relative;
+      top:2px;
     }
     #styled-confirm-cancel .styled-confirm-cancel-label {
       position:relative;

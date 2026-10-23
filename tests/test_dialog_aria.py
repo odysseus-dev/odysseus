@@ -58,6 +58,24 @@ def test_styled_confirm_cancel_or_close_label_is_shifted_without_moving_button()
     assert "top:2px;" in rule
 
 
+def test_styled_confirm_ok_and_alternate_labels_shift_without_moving_buttons():
+    # Moving #styled-confirm-ok itself (position:relative; top:2px) left it 2px
+    # below Cancel and the alternate button. The OK and alternate labels get the
+    # same label nudge as Cancel instead, and no rule moves a footer button.
+    css = app_css()
+
+    assert "setLabel(okBtn, 'styled-confirm-btn-label'" in _UI
+    assert "setLabel(altBtn, 'styled-confirm-btn-label'" in _UI
+    rule_start = css.index("#styled-confirm-ok .styled-confirm-btn-label")
+    rule = css[rule_start:rule_start + 160]
+    assert "#styled-confirm-alt .styled-confirm-btn-label" in rule
+    assert "position:relative;" in rule and "top:2px;" in rule
+    for selector in ("#styled-confirm-ok {", "#styled-confirm-alt {", "#styled-confirm-cancel {"):
+        if selector in css:
+            block = css[css.index(selector):].split("}", 1)[0]
+            assert "top:" not in block.replace(" ", ""), selector
+
+
 def test_styled_dialogs_manage_focus():
     # A dialog is only really accessible if it restores focus to the trigger on
     # close and traps Tab while open. Both styledConfirm and styledPrompt should
