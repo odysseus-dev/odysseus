@@ -168,55 +168,70 @@ def _vunesc(value: str) -> str:
     return "".join(out)
 
 
+def _vcard_property(line: str) -> tuple[str, str]:
+    """Read a property name/value without splitting a quoted parameter's colon."""
+    quoted = False
+    for index, char in enumerate(line):
+        if char == '"':
+            quoted = not quoted
+        elif char == ":" and not quoted:
+            name = line[:index].split(";", 1)[0].rsplit(".", 1)[-1].upper()
+            return name, line[index + 1:]
+    return "", ""
+
+
+def _vcard_blocks(text: str) -> list[list[str]]:
+    """Split complete cards, unfolding lines and matching delimiters case-insensitively."""
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw = re.sub(r"\n[ \t]", "", raw)
+    blocks = []
+    current = None
+    for line in raw.split("\n"):
+        name, value = _vcard_property(line)
+        if name == "BEGIN" and value.upper() == "VCARD":
+            current = [line]
+        elif current is not None:
+            current.append(line)
+            if name == "END" and value.upper() == "VCARD":
+                blocks.append(current)
+                current = None
+    return blocks
+
+
+def _vcard_components(value: str) -> list[str]:
+    """Split a structured value on unescaped semicolons, then unescape its fields."""
+    fields, current = [], []
+    escaped = False
+    for char in value:
+        if char == ";" and not escaped:
+            fields.append(_vunesc("".join(current)).strip())
+            current = []
+        else:
+            current.append(char)
+        escaped = char == "\\" and not escaped
+    fields.append(_vunesc("".join(current)).strip())
+    return fields
+
+
 def _parse_vcards(text: str) -> List[Dict]:
-    """Parse a stream of vCards into dicts with name, email, phone."""
-    # Unfold RFC 6350 3.2 line folding first: a CRLF/LF followed by a single
-    # space or tab is a continuation of the previous logical line. Real
-    # CardDAV servers (Radicale, iCloud, Apple/Google) fold long EMAIL / FN /
-    # PHOTO lines, and splitting on raw newlines without unfolding dropped the
-    # continuation (e.g. "...@example\n .com" lost the ".com"), truncating the
-    # email/name.
-    text = re.sub(r"\r\n[ \t]", "", text or "")
-    text = re.sub(r"\n[ \t]", "", text)
+    """Parse supported fields without losing card boundaries or escaped characters."""
     contacts = []
-    for block in re.split(r"BEGIN:VCARD", text):
-        if not block.strip():
-            continue
+    for block in _vcard_blocks(text):
         contact = {"name": "", "emails": [], "phones": [], "uid": "", "address": ""}
-        for line in block.split("\n"):
-            line = line.strip()
-            # Strip an optional RFC 6350 group prefix (e.g. "item1.EMAIL;...")
-            # that Apple Contacts / iCloud / many CardDAV servers emit by
-            # default — without this the property-name checks below miss those
-            # lines and silently drop the email / phone. The group token only
-            # precedes the property name, so it is safe to strip for matching
-            # and value extraction, and a no-op for non-grouped lines.
-            name_part = re.sub(r"^[A-Za-z0-9-]+\.", "", line, count=1)
-            if name_part.startswith("FN:") or name_part.startswith("FN;"):
-                contact["name"] = _vunesc(name_part.split(":", 1)[1]) if ":" in name_part else ""
-            elif name_part.startswith("EMAIL"):
-                # Handle EMAIL:foo@bar OR EMAIL;TYPE=...:foo@bar OR EMAIL;PREF=1:foo@bar
-                if ":" in name_part:
-                    email_addr = _vunesc(name_part.split(":", 1)[1])
-                    if email_addr and email_addr not in contact["emails"]:
-                        contact["emails"].append(email_addr)
-            elif name_part.startswith("TEL"):
-                if ":" in name_part:
-                    phone = _vunesc(name_part.split(":", 1)[1])
-                    if phone and phone not in contact["phones"]:
-                        contact["phones"].append(phone)
-            elif name_part.startswith("ADR"):
-                # vCard ADR is 7 semicolon-separated components:
-                # post-office-box;extended-address;street;locality;region;postal-code;country.
-                # Recover a human-readable string by joining non-empty
-                # components with ", ".
-                if ":" in name_part:
-                    raw = name_part.split(":", 1)[1]
-                    parts = [_vunesc(p).strip() for p in raw.split(";")]
-                    contact["address"] = ", ".join(p for p in parts if p)
-            elif name_part.startswith("UID:"):
-                contact["uid"] = _vunesc(name_part[4:])
-        if contact["name"] or contact["emails"]:
+        for line in block:
+            name, value = _vcard_property(line)
+            if name == "FN":
+                contact["name"] = _vunesc(value)
+            elif name in ("EMAIL", "TEL"):
+                key = "emails" if name == "EMAIL" else "phones"
+                item = _vunesc(value)
+                if item and item not in contact[key]:
+                    contact[key].append(item)
+            elif name == "ADR":
+                contact["address"] = ", ".join(p for p in _vcard_components(value) if p)
+            elif name == "UID":
+                contact["uid"] = _vunesc(value)
+        if any(contact[key] for key in ("name", "emails", "phones", "address")):
             contacts.append(contact)
     return contacts
 
@@ -279,6 +294,30 @@ def _build_vcard(name: str, email: str, uid: Optional[str] = None,
     if addr:
         lines.append(f"ADR:;;{_vesc(addr)};;;;")
     lines.append("END:VCARD")
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _edit_vcard(raw: str, uid: str, name: str, emails: List[str], phones: List[str],
+                address: Optional[str]) -> str:
+    """Replace edited properties only; retain metadata and unchanged parameters."""
+    blocks = _vcard_blocks(raw)
+    parsed = _parse_vcards(raw)
+    if len(blocks) != 1 or len(parsed) != 1 or parsed[0]["uid"] != uid:
+        raise ValueError("Existing vCard does not match the contact being edited")
+    previous = parsed[0]
+    changed = set()
+    if previous["name"] != name:
+        changed.update(("FN", "N"))
+    if previous["emails"] != emails:
+        changed.add("EMAIL")
+    if previous["phones"] != phones:
+        changed.add("TEL")
+    if address is not None and previous["address"] != address:
+        changed.add("ADR")
+    replacement = _vcard_blocks(_build_vcard(name, "", uid, emails, phones, address))[0]
+    lines = [line for line in blocks[0][:-1] if _vcard_property(line)[0] not in changed]
+    lines.extend(line for line in replacement if _vcard_property(line)[0] in changed)
+    lines.append(blocks[0][-1])
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -580,12 +619,15 @@ def _import_vcards(text: str) -> Dict:
             for e in (c.get("emails") or [])
             if e
         }
+        existing_uids = {c.get("uid") for c in contacts if c.get("uid")}
         imported = 0
         for c in parsed:
             emails = [e for e in (c.get("emails") or []) if e]
-            if emails and any(e.lower() in existing for e in emails):
+            if c.get("uid") in existing_uids or any(e.lower() in existing for e in emails):
                 continue
             contacts.append(_normalize_contact(c))
+            if c.get("uid"):
+                existing_uids.add(c["uid"])
             for e in emails:
                 existing.add(e.lower())
             imported += 1
@@ -598,33 +640,20 @@ def _import_vcards(text: str) -> Dict:
         logger.warning("CardDAV import URL rejected: %s", e)
         return {"imported": 0, "failed": 0, "total": 0, "error": str(e)}
     auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
-    # Split into individual cards. re.split drops the BEGIN line, so we
-    # re-add it. Normalize CRLF.
-    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-    blocks = []
-    for chunk in raw.split("BEGIN:VCARD"):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        # Trim anything after END:VCARD (defensive).
-        end = chunk.upper().find("END:VCARD")
-        body = chunk[: end + len("END:VCARD")] if end != -1 else chunk
-        blocks.append("BEGIN:VCARD\n" + body)
+    blocks = _vcard_blocks(text)
     imported = 0
     failed = 0
     for block in blocks:
         # Extract or assign a UID.
-        m = re.search(r"^UID:(.+)$", block, re.MULTILINE)
-        uid = (m.group(1).strip() if m else "") or str(uuid.uuid4())
-        if not m:
-            # Inject a UID right after the VERSION line (or after BEGIN).
-            if re.search(r"^VERSION:", block, re.MULTILINE):
-                block = re.sub(r"(^VERSION:.*$)", r"\1\nUID:" + uid, block, count=1, flags=re.MULTILINE)
-            else:
-                block = block.replace("BEGIN:VCARD", f"BEGIN:VCARD\nVERSION:4.0\nUID:{uid}", 1)
-        elif not re.search(r"^VERSION:", block, re.MULTILINE):
-            block = block.replace("BEGIN:VCARD", "BEGIN:VCARD\nVERSION:4.0", 1)
-        vcard = block.replace("\n", "\r\n") + "\r\n"
+        properties = dict(_vcard_property(line) for line in block)
+        stored_uid = _vunesc(properties.get("UID", "")).strip()
+        uid = stored_uid or str(uuid.uuid4())
+        if not properties.get("VERSION"):
+            block.insert(1, "VERSION:4.0")
+        if not stored_uid:
+            block = [line for line in block if _vcard_property(line)[0] != "UID"]
+            block.insert(2, f"UID:{_vesc(uid)}")
+        vcard = "\r\n".join(block) + "\r\n"
         url = base_url + "/" + quote(uid, safe="") + ".vcf"
         try:
             r = httpx.put(
@@ -646,125 +675,118 @@ def _import_vcards(text: str) -> Dict:
 
 
 def _import_csv_contacts(text: str) -> Dict:
-    """Import contacts from CSV. Supports common headers:
-    name/full_name/display_name, email/email_address/e-mail, phone/tel.
-    Falls back to first columns as name,email,phone when no headers exist."""
+    """Read lossless contact exports and legacy name/email/phone CSV files."""
     raw = (text or "").strip()
     if not raw:
         return {"imported": 0, "failed": 0, "total": 0, "error": "No CSV data found"}
-
     try:
-        sample = raw[:2048]
-        dialect = csv.Sniffer().sniff(sample)
-    except Exception:
+        dialect = csv.Sniffer().sniff(raw[:2048], delimiters=",;\t")
+    except csv.Error:
         dialect = csv.excel
-
-    stream = io.StringIO(raw)
-    try:
-        has_header = csv.Sniffer().has_header(raw[:2048])
-    except Exception:
-        has_header = True
-
-    rows = []
-    if has_header:
-        reader = csv.DictReader(stream, dialect=dialect)
-        for row in reader:
-            lowered = {str(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
-            name = (
-                lowered.get("name") or lowered.get("full name") or lowered.get("full_name")
-                or lowered.get("display name") or lowered.get("display_name")
-                or lowered.get("fn") or ""
-            )
-            email = (
-                lowered.get("email") or lowered.get("email address")
-                or lowered.get("email_address") or lowered.get("e-mail")
-                or lowered.get("mail") or ""
-            )
-            phone = lowered.get("phone") or lowered.get("telephone") or lowered.get("tel") or ""
-            rows.append((name, email, phone))
-    else:
-        stream.seek(0)
-        reader = csv.reader(stream, dialect=dialect)
-        for row in reader:
-            cols = [(c or "").strip() for c in row]
-            if not any(cols):
-                continue
-            rows.append((
-                cols[0] if len(cols) > 0 else "",
-                cols[1] if len(cols) > 1 else "",
-                cols[2] if len(cols) > 2 else "",
-            ))
-
-    imported = 0
-    failed = 0
-    total = 0
-    existing_emails = {
-        e.lower()
-        for c in _fetch_contacts()
-        for e in (c.get("emails") or [])
-        if e
+    rows = list(csv.reader(io.StringIO(raw), dialect=dialect))
+    aliases = {
+        "name": ("name", "full name", "full_name", "display name", "display_name", "fn"),
+        "emails": ("emails", "email", "email address", "email_address", "e-mail", "mail"),
+        "phones": ("phones", "phone", "telephone", "tel"),
+        "address": ("address", "postal address", "postal_address"),
+        "uid": ("uid",),
     }
-    for name, email, phone in rows:
-        email = (email or "").strip()
-        name = (name or "").strip() or (email.split("@")[0] if email else "")
-        if not email:
+    known = {label for labels in aliases.values() for label in labels}
+    headers = [cell.strip().lower() for cell in rows[0]]
+    has_header = any(cell in known for cell in headers)
+    # A contact's name can itself be an alias such as "Phone" or "Mail".
+    # Recognize data in the documented headerless email/phone positions before
+    # mistaking those contact values for column names.
+    legacy_email = headers[1] if len(headers) > 1 else ""
+    legacy_phone = headers[2] if len(headers) > 2 else ""
+    # Phone values may include extension labels; supported header aliases do
+    # not contain digits, so formatting must not restrict this data signal.
+    phone_number = any(char.isdigit() for char in legacy_phone)
+    if "@" in legacy_email or phone_number:
+        has_header = False
+
+    def values(cell):
+        if not cell:
+            return []
+        if cell.startswith("["):
+            parsed = json.loads(cell)
+            if not isinstance(parsed, list) or any(not isinstance(item, str) for item in parsed):
+                raise ValueError("Expected a list of strings")
+            return [item.strip() for item in parsed if item.strip()]
+        return [cell]
+
+    candidates = []
+    failed = total = 0
+    for row in rows[1:] if has_header else rows:
+        if not any(cell.strip() for cell in row):
             continue
         total += 1
-        if email.lower() in existing_emails:
-            continue
-        ok = _create_contact(name, email)
-        if ok:
-            imported += 1
-            existing_emails.add(email.lower())
-            # If the CSV had a phone number, rewrite the just-created row
-            # through the richer update path so phone lands in CardDAV too.
-            if phone:
-                try:
-                    contacts = _fetch_contacts(force=True)
-                    created = next((c for c in contacts if email.lower() in [e.lower() for e in c.get("emails", [])]), None)
-                    if created and created.get("uid"):
-                        _update_contact(created["uid"], name, [email], [phone])
-                except Exception:
-                    pass
-        else:
+        try:
+            if has_header:
+                if len(row) > len(headers):
+                    raise ValueError("Too many CSV columns")
+                fields = dict(zip(headers, (cell.strip() for cell in row)))
+                data = {key: next((fields[label] for label in labels if fields.get(label)), "")
+                        for key, labels in aliases.items()}
+            else:
+                data = dict(zip(("name", "emails", "phones"), (cell.strip() for cell in row)))
+            data["emails"] = values(data.get("emails", ""))
+            data["phones"] = values(data.get("phones", ""))
+            if not any(data.get(key) for key in ("name", "emails", "phones", "address")):
+                raise ValueError("No contact data")
+            candidates.append(_normalize_contact(data))
+        except (ValueError, TypeError):
             failed += 1
 
-    if imported:
-        _contact_cache["fetched_at"] = None
-    return {"imported": imported, "failed": failed, "total": total}
+    existing = _fetch_contacts()
+    uids = {c.get("uid") for c in existing if c.get("uid")}
+    emails = {email.lower() for c in existing for email in c.get("emails", [])}
+    incoming = []
+    for contact in candidates:
+        if contact["uid"] in uids or any(email.lower() in emails for email in contact["emails"]):
+            continue
+        incoming.append(contact)
+        uids.add(contact["uid"])
+        emails.update(email.lower() for email in contact["emails"])
+    if not incoming:
+        return {"imported": 0, "failed": failed, "total": total}
+    result = _import_vcards(_contacts_to_vcf(incoming))
+    return {"imported": result["imported"], "failed": result["failed"] + failed, "total": total}
 
 
 def _contacts_to_vcf(contacts: List[Dict]) -> str:
     return "".join(
         _build_vcard(
-            c.get("name") or ((c.get("emails") or [""])[0].split("@")[0] if c.get("emails") else "Contact"),
+            c.get("name") or "",
             "",
             uid=c.get("uid") or str(uuid.uuid4()),
             emails=c.get("emails") or [],
             phones=c.get("phones") or [],
+            address=c.get("address") or "",
         )
         for c in contacts
     )
 
 
 def _contacts_to_csv(contacts: List[Dict]) -> str:
+    """One row per contact; JSON arrays preserve list boundaries and punctuation."""
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["name", "email", "phone"])
+    # Retain the original leading columns for existing CSV consumers.
+    writer.writerow(["name", "email", "phone", "uid", "emails", "phones", "address"])
     for c in contacts:
-        emails = c.get("emails") or [""]
-        phones = c.get("phones") or [""]
-        max_len = max(len(emails), len(phones), 1)
-        for i in range(max_len):
-            writer.writerow([
-                c.get("name") or "",
-                emails[i] if i < len(emails) else "",
-                phones[i] if i < len(phones) else "",
-            ])
+        writer.writerow([
+            c.get("name") or "",
+            (c.get("emails") or [""])[0], (c.get("phones") or [""])[0],
+            c.get("uid") or "",
+            json.dumps(c.get("emails") or [], ensure_ascii=False),
+            json.dumps(c.get("phones") or [], ensure_ascii=False),
+            c.get("address") or "",
+        ])
     return out.getvalue()
 
 
-def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], address: str = "", owner: Optional[str] = None) -> bool:
+def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], address: Optional[str] = None, owner: Optional[str] = None) -> bool:
     """Rewrite an existing contact via CardDAV or local contacts."""
     cfg = _get_carddav_config()
     owner_key = str(owner or "").strip()
@@ -777,9 +799,8 @@ def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], a
                 if owner_key and not _contact_visible_to_owner(c, owner_key):
                     out.append(c)
                     continue
-                # Preserve existing address when caller passes "" (only
-                # updating name/emails/phones, not touching address).
-                addr = address if address else c.get("address", "")
+                # None means omitted; an explicit empty string clears it.
+                addr = c.get("address", "") if address is None else address
                 row = {"uid": uid, "name": name, "emails": emails, "phones": phones, "address": addr}
                 if owner_key:
                     row["owner"] = owner_key
@@ -795,16 +816,23 @@ def _update_contact(uid: str, name: str, emails: List[str], phones: List[str], a
         _save_local_contacts(out)
         return True
 
-    vcard = _build_vcard(name, "", uid=uid, emails=emails, phones=phones, address=address)
     # Use the real resource href (handles externally-created contacts whose
     # filename != UID); falls back to the <uid>.vcf guess.
     try:
         url = _resolve_resource_url(uid)
         auth = (cfg["username"], cfg["password"]) if cfg["username"] else None
+        original = httpx.get(url, auth=auth, timeout=10)
+        if original.status_code != 200:
+            logger.warning("Cannot read CardDAV contact before update: HTTP %s", original.status_code)
+            return False
+        vcard = _edit_vcard(original.text, uid, name, emails, phones, address)
+        headers = {"Content-Type": "text/vcard; charset=utf-8"}
+        if original.headers.get("ETag"):
+            headers["If-Match"] = original.headers["ETag"]
         r = httpx.put(
             url,
             data=vcard.encode("utf-8"),
-            headers={"Content-Type": "text/vcard; charset=utf-8"},
+            headers=headers,
             auth=auth,
             timeout=10,
         )
@@ -945,11 +973,11 @@ def setup_contacts_routes():
     @router.post("/import")
     async def import_vcf(data: dict, _admin: str = Depends(require_admin)):
         """Import contacts from .vcf or CSV. Body: {"vcf": "..."} or {"csv": "..."}."""
-        # Coerce defensively: a non-string vcf/text/csv (e.g. a number or list
-        # in the JSON body) would otherwise reach .strip() and 500 with an
-        # AttributeError instead of degrading to a clean "no data" response.
-        text = str(data.get("vcf") or data.get("text") or "")
-        csv_text = str(data.get("csv") or "")
+        # Non-text values must not reach the parsers or become contact rows.
+        value = data.get("vcf") or data.get("text") or ""
+        text = value if isinstance(value, str) else ""
+        csv_value = data.get("csv") or ""
+        csv_text = csv_value if isinstance(csv_value, str) else ""
         if text.strip():
             if "BEGIN:VCARD" not in text.upper():
                 return {"success": False, "error": "No vCard data found"}
@@ -1044,7 +1072,7 @@ def setup_contacts_routes():
             emails = [data["email"]]
         emails = [e.strip() for e in (emails or []) if e and e.strip()]
         phones = [p.strip() for p in (phones or []) if p and p.strip()]
-        address = (data.get("address") or "").strip()
+        address = (data.get("address") or "").strip() if "address" in data else None
         if not name and not emails and not address:
             return {"success": False, "error": "Name, email, or address required"}
         if not name and emails:
