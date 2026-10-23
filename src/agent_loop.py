@@ -9169,7 +9169,10 @@ def _streamed_tool_markup_starts(text: str) -> bool:
     tail = re.sub(r"\s+", "", value[marker:]).casefold()
     return bool(tail) and any(
         prefix.startswith(tail)
-        for prefix in ("<tool_call", "<invoke", "<｜tool▁call▁begin｜>")
+        for prefix in (
+            "<tool_call", "<invoke",
+            "<｜｜dsml｜｜", "<｜tool▁call▁begin｜>",
+        )
     )
 
 
@@ -9178,7 +9181,13 @@ def _strip_incomplete_tool_markup_tail(text: str) -> str:
 
     value = str(text or "")
     marker = value.rfind("<")
-    if marker >= 0 and _streamed_tool_markup_starts(value[marker:]):
+    # A bare less-than sign is ordinary prose/code when the stream ends.
+    # Only discard prefixes that contain some tool-specific tag characters.
+    if (
+        marker >= 0
+        and value[marker + 1:].strip()
+        and _streamed_tool_markup_starts(value[marker:])
+    ):
         return value[:marker].rstrip()
     return value
 
@@ -27508,12 +27517,22 @@ async def stream_agent_loop(
                             if _is_api_model:
                                 if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
                                     _streamed_tool_markup += _delta_text
-                                    if not _streamed_tool_markup_complete(_streamed_tool_markup):
+                                    if (
+                                        _streamed_tool_markup_starts(_streamed_tool_markup)
+                                        and not _streamed_tool_markup_complete(_streamed_tool_markup)
+                                    ):
                                         continue
-                                    _visible_markup_tail = strip_tool_blocks(
-                                        _streamed_tool_markup,
-                                        skip_fenced=True,
-                                    ).strip()
+                                    # A split '<' can become an ordinary
+                                    # comparison or HTML tag. Release a false
+                                    # prefix verbatim, including whitespace.
+                                    _visible_markup_tail = (
+                                        strip_tool_blocks(
+                                            _streamed_tool_markup,
+                                            skip_fenced=True,
+                                        )
+                                        if _STREAMED_TOOL_MARKUP_START_RE.search(_streamed_tool_markup)
+                                        else _streamed_tool_markup
+                                    )
                                     _streamed_tool_markup = ""
                                     if not _visible_markup_tail:
                                         continue
@@ -27562,6 +27581,23 @@ async def stream_agent_loop(
                 # Forward error events to frontend as visible text
                 yield chunk
             # Intercept [DONE] — don't forward until all rounds finish
+
+        if _streamed_tool_markup:
+            # The final chunk may end at an ambiguous '<'. Keep ordinary
+            # text, but never flush an unfinished textual tool call itself.
+            _markup_start = _STREAMED_TOOL_MARKUP_START_RE.search(_streamed_tool_markup)
+            _pending_visible = (
+                _streamed_tool_markup[:_markup_start.start()]
+                if _markup_start
+                else _strip_incomplete_tool_markup_tail(_streamed_tool_markup)
+            )
+            full_response += _pending_visible
+            if (
+                _pending_visible
+                and not _web_search_unavailable_turn
+                and not (_ody_qwen_finetune_model or _qwen38_tool_router)
+            ):
+                yield f'data: {json.dumps({"delta": _pending_visible, "round": round_num})}\n\n'
 
         logger.info(
             "[agent-timing] round_stream_done round=%s elapsed=%.3fs text_chars=%s tool_calls=%s first_event=%s first_token=%s",

@@ -726,6 +726,25 @@ def _check_serve_binary(seg: str) -> None:
     env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
     first = next((t for t in tokens if not env_re.match(t)), "")
     base = os.path.basename(first)
+    if base == "uv":
+        # Dependency recipes use uv's pip installer, not its general-purpose
+        # `run`, `tool`, or Python execution commands. Keep uv outside the
+        # executable allowlist and admit only this installer shape.
+        command_tokens = tokens[tokens.index(first):]
+        if command_tokens[1:3] != ["pip", "install"] or len(command_tokens) < 4:
+            raise HTTPException(400, "Only 'uv pip install' is allowed")
+        # shlex.split alone discards shell punctuation boundaries. Check them
+        # separately so a pipe/redirection cannot add an unchecked executable;
+        # quoted package constraints such as 'vllm>=1' remain ordinary args.
+        lexer = shlex.shlex(seg, posix=True, punctuation_chars="();<>|&")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        if "$" in seg or any(
+            token and all(char in "();<>|&" for char in token)
+            for token in lexer
+        ):
+            raise HTTPException(400, "Invalid characters in uv install cmd")
+        return
     if base not in _SERVE_CMD_ALLOWLIST:
         raise HTTPException(
             400,

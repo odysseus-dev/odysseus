@@ -464,9 +464,12 @@ if AUTH_ENABLED:
                         request.state.api_token_id = matched_id
                         request.state.api_token_owner = matched_owner
                         request.state.api_token_scopes = matched_scopes
-                        return await call_next(request)
                 except Exception:
                     logger.warning("API token auth error", exc_info=False)
+                    return JSONResponse(status_code=401, content={"error": "Invalid API token"})
+                # Route failures are application errors, not token failures.
+                if matched_id:
+                    return await call_next(request)
                 # Invalid bearer token — reject immediately
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 

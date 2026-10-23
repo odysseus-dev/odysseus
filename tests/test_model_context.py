@@ -4,8 +4,10 @@ import sys
 import types
 
 import pytest
+import httpx
 
 import src.model_context as model_context
+from src import endpoint_resolver
 from src.model_context import is_local_endpoint, estimate_tokens, _lookup_known
 
 
@@ -329,3 +331,214 @@ class TestGetContextLength:
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
         assert model_context.get_context_length(endpoint, "unknown-proxy-model") == model_context.DEFAULT_CONTEXT
+
+
+def _endpoint_row(base_url, **overrides):
+    return types.SimpleNamespace(**{
+        "base_url": base_url,
+        "endpoint_kind": "auto",
+        "api_key": "probe-test-key",
+        "provider_auth_id": None,
+        "is_enabled": True,
+        **overrides,
+    })
+
+
+@pytest.mark.parametrize("probe", ["slots", "props", "models"])
+@pytest.mark.parametrize("kind", ["auto", "local"])
+def test_protected_local_endpoint_uses_served_context(monkeypatch, probe, kind):
+    base = "http://127.0.0.1:8080/tenant/server/v1"
+    _install_endpoint_db(monkeypatch, [_endpoint_row(base, endpoint_kind=kind)])
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.headers.get("Authorization") != "Bearer probe-test-key":
+            return httpx.Response(401)
+        if request.url.path.endswith("/" + probe):
+            payload = {
+                "slots": [{"n_ctx": 8192}],
+                "props": {"default_generation_settings": {"n_ctx": 8192}},
+                "models": {"data": [{"id": "qwen3", "context_length": 8192}]},
+            }[probe]
+            return httpx.Response(200, json=payload)
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(base + "/chat/completions", "qwen3") == (8192, True)
+
+    assert requests
+    assert all(request.headers["Authorization"] == "Bearer probe-test-key" for request in requests)
+    assert [request.url.path for request in requests] == {
+        "slots": ["/tenant/server/slots"],
+        "props": ["/tenant/server/slots", "/tenant/server/props"],
+        "models": ["/tenant/server/slots", "/tenant/server/props", "/tenant/server/v1/models"],
+    }[probe]
+
+
+@pytest.mark.parametrize("row", [
+    None,
+    _endpoint_row("http://127.0.0.1:8080/tenant/v1", is_enabled=False),
+    _endpoint_row("http://127.0.0.2:8080/tenant/v1"),
+    _endpoint_row("http://127.0.0.1:8081/tenant/v1"),
+    _endpoint_row("https://127.0.0.1:8080/tenant/v1"),
+    _endpoint_row("http://127.0.0.1:8080/v1"),
+    _endpoint_row("http://127.0.0.1:8080/tenant/v1/other"),
+    _endpoint_row("http://127.0.0.1:8080/tenant/v1", provider_auth_id="account-session"),
+], ids=["unconfigured", "disabled", "host", "port", "scheme", "parent-prefix", "child-prefix", "account-auth"])
+def test_context_probe_does_not_borrow_unrelated_credentials(monkeypatch, row):
+    _install_endpoint_db(monkeypatch, [] if row is None else [row])
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(401)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(
+            "http://127.0.0.1:8080/tenant/v1/chat/completions", "qwen3",
+        ) == (131072, True)
+
+    assert len(requests) == 3
+    assert all("Authorization" not in request.headers for request in requests)
+
+
+def test_protected_proxy_catalog_uses_registered_auth(monkeypatch):
+    base = "https://proxy.test/tenant/v1"
+    _install_endpoint_db(monkeypatch, [_endpoint_row(base, endpoint_kind="proxy")])
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    monkeypatch.setattr(model_context, "_catalog_ctx_cache", {})
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.headers.get("Authorization") != "Bearer probe-test-key":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"data": [{"id": "new-model", "context_length": 32768}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(base, "new-model") == (32768, True)
+
+    assert [str(request.url) for request in requests] == [base + "/models"]
+
+
+def test_context_probe_matches_normalized_origin_and_base(monkeypatch):
+    _install_endpoint_db(monkeypatch, [_endpoint_row("http://LOCALHOST:80/tenant/v1/")])
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=[{"n_ctx": 8192}])
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(
+            "http://localhost/tenant/v1/chat/completions", "qwen3",
+        ) == (8192, True)
+
+    assert requests[0].headers["Authorization"] == "Bearer probe-test-key"
+
+
+@pytest.mark.parametrize("second", [
+    {"api_key": "different-registration-key"},
+    {"provider_auth_id": "account-session"},
+    {"owner": "another-owner"},
+    {"endpoint_kind": "proxy"},
+])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_context_probe_does_not_guess_between_conflicting_registrations(monkeypatch, second, reverse):
+    base = "http://127.0.0.1:8080/tenant/v1"
+    rows = [_endpoint_row(base), _endpoint_row(base, **second)]
+    _install_endpoint_db(monkeypatch, rows[::-1] if reverse else rows)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(401)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._get_context_probe(base, base + "/models").status_code == 401
+
+    assert "Authorization" not in requests[0].headers
+
+
+def test_context_probe_keeps_auth_for_equivalent_registration_aliases(monkeypatch):
+    base = "http://127.0.0.1:8080/tenant/v1"
+    _install_endpoint_db(monkeypatch, [_endpoint_row(base), _endpoint_row(base + "/")])
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"data": []})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._get_context_probe(base, base + "/models").status_code == 200
+
+    assert requests[0].headers["Authorization"] == "Bearer probe-test-key"
+
+
+def test_context_probes_do_not_follow_redirects(monkeypatch):
+    base = "http://127.0.0.1:8080/tenant/v1"
+    _install_endpoint_db(monkeypatch, [_endpoint_row(base)])
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": "https://other.test/v1/models"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond), follow_redirects=True) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(base, "qwen3") == (131072, True)
+
+    assert len(requests) == 3
+    assert all(request.url.host == "127.0.0.1" for request in requests)
+
+
+def test_known_public_api_keeps_fallback_when_probe_requires_auth(monkeypatch):
+    _install_endpoint_db(monkeypatch, [])
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(401)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(
+            "https://api.openai.com/v1/chat/completions", "gpt-4o",
+        ) == (128000, True)
+
+    assert [str(request.url) for request in requests] == ["https://api.openai.com/v1/models"]
+    assert "Authorization" not in requests[0].headers
+
+
+@pytest.mark.parametrize("models_url", [
+    "http://127.0.0.2:8080/tenant/v1/models",
+    "http://127.0.0.1:8080/other/v1/models",
+])
+def test_derived_models_url_cannot_receive_credentials_for_another_endpoint(monkeypatch, models_url):
+    base = "http://127.0.0.1:8080/tenant/v1"
+    _install_endpoint_db(monkeypatch, [_endpoint_row(base)])
+    monkeypatch.setattr(endpoint_resolver, "build_models_url", lambda url: models_url)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(model_context.httpx, "get", client.get)
+        assert model_context._query_context_length(base, "qwen3") == (131072, True)
+
+    assert str(requests[-1].url) == models_url
+    assert "Authorization" not in requests[-1].headers

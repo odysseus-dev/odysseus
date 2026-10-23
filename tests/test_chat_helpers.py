@@ -326,6 +326,9 @@ def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypa
     ("qwq 17:46:02", True),
     ("gemma3 23:59:59", True),
     ("claude-sonnet 4 0:00:00", True),
+    ("gemma-4-26b-a4b-qat 8.35.24", True),
+    ("qwq 17.46.02", True),
+    ("gemma3 8.35.24 PM", True),
 
     # 12h format (was already working)
     ("deepseek-v4-flash 2:05:33 PM", True),
@@ -342,6 +345,9 @@ def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypa
     ("CW Decoder for STM32", False),
     ("my chat about python", False),
     ("Fix the login bug", False),
+    ("Version 1.2.3", False),
+    ("Meeting 8.35:24", False),
+    ("Meeting 8:35.24", False),
 ])
 def test_needs_auto_name(name, expected):
     assert needs_auto_name(name) == expected, f"needs_auto_name({name!r}) should be {expected}"

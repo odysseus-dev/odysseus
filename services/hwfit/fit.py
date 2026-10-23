@@ -7,6 +7,9 @@ from services.hwfit.models import (
 )
 
 GPU_BANDWIDTH = {
+    # Dell Precision 5680 Technical Guidebook, table 35: 576 GB/s GDDR6.
+    # Match this longer laptop name before the desktop 4090's 1008 GB/s.
+    "4090 laptop": 576,
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
     "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360, "3050 ti": 192, "3050": 224,

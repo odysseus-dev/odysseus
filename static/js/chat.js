@@ -2309,6 +2309,9 @@ import { invalidateSettings } from './appConfig.js';
     
     let abortCtrl = null;
     let streamingTTS = false;
+    // Keep the request's mode available to the sibling catch block, even if
+    // the user changes the mode toggle while this response is in flight.
+    let _isAgent = false;
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
@@ -2366,6 +2369,11 @@ import { invalidateSettings } from './appConfig.js';
         }
         _userMsgEl = addMessage('user', userDisplay, null, _bubbleMeta);
       }
+      // Regenerations/continuations reuse the existing user bubble. Capture it
+      // before the assistant holder is appended or a later turn can appear.
+      const _attachmentUserMsgEl = _userMsgEl
+        || Array.from(document.querySelectorAll('#chat-history .msg-user')).pop()
+        || null;
       _sendPerf.mark('user_bubble_visible');
       messageInput.value = approvalForSend ? (approvalForSend.draft || '') : '';
       messageInput.style.height = '';
@@ -2705,9 +2713,9 @@ import { invalidateSettings } from './appConfig.js';
       currentAbort = abortCtrl;
 
 	      const _tState = Storage.loadToggleState();
-	      const _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
+	      _isAgent = (_tState.mode || 'chat') === 'agent' || !!_tState.plan_mode || workspaceAgentIntent;
 
-      // Timeout: 6 min for research and agent mode, 3 min otherwise
+      // Timeout: 6 min for research and agent mode, 2 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
       timeoutId = setTimeout(() => {
         if (!abortCtrl.signal.aborted) {
@@ -4571,7 +4579,7 @@ import { invalidateSettings } from './appConfig.js';
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews
-                const _ub = document.querySelector('#chat-history .msg-user:last-of-type');
+                const _ub = _attachmentUserMsgEl;
                 if (_ub) {
                   const _aw = _ub.querySelector('.attach-cards');
                   if (_aw) {

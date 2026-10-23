@@ -13,6 +13,9 @@ pypdf
 pypdfium2
 Pillow
 faster-whisper
+# faster-whisper 1.2.1 passes metadata_errors to av.open; PyAV 19 removed it.
+# Keep PyAV 18 support (including Python 3.14 wheels) until that caller is fixed.
+av>=11,<19
 pdfplumber
 beautifulsoup4
 charset-normalizer

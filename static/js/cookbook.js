@@ -1192,14 +1192,12 @@ async function _fetchDependencies() {
       // Keeping them in one menu avoids a second action pill changing the row
       // layout on narrow screens.
       const _rebuildBtn = '';
-      // For backends with a recipe catalog (vllm / sglang / llama_cpp),
-      // append a caret button that toggles a per-row recipe panel below.
+      // Recipes must be reachable for missing and installed packages alike;
+      // the Installed menu only contains maintenance actions.
       const hasRecipe = RECIPE_BACKENDS.has(pkg.name);
-      // Standalone recipe-caret button removed — the "Pick install
-      // command" action lives inside the Installed ▾ dropdown menu
-      // (see _showDepMenu) so each row only has ONE caret to click.
-      // Kept the variable so downstream concat code stays the same.
-      const recipeCaret = '';
+      const recipeCaret = hasRecipe
+        ? `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" data-dep-recipe-toggle="${esc(pkg.name)}" aria-expanded="false" aria-controls="cookbook-dep-recipe-${esc(pkg.name)}" aria-label="Pick install command for ${esc(pkg.name)}" title="Pick install command" style="gap:4px;">Recipes<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>`
+        : '';
       const recipePanel = hasRecipe ? _recipePanelHtml(pkg.name) : '';
       // When llama_cpp (or any future engine) reports build_deps_missing
       // from its system_prereqs probe, surface a one-tap install button
@@ -1233,8 +1231,8 @@ async function _fetchDependencies() {
         + _rebuildBtn
         + _buildDepsBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
-        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
         + recipeCaret
+        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
         + `</div>`
         + recipePanel;
     };
@@ -1283,7 +1281,7 @@ async function _fetchDependencies() {
       const initialCmds = recipeCommands(initial, initialVariant);
       const initialRuntimeCmds = _recipeRuntimeCommands(initialCmds, initialVariant);
       const rightActive = initialVariant === 'docker' ? ' mode-right' : '';
-      return `<div class="cookbook-dep-recipe-panel" data-dep-recipe-panel="${esc(backend)}" data-dep-recipe-active-variant="${esc(initialVariant)}" style="display:none;margin:-4px 0 8px;padding:8px 12px 10px;background:rgba(0,0,0,0.04);border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;">
+      return `<div id="cookbook-dep-recipe-${esc(backend)}" class="cookbook-dep-recipe-panel" data-dep-recipe-panel="${esc(backend)}" data-dep-recipe-active-variant="${esc(initialVariant)}" style="display:none;margin:-4px 0 8px;padding:8px 12px 10px;background:rgba(0,0,0,0.04);border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
             <span style="font-size:11px;opacity:0.75;flex-shrink:0;">Serving which model?</span>
             <select class="settings-select cookbook-dep-recipe-pick" data-dep-recipe-pick="${esc(backend)}" style="flex:1;font-size:11px;padding:3px 6px;">${opts}</select>
@@ -1761,7 +1759,7 @@ async function _fetchDependencies() {
           envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
         }
         const reqBody = {
-          repo_id: `${backend} setup`,
+          repo_id: backend,
           cmd: cmd,
           remote_host: _envState.remoteHost || undefined,
           ssh_port: _getPort(_envState.remoteHost) || undefined,
@@ -1779,7 +1777,7 @@ async function _fetchDependencies() {
             uiModule.showToast('Run failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 200));
             return;
           }
-          const payload = { repo_id: `${backend} setup`, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
+          const payload = { repo_id: backend, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
           _addTask(data.session_id, `${backend} setup`, 'download', payload);
           uiModule.showToast(`Running ${backend} setup on ${targetHost}…`);
         } catch (err) {
@@ -3289,7 +3287,7 @@ function _renderRecipes() {
   html += '<label>GPUs<input class="hwfit-manual-gpus" type="text" inputmode="numeric" placeholder="1"></label>';
   html += '<label>VRAM per GPU<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>';
   html += '<label>Total RAM<input class="hwfit-manual-ram" type="text" inputmode="decimal" placeholder="32 GB"></label>';
-  html += '<select class="hwfit-manual-backend"><option value="cuda">CUDA</option><option value="rocm">ROCm</option></select>';
+  html += '<select class="hwfit-manual-backend"><option value="cuda">CUDA</option><option value="rocm">ROCm</option><option value="metal">Metal (Apple Silicon)</option><option value="cpu_x86">CPU (x86)</option><option value="cpu_arm">CPU (ARM)</option></select>';
   html += '<button type="button" class="hwfit-hw-manual-save"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>Apply</span></button>';
   html += '<button type="button" class="hwfit-hw-manual-clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Clear</span></button>';
   html += '</div>';

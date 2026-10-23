@@ -2,6 +2,7 @@
 // AI Text-to-Speech Module — supports server TTS and browser Web Speech API
 
 import { getSettings } from './appConfig.js';
+import { extractThinkingBlocks } from './markdown.js';
 
 class AITTSManager {
     constructor() {
@@ -69,8 +70,9 @@ class AITTSManager {
     }
 
     extractPlainText(content) {
-        // Strip <think>/<thinking> blocks (model reasoning)
-        let cleaned = content.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
+        // Match the display parser for timed/namespaced tags and plain-text
+        // reasoning prefixes so read-aloud only receives the visible reply.
+        const cleaned = extractThinkingBlocks(content).content;
 
         // Create a temporary div to parse HTML/markdown
         const temp = document.createElement('div');

@@ -1,6 +1,7 @@
 """Static regressions for Docker/devops hardening contracts."""
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -65,6 +66,47 @@ def test_compose_files_forward_every_upload_limit_env_var():
 def test_compose_files_forward_companion_base_url():
     for path in COMPOSE_FILES:
         assert "COMPANION_BASE_URL" in _compose_env_names(path), path.name
+
+
+@pytest.mark.parametrize(
+    ("name", "default"),
+    [
+        ("ODYSSEUS_FIRST_TOKEN_TIMEOUT", ""),
+        ("ODYSSEUS_TTS_CACHE_MAX_BYTES", "524288000"),
+    ],
+)
+def test_compose_audio_and_stream_limits_have_defaults(name, default):
+    """Pin Compose interpolation contracts without requiring a Docker daemon.
+
+    The `:-` form handles unset/empty settings while preserving explicit 0.
+    The empty first-token default leaves endpoint selection to the runtime.
+    """
+    for path in COMPOSE_FILES:
+        service = yaml.safe_load(path.read_text(encoding="utf-8"))["services"]["odysseus"]
+        environment = dict(entry.split("=", 1) for entry in service["environment"])
+        assert environment[name] == "${" + name + ":-" + default + "}", path.name
+
+
+def test_image_loopback_matches_listener_and_compose_container_port(monkeypatch):
+    """Check the image configuration contract without building the large image.
+
+    Reading Dockerfile instructions is deliberate: a Python unit test alone
+    cannot detect missing image environment or a mismatched uvicorn command.
+    """
+    from src.constants import internal_api_base
+
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    command = json.loads(re.search(r"^CMD (\[.*\])$", dockerfile, re.MULTILINE).group(1))
+    port = command[command.index("--port") + 1]
+    image_port = re.search(r"^ENV APP_PORT=(\d+)$", dockerfile, re.MULTILINE).group(1)
+    monkeypatch.delenv("ODYSSEUS_INTERNAL_BASE", raising=False)
+    monkeypatch.setenv("APP_PORT", image_port)
+
+    assert internal_api_base() == f"http://127.0.0.1:{port}"
+    for path in COMPOSE_FILES:
+        service = yaml.safe_load(path.read_text(encoding="utf-8"))["services"]["odysseus"]
+        assert service["ports"] == ["${APP_BIND:-127.0.0.1}:${APP_PORT:-7011}:" + port]
+        assert "APP_PORT" not in _compose_env_names(path), "Host port must not override image listener"
 
 
 def test_default_compose_files_do_not_mount_host_docker_socket():

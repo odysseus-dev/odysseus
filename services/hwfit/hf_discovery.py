@@ -16,6 +16,18 @@ MLX_COMMUNITY_CACHE = HW_FIT_CACHE_DIR / "mlx_community_models.json"
 HF_COLLECTION_MODELS_CACHE = HW_FIT_CACHE_DIR / "hf_collection_models.json"
 HF_COLLECTION_TTL_SECONDS = 24 * 3600
 
+# Collection owners also publish image/video generators, vision encoders, and
+# time-series models. Their parameter counts do not make them LLM backends.
+# Keep generation, pooling, and the existing speech use cases; RL is used by
+# servable DeepHermes language models. Missing tags remain eligible below.
+HF_COLLECTION_PIPELINE_TAGS = frozenset({
+    "text-generation", "text2text-generation", "image-text-to-text",
+    "audio-text-to-text", "any-to-any",
+    "feature-extraction", "sentence-similarity", "text-ranking",
+    "text-classification", "token-classification",
+    "automatic-speech-recognition", "text-to-speech", "reinforcement-learning",
+})
+
 
 HF_COLLECTION_SOURCES = (
     {
@@ -209,16 +221,20 @@ def _entry_from_collection_item(collection, item, source):
     repo_prefix = source.get("repo_prefix")
     if repo_prefix and not repo_id.startswith(repo_prefix):
         return None
-    raw_params = item.get("numParameters") or 0
-    active = None
-    if not raw_params:
-        raw_params, active = _parse_params_from_name(repo_id)
+    pipeline_tag = item.get("pipeline_tag") or ""
+    if not isinstance(pipeline_tag, str):
+        return None
+    if pipeline_tag and pipeline_tag not in HF_COLLECTION_PIPELINE_TAGS:
+        return None
+    named_params, active = _parse_params_from_name(repo_id)
+    # HF's total is authoritative, while the name can separately declare the
+    # active MoE size (e.g. 35B-A3B) needed by token-speed estimation.
+    raw_params = item.get("numParameters") or named_params
     param_label, raw_params = _format_params(raw_params)
     if not raw_params:
         return None
 
     quant = _infer_quant(repo_id, source)
-    pipeline_tag = item.get("pipeline_tag") or ""
     min_ram = round((raw_params / 1_000_000_000) * _quant_bytes_per_param(quant) + 0.8, 1)
     last_modified = item.get("lastModified") or collection.get("lastUpdated") or ""
     release_date = ""
