@@ -763,15 +763,36 @@ def image_progress(request_id: str):
 async def edit_image(
     prompt: str = Form(...),
     image: UploadFile = File(...),
+    mask: UploadFile | None = File(None),
     model: str = Form(""),
     n: int = Form(1),
     size: str = Form("1024x1024"),
     quality: str = Form("medium"),
     response_format: str = Form("b64_json"),
     request_id: str = Form(""),
+    strength: float = Form(0.75),
+    feather: int = Form(8),
 ):
     if _pipe is None:
         return {"error": "Model not loaded"}
+    if mask is not None:
+        # A masked edit is an inpaint. Route it through the inpaint handler so
+        # the mask is honoured (native inpaint, or crop+composite fallbacks)
+        # instead of calling the pipeline without mask_image, which inpaint
+        # pipelines reject and other pipelines would apply to the whole image.
+        width, height = _parse_size(size)
+        result = inpaint_image(InpaintRequest(
+            image=base64.b64encode(await image.read()).decode(),
+            mask=base64.b64encode(await mask.read()).decode(),
+            prompt=prompt,
+            width=max(0, width),
+            height=max(0, height),
+            strength=strength,
+            feather=feather,
+        ))
+        if not result.get("image"):
+            raise HTTPException(status_code=500, detail=result.get("error") or "Inpaint failed")
+        return {"created": int(time.time()), "data": [{"b64_json": result["image"]}]}
     accepts_image = _pipeline_accepts_arg("image")
     accepts_input_images = _pipeline_accepts_arg("input_images")
     if not accepts_image and not accepts_input_images:
