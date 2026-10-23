@@ -1761,7 +1761,9 @@ async function _fetchDependencies() {
           envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
         }
         const reqBody = {
-          repo_id: `${backend} setup`,
+          // The server validates repo_id as a pip package spec for pip
+          // installs, so it can't contain a space.
+          repo_id: `${backend}-setup`,
           cmd: cmd,
           remote_host: _envState.remoteHost || undefined,
           ssh_port: _getPort(_envState.remoteHost) || undefined,
@@ -1779,7 +1781,7 @@ async function _fetchDependencies() {
             uiModule.showToast('Run failed: ' + String(data.detail || data.error || `HTTP ${res.status}`).slice(0, 200));
             return;
           }
-          const payload = { repo_id: `${backend} setup`, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
+          const payload = { repo_id: reqBody.repo_id, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
           _addTask(data.session_id, `${backend} setup`, 'download', payload);
           uiModule.showToast(`Running ${backend} setup on ${targetHost}…`);
         } catch (err) {
