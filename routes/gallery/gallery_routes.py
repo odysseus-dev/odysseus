@@ -1,6 +1,7 @@
 """Gallery routes — browsable library for photos and AI-generated images."""
 
 import os
+import asyncio
 import base64
 import hashlib
 import io
@@ -20,7 +21,7 @@ from src.upload_limits import (
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
-from src.constants import GENERATED_IMAGES_DIR
+from src.constants import GENERATED_IMAGES_DIR, VISION_MAX_TOKENS, VISION_DESCRIBE_PROMPT
 from src.path_confinement import confine
 from src.optional_deps import patch_realesrgan_torchvision_compat
 
@@ -30,9 +31,199 @@ from routes.gallery.gallery_helpers import (
 
 logger = logging.getLogger(__name__)
 
+# Gallery entries have no dedicated media-type column — video vs. image is
+# inferred from the stored filename's extension, same set the upload route
+# uses to decide is_video (see the /api/gallery/upload handler below).
+_GALLERY_VIDEO_EXTS = {"mp4", "mov", "webm", "mkv", "m4v"}
+
+
+def _gallery_filename_is_video(filename: str) -> bool:
+    ext = filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+    return ext in _GALLERY_VIDEO_EXTS
+
+
+class VisionRequestError(ValueError):
+    """A gallery vision call that failed for a reason the user can act on.
+
+    Each subclass carries one fixed, hand-written message. Routes answer with
+    ``_vision_error_message(err)``, which picks the message by type, so no
+    exception text ever reaches a client response.
+    """
+    message = "Vision model request failed"
+
+    def __init__(self):
+        super().__init__(self.message)
+
+
+class VisionDisabledError(VisionRequestError):
+    message = "Vision is disabled — enable it in Settings → AI Defaults → Vision"
+
+
+class VisionNotConfiguredError(VisionRequestError):
+    message = "No vision model configured — set one in Settings → AI Defaults → Vision"
+
+
+class VisionEndpointError(VisionRequestError):
+    message = "Could not resolve a vision endpoint"
+
+
+class VisionModelNotCapableError(VisionRequestError):
+    message = ("That model doesn't look vision-capable. Pick a vision model, or leave "
+               "it blank to use Settings → AI Defaults → Vision.")
+
+
+class VisionUnsupportedFileError(VisionRequestError):
+    message = "AI descriptions and tags support PNG, JPEG, WebP and GIF images only"
+
+
+class VisionThinkingOnlyError(VisionRequestError):
+    message = ("This vision model spent its whole budget thinking instead of answering. "
+               "Try again, or switch to a different vision model in Settings → AI Defaults → Vision.")
+
+
+class VisionNoEndpointError(VisionRequestError):
+    message = "No vision model endpoint configured"
+
+
+_VISION_ERROR_TYPES = (
+    VisionDisabledError, VisionNotConfiguredError, VisionEndpointError,
+    VisionModelNotCapableError, VisionUnsupportedFileError, VisionThinkingOnlyError,
+    VisionNoEndpointError,
+)
+
+
+def _vision_error_message(err: Exception) -> str:
+    for kind in _VISION_ERROR_TYPES:
+        if isinstance(err, kind):
+            return kind.message
+    return VisionRequestError.message
+
+
+# Image types a vision request can carry (the same set the gallery upload
+# route accepts as images).
+_VISION_IMAGE_FORMATS = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
+
+
+async def _resolve_vision_candidates(
+    model_override: str, owner: Optional[str], session_id: Optional[str] = None,
+) -> list:
+    """Resolve the vision model chain (override or Settings → AI Defaults →
+    Vision, plus its configured fallbacks) off the event loop.
+
+    ``session_id`` is the chat session a gallery image was originally
+    uploaded/captioned from (GalleryImage.session_id), when known — passed
+    through so auto-detect (no vision_model configured) can prefer that
+    session's own model over the app-wide default; see _resolve_vl_model.
+
+    Model discovery for OpenAI-compatible/native-Ollama endpoints makes a
+    blocking HTTP probe (`_resolve_model` in `src/ai_interaction.py`); doing
+    that inline in this async route stalls every other in-flight request for
+    up to its timeout, which shows up as avoidable per-image latency when
+    OCR/tagging is run over a batch. `asyncio.to_thread` moves it off-loop.
+
+    Raises a VisionRequestError subclass on any resolution failure.
+    """
+    from src.document_processor import _load_vl_settings, _resolve_vl_model
+    from src.endpoint_resolver import resolve_vision_fallback_candidates
+    from src.chat_helpers import model_supports_vision
+
+    def _resolve():
+        vl_settings = _load_vl_settings()
+        if not vl_settings.get("vision_enabled", True):
+            raise VisionDisabledError()
+        configured = (model_override or "").strip() or vl_settings.get("vision_model", "")
+        try:
+            primary = _resolve_vl_model(configured, owner=owner, session_id=session_id)
+        except ValueError:
+            raise VisionNotConfiguredError()
+        if not primary[0]:
+            raise VisionEndpointError()
+        # Only gate on an explicit per-call override — the admin-configured
+        # default is trusted as-is, same as everywhere else it's used.
+        if model_override and not model_supports_vision(primary[1], primary[0]):
+            raise VisionModelNotCapableError()
+        try:
+            fallbacks = resolve_vision_fallback_candidates(owner=owner)
+        except Exception:
+            fallbacks = []
+        return [primary] + fallbacks
+
+    return await asyncio.to_thread(_resolve)
+
+
+async def _call_vision_model(
+    image_path: Path,
+    prompt: str,
+    owner: Optional[str],
+    model_override: str = "",
+    max_tokens: int = VISION_MAX_TOKENS,
+    temperature: float = 0.2,
+    session_id: Optional[str] = None,
+) -> tuple:
+    """Describe/tag an image through the app's provider-aware LLM transport.
+
+    Tries the configured vision model, then its configured fallbacks in
+    order (Settings → AI Defaults → Vision → Fallbacks) via `llm_call_async`
+    — the same transport chat and document vision calls use, so this works
+    for every provider shape (OpenAI-compatible, Anthropic, native Ollama,
+    ChatGPT Subscription) instead of the two hand-built request shapes this
+    route used to speak, which made it fail outright against the other two.
+
+    Returns (text, model_name_that_answered). Raises a VisionRequestError
+    subclass for an unsupported file, or if every candidate failed or
+    returned nothing.
+    """
+    from src.llm_core import llm_call_async
+    from src.text_helpers import strip_think
+
+    # Reject anything that isn't a supported image before resolving models
+    # or reading bytes, instead of sending it labelled as JPEG.
+    img_format = _VISION_IMAGE_FORMATS.get(image_path.suffix.lower())
+    if not img_format:
+        raise VisionUnsupportedFileError()
+
+    candidates = await _resolve_vision_candidates(model_override, owner, session_id)
+    b64 = base64.b64encode(image_path.read_bytes()).decode()
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/{img_format};base64,{b64}"}},
+        ],
+    }]
+
+    empty_seen = False
+    last_err = None
+    for i, (url, model_name, headers) in enumerate(candidates):
+        if not url or not model_name:
+            continue
+        try:
+            raw = await llm_call_async(
+                url, model_name, messages, headers=headers,
+                timeout=300, max_tokens=max_tokens, temperature=temperature,
+            )
+        except Exception as e:
+            last_err = e
+            tag = "primary" if i == 0 else "candidate"
+            logger.warning("[gallery vision] %s %s failed (%s); trying next", tag, model_name, type(e).__name__)
+            continue
+        content = strip_think(raw or "", prose=True, prompt_echo=True).strip()
+        if content:
+            return content, model_name
+        # Thinking models can spend their whole budget reasoning and leave
+        # nothing behind once the think-markup is stripped out — try the
+        # next fallback rather than surfacing an empty caption/tag list.
+        logger.warning("[gallery vision] %s returned no visible content after think-strip", model_name)
+        empty_seen = True
+
+    if empty_seen:
+        raise VisionThinkingOnlyError()
+    if last_err is not None:
+        raise VisionRequestError()
+    raise VisionNoEndpointError()
+
 _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
-
 
 def _b64_to_pil_image(image_b64: str, *, mode: str = "RGBA"):
     if not image_b64:
@@ -773,6 +964,10 @@ def setup_gallery_routes() -> APIRouter:
             total_tagged = q.filter(
                 GalleryImage.ai_tags.isnot(None), GalleryImage.ai_tags != ""
             ).count()
+            # Same for AI descriptions — "X/Y described" in the OCR section.
+            total_described = q.filter(
+                GalleryImage.caption.isnot(None), GalleryImage.caption != ""
+            ).count()
 
             # Sorting
             if sort == "shuffle":
@@ -813,6 +1008,7 @@ def setup_gallery_routes() -> APIRouter:
                 "items": items,
                 "total": total,
                 "total_tagged": total_tagged,
+                "total_described": total_described,
                 "tags": sorted(all_tags),
                 "models": all_models,
             }
@@ -1105,6 +1301,28 @@ def setup_gallery_routes() -> APIRouter:
             db.rollback()
             logger.exception("clear_gallery_ai_tags: failed")
             raise HTTPException(500, "Tag update failed")
+        finally:
+            db.close()
+    @router.post("/api/gallery/clear-captions")
+    async def clear_gallery_captions(request: Request, image_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(GalleryImage.is_active == True)
+            q = _owner_filter(q, user)
+            if image_id:
+                q = q.filter(GalleryImage.id == image_id)
+            cleared = 0
+            for img in q.all():
+                if img.caption:
+                    img.caption = ''
+                    cleared += 1
+            db.commit()
+            return {"ok": True, "cleared": cleared}
+        except Exception:
+            db.rollback()
+            logger.exception("clear_gallery_captions: failed")
+            raise HTTPException(500, "Caption update failed")
         finally:
             db.close()
 
@@ -2260,100 +2478,109 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     # ---- AI auto-tag ----
+    # ---- POST /api/gallery/ocr-batch ----
+    # Returns the ids that still need an OCR description. The client loops
+    # over them calling /{id}/ocr one at a time, so cancelling just stops
+    # issuing requests — everything already processed stays committed.
+    @router.post("/api/gallery/ocr-batch")
+    async def ocr_batch(
+        request: Request,
+        album_id: Optional[str] = Query(None),
+        limit: int = Query(200),
+        force: int = Query(0),
+    ):
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            q = db.query(GalleryImage).filter(GalleryImage.is_active == True)
+            if not force:
+                q = q.filter(
+                    (GalleryImage.caption == None) | (GalleryImage.caption == "")
+                )
+            q = _owner_filter(q, user)
+            if album_id:
+                q = q.filter(GalleryImage.album_id == album_id)
+            # Videos aren't describable by an image vision model — exclude them
+            # so the queue/counter don't promise descriptions that /ocr will
+            # never produce for them.
+            non_video_ids = [
+                img.id for img in q.all() if not _gallery_filename_is_video(img.filename)
+            ]
+            pending = len(non_video_ids)
+            ids = non_video_ids[:max(1, min(limit, 500))]
+            return {"ok": True, "queued": len(ids), "total_pending": pending, "image_ids": ids}
+        finally:
+            db.close()
 
-    @router.post("/api/gallery/{image_id}/ai-tag")
-    async def ai_tag_image(request: Request, image_id: str):
-        """Send image to vision model for auto-tagging."""
-        import base64, httpx
-        from pathlib import Path
-
+    # ---- POST /api/gallery/{image_id}/ocr ----
+    @router.post("/api/gallery/{image_id}/ocr")
+    async def ocr_image(
+        request: Request,
+        image_id: str,
+        model: Optional[str] = Query(None),
+        force: int = Query(0),
+    ):
+        """Describe/transcribe an image with a vision model, store in caption."""
         user = get_current_user(request)
         db = SessionLocal()
         try:
             img = _get_or_404_image(db, image_id, user)
+            if not force and (img.caption or "").strip():
+                return {"ok": True, "skipped": True, "caption": img.caption}
+            if _gallery_filename_is_video(img.filename):
+                return {"error": "AI descriptions aren't supported for videos"}
 
             img_path = _gallery_image_path(img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
-            # Read and encode
-            img_bytes = img_path.read_bytes()
-            b64 = base64.b64encode(img_bytes).decode()
-            ext = img.filename.rsplit(".", 1)[-1].lower()
-            mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-                    "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
-
-            # Resolve vision model via admin Vision setting (same resolver used for docs)
-            from src.document_processor import _load_vl_settings, _resolve_vl_model
-            vl_settings = _load_vl_settings()
-            if not vl_settings.get("vision_enabled", True):
-                return {"error": "Vision is disabled — enable it in Settings → Vision"}
-            configured = vl_settings.get("vision_model", "")
+            # Explicit ?model= overrides the configured Vision model so OCR can
+            # run on a different model than tagging without changing Settings.
             try:
-                chat_url, model_name, headers = _resolve_vl_model(configured, owner=user)
-            except ValueError:
-                return {"error": "No vision model configured — set one in Settings → Vision"}
-            if not chat_url:
-                return {"error": "No vision-capable endpoint configured"}
+                caption, model_name = await _call_vision_model(
+                    img_path, VISION_DESCRIBE_PROMPT, user, model_override=(model or ""),
+                    session_id=img.session_id,
+                )
+            except VisionRequestError as vision_err:
+                return {"error": _vision_error_message(vision_err)}
 
-            # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
-            provider = _detect_provider(chat_url)
+            img.caption = caption
+            db.commit()
+            return {"ok": True, "caption": caption, "model": model_name}
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("OCR description failed")
+            return {"error": "OCR description failed"}
+        finally:
+            db.close()
+
+    # ---- POST /api/gallery/{image_id}/ai-tag ----
+    @router.post("/api/gallery/{image_id}/ai-tag")
+    async def ai_tag_image(request: Request, image_id: str):
+        """Send image to vision model for auto-tagging."""
+        user = get_current_user(request)
+        db = SessionLocal()
+        try:
+            img = _get_or_404_image(db, image_id, user)
+            if _gallery_filename_is_video(img.filename):
+                return {"error": "AI tagging isn't supported for videos"}
+
+            img_path = _gallery_image_path(img.filename)
+            if not img_path.exists():
+                raise HTTPException(404, "Image file not found")
+
             tag_prompt = (
-                "Analyze this photo. Return ONLY a comma-separated list of tags. "
-                "Include: objects, people (describe by appearance — age range, gender), "
-                "scene/setting, activities, mood/atmosphere, colors, location type, "
-                "time of day, weather if visible, any text/signs visible. "
-                "Be specific but concise. 10-25 tags. No explanation, just tags."
+                "List 6-10 comma-separated tags describing this image. "
+                "Cover objects, people, setting, activity, colors, and any visible text. "
+                "Return only the tags."
             )
-
-            if provider == "anthropic":
-                payload = {
-                    "model": model_name,
-                    "max_tokens": 200,
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "source": {
-                                "type": "base64", "media_type": mime, "data": b64,
-                            }},
-                            {"type": "text", "text": tag_prompt},
-                        ],
-                    }],
-                }
-            else:
-                _tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model_name) else "max_tokens"
-                payload = {
-                    "model": model_name,
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": tag_prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                        ],
-                    }],
-                    _tok_key: 200,
-                    "temperature": 0.3,
-                }
-                # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
-                if _restricts_temperature(model_name):
-                    payload.pop("temperature", None)
-
-            h = {"Content-Type": "application/json"}
-            if headers:
-                h.update(headers)
-
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(chat_url, json=payload, headers=h)
-                if resp.status_code != 200:
-                    logger.error("ai_tag vision model: status %s: %s", resp.status_code, resp.text[:500])
-                    return {"error": "Vision model request failed"}
-                data = resp.json()
-                # Anthropic returns content[0].text, OpenAI returns choices[0].message.content
-                if provider == "anthropic":
-                    content = (data.get("content") or [{}])[0].get("text", "")
-                else:
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            try:
+                content, _model_name = await _call_vision_model(
+                    img_path, tag_prompt, user, session_id=img.session_id,
+                )
+            except VisionRequestError as vision_err:
+                return {"error": _vision_error_message(vision_err)}
 
             # Clean up tags
             tags = [t.strip().lower() for t in content.split(",") if t.strip()]
