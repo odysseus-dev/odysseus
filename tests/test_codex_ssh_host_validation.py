@@ -8,6 +8,7 @@ These pin validation on the host/port before they reach the ssh string, matching
 the validators the rest of the cookbook routes already apply.
 """
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from fastapi import APIRouter, HTTPException
@@ -25,6 +26,7 @@ def _route_endpoint(path: str, method: str, router=None):
 
 
 def _launch_request() -> Request:
+    auth_manager = SimpleNamespace(is_admin=lambda user: user == "alice")
     request = Request(
         {
             "type": "http",
@@ -32,6 +34,7 @@ def _launch_request() -> Request:
             "path": "/api/codex/cookbook/adopt",
             "headers": [],
             "state": {},
+            "app": SimpleNamespace(state=SimpleNamespace(auth_manager=auth_manager)),
         }
     )
     request.state.api_token = True
