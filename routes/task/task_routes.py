@@ -1,5 +1,6 @@
 """CRUD routes for scheduled tasks."""
 
+import asyncio
 import json
 import logging
 import secrets
@@ -846,7 +847,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             # in the schedule modal). If so, delete the calendar event
             # too so the calendar doesn't end up holding a phantom event
             # for a task that no longer exists.
-            _maybe_cascade_calendar_event(task)
+            # The sync helper calls this server over HTTP. Allow the event
+            # loop to answer that request while waiting for the cascade.
+            await asyncio.to_thread(_maybe_cascade_calendar_event, task)
             db.delete(task)
             db.commit()
             return {"ok": True}
