@@ -186,6 +186,27 @@ def test_request_without_workspace_seals_the_agent_workspace(tmp_path, monkeypat
             ExactOperation.normalize("read_file", "../sessions.json"), roots=authority.resource_roots)
 
 
+def test_symlinked_agent_workspace_is_not_sealed(tmp_path, monkeypatch):
+    """A symlinked agent workspace must not become the file-tool root:
+    agent_cwd() and create_directories() refuse the same layout."""
+    from src.agent_runtime.authority import OperationGrant, RequestAuthority
+    current_execution = importlib.import_module("src.tool_execution")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _configure_test_data_tree(monkeypatch, data_dir)["AGENT_WORKSPACE_DIR"]
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "notes.txt").write_text("private", encoding="utf-8")
+    try:
+        workspace.symlink_to(elsewhere, target_is_directory=True)
+    except OSError:
+        pytest.skip("cannot create symlink")
+    monkeypatch.setattr(current_execution, "_AGENT_WORKDIR", str(workspace))
+
+    authority = RequestAuthority("request", "alice", "s", "", (OperationGrant("read_file"),))
+    assert authority.resource_roots == ()
+
+
 def test_blocks_app_state_reached_through_a_symlink(tmp_path):
     """/tmp is an allowed root and the agent can create links there in an
     un-armed turn, so containment has to survive one."""

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from functools import wraps
 from inspect import signature
 import json
+import os
 from pathlib import Path
 import re
 from uuid import uuid4
@@ -142,9 +143,18 @@ class RequestAuthority:
             roots = ()
             # With no workspace, bash/python run in the agent workspace
             # (agent_cwd), so the file tools get that same root (#6679).
+            # Imported here: authority -> execution is a new edge, and
+            # tool_execution imports this module at load time.
             from src import tool_execution
-            root = self.workspace or tool_execution._AGENT_WORKDIR
             try:
+                root = self.workspace
+                if not root:
+                    # Same vetting as agent_cwd(): a symlinked agent
+                    # workspace must not redirect the sealed root.
+                    root = os.path.realpath(tool_execution._AGENT_WORKDIR)
+                    if (root not in tool_execution._agent_readable_data_subdirs()
+                            or tool_execution.vet_workspace(root) != root):
+                        raise RuntimeError("agent workspace is not a safe real directory")
                 roots = (FilesystemRoot.seal(root, owner=self.owner),)
             except (OSError, ValueError, RuntimeError):
                 pass  # An unresolved workspace grants no filesystem root.
