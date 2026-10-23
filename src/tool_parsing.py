@@ -2183,10 +2183,10 @@ def strip_tool_blocks(
         cleaned, _declared_tool_name_map(additional_tool_names)
     )
     if declared_xml_calls:
-        cleaned = _strip_spans(
-            cleaned,
-            [(start, start, end, end) for _block, start, end in declared_xml_calls],
-        )
+        for _block, start, end in sorted(
+            declared_xml_calls, key=lambda call: call[1], reverse=True
+        ):
+            cleaned = cleaned[:start] + cleaned[end:]
     cleaned = _QWEN_OPEN_TOOLS_RE.sub('', cleaned)
     cleaned = _QWEN_ROLE_MARKER_RE.sub('', cleaned)
     cleaned = _QWEN_BARE_MARKER_RE.sub(' ', cleaned)

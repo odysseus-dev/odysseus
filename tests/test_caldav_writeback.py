@@ -83,6 +83,11 @@ def test_build_ical_includes_rrule():
     assert "RRULE:FREQ=WEEKLY" in ical
 
 
+def test_build_ical_includes_recurrence_exdates():
+    ical = build_event_ical(_ev(recurrence_exdates=["2026-06-17T14:00"]))
+    assert "EXDATE:20260617T140000Z" in ical
+
+
 def test_find_remote_calendar_matches_by_hash():
     cals = [FakeCalendar("https://other/x/"), FakeCalendar(REMOTE_URL)]
     found = find_remote_calendar(cals, CAL_ID)

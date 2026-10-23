@@ -169,3 +169,8 @@ def test_parse_strip_mirror_across_fence_shape_grid():
                     assert (
                         tag in TOOL_TAGS and not header.strip() and not body.strip()
                     ), f"non-executed fence was stripped: {case}"
+
+
+def test_strip_removes_declared_direct_xml_call():
+    text = 'Working.\n<manage_memory>{"action": "add", "content": "x"}</manage_memory>\nDone.'
+    assert strip_tool_blocks(text, additional_tool_names=["manage_memory"]) == "Working.\n\nDone."

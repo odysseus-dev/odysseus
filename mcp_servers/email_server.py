@@ -39,7 +39,7 @@ from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTING
 try:
     from src.constants import SCHEDULED_EMAILS_DB
 except Exception:
-    SCHEDULED_EMAILS_DB = str(DATA_DIR / "scheduled_emails.db")
+    SCHEDULED_EMAILS_DB = str(Path(_DATA_DIR) / "scheduled_emails.db")
 DATA_DIR = Path(_DATA_DIR)
 
 
