@@ -389,15 +389,17 @@ Or do it by hand:
 ```powershell
 git clone https://github.com/odysseus-dev/odysseus.git
 cd odysseus
-py -3.11 -m venv venv
+py -3 -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 
-If `python` points at an older interpreter, use `py -3.12` (or another installed
-3.11+ version) for the venv step.
+`py -3` uses the newest Python 3 the launcher knows about; run `py -0` to list
+them. If that is older than 3.11, or you want a specific one, use e.g. `py -3.12`
+for the venv step (`py -3.11` fails with "No suitable Python runtime found" when
+3.11 is not among the installed versions).
 
 **Exposing on a LAN/Tailscale (Windows):** the launcher binds to `127.0.0.1` and
 does **not** read `APP_BIND` / `ODYSSEUS_HOST` from `.env`, so editing `.env`
