@@ -672,7 +672,9 @@ def _is_ollama_native_url(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if _host_match(url, "ollama.com"):
         return True
-    if path.startswith("/v1"):
+    # OpenAI-compatible servers mounted under /v1, or under /api/v1 (e.g.
+    # Lemonade Server). Ollama's native API never uses an /api/v1 prefix.
+    if path.startswith("/v1") or path == "/api/v1" or path.startswith("/api/v1/"):
         return False
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
     return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
