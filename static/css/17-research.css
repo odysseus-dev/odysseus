@@ -2690,11 +2690,14 @@ body.theme-frosted .modal {
     max-height: 95dvh !important;
   }
 
+  /* Notes and Documents must respect the same viewport and safe-area
+     top as other mobile full-height sheets. Keep these authoritative rules
+     consistent with 05-documents.css and 14-email.css. */
   body.doc-view .doc-editor-pane,
   body.notes-view .notes-pane {
-    inset: auto 0 0 !important;
-    height: 95dvh !important;
-    max-height: 95dvh !important;
+    inset: var(--sheet-top) 0 0 !important;
+    height: calc(var(--app-height) - var(--sheet-top)) !important;
+    max-height: calc(var(--app-height) - var(--sheet-top)) !important;
   }
 }
 

@@ -379,7 +379,6 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
       root.classList.toggle('keyboard-open', keyboardOpen);
       if (keyboardOpen) root.style.setProperty('--keyboard-viewport-height', vv.height + 'px');
       else root.style.removeProperty('--keyboard-viewport-height');
-      if (window.scrollY) window.scrollTo(0, 0);
     };
     // iOS fires visualViewport resize only once, mid-animation, and no focusin when
     // the tapped field already had focus (e.g. the composer after a new chat)
@@ -392,7 +391,6 @@ document.addEventListener('DOMContentLoaded', markComposerUserEdited, { once: tr
     window.visualViewport.addEventListener('scroll', _syncKeyboardViewport);
     document.addEventListener('focusin', _syncThroughKeyboardAnimation);
     document.addEventListener('focusout', _syncThroughKeyboardAnimation);
-    window.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); }, { passive: true });
 
     let _lastVVHeight = window.visualViewport.height;
     window.visualViewport.addEventListener('resize', function() {
