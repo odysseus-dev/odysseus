@@ -79,7 +79,7 @@
   cursor: pointer;
 }
 .ge-topbar-mask-color-label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -175,7 +175,7 @@
 }
 .ge-toolbar::-webkit-scrollbar { display: none; }
 .ge-tool-sep {
-  font-size: 8px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-muted);
@@ -583,11 +583,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .ge-ai-command-status {
   margin-top: 4px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
   color: var(--fg-muted);
 }
@@ -1031,7 +1031,7 @@
 /* Small "Merge" text label next to each merge / flatten button so the
    icons read at a glance instead of needing the title-tooltip. */
 .ge-merge-label {
-  font-size: 10px;
+  font-size: 11px;
   margin-left: 4px;
   opacity: 0.75;
 }
@@ -1101,7 +1101,7 @@
   background: transparent;
   color: var(--fg-muted);
   border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  font-size: 7px;
+  font-size: 11px;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;
@@ -1126,7 +1126,7 @@
   right: 20px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   pointer-events: none;
 }
@@ -1195,7 +1195,7 @@
   background: color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
 }
 .ge-transform-popup-hint {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   margin: 0;
   line-height: 1.3;
@@ -1341,7 +1341,7 @@
   border-radius: 999px;
   margin: 0;
 }
-.ge-size-label { font-size: 10px; opacity: 0.5; min-width: 28px; text-align: right; }
+.ge-size-label { font-size: 11px; opacity: 0.5; min-width: 28px; text-align: right; }
 
 /* Eraser controls: tighter rows + a small brush preview on the left of
    each label so the user can see what each slider affects. The three
@@ -1364,7 +1364,7 @@
   padding: 0 4px;
   border-radius: 3px;
   cursor: text;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
@@ -1375,7 +1375,7 @@
   flex: 0 0 auto;
   margin: 0 0 0 6px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
   min-width: 34px;
@@ -1402,7 +1402,7 @@
 .ge-tool-model {
   flex: 1 1 0;
   min-width: 0;
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 4px;
   background: var(--bg);
   color: var(--fg);
@@ -1412,7 +1412,7 @@
 
 /* Section label inside a dropdown — small uppercase header. */
 .dropdown-section-label {
-  font-size: 9px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.5;
@@ -1431,7 +1431,7 @@
   position: absolute;
   z-index: 11;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   padding: 1px 4px;
   border: 1px solid var(--red);
@@ -1479,7 +1479,7 @@
 
 /* Small explanatory paragraph under AI tool section labels. */
 .ge-section-hint {
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.45;
   opacity: 0.55;
   margin: 0 0 8px;
@@ -1511,7 +1511,7 @@
   border-radius: 50%;
   background: color-mix(in srgb, var(--fg) 12%, transparent);
   color: var(--fg-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   cursor: help;
   user-select: none;
@@ -1528,7 +1528,7 @@
    the mask actions (Eye / Invert / Clear) under a "Selection" header. */
 .ge-section-title {
   margin: 10px 0 4px;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.5;
@@ -1545,7 +1545,7 @@
   flex: 0 0 auto;
 }
 .ge-inpaint-mask-label {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   opacity: 0.5;
@@ -1557,7 +1557,7 @@
    the same length when unused. Without this, "Flow" (4 chars) leaves
    more room than "Opacity" (7 chars). */
 .ge-eraser-row label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   flex: 0 0 78px;
   white-space: nowrap;
@@ -1622,7 +1622,7 @@
   width: 14px;
   height: 14px;
   margin-left: 4px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -1670,13 +1670,13 @@
   border-top: 1px solid var(--border);
 }
 .ge-fx-group-title {
-  font-size: 10px; font-weight: 600; opacity: 0.6;
+  font-size: 11px; font-weight: 600; opacity: 0.6;
   text-transform: uppercase; letter-spacing: 0.5px;
   margin: 8px 0 4px;
 }
 .ge-fx-group-title:first-child { margin-top: 0; }
 .ge-fx-cb-tone {
-  font-size: 10px; opacity: 0.55; font-style: italic;
+  font-size: 11px; opacity: 0.55; font-style: italic;
   margin: 4px 0 2px;
 }
 .ge-fx-row {
@@ -1684,7 +1684,7 @@
   padding: 2px 0;
 }
 .ge-fx-row-label {
-  font-size: 10px; opacity: 0.7;
+  font-size: 11px; opacity: 0.7;
   flex: 0 0 110px; white-space: nowrap;
 }
 .ge-fx-row input[type="range"] {
@@ -1704,7 +1704,7 @@
   background: var(--red); border: none; cursor: pointer;
 }
 .ge-fx-row-value {
-  font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums;
+  font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums;
   flex: 0 0 40px; text-align: right;
 }
 
@@ -1973,7 +1973,7 @@
   flex-shrink: 0;
 }
 .ge-history-row-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ge-history-row-time { font-size: 9px; opacity: 0.55; flex-shrink: 0; }
+.ge-history-row-time { font-size: 11px; opacity: 0.55; flex-shrink: 0; }
 
 /* Tight button group in popup heads — min + close sit immediately next
    to each other with no inherited flex gap, pushed to the right edge. */
@@ -2043,7 +2043,7 @@
 .ge-dep-notice-text strong { display: block; margin-bottom: 2px; }
 .ge-dep-notice-text code {
   font-family: 'Fira Code', monospace;
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 4px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
@@ -2284,7 +2284,7 @@
 }
 .ge-adj-row > label {
   flex: 0 0 96px;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
 }
 .ge-adj-row input[type="range"] {
@@ -2353,14 +2353,14 @@
   flex: 0 0 34px;
   margin-left: 0;
   padding: 0 2px;
-  font-size: 10px; opacity: 0.7; text-align: left;
+  font-size: 11px; opacity: 0.7; text-align: left;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: text;
 }
 .ge-adj-value:hover { opacity: 1; }
 .ge-adj-cb-tone {
-  font-size: 10px; opacity: 0.55; font-style: italic;
+  font-size: 11px; opacity: 0.55; font-style: italic;
   margin: 2px 0 0;
   line-height: 1;
 }
@@ -2441,7 +2441,7 @@
   opacity: 0.85;
   border-left: 2px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
   margin-left: 6px;
-  font-size: 10.5px;
+  font-size: 11px;
 }
 .ge-adj-sub-item .ge-layer-name {
   opacity: 0.85;
@@ -2507,7 +2507,7 @@
   border-color: var(--accent, var(--red));
   color: var(--accent, var(--red));
 }
-.ge-btn-sm { padding: 3px 6px; font-size: 10px; }
+.ge-btn-sm { padding: 3px 6px; font-size: 11px; }
 /* Busy state on AI tool buttons — whirlpool + verb text side by side. */
 .ge-btn-processing {
   display: inline-flex;
@@ -2569,7 +2569,7 @@
   height: 22px;
   padding: 0 10px !important;
   border-radius: 999px !important;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   transition: opacity 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
@@ -2594,7 +2594,7 @@
 .ge-topbar input { position: relative; top: -2px; }
 /* The tiny "Gen" / "Inpaint" inline labels now look too high relative to
    the shifted-up controls — nudge them down 2 px to re-align. */
-.ge-topbar span[style*="font-size:9px"] { position: relative; top: 2px; }
+.ge-topbar span[style*="font-size:11px"] { position: relative; top: 2px; }
 /* The Gen and Inpaint model selects — must visually sit on the same line as
    the small "Gen" / "Inpaint" labels (which are at top:2px). Use !important
    so this beats the generic `.ge-topbar select` rule above no matter what
@@ -2626,7 +2626,7 @@
   opacity: 0.55;
 }
 .ge-stacked-btn .ge-stacked-label {
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   opacity: 0.65;
   font-weight: 600;
@@ -2659,7 +2659,7 @@
   height: 16px;
 }
 .ge-zoom-stack .ge-zoom-label {
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   opacity: 0.65;
   font-weight: 600;
@@ -2835,7 +2835,7 @@
 /* Sub-menu label inside the Filter / Image dropdown — small uppercase
    header so "Blur" / "Selection" reads as a category, not an action. */
 .ge-filter-submenu-label {
-  font-size: 9px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   opacity: 0.45;
@@ -2923,7 +2923,7 @@
   gap: 2px;
 }
 .ge-filter-row label {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.7;
   display: flex;
   justify-content: space-between;
@@ -3157,7 +3157,7 @@
 .ge-edge-actions .ge-btn { flex: 1; }
 .ge-edge-hint {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.5;
   line-height: 1.4;
 }
@@ -3369,7 +3369,7 @@
   font-weight: 600;
 }
 .ge-btn-primary:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
-.ge-zoom-label { font-size: 10px; opacity: 0.5; }
+.ge-zoom-label { font-size: 11px; opacity: 0.5; }
 
 /* Nudge whirlpool spinners 1px down so they sit on the text baseline
    when placed inside action buttons (Generate, Harmonize, etc). */
@@ -3525,7 +3525,7 @@ button .spinner-whirlpool {
   flex: 0 0 auto;
   min-width: 0;
   padding: 4px 8px;
-  font-size: 10px;
+  font-size: 11px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4198,13 +4198,13 @@ button .spinner-whirlpool {
 }
 .ge-inpaint-model-row label {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.65;
 }
 .ge-inpaint-model-row #ge-ai-inpaint {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 10px;
+  font-size: 11px;
   padding: 4px 6px;
   background: var(--bg);
   color: var(--fg);
