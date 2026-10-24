@@ -29,3 +29,7 @@ def test_upload_pending_checks_response_and_surfaces_error():
     assert re.search(r"if\s*\(\s*!res\.ok\s*\)", body), "uploadPending must check res.ok"
     # ...and tell the user the upload failed (not swallow it).
     assert "Upload failed" in body
+    # Issue #6235: the failure toast must carry the server's real reason
+    # (e.g. "Chat attachment exceeds 10 MB limit"), not a generic message.
+    assert re.search(r"e\.detail\s*\|\|\s*e\.error", body), (
+        "uploadPending must surface the server detail from the error body")
