@@ -242,10 +242,23 @@ def _build_dav_client(url: str, username: str, password: str):
 
     DAVClient exposes no per-request redirect flag, so we set it on the session
     after construction (the session is created in ``__init__``).
+
+    Additionally, to support passwords containing spaces (e.g., Opencloud app
+    tokens which are six words separated by spaces), we pass an explicit
+    HTTPBasicAuth object via the ``auth`` parameter. This ensures the password
+    is encoded correctly in the Authorization header without any unintended
+    processing by the library's default auth handling.
     """
     import caldav
+    from requests.auth import HTTPBasicAuth
 
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    # Create explicit Basic auth to ensure passwords with spaces (like
+    # Opencloud app tokens) are handled correctly. The caldav library's
+    # default auth handling may not preserve spaces correctly in some
+    # versions/configurations.
+    auth = HTTPBasicAuth(username, password)
+
+    client = caldav.DAVClient(url=url, auth=auth)
     # Unconditional: a redirect-disable that only sometimes applies is not a
     # control. The session exists right after __init__ on every real client;
     # test_build_dav_client_disables_redirects asserts it against installed
