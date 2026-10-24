@@ -24,7 +24,7 @@ export function wireTopbarOverflow({ container }) {
   // Canvas-size badge updater (kept simple — it lives in the topbar).
   const sizeLabel = document.getElementById('ge-canvas-size');
   function updateSizeLabel() {
-    if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight}`;
+    if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight} px`;
   }
   updateSizeLabel();
 
@@ -46,8 +46,20 @@ export function wireTopbarOverflow({ container }) {
     const position = () => {
       const rect = anchor.getBoundingClientRect();
       menu.style.top = `${rect.bottom + 4}px`;
-      menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
-      menu.style.left = 'auto';
+      // Anchor the menu's LEFT edge under the button's left edge
+      // (Photoshop behaviour), then clamp so the whole menu stays inside
+      // the viewport — a right-hand menu would otherwise overflow on the
+      // right, and a left-hand button (e.g. SELECT at 390px) would push
+      // a ~224px menu past the left edge.
+      const margin = 8;
+      const width = menu.getBoundingClientRect().width || menu.offsetWidth || 0;
+      let left = rect.left;
+      if (left + width > window.innerWidth - margin) {
+        left = window.innerWidth - margin - width;
+      }
+      if (left < margin) left = margin;
+      menu.style.left = `${left}px`;
+      menu.style.right = 'auto';
     };
     const sync = () => {
       if (menu.hidden) {

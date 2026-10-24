@@ -362,6 +362,17 @@ async function compareExportPixels(page, bytes, size) {
   }, { base64: bytes.toString('base64'), targetSize: size });
 }
 
+async function selectTool(page, toolId) {
+  const face = page.locator(`.ge-tool-slot-face[data-tool="${toolId}"]`);
+  if (await face.count() > 0) {
+    await face.first().click();
+    return;
+  }
+  // Flyout members are pre-rendered (hidden until the slot opens). Dispatch a
+  // click directly so the helper does not depend on hover/flyout visibility.
+  await page.locator(`.ge-tool-flyout-item[data-tool-option="${toolId}"]`).first().dispatchEvent('click');
+}
+
 module.exports = {
   compareExportPixels,
   dragOnCanvas,
@@ -371,5 +382,6 @@ module.exports = {
   openBlankEditor,
   openExportDialog,
   reopenDraft,
+  selectTool,
   waitForDraft,
 };

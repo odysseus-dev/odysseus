@@ -18,7 +18,7 @@
  * }} deps
  */
 import { state } from './state.js';
-import { flipDocument, rotateDocument } from './document-geometry.js';
+import { flipDocument, rotateDocument, rotateDocumentArbitrary, flipLayer as flipLayerGeometry, rotateLayer as rotateLayerGeometry } from './document-geometry.js';
 
 export function createCanvasTransforms({
   saveState, composite, fitZoom, showCanvasLoading, hideCanvasLoading, renderLayerPanel,
@@ -53,6 +53,29 @@ export function createCanvasTransforms({
     },
 
     /**
+     * Rotate the entire document by an arbitrary angle in degrees
+     * (clockwise; negative for counter-clockwise), expanding the canvas
+     * so nothing is clipped. Right angles use the exact integer path.
+     */
+    rotateAllArbitrary(deg) {
+      if (!state.layers.length) return;
+      saveState(`Rotate ${deg}°`);
+      showCanvasLoading('Rotating…');
+      requestAnimationFrame(() => {
+        try {
+          const result = rotateDocumentArbitrary(state, deg);
+          const sizeLabel = document.getElementById('ge-canvas-size');
+          if (sizeLabel && result) sizeLabel.textContent = `${result.width}×${result.height}`;
+          fitZoom();
+          composite();
+          renderLayerPanel?.();
+        } finally {
+          hideCanvasLoading();
+        }
+      });
+    },
+
+    /**
      * Mirror every layer horizontally ('h') or vertically ('v').
      * Canvas dimensions don't change. Each layer offset is reflected
      * around the image centre.
@@ -61,6 +84,26 @@ export function createCanvasTransforms({
       if (!state.layers.length) return;
       saveState(axis === 'h' ? 'Flip horizontal' : 'Flip vertical');
       flipDocument(state, axis);
+      composite();
+      renderLayerPanel?.();
+    },
+
+    /** Flip only the active layer, in place (Edit ▸ Transform ▸ Flip). */
+    flipLayer(axis) {
+      const layer = state.layers.find((item) => item.id === state.activeLayerId);
+      if (!layer) return;
+      saveState(axis === 'h' ? 'Flip layer horizontal' : 'Flip layer vertical');
+      flipLayerGeometry(state, layer, axis);
+      composite();
+      renderLayerPanel?.();
+    },
+
+    /** Rotate only the active layer by 90/180/270°, centre preserved. */
+    rotateLayer(deg) {
+      const layer = state.layers.find((item) => item.id === state.activeLayerId);
+      if (!layer) return;
+      saveState(`Rotate layer ${deg}°`);
+      rotateLayerGeometry(state, layer, deg);
       composite();
       renderLayerPanel?.();
     },

@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const fs = require('node:fs');
 const {
   compareExportPixels,
@@ -23,7 +24,7 @@ async function downloadPng(page, filename) {
 
 test('group retained effects edit, toggle, reorder surface, and survive reopen', async ({ page, request }) => {
   await openBlankEditor(page, { width: 360, height: 240 }, 'Group effects E2E');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
     state.brushSize = 48;
@@ -37,7 +38,7 @@ test('group retained effects edit, toggle, reorder surface, and survive reopen',
   const groupId = (await editorState(page)).groups[0].id;
   const groupRow = page.locator(`.ge-layer-group-row[data-group-id="${groupId}"]`);
 
-  await page.locator('#ge-layer-tools .ge-layer-btn[title*="effect"]').click();
+  await page.locator('.ge-layer-controls:visible .ge-layer-btn[title*="effect"]').click();
   await page.locator('[data-filter-action="effect-blur-gaussian"]').click();
   await expect(page.locator('.ge-filter-modal')).toBeVisible();
   await page.locator('.ge-filter-row input[data-key="radius"]').fill('14');
@@ -73,7 +74,7 @@ test('group retained effects edit, toggle, reorder surface, and survive reopen',
 
 test('group retained effects export the visible composite and survive reopen', async ({ page }) => {
   await openBlankEditor(page, { width: 240, height: 180 }, 'Group effects export E2E');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
     state.brushSize = 64;
@@ -83,7 +84,7 @@ test('group retained effects export the visible composite and survive reopen', a
   await page.locator('.ge-layer-item[data-layer-id]').filter({ hasText: 'Background' }).first().click({ modifiers: ['Control'] });
   await page.locator('#ge-group-selected').click();
 
-  await page.locator('#ge-layer-tools .ge-layer-btn[title*="effect"]').click();
+  await page.locator('.ge-layer-controls:visible .ge-layer-btn[title*="effect"]').click();
   await page.locator('[data-filter-action="effect-color-overlay"]').click();
   await expect(page.locator('.ge-filter-modal')).toBeVisible();
   await page.locator('.ge-filter-row input[type="color"]').fill('#336699');

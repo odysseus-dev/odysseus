@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, flattenedPixelDigest, openBlankEditor } = require('./helpers.js');
 
 test('tool switching cancels incomplete crop and selection gestures without stale edits', async ({ page }) => {
@@ -6,7 +7,7 @@ test('tool switching cancels incomplete crop and selection gestures without stal
   const canvas = page.locator('.ge-main-canvas');
   const box = await canvas.boundingBox();
 
-  await page.locator('.ge-tool-btn[data-tool="crop"]').click();
+  await selectTool(page, 'crop');
   await page.mouse.move(box.x + 40, box.y + 35);
   await page.mouse.down();
   await page.mouse.move(box.x + 190, box.y + 150, { steps: 4 });
@@ -14,7 +15,7 @@ test('tool switching cancels incomplete crop and selection gestures without stal
     const { state } = await import('/static/js/editor/state.js');
     return { cropping: state.cropping, rect: state.cropRect };
   })).toMatchObject({ cropping: true, rect: { w: 150, h: 115 } });
-  await page.locator('.ge-tool-btn[data-tool="move"]').dispatchEvent('click');
+  await selectTool(page, 'move');
   expect(await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
     return { tool: state.tool, cropping: state.cropping, moving: state.cropMoving, rect: state.cropRect };
@@ -22,7 +23,7 @@ test('tool switching cancels incomplete crop and selection gestures without stal
   await page.mouse.up();
   await expect(page.locator('.ge-crop-apply')).toHaveCount(0);
 
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.2, y: 0.2 }, { x: 0.55, y: 0.55 });
   const beforeMove = await editorState(page);
   const bounds = beforeMove.selection.bounds;
@@ -33,7 +34,7 @@ test('tool switching cancels incomplete crop and selection gestures without stal
   await page.mouse.down();
   await page.mouse.move(box.x + bounds.x + bounds.width / 2 + 35, box.y + bounds.y + bounds.height / 2 + 20);
   expect((await editorState(page)).selection.bounds).not.toEqual(bounds);
-  await page.locator('.ge-tool-btn[data-tool="brush"]').dispatchEvent('click');
+  await selectTool(page, 'brush');
   const afterSwitch = await editorState(page);
   expect(afterSwitch.selection.bounds).toEqual(bounds);
   expect(afterSwitch.undo).toBe(beforeMove.undo);
@@ -49,7 +50,7 @@ test('Escape cancels an active crop without changing the document', async ({ pag
   await openBlankEditor(page, { width: 320, height: 240 }, 'Escape crop cancellation');
   const canvas = page.locator('.ge-main-canvas');
   const box = await canvas.boundingBox();
-  await page.locator('.ge-tool-btn[data-tool="crop"]').click();
+  await selectTool(page, 'crop');
   await page.mouse.move(box.x + 40, box.y + 35);
   await page.mouse.down();
   await page.mouse.move(box.x + 190, box.y + 150, { steps: 4 });
@@ -80,7 +81,7 @@ test('touch crop and selection gestures complete through the shared lifecycle', 
       touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 6, radiusY: 6 }],
     });
 
-    await page.locator('.ge-tool-btn[data-tool="crop"]').click();
+    await selectTool(page, 'crop');
     await touch('touchStart', canvasBox.x + 35, canvasBox.y + 30);
     await touch('touchMove', canvasBox.x + 190, canvasBox.y + 145);
     await touch('touchEnd', canvasBox.x + 190, canvasBox.y + 145);
@@ -90,7 +91,7 @@ test('touch crop and selection gestures complete through the shared lifecycle', 
       return state.cropRect;
     })).toMatchObject({ w: 155, h: 115 });
 
-    await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+    await selectTool(page, 'marquee');
     await touch('touchStart', canvasBox.x + 45, canvasBox.y + 40);
     await touch('touchMove', canvasBox.x + 165, canvasBox.y + 125);
     await touch('touchEnd', canvasBox.x + 165, canvasBox.y + 125);
@@ -117,7 +118,7 @@ test('touch brush paints and undoes as one stroke', async ({ browser, browserNam
       type,
       touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 6, radiusY: 6 }],
     });
-    await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+    await selectTool(page, 'brush');
     const before = await flattenedPixelDigest(page);
     await touch('touchStart', canvasBox.x + canvasBox.width * 0.25, canvasBox.y + canvasBox.height * 0.5);
     await touch('touchMove', canvasBox.x + canvasBox.width * 0.75, canvasBox.y + canvasBox.height * 0.5);
@@ -144,7 +145,7 @@ test('touch cancellation rolls back a partial brush stroke', async ({ browser, b
     await openBlankEditor(page, { width: 320, height: 240 }, 'Touch cancellation');
     const cdp = await context.newCDPSession(page);
     const canvasBox = await page.locator('.ge-main-canvas').boundingBox();
-    await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+    await selectTool(page, 'brush');
     const before = await flattenedPixelDigest(page);
     await cdp.send('Input.dispatchTouchEvent', {
       type: 'touchStart',
@@ -168,7 +169,7 @@ test('touch cancellation rolls back a partial brush stroke', async ({ browser, b
 test('pen input completes a crop gesture', async ({ page, context, browserName }) => {
   test.skip(browserName !== 'chromium', 'Uses Chromium CDP pen injection');
   await openBlankEditor(page, { width: 320, height: 240 }, 'Pen crop gesture');
-  await page.locator('.ge-tool-btn[data-tool="crop"]').click();
+  await selectTool(page, 'crop');
   const box = await page.locator('.ge-main-canvas').boundingBox();
   const cdp = await context.newCDPSession(page);
   await cdp.send('Input.dispatchMouseEvent', {

@@ -38,35 +38,45 @@ export function wireClipboardAndDrop({
   clipboardBindings?.abort();
   clipboardBindings = new AbortController();
   const { signal } = clipboardBindings;
+
+  const pasteAsLayer = (imgSource, label, offset = { x: 0, y: 0 }) => {
+    if (!state.editorOpen) return; // user closed mid-paste
+    saveState();
+    const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
+    // Selection clipboard data is already a complete layer-sized surface.
+    // Keep it source-backed with an identity matrix so future transforms do
+    // not repeatedly resample the pasted pixels.
+    layer.kind = 'placed';
+    layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, offset.x, offset.y], label || 'Pasted');
+    const rendered = renderPlacedLayer(layer);
+    state.layerOffsets.set(layer.id, rendered.offset);
+    state.layers.push(layer);
+    state.activeLayerId = layer.id;
+    state.selectedLayerIds = [layer.id];
+    state.activeGroupId = null;
+    const tb = state.container?.querySelector('.ge-toolbar');
+    tb?.querySelector('[data-tool="move"]')?.click();
+    renderLayerPanel();
+    composite();
+    uiModule.showToast('Pasted as new layer');
+  };
+
   // ── Paste ──
   window.addEventListener('paste', (e) => {
     if (!state.editorOpen || state.container !== container) return;
-    // Editable fields keep native paste. The Clipboard button focuses the
-    // canvas container before asking for a keyboard paste when read() is
-    // unavailable on an insecure origin.
-    if (e.target?.isContentEditable || e.target?.closest?.('input, textarea, select, [role="dialog"]')) return;
-
-    function pasteAsLayer(imgSource, label, offset = { x: 0, y: 0 }) {
-      if (!state.editorOpen) return; // user closed mid-paste
-      saveState();
-      const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
-      // Selection clipboard data is already a complete layer-sized surface.
-      // Keep it source-backed with an identity matrix so future transforms do
-      // not repeatedly resample the pasted pixels.
-      layer.kind = 'placed';
-      layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, offset.x, offset.y], label || 'Pasted');
-      const rendered = renderPlacedLayer(layer);
-      state.layerOffsets.set(layer.id, rendered.offset);
-      state.layers.push(layer);
-      state.activeLayerId = layer.id;
-      state.selectedLayerIds = [layer.id];
-      state.activeGroupId = null;
-      const tb = state.container?.querySelector('.ge-toolbar');
-      tb?.querySelector('[data-tool="move"]')?.click();
-      renderLayerPanel();
-      composite();
-      uiModule.showToast('Pasted as new layer');
-    }
+    // Editable fields INSIDE the editor keep native paste (the Clipboard button
+    // focuses the canvas container before asking for a keyboard paste when
+    // read() is unavailable on an insecure origin). Fields OUTSIDE the editor —
+    // notably the chat composer sitting behind the editor modal — must NOT
+    // swallow an image paste: while the editor is open it owns clipboard images,
+    // so we intercept here (capture phase) before the global chat attach
+    // listener in app.js can stage the file into the chatbox.
+    // NOTE: do NOT add `[role="dialog"]` to this guard — the editor itself lives
+    // inside the gallery modal's role="dialog" modal-content, so that would
+    // swallow every paste (including the internal Clipboard + Ctrl+V).
+    const target = e.target;
+    const insideEditor = target && container && container.contains(target);
+    if (insideEditor && (target.isContentEditable || target.closest?.('input, textarea, select'))) return;
 
     const imageItem = Array.from(e.clipboardData?.items || []).find(item => item.type.startsWith('image/'));
     if (imageItem) {
@@ -89,6 +99,26 @@ export function wireClipboardAndDrop({
       e.stopImmediatePropagation();
       pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
     }
+  }, { capture: true, signal });
+
+  // ── Ctrl/Cmd+V ──
+  // Paste the internal selection clipboard directly. On an insecure origin
+  // (the editor is served over http on a LAN IP) `navigator.clipboard` is
+  // unavailable, so copying a selection never reaches the OS clipboard and the
+  // native `paste` event above either carries stale `text/plain` or nothing —
+  // leaving Ctrl+V a silent no-op. Handling the keystroke here makes
+  // copy→paste work regardless of the platform clipboard (the toolbar buttons
+  // already did, which is why they worked).
+  window.addEventListener('keydown', (e) => {
+    if (!(state.editorOpen && state.container === container)) return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (String(e.key || '').toLowerCase() !== 'v') return;
+    if (!state.internalClipboard) return;
+    const target = e.target;
+    if (target && (target.isContentEditable || target.closest?.('input, textarea, select'))) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
   }, { capture: true, signal });
 
   // ── Drag-and-drop ──

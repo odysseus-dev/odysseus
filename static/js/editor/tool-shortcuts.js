@@ -4,4 +4,5 @@ export const TOOL_SHORTCUTS = Object.freeze({
   brush: 'B', gradient: 'G', eraser: 'E', eyedropper: 'I',
   smudge: 'Y', clone: 'S', heal: 'J', dodge: 'O',
   marquee: 'M', lasso: 'L', wand: 'W', pen: 'P',
+  zoom: 'Z',
 });

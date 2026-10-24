@@ -53,7 +53,7 @@ function pointerPressure(e) {
 
 function eventSample(e) {
   const coords = canvasCoords(e, state.mainCanvas);
-  return { x: coords.x, y: coords.y, pressure: pointerPressure(e) };
+  return { x: coords.x, y: coords.y, pressure: pointerPressure(e), shift: !!e?.shiftKey };
 }
 
 export function createStrokeTool({

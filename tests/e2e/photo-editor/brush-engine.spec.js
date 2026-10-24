@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { editorState, flattenedPixelDigest, openBlankEditor } = require('./helpers.js');
 
 async function canvasPoint(page, xRatio, yRatio) {
@@ -8,11 +9,13 @@ async function canvasPoint(page, xRatio, yRatio) {
 
 test('brush presets and shared stroke controls remain reusable', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await expect(page.locator('#ge-brush-spacing')).toBeVisible();
   await page.locator('#ge-brush-spacing').fill('28');
   await page.locator('#ge-brush-smoothing').fill('52');
   await page.locator('#ge-brush-blend').selectOption('multiply');
+  // The pen-pressure and preset rows live behind the options-bar overflow ('...').
+  await page.locator('#ge-options-more').click();
   await page.locator('.ge-pressure-option').filter({ hasText: 'Opacity' }).locator('.toggle-slider').click();
   await expect(page.locator('#ge-pressure-opacity')).toBeChecked();
 
@@ -31,7 +34,7 @@ test('brush presets and shared stroke controls remain reusable', async ({ page }
 
 test('long sampled strokes stay responsive and undo atomically', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.locator('.ge-size-slider').fill('700');
   await page.locator('#ge-brush-spacing').fill('8');
   await page.locator('#ge-brush-smoothing').fill('65');
@@ -59,7 +62,7 @@ test('long sampled strokes stay responsive and undo atomically', async ({ page }
 
 test('eyedropper and retouch tools use the editor stroke lifecycle', async ({ page }) => {
   await openBlankEditor(page);
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.locator('.ge-color-picker').first().evaluate((input) => {
     input.value = '#33aa55';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -67,7 +70,7 @@ test('eyedropper and retouch tools use the editor stroke lifecycle', async ({ pa
   const sample = await canvasPoint(page, 0.3, 0.3);
   await page.mouse.click(sample.x, sample.y);
 
-  await page.locator('.ge-tool-btn[data-tool="eyedropper"]').click();
+  await selectTool(page, 'eyedropper');
   await expect(page.locator('#ge-eyedropper-section')).toBeVisible();
   await page.locator('#ge-eyedropper-sample').selectOption('composite');
   await page.mouse.move(sample.x, sample.y);
@@ -82,7 +85,7 @@ test('eyedropper and retouch tools use the editor stroke lifecycle', async ({ pa
 
   for (const tool of ['dodge', 'burn']) {
     const before = await flattenedPixelDigest(page);
-    await page.locator(`.ge-tool-btn[data-tool="${tool}"]`).click();
+    await selectTool(page, tool);
     const from = await canvasPoint(page, 0.35, tool === 'dodge' ? 0.45 : 0.6);
     const to = await canvasPoint(page, 0.65, tool === 'dodge' ? 0.45 : 0.6);
     await page.mouse.move(from.x, from.y);
@@ -95,13 +98,13 @@ test('eyedropper and retouch tools use the editor stroke lifecycle', async ({ pa
   }
 
   const blemish = await canvasPoint(page, 0.72, 0.3);
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.locator('.ge-color-picker').first().evaluate((input) => {
     input.value = '#111111';
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.mouse.click(blemish.x, blemish.y);
-  await page.locator('.ge-tool-btn[data-tool="heal"]').click();
+  await selectTool(page, 'heal');
   const beforeHeal = await flattenedPixelDigest(page);
   const healTarget = blemish;
   await page.mouse.move(healTarget.x, healTarget.y);
@@ -115,7 +118,7 @@ test('eyedropper and retouch tools use the editor stroke lifecycle', async ({ pa
 
 test('healing brush can use an optional sampled source', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Sampled healing E2E');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.locator('.ge-size-slider').fill('420');
   await page.locator('.ge-color-picker').first().evaluate((input) => {
     input.value = '#d24b62';
@@ -124,7 +127,7 @@ test('healing brush can use an optional sampled source', async ({ page }) => {
   const source = await canvasPoint(page, 0.28, 0.5);
   await page.mouse.click(source.x, source.y);
 
-  await page.locator('.ge-tool-btn[data-tool="heal"]').click();
+  await selectTool(page, 'heal');
   await page.keyboard.down('Alt');
   await page.mouse.click(source.x, source.y);
   await page.keyboard.up('Alt');
@@ -153,7 +156,7 @@ test('healing brush can use an optional sampled source', async ({ page }) => {
 
 test('smudge carries nearby pixels along a stroke and undoes atomically', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Smudge E2E');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await page.locator('.ge-size-slider').fill('700');
   await page.locator('.ge-color-picker').first().evaluate((input) => {
     input.value = '#d24b62';
@@ -169,7 +172,7 @@ test('smudge carries nearby pixels along a stroke and undoes atomically', async 
     const y = Math.round(canvas.height * 0.5);
     return [...canvas.getContext('2d').getImageData(x, y, 1, 1).data];
   });
-  await page.locator('.ge-tool-btn[data-tool="smudge"]').click();
+  await selectTool(page, 'smudge');
   await expect(page.locator('#ge-smudge-strength-row')).toBeVisible();
   await page.mouse.move(source.x, source.y);
   await page.mouse.down();

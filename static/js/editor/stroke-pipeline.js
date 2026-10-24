@@ -42,10 +42,63 @@ function circleStamp(ctx, x, y, radius, softness, color, alpha, operation) {
   ctx.restore();
 }
 
+// Crisp pixel brush: a hard square fillRect snapped to a grid whose cell is
+// `size` px, so consecutive dabs land on the same lattice and connect cleanly.
+function pixelDab(ctx, x, y, size, operation, color) {
+  const s = Math.max(1, Math.round(size));
+  const gx = Math.floor(x / s) * s;
+  const gy = Math.floor(y / s) * s;
+  ctx.save();
+  ctx.globalCompositeOperation = operation;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.fillRect(gx, gy, s, s);
+  ctx.restore();
+}
+
+// Snap a drag vector to the nearest of 8 compass directions (0/45/90...)
+// so the pixel brush draws perfectly straight lines.
+function snapDirection(dx, dy) {
+  const step = Math.PI / 4;
+  const snapped = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: Math.cos(snapped), y: Math.sin(snapped) };
+}
+
+// Connect two sampled points by walking whole grid cells (cell = `size` px)
+// with a Bresenham line, so a fast drag fills every cell the line crosses and
+// leaves no gaps and no half-cells.
+function pixelLine(ctx, x0, y0, x1, y1, size, operation, color) {
+  const s = Math.max(1, Math.round(size));
+  let cx = Math.floor(Math.round(x0) / s);
+  let cy = Math.floor(Math.round(y0) / s);
+  const cx1 = Math.floor(Math.round(x1) / s);
+  const cy1 = Math.floor(Math.round(y1) / s);
+  const dx = Math.abs(cx1 - cx);
+  const dy = -Math.abs(cy1 - cy);
+  const sx = cx < cx1 ? 1 : -1;
+  const sy = cy < cy1 ? 1 : -1;
+  let err = dx + dy;
+  ctx.save();
+  ctx.globalCompositeOperation = operation;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  for (;;) {
+    ctx.fillRect(cx * s, cy * s, s, s);
+    if (cx === cx1 && cy === cy1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; cx += sx; }
+    if (e2 <= dx) { err += dx; cy += sy; }
+  }
+  ctx.restore();
+}
+
 export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composite }) {
   let strokeTool = null;
   let compositeFrame = null;
   let smudgeBuffer = null;
+  let pixelLast = null;
+  let pixelAnchor = null;
+  let pixelClickAnchor = null;
 
   // Pointer events can arrive much faster than the display refresh rate.
   // Stamps are applied synchronously, so only the visible document composite
@@ -246,6 +299,36 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
     else if (tool === 'burn') { operation = 'multiply'; color = 'rgba(0,0,0,1)'; }
     else if (target.paintingMask) { color = 'rgba(255,255,255,1)'; alpha = 1; softness = 0; }
     else operation = isLayerTransparencyLocked(state, layer) ? 'source-atop' : state.brushBlendMode;
+    if (state.brushPixel && (tool === 'brush' || tool === 'eraser') && !target.paintingMask) {
+      // Square pixel brush: hard integer-aligned dabs at the chosen size.
+      // Freehand by default; hold Shift to constrain the stroke to the
+      // nearest of 8 directions (a straight line anchored at the stroke
+      // start, or at the previous Shift+click point).
+      const pixelSize = Math.max(1, Math.round(diameter));
+      const px = sample.x - target.xOffset;
+      const py = sample.y - target.yOffset;
+      const op = tool === 'eraser' ? 'destination-out' : 'source-over';
+      if (sample.shift) {
+        if (!pixelAnchor) pixelAnchor = { x: px, y: py };
+        const ddx = px - pixelAnchor.x;
+        const ddy = py - pixelAnchor.y;
+        if (Math.hypot(ddx, ddy) < 2) {
+          pixelDab(target.ctx, px, py, pixelSize, op, color);
+          pixelLast = { x: px, y: py };
+          return;
+        }
+        const dir = snapDirection(ddx, ddy);
+        const len = ddx * dir.x + ddy * dir.y;
+        const end = { x: pixelAnchor.x + dir.x * len, y: pixelAnchor.y + dir.y * len };
+        pixelLine(target.ctx, pixelAnchor.x, pixelAnchor.y, end.x, end.y, pixelSize, op, color);
+        pixelLast = end;
+        return;
+      }
+      if (pixelLast) pixelLine(target.ctx, pixelLast.x, pixelLast.y, px, py, pixelSize, op, color);
+      else pixelDab(target.ctx, px, py, pixelSize, op, color);
+      pixelLast = { x: px, y: py };
+      return;
+    }
     circleStamp(target.ctx, sample.x - target.xOffset, sample.y - target.yOffset, radius, softness, color, alpha, operation);
   }
 
@@ -259,6 +342,8 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
   function beginStroke(sample, tool = state.tool) {
     strokeTool = tool;
     smudgeBuffer = null;
+    pixelLast = null;
+    pixelAnchor = (sample && sample.shift && pixelClickAnchor) ? { x: pixelClickAnchor.x, y: pixelClickAnchor.y } : null;
     sampler.begin(sample);
     state.lastX = sample.x;
     state.lastY = sample.y;
@@ -274,8 +359,11 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
 
   function endStroke(sample) {
     sampler.end(sample);
+    if (pixelLast) pixelClickAnchor = { x: pixelLast.x, y: pixelLast.y };
     strokeTool = null;
     smudgeBuffer = null;
+    pixelLast = null;
+    pixelAnchor = null;
     flushComposite();
   }
 

@@ -44,11 +44,47 @@ def test_narrow_topbar_scrolls_essential_actions_and_hides_ai_group_first():
     assert "justify-content: flex-start;" in topbar
 
 
+def test_mobile_topbar_pins_the_right_actions():
+    # On phones the menu row scrolls internally so Import/Save stay on-screen
+    # instead of the whole topbar scrolling them off the right edge.
+    assert ".ge-topbar > .ge-topbar-left {" in STYLE
+    assert ".ge-topbar > .ge-topbar-right { flex: 0 0 auto; margin-left: 0; }" in STYLE
+    block = STYLE[STYLE.index(".ge-topbar > .ge-topbar-left {") :]
+    block = block[: block.index("}")]
+    assert "flex: 1 1 0;" in block
+    assert "min-width: 0;" in block
+    assert "overflow-x: auto;" in block
+
+
 def test_desktop_tool_rail_keeps_long_tool_names_readable():
     toolbar_start = STYLE.index(".ge-toolbar {")
     toolbar_end = STYLE.index(".ge-toolbar::-webkit-scrollbar", toolbar_start)
     toolbar = STYLE[toolbar_start:toolbar_end]
-    assert "width: 64px;" in toolbar
+    assert "width: 50px;" in toolbar
     label_rule = re.search(r"(?m)^\.ge-tool-label\s*\{([^}]*)\}", STYLE[toolbar_end:])
     assert label_rule
-    assert "font-size: 10px;" in label_rule.group(1)
+    assert "font-size: 9px;" in label_rule.group(1)
+
+
+def test_mobile_footer_hides_wide_readouts():
+    # Audit 2026-10-11 #1: the footer overflowed horizontally on phones so the
+    # zoom controls sat off-screen; drop the wide text readouts on <=700px.
+    assert ".ge-editor-footer .ge-status-tool,\n  .ge-editor-footer .ge-status-model,\n  .ge-editor-footer .ge-canvas-size {" in STYLE
+    block_start = STYLE.index("@media (max-width: 700px) {\n  .ge-editor-footer {")
+    block = STYLE[block_start:]
+    block = block[: block.index("\n}\n", block.index(".ge-footer-history > .ge-btn"))]
+    assert "overflow: hidden;" in block
+    assert "min-width: 0;" in block
+
+
+def test_mobile_toast_avoids_editor_top_rows():
+    # Audit 2026-10-11 #7: a shared toast at the viewport top overlapped the
+    # editor menu row on phones. EVAL (d5ec9a3) moved it to the bottom-centre
+    # while the editor is open, so it clears both editor top rows AND any
+    # top-docked popup (Develop/Filters).
+    assert "body.ge-editor-open .toast.toast-editor-bottom {" in STYLE
+    assert "body.ge-editor-open .toast {" in STYLE
+    assert "bottom: 84px;" in STYLE
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
+    assert "document.body.classList.add('ge-editor-open')" in editor
+    assert "document.body.classList.remove('ge-editor-open')" in editor

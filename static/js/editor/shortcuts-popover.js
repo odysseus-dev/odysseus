@@ -33,7 +33,8 @@ export function createShortcutsPopover() {
       'border:1px solid color-mix(in srgb, var(--fg, #eee) 18%, transparent)',
       'border-radius:12px',
       'box-shadow:0 14px 36px rgba(0,0,0,0.5), inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent)',
-      'padding:12px 14px', 'min-width:540px', 'max-width:min(720px,92vw)',
+      'padding:12px 14px', 'min-width:min(540px,92vw)', 'max-width:min(720px,92vw)',
+      'max-height:86vh', 'overflow-y:auto',
       'font-size:12px', 'line-height:1.5',
     ].join(';');
     el.innerHTML = shortcutsPopupHTML();
