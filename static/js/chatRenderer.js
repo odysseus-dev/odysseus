@@ -2680,6 +2680,8 @@ export function displayMetrics(messageElement, metrics) {
     const modelWaitTime = metrics.agent_model_wait_time;
     const visibleTtft = metrics.client_ttft ?? metrics.time_to_first_token;
     const schemaCount = metrics.tool_schema_count;
+    const reasoningEffort = typeof metrics.reasoning_effort === 'string' ? metrics.reasoning_effort : '';
+    const temperature = Number.isFinite(metrics.temperature) ? metrics.temperature : null;
     const agentRounds = metrics.agent_rounds;
     const toolCalls = metrics.tool_calls;
     const prepBreakdown = metrics.agent_prep_breakdown || null;
@@ -2701,6 +2703,8 @@ export function displayMetrics(messageElement, metrics) {
       <div class="ctx-popup-title">Message stats</div>
       <div class="ctx-stat-section">
         <div class="ctx-stat-row"><span class="ctx-label">Model</span><span class="ctx-stat-value">${model.split('/').pop()}</span></div>
+        ${reasoningEffort ? `<div class="ctx-stat-row"><span class="ctx-label">Reasoning effort</span><span class="ctx-stat-value">${uiModule.esc(reasoningEffort)}</span></div>` : ''}
+        ${temperature !== null ? `<div class="ctx-stat-row"><span class="ctx-label">Temperature</span><span class="ctx-stat-value">${temperature}</span></div>` : ''}
         <div class="ctx-stat-row"><span class="ctx-label">Input</span><span class="ctx-stat-value">${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
         <div class="ctx-stat-row"><span class="ctx-label">Output</span><span class="ctx-stat-value">${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</span></div>
         <div class="ctx-stat-row"><span class="ctx-label">Total</span><span class="ctx-stat-value">${totalTok.toLocaleString()} tokens</span></div>
