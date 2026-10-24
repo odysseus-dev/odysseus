@@ -1,0 +1,91 @@
+configuration:
+  auth_enabled:
+    name: Require login
+    description: >-
+      Keep Odysseus authentication enabled. Turning this off makes anyone who
+      can reach the add-on a full user.
+  admin_user:
+    name: Initial admin username
+    description: Optional local Odysseus admin created on first start.
+  admin_password:
+    name: Initial admin password
+    description: >-
+      Password for the initial local admin. At least 8 characters. Ignored when
+      no username is set.
+  llm_host:
+    name: LLM host
+    description: Hostname or IP of the default LLM server (e.g. an Ollama host).
+  ollama_base_url:
+    name: Ollama base URL
+    description: Full URL of an Ollama server, e.g. http://host.docker.internal:11434.
+  llm_provider:
+    name: Model provider
+    description: >-
+      Which provider the API key below belongs to. The add-on creates a
+      ready-to-use model endpoint for it. Choose "none" to configure models
+      inside the app instead.
+  llm_api_key:
+    name: Provider API key
+    description: >-
+      API key for the selected provider. Stored encrypted in the Odysseus data
+      volume. Leave empty to keep the key managed in the app.
+  llm_model:
+    name: Default model
+    description: >-
+      Optional model ID to pin for this provider (e.g. gpt-4o-mini). Leave empty
+      to pick from the auto-discovered model list in the app.
+  db_type:
+    name: Database
+    description: >-
+      "sqlite" keeps all data on the add-on /data volume. "postgres" uses an
+      external PostgreSQL server configured below.
+  db_url:
+    name: Database URL override
+    description: >-
+      Full SQLAlchemy connection string. Overrides the type/host/... fields, e.g.
+      postgresql+psycopg2://user:pass@host:5432/odysseus.
+  db_host:
+    name: PostgreSQL host
+    description: Hostname or IP of the PostgreSQL server.
+  db_port:
+    name: PostgreSQL port
+    description: Defaults to 5432.
+  db_name:
+    name: PostgreSQL database
+    description: Database name. Defaults to "odysseus".
+  db_user:
+    name: PostgreSQL user
+    description: Username for the PostgreSQL connection.
+  db_password:
+    name: PostgreSQL password
+    description: Password for the PostgreSQL connection.
+  search_provider:
+    name: Search provider
+    description: >-
+      Web search backend. "searxng" uses the URL below (or a bundled instance);
+      brave/tavily/serper/google_pse need an API key. "none" leaves the setting
+      to the app.
+  search_url:
+    name: SearXNG / search URL
+    description: >-
+      Base URL of a SearXNG instance, e.g. http://searxng:8080. Used by the
+      searxng provider.
+  search_api_key:
+    name: Search API key
+    description: API key for the selected search provider (brave/tavily/serper/google_pse).
+  allowed_origins:
+    name: Allowed CORS origins
+    description: Extra browser origins allowed to call the API.
+  bind_address:
+    name: Bind address
+    description: >-
+      Address the web server listens on. Empty = automatic (dual-stack "::" when
+      IPv6 is available, else 0.0.0.0). Set 0.0.0.0 to force IPv4 only.
+  extra_env:
+    name: Extra environment variables
+    description: >-
+      Additional KEY=VALUE entries to pass to Odysseus. Use this for any
+      provider keys or tuning variables not covered above.
+
+network:
+  7000/tcp: Odysseus web UI and API
