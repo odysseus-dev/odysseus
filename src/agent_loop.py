@@ -873,14 +873,40 @@ def _is_qwen38_tool_router(model: str) -> bool:
     )
 
 
+# A negated lookup only forbids the web when it names the web (or a URL) or
+# stands alone ("don't search, just answer"). Naming another source narrows the
+# lookup instead: "don't search my notes, search the web for ..." and "find the
+# news without searching twitter" both still need web_search. Bare "from memory"
+# is just as often content ("learning piano from memory") as an instruction.
+_LOOKUP_OBJECT = r"(?:\s+(?:for\s+)?(?:it|this|that|them|anything))?"
+_NEGATED_LOOKUP = (
+    r"\b(?:do\s+not|don['’]?t|never|no\s+need\s+to)\s+"
+    r"(?:search|google|browse|look\s+(?:it|this|that|them)\s+up|look\s+up)"
+    r"(?:\s+(?:or|and)\s+(?:fetch|open|browse|search|google))?"
+    + _LOOKUP_OBJECT
+)
+_WITHOUT_LOOKUP = (
+    r"\bwithout\s+(?:searching|googling|looking\s+(?:it|this|that|them)\s+up)"
+    + _LOOKUP_OBJECT
+)
+_WEB_OR_ALONE = (
+    r"(?:\s+(?:on\s+|in\s+)?(?:the\s+)?(?:web|internet|online)\b|\s+https?://"
+    r"|(?=\s*(?:[,.;:!?)]|$)|\s+(?:just|only|please|instead)\b))"
+)
+_NO_WEB_LOOKUP_RE = re.compile(
+    rf"(?:{_NEGATED_LOOKUP}|{_WITHOUT_LOOKUP}){_WEB_OR_ALONE}"
+    r"|\bno\s+(?:web|internet|online)\s+(?:search(?:es|ing)?|look\s*-?ups?|access|browsing)\b"
+    r"|\bno\s+(?:web|internet)(?=\s*(?:[,.;:!?)]|$)|\s+please\b)"
+    r"|(?<!not\s)(?<!n't\s)(?<!never\s)\banswer\s+(?:\w+\s+){0,2}from\s+(?:your\s+)?memory\b"
+    r"|\b(?:just|only|purely)\s+from\s+(?:your\s+)?memory\b"
+    r"|\bfrom\s+(?:your\s+)?memory\s+only\b"
+    r"|(?:^|[.!?]\s+)from\s+(?:your\s+)?memory\s*[,:]"
+    r"|,\s*from\s+(?:your\s+)?memory\s*[.?!]*\s*$"
+)
+
+
 def _explicitly_avoids_web_lookup(text: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(?:no\s+web|do\s+not\s+search|don'?t\s+search|without\s+looking\s+it\s+up|"
-            r"without\s+searching|answer\s+from\s+memory\s+only|from\s+memory)\b",
-            str(text or "").lower(),
-        )
-    )
+    return bool(_NO_WEB_LOOKUP_RE.search(str(text or "").lower().strip()))
 
 
 def _looks_like_explicit_plan_request(text: str) -> bool:

@@ -151,15 +151,57 @@ def test_negative_web_wording_withholds_the_web_tools_memory_only(monkeypatch, p
     _assert_negative_web_turn(monkeypatch, phrasing)
 
 
-def test_plain_web_request_still_offers_search(monkeypatch):
+@pytest.mark.parametrize("phrasing", [
+    "Search the web for the latest Python release.",
+    # Excluding one source narrows the lookup; it does not forbid the web.
+    "don't search my notes, search the web for the 2026 F1 calendar",
+    "Find recent news about the Gemini launch, don't search twitter",
+    "without searching reddit, search the web for FastAPI docs",
+    # "from memory" here is the topic, not an instruction.
+    "search for articles about learning piano from memory",
+])
+def test_plain_web_request_still_offers_search(monkeypatch, phrasing):
     """The guard above must not become a blanket removal of the web tools."""
-    offered, chunks = _run_turn(
-        monkeypatch,
-        [{"role": "user", "content": "Search the web for the latest Python release."}],
-    )
+    offered, chunks = _run_turn(monkeypatch, [{"role": "user", "content": phrasing}])
 
     assert len(offered) == 1, chunks
     assert "web_search" in _schema_names(offered[0])
+
+
+@pytest.mark.parametrize("phrasing", [
+    "no web search please, just tell me what you know about Rust",
+    "answer from memory only: capital of Peru",
+    "From memory, what's the capital of Peru?",
+    "don't search, just guess",
+    "don’t search the web, I just want your take",
+    "Do not search or fetch https://example.com/private",
+    "no need to search, just answer",
+    "without searching, what's 2+2",
+    "tell me about Rome without looking it up",
+    "without googling it, what year did Rome fall?",
+    "explain TCP without searching the internet",
+])
+def test_no_web_classifier_recognises_refusals(phrasing):
+    assert al._explicitly_avoids_web_lookup(phrasing) is True
+
+
+@pytest.mark.parametrize("phrasing", [
+    "don't search my notes, search the web for the 2026 F1 calendar",
+    "do not search reddit, search official docs for FastAPI lifespan",
+    "Find recent news about the Gemini launch, don't search twitter",
+    "without searching reddit, search the web for FastAPI docs",
+    "Find news without searching twitter; use official sites",
+    "Tell me without searching Wikipedia; search the web instead",
+    "search for articles about learning piano from memory",
+    "I can't recall the lyrics from memory, can you search for them?",
+    "look it up online: tickets for the Louvre, not from memory",
+    "from memory of our last chat, search the web for that restaurant",
+    "Open both URLs before answering; do not answer from memory.",
+    "I have no web presence yet, can you look up how to build a site?",
+    "What's the weather in Paris? (no web dev jargon please)",
+])
+def test_no_web_classifier_ignores_scoped_or_topical_wording(phrasing):
+    assert al._explicitly_avoids_web_lookup(phrasing) is False
 
 
 # ── supplied workspace context must not produce a clarification ─────────────
