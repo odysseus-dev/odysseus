@@ -149,12 +149,9 @@ class RequestAuthority:
             try:
                 root = self.workspace
                 if not root:
-                    # Same vetting as agent_cwd(): a symlinked agent
-                    # workspace must not redirect the sealed root.
-                    root = os.path.realpath(tool_execution._AGENT_WORKDIR)
-                    if (root not in tool_execution._agent_readable_data_subdirs()
-                            or tool_execution.vet_workspace(root) != root):
-                        raise RuntimeError("agent workspace is not a safe real directory")
+                    # Vetted like agent_cwd(): a symlinked agent workspace
+                    # raises and so grants no root.
+                    root = tool_execution.default_agent_workspace()
                 roots = (FilesystemRoot.seal(root, owner=self.owner),)
             except (OSError, ValueError, RuntimeError):
                 pass  # An unresolved workspace grants no filesystem root.
