@@ -1,0 +1,54 @@
+name: Build Windows App
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'windows/**'
+      - 'build-windows-app.ps1'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'windows/**'
+      - 'build-windows-app.ps1'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install icon generator dependency
+        run: pip install Pillow
+
+      - name: Build Windows Executable
+        shell: pwsh
+        run: .\build-windows-app.ps1 -NoShortcut
+
+      - name: Upload Windows App Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Odysseus-Windows
+          path: dist/Odysseus.exe
+          if-no-files-found: error
+
+      - name: Upload Release Asset
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} dist/Odysseus.exe --clobber
