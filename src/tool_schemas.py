@@ -2162,6 +2162,15 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.warning(f"Unknown function call: {name}")
         return None
 
+    # Issue #6012: a Qwen/Hermes JSON wrapper with a non-string command/code
+    # (list/object/number) must fail closed - coercing it produced a ToolBlock
+    # whose content isn't a str and crashed or mangled execution.
+    if tool_type in ("bash", "python"):
+        _payload = args.get("command" if tool_type == "bash" else "code")
+        if _payload is not None and not isinstance(_payload, str):
+            logger.warning(f"Rejecting non-string {tool_type} payload for function call {name}: {_payload!r}")
+            return None
+
     # Convert structured args back to the text format each tool expects
     if tool_type == "bash":
         content = args.get("command", "")
