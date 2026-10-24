@@ -417,6 +417,7 @@ _HOST_TO_CURATED = (
     ("nvidia.com", "nvidia"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("conifer.build", "openrouter"),
 )
 
 
