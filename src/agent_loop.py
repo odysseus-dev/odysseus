@@ -14,12 +14,12 @@ import csv
 import difflib
 import html
 import json
+import logging
 import os
 import re
 import shlex
 import shutil
 import time
-import logging
 import hashlib
 from src.web_recovery import WebRecoveryBudget
 from itertools import count
@@ -16967,6 +16967,20 @@ def _detect_runaway_call(call_freq, threshold=15):
     sig = next((s for s, n in call_freq.items() if n >= threshold), None)
     return sig.split(":", 1)[0] if sig else None
 
+def _tool_approval_gate_bypassed(
+    exact_approval: Optional[ExactToolApproval] = None,
+) -> bool:
+    """Return whether the post-external-context tool approval gate is bypassed.
+
+    ``tool_approval_mode=auto`` (admin setting, Settings → Agent Tools) bypasses
+    the gate on every run, the same effect as ``ODYSSEUS_TOOL_APPROVAL_GATE=0``.
+    A chat-session grant bypasses it only within the scope of its own task.
+    """
+    return (
+        get_setting("tool_approval_mode", "ask") == "auto"
+        or bool(exact_approval and exact_approval.allow_remaining_actions)
+    )
+
 
 def _tool_result_signature(tool_result_records: list[dict]) -> str:
     """Return a bounded fingerprint of the observable result of a tool batch.
@@ -21205,9 +21219,7 @@ async def stream_agent_loop(
             )
             or messages_contain_external_untrusted_context(messages)
         ),
-        approval_gate_bypassed=bool(
-            exact_approval and exact_approval.allow_remaining_actions
-        ),
+        approval_gate_bypassed=_tool_approval_gate_bypassed(exact_approval),
         delegated_credential=bool(delegated_credential),
     )
     _has_tui_host_bridge = _tui_host_bridge_is_usable(client_runtime_context)

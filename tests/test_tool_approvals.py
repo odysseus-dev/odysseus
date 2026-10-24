@@ -500,3 +500,37 @@ async def test_dispatcher_revalidates_sealed_workspace(monkeypatch, tmp_path):
 
     assert result["blocked"] is True
     assert result["policy"] == "exact_tool_approval"
+
+def test_tool_approval_mode_defaults_to_ask(monkeypatch):
+    import src.agent_loop as agent_loop
+
+    monkeypatch.setattr(
+        agent_loop,
+        "get_setting",
+        lambda key, default=None: (
+            "ask" if key == "tool_approval_mode" else default
+        ),
+    )
+
+    assert agent_loop._tool_approval_gate_bypassed() is False
+
+def test_tool_approval_gate_respects_setting(monkeypatch):
+    import src.agent_loop as agent_loop
+
+    monkeypatch.setattr(
+        agent_loop,
+        "get_setting",
+        lambda key, default=None: (
+            "ask" if key == "tool_approval_mode" else default
+        ),
+    )
+    assert agent_loop._tool_approval_gate_bypassed() is False
+
+    monkeypatch.setattr(
+        agent_loop,
+        "get_setting",
+        lambda key, default=None: (
+            "auto" if key == "tool_approval_mode" else default
+        ),
+    )
+    assert agent_loop._tool_approval_gate_bypassed() is True

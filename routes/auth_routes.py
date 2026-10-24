@@ -18,6 +18,7 @@ from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, S
 from src.auth_helpers import _auth_disabled
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
+from src import tool_capabilities
 from src.settings import (
     load_settings as _load_settings,
     save_settings as _save_settings,
@@ -753,6 +754,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         settings = without_retired_settings(_load_settings())
         if _auth_disabled() or (user and auth_manager.is_admin(user)):
+            # Deployment-level truth for the Tool approval row: a falsy
+            # ODYSSEUS_TOOL_APPROVAL_GATE disables the approval gate for every
+            # run regardless of the stored tool_approval_mode, so surface it to
+            # admins instead of letting the row mislead them the other way.
+            settings["tool_approval_gate_env_disabled"] = not tool_capabilities.TOOL_APPROVAL_GATE_ENABLED
             return settings
         return scrub_settings(settings)
 
@@ -769,6 +775,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
             "auto_compact_threshold_percent": (50, 95),
         }
+        _VALID_VALUES = {
+            "tool_approval_mode": {"ask", "auto"},
+        }
         for key in DEFAULT_SETTINGS:
             if key in RETIRED_SETTING_KEYS:
                 continue
@@ -782,6 +791,15 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+
+            if key in _VALID_VALUES:
+                allowed = _VALID_VALUES[key]
+                if not isinstance(val, str) or val not in allowed:
+                    raise HTTPException(
+                        400,
+                        f"{key} must be one of {sorted(allowed)}",
+                    )
+
             current[key] = val
         _save_settings(current)
         return without_retired_settings(current)
