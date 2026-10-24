@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, text
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, _auth_disabled
@@ -173,6 +173,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                                 content=merged,
                                 summary="Updated existing email draft",
                                 source="user",
+                                is_autosave=False,
                             ))
                             db.commit()
                             db.refresh(existing)
@@ -201,6 +202,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 content=req.content,
                 summary="Initial version",
                 source="user",
+                is_autosave=False,
             )
             db.add(doc)
             db.add(ver)
@@ -763,6 +765,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 content=doc.current_content,
                 summary="PDF text re-extracted (OCR)",
                 source="ocr",
+                is_autosave=False,
             ))
             db.commit()
             return {"ok": True, "id": doc_id, "extracted": True, "chars": len(body_text)}
@@ -842,7 +845,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if db.get_bind().dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            doc = db.query(Document).filter(Document.id == doc_id).with_for_update().first()
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
@@ -866,28 +871,52 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             _reserve_document_uploads(user, incoming_content)
             _assert_pdf_marker_upload_owned(request, incoming_content, user, upload_handler)
 
-            # Check if we can coalesce with the latest version
+            # Only editor autosaves are mutable. Initial, explicitly saved,
+            # restored and legacy versions remain protected checkpoints.
             latest_ver = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id,
             ).order_by(DocumentVersion.version_number.desc()).first()
 
             now = datetime.now(timezone.utc)
             coalesced = False
-            if latest_ver and latest_ver.source == "user" and not req.force_version:
+            if latest_ver and latest_ver.is_autosave and not req.force_version:
                 ver_time = latest_ver.created_at
                 if ver_time.tzinfo is None:
                     ver_time = ver_time.replace(tzinfo=timezone.utc)
                 age = (now - ver_time).total_seconds()
                 if age < VERSION_COALESCE_SECONDS:
-                    # Update the existing version in-place
-                    latest_ver.content = incoming_content
-                    latest_ver.created_at = now
-                    if req.summary:
-                        latest_ver.summary = req.summary
-                    coalesced = True
+                    # Optimistic concurrency check: only update the version row if
+                    # its content has not changed since we read it.  Two concurrent
+                    # autosave requests from different browser tabs both see the same
+                    # is_autosave=True version and both plan to coalesce; without this
+                    # guard the second commit silently overwrites the first, losing
+                    # content.  When the check fails (rowcount==0), we fall through
+                    # and create a new version instead — no content is ever dropped.
+                    stale_content = latest_ver.content
+                    now_naive = now.replace(tzinfo=None)
+                    new_summary = req.summary or latest_ver.summary
+                    from sqlalchemy import update as sa_update
+                    result = db.execute(
+                        sa_update(DocumentVersion)
+                        .where(
+                            DocumentVersion.id == latest_ver.id,
+                            DocumentVersion.content == stale_content,
+                        )
+                        .values(
+                            content=incoming_content,
+                            created_at=now_naive,
+                            summary=new_summary,
+                        )
+                    )
+                    if result.rowcount == 1:
+                        # Invalidate the ORM identity cache so db.refresh(doc) later
+                        # does not return stale data from the in-memory object.
+                        db.expire(latest_ver)
+                        coalesced = True
 
             if not coalesced:
-                new_ver = doc.version_count + 1
+                current_max = max(doc.version_count or 0, latest_ver.version_number if latest_ver else 0)
+                new_ver = current_max + 1
                 ver = DocumentVersion(
                     id=str(uuid.uuid4()),
                     document_id=doc_id,
@@ -895,6 +924,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     content=incoming_content,
                     summary=req.summary or "Manual edit",
                     source="user",
+                    is_autosave=not req.force_version,
                 )
                 doc.version_count = new_ver
                 db.add(ver)
@@ -910,6 +940,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, f"Failed to update document: {e}")
         finally:
             db.close()
+
 
     # ---- PATCH /api/document/{doc_id} — metadata only ----
     @router.patch("/api/document/{doc_id}")
@@ -1030,7 +1061,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         db = SessionLocal()
         try:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if db.get_bind().dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            doc = db.query(Document).filter(Document.id == doc_id).with_for_update().first()
             if not doc:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
@@ -1042,7 +1075,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not old_ver:
                 raise HTTPException(404, "Version not found")
 
-            new_ver_num = doc.version_count + 1
+            latest_ver = db.query(DocumentVersion).filter(
+                DocumentVersion.document_id == doc_id,
+            ).order_by(DocumentVersion.version_number.desc()).first()
+            current_max = max(doc.version_count or 0, latest_ver.version_number if latest_ver else 0)
+            new_ver_num = current_max + 1
             ver = DocumentVersion(
                 id=str(uuid.uuid4()),
                 document_id=doc_id,
@@ -1050,6 +1087,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 content=old_ver.content,
                 summary=f"Restored from v{num}",
                 source="user",
+                is_autosave=False,
             )
             doc.current_content = old_ver.content
             doc.version_count = new_ver_num
