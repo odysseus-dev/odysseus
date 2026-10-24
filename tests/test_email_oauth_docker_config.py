@@ -1,4 +1,4 @@
-"""Regression coverage for Google OAuth configuration in Docker Compose."""
+"""Regression coverage for email OAuth configuration in Docker Compose."""
 
 from pathlib import Path
 
@@ -66,3 +66,37 @@ def test_redirect_documentation_covers_https_and_reverse_proxies():
     assert "HTTPS" in oauth_section
     assert "reverse-proxy" in oauth_section
     assert "exactly match an authorized redirect URI" in oauth_section
+
+
+MICROSOFT_KEYS = (
+    "MICROSOFT_OAUTH_CLIENT_ID",
+    "MICROSOFT_OAUTH_CLIENT_SECRET",
+    "MICROSOFT_OAUTH_TENANT_ID",
+    "MICROSOFT_OAUTH_REDIRECT_URI",
+)
+
+
+@pytest.mark.parametrize("key", MICROSOFT_KEYS)
+def test_microsoft_oauth_setting_is_forwarded(key):
+    expected = f"{key}=${{{key}:-}}"
+    for path in COMPOSE_PATHS:
+        assert expected in _odysseus_environment(path), path.name
+
+
+@pytest.mark.parametrize("key", MICROSOFT_KEYS)
+def test_microsoft_oauth_setting_is_documented(key):
+    assert f"# {key}=" in _env_example()
+
+
+def test_microsoft_oauth_example_uses_a_neutral_secret_placeholder():
+    env_example = _env_example()
+    assert "MICROSOFT_OAUTH_CLIENT_SECRET=replace-with-client-secret" in env_example
+
+
+def test_microsoft_setup_documents_the_required_mail_scopes():
+    """Without the Exchange delegated scopes the connect succeeds but IMAP and
+    SMTP still refuse the token, which is the confusing failure to prevent."""
+    section = _env_example().split("# Microsoft OAuth2", 1)[1]
+    assert "IMAP.AccessAsUser.All" in section
+    assert "SMTP.Send" in section
+    assert "offline_access" in section

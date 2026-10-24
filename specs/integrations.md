@@ -34,7 +34,7 @@ The SQLAlchemy `Integration` model exists in `core/database.py`, but current Set
 - document list/read/create/delete;
 - Cookbook task/server/output/cached-model/preset/serve/adopt/stop controls.
 
-`_scope_owner()` owns scope checks and token-owner resolution. `_as_owner()` temporarily runs borrowed route handlers as the scoped owner and restores request state afterward. Borrowed email, memory, calendar, and document route handlers own their domain behavior; Codex routes only adapt them behind scoped access.
+`_scope_owner()` owns scope checks and token-owner resolution. `_as_owner()` temporarily runs borrowed route handlers as the scoped owner and restores request state afterward. Borrowed email, memory, calendar, and document route handlers own their domain behavior; Codex routes only adapt them behind scoped access. Borrowed handlers are called as plain Python functions, so every call goes through `_call_handler()`: parameters left out would otherwise arrive as truthy FastAPI `Query()`/`Body()` marker objects instead of values, so it replaces them with their declared defaults and refuses an unresolved `Depends()` or required parameter.
 
 Runtime behavior:
 
@@ -150,6 +150,7 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 
 - 403 from scoped APIs means a settings/scope restriction.
 - 503 from Codex borrowed routes means the domain route surface is unavailable.
+- 401 `{"error": "Invalid API token"}` only means the bearer token failed verification. A route error after a token was accepted is a 500, logged as "Unhandled error ... after API token auth".
 - Missing or corrupt `data/integrations.json` loads as an empty list; non-object rows are ignored.
 - Plaintext generic integration API keys migrate to encrypted storage on load.
 - Webhook delivery has no retry/backoff queue; the persisted state is last status or sanitized last error.

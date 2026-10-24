@@ -113,7 +113,7 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
 | `ODYSSEUS_ALLOW_PRIVATE_CALDAV` | `'0'` | `src/caldav_sync.py` | Security-relevant. Truthy lets CalDAV sync reach private and link-local addresses. Off by default; this is an SSRF guard. |
-| `ODYSSEUS_FALLBACK_OWNER` | `'owner@localhost'` | `routes/calendar_routes.py` | Owner address that single-user mode attributes an unauthenticated request to. Only reachable while single-user mode is on. |
+| `ODYSSEUS_FALLBACK_OWNER` | `'owner@localhost'` | `routes/calendar_routes.py` (+2 more) | Owner address that single-user mode attributes an unauthenticated request to. Only reachable while single-user mode is on. |
 | `ODYSSEUS_SINGLE_USER` | `'1'` | `routes/calendar_routes.py` | Security-relevant. On by default. Set to 0 on a real multi-user install so unauthenticated calendar writes are rejected rather than absorbed. |
 
 ### Upload and media limits

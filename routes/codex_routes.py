@@ -6,6 +6,7 @@ user data.
 """
 
 import asyncio
+import inspect
 import json
 import zipfile
 from io import BytesIO
@@ -13,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
+from fastapi import params as fastapi_params
 from fastapi.responses import StreamingResponse
+from pydantic.fields import FieldInfo
 
 from core.middleware import require_admin
 from src.auth_helpers import require_authenticated_request, require_user
@@ -58,6 +61,33 @@ def _ssh_prefix_for_task(task: dict) -> tuple[str, str]:
     return host, port_flag
 
 
+async def _call_handler(fn, *args, **kwargs):
+    """Call a FastAPI route handler directly as a plain Python function.
+
+    Parameters the caller leaves out keep their FastAPI marker defaults
+    (``Query(None)``, ``Query(0)``, ``Body(...)``) -- truthy ``FieldInfo``
+    objects, not values -- so e.g. ``if date_from:`` takes the wrong branch.
+    Replace each unpassed marker with its declared default, and refuse to
+    call with an unresolved ``Depends`` or required parameter. Works for sync
+    and async handlers."""
+    sig = inspect.signature(fn)
+    bound = sig.bind_partial(*args, **kwargs)
+    for name, param in sig.parameters.items():
+        if name in bound.arguments:
+            continue
+        default = param.default
+        if isinstance(default, fastapi_params.Depends):
+            raise TypeError(f"{getattr(fn, '__name__', fn)}: dependency '{name}' must be passed explicitly")
+        if isinstance(default, FieldInfo):
+            if default.is_required():
+                raise TypeError(f"{getattr(fn, '__name__', fn)}: required parameter '{name}' not passed")
+            bound.arguments[name] = default.get_default(call_default_factory=True)
+    result = fn(*bound.args, **bound.kwargs)
+    if asyncio.iscoroutine(result):
+        result = await result
+    return result
+
+
 async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
     """Run an existing route handler with request.state.current_user temporarily
     set to ``owner`` so its internal get_current_user/require_user calls see
@@ -68,10 +98,7 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
     request.state.current_user = owner
     request.state.api_token = False
     try:
-        result = fn(*args, **kwargs)
-        if asyncio.iscoroutine(result):
-            result = await result
-        return result
+        return await _call_handler(fn, *args, **kwargs)
     finally:
         request.state.current_user = orig
         if orig_api_token is None:
@@ -314,7 +341,8 @@ def setup_codex_routes(
             from routes.email_helpers import _assert_owns_account
 
             _assert_owns_account(account_id, owner)
-        return await email_list_endpoint(
+        return await _call_handler(
+            email_list_endpoint,
             folder=folder,
             limit=limit,
             offset=offset,
@@ -322,7 +350,11 @@ def setup_codex_routes(
             from_addr=from_addr,
             account_id=account_id,
             has_attachments=has_attachments,
+            date_from=None,
+            date_to=None,
+            cached_only=0,
             cache_bust=None,
+            refresh=0,
             owner=owner,
         )
 
@@ -341,17 +373,21 @@ def setup_codex_routes(
             from routes.email_helpers import _assert_owns_account
 
             _assert_owns_account(account_id, owner)
-        return await email_read_endpoint(
+        return await _call_handler(
+            email_read_endpoint,
             uid=uid,
             folder=folder,
             account_id=account_id,
             mark_seen=mark_seen,
+            full=False,
             owner=owner,
         )
 
     # ── Email draft + send ────────────────────────────────────────────────
     # Both handlers in routes/email_routes.py already accept `owner=` via
     # FastAPI Depends, so we call them directly without patching state.
+    # Always go through _call_handler: unpassed FastAPI params would otherwise
+    # arrive as truthy Query()/Depends() marker objects.
 
     def _email_draft_document_content(body: dict[str, Any]) -> str:
         def clean(v: Any) -> str:
@@ -417,7 +453,7 @@ def setup_codex_routes(
             req = SendEmailRequest(**body)
         except Exception as exc:
             raise HTTPException(400, f"Invalid draft payload: {exc}")
-        return await email_draft_endpoint(req=req, owner=owner)
+        return await _call_handler(email_draft_endpoint, req=req, owner=owner)
 
     @router.post("/emails/send")
     async def codex_email_send(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -430,7 +466,7 @@ def setup_codex_routes(
             req = SendEmailRequest(**body)
         except Exception as exc:
             raise HTTPException(400, f"Invalid send payload: {exc}")
-        return await email_send_endpoint(req=req, background_tasks=BackgroundTasks(), owner=owner)
+        return await _call_handler(email_send_endpoint, req=req, background_tasks=BackgroundTasks(), owner=owner)
 
     # ── Memory ────────────────────────────────────────────────────────────
 
@@ -716,7 +752,7 @@ def setup_codex_routes(
                     break
         if serve_endpoint is None:
             raise HTTPException(503, "model serve endpoint unavailable")
-        return await serve_endpoint(request, req)
+        return await _call_handler(serve_endpoint, request, req)
 
     @router.post("/cookbook/stop/{session_id}")
     async def codex_cookbook_stop(request: Request, session_id: str):
@@ -789,7 +825,8 @@ def setup_codex_routes(
         if cached_endpoint is None:
             raise HTTPException(503, "model cached endpoint unavailable")
         # The endpoint reads host/model_dir/ssh_port/platform as kwargs.
-        return await cached_endpoint(
+        return await _call_handler(
+            cached_endpoint,
             request,
             host=params.get("host") or None,
             model_dir=params.get("model_dir") or None,
@@ -866,7 +903,7 @@ def setup_codex_routes(
                     break
         if serve_endpoint is None:
             raise HTTPException(503, "model serve endpoint unavailable")
-        return await serve_endpoint(request, req)
+        return await _call_handler(serve_endpoint, request, req)
 
     @router.post("/cookbook/adopt")
     async def codex_cookbook_adopt(request: Request, body: dict[str, Any] = Body(default_factory=dict)):

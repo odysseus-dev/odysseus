@@ -25,5 +25,7 @@ export function createNotesApi({ origin, request }) {
     defaultChat: () => request(`${origin}/api/default-chat`, { credentials: 'same-origin' }),
     createSession: body => request(`${origin}/api/session`, { method: 'POST', body, credentials: 'same-origin' }),
     startChat: body => request(`${origin}/api/chat_stream`, { method: 'POST', body, credentials: 'same-origin' }),
+    microsoftTodoConfig: () => request(`${origin}/api/notes/config/microsoft`, { credentials: 'same-origin' }),
+    syncTodo: direction => request(`${origin}/api/notes/sync?direction=${direction}`, { method: 'POST', credentials: 'same-origin' }),
   };
 }

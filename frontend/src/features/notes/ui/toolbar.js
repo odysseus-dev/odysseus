@@ -1,12 +1,75 @@
-/** Panel search, archive and list/grid controls. */
+/** Panel search, archive, list/grid and Microsoft To Do sync controls. */
 export function createToolbar({
+  api,
   app,
   state,
   persistence,
+  uiModule,
   _renderNotes,
   _fetchNotes,
   _applyMasonry
 }) {
+  // Microsoft To Do sync. The button stays hidden unless an account is
+  // actually connected — a control that can only ever say "nothing connected"
+  // is noise in a header this small.
+  let _todoSyncRunning = false;
+
+  async function _todoAccountConnected() {
+    try {
+      const res = await api.microsoftTodoConfig();
+      if (!res.ok) return false;
+      const data = await res.json();
+      return (data.accounts || []).length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function _flattenTodoSync(raw) {
+    const out = { tasks: 0, deleted: 0, errors: [] };
+    const add = (part) => {
+      if (!part || typeof part !== 'object') return;
+      out.tasks += Number(part.tasks || 0);
+      out.deleted += Number(part.deleted || 0);
+      if (Array.isArray(part.errors)) out.errors.push(...part.errors);
+    };
+    // `direction=both` nests its counts under push/pull.
+    if (raw && (raw.push || raw.pull)) { add(raw.push); add(raw.pull); }
+    else add(raw);
+    return out;
+  }
+
+  async function _syncTodo(interactive = true) {
+    if (_todoSyncRunning) return;
+    _todoSyncRunning = true;
+    const btn = document.getElementById('notes-todo-sync');
+    btn?.classList.add('active');
+    if (btn) btn.disabled = true;
+    try {
+      // `both` pushes local edits before pulling. A pull alone would strand a
+      // task created here while offline, and "Sync" is exactly when the user
+      // expects that retry to happen.
+      const res = await api.syncTodo('both');
+      const data = _flattenTodoSync(await res.json().catch(() => ({})));
+      // The open-time pass is silent: it redraws only when something actually
+      // moved, so opening Notes does not flash the board or pop a toast for a
+      // sync the user did not ask for.
+      if (interactive || data.tasks > 0 || data.deleted > 0) {
+        await _fetchNotes();
+        _renderNotes();
+      }
+      if (!interactive) return;
+      if (data.errors.length) uiModule.showError(String(data.errors[0]).slice(0, 200));
+      else uiModule.showToast?.(`Tasks synced (${data.tasks})`);
+    } catch (e) {
+      if (interactive) uiModule.showError('Task sync failed');
+    } finally {
+      _todoSyncRunning = false;
+      btn?.classList.remove('active');
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function wireToolbar(pane) {
     // Search
     const searchEl = document.getElementById('notes-search');
@@ -14,6 +77,19 @@ export function createToolbar({
       searchEl.addEventListener('input', () => {
         app.setSearchQuery(searchEl.value.trim().toLowerCase());
         _renderNotes();
+      });
+    }
+
+    // Microsoft To Do sync
+    const todoSyncBtn = document.getElementById('notes-todo-sync');
+    if (todoSyncBtn) {
+      todoSyncBtn.addEventListener('click', () => { _syncTodo(true); });
+      _todoAccountConnected().then((connected) => {
+        if (!connected) return;
+        todoSyncBtn.style.display = '';
+        // Same shape as the calendar: pull on open so a task ticked off on a
+        // phone is already here, without waiting for the user to press Sync.
+        _syncTodo(false);
       });
     }
 

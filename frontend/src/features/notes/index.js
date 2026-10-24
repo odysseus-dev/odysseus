@@ -201,9 +201,11 @@ const windowLayout = createWindowLayout({
   topToolWindowZ
 });
 const toolbar = createToolbar({
+  api,
   app,
   state,
   persistence,
+  uiModule,
   _renderNotes,
   _fetchNotes,
   _applyMasonry
