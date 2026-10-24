@@ -83,16 +83,19 @@ DEFAULT_SETTINGS = {
     #     DuckDuckGo    safesearch=off/moderate/on (library + HTML kp param)
     #     Google PSE    safe=active (omitted for "off"; PSE has no middle tier)
     #     Serper.dev    safe=active (omitted for "off"; proxies Google's `safe`)
+    #     You.com       safesearch=off/moderate/strict
     # Providers NOT touched: Tavily (no SafeSearch knob; filters at index time)
     # and any custom backend reached via search_url — they keep whatever the
     # backend itself decides, so operators stay in control of self-hosted /
     # niche search instances.
+    # You.com honors safesearch=off|moderate|strict on both free and keyed paths.
     "search_safesearch": "strict",
     "brave_api_key": "",
     "google_pse_key": "",
     "google_pse_cx": "",
     "tavily_api_key": "",
     "serper_api_key": "",
+    "ydc_api_key": "",
     "research_endpoint_id": "",
     "research_model": "",
     "research_search_provider": "",
