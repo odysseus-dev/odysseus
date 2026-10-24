@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from routes._validators import validate_remote_host, validate_ssh_port
+from services.hwfit.vision import vision_modality
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -53,7 +54,8 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_windows_bash_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     load_stored_hf_token,
-    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _append_vllm_linux_preflight_lines, _append_mlx_vlm_preflight_lines,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
@@ -1554,6 +1556,11 @@ def setup_cookbook_routes() -> APIRouter:
 	                    "is_diffusion": m.get("is_diffusion", False),
 	                    "is_video": m.get("is_video", False),
 	                    "is_adapter": m.get("is_adapter", False),
+	                    # Models scanned off disk carry no pipeline_tag, so the
+	                    # name marker is the only vision signal available here.
+	                    # Without it a VLM already on disk would still be routed
+	                    # to the text-only mlx_lm server.
+	                    "modality": vision_modality(m),
 	                }
                 if m.get("is_local_dir"):
                     entry["is_local_dir"] = True
@@ -2519,6 +2526,8 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  printf "%s\\n" "$ODYSSEUS_SGLANG_IMPORT_ERROR"')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
+            elif "mlx_vlm.server" in req.cmd:
+                _append_mlx_vlm_preflight_lines(runner_lines, req.cmd)
             elif "mlx_lm.server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
                 runner_lines.append(f"ODYSSEUS_SERVE_CMD='{_bash_squote(req.cmd)}'")

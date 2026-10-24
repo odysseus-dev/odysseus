@@ -5,6 +5,7 @@ from services.hwfit.models import (
     get_models, is_prequantized, _active_params_b, QUANT_BYTES_PER_PARAM,
     QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY,
 )
+from services.hwfit.vision import vision_modality, verified_vlm_models
 
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
@@ -529,6 +530,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "params_b": round(pb, 1),
             "is_moe": is_moe,
             "use_case": model_use_case,
+            "modality": vision_modality(model),
             "fit_level": "too_tight",
             "run_mode": "no_fit",
             "quant": quant_to_try,
@@ -604,6 +606,11 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         "params_b": round(pb, 1),
         "is_moe": is_moe,
         "use_case": model_use_case,
+        "modality": vision_modality(model),
+        # Whether THIS checkpoint has actually answered about an image here, as
+        # opposed to merely declaring that it can. Only scripts/smoke_mlx_vlm.py
+        # sets it, after a real round trip.
+        "vlm_verified": model.get("name") in verified_vlm_models(),
         "fit_level": fit_level,
         "run_mode": run_mode,
         "quant": quant,

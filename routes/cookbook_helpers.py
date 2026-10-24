@@ -822,6 +822,41 @@ def _append_vllm_linux_preflight_lines(runner_lines: list[str]) -> None:
     runner_lines.append('  if [ -n "$ODYSSEUS_VLLM_VERSION" ]; then echo "[odysseus] vLLM version: $ODYSSEUS_VLLM_VERSION"; fi')
     runner_lines.append('fi')
 
+def _append_mlx_vlm_preflight_lines(runner_lines: list[str], cmd: str) -> None:
+    """Append the readiness check for an mlx-vlm (vision) serve.
+
+    mlx-vlm requires mlx>=0.32.4, newer than the main venv pins, so it usually
+    lives in a venv of its own and the launch command points at that
+    interpreter by absolute path. This resolves that interpreter out of the
+    command and checks the import there, so a missing module is reported by
+    name before the server starts rather than failing somewhere inside it.
+
+    Nothing here falls back to mlx_lm: that server accepts no images, so for a
+    vision model it would come up healthy and silently useless, which is the
+    failure this whole path exists to prevent.
+    """
+    runner_lines.append('export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+    runner_lines.append(f"ODYSSEUS_SERVE_CMD='{_bash_squote(cmd)}'")
+    runner_lines.append('ODYSSEUS_MLX_VLM_CMD_PY="$(python3 - "$ODYSSEUS_SERVE_CMD" <<\'PY\'')
+    runner_lines.append('import shlex, sys')
+    runner_lines.append('parts = shlex.split(sys.argv[1])')
+    runner_lines.append('py = "python3"')
+    runner_lines.append('for part in parts:')
+    runner_lines.append('    if part.endswith("/bin/python") or part.endswith("/bin/python3") or "/bin/python3." in part:')
+    runner_lines.append('        py = part')
+    runner_lines.append('        break')
+    runner_lines.append('print(py)')
+    runner_lines.append('PY')
+    runner_lines.append(')"')
+    runner_lines.append('echo "[odysseus] mlx-vlm launch Python: $ODYSSEUS_MLX_VLM_CMD_PY"')
+    runner_lines.append('if ! ODYSSEUS_MLX_VLM_IMPORT_ERROR="$("$ODYSSEUS_MLX_VLM_CMD_PY" -c "import mlx_vlm" 2>&1)"; then')
+    runner_lines.append('  echo "ERROR: mlx-vlm is not installed in the launch Python: $ODYSSEUS_MLX_VLM_CMD_PY"')
+    runner_lines.append('  printf "%s\\n" "$ODYSSEUS_MLX_VLM_IMPORT_ERROR"')
+    runner_lines.append('  echo "Install it in Cookbook Dependencies (mlx_vlm), or point the Venv field at a venv that has it. It needs mlx>=0.32.4, so installing it into a venv pinned to an older mlx will upgrade mlx there."')
+    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('fi')
+
+
 def _append_serve_exit_code_lines(
     runner_lines: list[str],
     *,

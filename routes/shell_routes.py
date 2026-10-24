@@ -1601,7 +1601,7 @@ def setup_shell_routes() -> APIRouter:
             {
                 "name": "mlx_vlm",
                 "pip": "mlx-vlm",
-                "desc": "MLX-VLM backbone used by HiDream image models on Apple Silicon",
+                "desc": "Serves vision models (image input) on Apple Silicon, and backs HiDream image models. Needs mlx>=0.32.4 — installing it into a venv pinned to an older mlx upgrades mlx there, so prefer a venv of its own",
                 "category": "Image",
                 "target": "remote",
             },

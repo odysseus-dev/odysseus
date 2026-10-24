@@ -16,6 +16,7 @@ import {
 } from './escMenuStack.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 import { _hwfitCache } from './cookbook-hwfit.js';
+import { isVisionModel } from './cookbookVision.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 
 // Shared state/functions injected by init()
@@ -780,8 +781,8 @@ function _backendChoicesForTarget(target) {
     return [['llamacpp','llama.cpp'],['diffusers','Diffusers']];
   }
   return _isMetal()
-    ? [['mlx','MLX'],['mlx_image','MLX Image'],['llamacpp','llama.cpp'],['ollama','Ollama']]
-    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['mlx','MLX'],['mlx_image','MLX Image'],['diffusers','Diffusers']];
+    ? [['mlx','MLX'],['mlx_vlm','MLX VLM'],['mlx_image','MLX Image'],['llamacpp','llama.cpp'],['ollama','Ollama']]
+    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['mlx','MLX'],['mlx_vlm','MLX VLM'],['mlx_image','MLX Image'],['diffusers','Diffusers']];
 }
 
 function _dependencyPkgForServeBackend(backend, modelName = '') {
@@ -795,6 +796,7 @@ function _dependencyPkgForServeBackend(backend, modelName = '') {
     sglang: 'sglang',
     llamacpp: 'llama_cpp',
     mlx: 'mlx_lm',
+    mlx_vlm: 'mlx_vlm',
     mlx_image: 'mflux',
     diffusers: 'diffusers',
   };
@@ -849,6 +851,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
     sglang: 'sglang',
     llamacpp: 'llama_cpp',
     mlx: 'mlx_lm',
+    mlx_vlm: 'mlx_vlm',
     mlx_image: 'mflux',
     diffusers: 'diffusers',
   };
@@ -3435,6 +3438,15 @@ function _rerenderCachedModels() {
         });
         serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
         const launchTarget = _selectedServeTarget(panel);
+        // A vision model must never be launched on mlx_lm: it accepts no
+        // images, so the serve would come up healthy and silently useless.
+        // Checked against the MODEL, not just the dropdown, because the
+        // dropdown's default can land a vision model on plain MLX.
+        if (serveState.backend === 'mlx' && isVisionModel(m)) {
+          _restoreLaunchBtn();
+          uiModule.showToast('This is a vision model: mlx_lm.server accepts no images. Pick the MLX VLM backend instead — refusing rather than starting a server that would quietly ignore the image.', 9000);
+          return;
+        }
         if (serveState.backend === 'llamacpp' && serveState.vision && !/(?:^|\s)(?:--mmproj|--clip_model_path)\b/.test(launchCmd)) {
           _restoreLaunchBtn();
           uiModule.showToast('Vision is checked, but no mmproj projector is in the launch command. Refresh cached models after downloading mmproj, or add --mmproj manually.', 8000);
