@@ -873,10 +873,12 @@ app.include_router(setup_font_routes())
 from src.mcp_manager import McpManager
 from src.agent_tools import set_mcp_manager
 from routes.mcp.mcp_routes import setup_mcp_routes
+from routes.mcp_gateway_routes import setup_mcp_gateway_routes
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
 app.include_router(setup_mcp_routes(mcp_manager))
+app.include_router(setup_mcp_gateway_routes())
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)

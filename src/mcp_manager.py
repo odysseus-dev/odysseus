@@ -183,7 +183,7 @@ class McpManager:
         try:
             from src.agent_runtime.remote_resources import endpoint_identity, configuration_incarnation
             self._resource_endpoints[server_id] = (
-                endpoint_identity(url) if transport in {"sse", "http"} else f"stdio:{server_id}",
+                endpoint_identity(url) if transport in {"sse", "http", "gateway"} else f"stdio:{server_id}",
                 configuration_incarnation((transport, url, command, args, env)))
             if server_id == "memory":
                 effective_env = {**os.environ, **(env or {})}
@@ -194,6 +194,8 @@ class McpManager:
                 res = await self._connect_sse(server_id, name, url)
             elif transport == "http":
                 res = await self._start_http_connect(server_id, name, url)
+            elif transport == "gateway":
+                res = await self._connect_gateway(server_id, name)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -337,6 +339,57 @@ class McpManager:
             logger.warning("MCP package not installed. Install with: pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
+
+    async def _connect_gateway(self, server_id: str, name: str) -> bool:
+        """Connect a gateway-backed MCP server.
+
+        A gateway is not an MCP server on the wire: it serves a JSON route map
+        and plain HTTP underneath. So there is no ClientSession and no
+        initialize()/list_tools(); discovery reads the manifest and
+        synthesises a tool per callable route instead.
+
+        Calls go through GatewayPool per invocation rather than binding an
+        endpoint at connect time, so a gateway added or revived later is
+        picked up without reconnecting.
+        """
+        from src.mcp_gateway_transport import connect_gateway
+
+        self._connections[server_id] = {"status": "connecting", "name": name, "transport": "gateway"}
+        try:
+            session = await connect_gateway(server_id, name)
+        except Exception as e:
+            logger.error("Gateway connect failed for %s: %s", name, e)
+            self._connections[server_id] = {
+                "status": "error", "name": name, "transport": "gateway",
+                "error": f"Gateway discovery failed: {e}",
+            }
+            return False
+
+        if not session:
+            self._connections[server_id] = {
+                "status": "error", "name": name, "transport": "gateway",
+                "error": "No callable routes discovered. Check ODYSSEUS_GATEWAY_URLS "
+                         "and that the gateway publishes a route map.",
+            }
+            return False
+
+        self._sessions[server_id] = session
+        self._tools[server_id] = session.tools
+        # No AsyncExitStack: a gateway has no subprocess and no open stream,
+        # so disconnect_server must not try to close one. _stacks[server_id] is
+        # deliberately left unset.
+        self._connections[server_id] = {
+            "status": "connected",
+            "name": name,
+            "transport": "gateway",
+            "tool_count": len(session.tools),
+            "manifest_routes": sorted(session.manifest),
+        }
+        logger.info(
+            "MCP gateway connected: %s (%s) - %d tools via gateway",
+            name, server_id, len(session.tools),
+        )
+        return True
 
     async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odysseus · Gateway Control</title>
+<!--
+  Single-file dashboard. No build, no framework, no bundler — same stack as
+  the E8 lattice page and the City IP Map.
+
+  Reads /__gateway/dashboard from whichever worker serves it. Point at the
+  gateway worker by default; ?src=<url> overrides.
+-->
+<style>
+  :root{
+    --bg:#05080c; --panel:#0a1018; --line:#16222f; --fg:#d6e4f0;
+    --dim:#5f7788; --ok:#38e0c8; --bad:#ff6b8a; --warn:#ffc857;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+  header{padding:14px 18px;border-bottom:1px solid var(--line);
+         display:flex;gap:16px;align-items:baseline;flex-wrap:wrap;
+         position:sticky;top:0;background:var(--bg);z-index:2}
+  h1{margin:0;font-size:13px;letter-spacing:.2em;color:var(--ok);font-weight:600}
+  .m{color:var(--dim)} .m b{color:var(--fg);font-weight:400}
+  main{padding:18px;display:grid;gap:16px;
+       grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+  section{border:1px solid var(--line);background:var(--panel)}
+  h2{margin:0;padding:9px 12px;border-bottom:1px solid var(--line);
+     font-size:10px;letter-spacing:.18em;color:var(--dim);font-weight:600}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:7px 12px;text-align:left;border-bottom:1px solid var(--line);
+        font-weight:400;vertical-align:top}
+  th{color:var(--dim);font-size:10px;letter-spacing:.1em}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px}
+  .up{background:rgba(56,224,200,.14);color:var(--ok)}
+  .down{background:rgba(255,107,138,.14);color:var(--bad)}
+  .cool{background:rgba(255,200,87,.14);color:var(--warn)}
+  a{color:var(--ok)}
+  #err{margin:0;padding:12px 18px;color:var(--bad);display:none}
+  footer{padding:10px 18px 26px;color:var(--dim)}
+  code{color:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <h1>GATEWAY CONTROL</h1>
+  <span class="m">source <b id="src">—</b></span>
+  <span class="m">colo <b id="colo">—</b></span>
+  <span class="m">updated <b id="age">—</b></span>
+</header>
+<p id="err"></p>
+<main>
+  <section>
+    <h2>WORKERS</h2>
+    <table><thead><tr><th>name</th><th>state</th><th>latency</th></tr></thead>
+    <tbody id="workers"><tr><td colspan=3 class="m">loading…</td></tr></tbody></table>
+  </section>
+  <section>
+    <h2>UPSTREAM POOL</h2>
+    <table><thead><tr><th>origin</th><th>state</th><th>latency</th></tr></thead>
+    <tbody id="upstream"><tr><td colspan=3 class="m">loading…</td></tr></tbody></table>
+  </section>
+  <section>
+    <h2>ROUTING STATE</h2>
+    <table><thead><tr><th>endpoint</th><th>strikes</th><th>ok/fail</th><th>dead</th></tr></thead>
+    <tbody id="routing"><tr><td colspan=4 class="m">loading…</td></tr></tbody></table>
+  </section>
+  <section>
+    <h2>AGENT TOOL CALLING</h2>
+    <table><tbody id="tools"><tr><td colspan=2 class="m">loading…</td></tr></tbody></table>
+  </section>
+</main>
+<footer>
+  <code>osint_locate</code> routes through the pool; failover, cooldown and the
+  dead list are enforced in <code>src/mcp_gateway.py</code> and mirrored at the
+  edge.
+</footer>
+
+<script type="module">
+const SRC = new URL(location.href).searchParams.get("src")
+  || "https://odysseus-mcp-gateway.doxbin.workers.dev";
+const $ = (id) => document.getElementById(id);
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pill = (ok, label) =>
+  `<span class="pill ${ok ? "up" : "down"}">${esc(label)}</span>`;
+
+/** Tools the gateway transport synthesises, and what each one is for. */
+const TOOLS = [
+  ["osint_locate", "image → lat/lon via Workers AI vision"],
+  ["tools", "enumerate gateway capabilities"],
+  ["route", "route a request to the best backend"],
+  ["compose", "multi-step composed request"],
+  ["models", "models reachable through the pool"],
+];
+
+function render(d) {
+  $("src").textContent = d.src;
+  $("colo").textContent = d.data.colo || "—";
+  $("age").textContent = new Date().toLocaleTimeString();
+
+  $("workers").innerHTML = d.data.workers.map((w) => `
+    <tr><td>${esc(w.name)}<br><a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.url)}</a></td>
+    <td>${pill(w.ok, w.ok ? "online" : (w.error || "down"))}</td>
+    <td>${w.latencyMs} ms</td></tr>`).join("")
+    || `<tr><td colspan=3 class="m">none</td></tr>`;
+
+  $("upstream").innerHTML = d.data.upstream.map((u) => `
+    <tr><td>${esc(u.base_url)}</td>
+    <td>${pill(u.ok, u.ok ? "healthy" : (u.error || `HTTP ${u.status}`))}</td>
+    <td>${u.latencyMs ?? "—"} ms</td></tr>`).join("")
+    || `<tr><td colspan=3 class="m">pool empty</td></tr>`;
+
+  $("routing").innerHTML = (d.data.gateway.endpoints || []).map((e) => `
+    <tr><td>${esc(e.base_url)}</td><td>${e.strikes}</td>
+    <td>${e.ok} / ${e.fail}</td>
+    <td>${e.dead ? pill(false, "dead") : `<span class="pill up">live</span>`}</td></tr>`).join("")
+    || `<tr><td colspan=4 class="m">no endpoints</td></tr>`;
+
+  $("tools").innerHTML = TOOLS.map(([n, desc]) => `
+    <tr><td><code>${esc(n)}</code></td><td class="m">${esc(desc)}</td></tr>`).join("");
+}
+
+/**
+ * Peers are probed from the browser, not from the gateway Worker.
+ * Cloudflare rejects a Worker fetching another Worker on the same account
+ * (error 1042), so a server-side cross-probe can never work here. Both
+ * health endpoints send Access-Control-Allow-Origin to allow this.
+ */
+async function probePeer(peer) {
+  const started = performance.now();
+  try {
+    const res = await fetch(`${peer.url}/__gateway/health`, { cache: "no-store" });
+    const raw = await res.text();
+    let body = null;
+    try { body = JSON.parse(raw); } catch { /* not JSON */ }
+    return {
+      name: peer.name,
+      url: peer.url,
+      ok: res.ok && body !== null,
+      status: res.status,
+      latencyMs: Math.round(performance.now() - started),
+      routable: body && Array.isArray(body.routable) ? body.routable.length : null,
+      error: body === null ? "non-JSON response" : null,
+    };
+  } catch (e) {
+    return {
+      name: peer.name, url: peer.url, ok: false, status: 0,
+      latencyMs: Math.round(performance.now() - started),
+      error: String(e.message || e),
+    };
+  }
+}
+
+async function tick() {
+  try {
+    const res = await fetch(`${SRC}/__gateway/dashboard`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    data.workers = await Promise.all((data.peers || []).map(probePeer));
+    $("err").style.display = "none";
+    render({ data, src: SRC });
+  } catch (e) {
+    $("err").style.display = "block";
+    $("err").textContent = `dashboard unreachable: ${e.message}`;
+    // Leave the last good render on screen rather than blanking the page.
+  }
+}
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

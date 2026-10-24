@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "odysseus-mcp-gateway",
+  "main": "src/index.js",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Deployed to workers.dev only. It deliberately does NOT bind a route on
+  // htp.sh: that domain serves live production (still-firefly-7b67ebk on /,
+  // hackdeplanet Pages on crime.htp.sh), and a route here would take over
+  // that traffic. Add a route deliberately, never implicitly.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "vars": {
+    // Comma-separated upstream MCP gateway base URLs. Read at request time so
+    // the pool can change without a redeploy.
+    //
+    // Origin-only on purpose. htp.sh/ai advertises its routes as absolute
+    // paths ("/ai/tools", "/ai/models"), so the origin belongs here and the
+    // advertised path is the request path. Using "https://htp.sh/ai" as the
+    // base would make "/ai/tools" resolve to "/ai/ai/tools".
+    "GATEWAY_POOL": "https://htp.sh",
+    "UPSTREAM_TIMEOUT_MS": "30000",
+    "COOLDOWN_BASE_MS": "60000",
+    "COOLDOWN_MAX_MS": "3600000"
+  }
+}
