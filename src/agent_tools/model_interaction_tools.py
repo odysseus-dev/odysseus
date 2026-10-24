@@ -88,10 +88,16 @@ async def ask_teacher(content: str, session_id: Optional[str] = None, owner: Opt
     if not problem:
         return {"error": "No problem description provided"}
 
-    if model_spec.lower() in ("auto", ""):
-        model_spec = get_setting("teacher_model", "")
-        if not model_spec:
-            return {"error": "No teacher model configured. Specify a model name or set teacher_model in settings."}
+    # A configured teacher_model is the admin's choice of who answers, so it
+    # wins over whatever the calling model names on line 1. Otherwise a local
+    # chat could send its content to any endpoint, paid cloud APIs included.
+    configured = (get_setting("teacher_model", "") or "").strip()
+    if configured:
+        if model_spec.lower() not in ("auto", "", configured.lower()):
+            logger.info("ask_teacher: ignoring requested model %r, teacher_model is pinned", model_spec)
+        model_spec = configured
+    elif model_spec.lower() in ("auto", ""):
+        return {"error": "No teacher model configured. Specify a model name or set teacher_model in settings."}
 
     try:
         url, model, headers = await asyncio.to_thread(_resolve_model, model_spec, owner=owner)
