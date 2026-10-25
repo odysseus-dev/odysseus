@@ -810,10 +810,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     ext = _ext.get(doc.language or "text", ".txt")
                     base = (doc.title or "document").strip() or "document"
                     base = re.sub(r"[^\w\-. ]+", "", base)[:60].strip() or doc.id
-                    name = base if "." in base else base + ext
+                    has_ext = base.lower().endswith(ext)
+                    stem = base[:-len(ext)] if has_ext else base
+                    suffix = base[-len(ext):] if has_ext else ext
+                    name = stem + suffix
                     i = 1
                     while name in used:
-                        name = f"{base}-{i}" + ("" if "." in base else ext)
+                        name = f"{stem}-{i}{suffix}"
                         i += 1
                     used.add(name)
                     content = doc.current_content or ""
