@@ -35,6 +35,7 @@ CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
 CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
+CHAT_READ_SCOPES = {"chat"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
 
 
@@ -161,6 +162,7 @@ def setup_codex_routes(
     memory_router: APIRouter | None = None,
     calendar_router: APIRouter | None = None,
     document_router: APIRouter | None = None,
+    history_router: APIRouter | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/codex", tags=["codex"])
     email_list_endpoint = _find_endpoint(email_router, "GET", "/api/email/list")
@@ -174,6 +176,7 @@ def setup_codex_routes(
     documents_library_endpoint = _find_endpoint(document_router, "GET", "/api/documents/library")
     documents_get_endpoint = _find_endpoint(document_router, "GET", "/api/document/{doc_id}")
     documents_create_endpoint = _find_endpoint(document_router, "POST", "/api/document")
+    chat_history_endpoint = _find_endpoint(history_router, "GET", "/api/history/{session_id}")
 
     @router.get("/capabilities")
     def capabilities(request: Request):
@@ -219,11 +222,43 @@ def setup_codex_routes(
                     "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
                     "actions": ["tasks", "servers", "output", "serve", "stop"],
                 },
+                "chat": {
+                    "read": scoped(CHAT_READ_SCOPES),
+                    "actions": ["read"],
+                    "available": chat_history_endpoint is not None,
+                },
             },
             "safety": {
                 "email_send_requires_confirmation": True,
                 "destructive_actions_should_confirm": True,
             },
+        }
+
+    @router.get("/chat/{session_id}")
+    async def read_chat(
+        request: Request,
+        session_id: str,
+        offset: int = 0,
+        limit: int = 100,
+    ):
+        _scope_owner(request, CHAT_READ_SCOPES)
+        if chat_history_endpoint is None:
+            raise HTTPException(503, "chat history unavailable")
+        offset, limit = _clamp_pagination(
+            offset,
+            limit,
+            default_limit=100,
+            max_limit=100,
+        )
+        result = await chat_history_endpoint(request, session_id, limit, offset)
+        return {
+            "session_id": session_id,
+            "name": result["name"],
+            "model": result["model"],
+            "messages": result["history"],
+            "total": result["total"],
+            "offset": result["offset"],
+            "limit": result["limit"],
         }
 
     @router.get("/plugin.zip")
