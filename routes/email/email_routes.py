@@ -1162,7 +1162,74 @@ def _email_imap_search_criteria(query: str) -> str:
     return "(" + " ".join(term_exprs) + ")"
 
 
-def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails: list[dict]):
+def _email_index_begin_sync(owner: str, account_id: str | None, folder: str) -> int | None:
+    """Order mailbox observations across workers without holding a lock over IMAP."""
+    conn = None
+    try:
+        with _sql3.connect(SCHEDULED_DB) as conn:
+            scope = (owner or "", _account_cache_key(account_id, owner), folder)
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO email_index_sync_state (owner, account_key, folder, next_generation) "
+                "VALUES (?, ?, ?, 1) ON CONFLICT(owner, account_key, folder) "
+                "DO UPDATE SET next_generation=next_generation+1", scope,
+            )
+            return conn.execute(
+                "SELECT next_generation FROM email_index_sync_state "
+                "WHERE owner=? AND account_key=? AND folder=?", scope,
+            ).fetchone()[0]
+    except Exception:
+        logger.debug("email index sync ordering unavailable", exc_info=True)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _email_index_reconcile(owner: str, account_id: str | None, folder: str,
+                           uid_data: bytes, sync_generation: int | None):
+    """Prune absent UIDs only from a complete successful folder SEARCH ALL."""
+    if sync_generation is None or not isinstance(uid_data, bytes):
+        return
+    uids = uid_data.split()
+    if any(not uid.isdigit() or uid.startswith(b"0") for uid in uids):
+        return
+    live_uids = {uid.decode("ascii") for uid in uids}
+    scope = (owner or "", _account_cache_key(account_id, owner), folder)
+    conn = None
+    try:
+        with _sql3.connect(SCHEDULED_DB) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT reconciled_generation FROM email_index_sync_state "
+                "WHERE owner=? AND account_key=? AND folder=?", scope,
+            ).fetchone()
+            if row is None or sync_generation < row[0]:
+                return
+            cached = conn.execute(
+                "SELECT uid FROM email_message_index WHERE owner=? AND account_key=? "
+                "AND folder=? AND sync_generation<=?", (*scope, sync_generation),
+            ).fetchall()
+            # One bounded statement per stale UID avoids SQLite's variable limit
+            # even for large mailboxes. The transaction also fences late writers.
+            conn.executemany(
+                "DELETE FROM email_message_index WHERE owner=? AND account_key=? "
+                "AND folder=? AND uid=? AND sync_generation<=?",
+                [(*scope, uid, sync_generation) for (uid,) in cached if uid not in live_uids],
+            )
+            conn.execute(
+                "UPDATE email_index_sync_state SET reconciled_generation=? "
+                "WHERE owner=? AND account_key=? AND folder=?", (sync_generation, *scope),
+            )
+    except Exception:
+        logger.debug("email index reconciliation skipped", exc_info=True)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails: list[dict],
+                        sync_generation: int | None = None):
     if not emails:
         return
     now = datetime.utcnow().isoformat() + "Z"
@@ -1189,19 +1256,29 @@ def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails:
             e.get("flags") or "",
             1 if e.get("has_attachments") else 0,
             now,
+            sync_generation or 0,
         ))
     if not rows:
         return
     try:
         conn = _sql3.connect(SCHEDULED_DB)
         try:
+            conn.execute("BEGIN IMMEDIATE")
+            if sync_generation is not None:
+                row = conn.execute(
+                    "SELECT reconciled_generation FROM email_index_sync_state "
+                    "WHERE owner=? AND account_key=? AND folder=?",
+                    (owner or "", _account_cache_key(account_id, owner), folder),
+                ).fetchone()
+                if row is None or sync_generation < row[0]:
+                    return
             conn.executemany(
                 """
                 INSERT INTO email_message_index
                 (owner, account_key, folder, uid, message_id, subject, from_name,
                  from_address, to_text, cc_text, date_iso, date_display, date_epoch,
-                 size, flags, has_attachments, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 size, flags, has_attachments, updated_at, sync_generation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(owner, account_key, folder, uid) DO UPDATE SET
                     message_id=excluded.message_id,
                     subject=excluded.subject,
@@ -1215,7 +1292,9 @@ def _email_index_upsert(owner: str, account_id: str | None, folder: str, emails:
                     size=excluded.size,
                     flags=excluded.flags,
                     has_attachments=excluded.has_attachments,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    sync_generation=excluded.sync_generation
+                WHERE excluded.sync_generation>=email_message_index.sync_generation
                 """,
                 rows,
             )
@@ -2289,6 +2368,7 @@ def setup_email_routes():
             if select_status != "OK":
                 return {"emails": [], "total": 0, "folder": folder, "error": f"Folder not found: {folder}"}
 
+            sync_generation = _email_index_begin_sync(owner, account_id, folder)
             from_clause = ""
             if from_addr:
                 # Escape quotes/backslashes for IMAP SEARCH FROM
@@ -2430,6 +2510,13 @@ def setup_email_routes():
             else:
                 status, data = _imap_uid_search(conn, "ALL")
 
+            if (
+                status == "OK" and data and len(data) == 1
+                and filter_ in ("all", "", None) and not from_addr
+                and not date_from and not date_to and not has_attachments_only
+            ):
+                _email_index_reconcile(owner, account_id, folder, data[0], sync_generation)
+
             # Intersect the selected filter with an IMAP-native date range.
             # Search dates separately rather than sending the entire mailbox's
             # UID set back to IMAP (large Gmail inboxes can exceed command limits).
@@ -2508,7 +2595,6 @@ def setup_email_routes():
                 uid_order = [u.decode(errors="ignore") if isinstance(u, bytes) else str(u) for u in uid_list]
                 cached_rows = {} if refresh else _email_index_rows(owner, account_id, folder, uid_order)
                 missing_uids = [u for u in uid_order if u and u not in cached_rows]
-                fetched_emails = []
                 status, msg_data = "OK", []
                 if missing_uids:
                     fetch_set = ",".join(missing_uids).encode()
@@ -2565,9 +2651,11 @@ def setup_email_routes():
                 for meta_b, raw_header in grouped:
                     parsed = _parse_email_list_record(meta_b, raw_header)
                     if parsed:
-                        fetched_emails.append(parsed)
                         cached_rows[parsed["uid"]] = parsed
-                _email_index_upsert(owner, account_id, folder, fetched_emails)
+                if sync_generation is not None:
+                    # Cache hits are live UID observations too. Publishing
+                    # their generation prevents an older scan deleting them.
+                    _email_index_upsert(owner, account_id, folder, list(cached_rows.values()), sync_generation)
                 for uid_num in uid_order:
                     row = cached_rows.get(uid_num)
                     if not row:
@@ -3476,6 +3564,7 @@ def setup_email_routes():
 
                 search_cmd = _email_imap_search_criteria(q)
 
+                sync_generation = _email_index_begin_sync(owner, account_id, effective_folder)
                 status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:
                     if indexed_response and indexed_response.get("emails"):
@@ -3505,7 +3594,6 @@ def setup_email_routes():
                 uid_order = [uid.decode(errors="ignore") if isinstance(uid, bytes) else str(uid) for uid in uid_list]
                 cached_rows = _email_index_rows(owner, account_id, effective_folder, uid_order)
                 emails = []
-                fetched_emails = []
                 for uid in uid_order:
                     cached = cached_rows.get(uid)
                     if cached:
@@ -3539,11 +3627,11 @@ def setup_email_routes():
                             continue
                         parsed["folder"] = effective_folder
                         emails.append(parsed)
-                        fetched_emails.append(parsed)
                     except Exception as e:
                         logger.warning(f"Error parsing search result {uid}: {e}")
                         continue
-                _email_index_upsert(owner, account_id, effective_folder, fetched_emails)
+                if sync_generation is not None:
+                    _email_index_upsert(owner, account_id, effective_folder, emails, sync_generation)
 
                 return {
                     "emails": emails,
