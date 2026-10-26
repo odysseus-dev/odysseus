@@ -425,9 +425,13 @@ class ToolApprovalStore:
                     # approval exists to admit an ungranted one. Seal its launch
                     # boundary now, in the request's workspace, the same way an
                     # ungranted filesystem action gets its root below (#6635).
+                    # With no workspace bound, bash/python run in the agent
+                    # workspace (agent_cwd), so the launch is sealed there.
                     roots = request_authority.resource_roots
-                    if not roots and workspace:
-                        roots = (FilesystemRoot.seal(workspace, owner=_normalized_owner(owner)),)
+                    if not roots:
+                        from src.tool_execution import default_agent_workspace
+                        roots = (FilesystemRoot.seal(workspace or default_agent_workspace(),
+                                                     owner=_normalized_owner(owner)),)
                     if len(roots) == 1:
                         from dataclasses import replace
                         process_authority = replace(
@@ -455,8 +459,10 @@ class ToolApprovalStore:
         if tool_name in NATIVE_FILESYSTEM_TOOLS and backend_operation is not None and isinstance(backend_operation.resource, NativeBackendResource):
             try:
                 roots = request_authority.resource_roots if request_authority is not None else ()
-                if not roots and workspace and (request_authority is None or not request_authority.inherited):
-                    roots = (FilesystemRoot.seal(workspace, owner=_normalized_owner(owner)),)
+                if not roots and (request_authority is None or not request_authority.inherited):
+                    from src.tool_execution import default_agent_workspace
+                    roots = (FilesystemRoot.seal(workspace or default_agent_workspace(),
+                                                 owner=_normalized_owner(owner)),)
                 resource_operation = resolve_filesystem_operation(
                     ExactOperation.normalize(tool_name, content), roots=roots, workspace=workspace or "",
                     request_id=request_authority.request_id if request_authority is not None else "")

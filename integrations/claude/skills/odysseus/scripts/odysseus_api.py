@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small Odysseus scoped API helper for Codex terminal sessions."""
+"""Small Odysseus scoped API helper for Claude Code terminal sessions."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _config() -> tuple[str, str] | None:
     if not token:
         missing.append("ODYSSEUS_API_TOKEN")
     if missing:
-        print(f"missing {', '.join(missing)}; create a Codex Agent token in Odysseus Settings", file=sys.stderr)
+        print(f"missing {', '.join(missing)}; create a Claude Agent token in Odysseus Settings", file=sys.stderr)
         return None
     return base_url, token
 
