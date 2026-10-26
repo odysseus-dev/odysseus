@@ -15204,7 +15204,7 @@ _ADMIN_TOOLS = {
     "manage_documents", "manage_settings", "create_session", "list_sessions",
     "send_to_session", "search_chats", "pipeline", "ask_teacher", "list_models",
     "list_cached_models", "list_downloads", "list_cookbook_servers",
-    "list_serve_presets", "list_served_models",
+    "list_serve_presets", "list_served_models", "tail_serve_output", "search_hf_models",
 }
 
 def _build_base_prompt(
