@@ -1221,6 +1221,12 @@ def agent_cwd() -> str:
         if vetted is None:
             raise RuntimeError("active workspace is not a safe real directory")
         return vetted
+    return default_agent_workspace()
+
+
+def default_agent_workspace() -> str:
+    """The agent workspace under the data dir, where subprocesses run when no
+    workspace is bound."""
     resolved = os.path.realpath(_AGENT_WORKDIR)
     if resolved not in _agent_readable_data_subdirs() or vet_workspace(resolved) != resolved:
         raise RuntimeError("agent workspace is not a safe real directory")

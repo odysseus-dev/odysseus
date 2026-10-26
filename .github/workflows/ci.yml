@@ -171,7 +171,7 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
-          version: "0.13.4"
+          version: "0.13.5"
           enable-cache: true
           cache-dependency-glob: requirements.txt
           prune-cache: false
