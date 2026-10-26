@@ -60,6 +60,15 @@ def account_db(tmp_path, monkeypatch):
     engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _public_mail_hosts(monkeypatch):
+    """Resolve every mail host to a public address so the SSRF host guard
+    passes without real DNS; these tests are about signatures, not hosts."""
+    import src.url_safety as safety
+
+    monkeypatch.setattr(safety, "_default_resolver", lambda host: ["93.184.216.34"])
+
+
 def _endpoint(name):
     from routes import email_routes
 
