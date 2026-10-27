@@ -517,6 +517,16 @@ def _action_from_content(tool_name: str, content: Any) -> str | None:
     return _ACTION_ALIASES.get(tool_name, {}).get(normalized, normalized)
 
 
+def required_action_error(tool_name: Any, content: Any) -> str | None:
+    """Reject missing required discriminators before an action can be proposed."""
+    if tool_name == "manage_notes" and _action_from_content(tool_name, content) is None:
+        return (
+            'manage_notes requires an explicit non-empty string action. '
+            'For a new note, retry with action="add".'
+        )
+    return None
+
+
 def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
     """Classify a sealed multiplexed action; ambiguous actions fail high."""
     base = capabilities_for_tool(tool_name)
