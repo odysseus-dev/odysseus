@@ -32,6 +32,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.email_recipients import envelope_recipients
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
@@ -2687,15 +2688,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         msg["Message-ID"] = email.utils.make_msgid()
     msg.set_content(body)
 
-    recipients = []
-    if isinstance(to, str):
-        recipients.extend([a.strip() for a in to.split(",") if a.strip()])
-    else:
-        recipients.extend(to)
-    if cc:
-        recipients.extend([a.strip() for a in cc.split(",")] if isinstance(cc, str) else cc)
-    if bcc:
-        recipients.extend([a.strip() for a in bcc.split(",")] if isinstance(bcc, str) else bcc)
+    recipients = envelope_recipients(to, cc, bcc)
 
     conn = _smtp_connect(send_account, cfg=cfg)
     try:

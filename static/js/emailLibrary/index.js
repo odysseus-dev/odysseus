@@ -17,6 +17,7 @@ import {
   _escLinkify,
   _extractName,
   _formatRecipients,
+  _splitRecipientList,
   _senderColor,
   _sanitizeHtml,
 } from './utils.js';
@@ -363,30 +364,7 @@ function _emailAddressFromRecipientText(text) {
   return any ? any[0].trim() : raw;
 }
 
-export function _splitRecipientList(raw) {
-  const out = [];
-  let cur = '';
-  let quote = false;
-  let angle = false;
-  const s = String(raw || '');
-  for (let i = 0; i < s.length; i += 1) {
-    const ch = s[i];
-    if (ch === '"' && s[i - 1] !== '\\') quote = !quote;
-    else if (ch === '<' && !quote) angle = true;
-    else if (ch === '>' && !quote) angle = false;
-
-    if (ch === ',' && !quote && !angle) {
-      const part = cur.trim();
-      if (part) out.push(part);
-      cur = '';
-      continue;
-    }
-    cur += ch;
-  }
-  const tail = cur.trim();
-  if (tail) out.push(tail);
-  return out;
-}
+export { _splitRecipientList } from './utils.js';
 
 async function _copyTextToClipboard(text) {
   const value = String(text || '');
@@ -3683,7 +3661,7 @@ async function _buildSuggestionSource() {
   // 1) Senders / recipients already in the loaded grid.
   for (const em of (state._libEmails || [])) {
     _add(em.from_name, em.from_address);
-    const _parse = (s) => String(s || '').split(',').forEach(seg => {
+    const _parse = (s) => _splitRecipientList(s).forEach(seg => {
       const m = seg.match(/^\s*"?([^"<]*)"?\s*<?([^>]+)>?\s*$/);
       if (m) _add(m[1], m[2]);
     });
@@ -5444,7 +5422,7 @@ function _createCard(em) {
   if (isSentFolderEarly) {
     senderName = _formatRecipients(em.to) || em.to || '(no recipient)';
     // First address out of em.to for click-to-pill targeting.
-    const _firstTo = String(em.to || '').split(',')[0] || '';
+    const _firstTo = _splitRecipientList(em.to)[0] || '';
     const _m = _firstTo.match(/<([^>]+)>/);
     senderAddress = (_m ? _m[1] : _firstTo).trim();
   } else {
