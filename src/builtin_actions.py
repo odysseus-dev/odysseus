@@ -2300,7 +2300,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
     `due_date` falls in the current ±90-second window and hasn't been delivered
     through its configured channel in the last 25 minutes.
 
-    Per-owner state: {note_id: {at, channel}}, with legacy timestamp support. Pruned
+    Recurrences advance after delivery; old missed slots catch up without a burst.
+    Per-owner state: {note_id: {at, channel, due_date}}, with legacy receipt support. Pruned
     on each run by dropping entries for notes that are gone/archived/replied.
     """
     try:
@@ -2312,6 +2313,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         from src.settings import load_settings
 
         channel = load_settings().get("reminder_channel", "browser")
+        from src.note_recurrence import advance_note_schedule, note_now_utc, parse_note_due
+        from src.constants import NOTE_REMINDER_WINDOW_SECONDS
         external_channel = channel in ("email", "ntfy", "webhook")
         delivery_key = f"{channel}_sent" if external_channel else "browser_sent"
 
@@ -2332,24 +2335,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 pass
         # Scanner ticks every 60s in _note_pings_loop. 90s window guarantees
         # every note's due time lands inside at least one tick's window.
-        WINDOW_SEC = 90
+        WINDOW_SEC = NOTE_REMINDER_WINDOW_SECONDS
         REPING_MIN = 25     # don't re-ping same note more often than this
-
-        def _parse_due(s: str):
-            """Accept '2026-05-29T16:31' (local) or '...Z' (UTC). Returns UTC datetime."""
-            if not s:
-                return None
-            try:
-                # Handle the JS-style 'Z' suffix.
-                if s.endswith("Z"):
-                    return _dt.fromisoformat(s[:-1]).replace(tzinfo=_tz.utc)
-                # Naive → assume local server time.
-                d = _dt.fromisoformat(s)
-                if d.tzinfo is None:
-                    d = d.astimezone().astimezone(_tz.utc)
-                return d.astimezone(_tz.utc)
-            except Exception:
-                return None
 
         try:
             cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
@@ -2367,17 +2354,29 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
             if not notes:
                 raise TaskNoop("no notes with due dates")
 
-            now = _dt.now(_tz.utc)
+            now = note_now_utc()
             window = _td(seconds=WINDOW_SEC)
             reping_cutoff = now - _td(minutes=REPING_MIN)
             seen_ids = set()
             sent = []
 
+            def advance_schedule(snapshot, after=None):
+                return advance_note_schedule(db, snapshot, after=after or now)
+
             for n in notes:
                 seen_ids.add(n.id)
-                due = _parse_due(n.due_date)
+                snapshot = (n.id, n.owner, n.due_date, n.repeat, n.reminder_timezone)
+                due = parse_note_due(n.due_date, n.reminder_timezone)
                 if not due:
                     continue
+                if due < now - window:
+                    # Match the browser's catch-up of old reminders, while
+                    # retaining an occurrence that is still inside the window.
+                    next_due = advance_schedule(snapshot, after=now - window)
+                    if next_due is None:
+                        continue
+                    snapshot = (snapshot[0], snapshot[1], next_due.due_date, next_due.repeat, snapshot[4])
+                    due = parse_note_due(next_due.due_date, snapshot[4])
                 # Inside the due window?
                 if abs((due - now).total_seconds()) > window.total_seconds():
                     continue
@@ -2387,14 +2386,18 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 if last:
                     try:
                         last_channel = None
+                        last_due = None
                         if isinstance(last, dict):
                             last_channel = last.get("channel")
+                            last_due = last.get("due_date")
                             last = last.get("at")
                         last_dt = _dt.fromisoformat(str(last))
                         if last_dt.tzinfo is None:
                             last_dt = last_dt.replace(tzinfo=_tz.utc)
-                        if last_dt >= reping_cutoff:
+                        if last_dt >= reping_cutoff and (last_due is None or last_due == snapshot[2]):
                             if not external_channel or last_channel == channel:
+                                if last_due == snapshot[2]:
+                                    advance_schedule(snapshot)
                                 continue
                             # Browser-only receipts do not prove external
                             # delivery, but the fallback must not be queued twice.
@@ -2426,11 +2429,19 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         title=title, note_body=body, note_id=n.id,
                         owner=n.owner or owner or "",
                         queue_browser=not browser_recent,
+                        due_date=snapshot[2],
                     )
                     if result.get("skipped"):
+                        # The browser may have delivered after our cache read.
+                        latest = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
+                        receipt = latest.get(snapshot[0], {})
+                        if (isinstance(receipt, dict) and receipt.get("due_date") == snapshot[2]
+                                and (not external_channel or receipt.get("channel") == channel)):
+                            advance_schedule(snapshot)
                         continue
                     if result.get(delivery_key):
                         sent.append(title)
+                        advance_schedule(snapshot)
                     else:
                         logger.warning("ping_notes: %s delivery failed for %s", channel, n.id)
                 except Exception as e:

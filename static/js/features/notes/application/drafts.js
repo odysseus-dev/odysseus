@@ -26,13 +26,17 @@ export function createNotesDrafts({
     const persist = (d) => {
       if (!id || id === '__new__' || d.note_type === 'draw') return pending;
       const { _ts, ...payload } = d;
+      const original = state.notes.find(n => n.id === id);
+      if (original && original.due_date === payload.due_date && Object.hasOwn(original, 'reminder_timezone')) {
+        payload.reminder_timezone = original.reminder_timezone;
+      }
       payload.label = [...new Set(payload.label.split(/\s+/).map(s => s.replace(/^#+/, '')).filter(Boolean))].join(' ') || null;
       pending = pending.then(async () => {
         try {
-          await api.patchNote(id, payload);
+          const saved = await api.patchNote(id, payload);
           view.failed = false;
           const note = state.notes.find(n => n.id === id);
-          if (note) app.mergeNote(note, payload);
+          if (note) app.mergeNote(note, { ...payload, ...(saved && Object.hasOwn(saved, 'reminder_timezone') ? { reminder_timezone: saved.reminder_timezone, reminder_schedule: saved.reminder_schedule } : {}) });
           if (persistence.getItem(_draftKey(id)) === JSON.stringify(d)) _clearDraft(id);
         } catch {
           if (!view.failed) effects.showError('Note not synced. Your edits are kept on this device; retry Save.');

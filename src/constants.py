@@ -121,6 +121,8 @@ FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(DATA_DIR
 MAX_OUTPUT_CHARS = 10_000       # cap for bash/python/web_search/web_fetch output
 MAX_READ_CHARS = 20_000         # cap for read_file / document preview
 MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
+NOTE_RECURRENCE_MAX_STEPS = 5_000  # bound catch-up of very old reminder dates
+NOTE_REMINDER_WINDOW_SECONDS = 90
 
 # web_fetch response-size policy (#3812). MAX_OUTPUT_CHARS above only trims
 # what the agent SEES; these caps bound what the server downloads, parses,

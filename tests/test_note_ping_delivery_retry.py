@@ -16,11 +16,12 @@ def reminder_scan(tmp_path, monkeypatch):
     from src import builtin_actions, integrations, settings
 
     instant = datetime.datetime(2026, 10, 7, 12, tzinfo=datetime.timezone.utc)
+    clock = [instant]
 
     class Clock(datetime.datetime):
         @classmethod
         def now(cls, tz=None):
-            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+            return clock[0].astimezone(tz) if tz else clock[0].replace(tzinfo=None)
 
     calls, notices = [], []
     statuses = [503, 200]
@@ -48,6 +49,7 @@ def reminder_scan(tmp_path, monkeypatch):
             scan=lambda: builtin_actions.action_ping_notes("alice"),
             path=tmp_path / "note_pings_alice.json", calls=calls, notices=notices,
             statuses=statuses, channel=channel, instant=instant, factory=factory,
+            set_time=lambda value: clock.__setitem__(0, value),
         )
 
 
