@@ -11,6 +11,7 @@ from src.constants import DATA_DIR
 
 
 HF_COLLECTIONS_URL = "https://huggingface.co/api/collections"
+HF_MODELS_URL = "https://huggingface.co/api/models"
 HW_FIT_CACHE_DIR = Path(DATA_DIR) / "hwfit"
 MLX_COMMUNITY_CACHE = HW_FIT_CACHE_DIR / "mlx_community_models.json"
 HF_COLLECTION_MODELS_CACHE = HW_FIT_CACHE_DIR / "hf_collection_models.json"
@@ -18,6 +19,8 @@ HF_COLLECTION_TTL_SECONDS = 24 * 3600
 
 
 HF_COLLECTION_SOURCES = (
+    {"key": "unsloth_gguf", "owner": "unsloth", "provider": "unsloth", "gguf_only": True},
+    {"key": "bartowski_gguf", "owner": "bartowski", "provider": "bartowski", "gguf_only": True},
     {
         "key": "mlx_community",
         "owner": "mlx-community",
@@ -271,6 +274,92 @@ def _next_link(header):
     return m.group(1) if m else None
 
 
+def _gguf_downloads(repo_id, siblings):
+    """Supported weight files, with complete shard groups and exact quant IDs."""
+    from services.hwfit.models import QUANT_HIERARCHY
+    quants = QUANT_HIERARCHY + ["Q4_0", "BF16", "F16", "F32"]
+    quant_re = re.compile(r"(?:^|[-_/])(" + "|".join(quants) + r")(?=[-_.\/]|$)", re.I)
+    groups = {}
+    for sibling in siblings or []:
+        filename = sibling.get("rfilename", "") if isinstance(sibling, dict) else ""
+        if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9._/-]+\.gguf", filename, re.I):
+            continue
+        if filename.startswith("/") or any(part in (".", "..") for part in filename.split("/")):
+            continue
+        if re.search(r"(?:^|/)(?:mmproj|mtp|imatrix|projector)(?:[-_./]|$)", filename, re.I):
+            continue
+        match = quant_re.search(filename)
+        if not match:
+            continue
+        quant = match.group(1).upper()
+        shard = re.search(r"-(\d{5})-of-(\d{5})\.gguf$", filename, re.I)
+        key = (quant, filename[:shard.start()] if shard else filename)
+        groups.setdefault(key, []).append((filename, shard))
+    sources = {}
+    for (quant, _), files in sorted(groups.items()):
+        files.sort(key=lambda item: item[0])
+        first, shard = files[0]
+        source = {"repo": repo_id, "file": first, "quant": quant}
+        if shard:
+            total = int(shard.group(2))
+            numbers = {int(s.group(1)) for _, s in files if s and int(s.group(2)) == total}
+            if total != len(numbers) or numbers != set(range(1, total + 1)):
+                continue
+            source["include"] = first[:shard.start()] + f"-*-of-{total:05d}.gguf"
+        sources.setdefault(quant, source)
+    order = ["Q4_K_M", "Q4_0"] + quants
+    return [sources.pop(q) for q in order if q in sources]
+
+
+def fetch_gguf_models(source, timeout=20, max_pages=20):
+    """Bulk metadata discovery; never download weights or query per base model."""
+    params = urllib.parse.urlencode([
+        ("author", source["owner"]), ("filter", "gguf"), ("limit", "1000"),
+        *[("expand[]", key) for key in ("siblings", "gguf", "pipeline_tag", "downloads", "likes", "lastModified")],
+    ])
+    url = f"{HF_MODELS_URL}?{params}"
+    rows = {}
+    for _ in range(max_pages):
+        if not url:
+            break
+        if not url.startswith(HF_MODELS_URL + "?"):
+            raise ValueError("Unexpected Hugging Face models pagination URL")
+        req = urllib.request.Request(url, headers={"User-Agent": "odysseus-hwfit/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.load(resp)
+            url = _next_link(resp.headers.get("Link"))
+        if not isinstance(payload, list):
+            raise ValueError("Invalid Hugging Face models response")
+        for model in payload:
+            if not isinstance(model, dict):
+                continue
+            repo_id = model.get("id")
+            if not isinstance(repo_id, str) or not repo_id.startswith(source["owner"] + "/"):
+                continue
+            if model.get("pipeline_tag") not in ("text-generation", "image-text-to-text"):
+                continue
+            downloads = _gguf_downloads(repo_id, model.get("siblings"))
+            if not downloads:
+                continue
+            info = model.get("gguf")
+            if not isinstance(info, dict):
+                info = {}
+            # Hub GGUF totals may describe the first auxiliary/projector file.
+            # Prefer a size-bearing repo name, which also preserves MoE A*B.
+            named_params, _ = _parse_params_from_name(repo_id)
+            architecture = str(info.get("architecture") or "").lower()
+            if not named_params and any(part in architecture for part in ("clip", "projector", "vision")):
+                continue
+            item = dict(model, type="model", numParameters=0 if named_params else info.get("total", 0))
+            entry = _entry_from_collection_item({}, item, source)
+            if entry:
+                entry.update(is_gguf=True, format="gguf", capabilities=["llama.cpp"],
+                             quantization=downloads[0]["quant"], gguf_sources=downloads,
+                             _source="hf_models")
+                rows.setdefault(repo_id, entry)
+    return sorted(rows.values(), key=lambda row: row.get("hf_downloads", 0), reverse=True)
+
+
 def fetch_collection_models(source, timeout=20, max_pages=20):
     params = urllib.parse.urlencode({
         "owner": source["owner"],
@@ -352,23 +441,29 @@ def refresh_mlx_community_cache(force=False):
 def refresh_hf_collection_models_cache(force=False):
     if not force and _cache_fresh(HF_COLLECTION_MODELS_CACHE):
         return load_cached_hf_collection_models()
+    previous = load_cached_hf_collection_models()
     rows_by_name = {}
+    succeeded = False
     for source in HF_COLLECTION_SOURCES:
         if source["key"] == "mlx_community":
             continue
         try:
-            for row in fetch_collection_models(source):
+            fetch = fetch_gguf_models if source.get("gguf_only") else fetch_collection_models
+            for row in fetch(source):
                 rows_by_name.setdefault(row["name"], row)
+            succeeded = True
         except Exception:
             # Keep partial refreshes useful. A temporary DNS/provider issue for
             # one brand should not invalidate the other cached collection rows.
-            continue
+            for row in previous:
+                if isinstance(row, dict) and row.get("_source_owner") == source["owner"] and row.get("name"):
+                    rows_by_name.setdefault(row["name"], row)
     rows = sorted(
         rows_by_name.values(),
         key=lambda x: (x.get("hf_downloads") or 0, x.get("release_date") or ""),
         reverse=True,
     )
-    if rows:
-        _write_cache(HF_COLLECTION_MODELS_CACHE, "https://huggingface.co/collections", rows)
+    if rows or succeeded:
+        _write_cache(HF_COLLECTION_MODELS_CACHE, "https://huggingface.co", rows)
         return rows
     return load_cached_hf_collection_models()
