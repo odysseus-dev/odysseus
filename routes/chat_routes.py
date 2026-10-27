@@ -27,6 +27,7 @@ from src.llm_core import (
 from src.agent_loop import (
     stream_agent_loop,
     _configured_model_tool_surface,
+    _explicitly_avoids_web_lookup,
     _local_media_needs_browser_render,
     _looks_like_workspace_coding_request,
 )
@@ -259,14 +260,9 @@ def _is_personal_data_search_without_web_target(text: str) -> bool:
 
 
 def _explicitly_denies_web_lookup(text: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(?:no\s+web|do\s+not\s+search|don'?t\s+search|without\s+looking\s+it\s+up|"
-            r"without\s+searching|answer\s+from\s+memory\s+only|from\s+memory|"
-            r"no\s+tools?|do\s+not\s+use\s+(?:any\s+)?tools?|don'?t\s+use\s+(?:any\s+)?tools?)\b",
-            str(text or "").lower(),
-        )
-    )
+    # Same wording the agent loop uses to withhold web tools, so the route
+    # never auto-enables the web for a turn the loop will then strip.
+    return _explicitly_avoids_web_lookup(text) or _explicitly_denies_tool_use(text)
 
 
 def _explicitly_denies_tool_use(text: str) -> bool:
