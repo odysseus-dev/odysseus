@@ -1930,7 +1930,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       }
     }).catch(() => {});
   } else if (kind === 'event') {
-    import('./calendar.js?v=20260914emailsource11').then(mod => {
+    import('./calendar.js?v=20261028calendarinline1').then(mod => {
       const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
       if (open) open(id);
     }).catch(() => {});

@@ -181,7 +181,7 @@ export function _showEmailReaderLoadError(reader, message, onRetry) {
 export function _openCalendarEventFromEmail(uid) {
   const target = String(uid || '').trim();
   if (!target) return;
-  import('../calendar.js?v=20260914emailsource11').then(mod => {
+  import('../calendar.js?v=20261028calendarinline1').then(mod => {
     const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
     if (open) open(target);
   }).catch(() => {});
