@@ -2462,21 +2462,34 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
+            base = _normalize_base(ep.base_url)
+            ep_data = {
+                "id": ep.id, "name": ep.name, "base_url": base,
+                "api_key": _resolve_probe_key(ep),
+                "kind": _effective_endpoint_kind(ep, base),
+                "hidden": _normalize_model_ids(ep.hidden_models),
+            }
         finally:
             db.close()
 
-        base = _normalize_base(ep_data["base_url"])
+        base = ep_data["base_url"]
         all_models = _probe_endpoint(base, ep_data["api_key"])
-        chat_models = [m for m in all_models if _is_chat_model(m)]
+        hidden = set(ep_data["hidden"])
+        chat_models = [m for m in all_models if _is_chat_model(m) and m not in hidden]
         skipped = len(all_models) - len(chat_models)
+        probe_completions = _classify_endpoint(base, ep_data["kind"]) == "local"
 
         def _stream():
             yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(chat_models), 'skipped': skipped})}\n\n"
             failed = []
             ok_count = 0
             for mid in chat_models:
-                result = _probe_single_model(base, ep_data["api_key"], mid, timeout=8)
+                if probe_completions:
+                    result = _probe_single_model(base, ep_data["api_key"], mid, timeout=8)
+                else:
+                    # Discovery refreshes API/proxy inventory without spending
+                    # tokens on one completion per advertised model.
+                    result = {"status": "ok", "latency_ms": 0, "skipped": True}
                 result["model"] = mid
                 result["type"] = "probe_result"
                 result["endpoint"] = ep_data["name"]
@@ -2487,11 +2500,16 @@ def setup_model_routes(model_discovery):
                 yield f"data: {json.dumps(result)}\n\n"
 
             # Update hidden_models and cached_models in DB
+            hidden_count = len(failed)
             db2 = SessionLocal()
             try:
                 ep_obj = db2.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                 if ep_obj:
-                    ep_obj.hidden_models = json.dumps(failed) if failed else None
+                    # Read the current choices: the admin may have changed
+                    # visibility while the completion probes were running.
+                    merged_hidden = _merge_model_ids(_normalize_model_ids(ep_obj.hidden_models), failed)
+                    ep_obj.hidden_models = json.dumps(merged_hidden) if merged_hidden else None
+                    hidden_count = len(merged_hidden)
                     if all_models:
                         ep_obj.cached_models = json.dumps(all_models)
                     db2.commit()
@@ -2499,7 +2517,7 @@ def setup_model_routes(model_discovery):
                 db2.close()
             _invalidate_models_cache()
 
-            yield f"data: {json.dumps({'type': 'probe_done', 'total': len(all_models), 'ok': ok_count, 'hidden': len(failed)})}\n\n"
+            yield f"data: {json.dumps({'type': 'probe_done', 'total': len(all_models), 'ok': ok_count, 'hidden': hidden_count})}\n\n"
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
