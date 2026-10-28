@@ -7,7 +7,7 @@ import Storage from './storage.js';
 import themeModule from './theme.js?v=20260911organsrain1';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
-import documentModule from './document.js?v=20260916docctx2';
+import documentModule from './document.js?v=20261028docpreservemode1';
 
 // Tool approvals are control-plane submits for the current chat. chat.js
 // deliberately leaves the composer untouched, then programmatically clicks the

@@ -16,7 +16,7 @@ import spinnerModule from './spinner.js';
 import presetsModule from './presets.js?v=20260908personaname1';
 import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
 import searchModule from './search.js';
-import documentModule from './document.js?v=20260916docctx2';
+import documentModule from './document.js?v=20261028docpreservemode1';
 import * as emailInbox from './emailInbox.js?v=20260914aireply4';
 import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260921chatgptusage1';

@@ -55,7 +55,7 @@ def test_all_runtime_document_imports_share_one_module_url():
         for path in runtime_files
         for match in re.findall(r"document\.js\?v=([A-Za-z0-9_-]+)", path.read_text(encoding="utf-8"))
     }
-    assert versions == {"20260916docctx2"}
+    assert versions == {"20261028docpreservemode1"}
 
 
 def test_server_fallback_is_legacy_only_when_ui_state_is_absent():

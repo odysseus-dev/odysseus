@@ -1062,15 +1062,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
   }
 
-  /** Switch chat to agent mode if not already */
-  function _ensureAgentMode() {
-    const ab = document.getElementById('mode-agent-btn');
-    const cb = document.getElementById('mode-chat-btn');
-    if (ab && !ab.classList.contains('active')) {
-      ab.click();
-    }
-  }
-
   export function init(apiBase) {
     API_BASE = apiBase;
     initLibrary({
@@ -7380,7 +7371,6 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     // Doc was opened last → it goes in front of the email windows (clears the
     // email-front flag; the doc/email z-index alternation lives in CSS).
     document.body.classList.remove('email-front');
-    _ensureAgentMode();
     _markDocVisibleState(_lastSessionId, 'open');
 
     document.body.classList.add('doc-view');

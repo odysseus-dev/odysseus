@@ -1889,7 +1889,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       } catch {}
     });
   } else if (kind === 'document') {
-    import('./document.js?v=20260916docctx2').then(mod => {
+    import('./document.js?v=20261028docpreservemode1').then(mod => {
       const open = mod.loadDocument
         || mod.openDocument
         || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
@@ -3656,7 +3656,7 @@ export function addMessage(role, content, modelName, metadata) {
 
       b.querySelectorAll('[data-doc-edit-ref]').forEach(button => {
         button.addEventListener('click', () => {
-          import('./document.js?v=20260916docctx2').then(mod => {
+          import('./document.js?v=20261028docpreservemode1').then(mod => {
             const restore = mod.restoreSelectionReference
               || mod.default?.restoreSelectionReference;
             return restore?.(button.dataset.docEditRef || '', {

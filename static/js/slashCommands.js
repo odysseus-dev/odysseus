@@ -16,7 +16,7 @@ import modelsModule from './models.js';
 import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
 import spinnerModule from './spinner.js';
 import themeModule from './theme.js?v=20260911organsrain1';
-import documentModule from './document.js?v=20260916docctx2';
+import documentModule from './document.js?v=20261028docpreservemode1';
 import workspaceModule from './workspace.js';
 import settingsModule from './settings.js?v=20260912writingstyle3';
 import cookbookModule from './cookbook.js';
