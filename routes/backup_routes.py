@@ -13,6 +13,26 @@ from src.settings import load_settings, save_settings, load_features, save_featu
 logger = logging.getLogger(__name__)
 
 
+def _merge_by_id(current, incoming: list) -> list:
+    """Merge a backed-up list (user templates, group presets) into the
+    current one. Entries with the same ``id`` take the backed-up value;
+    everything else already saved is kept."""
+    merged = list(current) if isinstance(current, list) else []
+    by_id = {
+        item["id"]: i for i, item in enumerate(merged)
+        if isinstance(item, dict) and item.get("id")
+    }
+    for item in incoming:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if item_id and item_id in by_id:
+            merged[by_id[item_id]] = item
+        elif item not in merged:
+            if item_id:
+                by_id[item_id] = len(merged)
+            merged.append(item)
+    return merged
+
+
 def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
     router = APIRouter(tags=["backup"])
 
@@ -187,7 +207,9 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                 if isinstance(value, dict):
                     current[key] = value
                 elif isinstance(value, list):
-                    current[key] = value
+                    # user_templates / group_presets: replacing the list
+                    # would delete everything created after the backup.
+                    current[key] = _merge_by_id(current.get(key), value)
             preset_manager.save(current)
             imported.append("presets")
 
