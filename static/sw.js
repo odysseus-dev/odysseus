@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v659-notes-reference';
+const CACHE_NAME = 'odysseus-v660-modal-visibility';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -123,6 +123,7 @@ const PRECACHE = [
   '/static/js/modalSnap.js',
   '/static/js/windowResize.js',
   '/static/js/modalManager.js',
+  '/static/js/modalVisibility.js',
   '/static/js/escMenuStack.js',
   '/static/js/tourHintDismiss.js',
   '/static/js/shared/ui/confetti.js',
