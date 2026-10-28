@@ -2005,6 +2005,8 @@ def setup_model_routes(model_discovery):
                     "name": ep.name,
                     "base_url": ep.base_url,
                     "api_key": _resolve_probe_key(ep),
+                    "kind": _effective_endpoint_kind(ep, _normalize_base(ep.base_url)),
+                    "hidden": _normalize_model_ids(ep.hidden_models),
                 })
         finally:
             db.close()
@@ -2017,6 +2019,8 @@ def setup_model_routes(model_discovery):
         def _stream():
             total = 0
             ok_count = 0
+            listed_count = 0
+            hidden_count = 0
             for ep in ep_data:
                 base = _normalize_base(ep["base_url"])
                 all_models = _probe_endpoint(base, ep.get("api_key"))
@@ -2034,13 +2038,23 @@ def setup_model_routes(model_discovery):
                     yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': 0, 'error': 'No models found or endpoint offline'})}\n\n"
                     continue
 
-                models = [m for m in all_models if _is_chat_model(m)]
-                skipped = len(all_models) - len(models)
-                yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': len(models), 'skipped': skipped})}\n\n"
+                chat_models = [m for m in all_models if _is_chat_model(m)]
+                hidden = set(ep["hidden"])
+                models = [m for m in chat_models if m not in hidden]
+                skipped = len(all_models) - len(chat_models)
+                hidden_skipped = len(chat_models) - len(models)
+                hidden_count += hidden_skipped
+                discovery_only = _classify_endpoint(base, ep["kind"]) != "local"
+                yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': len(models), 'skipped': skipped, 'hidden_skipped': hidden_skipped, 'discovery_only': discovery_only})}\n\n"
 
                 for model_id in models:
                     total += 1
-                    result = _probe_single_model(base, ep.get("api_key"), model_id, timeout=8)
+                    if discovery_only:
+                        result = {"status": "ok", "latency_ms": None, "skipped": True}
+                    else:
+                        result = _probe_single_model(base, ep.get("api_key"), model_id, timeout=8)
+                    if result.get("skipped"):
+                        listed_count += 1
                     result["type"] = "probe_result"
                     result["endpoint"] = ep["name"]
                     result["model"] = model_id
@@ -2048,7 +2062,7 @@ def setup_model_routes(model_discovery):
                         ok_count += 1
                     yield f"data: {json.dumps(result)}\n\n"
 
-            yield f"data: {json.dumps({'type': 'probe_done', 'total': total, 'ok': ok_count})}\n\n"
+            yield f"data: {json.dumps({'type': 'probe_done', 'total': total, 'ok': ok_count, 'skipped': listed_count, 'hidden_skipped': hidden_count})}\n\n"
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
@@ -2475,12 +2489,14 @@ def setup_model_routes(model_discovery):
         base = ep_data["base_url"]
         all_models = _probe_endpoint(base, ep_data["api_key"])
         hidden = set(ep_data["hidden"])
-        chat_models = [m for m in all_models if _is_chat_model(m) and m not in hidden]
-        skipped = len(all_models) - len(chat_models)
+        discovered_chat_models = [m for m in all_models if _is_chat_model(m)]
+        chat_models = [m for m in discovered_chat_models if m not in hidden]
+        skipped = len(all_models) - len(discovered_chat_models)
+        hidden_skipped = len(discovered_chat_models) - len(chat_models)
         probe_completions = _classify_endpoint(base, ep_data["kind"]) == "local"
 
         def _stream():
-            yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(chat_models), 'skipped': skipped})}\n\n"
+            yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(chat_models), 'skipped': skipped, 'hidden_skipped': hidden_skipped, 'discovery_only': not probe_completions})}\n\n"
             failed = []
             ok_count = 0
             for mid in chat_models:
@@ -2489,7 +2505,7 @@ def setup_model_routes(model_discovery):
                 else:
                     # Discovery refreshes API/proxy inventory without spending
                     # tokens on one completion per advertised model.
-                    result = {"status": "ok", "latency_ms": 0, "skipped": True}
+                    result = {"status": "ok", "latency_ms": None, "skipped": True}
                 result["model"] = mid
                 result["type"] = "probe_result"
                 result["endpoint"] = ep_data["name"]

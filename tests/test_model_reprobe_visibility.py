@@ -108,3 +108,19 @@ def test_empty_discovery_does_not_erase_saved_visibility(probe_state,monkeypatch
     assert calls==[]
     with sessions() as db:
         assert json.loads(db.get(ModelEndpoint,'ep').hidden_models)==['hidden']
+
+
+@pytest.mark.parametrize('kind', ['local', 'api'])
+def test_global_probe_respects_visibility_and_discovery_only_kind(probe_state, kind):
+    client, sessions, calls = probe_state
+    with sessions() as db:
+        db.get(ModelEndpoint, 'ep').endpoint_kind = kind
+        db.commit()
+    response = client.get('/api/probe', params={'endpoint_id': 'ep'})
+    assert response.status_code == 200
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+    assert calls == (['keep', 'fail'] if kind == 'local' else [])
+    assert events[0]['hidden_skipped'] == 1
+    assert events[-1]['skipped'] == (0 if kind == 'local' else 2)
+    with sessions() as db:
+        assert json.loads(db.get(ModelEndpoint, 'ep').hidden_models) == ['hidden']
