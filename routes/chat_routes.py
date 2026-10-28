@@ -3566,8 +3566,11 @@ def setup_chat_routes(
             active_document=bool(active_doc),
             image_attachment=any(str(a.get('mime') or '').startswith('image/')
                                  for a in (ctx.preprocessed.attachment_meta or [])),
+            # Web tools left enabled here came from the user's toggle or the
+            # web routing above; without the grant they are offered and denied.
             capabilities=({'search_browser'} if (
                 _explicit_browser_intent or _external_discovery_intent
+                or "web_search" not in disabled_tools
             ) else ()),
         )
         if exact_tool_approval is not None:
