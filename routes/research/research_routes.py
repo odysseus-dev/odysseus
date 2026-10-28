@@ -183,6 +183,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     OAuth tokens in ProviderAuthSession, so ep.api_key is intentionally empty.
     """
     from src.endpoint_resolver import (
+        _endpoint_enabled_models,
         build_chat_url,
         build_headers,
         resolve_endpoint_runtime as resolve_model_endpoint_runtime,
@@ -197,7 +198,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     ep_model = (model or "").strip()
     if not ep_model:
         try:
-            models = json.loads(ep.cached_models) if ep.cached_models else []
+            models = _endpoint_enabled_models(ep)
             if models:
                 ep_model = _first_chat_model(models)
         except Exception:
@@ -824,23 +825,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not ep_url or not ep_model:
             # Last resort: this user's enabled endpoint, plus legacy shared rows.
             from src.database import SessionLocal
-            from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:
                 ep = _owned_enabled_endpoint(db, user)
                 if ep:
-                    base = normalize_base(ep.base_url)
-                    fallback_url = build_chat_url(base)
-                    fallback_headers = build_headers(ep.api_key, base)
-                    fallback_model = ""
-                    if ep.cached_models:
-                        try:
-                            models = json.loads(ep.cached_models)
-                            if models:
-                                fallback_model = _first_chat_model(models)
-                        except Exception:
-                            pass
-                    _merge(fallback_url, fallback_model, fallback_headers)
+                    resolved = _resolve_endpoint_runtime(ep, owner=user)
+                    if resolved:
+                        _merge(*resolved)
             finally:
                 db.close()
 

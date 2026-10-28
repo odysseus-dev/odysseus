@@ -289,15 +289,15 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
 
     try:
         from core.database import ModelEndpoint
-        eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        from src.auth_helpers import owner_filter
+        from src.endpoint_resolver import _endpoint_enabled_models
+
+        eps = owner_filter(
+            db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True),
+            ModelEndpoint, getattr(task, "owner", None),
+        ).all()
         for ep in eps:
-            cached = []
-            if ep.cached_models:
-                try:
-                    cached = json.loads(ep.cached_models) or []
-                except Exception:
-                    cached = []
-            if model in cached:
+            if model in _endpoint_enabled_models(ep):
                 return ep.base_url or ""
     except Exception:
         pass

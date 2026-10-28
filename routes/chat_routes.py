@@ -1901,7 +1901,7 @@ def _ts_or_zero(value) -> float:
 
 
 def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
-    """Re-populate sess.model from the matching endpoint's cached models.
+    """Recover sess.model from the endpoint's visible cached and pinned models.
 
     Covers the window between endpoint setup and the first chat send: the
     picker showed a model in the dropdown but the session record never got
@@ -1965,6 +1965,9 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 visible = _visible_models(cached, getattr(ep, "hidden_models", None))
             except Exception:
                 visible = cached
+        if not is_chatgpt_subscription:
+            from src.endpoint_resolver import _endpoint_enabled_models
+            visible = _endpoint_enabled_models(ep)
         if current_model and current_model in {str(item).strip() for item in visible}:
             return False
         if is_chatgpt_subscription:
