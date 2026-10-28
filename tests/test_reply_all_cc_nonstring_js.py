@@ -27,10 +27,14 @@ def _cc(data, mine):
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_build_reply_all_cc_tolerates_non_string_fields():
+@pytest.mark.parametrize("invalid", [123, True, {"email": "me@x.com"}, ["me@x.com"], None])
+@pytest.mark.parametrize("field", ["to", "cc"])
+def test_build_reply_all_cc_tolerates_non_string_fields(invalid, field):
     # data.to / data.cc come from a JSON message blob and are not always
     # strings; the old (s || "").split crashed on a non-string To.
-    out = _cc({"to": 123, "cc": "a@x.com, b@x.com"}, "me@x.com")
+    data = {"to": "a@x.com, b@x.com", "cc": "a@x.com, b@x.com"}
+    data[field] = invalid
+    out = _cc(data, "me@x.com")
     assert out == "a@x.com, b@x.com"
 
 

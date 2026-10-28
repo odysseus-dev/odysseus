@@ -129,13 +129,13 @@ export function _formatBubbleDate(iso) {
 // Split header recipients without cutting a quoted name or angle address.
 // Shared with reader pills, reply-all and the compose recipient inputs.
 export function _splitRecipientList(raw) {
+  if (typeof raw !== 'string') return [];
   const out = [];
   let cur = '';
   let quote = false;
   let angle = false;
   let escaped = false;
-  const s = String(raw || '');
-  for (const ch of s) {
+  for (const ch of raw) {
     if (escaped) {
       escaped = false;
     } else if (ch === '\\' && quote) {
