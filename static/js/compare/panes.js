@@ -372,14 +372,23 @@ function _showShuffleNotice() {
 // ── Stop / reroll ──
 
 function stopAll() {
+  const broadcast = state._broadcastController;
+  broadcast?.abort();
   state._abortControllers.forEach(ac => { if (ac) ac.abort(); });
-  state._abortControllers = [];
-  state._streaming = false;
-  if (_setSendBtn) _setSendBtn('send');
-  // Re-enable header buttons
-  document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach(b => {
-    b.disabled = false; b.style.opacity = '0.7'; b.style.pointerEvents = '';
+  state._selectedModels.forEach((_, i) => {
+    const message = document.getElementById('cmp-history-' + i)?.querySelector('.msg-ai:last-child');
+    if (state._abortControllers[i] || message?._spinner) stopPane(i);
   });
+  state._abortControllers = [];
+  // Let the broadcast's finally release the controls after its active stream
+  // settles. An immediate retry must not overlap the cancelled round.
+  if (!broadcast) {
+    state._streaming = false;
+    if (_setSendBtn) _setSendBtn('send');
+    document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach(b => {
+      b.disabled = false; b.style.opacity = '0.7'; b.style.pointerEvents = '';
+    });
+  }
   document.querySelectorAll('.compare-pane').forEach(pane => {
     pane.classList.remove('is-streaming', 'is-awaiting-input');
   });
