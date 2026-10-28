@@ -47,6 +47,12 @@ DEFAULT_SETTINGS = {
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
+    # Optional editor planner/caption endpoints. Empty uses configured chat
+    # fallback without probing a developer-specific host.
+    "editor_agent_base_url": "",
+    "editor_agent_model": "",
+    "editor_caption_base_url": "",
+    "editor_caption_model": "",
     "vision_model": "",
     "vision_enabled": True,
     # Ordered fallback chain for the Vision model (image analysis, OCR, tagging).

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from functools import wraps
 from inspect import signature
 import json
+import os
 from pathlib import Path
 import re
 from uuid import uuid4
@@ -140,11 +141,20 @@ class RequestAuthority:
             raise ValueError("Malformed request authority")
         if self.resource_roots is None:
             roots = ()
-            if self.workspace:
-                try:
-                    roots = (FilesystemRoot.seal(self.workspace, owner=self.owner),)
-                except (OSError, ValueError, RuntimeError):
-                    pass  # An unresolved workspace grants no filesystem root.
+            # With no workspace, bash/python run in the agent workspace
+            # (agent_cwd), so the file tools get that same root (#6679).
+            # Imported here: authority -> execution is a new edge, and
+            # tool_execution imports this module at load time.
+            from src import tool_execution
+            try:
+                root = self.workspace
+                if not root:
+                    # Vetted like agent_cwd(): a symlinked agent workspace
+                    # raises and so grants no root.
+                    root = tool_execution.default_agent_workspace()
+                roots = (FilesystemRoot.seal(root, owner=self.owner),)
+            except (OSError, ValueError, RuntimeError):
+                pass  # An unresolved workspace grants no filesystem root.
             object.__setattr__(self, "resource_roots", roots)
         if (not isinstance(self.resource_roots, tuple)
                 or any(not isinstance(r, FilesystemRoot) or (r.owner and r.owner != self.owner)

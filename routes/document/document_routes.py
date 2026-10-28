@@ -1185,7 +1185,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
-        from src.task_endpoint import resolve_task_endpoint
+        from src.task_endpoint import resolve_task_endpoint, task_llm_call_async
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
@@ -1228,13 +1228,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 + "\n".join(doc_list)
             )
 
-            response = await llm_call_async(
-                url, model,
+            response = await task_llm_call_async(
                 [{"role": "system", "content": "You classify documents as junk or keep. Respond only with a JSON array."},
                  {"role": "user", "content": prompt}],
+                fallback_url=url, fallback_model=model, fallback_headers=headers,
+                owner=user or None,
                 temperature=0.1,
                 max_tokens=200,
-                headers=headers,
                 timeout=30,
             )
 

@@ -31,6 +31,10 @@ def _patch_scheduler_deps(monkeypatch):
         lambda key, default=None: [] if key == "disabled_tools" else default,
     )
     monkeypatch.setattr("src.tool_index.get_tool_index", lambda: None)
+    monkeypatch.setattr("src.endpoint_resolver.resolve_owner_registered_endpoint",
+                        lambda *a, **k: SimpleNamespace(base_url="http://ep/v1"))
+    monkeypatch.setattr("src.endpoint_resolver.resolve_endpoint_runtime",
+                        lambda ep, owner=None: (ep.base_url, None))
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +74,7 @@ async def test_scheduler_agent_loop_path(monkeypatch):
 
 
 async def test_scheduler_retires_unattended_exact_approval(monkeypatch):
+    _patch_scheduler_deps(monkeypatch)
     from src.task_scheduler import TaskScheduler
     from src.tool_approvals import tool_approval_store
     from src.tool_capabilities import capabilities_for_action

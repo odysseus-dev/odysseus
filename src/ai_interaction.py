@@ -965,7 +965,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
     elif action == "open_panel":
         # Open a top-level panel/modal: documents/library, gallery,
-        # calendar, email, sessions, notes, memories, skills, settings, theme, cookbook.
+        # calendar, email, sessions, notes, tasks, memories, skills, settings, theme, cookbook.
         panel = parts[1].lower() if len(parts) > 1 else ""
         view = ""
         view_label = ""
@@ -993,6 +993,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "note": "notes",
             "todo": "notes",
             "todos": "notes",
+            "tasks": "tasks",
+            "task": "tasks",
             "memories": "memories",
             "memory": "memories",
             "brain": "memories",
@@ -1010,7 +1012,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         }
         target = _panel_aliases.get(panel)
         if not target:
-            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, calendar, email, sessions, notes, memories, skills, settings, theme, cookbook."}
+            return {"error": f"Unknown panel '{panel}'. Valid: documents, gallery, calendar, email, sessions, notes, tasks, memories, skills, settings, theme, cookbook."}
         if target == "cookbook":
             cookbook_views = {
                 "models": ("Search", "models"), "model": ("Search", "models"),
@@ -1155,7 +1157,50 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+# Message used whenever a generative image edit (object add/remove/replace,
+# image generation) is requested but no image provider is configured. The
+# photo-editor agent and the image tools surface this verbatim so the user gets
+# a plain, actionable explanation instead of a silent substitute edit.
+IMAGE_PROVIDER_REQUIRED_MESSAGE = (
+    "Removing/adding objects needs an image generation provider; enable one in "
+    "Settings > Models."
+)
+
+
+def image_editing_provider_available(owner: Optional[str] = None) -> bool:
+    """True when an enabled, owner-visible image endpoint can serve AI edits.
+
+    Generative operations (object add/remove/replace, image generation) require
+    a configured image model. Local transforms (remove-bg, upscale, denoise,
+    enhance-face) do not, but the photo-editor agent gates the whole generative
+    request on this so it never falls back to deterministic approximations.
+    """
+    try:
+        from src.settings import load_settings
+
+        if not load_settings().get("image_gen_enabled", True):
+            return False
+    except Exception:
+        pass
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+        from src.auth_helpers import owner_filter
+
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(
+                ModelEndpoint.is_enabled == True,  # noqa: E712
+                ModelEndpoint.model_type == "image",
+            )
+            q = owner_filter(q, ModelEndpoint, owner)
+            return q.first() is not None
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
+async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None, *, incognito: bool = False) -> Dict:
     """Generate an image using an image-capable model (e.g. gpt-image-1).
 
     Content format:
@@ -1255,6 +1300,14 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     async def _resolve_image_model(model_name: str):
         def _call():
+            # Try a plain by-name lookup first. Gateway endpoints (OpenRouter)
+            # register as `llm` yet serve image models, and the image-typed
+            # query's last-resort fallback would otherwise hijack a cloud model
+            # onto the local image endpoint (gpt-5-image -> qwen-image-edit).
+            try:
+                return _resolve_model(model_name, owner=owner)
+            except ValueError:
+                pass
             try:
                 return _resolve_model(model_name, owner=owner, model_type="image")
             except TypeError as exc:
@@ -1314,7 +1367,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         else:
             payload["quality"] = "medium"
 
-    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
+    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={'[private]' if incognito else prompt[:80]}")
 
     try:
         # GPT image models can take 30-120s+ depending on quality
@@ -1365,18 +1418,22 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                     logger.warning(f"Failed to save gallery record: {_ge}")
                     return ""
 
-            # GPT image models always return b64_json; DALL-E may return url
-            if img.get("b64_json"):
+            def _store_image(image_bytes):
+                if incognito:
+                    return 'data:image/png;base64,' + base64.b64encode(image_bytes).decode('ascii'), None
                 img_dir = Path(GENERATED_IMAGES_DIR)
                 img_dir.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename
-                img_path.write_bytes(base64.b64decode(img.get("b64_json")))
+                img_path.write_bytes(image_bytes)
                 if owner:
                     from src.generated_images import register_generated_image
                     register_generated_image(filename, owner)
-                image_url = f"/api/generated-image/{filename}"
-                image_id = _save_to_gallery(filename)
+                return f"/api/generated-image/{filename}", _save_to_gallery(filename)
+
+            # Private results stay in the response, never in the gallery or on disk.
+            if img.get("b64_json"):
+                image_url, image_id = _store_image(base64.b64decode(img['b64_json']))
 
             elif img.get("url"):
                 # Download external URL and save locally (DALL-E returns temp URLs)
@@ -1390,16 +1447,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 try:
                     dl_resp = httpx.get(result_url, timeout=60)
                     if dl_resp.status_code == 200:
-                        img_dir = Path(GENERATED_IMAGES_DIR)
-                        img_dir.mkdir(parents=True, exist_ok=True)
-                        filename = f"{uuid.uuid4().hex[:12]}.png"
-                        img_path = img_dir / filename
-                        img_path.write_bytes(dl_resp.content)
-                        if owner:
-                            from src.generated_images import register_generated_image
-                            register_generated_image(filename, owner)
-                        image_url = f"/api/generated-image/{filename}"
-                        image_id = _save_to_gallery(filename)
+                        image_url, image_id = _store_image(dl_resp.content)
                     else:
                         image_url = result_url  # fallback to external URL
                 except Exception as _dl_e:
@@ -1436,6 +1484,7 @@ async def do_edit_image(
     size: str = "auto",
     quality: str = "medium",
     progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    incognito: bool = False,
 ) -> Dict:
     """Edit an uploaded image using the configured image endpoint."""
     import base64
@@ -1509,7 +1558,7 @@ async def do_edit_image(
     request_id = uuid.uuid4().hex
     payload["request_id"] = request_id
 
-    logger.info("Image edit: model=%s, size=%s, quality=%s, image=%s, prompt=%s", model_id, size, quality, path.name, prompt[:80])
+    logger.info("Image edit: model=%s, size=%s, quality=%s, image=%s, prompt=%s", model_id, size, quality, '[private]' if incognito else path.name, '[private]' if incognito else prompt[:80])
 
     def _save_edited_image_to_gallery(filename: str) -> str:
         try:
@@ -1539,6 +1588,9 @@ async def do_edit_image(
         from PIL import Image
         with Image.open(BytesIO(image_bytes)) as output:
             size = f"{output.width}x{output.height}"
+            image_mime = Image.MIME.get(output.format, 'image/png')
+        if incognito:
+            return 'data:' + image_mime + ';base64,' + base64.b64encode(image_bytes).decode('ascii'), ''
         img_dir = Path(GENERATED_IMAGES_DIR)
         img_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex[:12]}{suffix}"

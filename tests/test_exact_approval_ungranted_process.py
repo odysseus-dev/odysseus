@@ -93,7 +93,6 @@ def test_approval_without_a_workspace_seals_a_launch_in_the_agent_workspace(agen
     # Agent mode with no folder picked is the default. bash already runs in the
     # agent workspace there (agent_cwd), so that is where its approval seals.
     authority = _authority("", "get_workspace")
-    assert authority.resource_roots == ()
 
     pending, _ = _approve(authority, "bash", "pwd")
 

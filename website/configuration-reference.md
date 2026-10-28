@@ -21,7 +21,7 @@ described as a switch that turns something off, the read rejects `0`, `false`,
 `no` and `off` and treats everything else as on. The `Default` column is the
 value the code falls back to when the variable is unset, quoted from the source.
 
-The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to set, and 36 that are internal - sentinels, fixture switches, capture hooks and development tooling. The internal ones are listed too, in their own section, so this page can be checked against the source mechanically.
+The source tree reads **147** `ODYSSEUS_*` variables: 90 an operator may want to set, and 57 that are internal - sentinels, fixture switches, capture hooks and development tooling. The internal ones are listed too, in their own section, so this page can be checked against the source mechanically.
 
 > This page is generated. Edit `scripts/generate_env_reference.py` and
 > re-run it; `tests/test_env_reference.py` enforces that the committed page
@@ -58,14 +58,19 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 
 | Variable | Default | Read in | What it does |
 |---|---|---|---|
+| `ODYSSEUS_ALLOW_LOCAL_IMAGE_MODELS` | `''` | `routes/gallery/gallery_routes.py` | Set to 1, true, yes or on to allow local image-generation and editing backends to be reachable as image providers. |
 | `ODYSSEUS_COPILOT_API_VERSION` | `'2026-06-01'` | `src/copilot.py` | Dated API-version header the Copilot models and chat endpoints require. |
 | `ODYSSEUS_COPILOT_CLIENT_ID` | `'01ab8ac9400c4e429b23'` | `src/copilot.py` | GitHub OAuth client id for the Copilot device flow. The default is the public VS Code client id; override it only with your own allow-listed app. |
 | `ODYSSEUS_DEEPSEEK_REASONING_EFFORT` | `'high'` | `src/llm_core.py` | Reasoning effort for DeepSeek. Only `high` and `max` are accepted; any other value falls back to the default. |
+| `ODYSSEUS_EDITOR_AGENT_BASES` | *unset* | `src/editor_agent_model.py` | Comma-separated base URLs for the image-editor agent backends; a single base URL in the model endpoint config wins over this list. |
 | `ODYSSEUS_FIRST_TOKEN_TIMEOUT` | `''` | `src/llm_core.py` | Seconds to wait for the first streamed token from a local endpoint before failing. Unset keeps the generous read timeout, which makes a stalled backend look like a hung agent. |
+| `ODYSSEUS_IMAGE_OPS_BASE` | `''` | `routes/gallery/gallery_routes.py` | Base URL of the image-operations backend (inpaint, outpainting and style transfer); a trailing slash is stripped before use. |
 | `ODYSSEUS_LOCAL_MODEL_GATE` | `'true'` | `src/llm_core.py` | On by default. Set 0, false, no or off to drop the gate that checks a local endpoint before routing a request to it. |
 | `ODYSSEUS_MISTRAL_REASONING_EFFORT` | `'high'` | `src/llm_core.py` | Reasoning effort sent to Mistral thinking-capable models. The API accepts high, medium, low and none. |
 | `ODYSSEUS_MLX_IMAGE_VLM_MODEL` | *unset* | `scripts/mlx_image_server.py` | Vision-language model id for the MLX image server script. Required unless `--vlm-model` is passed on the command line. |
 | `ODYSSEUS_QWEN_ROUTE_THINKING` | `'auto'` | `src/agent_loop.py` | Thinking policy for the Qwen routing step. An unrecognized value falls back to `auto`. |
+| `ODYSSEUS_VISION_MODELS` | `''` | `src/chat_helpers.py` | Comma-separated model-name fragments that explicitly support inline images. |
+| `ODYSSEUS_VISION_PROBE` | `'1'` | `src/chat_helpers.py` | Allow a cached vision-capability probe against local model endpoints. |
 
 ### Agent loop and tool execution
 
@@ -88,9 +93,9 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 | `ODYSSEUS_BROWSER_MCP_CACHE` | `os.path.join(base_dir, 'data', 'local', 'playwright-mcp-cache')` | `src/builtin_mcp.py` | Cache directory handed to the browser MCP server, so its npm download survives a container rebuild. |
 | `ODYSSEUS_BROWSER_MCP_CALL_TIMEOUT_S` | `'90'` | `src/mcp_manager.py` | Upper bound in seconds for one browser MCP tool call. A call that exceeds it fails without being retried. |
 | `ODYSSEUS_BROWSER_MCP_REQUIRE_CACHE` | `''` | `src/builtin_mcp.py` | Truthy refuses to start the browser MCP server unless its npm package is already in the npx cache, instead of installing it at startup. |
-| `ODYSSEUS_BROWSER_NAMESPACE` | `'odysseus-ui'` | `src/agent_tools/web_tools.py` | Namespace for the detached agent-browser daemon's pid files, so two runtimes on one machine do not terminate each other's browsers. |
+| `ODYSSEUS_BROWSER_NAMESPACE` | `'odysseus-ui'` | `src/agent_tools/web_tools.py` (+1 more) | Namespace for the detached agent-browser daemon's pid files, so two runtimes on one machine do not terminate each other's browsers. |
 | `ODYSSEUS_BROWSER_NO_SANDBOX` | `'1'` | `src/builtin_mcp.py` | Security-relevant. On by default, adding `--no-sandbox` because the Docker image cannot use the Chromium sandbox. Set 0, false or no to keep it. |
-| `ODYSSEUS_BROWSER_SCREENSHOT_DIR` | *unset* | `src/agent_tools/web_tools.py` | Where private-browser screenshots are written. Falls back to the container path, then the system temp directory. |
+| `ODYSSEUS_BROWSER_SCREENSHOT_DIR` | *unset* | `src/agent_tools/web_tools.py` (+1 more) | Where private-browser screenshots are written. Falls back to the container path, then the system temp directory. |
 
 ### Container and workspace mounts
 
@@ -126,6 +131,9 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 | `ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES` | `25 * 1024 * 1024` | `src/upload_limits.py` (+1 more) | Maximum bytes accepted for an image handed to a gallery transform. |
 | `ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES` | `100 * 1024 * 1024` | `src/upload_limits.py` (+1 more) | Maximum bytes accepted for a gallery upload. |
 | `ODYSSEUS_ICS_MAX_BYTES` | `10 * 1024 * 1024` | `src/upload_limits.py` | Maximum bytes accepted for an imported ICS file. |
+| `ODYSSEUS_IMAGE_EDIT_MAX_SIDE` | `'768'` | `routes/gallery/gallery_routes.py` | Maximum pixel side (width or height) an edited image is downscaled to before it is sent to the image backend. |
+| `ODYSSEUS_IMAGE_EDIT_MAX_STEPS` | `'8'` | `routes/gallery/gallery_routes.py` | Maximum number of iterative edit steps the image backend may perform in a single request. |
+| `ODYSSEUS_IMAGE_OUTPAINT_TIMEOUT` | `'900'` | `routes/gallery/gallery_routes.py` | Seconds the outpainting proxy waits for the image backend before giving up on a single request. |
 | `ODYSSEUS_MEDIA_FRAME_TIMEOUT` | `30` | `src/media_ingress.py` | Seconds allowed for extracting frames from a video before giving up. |
 | `ODYSSEUS_MEDIA_MAX_AUDIO_BYTES` | `32 * 1024 * 1024` | `src/media_ingress.py` | Largest source audio file the media pipeline will read. |
 | `ODYSSEUS_MEDIA_MAX_DIMENSION` | `1600` | `src/media_ingress.py` | Longest edge in pixels an image is resized down to before encoding. |
@@ -141,6 +149,7 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 | `ODYSSEUS_MEMORY_IMPORT_MAX_BYTES` | `10 * 1024 * 1024` | `src/upload_limits.py` (+1 more) | Maximum bytes accepted for a memory import file. |
 | `ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES` | `25 * 1024 * 1024` | `src/upload_limits.py` (+1 more) | Maximum bytes accepted for a personal-documents upload. |
 | `ODYSSEUS_STT_MAX_AUDIO_BYTES` | `25 * 1024 * 1024` | `src/upload_limits.py` | Maximum bytes accepted for an audio file submitted for transcription. |
+| `ODYSSEUS_VISION_MAX_SIDE` | `'1280'` | `src/document_processor.py` | Maximum pixel side for image attachments sent directly to a vision model. |
 
 ### Search
 
@@ -184,6 +193,12 @@ The source tree reads **117** `ODYSSEUS_*` variables: 81 an operator may want to
 
 Listed for completeness. Setting one of these on a real install is either a no-op or a way to break something quietly.
 
+### Deployment and first run
+
+| Variable | Default | Read in | What it does |
+|---|---|---|---|
+| `ODYSSEUS_GRACEFUL_SHUTDOWN_TIMEOUT` | `'900'` | `app.py` | Seconds the server waits for in-flight requests and background loops to finish during a graceful shutdown. |
+
 ### Model routing and providers
 
 | Variable | Default | Read in | What it does |
@@ -199,6 +214,26 @@ Listed for completeness. Setting one of these on a real install is either a no-o
 |---|---|---|---|
 | `ODYSSEUS_CAPTURE_MODEL_REQUESTS` | `''` | `src/agent_loop.py` | Truthy writes model-request snapshots for local debugging. The marker file `/tmp/odysseus_capture_model_requests` enables the same thing. |
 | `ODYSSEUS_EXPOSE_RAW_BROWSER_MCP` | `''` | `src/agent_loop.py` | Truthy stops hiding the raw Playwright MCP tools from agent prompts when the private-browser tool is available. |
+| `ODYSSEUS_JEFF_` | *unset* | `src/jeff_decision.py` | Prefix for per-job decision adapter opt-ins; each job is disabled by default. |
+| `ODYSSEUS_JEFF_TIMEOUT` | `str(default)` | `src/jeff_decision.py` | Timeout in seconds for a decision adapter request. |
+| `ODYSSEUS_JEFF_URL` | `'http://127.0.0.1:8765'` | `src/jeff_decision.py` | Base URL of the optional decision adapter service. |
+| `ODYSSEUS_PRIVATE_BROWSER_LEGACY` | `'0'` | `src/tool_execution.py` (+1 more) | Explicit opt-in to the legacy browser compatibility transport; disabled by default. |
+| `ODYSSEUS_SPEC_BROWSER_FALLBACK` | `'0'` | `src/spec_router.py` | Optional browser routing fallback: mcp, web, or 0 to disable. |
+| `ODYSSEUS_SPEC_DIRECT_MIN_P` | `'0.9'` | `src/clean_agent_preview.py` | Minimum confidence probability a spec-router direct-answer decision must reach before the no-tools path is taken. |
+| `ODYSSEUS_SPEC_DIRECT_MODE` | `'tool_choice_none'` | `src/clean_agent_preview.py` | Controls how the spec router answers high-confidence direct-answer turns; either tool_choice_none (default) or empty_menu. |
+| `ODYSSEUS_SPEC_DIRECT_NOTOOLS` | `''` | `src/clean_agent_preview.py` | Set to 1, true, yes or on to enable the spec router's direct-answer no-tools path for high-confidence answer_directly decisions. |
+| `ODYSSEUS_SPEC_MODE` | `'strict'` | `src/agent_loop.py` (+1 more) | Spec routing mode for explicitly configured models, including strict and driver. |
+| `ODYSSEUS_SPEC_ROUTER_MIN_CONF` | `'0.3'` | `src/spec_router.py` | Minimum tool-selection confidence accepted from the router. |
+| `ODYSSEUS_SPEC_ROUTER_MODEL` | `'odysseus-s60'` | `src/spec_router.py` | Decision adapter model used for tool routing. |
+| `ODYSSEUS_SPEC_ROUTER_SECOND` | `'0.25'` | `src/spec_router.py` | Minimum confidence for adding a secondary tool candidate. |
+| `ODYSSEUS_SPEC_ROUTER_TIMEOUT` | `'0.5'` | `src/spec_router.py` | Time budget in seconds for a router decision. |
+| `ODYSSEUS_SPEC_ROUTER_URL` | `''` | `src/spec_router.py` | Base URL of the optional Spec router; an empty URL disables requests. |
+| `ODYSSEUS_SPEC_THINK_MIN_P` | `'0.5'` | `src/spec_router.py` | Minimum router confidence for enabling thinking. |
+| `ODYSSEUS_SPEC_THINK_MODEL` | `os.getenv('ODYSSEUS_SPEC_ROUTER_MODEL', 'odysseus-s60')` | `src/spec_router.py` | Optional thinking decision adapter model, falling back to the tool router model. |
+| `ODYSSEUS_SPEC_THINK_QUESTION` | `'binary'` | `src/spec_router.py` | Thinking classifier question format: binary or kind5. |
+| `ODYSSEUS_SPEC_THINK_ROUTER` | `'0'` | `src/spec_router.py` | Enable router thinking decisions for explicitly configured Spec models. |
+| `ODYSSEUS_SPEC_TOOL_FORMAT` | `''` | `src/spec_router.py` | Use names for compact router tool signatures, otherwise include descriptions. |
+| `ODYSSEUS_SPEC_TRIM_PROMPT` | `'1'` | `src/agent_loop.py` | Enable prompt trimming for the selected Spec tool menu. |
 | `ODYSSEUS_TOOL_CONTRACT_ROOT` | `str(Path(__file__).resolve().parents[1] / 'scripts')` | `src/clean_agent_preview.py` (+1 more) | Directory holding the tool-contract scripts the clean-agent preview loads. The default resolves to the bundled scripts directory relative to the installed/source tree. |
 
 ### Email
@@ -265,7 +300,7 @@ reads three ways, because no single pattern covers the codebase:
   lines, so one read lives inside a string literal.
 
 The three passes are not redundancy. A line-based grep for a direct
-`os.environ.get("ODYSSEUS_...` call finds 87 of the 117 variables on this
+`os.environ.get("ODYSSEUS_...` call finds 117 of the 147 variables on this
 page. What it misses is reads through an env-reader helper, reads whose call
 spans more than one line, reads whose variable name is held in a module
 constant, and reads through a mapping passed in as an argument - which is the

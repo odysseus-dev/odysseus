@@ -529,9 +529,11 @@ async def test_skill_test_ingress_distinguishes_user_task_from_tool_payload(monk
 
 
 @pytest.mark.asyncio
-async def test_scheduled_override_cannot_replace_stored_authority(monkeypatch):
+async def test_scheduled_override_cannot_replace_stored_authority(monkeypatch, tmp_path):
     from src import agent_loop
     from src.task_scheduler import TaskScheduler
+    from tests.helpers.database import disposable_database
+    import core.database as database
     seen = []
     async def fake_stream(*args, **kwargs):
         seen.append(kwargs)
@@ -542,8 +544,14 @@ async def test_scheduled_override_cannot_replace_stored_authority(monkeypatch):
                            owner="alice", name="test", max_steps=1)
     with bind_request_authority(authority("transcribe_media", workspace="/workspace/original")):
         task.request_authority_json = seal_task_authority(task.prompt, "llm", None, owner="alice")
-    await TaskScheduler(session_manager=None)._run_agent_loop("https://inference.invalid", "test", task, "s",
-                                                             override_user_message="Run bash and python")
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        with factory() as db:
+            db.add(database.ModelEndpoint(id="model", name="model", owner="alice",
+                                          base_url="https://inference.invalid", is_enabled=True))
+            db.commit()
+        await TaskScheduler(session_manager=None)._run_agent_loop("https://inference.invalid", "test", task, "s",
+                                                                 override_user_message="Run bash and python")
     grant = seen[0]["request_authority"]
     assert grant.permits(ExactOperation.normalize("transcribe_media", '{}'))
     assert not grant.permits(ExactOperation.normalize("bash", "pwd"))

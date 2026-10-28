@@ -207,12 +207,42 @@ async def test_default_namespace_preserves_loopback_sidecars(namespaces):
     assert "network" not in result["containment"]["enforced"]
 
 
+def _assert_sandboxed_shell_output(result, expected):
+    # Some distributions' login profiles invoke systemd-cat via im-config.
+    # The sandbox intentionally has no host journal socket; retain its exact
+    # diagnostic in the result and reject every other stderr message.
+    assert result["exit_code"] == 0, result
+    assert result["containment"]["mechanism"] == "bubblewrap", result
+    assert result["containment"]["contained"] is True, result
+    assert result["containment"]["executed"] is True, result
+    assert result["teardown"]["dead"] is True, result
+    stdout, separator, stderr = result["output"].partition("\nSTDERR: ")
+    assert stdout == expected, result
+    if separator:
+        assert stderr and all(
+            line == "Failed to create stream fd: No such file or directory"
+            for line in stderr.splitlines()
+        ), result
+
+
+def test_shell_output_check_rejects_unexpected_diagnostics_and_failed_launch():
+    result = {
+        "exit_code": 0, "containment": {"mechanism": "bubblewrap", "contained": True, "executed": True},
+        "teardown": {"dead": True}, "output": "closed\nSTDERR: unexpected error",
+    }
+    with pytest.raises(AssertionError):
+        _assert_sandboxed_shell_output(result, "closed")
+    result["output"] = "closed"
+    result["containment"]["executed"] = False
+    with pytest.raises(AssertionError):
+        _assert_sandboxed_shell_output(result, "closed")
+
+
 async def test_namespace_handshake_closes_model_stdin(namespaces):
     result = await subprocess_tools.BashTool().execute(
         "if read value; then echo unexpected; else echo closed; fi", {},
     )
-    assert result["output"] == "closed", result
-    assert result["teardown"]["dead"] is True
+    _assert_sandboxed_shell_output(result, "closed")
 
 
 @pytest.mark.parametrize("legacy_name", [True, False])
@@ -240,7 +270,7 @@ async def test_execution_environment_cannot_replace_probed_bwrap(namespaces, mon
         assert "containment unavailable" in result["error"]
         assert outside.read_text() == "escaped"
     else:
-        assert result["output"] == "contained", result
+        _assert_sandboxed_shell_output(result, "contained")
         assert not outside.exists()
 
 

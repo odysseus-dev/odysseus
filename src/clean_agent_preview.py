@@ -20,7 +20,11 @@ from pathlib import Path
 import httpx
 import jsonschema
 
-from src.context_compactor import prune_multimodal_images, trim_for_context
+from src.context_compactor import (
+    keep_recent_image_turns,
+    prune_multimodal_images,
+    trim_for_context,
+)
 from src.agent_runtime.runtime_selection import COMPACT_PREVIEW_MODE
 from src import agent_runs
 from src.agent_evidence import command_has_mutation_effect, workspace_artifact_is_usable
@@ -42,6 +46,7 @@ from src.turn_contract import (
     _REQUEST_PREFIX,
     calendar_retiming_request,
     FAMILY_TOOLS, broad_web_briefing_request, required_read_operation_for_request,
+    note_read_intent,
     targets_bound_editor_request, inline_text_transformation, editor_request_instructions,
     _bound_editor_requests_web_verification, scheduled_automation_request, creation_container_tool,
 )
@@ -206,9 +211,17 @@ CONTRACT_REQUIRED_TOOLS = frozenset({
 })
 from src.turn_contract import CONTRACT_CORE_TOOLS
 
+# Scoped NL photo-editor surface. These are offered only when the
+# ``photo_editor`` capability family is active (editor Quick Edit popup or an
+# image-edit chat turn); they drive the in-process, owner-scoped editor bridge
+# and the existing AI image ops.
+EDITOR_AGENT_TOOLS = frozenset({
+    'plan_edit', 'run_editor_command', 'get_editor_screenshot', 'ai_edit_image',
+})
 PREVIEW_TOOLS = (
     READ_TOOLS | SAFE_WRITE_TOOLS | EXPLICIT_EXECUTE_TOOLS | SAFE_UI_TOOLS
     | BROKERED_JOB_TOOLS | CONTRACT_REQUIRED_TOOLS | CONTRACT_CORE_TOOLS
+    | EDITOR_AGENT_TOOLS
 )
 # Keep a small recovery-capable surface on every interactive compact agent
 # turn. Routing still adds domain tools, while policy and action guards remain
@@ -1035,6 +1048,22 @@ def notes_terminal_response(raw, *, user_text='', max_items=20):
     return _bounded_structured_list(summary, user_text=user_text)
 
 
+def note_locator_followup(raw, *, user_text=''):
+    """Require a body read before answering a note-content request."""
+    _, needs_body = note_read_intent(user_text)
+    if not needs_body or note_search_result_empty(raw):
+        return ''
+    listing = notes_terminal_response(raw, user_text=user_text, max_items=5)
+    match = re.search(r'\(#note-([A-Za-z0-9_-]+)\)', listing)
+    if not match:
+        return ''
+    return (
+        'The notes result contains titles only, not the body. '
+        f'Call manage_notes with action="view" and id="{match.group(1)}" now. '
+        'Use the returned body to answer the request; do not infer content from the title.'
+    )
+
+
 def documents_terminal_response(raw, *, user_text='', max_items=8):
     """Render linked document rows under the user's explicit global cap."""
     from src.agent_loop import _document_list_summary_from_tool_output
@@ -1368,17 +1397,26 @@ def contentless_final_response(content):
 
 
 def action_promise_response(content):
-    """Recognize a short promise to do work that contains no result yet."""
-    text = re.sub(r'\s+', ' ', str(content or '')).strip()
-    if not text or len(text.split()) > 48:
+    """Recognize a short promise to do work that contains no result yet.
+
+    Fenced code blocks are stripped before the word count and the verb match,
+    so a promise followed by a code block (e.g. "I will browse Google Maps ..."
+    plus a requests/BeautifulSoup snippet and no tool call) still counts as an
+    action promise. The caller only reaches this when no tool call was made.
+    """
+    without_code = re.sub(
+        r'\s+', ' ', re.sub(r'```.*?```', ' ', str(content or ''), flags=re.DOTALL)
+    ).strip()
+    if not without_code or len(without_code.split()) > 48:
         return False
-    if re.search(r'\b(?:answer|result|score|served|created|saved)\s*:', text, re.I):
+    if re.search(r'\b(?:answer|result|score|served|created|saved)\s*:', without_code, re.I):
         return False
     return bool(re.match(
         r"^(?:okay[,.:]?\s*)?(?:let me|i(?:'ll| will)|next[,.:]?\s+i(?:'ll| will))\s+"
         r"(?:now\s+)?(?:inspect|extract|read|check|review|analy[sz]e|verify|open|"
-        r"search|look|create|write|render|run|use|continue|finish|provide)\b",
-        text,
+        r"search|look|create|write|render|run|use|continue|finish|provide|"
+        r"browse|find|fetch|visit|navigate|go|get|scrape)\b",
+        without_code,
         re.I,
     ))
 
@@ -1407,6 +1445,210 @@ def progressive_thinking_for_turn(model, offered_schemas, thinking_mode=None):
     return uses_odysseus_progressive_thinking(model) and not bool(offered_schemas)
 
 
+def spec_router_thinking_decision(endpoint_url, model, owner, headers, direct_user_text):
+    """Env-gated router decision for spec tool-surface turns. Fail open (None)."""
+    try:
+        import sys as _sys
+        spec_router = _sys.modules.get('src.spec_router')
+        if spec_router is None:
+            from src import spec_router  # noqa: F401
+        if not spec_router.think_router_enabled():
+            return None
+        from src.agent_loop import _configured_model_tool_surface_raw
+        if _configured_model_tool_surface_raw(
+            endpoint_url, model, owner, headers=headers
+        ) != 'spec':
+            return None
+        return spec_router.route_thinking(direct_user_text)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            'spec think router decision failed; using rules only', exc_info=True)
+        return None
+
+
+async def spec_router_thinking_decision_async(endpoint_url, model, owner, headers, direct_user_text):
+    """Async env-gated router decision for spec tool-surface turns. Fail open (None)."""
+    try:
+        import sys as _sys
+        spec_router = _sys.modules.get('src.spec_router')
+        if spec_router is None:
+            from src import spec_router  # noqa: F401
+        if not spec_router.think_router_enabled():
+            return None
+        from src.agent_loop import _configured_model_tool_surface_raw
+        if _configured_model_tool_surface_raw(
+            endpoint_url, model, owner, headers=headers
+        ) != 'spec':
+            return None
+        if hasattr(spec_router, 'route_thinking_async'):
+            return await spec_router.route_thinking_async(direct_user_text)
+        return spec_router.route_thinking(direct_user_text)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            'spec think router decision failed; using rules only', exc_info=True)
+        return None
+
+
+def spec_router_think_reason(round_number, decision, existing_deliberate):
+    """Add 'router_think' on round 1 when the router asked for thinking and no
+    other rule already selected a deliberate reason."""
+    if (round_number == 1 and not existing_deliberate
+            and isinstance(decision, dict) and decision.get('think')):
+        return 'router_think'
+    return ''
+
+
+def spec_direct_mode():
+    """Which direct-answer behaviour to use when the gate is on.
+
+    'tool_choice_none' (default) keeps the tools list but forbids a tool call
+    for the round; 'empty_menu' sends no tools at all. Any other value falls
+    back to the default.
+    """
+    mode = str(
+        os.getenv('ODYSSEUS_SPEC_DIRECT_MODE', 'tool_choice_none') or ''
+    ).strip().lower()
+    return 'empty_menu' if mode == 'empty_menu' else 'tool_choice_none'
+
+
+def spec_direct_no_tools_p(user_message, endpoint_url, model, owner, headers):
+    """Env-gated confidence for a spec 'answer_directly' turn.
+
+    Returns the answer_directly probability when the spec router just decided
+    to answer directly with enough confidence, else None. Default OFF, so the
+    caller behaves exactly as before unless ODYSSEUS_SPEC_DIRECT_NOTOOLS is set.
+    """
+    if str(os.getenv('ODYSSEUS_SPEC_DIRECT_NOTOOLS', '')).strip().lower() not in (
+        '1', 'true', 'yes', 'on'):
+        return None
+    try:
+        from src.agent_loop import _configured_model_tool_surface_raw
+        if _configured_model_tool_surface_raw(
+            endpoint_url, model, owner, headers=headers
+        ) != 'spec':
+            return None
+        import sys as _sys
+        spec_router = _sys.modules.get('src.spec_router')
+        if spec_router is None:
+            from src import spec_router  # noqa: F401
+        decision = spec_router.latest_decision()
+        if not isinstance(decision, dict):
+            return None
+        # Guard against a stale decision from a previous turn.
+        msg = str(user_message or '')
+        decided_msg = str(decision.get('message') or '')
+        if decided_msg and msg and decided_msg[:40] != msg[:40]:
+            return None
+        if decision.get('choice') != 'answer_directly':
+            return None
+        try:
+            p = float(decision.get('answer_directly') or 0.0)
+        except (TypeError, ValueError):
+            return None
+        try:
+            min_p = float(os.getenv('ODYSSEUS_SPEC_DIRECT_MIN_P', '0.9') or 0.9)
+        except (TypeError, ValueError):
+            min_p = 0.9
+        return p if p >= min_p else None
+    except Exception:
+        logging.getLogger(__name__).warning(
+            'spec direct-answer decision failed; using rules only', exc_info=True)
+        return None
+
+
+def spec_driver_active(endpoint_url, model, owner, headers):
+    """True when ODYSSEUS_SPEC_MODE=driver and the turn uses the spec surface."""
+    if str(os.getenv('ODYSSEUS_SPEC_MODE', '') or '').strip().lower() != 'driver':
+        return False
+    try:
+        from src.agent_loop import _configured_model_tool_surface_raw
+        return _configured_model_tool_surface_raw(
+            endpoint_url, model, owner, headers=headers) == 'spec'
+    except Exception:
+        return False
+
+
+def spec_driver_pick(conversation, disabled_tools, user_text, schemas=None):
+    """Per-round ODYSSEUS_SPEC_MODE=driver decision: the router drives tools.
+
+    Ask the router once for this round and return its TOP-1 choice at ANY
+    confidence: ``{'choice': 'tool'|'answer_directly'|'ask_user', 'p': float,
+    'tool_name': str|None}``. Returns None on any router error/timeout or an
+    unusable pick, so the caller keeps the normal menu for that round.
+
+    ``schemas`` is the round's offered menu; the router only ever picks from
+    it, so a top-1 tool is always one the turn can actually execute (passing
+    every known tool here made the driver name tools outside the offered set,
+    which then looped on permission errors).
+    """
+    try:
+        from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+        import sys as _sys
+        spec_router = _sys.modules.get('src.spec_router')
+        if spec_router is None:
+            from src import spec_router  # noqa: F401
+        menu = list(schemas) if schemas else list(FUNCTION_TOOL_SCHEMAS)
+        picks, _decided = spec_router.spec_route_tools(
+            str(user_text or ''), menu,
+            set(disabled_tools or ()), list(conversation or []),
+            return_decision=True,
+        )
+        decision = spec_router.latest_decision() or {}
+        if not isinstance(decision, dict) or decision.get('error'):
+            return None
+        choice = decision.get('choice')
+        top = decision.get('top') or []
+        if choice == 'answer_directly':
+            return {'choice': 'answer_directly',
+                    'p': float(decision.get('answer_directly') or 0.0),
+                    'tool_name': None}
+        if choice == 'ask_user':
+            return {'choice': 'ask_user',
+                    'p': float(decision.get('ask_user') or 0.0),
+                    'tool_name': None}
+        # Driver mode takes the router's TOP-1 at ANY confidence, so read the
+        # ranked ``top`` (not the MIN_CONF-filtered ``picks``/``added``).
+        if top and isinstance(top[0], (list, tuple)) and top[0]:
+            name = str(top[0][0] or '')
+            p = None
+            if len(top[0]) >= 2:
+                try:
+                    p = float(top[0][1])
+                except (TypeError, ValueError):
+                    p = None
+            if name:
+                return {'choice': 'tool', 'p': p, 'tool_name': name}
+        if picks:
+            try:
+                name = str(next(iter(picks)))
+            except TypeError:
+                name = str(picks[0]) if len(picks) else ''
+            if name:
+                return {'choice': 'tool', 'p': None, 'tool_name': name}
+        return None
+    except Exception:
+        logging.getLogger(__name__).warning(
+            'spec driver decision failed; using the normal menu', exc_info=True)
+        return None
+
+
+def tool_deliberation_reason(name, args):
+    """Classify selected operations, never infer intent from tool availability."""
+    name = canonical(name)
+    if name in {'python', 'edit_file', 'apply_patch'}:
+        return 'code'
+    if name in {'edit_document', 'suggest_document', 'update_document'}:
+        return 'document_edit'
+    if name in {'draft_email', 'draft_email_reply', 'ai_draft_email_reply'}:
+        return 'email_draft'
+    action = str(args.get('action') or '').lower()
+    if name == 'manage_tasks' and action in {'create', 'add', 'update', 'edit'}:
+        return 'task_design'
+    if name == 'manage_skills' and action in {'add', 'edit', 'patch', 'publish', 'audit'}:
+        return 'skill_evaluation'
+    return ''
+
+
 def visible_content_after_qwen_thinking(content):
     """Remove private Qwen reasoning when the server lacks a reasoning parser."""
 
@@ -1420,6 +1662,48 @@ def visible_content_after_qwen_thinking(content):
     if re.match(r'^\s*<think>', text, re.I):
         return ''
     return text.strip()
+
+
+def qwen_think_split_events(content, state):
+    """Split a no-reasoning-parser thinking round into live deltas.
+
+    Some thinking servers (no --reasoning-parser) return the whole
+    ``<think>…</think>`` trace as ordinary ``content``. Buffering that round
+    made the UI show nothing while the model thought and then dump the whole
+    answer at once. Stream the trace as ``{'delta': ..., 'thinking': True}``
+    events (the same shape a reasoning-parser server emits) and the text after
+    ``</think>`` as normal answer deltas. ``state`` is a mutable per-round dict
+    carrying the emission bookkeeping; the stored answer is unchanged (see
+    ``visible_content_after_qwen_thinking``).
+    """
+    events = []
+    text = str(content or '')
+    if not text:
+        return events
+    lowered = text.casefold()
+    lead = len('<think>') if lowered.startswith('<think>') else 0
+    close = lowered.find('</think>')
+    if close < 0:
+        # The opening <think> is injected by the chat template, so a progressive
+        # trace can arrive with no marker until </think>. Emit the buffered text
+        # as thinking - holding back a possible partial close tag - so the trace
+        # streams live instead of dumping in one block at the end.
+        think_region = text[lead:max(lead, len(text) - len('</think>'))]
+        answer_region = ''
+    else:
+        think_region = text[lead:close]
+        answer_region = text[close + len('</think>'):]
+    emitted_think = int(state.get('think_emitted', 0) or 0)
+    if len(think_region) > emitted_think:
+        events.append({'delta': think_region[emitted_think:], 'thinking': True})
+        state['think_emitted'] = len(think_region)
+    if close >= 0:
+        state['closed'] = True
+        emitted_answer = int(state.get('answer_emitted', 0) or 0)
+        if len(answer_region) > emitted_answer:
+            events.append({'delta': answer_region[emitted_answer:]})
+            state['answer_emitted'] = len(answer_region)
+    return events
 
 
 def prior_short_answer_for_no_tool_summary(user_text, history):
@@ -2714,6 +2998,18 @@ def normalize_preview_entity_anchor_args(name, args):
         value = args.get(field)
         if isinstance(value, str) and value.startswith(prefix):
             args[field] = value[len(prefix):]
+    if canonical(name) == 'manage_notes':
+        # Some models copy the rendered note href without its leading '#'.
+        # Decode only a complete UUID; partial selectors retain the existing
+        # owner-bound resolution policy instead of gaining a new alias.
+        value = args.get('note_id')
+        if isinstance(value, str):
+            match = re.fullmatch(
+                r'note-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+                value, re.I,
+            )
+            if match:
+                args['note_id'] = match.group(1)
     return args
 
 
@@ -2754,6 +3050,9 @@ def normalize_preview_function_args(name, args, *, user_text=''):
             args.pop('filter', None)
     if canonical(name) == 'manage_notes':
         action = str(args.get('action') or '').strip().replace('-', '_').casefold()
+        if action == 'read' and (args.get('id') or args.get('note_id')):
+            args['action'] = 'view'
+            action = 'view'
         if action == 'list':
             request = str(user_text or '').casefold()
             # The notes backend interprets title/query/content on ``list`` as
@@ -2770,6 +3069,10 @@ def normalize_preview_function_args(name, args, *, user_text=''):
                 args.pop('archived', None)
             if not re.search(r'\b(?:checklists?|freeform\s+notes?|notes?\s+only)\b', request):
                 args.pop('note_type', None)
+            query, _ = note_read_intent(user_text)
+            if query:
+                args['action'] = 'search'
+                args['query'] = query
     if canonical(name) == 'manage_skills':
         action = str(args.get('action') or '').strip().replace('-', '_').casefold()
         if action in {'update', 'change', 'revise'}:
@@ -2897,8 +3200,9 @@ def scope_preview_contract(preview_contract, routed_contract, active_capabilitie
     requested_family_tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in active))
     available_requested = routed_canonical & offered_canonical & requested_family_tools
     routed_canonical.update(canonical(name) for name in extra_tools)
-    if 'image_generation' not in active:
-        # A past image request must not keep generation warm on email/doc turns.
+    if 'image_generation' not in active and 'photo_editor' not in active:
+        # A past image request must not keep generation warm on email/doc turns,
+        # unless the photo_editor family (which bundles generate_image) is active.
         routed_canonical.discard('generate_image')
     missing_active = {
         f'capability:{family}' for family in active
@@ -3230,7 +3534,11 @@ def _successful_email_identifiers(history):
     for message in history or ():
         if not isinstance(message, dict):
             continue
-        if message.get('role') == 'system' and 'Message UID:' in str(message.get('content') or ''):
+        active_reader = (
+            message.get('_agent_injected') == 'context'
+            and (message.get('metadata') or {}).get('source') == 'active email reader'
+        )
+        if (message.get('role') == 'system' or active_reader) and 'Message UID:' in str(message.get('content') or ''):
             extracted = _email_identifiers_from_text(message.get('content'))
             known['uid'].update(extracted['uid'])
             known['message_id'].update(extracted['message_id'])
@@ -3518,6 +3826,20 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
     runtime_tools = PREVIEW_TOOLS | (
         NATIVE_WORKSPACE_TOOLS if allow_native_workspace else frozenset()
     ) | ({canonical(tool) for tool in external_runtime_tools} if allow_native_workspace else set())
+    # Spec turns are driven by the router: the Spec contract (its offered set)
+    # IS the model runtime, so a Spec pick is runnable. Keyed off the same
+    # marker the spec hook sets (`routing_experiment == 'spec-router'`), never
+    # a new flag, and never applied to compact/native turns.
+    try:
+        from src.turn_contract import active_turn_contract as _atc
+        _spec_contract = _atc()
+        if _spec_contract is not None and getattr(
+                _spec_contract, 'routing_experiment', '') == 'spec-router':
+            runtime_tools = runtime_tools | {
+                canonical(tool) for tool in getattr(_spec_contract, 'offered', ()) or ()
+            }
+    except Exception:
+        pass
     if bare not in runtime_tools:
         return decision(False, 'tool_not_in_model_runtime')
     if bare in {canonical(tool) for tool in external_runtime_tools}:
@@ -3559,6 +3881,9 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
                 or bare in BROKERED_JOB_TOOLS
                 or (contract_required and bare in {'edit_image', 'generate_image'})
                 or (contract_required and bare == 'create_document' and standalone_code_request(user_text))
+                # The editor command is conservatively classified as a write;
+                # document.info is a read even when the user requested no edit.
+                or (bare == 'run_editor_command' and args.get('op') == 'document.info')
             )
         )
         if family not in authorized and not contextual_revision and not contract_scoped_mutation and not fixture_delete and not offered_private_action:
@@ -3618,6 +3943,18 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
         # Image edits are brokered by the owned gallery backend. The exact
         # editor is offered only for an explicit image-editing turn.
         blocked_effects.remove(ToolEffect.NETWORK_EGRESS)
+        allowed_effects.add(ToolEffect.NETWORK_EGRESS)
+    if (
+        (contract_required or family in turn_authorized_families)
+        and bare in {'plan_edit', 'run_editor_command', 'get_editor_screenshot', 'ai_edit_image'}
+    ):
+        # Scoped photo_editor agent tools. They are never in the general tool
+        # list; the immutable turn contract only selects them for an explicit
+        # editor request (Quick Edit popup / image-edit turn), so their UI and
+        # brokered-network effects are covered by the contract seal.
+        blocked_effects.discard(ToolEffect.UI_SIDE_EFFECT)
+        allowed_effects.add(ToolEffect.UI_SIDE_EFFECT)
+        blocked_effects.discard(ToolEffect.NETWORK_EGRESS)
         allowed_effects.add(ToolEffect.NETWORK_EGRESS)
     if (
         contract_required
@@ -3849,6 +4186,29 @@ def conversation(history_session, messages, *, owner=None, diagnostics=None):
     from src.turn_contract import result_reference_followup
     source_context = (recent_source_reference_context(groups[-2])
                       if len(groups) > 1 and result_reference_followup(current_text) else None)
+    # Tool output can dwarf the dialogue (especially a web search). Keep the
+    # visible exchange before enforcing the history cap, so one search-heavy
+    # turn cannot erase the subject of the next follow-up.
+    for index, group in enumerate(groups[:-1]):
+        if len(json.dumps(group)) <= 5000 or len(group) < 2:
+            continue
+        # Keep non-web tool evidence intact: a note/list follow-up may need
+        # exact result identifiers, and shortening it would be misleading.
+        if not any(
+            canonical((call.get('function') or {}).get('name', '')) in {'web_search', 'web_fetch'}
+            for message in group if message.get('role') == 'assistant'
+            for call in message.get('tool_calls') or ()
+        ):
+            continue
+        answer = next((message.get('content') for message in reversed(group)
+                       if message.get('role') == 'assistant'
+                       and str(message.get('content') or '').strip()), None)
+        if answer is None:
+            continue
+        answer_text = str(answer)
+        if len(answer_text) > 3500:
+            answer_text = answer_text[:3500] + '\n[Earlier answer shortened for context.]'
+        groups[index] = [group[0], {'role': 'assistant', 'content': answer_text}]
     # Drop whole turns only, never orphan tool results from their native calls.
     groups = groups[-8:]
     while len(groups) > 1 and len(json.dumps(groups)) > 22000:
@@ -4207,6 +4567,26 @@ def denied_response():
     return 'I can’t perform that operation in this preview. No changes were made.'
 
 
+WORKSPACE_REQUIRED_REFUSAL = (
+    'Shell and Python commands only run inside a workspace. '
+    'Open the code workspace (or set a working directory) and try again.'
+)
+
+
+def workspace_process_denial(executions) -> bool:
+    """True when a blocked call was refused because process execution needs a
+    sealed workspace (a plain chat turn carries none)."""
+    for entry in executions or ():
+        blob = ' '.join(
+            str(entry.get(key) or '') for key in ('error', 'output', 'failure_kind')
+        )
+        # Resource identity also covers missing note and document selectors.
+        # Those denials must not turn into instructions to open a code workspace.
+        if 'sealed workspace' in blob.casefold():
+            return True
+    return False
+
+
 def execution_has_write_effect(tool_name, content, capability, *, native_workspace_enabled):
     """Recognize successful native code that visibly mutates the workspace."""
 
@@ -4226,7 +4606,7 @@ _MUTATION_REQUEST = re.compile(
     r'\b(?:add|creat(?:e|ing)?|make|writ(?:e|ing)|sav(?:e|ing)|updat(?:e|ing)|edit(?:ing)?|chang(?:e|ing)|'
     r'set|schedul(?:e|ing)|reschedul(?:e|ing)|paus(?:e|ing)|resum(?:e|ing)|toggle|mark|'
     r'pin|archive|delet(?:e|ing)|remov(?:e|ing)|send|reply|draft|publish|run|launch|serve|start|stop|'
-    r'remember|remeber|forget|remind|review|proofread|suggest(?:ions?)?|expand|broaden|deepen|lighten|feedback|reserve|block)\b|'
+    r'remember|remeber|forget|remind|review|proofread|suggest(?:ions?)?|expand|broaden|deepen|lighten|reserve|block)\b|'
     r'\bgo\s+deeper\b',
     re.I,
 )
@@ -4262,7 +4642,7 @@ def mutation_action_requested(user_text):
     actionable = re.sub(
         r"\b(?:do\s+not|don't|never|without)\s+"
         r"(?:(?:chang(?:e|ing)|modif(?:y|ying)|edit(?:ing)?|delet(?:e|ing)|"
-        r"remov(?:e|ing)|send(?:ing)?|writ(?:e|ing)|creat(?:e|ing))\b)"
+        r"remov(?:e|ing)|send(?:ing)?|writ(?:e|ing)|creat(?:e|ing)|schedul(?:e|ing))\b)"
         r"[^.;\n]{0,120}?(?=(?:[.;\n]|\bbut\b|\binstead\b|$))",
         '', text, flags=re.I,
     )
@@ -5242,6 +5622,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                          external_tool_schemas=None, temperature=0.0,
                          context_resolution=None,
                          request_authority=MISSING_AUTHORITY, **ignored):
+    if spec_driver_active(endpoint_url, model, owner, headers):
+        yield event({'delta': 'Spec driver mode is unavailable because its authority and completion checks are not supported. No action was performed.'})
+        yield 'data: [DONE]\n\n'
+        return
     from src.generation_sampling import validate_temperature
     temperature = validate_temperature(temperature)
     # This path sends requests directly with httpx and therefore bypasses
@@ -5622,6 +6006,38 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                  'multimodal_image_count': image_context_count,
                  'attachment_reference_count': attachment_refs,
                  'image_rehydration': conversation_diagnostics.get('image_rehydration')})
+    _photo_editor_active = 'photo_editor' in (getattr(turn_contract, 'active_capabilities', ()) or ())
+    _photo_editor_open = bool(
+        ((client_runtime_context or {}).get('web_ui_state') or {}).get('photo_editor_open')
+    )
+    if _photo_editor_active and not _photo_editor_open:
+        _editor_guidance = (
+            "This image isn't open in the editor yet, so I can't apply edits to the "
+            "canvas from chat. Open the attached image in the editor (Quick Edit) and "
+            "send this request there \u2014 I'll apply it to the canvas."
+        )
+        history.append({'role': 'assistant', 'content': _editor_guidance})
+        yield event({'delta': _editor_guidance})
+        _action_prompt = str(direct_user_text or '')
+        for _annotation in ('\n\n[Image:', '\n[Image:', '\n\n[Attached', '\n[No vision model'):
+            _cut = _action_prompt.find(_annotation)
+            if _cut != -1:
+                _action_prompt = _action_prompt[:_cut]
+        _action_prompt = _action_prompt.strip() or str(direct_user_text or '').strip()
+        yield event({
+            'type': 'final_response',
+            'content': _editor_guidance,
+            'photo_editor_action': {
+                'kind': 'open_and_apply',
+                'prompt': _action_prompt,
+            },
+        })
+        yield event({'type': 'metrics', 'data': {
+            'model': model, 'rounds': 0, 'round_texts': [_editor_guidance],
+            'tool_events': [], 'tool_calls': 0, 'agent_rounds': 0,
+        }})
+        yield 'data: [DONE]\n\n'
+        return
     try:
         async with httpx.AsyncClient(
             timeout=preview_http_timeout(
@@ -5703,6 +6119,40 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 usage_in += intent_accounting.get('input_tokens', 0)
                 usage_out += intent_accounting.get('output_tokens', 0)
                 has_real_usage = intent_accounting.get('usage_source') == 'real'
+            # Optional env-gated router decision (spec surface only). Computed
+            # once per user turn; disabled/None leaves behaviour unchanged.
+            _spec_route_think = await spec_router_thinking_decision_async(
+                endpoint_url, model, owner, headers, direct_user_text)
+            if _spec_route_think is not None:
+                logging.getLogger(__name__).info(
+                    'spec think router: think=%s p_think=%s ms=%s',
+                    _spec_route_think.get('think'),
+                    _spec_route_think.get('p_think'),
+                    _spec_route_think.get('ms'))
+            # Optional env-gated direct-answer override (spec surface only):
+            # when the spec router chose answer_directly with high confidence,
+            # round 1 is sent with tool_choice 'none' (same tools list).
+            _spec_direct_p = spec_direct_no_tools_p(
+                direct_user_text, endpoint_url, model, owner, headers)
+            if (turn_contract.required or turn_contract.unavailable
+                    or turn_contract.required_read_operation is not None):
+                _spec_direct_p = None
+            # Option B: send round 1 with no tools at all for a direct answer.
+            _spec_direct_empty_menu = (
+                _spec_direct_p is not None and spec_direct_mode() == 'empty_menu')
+            # ODYSSEUS_SPEC_MODE=driver: the router (not the 9B) picks the tool
+            # every round; the 9B only writes the arguments or the answer.
+            # Driver execution is refused at entry. Keep this false even if
+            # configuration changes while the stream is already in progress.
+            _spec_driver_on = False
+            # Driver mode narrows the contract per round to the Spec pick.
+            # Rebuild each round from this frozen base so the narrowing does
+            # not accumulate/mutate across rounds.
+            _driver_base_contract = turn_contract
+            # Per-round Spec pick (driver mode): 'answer_directly' | 'ask_user'
+            # | 'tool' | None (router fallback). Set inside the round loop.
+            _driver_round_kind = None
+            _driver_round_pick = None
             # One extra iteration is available only when a provider emits raw
             # tool markup during the normal final no-tools round. Ordinary
             # turns still obey ``round_limit`` exactly.
@@ -5839,7 +6289,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         'completion_reserve_seconds': artifact_completion_reserve_seconds,
                     })
                 request_messages = provider_request_messages(
-                    prune_multimodal_images(history, max_images=3)
+                    prune_multimodal_images(
+                        keep_recent_image_turns(history, keep=2), max_images=3
+                    )
                 )
                 if prior_summary_answer or force_no_tools_next_round or reserve_final_synthesis:
                     round_offered = []
@@ -6036,6 +6488,94 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         break
                     request['tools'] = source_tools
                     request['tool_choice'] = 'required'
+                # ODYSSEUS_SPEC_MODE=driver: the router is the tool driver.
+                # Ask it for this round's single next action (any confidence);
+                # the 9B then only writes the arguments (a named tool_choice) or
+                # the answer (tools key omitted; vLLM rejects an empty array).
+                # Router error/timeout keeps the normal menu for this round.
+                if _spec_driver_on and round_offered:
+                    # The router chooses from the FULL Ajax Spec surface (~all
+                    # built-ins minus disabled), not the compact round menu, so
+                    # a Spec pick is never silently out of reach. The 9B then
+                    # only writes the arguments (a named tool_choice) or the
+                    # answer (tools key omitted; vLLM rejects an empty array).
+                    # Router error/timeout keeps the normal menu this round.
+                    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS as _SPEC_SURFACE
+                    _drv = spec_driver_pick(history, disabled_tools, direct_user_text)
+                    if _drv is not None:
+                        _drv_choice = _drv.get('choice')
+                        if _drv_choice == 'answer_directly':
+                            _driver_round_kind = 'answer_directly'
+                            request.pop('tools', None)
+                            request.pop('tool_choice', None)
+                        elif _drv_choice == 'ask_user':
+                            _driver_round_kind = 'ask_user'
+                            _ask = [s for s in _SPEC_SURFACE
+                                    if (s.get('function') or {}).get('name') == 'ask_user']
+                            if _ask:
+                                request['tools'] = [_ask[0]]
+                                request['tool_choice'] = {
+                                    'type': 'function',
+                                    'function': {'name': 'ask_user'},
+                                }
+                                if _ask[0] not in round_offered:
+                                    round_offered = list(round_offered) + [_ask[0]]
+                        elif _drv_choice == 'tool' and _drv.get('tool_name'):
+                            _name = _drv['tool_name']
+                            _sel = [s for s in list(round_offered) + list(_SPEC_SURFACE)
+                                    if (s.get('function') or {}).get('name') == _name]
+                            if _sel:
+                                _driver_round_kind = 'tool'
+                                _driver_round_pick = _name
+                                request['tools'] = [_sel[0]]
+                                request['tool_choice'] = {
+                                    'type': 'function',
+                                    'function': {'name': _name},
+                                }
+                                # The per-call validator looks the schema up in
+                                # `round_offered` (not `request['tools']`), so the
+                                # Spec pick must be present there too.
+                                round_offered = [_sel[0]]
+                                # Driver mode narrows the whole contract to the
+                                # Spec pick for this round: the router is the
+                                # authority, and the executor must be able to run
+                                # the picked tool. Build a valid contract (the
+                                # TurnContract invariant requires
+                                # required <= offered <= executable and
+                                # schema_json names == offered).
+                                try:
+                                    from src.turn_contract import (
+                                        _ACTIVE_CONTRACT as _TC,
+                                        canonical_tool as _ct,
+                                    )
+                                    _pick = _ct(_name)
+                                    turn_contract = replace(
+                                        _driver_base_contract,
+                                        required=frozenset(),
+                                        offered=frozenset({_pick}),
+                                        executable=frozenset(
+                                            set(_driver_base_contract.executable) | {_pick}),
+                                        schema_json=(json.dumps(_sel[0]),),
+                                        required_read_operation=None,
+                                    )
+                                    _TC.set(turn_contract)
+                                except Exception:
+                                    turn_contract = _driver_base_contract
+                                    logging.getLogger(__name__).info(
+                                        '[spec-driver] round=%s pick=%s contract admit failed; '
+                                        'normal contract kept', round_number, _name)
+                            else:
+                                logging.getLogger(__name__).info(
+                                    '[spec-driver] round=%s pick=%s not executable; normal menu this round',
+                                    round_number, _name)
+                        logging.getLogger(__name__).info(
+                            '[spec-driver] round=%s pick=%s p=%s', round_number,
+                            (_drv.get('tool_name') if _drv_choice == 'tool'
+                             else _drv_choice),
+                            _drv.get('p'))
+                    else:
+                        logging.getLogger(__name__).info(
+                            '[spec-driver] round=%s pick=fallback p=None', round_number)
                 pending, content, round_reasoning = {}, '', ''
                 document_preview_index = None
                 document_preview_content = ''
@@ -6056,6 +6596,49 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 request = search_tool_choice_request(request)
                 tool_call_requested = request.get('tool_choice') not in (None, 'auto', 'none')
                 request = provider_compatible_tool_choice_request(request, model)
+                # Log the tool surface actually sent to the provider: the
+                # metrics `tool_schema_names` reports the pre-narrowing
+                # `offered` set, which hid the fact that a forced choice had
+                # shrunk the provider tools array to one schema.
+                logging.getLogger(__name__).info(
+                    "clean preview round %s sending %d tool(s): %s",
+                    round_number,
+                    len(request.get('tools') or []),
+                    [
+                        (schema.get('function') or {}).get('name')
+                        for schema in (request.get('tools') or [])
+                    ][:40],
+                )
+                if round_number == 1 and _spec_direct_p is not None:
+                    # The router decided to answer directly with high
+                    # confidence.
+                    if _spec_direct_empty_menu:
+                        # Option B: an empty menu — send no tools at all, so
+                        # nothing can be executed and no markup is recovered.
+                        request['tools'] = []
+                        request.pop('tool_choice', None)
+                        tool_call_requested = False
+                        # Keep the thinking router's decision; never let the
+                        # no-tools progressive rule turn thinking on when the
+                        # router said off.
+                        if not (_spec_route_think or {}).get('think'):
+                            ctk = dict(request.get('chat_template_kwargs') or {})
+                            ctk['enable_thinking'] = False
+                            request['chat_template_kwargs'] = ctk
+                        logging.getLogger(__name__).info(
+                            '[spec-harness] direct answer: empty menu p=%s',
+                            _spec_direct_p)
+                    else:
+                        # Default: keep the same tools list (prefix-cache
+                        # friendly) but forbid a tool call this round. Thinking
+                        # is left to the thinking router; offered stays
+                        # non-empty so this does not switch progressive
+                        # thinking on.
+                        request['tool_choice'] = 'none'
+                        tool_call_requested = False
+                        logging.getLogger(__name__).info(
+                            '[spec-harness] direct answer: tool_choice none p=%s',
+                            _spec_direct_p)
                 if active_editor_target and request.get('tools'):
                     # Edits share mutable document state. Await a saved result
                     # before asking for another call; one call may still batch
@@ -6144,6 +6727,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 and not progressive_thinking
                                 and not source_lookup_pending
                                 and not tool_call_requested
+                                and not _spec_direct_empty_menu
                             ):
                                 text_event = {'delta': text}
                                 if replace_streamed_draft_on_finish and not streamed_round_text:
@@ -6197,6 +6781,13 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     if content and not prior_summary_answer and not source_lookup_pending:
                         yield event({'delta': content})
                         streamed_round_text = True
+                if _spec_direct_empty_menu and pending:
+                    # Option B: nothing is offered, so never execute a tool
+                    # call the model still produced (native shape).
+                    logging.getLogger(__name__).info(
+                        '[spec-harness] direct answer: dropped %d tool call(s)',
+                        len(pending))
+                    pending = {}
                 proposed = [pending[i] for i in sorted(pending)]
                 # A lead-in emitted before a tool call is live progress, not
                 # part of the terminal answer. Replace that draft when the
@@ -6204,7 +6795,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 if proposed and streamed_round_text:
                     replace_streamed_draft_on_finish = True
                 unexecutable_dsml_completion = False
-                if not proposed and 'DSML' in content:
+                if (not proposed and not _spec_direct_empty_menu
+                        and _driver_round_kind != 'answer_directly'
+                        and 'DSML' in content):
                     offered_by_canonical = {
                         canonical(schema['function']['name']): schema['function']['name']
                         for schema in round_offered
@@ -6252,6 +6845,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             })
                         else:
                             unexecutable_dsml_completion = True
+                if _spec_direct_empty_menu and content:
+                    # Option B: show the answer text without any tool-call
+                    # markup the model may still have written (nothing offered).
+                    _stripped = re.sub(
+                        r'<tool_call\b[^>]*>.*?</tool_call>', '',
+                        content, flags=re.DOTALL | re.IGNORECASE).strip()
+                    if _stripped != content.strip():
+                        content = _stripped
+                        replace_streamed_draft_on_finish = True
                 if source_lookup_pending and not proposed:
                     if source_answer_retries < 1 and round_number < round_limit:
                         source_answer_retries += 1
@@ -6276,6 +6878,37 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 )
                 if active_editor_target:
                     proposed = drop_redundant_editor_noops(proposed)
+                # ODYSSEUS_SPEC_MODE=driver: Spec is the tool driver, so execute
+                # ONLY the call Spec picked this round. Drop (never execute) any
+                # other native call and any text/DSML-recovered call; when Spec
+                # said answer_directly, keep no calls and strip tool markup so
+                # the remaining text is the answer.
+                if _driver_round_kind == 'answer_directly':
+                    if proposed:
+                        for _c in proposed:
+                            logging.getLogger(__name__).info(
+                                '[spec-driver] dropped off-pick call name=%s',
+                                (_c.get('function') or {}).get('name'))
+                        proposed = []
+                    if content:
+                        _stripped = strip_tool_blocks(content, skip_fenced=True).strip()
+                        _stripped = re.sub(
+                            r'<tool_call\b[^>]*>.*?</tool_call>', '',
+                            _stripped, flags=re.DOTALL | re.IGNORECASE).strip()
+                        if _stripped != content:
+                            content = _stripped
+                            replace_streamed_draft_on_finish = True
+                elif _driver_round_kind in ('tool', 'ask_user'):
+                    _want = 'ask_user' if _driver_round_kind == 'ask_user' else _driver_round_pick
+                    _keep = []
+                    for _c in proposed:
+                        _cn = (_c.get('function') or {}).get('name')
+                        if canonical(str(_cn or '')) == canonical(str(_want or '')):
+                            _keep.append(_c)
+                        else:
+                            logging.getLogger(__name__).info(
+                                '[spec-driver] dropped off-pick call name=%s', _cn)
+                    proposed = _keep
                 if model_choice_experiment:
                     for proposal in proposed:
                         yield event({'type': 'model_tool_proposal', 'round': round_number,
@@ -6695,6 +7328,25 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         # that draft and persisted history with the evidence-backed result.
                         history.pop()
                         refusal = denied_response()
+                        # A photo-editor turn with no canvas command actually executed
+                        # (no browser editor attached) cannot claim the edit. Point the
+                        # user at the editor instead of the generic no-op refusal.
+                        if 'photo_editor' in (getattr(turn_contract, 'active_capabilities', ()) or ()):
+                            touched_canvas = any(
+                                str(e.get('tool') or '') in {
+                                    'run_editor_command', 'get_editor_screenshot',
+                                    'ai_edit_image', 'generate_image',
+                                }
+                                and not e.get('error') and e.get('exit_code', 0) == 0
+                                for e in executions
+                            )
+                            if not touched_canvas:
+                                refusal = (
+                                    'This photo is not open on the editor canvas, so I cannot '
+                                    'apply edits to it from chat. Open the attached image in the '
+                                    'editor (Quick Edit) and send the request there, and I will '
+                                    'apply it to the canvas.'
+                                )
                         history.append({'role': 'assistant', 'content': refusal})
                         yield event({'type': 'final_response', 'content': refusal})
                         break
@@ -7948,6 +8600,15 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             output, user_text=latest_user,
                             max_items=contract_item_limit(turn_contract, 20),
                         )
+                        followup = note_locator_followup(output, user_text=latest_user)
+                        if followup:
+                            if round_number < round_limit:
+                                structured_terminal_response = ''
+                                round_recovery_messages.append(followup)
+                            else:
+                                structured_terminal_response = (
+                                    'I found a note, but could not read its content in this turn.'
+                                )
                         action = str(args.get('action') or '').replace('-', '_').casefold()
                         if (
                             action in {'search', 'find'}

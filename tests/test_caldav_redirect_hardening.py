@@ -77,8 +77,19 @@ def test_dav_client_does_not_follow_redirect_to_internal_host():
             pass
         # The request must actually have left the building — otherwise an early
         # error would make "sink not hit" pass vacuously.
-        assert public_methods == ["PROPFIND"], "the PROPFIND must reach the public server first"
+        # Some caldav releases retry the original URL with GET to probe auth
+        # after the redirect exception. Neither request may reach the sink.
+        assert public_methods in (["PROPFIND"], ["PROPFIND", "GET"]), public_methods
         assert sink_hits == [], "redirect toward an internal host must not be followed"
+
+        # Positive control: demonstrate that the sink would see the redirect
+        # if the session's redirect protection were removed.
+        client.session.max_redirects = 30
+        try:
+            client.request(public_url, "PROPFIND", "")
+        except Exception:
+            pass  # The sink's response is intentionally not a valid DAV body.
+        assert sink_hits == ["/leak"], "the test must detect a followed redirect"
     finally:
         internal.shutdown()
         public.shutdown()

@@ -1,5 +1,6 @@
 """Live folder UID snapshots reconcile only the matching durable list cache."""
 import sqlite3
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -159,6 +160,38 @@ def test_old_writer_cannot_restore_uids_removed_by_a_newer_snapshot(mailbox_cach
     assert cache.cached_uids() == {"1", "3"}
 
 
+@pytest.mark.parametrize("snapshot", [b"1 3", b""])
+def test_invalidated_search_cannot_prune_a_completed_mutation(mailbox_cache, monkeypatch, snapshot):
+    cache = mailbox_cache
+
+    class MutationMailbox:
+        def select(self, *args, **kwargs):
+            return "OK", []
+
+        def uid(self, command, *args):
+            if command == "FETCH":
+                return "OK", [b"1 (UID 2)"]
+            assert command == "STORE"
+            return "OK", []
+
+    @contextmanager
+    def mutation_mailbox(*args, **kwargs):
+        yield MutationMailbox()
+
+    monkeypatch.setattr(cache.routes, "_imap", mutation_mailbox)
+    def mark_read_during_search():
+        response = cache.client.post("/api/email/mark-read/2", params={"account_id": "a"})
+        assert response.status_code == 200 and response.json()["success"]
+
+    cache.mailbox.on_search = mark_read_during_search
+    cache.mailbox.search_data = [snapshot]
+    cache.refresh()
+
+    assert cache.cached_uids() == {"1", "2", "3"}
+    rows = cache.routes._email_index_rows("alice", "a", "INBOX", ["2"])
+    assert rows["2"]["is_read"] is True
+
+
 def test_old_snapshot_cannot_remove_newer_observations(mailbox_cache):
     cache = mailbox_cache
     old = cache.routes._email_index_begin_sync("alice", "a", "INBOX")
@@ -180,7 +213,9 @@ def test_old_snapshot_cannot_override_a_newer_reconciliation(mailbox_cache):
 def test_cache_hits_in_a_newer_filtered_read_are_live_observations(mailbox_cache):
     cache = mailbox_cache
     old = cache.routes._email_index_begin_sync("alice", "a", "INBOX")
-    result = cache.refresh(refresh=0, filter="unread")
+    # A sender filter keeps this request on the synchronous IMAP path under
+    # stale-while-revalidate, so the worker really observes existing cache hits.
+    result = cache.refresh(refresh=0, filter="unread", **{"from": "sender@example.com"})
     assert {row["uid"] for row in result["emails"]} == {"1", "3"}
     cache.routes._email_index_reconcile("alice", "a", "INBOX", b"", old)
     assert cache.cached_uids() == {"1", "3"}

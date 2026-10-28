@@ -211,10 +211,15 @@ class ChatHandler:
             from src.settings import get_setting
             vision_enabled = get_setting("vision_enabled", True)
             if vision_enabled:
+                from src.owner_identity import auth_disabled
+                sess_owner = getattr(sess, "owner", None)
+                if not sess_owner and not auth_disabled():
+                    sess_owner = ""
                 main_is_vision = await asyncio.to_thread(
                     model_supports_vision,
                     sess.model or "",
                     getattr(sess, "endpoint_url", "") or "",
+                    sess_owner,
                 )
 
         if effective_att_ids and vision_enabled:

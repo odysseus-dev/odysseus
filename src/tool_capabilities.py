@@ -217,6 +217,28 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
+    {"ai_edit_image"},
+    ToolEffect.NETWORK_EGRESS,
+    ToolEffect.WRITE_PRIVATE,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
+    {"get_editor_screenshot"},
+    ToolEffect.READ_PRIVATE,
+)
+_register(
+    {"plan_edit"},
+    ToolEffect.NETWORK_EGRESS,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
+    {"run_editor_command"},
+    ToolEffect.READ_PRIVATE,
+    ToolEffect.WRITE_PRIVATE,
+    ToolEffect.UI_SIDE_EFFECT,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
     {
         "archive_email",
         "block_sender",

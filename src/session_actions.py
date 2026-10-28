@@ -67,7 +67,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
     """
     from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg
     from src.llm_core import llm_call_async
-    from src.task_endpoint import resolve_task_endpoint
+    from src.task_endpoint import resolve_task_endpoint, task_llm_call_async
 
     db = SessionLocal()
     try:
@@ -164,8 +164,6 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions (folder sort skipped)."
 
         url, model, headers = resolve_task_endpoint(owner=owner or None)
-        if not url:
-            return f"Cleaned {deleted_empty + deleted_throwaway} sessions. No model endpoint available for sorting."
 
         names_text = "\n".join(f'  "{s["id"][:8]}": "{s["name"]}"' for s in session_list)
         prompt = (
@@ -183,8 +181,12 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         try:
             # 16384 (was 4096): large folder JSON + reasoning-model thinking
             # overflowed 4096 and truncated the JSON, so it never parsed.
-            raw = await llm_call_async(url, model, [{"role": "user", "content": prompt}],
-                                       temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+            raw = await task_llm_call_async(
+                [{"role": "user", "content": prompt}],
+                fallback_url=url, fallback_model=model, fallback_headers=headers,
+                owner=owner or None,
+                temperature=0.3, max_tokens=16384, timeout=120,
+            )
         except Exception as e:
             logger.warning(f"Auto-sort LLM call failed: {e}")
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions. Folder sort skipped (model unreachable)."
