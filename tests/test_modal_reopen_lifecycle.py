@@ -40,6 +40,16 @@ def test_modal_reopen_after_dock_close_and_pending_animation(modal_id, width):
           const visible = () => getComputedStyle(modal).display !== 'none';
           const wait = () => new Promise(resolve=>setTimeout(resolve,350));
           const states = {};
+          if (id === 'theme-modal') {
+            const theme = await import('/static/js/theme.js');
+            theme.togglePopup();
+            theme.togglePopup();
+            theme.togglePopup();
+            await wait();
+            states.fastToggleReopens = visible();
+            close();
+            await wait();
+          }
           open();
           manager.register(id,{closeFn:close,restoreFn:()=>{}});
           manager.minimize(id);

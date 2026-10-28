@@ -1581,7 +1581,9 @@ export function openPopup() {
 export function togglePopup() {
   const modal = document.getElementById('theme-modal');
   if (!modal) return;
-  const visible = !modal.classList.contains('hidden') && !modal.classList.contains('modal-minimized');
+  const visible = !modal.classList.contains('hidden')
+    && !modal.classList.contains('modal-minimized')
+    && !modal.querySelector('.modal-closing');
   if (visible) {
     closePopup();
   } else {
