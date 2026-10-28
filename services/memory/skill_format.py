@@ -292,7 +292,10 @@ def parse_body(body: str) -> Dict[str, Any]:
         if m:
             heading = m.group(1).strip().lower()
             key = _HEADING_TO_KEY.get(heading)
-            sections.append((key, []))
+            # A heading we don't model starts free-form text. Keep the
+            # heading line with it, or the section loses its title the next
+            # time the file is rewritten from body_extra.
+            sections.append((key, [] if key else [line]))
             continue
         sections[-1][1].append(line)
 
@@ -331,6 +334,14 @@ def _parse_list_lines(text: str) -> List[str]:
 
 def emit_body(sections: Dict[str, Any]) -> str:
     parts: List[str] = []
+    extra = (sections.get("body_extra") or "").strip()
+    # Free text that sits before any heading has to be written first. Placed
+    # after a known section it is read back as part of that section, and
+    # _parse_list_lines folds it into the last list item.
+    m = re.search(r"^##\s", extra, re.MULTILINE)
+    lead, custom = (extra[:m.start()].strip(), extra[m.start():].strip()) if m else (extra, "")
+    if lead:
+        parts.append(lead)
     when = (sections.get("when_to_use") or "").strip()
     if when:
         parts.append(f"## {_KEY_TO_HEADING['when_to_use']}\n\n{when}")
@@ -344,9 +355,8 @@ def emit_body(sections: Dict[str, Any]) -> str:
         else:
             body = "\n".join(f"- {x}" for x in items)
         parts.append(f"## {heading}\n\n{body}")
-    extra = (sections.get("body_extra") or "").strip()
-    if extra:
-        parts.append(extra)
+    if custom:
+        parts.append(custom)
     return "\n\n".join(parts) + ("\n" if parts else "")
 
 

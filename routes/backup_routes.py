@@ -169,6 +169,13 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                     fallback_for_toolsets=skill.get("fallback_for_toolsets"),
                     status=skill.get("status", "draft"),
                     version=skill.get("version", "1.0.0"),
+                    # Exports carry the free-form notes here; "solution" is
+                    # only their back-compat alias and is dropped by
+                    # add_skill whenever the skill also has a procedure.
+                    body_extra=(
+                        skill["body_extra"]
+                        if isinstance(skill.get("body_extra"), str) else None
+                    ),
                 )
                 if result.get("_deduped"):
                     continue
