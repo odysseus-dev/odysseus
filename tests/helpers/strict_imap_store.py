@@ -1,7 +1,9 @@
-"""Loopback IMAP subset that rejects bare UID STORE flag atoms.
+"""Loopback IMAP subset emulating GreenMail's parenthesized STORE requirement.
 
 The fixture exercises imaplib's actual wire serialization. It is not a full
 IMAP server: only the commands needed by flag/move/delete regressions exist.
+RFC 3501/9051 also allow bare flags; rejecting them models a server
+compatibility constraint, not a general RFC conformance requirement.
 """
 import socketserver
 import threading
@@ -72,6 +74,8 @@ class _Handler(socketserver.StreamRequestHandler):
                             self.server.flags.update(values)
                         else:
                             self.server.flags.difference_update(values)
+                        current = b' '.join(sorted(self.server.flags))
+                        self.wfile.write(b'* 1 FETCH (UID 89773 FLAGS ('+current+b'))\r\n')
                 elif operation != b'FETCH':
                     status = b'BAD unsupported fixture command'
             elif command == b'EXPUNGE':

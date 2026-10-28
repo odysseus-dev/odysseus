@@ -47,3 +47,32 @@ def test_copy_delete_paths_can_expunge_on_a_strict_server(mailbox, monkeypatch, 
             assert action(client, '89773', 'Trash', role='trash')
     assert mailbox.copies
     assert mailbox.present is False
+
+
+@pytest.mark.parametrize('bulk', [False, True])
+@pytest.mark.parametrize('flag', [r'\Seen', r'\Flagged', r'\Answered', r'\Deleted'])
+@pytest.mark.parametrize('add', [True, False])
+def test_mcp_flag_paths_use_the_same_wire_contract(mailbox, monkeypatch, bulk, flag, add):
+    from mcp_servers import email_server
+    monkeypatch.setattr(email_server, '_fixture_email_enabled', lambda: False)
+    monkeypatch.setattr(email_server, '_imap_connect', lambda *args, **kwargs: connect(mailbox))
+    if not add:
+        mailbox.flags.add(flag.encode())
+    if bulk:
+        assert email_server._bulk_set_flag(['89773'], 'INBOX', flag, add=add) == 1
+    else:
+        assert email_server._set_flag('89773', 'INBOX', flag, add=add)
+    assert (flag.encode() in mailbox.flags) == add
+
+
+@pytest.mark.parametrize('bulk', [False, True])
+def test_mcp_move_fallbacks_remove_the_source_message(mailbox, monkeypatch, bulk):
+    from mcp_servers import email_server
+    monkeypatch.setattr(email_server, '_fixture_email_enabled', lambda: False)
+    monkeypatch.setattr(email_server, '_imap_connect', lambda *args, **kwargs: connect(mailbox))
+    monkeypatch.setattr(email_server, '_email_index_delete_uids', lambda *args: None)
+    if bulk:
+        assert email_server._bulk_move(['89773'], 'INBOX', 'Trash', role='trash') == 1
+    else:
+        assert email_server._move_message('89773', 'INBOX', 'Trash', role='trash')
+    assert mailbox.present is False
