@@ -85,6 +85,7 @@ def test_actual_tests_restore_process_state_and_ignore_inherited_database(tmp_pa
         import os
         import sys
         import pytest
+        import tempfile
         from pathlib import Path
         from sqlalchemy.engine import make_url
 
@@ -113,7 +114,7 @@ def test_actual_tests_restore_process_state_and_ignore_inherited_database(tmp_pa
                 self.default_path = Path(make_url(self.initial[0]).database)
                 assert self.default_path.is_file()
                 assert self.default_path.name == "collection.db"
-                assert self.default_path.parent == Path(os.environ["ODYSSEUS_DATA_DIR"]).parent
+                assert self.default_path.parent == Path(tempfile.gettempdir()).parent
 
             def pytest_collection_finish(self):
                 assert snapshot() == self.initial, "collection changed database bindings"
