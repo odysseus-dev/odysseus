@@ -3,7 +3,7 @@ name: Native test suites
 on:
   pull_request:
   push:
-    branches: [main, dev]
+    branches: [main, dev, test/remediation-integration-validation]
   workflow_dispatch:
 
 permissions:
