@@ -79,6 +79,14 @@ def test_swr_contract_is_wired_into_the_list_path():
     assert "cached_rows = {} if refresh else _email_index_rows" in SRC
 
 
+def test_frontend_email_library_recognizes_skip_fast_path():
+    lib_path = pathlib.Path(__file__).resolve().parent.parent / "static" / "js" / "emailLibrary" / "index.js"
+    email_lib_src = lib_path.read_text(encoding="utf-8")
+    assert "skipFastPath: true" in email_lib_src
+    assert "skipFastPath = false" in email_lib_src
+    assert "!skipFastPath" in email_lib_src
+
+
 def test_manual_refresh_fetches_mailbox_instead_of_returning_stale_index(monkeypatch):
     class EmptyMailbox:
         def select(self, folder, readonly=False):

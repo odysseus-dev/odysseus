@@ -704,6 +704,7 @@ textarea.memory-add-input {
 #serve-bulk-bar,
 #gallery-bulk-bar,
 #gallery-editor-drafts-bulk,
+#notes-bulk-bar,
 #memory-modal .memory-bulk-bar {
   padding-right: 18px;
 }

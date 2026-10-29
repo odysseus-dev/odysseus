@@ -1,5 +1,9 @@
 const { test, expect } = require('@playwright/test');
 
+// These tests borrow /login as a lightweight page. A signed-in session would
+// make the login page redirect to the app mid-test, so run them signed out.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 async function addAppStyles(page) {
   const { stylesheetUrls } = await import('../../helpers/stylesheets.mjs');
   for (const url of await stylesheetUrls()) {

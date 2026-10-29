@@ -1498,8 +1498,11 @@ let _libSyncStatus = {
   source: '',
   warming: false,
   loading: false,
+  stale: false,
 };
 let _libSyncTicker = null;
+let _libStaleRefetchTimer = null;
+let _libStaleRefetchCount = 0;
 
 function _libSyncDateFrom(value) {
   if (!value) return null;
@@ -1554,7 +1557,35 @@ function _setEmailSyncStatus(next = {}) {
   if (Object.prototype.hasOwnProperty.call(next, 'loading')) {
     _libSyncStatus.loading = Boolean(next.loading);
   }
+  if (Object.prototype.hasOwnProperty.call(next, 'stale')) {
+    _libSyncStatus.stale = Boolean(next.stale);
+  }
   _renderEmailSyncStatus();
+}
+
+// A server-side stale (sync.stale) response means the SWR snapshot was served
+// while a background IMAP refresh is still running. Re-fetch in place after a
+// short delay (bounded) so the fresh rows land with no skeleton and no scroll
+// jump. We only keep retrying while the response is still marked stale.
+function _clearStaleEmailRefetch() {
+  if (_libStaleRefetchTimer) {
+    clearTimeout(_libStaleRefetchTimer);
+    _libStaleRefetchTimer = null;
+  }
+  _libStaleRefetchCount = 0;
+}
+
+function _scheduleStaleEmailRefetch() {
+  if (_libStaleRefetchTimer || _libStaleRefetchCount >= 3) return;
+  const folderAtSchedule = state._libFolder;
+  const accountAtSchedule = state._libAccountId || '';
+  _libStaleRefetchCount++;
+  _libStaleRefetchTimer = setTimeout(() => {
+    _libStaleRefetchTimer = null;
+    if (document.hidden) return;
+    if (folderAtSchedule !== state._libFolder || accountAtSchedule !== (state._libAccountId || '')) return;
+    _loadEmails({ force: false, useCache: false, skipFastPath: true });
+  }, 2500);
 }
 
 function _libCacheKeyFor(accountId, folder, filter, hasAttachments) {
@@ -4990,7 +5021,7 @@ export async function _refreshUnreadBadge({ unreadCountOverride = null, preserve
   } catch (_) { _syncUnreadTabBadge(0); }
 }
 
-export async function _loadEmails({ force = false, useCache = true } = {}) {
+export async function _loadEmails({ force = false, useCache = true, skipFastPath = false } = {}) {
   const seq = ++_libLoadSeq;
   state._libLoading = true;
   const accountAtStart = state._libAccountId || '';
@@ -5044,11 +5075,15 @@ export async function _loadEmails({ force = false, useCache = true } = {}) {
     }
     const stats = document.getElementById('email-lib-stats');
     if (stats) stats.textContent = `${state._libTotal} emails`;
+    const _isStale = Boolean(sync.stale);
     _setEmailSyncStatus({
       updatedAt: sync.updated_at || '',
       source: sync.source || (cacheSource ? 'client_cache' : ''),
       loading: false,
+      stale: _isStale,
     });
+    if (_isStale) _scheduleStaleEmailRefetch();
+    else _clearStaleEmailRefetch();
     if (cacheable && !cacheSource) {
       _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal, sync });
     }
@@ -5084,7 +5119,7 @@ export async function _loadEmails({ force = false, useCache = true } = {}) {
       const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
       const attQS = hasAttachmentsAtStart ? '&has_attachments=1' : '';
       const dateQS = `${dateFromAtStart ? `&date_from=${encodeURIComponent(dateFromAtStart)}` : ''}${dateToAtStart ? `&date_to=${encodeURIComponent(dateToAtStart)}` : ''}`;
-      if (!cached && cacheable && !force) {
+      if (!cached && cacheable && !force && !skipFastPath) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 450);
         try {
