@@ -144,10 +144,12 @@ def test_editor_agent_endpoint_reports_scoped_tools():
 
 async def _route_contract(monkeypatch, message, *, attachment_meta=(), form=None, messages_out=None):
     from routes import chat_routes
-    from src import tool_security
+    from src import tool_security, tool_utils
     from tests.test_foreground_model_routing import _RouteRequest, _chat_stream_endpoint
 
     with monkeypatch.context() as route_patch:
+        # This built-in catalog fixture has no configured external MCP servers.
+        route_patch.setattr(tool_utils, "get_mcp_manager", lambda: None)
         endpoint = _chat_stream_endpoint(
             route_patch, "agent", {},
             session_model="odysseus-qwen3.5-tools-pre-heretic",
