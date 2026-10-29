@@ -1203,19 +1203,64 @@ def _bridge_timeout(value: Any) -> float:
 
 
 def _is_admin(request: Request) -> bool:
+    """Return True only for authorized administrator browser sessions or auth-disabled single-user mode.
+
+    Delegated credentials (bearer API tokens) are explicitly rejected:
+    per src/tool_security.py, bearer tokens are long-lived credentials handed to
+    third parties/scripts and must remain capped at non-admin policies even
+    when minted by an administrator.
+    """
+    # 1. Delegated credentials (bearer API tokens) must NEVER receive admin metadata privileges
+    if getattr(request.state, "api_token", False):
+        return False
+
+    # 2. In-process internal tool bypass (loopback agent tools)
+    try:
+        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN, INTERNAL_TOOL_USER
+        import secrets
+        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+            return True
+        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
+            return True
+    except Exception:
+        pass
+
+    # 3. Explicitly auth-disabled single-user operation (AUTH_ENABLED=false)
+    try:
+        from src.auth_helpers import _auth_disabled
+        if _auth_disabled():
+            return True
+    except Exception:
+        pass
+
+    # 4. Middleware require_admin
     try:
         from core.middleware import require_admin
         require_admin(request)
         return True
     except Exception:
-        return False
+        pass
+
+    # 5. Direct session/user check when request.state.current_user is set
+    try:
+        auth_mgr = getattr(request.app.state, "auth_manager", None)
+        if auth_mgr and getattr(auth_mgr, "is_configured", False):
+            from src.auth_helpers import get_current_user
+            user = get_current_user(request) or getattr(request.state, "current_user", None)
+            if user and getattr(auth_mgr, "is_admin", None) and auth_mgr.is_admin(user):
+                return True
+    except Exception:
+        pass
+
+    return False
 
 
 def _user(request: Request) -> Optional[str]:
-    # These owner-scoped editor APIs have no delegated-token scope contract.
-    # Do not collapse all bearer users into the shared "api" pseudo-owner.
+    # Handle API bearer tokens explicitly: require 'chat' scope and attribute to real owner
     if getattr(request.state, "api_token", False):
-        raise HTTPException(403, "API tokens must use a scope-aware API route")
+        from src.auth_helpers import require_api_token_scope
+        return require_api_token_scope(request, "chat")
     from src.auth_helpers import get_current_user, _auth_disabled
     u = get_current_user(request)
     if u:
@@ -1358,9 +1403,13 @@ def setup_editor_agent_routes() -> APIRouter:
             except Exception:
                 raw = None
         _used = editor_agent_model.get_last_model()
-        model_used = (_used[0] if _used and _used[0]
-                      else (agent_model or editor_agent_model.local_model()))
         parsed = _parse_plan(raw)
+        if _used and _used[0]:
+            model_used = _used[0]
+        elif parsed:
+            model_used = agent_model or editor_agent_model.local_model()
+        else:
+            model_used = "fallback" if agent_model else editor_agent_model.local_model()
         if isinstance(parsed, dict):
             parsed["agent_model"] = model_used
         if mode != "check":
@@ -1634,9 +1683,14 @@ def setup_editor_agent_routes() -> APIRouter:
             except Exception:
                 raw = None
         _used = editor_agent_model.get_last_model()
-        model_used = (_used[0] if _used and _used[0]
-                      else (agent_model or editor_agent_model.local_model()))
-        plan = _parse_plan(raw) or _fallback_plan(prompt)
+        parsed = _parse_plan(raw)
+        if _used and _used[0]:
+            model_used = _used[0]
+        elif parsed:
+            model_used = agent_model or editor_agent_model.local_model()
+        else:
+            model_used = "fallback" if agent_model else editor_agent_model.local_model()
+        plan = parsed or _fallback_plan(prompt)
         _strengthened = style_guide.strengthen(prompt, list(plan.get("steps") or []))
         if _strengthened != plan.get("steps"):
             plan = {**plan, "steps": _strengthened,
@@ -1723,6 +1777,12 @@ def setup_editor_agent_routes() -> APIRouter:
                 "results": [],
                 "agent_model": model_used,
             })
+        needed = {"plan_edit"}
+        for step in steps:
+            op = step.get("op")
+            needed.add(op if op in {"ai_edit_image", "generate_image"} else "run_editor_command")
+        if needed.intersection(disabled):
+            raise HTTPException(403, "Editor tool is disabled")
         results: List[Dict[str, Any]] = []
         for step in steps:
             op = step.get("op")
@@ -1865,14 +1925,19 @@ def setup_editor_agent_routes() -> APIRouter:
                     # recognisably image-capable — the same test the request
                     # router uses.
                     image_endpoint = getattr(ep, "model_type", None) == "image"
+                    endpoint_id = getattr(ep, "id", None)
                     provider = getattr(ep, "name", None)
                     if not provider:
-                        provider = getattr(ep, "base_url", "") if is_admin else "image"
+                        provider = (
+                            getattr(ep, "base_url", "")
+                            if is_admin
+                            else (f"Endpoint {endpoint_id}" if endpoint_id else "image")
+                        )
                     provider = provider or "image"
                     for name in _endpoint_enabled_models(ep):
                         if not image_endpoint and not looks_like_image_generation_model(name):
                             continue
-                        key = (provider, name)
+                        key = (str(endpoint_id or provider), name)
                         if key in seen:
                             continue
                         seen.add(key)
@@ -1881,7 +1946,7 @@ def setup_editor_agent_routes() -> APIRouter:
                             "label": name,
                             "kind": "edit" if _EDIT_MODEL_RE.search(name) else "generate",
                             "provider": provider,
-                            "endpoint_id": getattr(ep, "id", None),
+                            "endpoint_id": endpoint_id,
                         }
                         if is_admin:
                             entry["base_url"] = getattr(ep, "base_url", "") or ""
@@ -1896,11 +1961,12 @@ def setup_editor_agent_routes() -> APIRouter:
     async def editor_agent_models(request: Request) -> JSONResponse:
         """List the models the editor agent/planner can run on.
 
-        Each entry is ``{id, label, source, vision, base_url}`` where ``id`` is
+        Each entry is ``{id, label, source, vision}`` where ``id`` is
         passed as ``agent_model`` to /api/editor/plan or /api/editor/agent, and
         ``source`` is ``local`` (the local Qwen3.5-9B vision server) or
         ``hosted`` (the configured default/utility chat model that the planner
         falls back to).
+        For non-admin users, private URLs and internal probe status are omitted.
         """
         owner = _user(request)
         is_admin = _is_admin(request)
@@ -1916,12 +1982,14 @@ def setup_editor_agent_routes() -> APIRouter:
         except Exception:
             logger.warning("editor agent-models lookup failed", exc_info=True)
             models = []
+
         probe_info = {}
         if is_admin:
             probe_info = editor_agent_model.probe_status()
             if not probe_info:
                 editor_agent_model.startup_probe()
                 probe_info = editor_agent_model.probe_status()
+
         return JSONResponse({
             "models": models,
             "probe": probe_info,

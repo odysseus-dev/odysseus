@@ -7,7 +7,7 @@ import Storage from './storage.js';
 import themeModule from './theme.js?v=20260911organsrain1';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
-import documentModule from './document.js?v=20261028docpreservemode1';
+import documentModule from './document.js?v=20260916docctx2';
 
 // Tool approvals are control-plane submits for the current chat. chat.js
 // deliberately leaves the composer untouched, then programmatically clicks the
@@ -212,6 +212,8 @@ export function handleUIControl(uiData) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
           if (fn) fn();
         }).catch(function(){});
+      } else if (panel === 'tasks') {
+        document.getElementById('tool-tasks-btn')?.click();
       } else if (panel === 'theme' || panel === 'themes') {
         import('./theme.js?v=20260911organsrain1').then(function(mod) {
           var fn = mod.togglePopup || (mod.default && mod.default.togglePopup);

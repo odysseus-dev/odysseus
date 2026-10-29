@@ -42,8 +42,8 @@ def test_document_reference_looks_clickable_and_has_keyboard_focus_feedback():
 
 def test_document_module_has_one_browser_identity_for_restore_and_chat_send():
     """Different query strings create separate JS module selection stores."""
-    assert "/static/js/document.js?v=20261028docpreservemode1" in INDEX
-    assert "./js/document.js?v=20261028docpreservemode1" in APP
+    assert "/static/js/document.js?v=20260916docctx2" in INDEX
+    assert "./js/document.js?v=20260916docctx2" in APP
     assert "document.js?v=20260913dirtysaveicon1" not in INDEX
 
 
