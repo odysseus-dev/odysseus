@@ -34,7 +34,6 @@ def test_runtime_restores_environment_and_removes_files(monkeypatch, tmp_path, f
                 path = Path(os.environ[name])
                 assert path.is_dir() and path.is_relative_to(root)
                 (path / "owned").write_text("test")
-            assert os.environ["DATABASE_URL"] == f"sqlite:///{root / 'collection.db'}"
             assert Path(tempfile.gettempdir()).is_relative_to(root)
             if fail:
                 raise RuntimeError("test failure")

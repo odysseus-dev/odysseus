@@ -85,6 +85,8 @@ def test_actual_tests_restore_process_state_and_ignore_inherited_database(tmp_pa
         import os
         import sys
         import pytest
+        from pathlib import Path
+        from sqlalchemy.engine import make_url
 
         def snapshot():
             import core
@@ -107,7 +109,11 @@ def test_actual_tests_restore_process_state_and_ignore_inherited_database(tmp_pa
         class StateGuard:
             def pytest_sessionstart(self):
                 self.initial = snapshot()
-                assert self.initial[0] == "sqlite:///:memory:"
+                assert self.initial[0] != inherited_url
+                self.default_path = Path(make_url(self.initial[0]).database)
+                assert self.default_path.is_file()
+                assert self.default_path.name == "collection.db"
+                assert self.default_path.parent == Path(os.environ["ODYSSEUS_DATA_DIR"]).parent
 
             def pytest_collection_finish(self):
                 assert snapshot() == self.initial, "collection changed database bindings"
@@ -118,9 +124,11 @@ def test_actual_tests_restore_process_state_and_ignore_inherited_database(tmp_pa
                 assert snapshot() == self.initial, "test leaked database or module state"
 
         inherited_url = os.environ["DATABASE_URL"]
+        guard = StateGuard()
         result = pytest.main(["-q", "-p", "no:cacheprovider", *sys.argv[1:]],
-                             plugins=[StateGuard()])
+                             plugins=[guard])
         assert os.environ["DATABASE_URL"] == inherited_url
+        assert not guard.default_path.exists(), "collection database outlived its runtime"
         raise SystemExit(result)
     ''')
     result = subprocess.run(
