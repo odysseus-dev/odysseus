@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_dispatch:
 
 # Least privilege: none of the jobs write to the repo.
 permissions:
