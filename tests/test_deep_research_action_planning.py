@@ -92,6 +92,7 @@ def _researcher(nav: ResearchNavigator) -> DeepResearcher:
     researcher.max_report_tokens = 4096
     researcher.extraction_timeout = 30
     researcher.query_timeout = 30
+    researcher.llm_timeout = 180
     researcher.synthesis_window = 10
     researcher.research_plan = "Use primary sources."
     researcher._cancelled = False

@@ -28,6 +28,7 @@ def _researcher():
     r = DeepResearcher.__new__(DeepResearcher)
     r.synthesis_window = 10
     r.max_report_tokens = 4096
+    r.llm_timeout = 180
     return r
 
 

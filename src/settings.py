@@ -109,6 +109,14 @@ DEFAULT_SETTINGS = {
     # the old 30s/60s per-call defaults.
     "research_planning_timeout_seconds": 90,
     "research_query_timeout_seconds": 90,
+    # Synthesis / final-report generation calls are non-streaming, so the
+    # entire prefill + decode must finish inside this read timeout — or the
+    # client cancels mid-generation and each retry repeats the full run
+    # (#6986). Size it as prefill + max_tokens / tokens-per-second (16384
+    # tokens at 30 t/s ≈ 550s). 180 preserves the historical default and is
+    # fine for hosted APIs; slow local backends should raise it. Bounded to
+    # [15, 3600] like the other research_*_timeout_seconds keys.
+    "research_llm_timeout_seconds": 180,
     "research_extraction_concurrency": 3,
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
