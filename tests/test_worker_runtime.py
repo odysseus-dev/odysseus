@@ -34,6 +34,7 @@ def test_runtime_restores_environment_and_removes_files(monkeypatch, tmp_path, f
                 path = Path(os.environ[name])
                 assert path.is_dir() and path.is_relative_to(root)
                 (path / "owned").write_text("test")
+            assert os.environ["DATABASE_URL"] == f"sqlite:///{root / 'collection.db'}"
             assert Path(tempfile.gettempdir()).is_relative_to(root)
             if fail:
                 raise RuntimeError("test failure")
@@ -79,3 +80,32 @@ def test_tmp_path_under_private_runtime_fits_unix_socket(tmp_path):
     # witness. A nested pytest-of-<user> basetemp made it 110 bytes under xdist.
     with socket.socket(socket.AF_UNIX) as sock:
         sock.bind(str(tmp_path / "tmux.sock"))
+
+
+def test_collection_database_survives_thread_connection_churn():
+    """TestClient threads must not lose the collection database or its schema.
+
+    SingletonThreadPool's default five-connection limit used to close the main
+    thread's in-memory database after repeated route clients. Each new thread
+    also saw an empty database. Exercise more threads than that limit and then
+    verify both compatibility factories still see all registered tables.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import inspect
+    import core.database as database
+    import src.database as compatibility
+
+    expected = set(database.Base.metadata.tables)
+
+    def table_names(factory):
+        with factory() as session:
+            return set(inspect(session.connection()).get_table_names())
+
+    assert {"documents", "model_endpoints", "mcp_servers", "calendars"} <= expected
+    assert expected <= table_names(database.SessionLocal)
+    for _ in range(8):
+        # A fresh executor creates a fresh thread rather than reusing one.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            assert expected <= executor.submit(table_names, database.SessionLocal).result()
+    assert expected <= table_names(database.SessionLocal)
+    assert expected <= table_names(compatibility.SessionLocal)

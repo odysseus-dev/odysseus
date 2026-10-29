@@ -60,6 +60,11 @@ def isolated_runtime(worker="main"):
                 path.mkdir(mode=0o700)
                 patcher.setenv(name, str(path))
             (root / "data" / "agent_workspace").mkdir(mode=0o700, exist_ok=True)
+            # SQLite's default in-memory pool gives each thread an empty DB
+            # and can evict the main connection as TestClient threads churn.
+            # A worker-owned file preserves the collection schema across real
+            # connections. Tests that write rows still own explicit fixtures.
+            patcher.setenv("DATABASE_URL", f"sqlite:///{root / 'collection.db'}")
             # Browser resolution falls back to our XDG runtime directory.
             patcher.delenv("AGENT_BROWSER_SOCKET_DIR", raising=False)
             tmp = root / "tmp"
