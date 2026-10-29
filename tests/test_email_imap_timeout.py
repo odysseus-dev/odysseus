@@ -86,6 +86,62 @@ def test_open_imap_connection_supports_starttls(monkeypatch):
     ]
 
 
+
+def test_open_imap_connection_forces_implicit_tls_on_993(monkeypatch):
+    """Port 993 is IMAPS; a stale STARTTLS flag must not downgrade the dial.
+
+    Older defaults paired imap_port=993 with imap_starttls=True, and honouring
+    that flag opens a plaintext socket against a TLS-only listener: both ends
+    block, and the server logs "no auth attempts in N secs ... TLS handshaking"
+    when the client's socket timeout finally fires.
+    """
+    import routes.email_helpers as helpers
+
+    _FakeIMAP.calls = []
+    monkeypatch.setattr(helpers, "_PolicyIMAP4", _FakeIMAP)
+    monkeypatch.setattr(helpers, "_PolicyIMAP4_SSL", _FakeIMAPSSL)
+
+    conn = _open_imap_connection("imap.example.com", 993, starttls=True)
+
+    assert _FakeIMAP.calls == [
+        ("connect", "_FakeIMAPSSL", "imap.example.com", 993, _IMAP_TIMEOUT_SECONDS)
+    ]
+    assert not conn.starttls_called
+
+
+def test_default_imap_starttls_follows_port():
+    from src.constants import default_imap_starttls
+
+    assert default_imap_starttls(993) is False
+    assert default_imap_starttls("993") is False
+    assert default_imap_starttls(None) is False
+    assert default_imap_starttls(143) is True
+    assert default_imap_starttls(31143) is True
+    assert default_imap_starttls("bogus") is True
+
+
+def test_google_oauth_transport_accepts_993_with_stale_starttls():
+    from routes.email.email_routes import _google_oauth_imap_transport_allowed
+
+    assert _google_oauth_imap_transport_allowed(993, True)
+    assert _google_oauth_imap_transport_allowed(993, False)
+    assert _google_oauth_imap_transport_allowed(143, True)
+    assert not _google_oauth_imap_transport_allowed(143, False)
+
+
+def test_mcp_load_config_forces_implicit_tls_on_993(monkeypatch):
+    import mcp_servers.email_server as email_server
+
+    monkeypatch.setenv("IMAP_PORT", "993")
+    monkeypatch.delenv("IMAP_STARTTLS", raising=False)
+    monkeypatch.setattr(email_server, "_ACCOUNT_CACHE", {})
+    monkeypatch.setattr(email_server, "APP_DB", str(_tmp_data / "missing.db"))
+
+    cfg = email_server._load_config()
+
+    assert cfg["imap_ssl"] is True
+    assert cfg["imap_starttls"] is False
+
 @pytest.mark.asyncio
 async def test_account_config_uses_shared_imap_timeout(monkeypatch):
     import routes.email_routes as email_routes

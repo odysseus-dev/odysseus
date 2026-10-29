@@ -678,7 +678,7 @@ def _cleanup_compose_uploads(tokens) -> None:
             pass
 
 
-from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB
+from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB, IMAPS_PORT, default_imap_starttls
 DATA_DIR = Path(_DATA_DIR)
 SETTINGS_FILE = Path(_SETTINGS_FILE)
 # Override at deploy time via ODYSSEUS_MAIL_ATTACHMENTS_DIR. Defaults to a
@@ -1237,6 +1237,8 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
 
     # Legacy fallback — flat keys in settings.json / env vars
     settings = _load_settings()
+    _legacy_imap_port = int(
+        settings.get("imap_port", os.environ.get("IMAP_PORT", IMAPS_PORT)) or IMAPS_PORT)
     cfg = {
         "account_id": resolved_id,
         "account_name": "legacy",
@@ -1250,10 +1252,11 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         "smtp_user": settings.get("smtp_user", os.environ.get("SMTP_USER", "")),
         "smtp_password": settings.get("smtp_password", os.environ.get("SMTP_PASSWORD", "")),
         "imap_host": settings.get("imap_host", os.environ.get("IMAP_HOST", "")),
-        "imap_port": int(settings.get("imap_port", os.environ.get("IMAP_PORT", "993")) or 993),
+        "imap_port": _legacy_imap_port,
         "imap_user": settings.get("imap_user", os.environ.get("IMAP_USER", "")),
         "imap_password": settings.get("imap_password", os.environ.get("IMAP_PASSWORD", "")),
-        "imap_starttls": settings.get("imap_starttls", True),
+        "imap_starttls": settings.get(
+            "imap_starttls", default_imap_starttls(_legacy_imap_port)),
         "from_address": settings.get("email_from", os.environ.get("EMAIL_FROM", "")),
     }
     if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
@@ -1310,7 +1313,21 @@ def _open_imap_connection(
 
     `owner` is the principal the destination is judged for
     (see _mail_private_blocked)."""
-    port = int(port or 993)
+    port = int(port or IMAPS_PORT)
+    # Port 993 is implicit TLS (RFC 8314); no server offers STARTTLS there.
+    # The shipped defaults used to pair port 993 with imap_starttls=True
+    # (core/database.py), and existing rows still carry that pairing, so it
+    # arrives here routinely. Honouring the flag would dial a plaintext socket
+    # into a TLS-only listener: the client waits for the greeting, the server
+    # waits for a ClientHello, and nothing moves until the socket timeout
+    # fires. Server-side that logs as "Disconnected: Connection closed (no auth
+    # attempts in N secs) ... TLS handshaking", with no auth attempt to explain
+    # it. The port is unambiguous where the flag is not, so the port wins.
+    if starttls and port == IMAPS_PORT:
+        logger.debug(
+            "Ignoring STARTTLS for %s:%d — port 993 is implicit TLS", host, port
+        )
+        starttls = False
     block_private = _mail_private_blocked(owner)
     if starttls:
         conn = _PolicyIMAP4(host, port, timeout=timeout, block_private=block_private)
@@ -1327,7 +1344,7 @@ def _open_imap_connection(
             except Exception:
                 pass
             raise
-    elif port == 993:
+    elif port == IMAPS_PORT:
         kwargs = {"ssl_context": ssl_context} if ssl_context else {}
         conn = _PolicyIMAP4_SSL(host, port, timeout=timeout, block_private=block_private, **kwargs)
     else:
@@ -1360,8 +1377,8 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
             f"IMAP is not configured for account {cfg.get('account_name') or 'default'!r}"
         )
     # Connection mode:
-    #   STARTTLS on → plain + upgrade
-    #   STARTTLS off + port 993 → implicit SSL (IMAPS)
+    #   port 993 → implicit SSL (IMAPS), STARTTLS flag ignored
+    #   STARTTLS on, any other port → plain + upgrade
     #   STARTTLS off + any other port → plain (local Dovecot, custom ports)
     # The last branch is critical: previously this fell into IMAP4_SSL
     # for any non-STARTTLS port, which would fail the TLS handshake on

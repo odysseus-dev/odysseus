@@ -198,3 +198,29 @@ def internal_api_base() -> str:
     if override:
         return override.rstrip("/")
     return f"http://127.0.0.1:{os.environ.get('APP_PORT', '7011')}"
+
+
+# ── Email transport ──
+
+# Implicit-TLS IMAP port (IMAPS, RFC 8314). Plain IMAP is 143.
+IMAPS_PORT = 993
+
+
+def default_imap_starttls(port) -> bool:
+    """Whether STARTTLS should default to on for `port`.
+
+    Port 993 is implicit TLS and no server offers STARTTLS there, so defaulting
+    the flag on for 993 — which every account-creation path used to do
+    unconditionally — produced accounts that dialled a plaintext socket into a
+    TLS-only listener. Both ends then block: the client waits for the greeting,
+    the server waits for a ClientHello, and nothing moves until the socket
+    timeout fires. Server-side that shows up as "no auth attempts in N secs ...
+    TLS handshaking" with no auth attempt to explain it.
+
+    Every other port (143, or a local Dovecot on 31143) starts plain and
+    upgrades, so STARTTLS on remains the right default there.
+    """
+    try:
+        return int(port or IMAPS_PORT) != IMAPS_PORT
+    except (TypeError, ValueError):
+        return True
