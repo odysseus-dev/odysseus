@@ -679,6 +679,22 @@ button.hamburger {
 .attach-image-preview {
   margin: 4px 0;
 }
+/* Generated videos play inline in a message (markdown.js). */
+.msg .body video.chat-video {
+  display: block;
+  max-width: 100%;
+  max-height: min(70vh, 640px);
+  border-radius: 6px;
+  background: #000;
+}
+/* An uploaded video attachment plays in the bubble, at thumbnail scale. */
+.attach-video-preview {
+  margin: 4px 0;
+}
+.msg .body .attach-video-preview video.chat-video {
+  max-width: min(100%, 360px);
+  max-height: 240px;
+}
 .attach-image-preview img {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2);
   /* Same border as the chat bubbles. */
