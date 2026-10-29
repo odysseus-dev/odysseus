@@ -12,7 +12,7 @@ SNAP_MODULE = (ROOT / "static/js/editor/snap.js").as_uri()
 def run_node(body: str):
     script = textwrap.dedent(
         f"""
-        import {{transformFrameGeometry, hitTestTransformHandle, pointInTransformFrame, resizeTransformFrame}} from {json.dumps(MODULE)};
+        import {{transformFrameGeometry, hitTestTransformHandle, pointInTransformFrame, resizeTransformFrame, skewTransformFrame, distortTransformFrame}} from {json.dumps(MODULE)};
         {body}
         """
     )
@@ -220,3 +220,121 @@ def test_shift_alt_corner_resize_is_centered_and_aspect_locked():
         "flipH": False,
         "flipV": False,
     }
+
+
+def test_skew_drag_shears_the_dragged_edge_only():
+    result = run_node(
+        """
+        const frame={centerX:0,centerY:0,width:200,height:100,rotation:0};
+        const right=skewTransformFrame(frame,'r',{x:0,y:0},{x:0,y:40});
+        const top=skewTransformFrame(frame,'t',{x:0,y:0},{x:50,y:0});
+        const corner=skewTransformFrame(frame,'br',{x:0,y:0},{x:30,y:20});
+        const none=skewTransformFrame(frame,'r',{x:0,y:0},{x:0,y:0});
+        console.log(JSON.stringify({right,top,corner,none}));
+        """
+    )
+    # Right edge dragged down -> skew Y only; top edge dragged right ->
+    # skew X only; corner -> both; no drag -> unchanged.
+    assert result["right"]["skewX"] == 0
+    assert abs(result["right"]["skewY"] - 21.8) < 0.5
+    assert abs(result["top"]["skewX"] - (-45.0)) < 0.5
+    assert result["top"]["skewY"] == 0
+    assert abs(result["corner"]["skewX"] - 30.96) < 0.5
+    assert abs(result["corner"]["skewY"] - 11.31) < 0.5
+    assert result["none"] == {"skewX": 0, "skewY": 0}
+
+
+def test_skew_drag_is_relative_to_the_start_and_clamped():
+    result = run_node(
+        """
+        const frame={centerX:0,centerY:0,width:100,height:100,rotation:0};
+        const grown=skewTransformFrame({...frame,height:100},'b',{x:0,y:0},{x:10,y:0},{startSkewX:20,startSkewY:0});
+        const huge=skewTransformFrame({...frame,height:1},'b',{x:0,y:0},{x:9000,y:0});
+        console.log(JSON.stringify({grown,huge}));
+        """
+    )
+    assert result["grown"]["skewX"] > 20  # start offset + drag delta
+    assert result["huge"]["skewX"] == 85  # clamped below the singular 90°
+
+
+
+def test_distort_drag_moves_only_the_dragged_corner():
+    result = run_node(
+        """
+        const frame={centerX:0,centerY:0,width:100,height:100,rotation:0};
+        const corner=distortTransformFrame(frame,'br',{x:0,y:0},{x:10,y:20});
+        console.log(JSON.stringify({corner}));
+        """
+    )
+    assert result["corner"] == {
+        "tl": {"x": 0, "y": 0},
+        "tr": {"x": 0, "y": 0},
+        "br": {"x": 0.1, "y": 0.2},
+        "bl": {"x": 0, "y": 0},
+    }
+
+
+def test_distort_drag_moves_only_the_dragged_edge_corners():
+    result = run_node(
+        """
+        const frame={centerX:0,centerY:0,width:100,height:100,rotation:0};
+        const edge=distortTransformFrame(frame,'t',{x:0,y:0},{x:5,y:-10});
+        console.log(JSON.stringify({edge}));
+        """
+    )
+    assert result["edge"] == {
+        "tl": {"x": 0.05, "y": -0.1},
+        "tr": {"x": 0.05, "y": -0.1},
+        "br": {"x": 0, "y": 0},
+        "bl": {"x": 0, "y": 0},
+    }
+
+
+def test_distort_ignores_rotation_and_move_handles():
+    result = run_node(
+        """
+        const frame={centerX:0,centerY:0,width:100,height:100,rotation:0};
+        console.log(JSON.stringify({
+          rot: distortTransformFrame(frame,'rot',{x:0,y:0},{x:30,y:0}),
+          move: distortTransformFrame(frame,'move',{x:0,y:0},{x:30,y:0}),
+        }));
+        """
+    )
+    assert result["rot"] is None
+    assert result["move"] is None
+
+
+def test_distort_is_clamped_and_relative_to_the_start():
+    result = run_node(
+        """
+        const frame={centerX:0,centerY:0,width:100,height:100,rotation:0};
+        const huge=distortTransformFrame(frame,'br',{x:0,y:0},{x:900,y:0});
+        const grown=distortTransformFrame(frame,'br',{x:0,y:0},{x:10,y:0},{startDistort:{tl:{x:0,y:0},tr:{x:0,y:0},br:{x:0.5,y:0},bl:{x:0,y:0}}});
+        console.log(JSON.stringify({huge: huge.br.x, grown: grown.br.x}));
+        """
+    )
+    assert result["huge"] == 4  # clamped to the ±4 frame-normal limit
+    assert abs(result["grown"] - 0.6) < 1e-9  # start offset + drag delta
+
+
+def test_geometry_places_handles_on_the_distorted_quad():
+    result = run_node(
+        """
+        const geometry=transformFrameGeometry({centerX:0,centerY:0,width:100,height:100,rotation:0,distort:{tl:{x:0,y:0},tr:{x:0,y:0},br:{x:0.1,y:0.2},bl:{x:0,y:0}}},{zoom:1});
+        console.log(JSON.stringify({
+          corners: geometry.corners,
+          handles: Object.fromEntries(geometry.resizeHandles.map(h=>[h.id,[h.x,h.y]])),
+        }));
+        """
+    )
+    assert result["corners"] == {
+        "tl": {"x": -50, "y": -50},
+        "tr": {"x": 50, "y": -50},
+        "br": {"x": 60, "y": 70},
+        "bl": {"x": -50, "y": 50},
+    }
+    assert result["handles"]["br"] == [60, 70]
+    assert result["handles"]["t"] == [0, -50]
+    assert result["handles"]["r"] == [55, 10]
+    assert result["handles"]["b"] == [5, 60]
+    assert result["handles"]["l"] == [-50, 0]

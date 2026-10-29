@@ -1,9 +1,10 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { openBlankEditor } = require('./helpers.js');
 
 test('brush cursor matches the rendered brush diameter and replaces the crosshair', async ({ page }) => {
   await openBlankEditor(page, { width: 400, height: 300 });
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
 
   await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');

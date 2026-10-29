@@ -65,6 +65,12 @@ def test_what_im_writing_targets_the_visible_document():
         language="richtext",
     )
 
+    assert _turn_targets_active_document(
+        {"domains": set()},
+        "can you fact check what Im writing",
+        active_document,
+    )
+
 
 def test_unrelated_fact_check_does_not_target_a_stale_visible_document():
     active_document = MagicMock(

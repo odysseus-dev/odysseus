@@ -769,6 +769,8 @@ _APP_API_BLOCKLIST_PREFIXES = (
 # {"tasks": []} to /api/cookbook/state, which overwrote the whole file.
 # Use dedicated tools or UI flows instead.
 _APP_API_BLOCKLIST_METHOD_PATH = (
+    ("POST",   "/api/tools"),  # global tool policy is changed by a human in Settings
+    ("PATCH",  "/api/mcp/servers"),  # per-server MCP tool policy and server toggles, same reason
     ("GET",    "/api/email/accounts"),  # owner-filtered in tool context; use list_email_accounts MCP tool
     ("POST",   "/api/cookbook/state"),   # whole-file overwrite — agent must use serve_preset/serve_model instead
     ("DELETE", "/api/cookbook/state"),
@@ -893,6 +895,10 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         return {"error": f"Unsupported method: {method}", "exit_code": 1}
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+        if path.startswith("/api/tools"):
+            return {"error": "Tool policy cannot be replaced from chat. Re-enable tools in Settings > Agent Tools; use manage_settings to list or disable them.", "exit_code": 1}
+        if path.startswith("/api/mcp/servers"):
+            return {"error": "MCP server and tool policy cannot be changed from chat. Ask the user to change it in Settings > Integrations.", "exit_code": 1}
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
         if "/api/cookbook/packages/install" in path:

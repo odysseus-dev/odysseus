@@ -410,7 +410,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         "manage_endpoints": frozenset({"add", "delete", "enable", "disable"}),
         "manage_mcp": frozenset({"add", "delete", "enable", "disable", "reconnect"}),
         "manage_settings": frozenset(
-            {"set", "delete", "reset", "disable_tool", "enable_tool"}
+            {"set", "delete", "reset", "disable_tool"}
         ),
         "manage_tokens": frozenset({"create", "delete"}),
         "manage_webhooks": frozenset({"add", "delete", "enable", "disable"}),

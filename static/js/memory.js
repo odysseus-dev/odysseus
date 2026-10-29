@@ -272,7 +272,7 @@ export function openMemoryModal(tabName = 'browse') {
   if (tab) {
     tab.click();
   } else if (target === 'skills') {
-    import('./skills.js?v=20261028skilltesteditor1').then(m => {
+    import('./skills.js?v=20260909kebabconsistency1').then(m => {
       if (m.loadSkills) m.loadSkills(true);
       else if (m.default?.loadSkills) m.default.loadSkills(true);
     });
@@ -1613,7 +1613,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       // Lazy-load skills tab (cascade=true → play the domino-in entrance)
       if (target === 'skills') {
-        import('./skills.js?v=20261028skilltesteditor1').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
+        import('./skills.js?v=20260909kebabconsistency1').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
       }
     });
   });

@@ -20,6 +20,8 @@ export const DEFAULT_SHAPE_DATA = Object.freeze({
   strokeWidth: 2,
   cornerRadius: 0,
   sides: 5,
+  pathPoints: Object.freeze([]),
+  closed: true,
   transform: Object.freeze({ scaleX: 1, scaleY: 1, rotation: 0, flipH: false, flipV: false }),
 });
 
@@ -36,7 +38,7 @@ export function normalizeShapeData(value = {}) {
   const gradientMidPosition = finite(value.gradientMidPosition, DEFAULT_SHAPE_DATA.gradientMidPosition, 1, 99);
   const gradientEnd = String(value.gradientEnd || DEFAULT_SHAPE_DATA.gradientEnd);
   return {
-    type: ['rectangle', 'ellipse', 'line', 'polygon'].includes(value.type) ? value.type : 'rectangle',
+    type: ['rectangle', 'ellipse', 'line', 'polygon', 'path'].includes(value.type) ? value.type : 'rectangle',
     width: finite(value.width, DEFAULT_SHAPE_DATA.width, 1, 10000),
     height: finite(value.height, DEFAULT_SHAPE_DATA.height, 1, 10000),
     fillColor: String(value.fillColor || DEFAULT_SHAPE_DATA.fillColor),
@@ -58,6 +60,10 @@ export function normalizeShapeData(value = {}) {
     strokeWidth: finite(value.strokeWidth, DEFAULT_SHAPE_DATA.strokeWidth, 0, 500),
     cornerRadius: finite(value.cornerRadius, DEFAULT_SHAPE_DATA.cornerRadius, 0, 5000),
     sides: Math.round(finite(value.sides, DEFAULT_SHAPE_DATA.sides, 3, 24)),
+    pathPoints: Array.isArray(value.pathPoints)
+      ? value.pathPoints.map(point => ({ x: finite(point?.x, 0, -100000, 100000), y: finite(point?.y, 0, -100000, 100000) }))
+      : [],
+    closed: value.closed !== false,
     transform: {
       scaleX: finite(transform.scaleX, 1, 0.01, 100),
       scaleY: finite(transform.scaleY, 1, 0.01, 100),
@@ -89,6 +95,13 @@ function shapePath(ctx, shape, padding) {
       if (!index) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     }
     ctx.closePath();
+  } else if (shape.type === 'path' && shape.pathPoints.length) {
+    shape.pathPoints.forEach((point, index) => {
+      const px = x + point.x;
+      const py = y + point.y;
+      if (!index) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    if (shape.closed !== false) ctx.closePath();
   } else {
     const radius = Math.min(shape.cornerRadius, width / 2, height / 2);
     if (ctx.roundRect) ctx.roundRect(x, y, width, height, radius);

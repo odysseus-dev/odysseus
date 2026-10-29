@@ -315,7 +315,7 @@ body.bg-pattern-ascii-fireflies {
       width: 240px;
       background: var(--sidebar-bg, var(--panel));
       border-right: 1px solid var(--border);
-      transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+      transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease, visibility 0.25s;
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
@@ -361,12 +361,23 @@ body.bg-pattern-ascii-fireflies {
       /* !important so it beats the inline width init.js restores from storage —
          otherwise the width never changes and only opacity animates, making the
          collapse look instant. With this, width animates from the inline value
-         down to 0 via the .sidebar width transition. */
+         down to 0 via the .sidebar width transition.
+         display overrides the global .hidden utility, which would otherwise
+         remove the box before any transition can run. visibility (transitioned
+         on .sidebar) flips to hidden only once the collapse has finished,
+         taking the closed sidebar out of the tab order. */
+      display: flex;
       width: 0 !important;
       padding: 0 !important;
       border: none;
       overflow: hidden;
       opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    /* IDs so this also beats the mobile drawer's !important transition. */
+    @media (prefers-reduced-motion: reduce) {
+      #sidebar, #icon-rail { transition: none !important; }
     }
     /* ===== Sidebar User Bar ===== */
     .sidebar-user-bar {
@@ -448,10 +459,6 @@ body.bg-pattern-ascii-fireflies {
       background: color-mix(in srgb, var(--fg) 8%, transparent);
     }
 
-
-    .sidebar.hidden .sidebar-user-bar {
-      display: none;
-    }
 
     /* Sticky sidebar header — logo, never scrolls */
     .sidebar-header {
@@ -672,6 +679,24 @@ body.bg-pattern-ascii-fireflies {
       .icon-rail {
         margin-bottom: calc(-1 * var(--safe-bottom));
         padding-bottom: calc(8px + var(--safe-bottom));
+      }
+      /* Tuck the rail under the sidebar (which paints above it) and slide it
+         out as the sidebar collapses, so the combined width eases instead of
+         jumping by the rail's 48px when the two swap. */
+      .icon-rail,
+      .icon-rail.right-side {
+        margin-inline-end: -48px;
+        transition: margin-inline-end 0.25s ease, display 0.25s allow-discrete;
+      }
+      body.sidebar-collapsed:not(.hamburger-only) .icon-rail,
+      html.ody-sidebar-mini .icon-rail {
+        margin-inline-end: 0;
+      }
+      @starting-style {
+        body.sidebar-collapsed:not(.hamburger-only) .icon-rail,
+        html.ody-sidebar-mini .icon-rail {
+          margin-inline-end: -48px;
+        }
       }
     }
     .icon-rail-divider {
@@ -5116,7 +5141,7 @@ body.bg-pattern-ascii-fireflies {
         width: 80% !important;
         max-width: 340px;
         box-shadow: 4px 0 20px rgba(0,0,0,0.5);
-        transition: transform 0.25s ease, opacity 0.25s ease !important;
+        transition: transform 0.25s ease, opacity 0.25s ease, visibility 0.25s !important;
         opacity: 1 !important;
         overflow: visible !important;
         /* Force opaque background — Firefox mobile renders the
@@ -5147,6 +5172,7 @@ body.bg-pattern-ascii-fireflies {
       }
       html.ody-sidebar-off .sidebar,
       html.ody-mobile-startup-sidebar-hidden .sidebar {
+        width: 80% !important;
         transform: translateX(-100%) !important;
         pointer-events: none !important;
         opacity: 0 !important;
@@ -7228,6 +7254,39 @@ body.bg-pattern-ascii-fireflies {
       margin-top: 6px;
       font-style: italic;
       text-align: center;
+    }
+
+    /* Inline assistant markdown images (`![alt](url)`) — rendered by
+       static/js/markdown.js as a.clickable <a class="chat-image"> wrapper. */
+    a.chat-image {
+      display: inline-block;
+      max-width: 100%;
+      margin: 0.35rem 0;
+    }
+    a.chat-image img.chat-inline-image {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+      cursor: zoom-in;
+    }
+    a.chat-image .chat-image-fallback {
+      display: none;
+      font-size: 0.8rem;
+      color: var(--color-muted, #94a3b8);
+      word-break: break-all;
+      padding: 0.5rem 0.75rem;
+      border: 1px dashed var(--border, #475569);
+      border-radius: 8px;
+      background: var(--panel, #202428);
+    }
+    a.chat-image.image-broken img.chat-inline-image {
+      display: none;
+    }
+    a.chat-image.image-broken .chat-image-fallback {
+      display: block;
+      text-decoration: underline;
+      cursor: pointer;
     }
 
     /* Setup wizard */
