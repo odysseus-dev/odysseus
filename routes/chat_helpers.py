@@ -532,8 +532,9 @@ def needs_auto_name(name: str) -> bool:
         return True
     if name.startswith("Chat:") or name == "Chat":
         return True
-    # Default frontend name: "modelname HH:MM:SS AM/PM"
-    if re.match(r"^.+ \d{1,2}:\d{2}:\d{2}(\s*(AM|PM))?$", name, re.IGNORECASE):
+    # The frontend uses locale-formatted times; Finnish uses dots instead
+    # of colons. Require the same separator throughout the timestamp.
+    if re.fullmatch(r".+ \d{1,2}([:.])\d{2}\1\d{2}(\s*(AM|PM))?", name, re.IGNORECASE):
         return True
     return False
 

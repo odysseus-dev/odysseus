@@ -770,6 +770,15 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     )
                 except ValueError as exc:
                     raise HTTPException(400, str(exc)) from exc
+            trigger_changed = (
+                req.trigger_type is not None
+                and req.trigger_type != (task.trigger_type or "schedule")
+            )
+            if trigger_changed:
+                # A timer or event count belongs to the previous trigger.
+                # Keep deferred event timers when merely editing that task.
+                task.next_run = None
+                task.trigger_counter = 0
             if req.trigger_type is not None:
                 # Generate webhook token when switching to webhook trigger
                 if req.trigger_type == "webhook" and not task.webhook_token:
@@ -795,8 +804,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         raise HTTPException(400, "Invalid cron expression")
                 task.cron_expression = req.cron_expression or None
 
-            # Recompute next_run if schedule changed
-            schedule_changed = False
+            # Switching back to schedule also needs a fresh next_run, even
+            # when the editor leaves the stored schedule fields unchanged.
+            schedule_changed = trigger_changed
             if req.schedule is not None:
                 task.schedule = req.schedule
                 schedule_changed = True

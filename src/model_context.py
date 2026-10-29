@@ -10,7 +10,7 @@ import logging
 import sys
 from typing import Dict, List, Optional, Tuple
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -45,46 +45,86 @@ def _is_private_ip_literal(host: str) -> bool:
     return any(ip in network for network in _PRIVATE_NETWORKS)
 
 
-def _normalize_base_for_compare(url: str) -> str:
-    url = (url or "").strip().rstrip("/")
-    for suffix in ("/chat/completions", "/models", "/completions", "/v1/messages"):
-        if url.endswith(suffix):
-            url = url[: -len(suffix)].rstrip("/")
-    return url
-
-
-def _configured_endpoint_kind(url: str) -> Optional[str]:
-    """Return configured endpoint kind for a chat/base URL when available."""
-    target = _normalize_base_for_compare(url)
-    if not target:
-        return None
+def _configured_endpoint(url: str):
+    """Find an unambiguous registration for this exact API origin/base path."""
     if "core.database" not in sys.modules:
         return None
     try:
         from core.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import same_endpoint_base
+
         db = SessionLocal()
         try:
             rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            matched = None
+            configuration = None
             for ep in rows:
-                base = _normalize_base_for_compare(getattr(ep, "base_url", "") or "")
-                if not base:
+                if not same_endpoint_base(url, getattr(ep, "base_url", "") or ""):
                     continue
-                if target != base and not target.startswith(base + "/"):
-                    continue
-                kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
-                if kind in ("local", "api", "proxy"):
-                    return kind
-                if getattr(ep, "api_key", None):
-                    parsed = urlparse(base)
-                    host = (parsed.hostname or "").lower()
-                    path = (parsed.path or "").rstrip("/")
-                    if parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
-                        return "proxy"
-                return "auto"
+                candidate = (
+                    (getattr(ep, "endpoint_kind", None) or "auto").strip().lower(),
+                    getattr(ep, "api_key", None) or None,
+                    getattr(ep, "provider_auth_id", None) or None,
+                    getattr(ep, "owner", None) or None,
+                )
+                # A URL alone cannot choose between different credentials or
+                # owners. Equivalent aliases are safe; conflicting rows must
+                # fall back to an unauthenticated probe instead of row order.
+                if matched is not None and candidate != configuration:
+                    return None
+                matched, configuration = ep, candidate
+            return matched
         finally:
             db.close()
     except Exception:
         return None
+
+
+def _configured_endpoint_kind(url: str) -> Optional[str]:
+    """Return configured endpoint kind for a chat/base URL when available."""
+    ep = _configured_endpoint(url)
+    if ep is None:
+        return None
+    kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
+    if kind in ("local", "api", "proxy"):
+        return kind
+    if getattr(ep, "api_key", None):
+        parsed = urlparse(getattr(ep, "base_url", "") or "")
+        host = (parsed.hostname or "").lower()
+        path = (parsed.path or "").rstrip("/")
+        local_host = host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
+        # A static key on a LAN/loopback server does not make it a cloud
+        # proxy: its actual serving limit still takes precedence over maxima.
+        if not local_host and parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
+            return "proxy"
+    return "auto"
+
+
+def _local_probe_base(endpoint_url: str) -> str:
+    """Keep a custom server prefix when deriving llama.cpp metadata URLs."""
+    from src.endpoint_resolver import normalize_base
+
+    parsed = urlparse(normalize_base(endpoint_url))
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    return urlunparse(parsed._replace(path=path, query="", fragment=""))
+
+
+def _get_context_probe(endpoint_url: str, probe_url: str):
+    """Use registered static auth only for this endpoint's derived probes."""
+    from src.endpoint_resolver import build_headers, same_endpoint_base
+
+    headers = {}
+    ep = _configured_endpoint(endpoint_url)
+    if ep is not None and not getattr(ep, "provider_auth_id", None):
+        root = _local_probe_base(endpoint_url)
+        if same_endpoint_base(probe_url, endpoint_url) or probe_url in (
+            f"{root}/slots", f"{root}/props",
+        ):
+            headers = build_headers(getattr(ep, "api_key", None), ep.base_url)
+    # Never forward a registered credential to a redirect destination.
+    return httpx.get(probe_url, headers=headers, timeout=REQUEST_TIMEOUT, follow_redirects=False)
 
 
 def is_local_endpoint(url: str) -> bool:
@@ -369,7 +409,7 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     if cat is None:
         from src.endpoint_resolver import build_models_url
         try:
-            r = httpx.get(build_models_url(endpoint_url), timeout=REQUEST_TIMEOUT)
+            r = _get_context_probe(endpoint_url, build_models_url(endpoint_url))
         except Exception as e:
             logger.debug(f"Failed to fetch proxy catalog for context length: {e}")
             return None
@@ -424,9 +464,9 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
 
     # Try llama.cpp /slots endpoint first — reports actual serving context
     if is_local_endpoint(endpoint_url):
-        base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
+        base = _local_probe_base(endpoint_url)
         try:
-            r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
+            r = _get_context_probe(endpoint_url, f"{base}/slots")
             if r.is_success:
                 slots = r.json()
                 if isinstance(slots, list) and slots:
@@ -440,7 +480,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         # /props endpoint still reports the active serving context, and is the
         # authoritative value for single-slot servers.
         try:
-            r = httpx.get(f"{base}/props", timeout=REQUEST_TIMEOUT)
+            r = _get_context_probe(endpoint_url, f"{base}/props")
             if r.is_success:
                 props = r.json()
                 generation = props.get("default_generation_settings") if isinstance(props, dict) else None
@@ -466,7 +506,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
 
     models_url = build_models_url(endpoint_url)
     try:
-        r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
+        r = _get_context_probe(endpoint_url, models_url)
         if r.is_success:
             data = r.json()
             models_list = data.get("data") or []

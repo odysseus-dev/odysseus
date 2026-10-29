@@ -167,6 +167,11 @@ RUN mkdir -p data logs services/cache/search
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# The image listens on 7000 even when Compose publishes a different host port.
+# Keep internal_api_base() on that listener; host-network deployments override
+# APP_PORT together with the uvicorn command in docker/host-network.yml.
+ENV APP_PORT=7000
+
 EXPOSE 7000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -38,7 +38,7 @@ def test_model_context_queries_models_for_v1_base(monkeypatch):
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
     seen = []
 
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, headers=None, follow_redirects=False):
         seen.append(url)
         request = httpx.Request("GET", url)
         if url.endswith("/slots"):
@@ -62,7 +62,7 @@ def test_model_context_queries_models_for_v1_base(monkeypatch):
 def test_model_context_prefers_llama_props_when_slots_are_disabled(monkeypatch):
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
 
-    def fake_get(url, timeout=None):
+    def fake_get(url, timeout=None, headers=None, follow_redirects=False):
         request = httpx.Request("GET", url)
         if url.endswith("/slots"):
             return httpx.Response(501, json={"error": {"code": 501}}, request=request)
