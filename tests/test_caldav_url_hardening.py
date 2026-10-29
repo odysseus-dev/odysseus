@@ -139,7 +139,7 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
 
     captured = {}
 
-    def fake_sync_blocking(owner, url, username, password, account_id=""):
+    def fake_sync_blocking(owner, url, username, password, account_id="", auth_type=None):
         captured.update(
             {
                 "owner": owner,
@@ -172,6 +172,6 @@ def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
 
     assert "validate_caldav_url(body.get(\"url\", \"\"))" in text
     assert "encrypt(body[\"password\"])" in text
-    assert "pw = decrypt(pw)" in text
+    assert "caldav_credentials" in text
     assert "follow_redirects=False, trust_env=False" in text
     assert "Redirects are not followed for CalDAV safety" in text

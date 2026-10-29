@@ -1,5 +1,6 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
+import asyncio
 import logging
 import json
 import re
@@ -964,6 +965,23 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         prefs.pop("caldav", None)
         _save_for_user(owner, prefs)
 
+    def _google_caldav_target(request: Request, email_account_id: str) -> tuple[str, str]:
+        """Validate a caller-owned Google email account; return its CalDAV (url, username).
+
+        Google-OAuth accounts use the v2 endpoint; Gmail accounts set up with an
+        app password use the legacy one, the only endpoint that accepts it.
+        """
+        from routes.email_helpers import google_oauth_email, gmail_app_password
+        from src.caldav_sync import google_legacy_caldav_url
+        owner = require_user(request)
+        email = google_oauth_email(email_account_id, owner)
+        if email:
+            return f"https://apidata.googleusercontent.com/caldav/v2/{email}/user", email
+        app_login = gmail_app_password(email_account_id, owner)
+        if app_login:
+            return google_legacy_caldav_url(app_login[0]), app_login[0]
+        raise HTTPException(400, "Pick a Gmail account (app password or Google sign-in)")
+
     # ── CalDAV config routes (backward-compat single-account API) ────────────
 
     @router.get("/config")
@@ -1044,6 +1062,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                 "url": acc.get("url", "") or "",
                 "username": acc.get("username", "") or "",
                 "has_password": has_pw,
+                "google_account_id": acc.get("google_account_id", "") or "",
             })
         return {"accounts": safe}
 
@@ -1056,21 +1075,28 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             body = await request.json()
         except Exception:
             body = {}
-        from src.caldav_sync import validate_caldav_url
-        try:
-            url = validate_caldav_url(body.get("url", ""))
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        if not body.get("password"):
-            raise HTTPException(400, "Password is required")
-        from src.secret_storage import encrypt
-        new_acc = {
-            "id": str(_uuid.uuid4()),
-            "label": (body.get("label") or "").strip() or "CalDAV",
-            "url": url,
-            "username": (body.get("username") or "").strip(),
-            "password": encrypt(body["password"]),
-        }
+        label = (body.get("label") or "").strip() or "CalDAV"
+        google_id = (body.get("google_account_id") or "").strip()
+        if google_id:
+            url, username = _google_caldav_target(request, google_id)
+            new_acc = {"id": str(_uuid.uuid4()), "label": label, "url": url,
+                       "username": username, "google_account_id": google_id}
+        else:
+            from src.caldav_sync import validate_caldav_url
+            try:
+                url = validate_caldav_url(body.get("url", ""))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            if not body.get("password"):
+                raise HTTPException(400, "Password is required")
+            from src.secret_storage import encrypt
+            new_acc = {
+                "id": str(_uuid.uuid4()),
+                "label": label,
+                "url": url,
+                "username": (body.get("username") or "").strip(),
+                "password": encrypt(body["password"]),
+            }
         accounts = _get_caldav_accounts(owner)
         accounts.append(new_acc)
         _save_caldav_accounts(owner, accounts)
@@ -1131,7 +1157,14 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         url = (body.get("url") or "").strip()
         user = (body.get("username") or "").strip()
         pw = body.get("password") or ""
-        if not (url and user and pw):
+        auth_type = None
+        google_id = (body.get("google_account_id") or "").strip()
+        if google_id:
+            from src.caldav_sync import caldav_credentials
+            url, user = _google_caldav_target(request, google_id)
+            link = {"url": url, "username": user, "google_account_id": google_id}
+            url, user, pw, auth_type = await asyncio.to_thread(caldav_credentials, link, owner)
+        elif not (url and user and pw):
             # Look up a saved account: by id if supplied, else first account.
             accounts = _get_caldav_accounts(owner)
             acc = None
@@ -1140,17 +1173,14 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             if acc is None and accounts:
                 acc = accounts[0]
             if acc:
-                url = url or (acc.get("url") or "")
-                user = user or (acc.get("username") or "")
+                from src.caldav_sync import caldav_credentials
+                a_url, a_user, a_pw, a_auth = await asyncio.to_thread(caldav_credentials, acc, owner)
+                url, user = url or a_url, user or a_user
                 if not pw:
-                    pw = acc.get("password") or ""
-                    if pw:
-                        try:
-                            from src.secret_storage import decrypt
-                            pw = decrypt(pw)
-                        except Exception:
-                            pass
+                    pw, auth_type = a_pw, a_auth
         if not (url and user and pw):
+            if auth_type == "bearer":
+                return {"ok": False, "error": "Google sign-in has no calendar access — click Grant calendar access"}
             return {"ok": False, "error": "Missing URL, username, or password"}
         from src.caldav_sync import validate_caldav_url
         try:
@@ -1181,11 +1211,16 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
                     _ssl_ctx.load_verify_locations(_ca_bundle)
                 else:
                     logger.warning("CalDAV test: CA bundle %s not found, using system CAs", _ca_bundle)
+            headers = {"Depth": "0", "Content-Type": "application/xml"}
+            auth = (user, pw)
+            if auth_type == "bearer":
+                headers["Authorization"] = f"Bearer {pw}"
+                auth = None
             async with httpx.AsyncClient(timeout=8.0, follow_redirects=False, trust_env=False, verify=_ssl_ctx) as cx:
                 r = await cx.request(
                     "PROPFIND", url,
-                    auth=(user, pw),
-                    headers={"Depth": "0", "Content-Type": "application/xml"},
+                    auth=auth,
+                    headers=headers,
                     content=propfind_body,
                 )
                 # If the server demands Digest (Baïkal default, SabreDAV-based
@@ -1204,6 +1239,8 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             # acceptable. Anything else (401/403/404/5xx) means trouble.
             if r.status_code in (200, 207):
                 return {"ok": True}
+            if r.status_code in (401, 403) and auth_type == "bearer":
+                return {"ok": False, "error": "Google rejected the sign-in — grant calendar access and enable the CalDAV API in your Google Cloud project"}
             if r.status_code == 401:
                 return {"ok": False, "error": "Auth failed — check username/password"}
             if r.status_code == 403:
