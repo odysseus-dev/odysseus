@@ -31,7 +31,7 @@ class _FakeSession:
 
     def get_context_messages(self):
         return [
-            {"role": "user", "content": "Hi, a few things about me."},
+            {"role": "user", "content": "I live in Lisbon. I prefer tea over coffee."},
             {"role": "assistant", "content": "Noted."},
         ]
 
@@ -54,8 +54,8 @@ def _run(coro):
 
 def test_extraction_persists_facts_when_vector_store_fails_at_runtime(monkeypatch):
     facts_json = (
-        '[{"text": "Alice lives in Lisbon", "category": "fact"}, '
-        '{"text": "Alice prefers tea over coffee", "category": "preference"}]'
+        '[{"text": "Alice lives in Lisbon", "category": "fact", "evidence": "I live in Lisbon"}, '
+        '{"text": "Alice prefers tea over coffee", "category": "preference", "evidence": "I prefer tea over coffee"}]'
     )
 
     async def _fake_llm(url, model, messages, **kwargs):
@@ -94,7 +94,7 @@ def test_healthy_vector_store_still_dedups_normally(monkeypatch):
     memory, so the dedup must still fire."""
 
     async def _fake_llm(url, model, messages, **kwargs):
-        return '[{"text": "Alice lives in Lisbon", "category": "fact"}]'
+        return '[{"text": "Alice lives in Lisbon", "category": "fact", "evidence": "I live in Lisbon"}]'
 
     monkeypatch.setattr(src.llm_core, "llm_call_async", _fake_llm)
     monkeypatch.setattr(src.event_bus, "fire_event", lambda *a, **k: None)

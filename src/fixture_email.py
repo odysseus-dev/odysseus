@@ -68,6 +68,7 @@ def _row(index: int, message: dict[str, Any]) -> dict[str, Any]:
         })
     return {
         "uid": str(message.get("uid") or _uid(index)),
+        "message_id": str(message.get("message_id") or ""),
         "account": str(message.get("account") or "fixture"),
         "account_email": str(message.get("account_email") or message.get("to") or ""),
         "account_id": str(message.get("account_id") or "fixture"),
@@ -78,6 +79,16 @@ def _row(index: int, message: dict[str, Any]) -> dict[str, Any]:
         "folder": str(message.get("folder") or "INBOX"),
         "attachments": attachments,
         "has_attachments": bool(attachments),
+        "summary": str(message.get("summary") or message.get("body") or ""),
+    }
+
+
+def _account_matches(message: dict[str, Any], account: str | None) -> bool:
+    selector = str(account or "").strip().casefold()
+    return not selector or selector in {
+        str(message.get("account") or "fixture").strip().casefold(),
+        str(message.get("account_email") or message.get("to") or "").strip().casefold(),
+        str(message.get("account_id") or "fixture").strip().casefold(),
     }
 
 
@@ -159,6 +170,7 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
 
     if bare == "read_email":
         uid = str(args.get("uid") or "")
+        message_id = str(args.get("message_id") or "")
         folder = str(args.get("folder") or "INBOX")
         try:
             index = int(uid) - 1
@@ -185,6 +197,7 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
         all_messages = _messages()
         owner_value = str(owner or "").strip()
         visible_index = -1
+        matches = []
         for original in all_messages:
             if owner_value and original.get("owner") and original.get("owner") != owner_value:
                 continue
@@ -193,6 +206,13 @@ def execute_fixture_email(tool: str, args: dict[str, Any], owner: str | None = N
                 continue
             if not _folder_matches(original.get("folder"), folder):
                 continue
+            if not _account_matches(original, args.get("account")):
+                continue
+            matches.append(original)
+        if len(matches) > 1:
+            return {"error": "Email identity is ambiguous; specify its account and folder.", "exit_code": 1}
+        if matches:
+            original = matches[0]
             if bare == "archive_email":
                 original["folder"] = "Archive"
                 action = "Archived"

@@ -24,6 +24,8 @@ const SUPPORTED_BLEND_MODES = new Set([
   'source-over', 'multiply', 'screen', 'overlay', 'soft-light', 'hard-light',
   'darken', 'lighten', 'color-dodge', 'color-burn', 'difference', 'exclusion',
   'hue', 'saturation', 'color', 'luminosity',
+  'dissolve', 'linear-burn', 'linear-dodge', 'darker-color', 'lighter-color',
+  'vivid-light', 'linear-light', 'pin-light', 'hard-mix', 'subtract', 'divide',
 ]);
 
 function normalizeGuideValues(values, fallback = []) {
@@ -51,6 +53,8 @@ export function normalizeEditorView(view, fallback = {}) {
     gridSize: Math.max(2, Math.min(1000, Math.round(Number.isFinite(rawGridSize) ? rawGridSize : 16))),
     snapEnabled: Boolean(source.snapEnabled ?? fallback.snapEnabled ?? false),
     snapToGrid: Boolean(source.snapToGrid ?? fallback.snapToGrid ?? false),
+    autoSelectLayer: Boolean(source.autoSelectLayer ?? fallback.autoSelectLayer ?? false),
+    autoSelectTarget: (source.autoSelectTarget ?? fallback.autoSelectTarget) === 'group' ? 'group' : 'layer',
     guides: {
       vertical: normalizeGuideValues(guides.vertical, fallbackGuides.vertical),
       horizontal: normalizeGuideValues(guides.horizontal, fallbackGuides.horizontal),
@@ -590,8 +594,10 @@ export function prepareEditorDocument(raw) {
     document: {
       ...migrated,
       v: EDITOR_DOCUMENT_VERSION,
-      imgWidth: width,
-      imgHeight: height,
+    imgWidth: width,
+    imgHeight: height,
+    colorMode: migrated.colorMode === 'grayscale' ? 'grayscale' : 'rgb',
+    bitDepth: 8,
       activeLayerId,
       view: normalizeEditorView(migrated.view),
       groups,
@@ -634,6 +640,8 @@ export function serializeEditorDocument(state, extras = {}) {
     imageId: state.imageId || null,
     imgWidth: state.imgWidth,
     imgHeight: state.imgHeight,
+    colorMode: state.colorMode || 'rgb',
+    bitDepth: state.bitDepth || 8,
     activeLayerId: state.activeLayerId || null,
     nextLayerId: state.nextLayerId,
     view: normalizeEditorView(state),

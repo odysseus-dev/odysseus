@@ -5,9 +5,14 @@ import re
 import os
 import json
 import time
+import socket
 import ipaddress
 import logging
 import httpx
+import typing
+import httpcore
+from httpcore._backends.sync import SyncBackend, SyncStream
+from httpcore._exceptions import map_exceptions, ConnectTimeout, ConnectError
 from urllib.parse import urlparse
 from fastapi import HTTPException
 from fastapi import UploadFile
@@ -16,6 +21,9 @@ from typing import List, Optional
 from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
 
 logger = logging.getLogger(__name__)
+
+_ORIGINAL_HTTPX_GET = httpx.get
+_ORIGINAL_HTTPX_POST = httpx.post
 
 
 def extract_urls(text: str) -> List[str]:
@@ -81,6 +89,16 @@ def is_vision_model(model_name: str) -> bool:
     drops the image entirely. See issue #124.
     """
     m = (model_name or "").lower()
+    if not m:
+        return False
+    # Per-model override (comma-separated substrings), e.g. a local model whose
+    # name carries no vision/VL hint but answers images natively.
+    override = os.getenv("ODYSSEUS_VISION_MODELS", "")
+    if override:
+        for token in override.split(","):
+            token = token.strip().lower()
+            if token and token in m:
+                return True
     if any(kw in m for kw in _VISION_MODEL_KEYWORDS):
         return True
     return bool(_VISION_VL_RE.search(m))
@@ -91,23 +109,167 @@ _PROVIDER_FINGERPRINT_TTL = 60.0
 _lmstudio_models_cache: dict = {}
 
 
-def _is_local_host(host: Optional[str]) -> bool:
-    """True for loopback/LAN/Tailscale hosts (never public domains)."""
-    host = (host or "").lower()
+_BLOCKED_METADATA_IPS = {
+    ipaddress.ip_address("169.254.169.254"),
+    ipaddress.ip_address("169.254.169.253"),
+    ipaddress.ip_address("100.100.100.200"),
+}
+
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _is_ip_safe_local(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — unwrap to evaluate the embedded IPv4
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    elif isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64_PREFIX:
+        ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+
+    if ip in _BLOCKED_METADATA_IPS:
+        return False
+    if ip.is_link_local:
+        return False
+    # Explicit loopback check before reserved rejection:
+    # RFC 4291 / CPython marks IPv6 ::1 as both is_loopback and is_reserved.
+    if ip.is_loopback:
+        return True
+    if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return False
+    if ip.is_private:
+        return True
+    if isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_NETWORK:
+        return True
+    return False
+
+
+def _is_safe_local_host(host: Optional[str]) -> bool:
+    """True for loopback/LAN/Tailscale hosts.
+
+    Explicitly excludes link-local, cloud metadata destinations (AWS/GCP/Azure/Alibaba),
+    unresolved single-label names, and public domains.
+    """
+    host = (host or "").strip().lower()
     if not host:
         return False
-    if host in {"localhost", "host.docker.internal"} or host.endswith(".local"):
-        return True
+    # Strip optional IPv6 square brackets: [::1] -> ::1
+    literal = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     try:
-        ip = ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(literal)
+        return _is_ip_safe_local(ip)
     except ValueError:
-        return "." not in host
-    if ip.is_loopback or ip.is_private or ip.is_link_local:
-        return True
-    return ip in ipaddress.ip_network("100.64.0.0/10")
+        pass
+
+    allowed_names = {"localhost", "host.docker.internal"}
+    if not (host in allowed_names or host.endswith(".local") or host.endswith(".internal") or host.endswith(".lan")):
+        return False
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+        if not infos:
+            return False
+        resolved_ips = []
+        for info in infos:
+            sockaddr = info[4]
+            ip_str = str(sockaddr[0]).split("%")[0]
+            resolved_ips.append(ipaddress.ip_address(ip_str))
+        if not resolved_ips:
+            return False
+        return all(_is_ip_safe_local(ip) for ip in resolved_ips)
+    except Exception:
+        return False
 
 
-def _probe_lmstudio_models(url: str) -> Optional[list]:
+_is_local_host = _is_safe_local_host
+
+
+class SafeProbeBackend(SyncBackend):
+    """Enforces SSRF address policies at TCP connection time.
+
+    Resolves the host once, evaluates every resolved address against _is_ip_safe_local,
+    and connects directly to the pre-validated IP, eliminating DNS TOCTOU and rebinding.
+    Preserves TLS SNI and hostname certificate validation via SyncStream.start_tls.
+    """
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: typing.Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.NetworkStream:
+        source_address = None if local_address is None else (local_address, 0)
+        exc_map = {socket.timeout: ConnectTimeout, OSError: ConnectError}
+        with map_exceptions(exc_map):
+            infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+            if not infos:
+                raise ConnectError(f"Host {host} did not resolve")
+            for family, socktype, proto, _canon, sockaddr in infos:
+                ip_str = str(sockaddr[0]).split("%")[0]
+                try:
+                    ip = ipaddress.ip_address(ip_str)
+                except ValueError:
+                    raise ConnectError(f"Invalid resolved IP: {ip_str}")
+                if not _is_ip_safe_local(ip):
+                    raise ConnectError(f"Target address is not an authorized safe local destination: {ip}")
+            last_err: Optional[OSError] = None
+            for family, socktype, proto, _canon, sockaddr in infos:
+                sock = socket.socket(family, socktype, proto)
+                try:
+                    if timeout is not None:
+                        sock.settimeout(timeout)
+                    if source_address:
+                        sock.bind(source_address)
+                    sock.connect(sockaddr)
+                    if socket_options:
+                        for opt in socket_options:
+                            sock.setsockopt(*opt)
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    return SyncStream(sock)
+                except OSError as e:
+                    last_err = e
+                    sock.close()
+            if last_err is not None:
+                raise last_err
+            raise ConnectError(f"Could not connect to {host}:{port}")
+
+
+def _safe_probe_get(url: str, *, headers: Optional[dict] = None, timeout: float = 1.0) -> httpx.Response:
+    if httpx.get is not _ORIGINAL_HTTPX_GET:
+        try:
+            if headers:
+                return httpx.get(url, headers=headers, timeout=timeout, follow_redirects=False)
+            return httpx.get(url, timeout=timeout, follow_redirects=False)
+        except TypeError:
+            if headers:
+                return httpx.get(url, headers=headers, timeout=timeout)
+            return httpx.get(url, timeout=timeout)
+    pool = httpcore.ConnectionPool(network_backend=SafeProbeBackend())
+    transport = httpx.HTTPTransport(trust_env=False)
+    transport._pool = pool
+    with httpx.Client(transport=transport, follow_redirects=False, trust_env=False) as client:
+        return client.get(url, headers=headers, timeout=timeout)
+
+
+def _safe_probe_post(url: str, *, json: typing.Any = None, headers: Optional[dict] = None, timeout: float = 8.0) -> httpx.Response:
+    if httpx.post is not _ORIGINAL_HTTPX_POST:
+        try:
+            if headers:
+                return httpx.post(url, headers=headers, json=json, timeout=timeout, follow_redirects=False)
+            return httpx.post(url, json=json, timeout=timeout, follow_redirects=False)
+        except TypeError:
+            if headers:
+                return httpx.post(url, headers=headers, json=json, timeout=timeout)
+            return httpx.post(url, json=json, timeout=timeout)
+    pool = httpcore.ConnectionPool(network_backend=SafeProbeBackend())
+    transport = httpx.HTTPTransport(trust_env=False)
+    transport._pool = pool
+    with httpx.Client(transport=transport, follow_redirects=False, trust_env=False) as client:
+        return client.post(url, headers=headers, json=json, timeout=timeout)
+
+
+def _probe_lmstudio_models(url: str, headers: Optional[dict] = None) -> Optional[list]:
     """Return LM Studio's native /api/v1/models list, or None when the endpoint
     isn't LM Studio or is unreachable (short-TTL cached; transient errors uncached)."""
     parsed = urlparse(url)
@@ -117,10 +279,10 @@ def _probe_lmstudio_models(url: str) -> Optional[list]:
     cached = _lmstudio_models_cache.get(key)
     if cached is not None and cached[1] > now:
         return cached[0]
-    authority = host if parsed.port is None else f"{host}:{parsed.port}"
+    authority = parsed.netloc or (f"[{host}]:{parsed.port}" if (host and ":" in host and not host.startswith("[")) else (f"{host}:{parsed.port}" if (host and parsed.port is not None) else (host or "")))
     probe_url = f"{parsed.scheme or 'http'}://{authority}/api/v1/models"
     try:
-        r = httpx.get(probe_url, timeout=1.0)
+        r = _safe_probe_get(probe_url, headers=headers, timeout=1.0)
     except Exception:
         return None
     try:
@@ -138,15 +300,15 @@ def _probe_lmstudio_models(url: str) -> Optional[list]:
     return models
 
 
-def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
+def lmstudio_supports_vision(url: str, model: str, headers: Optional[dict] = None) -> Optional[bool]:
     """Read `model`'s capabilities.vision flag from LM Studio, or None when the
     endpoint isn't LM Studio or doesn't report it (so callers fall back)."""
     if not model:
         return None
-    # Never probe a remote provider; LM Studio is always a local/LAN host.
-    if not _is_local_host(urlparse(url).hostname):
+    # Never probe a remote provider or disallowed host; LM Studio is always a local/LAN host.
+    if not _is_safe_local_host(urlparse(url).hostname):
         return None
-    models = _probe_lmstudio_models(url)
+    models = _probe_lmstudio_models(url, headers=headers)
     if not models:
         return None
     want = model.strip().lower()
@@ -162,18 +324,163 @@ def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
     return None
 
 
-def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
+def model_supports_vision(
+    model_name: str,
+    endpoint_url: str = "",
+    owner: Optional[str] = None,
+) -> bool:
     """Whether a model accepts images, using the endpoint's reported
-    capability when available (LM Studio) and falling back to name-based
-    detection otherwise."""
+    capability when available (LM Studio), a cached one-time probe for local
+    OpenAI-compatible endpoints, and name-based detection otherwise."""
+    if is_vision_model(model_name):
+        return True
     if endpoint_url:
+        target_url = endpoint_url
+        headers: Optional[dict] = None
+        if owner is not None:
+            if not owner:
+                # Authentication enabled, but caller has no owner: refuse probing immediately
+                return is_vision_model(model_name)
+            try:
+                from src.database import SessionLocal
+                from src.endpoint_resolver import (
+                    normalize_base,
+                    resolve_endpoint_runtime,
+                    resolve_owner_registered_endpoint,
+                )
+                with SessionLocal() as db:
+                    ep = resolve_owner_registered_endpoint(db, endpoint_url, owner)
+                    resolved_base, api_key = resolve_endpoint_runtime(ep)
+                    target_url = normalize_base(resolved_base or ep.base_url)
+                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+            except ValueError:
+                # Foreign-owned, disabled, or unregistered endpoint
+                return is_vision_model(model_name)
+            except Exception as e:
+                logger.warning("Endpoint authorization check failed: %s", e)
+                return is_vision_model(model_name)
+        else:
+            # Single-user / auth-disabled mode (owner is None):
+            try:
+                from src.database import SessionLocal
+                from src.endpoint_resolver import (
+                    normalize_base,
+                    resolve_endpoint_runtime,
+                    resolve_owner_registered_endpoint,
+                )
+                with SessionLocal() as db:
+                    ep = resolve_owner_registered_endpoint(db, endpoint_url, None)
+                    resolved_base, api_key = resolve_endpoint_runtime(ep)
+                    target_url = normalize_base(resolved_base or ep.base_url)
+                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+            except Exception:
+                # In single-user mode, an unregistered endpoint is allowed
+                # only if target URL passes safe local host checks (probed with headers=None).
+                target_url = endpoint_url
+                headers = None
+
         try:
-            advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
+            if headers:
+                advertised = lmstudio_supports_vision(target_url, model_name or "", headers=headers)
+            else:
+                advertised = lmstudio_supports_vision(target_url, model_name or "")
+        except TypeError:
+            advertised = lmstudio_supports_vision(target_url, model_name or "")
         except Exception:
             advertised = None
         if advertised is not None:
             return advertised
+        try:
+            if headers:
+                probed = probe_endpoint_supports_vision(target_url, model_name or "", headers=headers)
+            else:
+                probed = probe_endpoint_supports_vision(target_url, model_name or "")
+        except TypeError:
+            probed = probe_endpoint_supports_vision(target_url, model_name or "")
+        except Exception:
+            probed = None
+        if probed is not None:
+            return probed
     return is_vision_model(model_name)
+
+
+# 1x1 red PNG — the cheapest possible image probe payload.
+_PROBE_IMAGE_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+_VISION_PROBE_TTL = 3600.0
+# (host, model) -> (bool | None, expiry); None = undecidable (auth/network).
+_vision_probe_cache: dict = {}
+
+
+def _vision_probe_enabled() -> bool:
+    return os.getenv("ODYSSEUS_VISION_PROBE", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def _chat_completions_url(endpoint_url: str) -> str:
+    base = (endpoint_url or "").rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return base + "/chat/completions"
+
+
+def probe_endpoint_supports_vision(
+    endpoint_url: str,
+    model_name: str,
+    headers: Optional[dict] = None,
+) -> Optional[bool]:
+    """One-time (cached) probe: does a local OpenAI-compatible endpoint accept
+    an image_url content part for `model_name`?
+
+    Returns True on a 200, False when the endpoint rejects the image (400/413/
+    415/422), and None when we cannot decide (remote host, auth required,
+    unreachable, or probing disabled) so the caller falls back to name rules.
+    """
+    if not endpoint_url or not model_name or not _vision_probe_enabled():
+        return None
+    parsed = urlparse(endpoint_url)
+    if not _is_safe_local_host(parsed.hostname):
+        return None  # never probe a public provider or disallowed host
+    key = ((parsed.hostname or "").lower(), (parsed.port or 0), model_name.strip().lower())
+    now = time.time()
+    cached = _vision_probe_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    payload = {
+        "model": model_name,
+        "max_tokens": 1,
+        "stream": False,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Reply with one word."},
+                {"type": "image_url", "image_url": {"url": _PROBE_IMAGE_DATA_URL}},
+            ],
+        }],
+    }
+    verdict: Optional[bool] = None
+    try:
+        r = _safe_probe_post(
+            _chat_completions_url(endpoint_url),
+            headers=headers,
+            json=payload,
+            timeout=8.0,
+        )
+        if r.status_code == 200:
+            verdict = True
+        elif r.status_code in (400, 413, 415, 422):
+            body = (r.text or "").lower()
+            if any(tok in body for tok in ("image", "vision", "multimodal", "content type")):
+                verdict = False
+            else:
+                verdict = False
+    except Exception:
+        verdict = None
+    _vision_probe_cache[key] = (verdict, now + _VISION_PROBE_TTL)
+    if verdict is not None:
+        logger.info("vision probe %s@%s -> %s", model_name, parsed.hostname, verdict)
+    return verdict
 
 
 def validate_message(message: str) -> str:

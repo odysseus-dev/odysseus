@@ -12,13 +12,22 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
 from core.auth import RESERVED_USERNAMES
-from src.owner_identity import REQUEST_SENTINEL_OWNERS
+from src.owner_identity import REQUEST_SENTINEL_OWNERS, auth_disabled
 from src.task_action_policy import (
     is_admin_only_task_action,
     owner_has_admin_task_privileges,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TaskEndpointAuthorityError(RuntimeError):
+    """A scheduled task's endpoint or its credentials cannot be authorized."""
+
+
+def _require_task_owner(owner):
+    if not str(owner or "").strip() and not auth_disabled():
+        raise TaskEndpointAuthorityError("Scheduled task has no owner in authenticated mode")
 
 
 def _is_sft_fixture_owner(owner: str | None) -> bool:
@@ -1345,6 +1354,7 @@ class TaskScheduler:
 
     async def _execute_action(self, task, run_id: str | None = None) -> tuple:
         """Execute a built-in action (no LLM needed)."""
+        _require_task_owner(task.owner)
         from src.builtin_actions import BUILTIN_ACTIONS
         from src.agent_runtime.authority import (
             bind_request_authority, restore_task_authority, task_operation,
@@ -1634,6 +1644,7 @@ class TaskScheduler:
     async def _execute_llm_task(self, task, db) -> str:
         """Execute an LLM task with full tool access via the agent loop."""
         from core.database import Session as DbSession, ChatMessage, CrewMember
+        _require_task_owner(task.owner)
 
         # If this task is wired to a CrewMember (personal assistant, custom
         # crew), prefer the crew member's persona/model/endpoint as overrides.
@@ -1654,6 +1665,11 @@ class TaskScheduler:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
         if not endpoint_url or not model:
             raise RuntimeError("No model/endpoint configured")
+        # Authorize the original URL before normalization can erase a query,
+        # fragment, or caller-selected path. Stored tasks do not themselves
+        # grant permission to contact an endpoint.
+        from src.endpoint_resolver import resolve_owner_registered_endpoint
+        resolve_owner_registered_endpoint(db, endpoint_url, task.owner or None)
         endpoint_url = _normalize_chat_endpoint(endpoint_url)
         # Record the resolved model so _execute_task_locked can persist it on
         # the run (tasks rarely pin a model, so this is the only record of
@@ -1772,6 +1788,8 @@ class TaskScheduler:
                 relevant_tools=relevant_tools,
                 datetime_context_msg=_dt_msg,
             )
+        except TaskEndpointAuthorityError:
+            raise
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
             from src.task_endpoint import task_llm_call_async
@@ -1986,6 +2004,7 @@ class TaskScheduler:
                               override_user_message: str | None = None,
                               datetime_context_msg: dict | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
+        _require_task_owner(task.owner)
         from src.agent_loop import stream_agent_loop
         from src.agent_runtime.authority import restore_task_authority
 
@@ -2015,8 +2034,8 @@ class TaskScheduler:
                 headers = build_headers(api_key, base)
             finally:
                 db2.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            raise TaskEndpointAuthorityError("Scheduled task endpoint is unavailable or unauthorized") from exc
         full_text = ""
         final_text_replaced = False
         tool_results = []
@@ -2172,10 +2191,15 @@ class TaskScheduler:
         from src.settings import get_setting
 
         # Resolve endpoint/model: research settings > task settings > session defaults
+        _require_task_owner(task.owner)
         endpoint_url = task.endpoint_url
         model = task.model
         headers = {}
         headers_from_resolver = False
+
+        if endpoint_url:
+            from src.endpoint_resolver import resolve_owner_registered_endpoint
+            resolve_owner_registered_endpoint(db, endpoint_url, task.owner or None)
 
         if not endpoint_url or not model:
             try:
@@ -2213,8 +2237,8 @@ class TaskScheduler:
                 base, api_key = resolve_endpoint_runtime(ep, owner=task.owner or None)
                 endpoint_url = build_chat_url(base)
                 headers = build_headers(api_key, base)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise TaskEndpointAuthorityError("Scheduled research endpoint is unavailable or unauthorized") from exc
         endpoint_url = _normalize_chat_endpoint(endpoint_url)
 
         max_tokens, extraction_timeout, extraction_concurrency = (
@@ -2348,11 +2372,11 @@ class TaskScheduler:
         have to special-case each tool's schema; the MCP tool ignores keys it
         doesn't recognise.
         """
+        _require_task_owner(task.owner)
         from src.tool_utils import get_mcp_manager
         mcp = get_mcp_manager()
         if not mcp:
-            logger.warning(f"Task {task.id}: MCP manager not available for delivery")
-            return
+            raise RuntimeError("MCP manager not available for task delivery")
 
         # Resolve recipient — prefer the configured email From (the established
         # "email yourself" pattern from daily_brief), fall back to task.owner.
@@ -2361,7 +2385,7 @@ class TaskScheduler:
         recipient = None
         try:
             from routes.email_helpers import _get_email_config
-            cfg = _get_email_config() or {}
+            cfg = _get_email_config(owner=task.owner or "") or {}
             recipient = cfg.get("from_address") or None
         except Exception as _e:
             logger.debug(f"_deliver_via_mcp: email config lookup failed: {_e}")
@@ -2377,6 +2401,14 @@ class TaskScheduler:
                 "X-Odysseus-Ref": str(task.id),
             },
         }
+        if tool_name.startswith("mcp__email__"):
+            # The email server uses this reserved field for its account and
+            # approval scope; it must come from the task owner, never a model.
+            from src.tool_execution import _EMAIL_MCP_OWNER_ARG, _EMAIL_MCP_SESSION_ARG
+            if task.owner:
+                args[_EMAIL_MCP_OWNER_ARG] = task.owner
+            if getattr(task, "session_id", None):
+                args[_EMAIL_MCP_SESSION_ARG] = task.session_id
         if recipient:
             # Cover the common field names so we work across MCP servers (Gmail,
             # generic SMTP, Slack DMs, etc.) without having to hard-code each.
@@ -2391,25 +2423,18 @@ class TaskScheduler:
             )
         try:
             mcp_result = await mcp.call_tool(tool_name, args)
-            stderr = mcp_result.get("stderr", "")
-            stdout = mcp_result.get("stdout", "")
-            body_len = len(result or "")
-            exit_code = mcp_result.get("exit_code", 0)
-            if exit_code != 0:
-                logger.warning(
-                    f"Task {task.id} MCP delivery FAILED via {tool_name}: "
-                    f"exit={exit_code} stderr={stderr[:400]!r} stdout={stdout[:400]!r}"
-                )
-            else:
-                # Include the MCP tool's own stdout (e.g. email_server returns
-                # "Sent email to ... with subject ...") + the body size so a
-                # silent SMTP failure is easier to spot in the logs.
-                logger.info(
-                    f"Task {task.id} delivered via MCP tool {tool_name} "
-                    f"(recipient_set={bool(recipient)}, body={body_len}b, reply={stdout[:200]!r})"
-                )
+            if isinstance(mcp_result, dict):
+                from src.tool_execution import _normalize_mcp_text_error
+                mcp_result = _normalize_mcp_text_error(dict(mcp_result))
+            if not isinstance(mcp_result, dict) or mcp_result.get("error") or mcp_result.get("exit_code") != 0:
+                raise RuntimeError("MCP task delivery failed or returned an invalid result")
+            if tool_name == "mcp__email__send_email" and not str(mcp_result.get("stdout") or "").strip().startswith("Sent email to "):
+                raise RuntimeError("MCP email delivery did not report a completed send")
+            logger.info("Task %s delivered via MCP tool %s (recipient_set=%s, body=%sb)",
+                        task.id, tool_name, bool(recipient), len(result or ""))
         except Exception as e:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
+            raise
 
     async def run_task_now(self, task_id: str, *, force: bool = False):
         """Manually trigger a task execution."""

@@ -138,7 +138,11 @@ async def test_scheduler_refresh_failure_never_uses_static_or_caller_credentials
         db.commit()
     runtime = MagicMock(side_effect=ValueError("Session expired"))
     monkeypatch.setattr("src.chatgpt_subscription.resolve_runtime_credentials", runtime)
-    assert (await run(kind, base))["headers"] == {}
+    fallback = AsyncMock(side_effect=AssertionError("unauthorized endpoint must not fall back"))
+    monkeypatch.setattr("src.task_endpoint.task_llm_call_async", fallback)
+    with pytest.raises((ValueError, RuntimeError)):
+        await run(kind, base)
+    fallback.assert_not_awaited()
     runtime.assert_called_once_with("server-session", owner="alice")
 
 
@@ -155,12 +159,13 @@ async def test_scheduler_credentials_require_enabled_visible_registration(execut
             db.commit()
     runtime = MagicMock(wraps=resolver.resolve_endpoint_runtime)
     monkeypatch.setattr(resolver, "resolve_endpoint_runtime", runtime)
-    captured = await run(kind, base)
     if state == "shared":
+        captured = await run(kind, base)
         assert captured["headers"] == resolver.build_headers("server-secret", base)
         assert runtime.call_args.kwargs == {"owner": "alice"}
     else:
-        assert captured["headers"] == {}
+        with pytest.raises((ValueError, RuntimeError)):
+            await run(kind, base)
         runtime.assert_not_called()
 
 
@@ -191,8 +196,8 @@ async def test_scheduler_invalid_route_never_recovers_registered_credentials(exe
     }
     runtime = MagicMock(wraps=resolver.resolve_endpoint_runtime)
     monkeypatch.setattr(resolver, "resolve_endpoint_runtime", runtime)
-    captured = await run(kind, mutations[change].geturl(), execute_agent_task=False)
-    assert captured["headers"] == {}
+    with pytest.raises((ValueError, RuntimeError)):
+        await run(kind, mutations[change].geturl(), execute_agent_task=False)
     runtime.assert_not_called()
 
 
@@ -208,3 +213,34 @@ async def test_scheduled_research_keeps_configured_resolver_credentials(executio
     assert captured == {"endpoint_url": url, "headers": headers}
     assert configured.call_args.kwargs["owner"] == "alice"
     recovery.assert_not_called()
+
+
+@pytest.mark.parametrize('kind', ['agent', 'research'])
+async def test_scheduler_refuses_unregistered_task_endpoint(execution, kind):
+    _, run = execution
+    with pytest.raises((ValueError, RuntimeError)):
+        await run(kind, 'https://unregistered.example.test/v1')
+
+
+@pytest.mark.parametrize('kind', ['agent', 'research'])
+async def test_ownerless_task_cannot_use_another_owners_endpoint(execution, monkeypatch, kind):
+    factory, run = execution
+    monkeypatch.setenv('AUTH_ENABLED', 'true')
+    with factory() as db:
+        db.add(database.ModelEndpoint(id='bob', name='Bob endpoint', owner='bob',
+                                     base_url='https://bob.example.test/v1', is_enabled=True))
+        db.commit()
+    with pytest.raises((ValueError, RuntimeError)):
+        await run(kind, 'https://bob.example.test/v1', owner=None)
+
+
+@pytest.mark.parametrize('kind', ['agent', 'research'])
+async def test_ownerless_task_works_in_explicit_single_user_mode(execution, monkeypatch, kind):
+    factory, run = execution
+    monkeypatch.setenv('AUTH_ENABLED', 'false')
+    with factory() as db:
+        db.add(database.ModelEndpoint(id='shared', name='Local endpoint', owner=None,
+                                     base_url='http://localhost:1234/v1', is_enabled=True))
+        db.commit()
+    captured = await run(kind, 'http://localhost:1234/v1', owner=None)
+    assert captured['endpoint_url'] == 'http://localhost:1234/v1/chat/completions'

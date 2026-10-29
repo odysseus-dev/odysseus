@@ -39,8 +39,8 @@
 import { state } from './state.js';
 import { isLayerPixelLocked, isLayerTransparencyLocked } from './layer-groups.js';
 
-const TOPBAR_MENU_IDS = ['ge-view-menu', 'ge-image-menu', 'ge-selection-menu', 'ge-filter-menu', 'ge-resize-menu', 'ge-save-menu'];
-const TOPBAR_TRIGGER_IDS = ['ge-view-menu-btn', 'ge-image-menu-btn', 'ge-selection-menu-btn', 'ge-filter-menu-btn', 'ge-resize-menu-btn', 'ge-save-menu-btn'];
+const TOPBAR_MENU_IDS = ['ge-file-menu', 'ge-edit-menu', 'ge-view-menu', 'ge-image-menu', 'ge-layer-menu', 'ge-type-menu', 'ge-selection-menu', 'ge-filter-menu', 'ge-window-menu', 'ge-help-menu', 'ge-resize-menu', 'ge-save-menu'];
+const TOPBAR_TRIGGER_IDS = ['ge-file-menu-btn', 'ge-edit-menu-btn', 'ge-view-menu-btn', 'ge-image-menu-btn', 'ge-layer-menu-btn', 'ge-type-menu-btn', 'ge-selection-menu-btn', 'ge-filter-menu-btn', 'ge-window-menu-btn', 'ge-help-menu-btn', 'ge-resize-menu-btn', 'ge-save-menu-btn'];
 
 /**
  * Close every topbar dropdown except an optional "keep open" one.
@@ -59,7 +59,7 @@ export function wireTopbar(deps) {
   const {
     undo, redo, toggleHistoryPanel, toggleCompare,
     fitZoom, applyZoom,
-    exportToGallery, downloadPNG, saveProject, loadProjectPrompt,
+    exportToGallery, downloadPNG, exportPNGFile, saveProject, loadProjectPrompt,
     activeLayer, saveState, applyEdgeFeather, composite,
     registerDocClickAway, uiModule,
   } = deps;
@@ -127,12 +127,13 @@ export function wireTopbar(deps) {
         (Math.abs(state.zoom - 1) < 0.001 && state.zoomViewMode !== 'fit')) fitZoom();
     else { state.zoom = 1; state.zoomViewMode = 'scale'; applyZoom(); }
   });
-  document.getElementById('ge-zoom-in')?.addEventListener('click', () => { state.zoom = Math.min(5, state.zoom * 1.25); applyZoom(); });
-  document.getElementById('ge-zoom-out')?.addEventListener('click', () => { state.zoom = Math.max(0.1, state.zoom / 1.25); applyZoom(); });
+  document.getElementById('ge-zoom-in')?.addEventListener('click', () => { state.zoom = Math.min(5, state.zoom * 1.25); state.zoomViewMode = 'scale'; applyZoom(); });
+  document.getElementById('ge-zoom-out')?.addEventListener('click', () => { state.zoom = Math.max(0.1, state.zoom / 1.25); state.zoomViewMode = 'scale'; applyZoom(); });
 
   // Export / Download / Project Save / Project Load.
   document.getElementById('ge-export-gallery')?.addEventListener('click', exportToGallery);
   document.getElementById('ge-download')?.addEventListener('click', downloadPNG);
+  document.getElementById('ge-export-png')?.addEventListener('click', exportPNGFile);
   document.getElementById('ge-save-project')?.addEventListener('click', saveProject);
   document.getElementById('ge-load-project')?.addEventListener('click', loadProjectPrompt);
 

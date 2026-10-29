@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v659-notes-reference';
+const CACHE_NAME = 'odysseus-v1114-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -74,6 +74,8 @@ const PRECACHE = [
   '/static/js/fileHandler.js?v=20260909mobileattachmentedit1',
   '/static/js/voiceRecorder.js',
   '/static/js/actionMenuOrder.js',
+  '/static/js/platform.js',
+  '/static/js/modelSort.js',
   '/static/js/models.js',
   '/static/js/rag.js',
   '/static/js/presets.js?v=20260908personaname1',
@@ -84,7 +86,7 @@ const PRECACHE = [
   '/static/js/gallery.js?v=20260910promptcopy1',
   '/static/js/chatRenderer.js?v=20260914metricssummary1',
   '/static/js/codeRunner.js?v=20260831richtexttools91',
-  '/static/js/chatStream.js?v=20260914pdfstrip1',
+  '/static/js/chatStream.js?v=20261026devsync1',
   '/static/js/chat.js?v=20260917toolttft1',
   '/static/js/cookbook.js',
   '/static/js/search-chat.js',
@@ -203,9 +205,11 @@ const PANEL_PRECACHE = [
   '/static/js/editor/ai-tool-runner.js',
   '/static/js/editor/ai-tools-misc.js',
   '/static/js/editor/build/controls.js?v=20260830editor2',
+  '/static/js/editor/build/dock.js',
+  '/static/js/editor/build/options-bar.js?v=20261009autoselect',
   '/static/js/editor/build/popups.js',
   '/static/js/editor/build/right-panel.js',
-  '/static/js/editor/build/toolbar.js?v=20260830editor2',
+  '/static/js/editor/build/toolbar.js?v=20261010brushpresets',
   '/static/js/editor/build/topbar.js',
   '/static/js/editor/build/transform-popup.js',
   '/static/js/editor/canvas-coords.js',
@@ -217,8 +221,10 @@ const PANEL_PRECACHE = [
   '/static/js/editor/checkerboard.js',
   '/static/js/editor/clipboard-and-drop.js',
   '/static/js/editor/composite-helpers.js',
+  '/static/js/editor/draggable-dialog.js',
   '/static/js/editor/document-codec.js',
   '/static/js/editor/adjustment-layer.js',
+  '/static/js/editor/blend-modes.js',
   '/static/js/editor/adjustments-worker.js',
   '/static/js/editor/thumbnail-worker.js',
   '/static/js/editor/serialization-worker.js',
@@ -227,21 +233,46 @@ const PANEL_PRECACHE = [
   '/static/js/editor/render-cancellation.js',
   '/static/js/editor/effects-worker.js',
   '/static/js/editor/document-geometry.js',
+  '/static/js/editor/aspect-fit.js',
+  '/static/js/editor/preflight.js',
+  '/static/js/editor/ai-settings.js',
+  '/static/js/editor/look-recipes.js',
+  '/static/js/editor/editor-control.js',
+  '/static/js/editor/editor-bridge.js',
+  '/static/js/editor/control-kit.js',
+  '/static/js/editor/nl-edit.js',
+  '/static/js/editor/editor-agent.js',
+  '/static/js/editor/mask-ops.js',
+  '/static/js/editor/retouch.js',
   '/static/js/editor/export-dialog.js',
   '/static/js/editor/selection-mask.js',
+  '/static/js/editor/select-and-mask.js',
+  '/static/js/editor/shape-boolean.js',
+  '/static/js/editor/perspective-warp.js',
+  '/static/js/editor/color-mode.js',
+  '/static/js/editor/workspaces.js',
+  '/static/js/editor/psd.js',
+  '/static/js/editor/build/command-palette.js',
   '/static/js/editor/selection-modifiers.js',
   '/static/js/editor/tool-shortcuts.js',
   '/static/js/editor/filters/blur.js',
   '/static/js/editor/filters/edge-feather.js',
+  '/static/js/editor/filters/effects.js',
   '/static/js/editor/fx/adj-popup.js',
   '/static/js/editor/fx/filter-string.js',
   '/static/js/editor/fx/histogram.js',
   '/static/js/editor/fx/pixel-pass.js',
+  '/static/js/editor/fx/develop.js',
+  '/static/js/editor/panels/panels.js',
+  '/static/js/editor/panels/studio-panels.js',
+  '/static/js/editor/actions-panel.js',
+  '/static/js/editor/batch-runner.js',
   '/static/js/editor/harmonize-masks.js',
   '/static/js/editor/history-panel.js',
   '/static/js/editor/history-budget.js',
   '/static/js/editor/keyboard-shortcuts.js',
   '/static/js/editor/layer-helpers.js',
+  '/static/js/editor/layer-hit-test.js',
   '/static/js/editor/layer-groups.js',
   '/static/js/editor/layer-clipping.js',
   '/static/js/editor/multi-transform.js',
@@ -269,17 +300,23 @@ const PANEL_PRECACHE = [
   '/static/js/editor/tools/crop.js',
   '/static/js/editor/tools/flood-fill.js',
   '/static/js/editor/tools/gradient.js',
+  '/static/js/editor/tools/color-range.js',
   '/static/js/editor/tools/lasso-mask.js',
   '/static/js/editor/tools/lasso.js',
   '/static/js/editor/tools/marquee.js',
   '/static/js/editor/tools/move.js',
+  '/static/js/editor/tools/object-select.js',
   '/static/js/editor/tools/pen-selection.js',
+  '/static/js/editor/tools/liquify.js',
+  '/static/js/editor/tools/pen-path.js',
+  '/static/js/editor/tools/quick-select.js',
   '/static/js/editor/tools/stroke.js',
   '/static/js/editor/tools/transform-drag.js',
   '/static/js/editor/tools/transform-handles.js',
   '/static/js/editor/tools/transform-session.js',
   '/static/js/editor/tools/wand.js',
   '/static/js/editor/wire-import.js',
+  '/static/js/editor/wire-extra-menus.js',
   '/static/js/editor/wire-inpaint-controls.js?v=20260708match1',
   '/static/js/editor/wire-merge-buttons.js',
   '/static/js/editor/wire-selection-controls.js',
@@ -287,6 +324,21 @@ const PANEL_PRECACHE = [
   '/static/js/editor/wire-topbar-overflow.js',
   '/static/js/editor/wire-topbar.js',
   '/static/js/editor/wire-view-menu.js',
+  // Editor modules reachable only through the lazy galleryEditor.js graph.
+  '/static/js/editor/build/toolbar.js?v=20261010brushpresets',
+  '/static/js/editor/canvas-context-menu.js',
+  '/static/js/editor/scroll-affordance.js',
+  '/static/js/editor/panel-visibility.js',
+  '/static/js/editor/submenu-toggles.js',
+  '/static/js/editor/path-geometry.js',
+  '/static/js/editor/select-subject.js',
+  '/static/js/editor/patch-ops.js',
+  '/static/js/editor/tools/bucket.js',
+  '/static/js/editor/tools/patch.js',
+  '/static/js/editor/perspective-crop.js',
+  '/static/js/editor/tools/perspective-crop.js',
+  '/static/js/editor/filters/dehaze.js',
+  '/static/js/editor/fx/cube-lut.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -314,11 +366,29 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Offline fallback for /static/ JS/CSS. /static is a public, unauthenticated
+// mount whose bytes do not depend on the request, but CORS adds `Vary: Origin`
+// and module imports send an Origin header that install-time fetches omit, so a
+// strict match hides the precached copy. Ignore Vary only for entries in this
+// worker's own cache whose sole Vary header is Origin.
+async function cachedStaticFile(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const exact = await cache.match(request);
+  if (exact) return exact;
+  const variesOnlyOnOrigin = response => (response.headers.get('Vary') || '')
+    .split(',').map(name => name.trim().toLowerCase()).filter(Boolean)
+    .every(name => name === 'origin');
+  const candidates = await cache.matchAll(request, { ignoreVary: true });
+  return candidates.find(variesOnlyOnOrigin) || Response.error();
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
   // Never touch API calls or non-GET.
   if (url.pathname.startsWith('/api/') || e.request.method !== 'GET') return;
+  // Only this origin's own files are cached; anything else goes to the network.
+  if (url.origin !== self.location.origin) return;
 
   // HTML navigation: network-first app shell — but ONLY for the SPA root.
   // Other navigations (e.g. a deep-linked /static/*.html page) must go to the
@@ -344,10 +414,10 @@ self.addEventListener('fetch', (e) => {
       fetch(e.request).then(res => {
         if (res && res.ok) {
           const copy = res.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(e.request, copy));
+          caches.open(CACHE_NAME).then(cache => cache.put(e.request, copy)).catch(() => {});
         }
         return res;
-      }).catch(() => caches.match(e.request))
+      }).catch(() => cachedStaticFile(e.request))
     );
     return;
   }

@@ -2465,6 +2465,100 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def _spec_triage_email_urgency(item: dict, *, triage_version: int) -> dict | None:
+    """Classify one email's urgency with the trained jeff ``triage`` adapter.
+
+    Returns an email-urgency verdict (same shape as the LLM path) or None when
+    the per-job flag is off or the adapter is unavailable, so the caller falls
+    through to the LLM candidate chain. Only the ``urgency`` question is sent:
+    jeff scores each question in its own forward pass, and that is the question
+    this adapter was trained on.
+    """
+    from src.jeff_decision import jeff_job_enabled, jeff_systemone, score_value
+
+    if not jeff_job_enabled("EMAIL_URGENCY"):
+        return None
+    message = f"Subject: {item.get('subject','')}\n\n{item.get('body','')}".strip()
+    if not message:
+        return None
+    answers = await jeff_systemone(
+        "triage",
+        {"channel": "email", "message": message[:8000]},
+        {"urgency": {
+            "type": "score",
+            "instructions": "How urgently does this need a response?",
+            "criteria": [
+                "No action needed",
+                "Can wait a few days",
+                "Handle within a day",
+                "Handle within hours",
+                "Handle immediately",
+            ],
+        }},
+    )
+    if not answers:
+        return None
+    exp = score_value(answers.get("urgency"))
+    if exp is None:
+        return None
+
+    # Adapter's 0-4 urgency scale -> the app's 0-3 score.
+    score = max(0, min(3, int(round(exp))))
+    reason = "triage adapter"
+
+    # Same high-precision correction the prompt path applies: a person waiting
+    # in person is always urgent, whatever the model thinks.
+    blob = f"{item.get('headers','')}\n{item.get('subject','')}\n{item.get('body','')}".lower()
+    if re.search(r"\b(i'?m|i am|im|we'?re|we are)\s+outside\b", blob) or re.search(
+        r"\b(waiting outside|at the door|locked out|can'?t get in|cannot get in)\b", blob
+    ):
+        if score < 3:
+            reason = "person is waiting outside"
+        score = 3
+
+    # Same bulk/marketing guard the prompt path applies: a newsletter or
+    # promotion is not urgent no matter how time-limited it sounds.
+    bulkish = bool(re.search(
+        r"\b(list-unsubscribe|list-id|mailchimp|mailchimpapp|view this email in your browser|unsubscribe|newsletter|digest|precedence:\s*bulk)\b",
+        blob,
+    ))
+    # The adapter was trained on support tickets, so it over-rates promotions.
+    # Require a clear bulk header or several marketing terms before zeroing.
+    marketing_hits = sum(1 for t in (
+        "advertisement", "sponsored", "promo", "promotion", "sale", "discount",
+        "offer", "limited time", "deal", "coupon", "shop now", "buy now",
+        "sold out", "low tickets",
+    ) if t in blob)
+    if bulkish or marketing_hits >= 2:
+        score = 0
+        reason = "bulk mail; no personal reply needed"
+
+    tags = []
+    if score >= 3:
+        tags.append("urgent")
+    elif score >= 2:
+        tags.append("reply-soon")
+
+    _from_raw = item.get("from", "") or ""
+    if "<" in _from_raw:
+        _from_short = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
+    else:
+        _from_short = _from_raw
+
+    return {
+        "score": score,
+        "tags": tags[:4],
+        "spam": False,
+        "reason": reason,
+        "subject": (item.get("subject") or "")[:200],
+        "from": _from_short[:120],
+        "triage_version": triage_version,
+        "message_id": (item.get("message_id") or "").strip(),
+        "unread": bool(item.get("unread")),
+        "ts": time.time(),
+    }
+
+
 async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
     """Scan unread emails across all accounts, LLM-triage new ones, cache
     per-UID verdicts, tag the inbox, and fire a reminder when a previously
@@ -2850,6 +2944,16 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 if verdict.get("tags") or verdict.get("reason") != "categorized by email metadata":
                     cache.setdefault("uids", {})[item["uid"]] = verdict
                     per_uid_scores[key] = verdict
+                    saved_classifications += 1
+                    continue
+                # ── Spec decision adapter (triage): a calibrated urgency score
+                # with no generated-text prompt. Enabled per-job via
+                # ODYSSEUS_JEFF_EMAIL_URGENCY; any failure returns None and the
+                # LLM candidate chain below still runs.
+                _tri = await _spec_triage_email_urgency(item, triage_version=TRIAGE_VERSION)
+                if _tri is not None:
+                    cache.setdefault("uids", {})[item["uid"]] = _tri
+                    per_uid_scores[key] = _tri
                     saved_classifications += 1
                     continue
                 # ── LLM-classify. JSON-only response; bullet-proof parse.

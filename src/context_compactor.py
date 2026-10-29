@@ -92,6 +92,84 @@ def prune_multimodal_images(
     return pruned
 
 
+_IMAGE_TURN_LABEL_RE = re.compile(r"\[Image(?:s)?(?:[ \t]{1,64}attached)?:[ \t]{0,64}([^\]]{1,512})\]", re.IGNORECASE)
+
+
+def _image_turn_label(message: Dict) -> str:
+    """Best-effort '[Image: name]' label for a message whose image parts are dropped."""
+    name = ""
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES:
+                image_url = item.get("image_url")
+                candidate = item.get("name") or (image_url.get("name") if isinstance(image_url, dict) else None)
+                if candidate:
+                    name = str(candidate)
+                    break
+        if not name:
+            text = _content_as_text(content)
+            match = _IMAGE_TURN_LABEL_RE.search(text)
+            if match:
+                name = match.group(1).strip()
+    return f"[Image: {name}]" if name else "[Image]"
+
+
+def keep_recent_image_turns(messages: List[Dict], *, keep: int = 2) -> List[Dict]:
+    """Keep image parts only for the last `keep` messages that carry an image.
+
+    Older image blocks are dropped and replaced with a short ``[Image: name]``
+    text label so the model still knows a picture was shared (and its name)
+    without paying the image tokens on every later turn. Non-text, non-image
+    multimodal blocks (e.g. audio) are left untouched.
+    """
+    limit = max(0, int(keep))
+    image_messages = [
+        index for index, message in enumerate(messages)
+        if isinstance(message, dict)
+        and isinstance(message.get("content"), list)
+        and any(
+            isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES
+            for item in message["content"]
+        )
+    ]
+    if len(image_messages) <= limit:
+        return list(messages)
+    selected = set(image_messages[len(image_messages) - limit:]) if limit else set()
+
+    trimmed: List[Dict] = []
+    for message_index, message in enumerate(messages):
+        if message_index in selected or not isinstance(message, dict):
+            trimmed.append(message)
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            trimmed.append(message)
+            continue
+        kept_blocks = [
+            dict(item) if isinstance(item, dict) else item for item in content
+            if not (isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES)
+        ]
+        if len(kept_blocks) == len(content):
+            trimmed.append(message)
+            continue
+        label = _image_turn_label(message)
+        # Attach the label to the trailing text block when possible so we do not
+        # introduce an extra content block; otherwise append a fresh text block.
+        labelled = False
+        for item in reversed(kept_blocks):
+            if isinstance(item, dict) and item.get("type") == "text":
+                item["text"] = (item.get("text") or "").rstrip() + f"\n{label}"
+                labelled = True
+                break
+        if not labelled:
+            kept_blocks.append({"type": "text", "text": label})
+        cloned = dict(message)
+        cloned["content"] = kept_blocks
+        trimmed.append(cloned)
+    return trimmed
+
+
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
@@ -106,7 +184,7 @@ def auto_compact_threshold_percent() -> int:
     return max(50, min(95, value))
 
 # Cursor-style self-summarization prompt — produces structured, dense summaries
-SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation to preserve context after compaction. Produce a structured summary that lets the conversation continue seamlessly.
+SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation with Ajax, the user's AI assistant, to preserve context after compaction. Produce a structured summary that lets Ajax continue seamlessly. Ajax is the assistant's name; Odysseus is the app name.
 
 Use this format:
 

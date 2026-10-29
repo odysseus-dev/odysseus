@@ -311,14 +311,67 @@ class _Manager:
         pass
 
 
-def test_auto_title_inherits_chat_effort_when_utility_is_blank(util, monkeypatch):
+@pytest.fixture
+def title_registered_endpoint(tmp_path, monkeypatch):
+    import core.database as database
+    import src.database as compat_database
+    import src.endpoint_resolver as resolver
+    from tests.helpers.database import disposable_database
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setattr("src.settings.load_settings", lambda: {})
+    monkeypatch.setattr(resolver, "resolve_url", lambda url: url)
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(compat_database, "SessionLocal", factory)
+        monkeypatch.setattr(resolver, "SessionLocal", factory)
+        with factory() as db:
+            db.add(database.ModelEndpoint(id="chat", name="chat", owner="alice",
+                                          base_url=CHAT[0], is_enabled=True))
+            db.add(database.ModelEndpoint(id="shared", name="shared", owner=None,
+                                          base_url="https://shared.example/v1", is_enabled=True))
+            db.commit()
+        yield
+
+
+def test_auto_title_inherits_chat_effort_when_utility_is_blank(util, monkeypatch, title_registered_endpoint):
+    from routes import chat_helpers
+    from src.endpoint_resolver import build_chat_url
+
+    sent = _capture_llm(monkeypatch)
+    chat_url = build_chat_url(CHAT[0])
+    asyncio.run(chat_helpers.auto_name_session(_Manager(), _title_session(url=chat_url)))
+    assert sent == [(chat_url, CHAT[1], "low")]
+
+
+@pytest.mark.parametrize("owner,url", [
+    ("alice", "https://unregistered.example/v1"),
+    ("bob", CHAT[0]),
+    (None, "https://shared.example/v1"),
+    ("", "https://shared.example/v1"),
+    ("   ", "https://shared.example/v1"),
+    (" alice ", "https://shared.example/v1"),
+    ("system", "https://shared.example/v1"),
+    (42, "https://shared.example/v1"),
+])
+def test_auto_title_rejects_unauthorized_chat_endpoint_when_utility_is_blank(
+    util, monkeypatch, title_registered_endpoint, owner, url,
+):
     from routes import chat_helpers
 
     sent = _capture_llm(monkeypatch)
-    # Blank utility/task resolves to the session's own route.
-    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", lambda *a, **k: (CHAT[0], CHAT[1], {}))
-    asyncio.run(chat_helpers.auto_name_session(_Manager(), _title_session()))
-    assert sent == [(CHAT[0], CHAT[1], "low")]
+    asyncio.run(chat_helpers.auto_name_session(_Manager(), _title_session(owner=owner, url=url)))
+    assert sent == []
+
+
+def test_auto_title_missing_owner_fails_closed_in_single_user_mode(util, monkeypatch, title_registered_endpoint):
+    from routes import chat_helpers
+
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    sent = _capture_llm(monkeypatch)
+    asyncio.run(chat_helpers.auto_name_session(
+        _Manager(), _title_session(owner=None, url="https://shared.example/v1"),
+    ))
+    assert sent == []
 
 
 def test_auto_title_setting_beats_chat_effort(util, monkeypatch):
