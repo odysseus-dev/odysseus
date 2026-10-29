@@ -44,6 +44,283 @@ import { invalidateSettings } from './appConfig.js';
   const RUN_ID_ABORT_GRACE_MS = 2000; // timeout waits this long for a run-id header before hard-aborting
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
+  // Inline chat images share the editor's 8192px dimension ceiling, with a
+  // conservative 16MP budget for its multiple canvas surfaces. No blob URLs are
+  // needed here: chat previews use server-authorized upload references.
+  const _MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
+  const _MAX_INLINE_BYTES = 7 * 1024 * 1024;
+  const _MAX_IMAGE_DIMENSION = 8192;
+  const _MAX_IMAGE_PIXELS = 16 * 1024 * 1024;
+  let _inlineRasterCache = null; // One bounded source; repeated actions reuse its decode.
+
+  function _imageDimensionsAllowed(width, height) {
+    return width > 0 && height > 0 && width <= _MAX_IMAGE_DIMENSION &&
+      height <= _MAX_IMAGE_DIMENSION && width * height <= _MAX_IMAGE_PIXELS;
+  }
+
+  function _rasterDimensions(bytes, mime) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const ascii = (offset, text) => [...text].every((char, i) => bytes[offset + i] === char.charCodeAt(0));
+    if (mime === 'image/png' && bytes.length >= 33 &&
+        bytes[0] === 137 && ascii(1, 'PNG\r\n\x1a\n') && view.getUint32(8) === 13 && ascii(12, 'IHDR')) {
+      return [view.getUint32(16), view.getUint32(20)];
+    }
+    if (mime === 'image/gif' && bytes.length >= 13 && (ascii(0, 'GIF87a') || ascii(0, 'GIF89a'))) {
+      return [view.getUint16(6, true), view.getUint16(8, true)];
+    }
+    if (mime === 'image/jpeg' && bytes[0] === 255 && bytes[1] === 216) {
+      let pos = 2;
+      while (pos + 4 <= bytes.length) {
+        if (bytes[pos++] !== 255) return null;
+        while (bytes[pos] === 255) pos++;
+        const marker = bytes[pos++];
+        if (marker === 218 || marker === 217) break;
+        if (marker === 1 || (marker >= 208 && marker <= 215)) continue;
+        if (pos + 2 > bytes.length) return null;
+        const size = view.getUint16(pos);
+        if (size < 2 || pos + size > bytes.length) return null;
+        if (marker >= 192 && marker <= 207 && ![196, 200, 204].includes(marker) && size >= 8) {
+          return [view.getUint16(pos + 5), view.getUint16(pos + 3)];
+        }
+        pos += size;
+      }
+    }
+    if (mime === 'image/webp' && bytes.length >= 30 && ascii(0, 'RIFF') &&
+        view.getUint32(4, true) + 8 === bytes.length && ascii(8, 'WEBP')) {
+      if (ascii(12, 'VP8X')) return [1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16), 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16)];
+      if (ascii(12, 'VP8L') && bytes[20] === 47) return [1 + ((bytes[21] | (bytes[22] << 8)) & 16383), 1 + (((bytes[22] >> 6) | (bytes[23] << 2) | (bytes[24] << 10)) & 16383)];
+      if (ascii(12, 'VP8 ') && bytes[23] === 157 && bytes[24] === 1 && bytes[25] === 42) return [view.getUint16(26, true) & 16383, view.getUint16(28, true) & 16383];
+    }
+    return null;
+  }
+
+  function _inlineRaster(url) {
+    if (_inlineRasterCache?.url === url) return _inlineRasterCache;
+    const result = { url, valid: false };
+    _inlineRasterCache = result;
+    if (url.length > _MAX_DATA_URL_LENGTH) return result;
+    const match = /^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,/i.exec(url);
+    if (!match) return result;
+    const payload = url.slice(match[0].length);
+    if (!payload || payload.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return result;
+    const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+    const size = payload.length / 4 * 3 - padding;
+    if (size > _MAX_INLINE_BYTES) return result;
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    if (padding && (alphabet.indexOf(payload[payload.length - padding - 1]) & (padding === 2 ? 15 : 3))) return result;
+    try {
+      const bytes = typeof Uint8Array.fromBase64 === 'function' ? Uint8Array.fromBase64(payload) : (() => {
+        const binary = atob(payload); const array = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+        return array;
+      })();
+      const mime = match[1].toLowerCase().replace('image/jpg', 'image/jpeg');
+      const dimensions = _rasterDimensions(bytes, mime);
+      if (!dimensions || !_imageDimensionsAllowed(...dimensions)) return result;
+      Object.assign(result, { valid: true, bytes, mime, dimensions });
+    } catch (_) {}
+    return result;
+  }
+
+  // This synchronous guard rejects untrusted references before any fetch/decode.
+  // Inline images additionally require a successful browser decode before launch.
+  function _isAuthorizedImageUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (trimmed.startsWith('data:')) return _inlineRaster(trimmed).valid;
+    if (!trimmed || trimmed.startsWith('blob:') || trimmed.startsWith('//')) return false;
+    try {
+      const base = window.location.origin;
+      const parsed = new URL(trimmed, base);
+      return parsed.origin === base && !parsed.search && !parsed.hash &&
+        /^\/api\/(?:upload|gallery)\/[A-Za-z0-9_\-]+(?:\.[a-zA-Z0-9]+)?$/.test(parsed.pathname);
+    } catch (_) { return false; }
+  }
+
+  async function _validateInlineImage(url) {
+    const raster = _inlineRaster(url.trim());
+    if (!raster.valid) return false;
+    if (!raster.decoded) raster.decoded = (async () => {
+      try {
+        const image = await createImageBitmap(new Blob([raster.bytes], { type: raster.mime }));
+        try {
+          return _imageDimensionsAllowed(image.width, image.height) &&
+            image.width * image.height === raster.dimensions[0] * raster.dimensions[1];
+        } finally { image.close(); }
+      } catch (_) { return false; }
+      finally { raster.bytes = null; }
+    })();
+    return raster.decoded;
+  }
+
+  // Find the specific user message that originated the turn containing container.
+  function _findOriginatingUserMessage(container) {
+    if (!container) return null;
+    let curr = container.previousElementSibling;
+    while (curr) {
+      if (curr.classList && curr.classList.contains('msg-user')) {
+        return curr;
+      }
+      curr = curr.previousElementSibling;
+    }
+    const box = document.getElementById('chat-history');
+    if (box && box.contains(container)) {
+      const all = Array.from(box.querySelectorAll('.msg, .agent-thread, .ai-msg-wrap, .round-holder'));
+      const idx = all.findIndex((el) => el === container || el.contains(container));
+      if (idx > 0) {
+        for (let i = idx - 1; i >= 0; i--) {
+          if (all[i].classList && all[i].classList.contains('msg-user')) {
+            return all[i];
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // Resolve the image attached to the exact turn associated with container / action.
+  // Never falls back to unrelated images from earlier conversation turns.
+  function _attachedImageForTurn(container, action) {
+    const explicitId = action && (action.imageId || action.image_id || action.fileId || action.file_id);
+    if (explicitId && typeof explicitId === 'string' && /^[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9]+)?$/.test(explicitId)) {
+      return (API_BASE || '') + '/api/upload/' + explicitId;
+    }
+    const explicitUrl = action && (action.imageUrl || action.image_url);
+    if (explicitUrl) return _isAuthorizedImageUrl(explicitUrl) ? explicitUrl : null;
+
+    const userMsg = _findOriginatingUserMessage(container);
+    if (!userMsg) return null;
+
+    const previews = userMsg.querySelectorAll(
+      '.attach-image-preview[data-file-id], .attach-card[data-file-id]'
+    );
+    for (let i = previews.length - 1; i >= 0; i--) {
+      const fid = previews[i].dataset ? previews[i].dataset.fileId : null;
+      if (fid && /^[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9]+)?$/.test(fid)) {
+        return (API_BASE || '') + '/api/upload/' + fid;
+      }
+      const img = previews[i].querySelector('img');
+      const src = img ? (img.getAttribute('src') || '') : '';
+      if (_isAuthorizedImageUrl(src)) return src;
+    }
+
+    const imgs = userMsg.querySelectorAll('.attach-image-preview img, .attach-card img');
+    for (let i = imgs.length - 1; i >= 0; i--) {
+      const src = imgs[i].getAttribute('src') || '';
+      if (_isAuthorizedImageUrl(src)) return src;
+    }
+
+    return null;
+  }
+
+  function _currentAttachedImageUrl(container, action) {
+    return _attachedImageForTurn(container, action);
+  }
+
+  function _notifyError(msg) {
+    try {
+      if (uiModule && typeof uiModule.showError === 'function') {
+        uiModule.showError(msg);
+        return;
+      }
+    } catch (_) {}
+    console.warn('[chat]', msg);
+  }
+
+  // Render the one-click "Open in editor & apply" button on a photo-edit reply
+  // that had no open editor (photo_editor_action kind 'open_and_apply').
+  function renderPhotoEditorApplyButton(container, action) {
+    if (!container || !action || action.kind !== 'open_and_apply') return;
+    if (container.querySelector('.chat-open-in-editor-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chat-open-in-editor-btn';
+    btn.textContent = 'Open in editor & apply';
+    btn.style.cssText = 'margin-top:8px;padding:6px 12px;border-radius:6px;border:1px solid rgba(120,120,120,0.4);background:transparent;color:inherit;cursor:pointer;font:inherit;';
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        let imageUrl = _attachedImageForTurn(container, action);
+        if (!imageUrl) {
+          _notifyError('No attached photo found for this conversation turn.');
+          btn.disabled = false;
+          return;
+        }
+
+        if (!_isAuthorizedImageUrl(imageUrl)) {
+          _notifyError('Unauthorized or invalid image reference.');
+          btn.disabled = false;
+          return;
+        }
+
+        if (imageUrl.trim().startsWith('data:') && !await _validateInlineImage(imageUrl)) {
+          _notifyError('Invalid or oversized image attachment.');
+          return;
+        }
+        // Gallery references name an owner-scoped metadata resource, not image bytes.
+        if (!imageUrl.trim().startsWith('data:') && new URL(imageUrl, window.location.origin).pathname.startsWith('/api/gallery/')) {
+          const response = await fetch(imageUrl, { credentials: 'same-origin' });
+          if (!response.ok) { _notifyError('The gallery image is unavailable.'); return; }
+          const image = await response.json();
+          const source = new URL(image.url || '', window.location.origin);
+          if (source.origin !== window.location.origin || source.search || source.hash ||
+              !/^\/api\/generated-image\/[A-Za-z0-9_.-]+$/.test(source.pathname)) {
+            _notifyError('Invalid gallery image reference.'); return;
+          }
+          imageUrl = source.href;
+        }
+
+        // Verify attachment is accessible and authorized on the server before launching editor
+        if (imageUrl.includes('/api/upload/')) {
+          try {
+            const probe = await fetch(imageUrl, { method: 'HEAD' });
+            if (!probe.ok) {
+              if (probe.status === 404 || probe.status === 410) {
+                _notifyError('The attached image is no longer available or upload has expired.');
+              } else if (probe.status === 401 || probe.status === 403) {
+                _notifyError('You are not authorized to edit this attached image.');
+              } else {
+                _notifyError('Could not verify image attachment authorization.');
+              }
+              btn.disabled = false;
+              return;
+            }
+          } catch (_) {
+            _notifyError('Could not verify image attachment authorization.');
+            btn.disabled = false;
+            return;
+          }
+        }
+
+        if (typeof window.gePhotoEditorApply !== 'function') {
+          await import('/static/js/galleryEditor.js?v=20260909movepicklayer1');
+        }
+        await window.gePhotoEditorApply({
+          imageId: (action && (action.imageId || action.image_id)) || null,
+          imageUrl,
+          prompt: action.prompt || '',
+          displayName: 'Chat edit',
+        });
+      } catch (err) {
+        console.error('[chat] open_and_apply failed', err);
+        _notifyError('Failed to apply edit: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    container.appendChild(btn);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.__chatPhotoEditorTestHooks = {
+      _isAuthorizedImageUrl,
+      _findOriginatingUserMessage,
+      _attachedImageForTurn,
+      renderPhotoEditorApplyButton,
+    };
+  }
+
   let API_BASE = '';
   let currentAbort = null;
   let isStreaming = false;
@@ -4095,6 +4372,7 @@ import { invalidateSettings } from './appConfig.js';
                   threadAbove.classList.add('has-bottom');
                 }
                 terminalFinalResponseRendered = _renderTerminalAnswer(finalText, '', json.render_owner, json.replacement_scope);
+                if (json.photo_editor_action) renderPhotoEditorApplyButton(roundHolder, json.photo_editor_action);
                 lastContentRoundHolder = roundHolder || lastContentRoundHolder;
                 uiModule.scrollHistory();
                 continue;
@@ -6519,6 +6797,7 @@ import { invalidateSettings } from './appConfig.js';
             gotDelta = true;
             try { spinner.destroy(); } catch (_) {}
             renderDelta(json);
+            if (json.photo_editor_action) renderPhotoEditorApplyButton(roundHolder, json.photo_editor_action);
             replayRendering.settle();
           } else if (json.delta) {
             if (!replayRendering.accepts(json)) continue;

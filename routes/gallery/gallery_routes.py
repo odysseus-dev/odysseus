@@ -683,9 +683,15 @@ def _visible_image_endpoint_for_base(db, base: str, owner: str | None, model: st
                     configured.update(v for v in values if isinstance(v, str))
                 except (TypeError, ValueError):
                     pass
-            if model not in configured or not looks_like_image_generation_model(model):
-                continue
-        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if model:
+                if model not in configured or not looks_like_image_generation_model(model):
+                    continue
+            else:
+                if not any(looks_like_image_generation_model(v) for v in configured):
+                    continue
+        ep_id = str(getattr(ep, "id", "") or "")
+        ep_base = _normalize_image_endpoint_base(getattr(ep, "base_url", ""))
+        if (ep_id and (base == ep_id or target == ep_id)) or (ep_base and ep_base == target):
             if owner and getattr(ep, "owner", None) == owner:
                 return ep
             if fallback is None:
@@ -712,7 +718,7 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
     )
     if not ok:
         raise HTTPException(502, f"Upstream returned an unsafe image URL: {reason}")
-    async with httpx.AsyncClient(timeout=60) as c2:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False) as c2:
         ir = await c2.get(url)
         if ir.status_code == 200:
             return base64.b64encode(ir.content).decode()
@@ -1730,7 +1736,7 @@ def setup_gallery_routes() -> APIRouter:
         requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
-        if requested_base:
+        if requested_base and "://" in requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
@@ -2076,7 +2082,7 @@ def setup_gallery_routes() -> APIRouter:
         runs off the event loop (large images).
         """
         requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
-        if requested_base:
+        if requested_base and "://" in requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
@@ -2169,26 +2175,38 @@ def setup_gallery_routes() -> APIRouter:
         try:
             ep = None
             if endpoint_id:
-                ep = owner_filter(
-                    db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id),
-                    ModelEndpoint, user,
-                ).first()
-            if ep is None and requested_base:
+                ep = _visible_image_endpoint_for_base(db, endpoint_id, user)
+                if ep is None:
+                    return {"available": False, "reason": "endpoint not found or disabled"}
+            elif requested_base:
                 ep = _visible_image_endpoint_for_base(db, requested_base, user)
-            if ep is None:
+                if ep is None:
+                    return {"available": False, "reason": "endpoint not found or disabled"}
+            else:
                 ep = _first_visible_image_endpoint(db, user)
             if ep is None:
                 return {"available": False, "reason": "no image endpoint configured"}
             base = ep.base_url.rstrip("/")
         finally:
             db.close()
+
+        from src.url_safety import check_outbound_url
+        block_private = os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+        ok, reason = check_outbound_url(base, block_private=block_private)
+        if not ok:
+            # CodeQL #1203: Never expose internal addresses, resolver errors or raw
+            # exception details to clients or logs. Use a stable diagnostic message
+            # without interpolating untrusted exception content or destination strings.
+            logger.warning("edit-progress endpoint rejected: outbound URL policy check failed")
+            return {"available": False, "reason": "endpoint URL rejected"}
+
         if not base.endswith("/v1"):
             base += "/v1"
         # Dynamic path segment (validated token above), so not routed through
         # _join_checked_gallery_endpoint's exact-match whitelist.
         url = f"{base}/images/progress/{request_id}"
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
                 r = await client.get(url)
             if r.status_code == 200:
                 data = r.json()
@@ -2226,7 +2244,7 @@ def setup_gallery_routes() -> APIRouter:
         # below, so validate it first (mirrors routes/embedding_routes.py).
         # Local-first means loopback/LAN is allowed by default; the cloud
         # metadata range and non-HTTP(S) schemes are always rejected.
-        if requested_base:
+        if requested_base and "://" in requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
@@ -2253,7 +2271,7 @@ def setup_gallery_routes() -> APIRouter:
             # so the outbound URL never depends directly on request-body input.
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+                ep = _visible_image_endpoint_for_base(db, requested_base, user, model)
                 if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
                 base = ep.base_url.rstrip("/")

@@ -1,9 +1,8 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
 test('Ctrl-click thumbnail shows pixel selection even after outlines were hidden', async ({ page }) => {
-  // Notification polling requires login even in the auth-disabled test server.
-  await page.route('**/api/tasks/notification-logs*', route => route.fulfill({ json: { logs: [] } }));
   await openBlankEditor(page, { width: 240, height: 160 }, 'Thumbnail selection');
   const id = await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
@@ -31,7 +30,6 @@ test('Ctrl-click thumbnail shows pixel selection even after outlines were hidden
 test('selected layers align to the canvas and undo as one operation', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Alignment E2E');
   await page.locator('#ge-add-layer').click();
-  await page.locator('.ge-add-layer-menu [data-layer-kind="raster"]').click();
   await page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
     const edit = state.layers.find(layer => layer.name === 'Edit');
@@ -110,7 +108,6 @@ test('group rows can be selected with the keyboard', async ({ page }) => {
 test('Delete removes the selected layer and undo restores it', async ({ page }) => {
   await openBlankEditor(page, { width: 240, height: 160 }, 'Keyboard delete E2E');
   await page.locator('#ge-add-layer').click();
-  await page.locator('.ge-add-layer-menu [data-layer-kind="raster"]').click();
   const addedId = (await editorState(page)).activeLayerId;
   await page.locator(`.ge-layer-item[data-layer-id="${addedId}"]`).click();
   await page.keyboard.press('Backspace');
@@ -133,19 +130,19 @@ test('Ctrl/Cmd+J duplicates the active layer through the layer panel path', asyn
 
 test('move tool can auto-select the topmost visible layer under the pointer', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Auto-select E2E');
-  await page.locator('.ge-tool-btn[data-tool="shape"]').click();
+  await selectTool(page, 'shape');
   await dragOnCanvas(page, { x: 0.25, y: 0.25 }, { x: 0.75, y: 0.75 });
   const shape = (await editorState(page)).layers.find(layer => layer.kind === 'shape');
   expect(shape).toBeTruthy();
 
   await page.locator('.ge-layer-item[data-layer-id]').filter({ hasText: 'Background' }).first().click();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await expect(page.locator('.ge-auto-select-option')).toBeVisible();
   await page.locator('.ge-auto-select-option').click();
   await expect(page.locator('#ge-auto-select-layer')).toBeChecked();
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('.ge-auto-select-option')).toBeHidden();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await expect(page.locator('.ge-auto-select-option')).toBeVisible();
   const box = await page.locator('.ge-main-canvas').boundingBox();
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
@@ -163,7 +160,7 @@ test('multi-selected layers move together and support history-backed bulk action
   expect((await editorState(page)).selectedLayerIds).toHaveLength(2);
   await expect(page.locator('#ge-layer-selection-bar')).toBeVisible();
 
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await dragOnCanvas(page, { x: 0.42, y: 0.42 }, { x: 0.52, y: 0.50 });
   let current = await editorState(page);
   const edit = current.layers.find(layer => layer.name === 'Edit');
@@ -192,7 +189,6 @@ test('multi-selected layers move together and support history-backed bulk action
 
   await editRow.click();
   await page.locator('#ge-add-layer').click();
-  await page.locator('.ge-add-layer-menu [data-layer-kind="raster"]').click();
   const addedId = (await editorState(page)).activeLayerId;
   await editRow.click({ modifiers: ['Control'] });
   await expect(page.locator('.ge-layer-item.selected[data-layer-id]')).toHaveCount(2);
@@ -236,7 +232,7 @@ test('layer groups composite, lock, collapse, undo, and survive server reopen', 
   await page.locator('.ge-layer-group-row .ge-layer-lock-btn').click();
 
   await page.locator('.ge-layer-group-row').click();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await dragOnCanvas(page, { x: 0.40, y: 0.40 }, { x: 0.52, y: 0.48 });
   current = await editorState(page);
   expect(current.layers[0].offset).toEqual(current.layers[1].offset);
@@ -260,7 +256,7 @@ test('layer groups composite, lock, collapse, undo, and survive server reopen', 
   await expect(page.locator('.ge-layer-item.grouped')).toHaveCount(0);
 
   await page.locator('.ge-layer-group-row').click();
-  await page.locator('#ge-layer-tools button[title="Ungroup layers"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Ungroup layers"]').click();
   expect((await editorState(page)).groups).toHaveLength(0);
   await page.locator('#ge-undo').click();
   expect((await editorState(page)).groups).toHaveLength(1);
@@ -277,7 +273,6 @@ test('nested groups preserve hierarchy, ancestor locks, collapse, and server reo
   const innerId = current.groups[0].id;
 
   await page.locator('#ge-add-layer').click();
-  await page.locator('.ge-add-layer-menu [data-layer-kind="raster"]').click();
   current = await editorState(page);
   const looseId = current.activeLayerId;
   await page.locator(`.ge-layer-group-row[data-group-id="${innerId}"]`).click();
@@ -318,7 +313,7 @@ test('nested groups preserve hierarchy, ancestor locks, collapse, and server reo
   await expect(page.locator('.ge-layer-group-row')).toHaveCount(2);
 
   await page.locator(`.ge-layer-group-row[data-group-id="${outer.id}"]`).click();
-  await page.locator('#ge-layer-tools button[title="Ungroup layers"]').click();
+  await page.locator('.ge-layer-controls:visible button[title="Ungroup layers"]').click();
   current = await editorState(page);
   expect(current.groups).toHaveLength(1);
   expect(current.groups[0]).toMatchObject({ id: inner.id, parentId: null });

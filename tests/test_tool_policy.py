@@ -3087,7 +3087,7 @@ def test_qwen_explicit_admin_requests_build_safe_args():
     )
     assert al._parse_qwen_explicit_admin_request("turn image generation back on now") == (
         "manage_settings",
-        json.dumps({"action": "enable_tool", "tool": "images"}),
+        json.dumps({"action": "list_tools"}),
     )
     assert al._parse_qwen_explicit_admin_request("list API tokens by name and prefix only") == (
         "manage_tokens",

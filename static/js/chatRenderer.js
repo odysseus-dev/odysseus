@@ -457,6 +457,7 @@ function _makeActionBtn(className, title, text, handler) {
   btn.className = className;
   btn.type = 'button';
   btn.title = title;
+  btn.setAttribute('aria-label', title);
   btn.textContent = text;
   btn.addEventListener('click', handler);
   return btn;
@@ -2375,6 +2376,7 @@ export function createMsgFooter(msgElement, { animate = false } = {}) {
     moreBtn.className = 'msg-action-btn msg-more-btn';
     moreBtn.type = 'button';
     moreBtn.title = 'More actions';
+    moreBtn.setAttribute('aria-label', 'More actions');
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2571,6 +2573,7 @@ export function createUserMsgFooter(msgElement) {
     moreBtn.className = 'msg-action-btn msg-more-btn';
     moreBtn.type = 'button';
     moreBtn.title = 'More actions';
+    moreBtn.setAttribute('aria-label', 'More actions');
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3443,7 +3446,8 @@ export function addMessage(role, content, modelName, metadata) {
           for (const ev of roundTools) {
             const image = generatedImageResult(ev);
             if (image) {
-              box.appendChild(buildImageBubble(image.image_url, image.image_prompt, image.image_model, image.image_size, image.image_quality, image.image_id));
+              const imgBubble = buildImageBubble(image.image_url, image.image_prompt, image.image_model, image.image_size, image.image_quality, image.image_id);
+              box.appendChild(imgBubble);
             }
           }
         }

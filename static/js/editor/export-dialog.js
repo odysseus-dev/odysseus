@@ -1,9 +1,12 @@
 /** Controlled image export dialog and canvas encoding helpers. */
 
+import { exportPsd } from './psd.js';
+
 const FORMAT_META = {
   png: { mime: 'image/png', extension: 'png', quality: undefined },
   jpeg: { mime: 'image/jpeg', extension: 'jpg', quality: 0.9 },
   webp: { mime: 'image/webp', extension: 'webp', quality: 0.9 },
+  psd: { mime: 'image/vnd.adobe.photoshop', extension: 'psd', quality: undefined },
 };
 
 function clampNumber(value, min, max, fallback) {
@@ -43,6 +46,14 @@ export function prepareExportCanvas(sourceCanvas, settings) {
 export function encodeExportCanvas(sourceCanvas, settings) {
   const normalized = normalizeExportSettings(settings, sourceCanvas.width, sourceCanvas.height);
   const output = prepareExportCanvas(sourceCanvas, normalized);
+  if (normalized.format === 'psd') {
+    const bytes = exportPsd(output);
+    return Promise.resolve({
+      blob: new Blob([bytes], { type: FORMAT_META.psd.mime }),
+      settings: normalized,
+      extension: 'psd',
+    });
+  }
   const meta = FORMAT_META[normalized.format];
   return new Promise((resolve, reject) => {
     output.toBlob(
@@ -86,6 +97,7 @@ export function openExportDialog({
               <button type="button" class="active" data-format="png">PNG</button>
               <button type="button" data-format="jpeg">JPEG</button>
               <button type="button" data-format="webp">WebP</button>
+              <button type="button" data-format="psd">PSD</button>
             </div></div>
             <div class="ge-export-dimensions">
               <label class="ge-export-field"><span>Width</span><input id="ge-export-width" type="number" min="1" max="16384" value="${sourceCanvas.width}" /></label>

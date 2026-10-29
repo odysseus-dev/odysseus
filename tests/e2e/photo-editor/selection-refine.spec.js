@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers');
 
 async function openRefine(page) {
@@ -23,9 +24,9 @@ async function drawLasso(page, points) {
 
 test('selection clipboard copy and paste creates an undoable independent layer', async ({ page, request }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Selection clipboard');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.18, y: 0.24 }, { x: 0.72, y: 0.68 });
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.25, y: 0.25 }, { x: 0.65, y: 0.65 });
 
   const before = await editorState(page);
@@ -55,11 +56,11 @@ test('selection clipboard copy and paste creates an undoable independent layer',
   await request.delete(`/api/editor-drafts/${encodeURIComponent(draftId)}`);
 });
 
-test('cut selection is one undoable move from source to new layer', async ({ page }) => {
+test('cut selection removes source pixels in one undoable step', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Selection cut');
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.18, y: 0.24 }, { x: 0.72, y: 0.68 });
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.25, y: 0.25 }, { x: 0.65, y: 0.65 });
 
   const before = await editorState(page);
@@ -76,9 +77,11 @@ test('cut selection is one undoable move from source to new layer', async ({ pag
   });
   const beforeSource = await sourceSignature();
   await page.keyboard.press('Control+x');
-  await expect(page.locator('.ge-layer-item').filter({ hasText: 'Wand copy' })).toBeVisible();
+  // Cut copies to the clipboard and erases the selected pixels in place —
+  // it does not create a new layer (that is Ctrl+Shift+J, Layer via Cut).
   const cut = await editorState(page);
-  expect(cut.layers).toHaveLength(before.layers.length + 1);
+  expect(cut.layers).toHaveLength(before.layers.length);
+  expect(cut.selection).toBeNull();
   expect(await sourceSignature()).not.toBe(beforeSource);
 
   await page.locator('#ge-undo').click();
@@ -93,9 +96,9 @@ test('completed lasso copy preserves the source layer coordinate space', async (
     state.layerOffsets.set(state.activeLayerId, { x: 32, y: 24 });
     window.galleryEditorComposite?.();
   });
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.28, y: 0.3 }, { x: 0.62, y: 0.58 });
-  await page.locator('.ge-tool-btn[data-tool="lasso"]').click();
+  await selectTool(page, 'lasso');
   await drawLasso(page, [[0.26, 0.26], [0.68, 0.26], [0.68, 0.64], [0.26, 0.64]]);
 
   const before = await editorState(page);
@@ -110,7 +113,7 @@ test('completed lasso copy preserves the source layer coordinate space', async (
 
 test('selection refine previews safely and layer masks round-trip to selection', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Selection refinement');
-  await page.locator('.ge-tool-btn[data-tool="marquee"]').click();
+  await selectTool(page, 'marquee');
   await dragOnCanvas(page, { x: 0.25, y: 0.25 }, { x: 0.55, y: 0.55 });
   const original = (await editorState(page)).selection;
 
@@ -132,7 +135,7 @@ test('selection refine previews safely and layer masks round-trip to selection',
   expect(refined.bounds.width).toBeGreaterThan(original.bounds.width);
   expect(refined.pixelHash).not.toBe(original.pixelHash);
 
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
   let current = await editorState(page);
   const active = current.layers.find(layer => layer.id === current.activeLayerId);
   expect(active.masks).toHaveLength(1);
@@ -149,7 +152,7 @@ test('selection refine previews safely and layer masks round-trip to selection',
 
 test('lasso uses the shared replace, add, subtract, and intersect modes', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Lasso combine modes');
-  await page.locator('.ge-tool-btn[data-tool="lasso"]').click();
+  await selectTool(page, 'lasso');
   await drawLasso(page, [[0.1, 0.2], [0.35, 0.2], [0.35, 0.55], [0.1, 0.55]]);
   const first = (await editorState(page)).selection;
   expect(first.source).toBe('lasso');

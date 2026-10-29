@@ -65,6 +65,38 @@ export function transformPopupHTML() {
           <button type="button" data-spin="up" tabindex="-1" aria-label="Rotate +1°">+</button>
         </span>
       </div>
+      <div class="ge-transform-field">
+        <label>⇱</label>
+        <input type="number" class="ge-transform-popup-input" id="ge-transform-skew-x" step="1" value="0" aria-label="Horizontal skew" />
+        <span class="ge-transform-spin" data-spin-for="ge-transform-skew-x">
+          <button type="button" data-spin="down" tabindex="-1" aria-label="Skew X -1°">−</button>
+          <button type="button" data-spin="up" tabindex="-1" aria-label="Skew X +1°">+</button>
+        </span>
+      </div>
+      <div class="ge-transform-field">
+        <label>⇲</label>
+        <input type="number" class="ge-transform-popup-input" id="ge-transform-skew-y" step="1" value="0" aria-label="Vertical skew" />
+        <span class="ge-transform-spin" data-spin-for="ge-transform-skew-y">
+          <button type="button" data-spin="down" tabindex="-1" aria-label="Skew Y -1°">−</button>
+          <button type="button" data-spin="up" tabindex="-1" aria-label="Skew Y +1°">+</button>
+        </span>
+      </div>
+      <div class="ge-transform-field">
+        <label>⤒</label>
+        <input type="number" class="ge-transform-popup-input" id="ge-transform-persp-x" step="1" value="0" aria-label="Horizontal perspective" />
+        <span class="ge-transform-spin" data-spin-for="ge-transform-persp-x">
+          <button type="button" data-spin="down" tabindex="-1" aria-label="Perspective X -1">−</button>
+          <button type="button" data-spin="up" tabindex="-1" aria-label="Perspective X +1">+</button>
+        </span>
+      </div>
+      <div class="ge-transform-field">
+        <label>⤓</label>
+        <input type="number" class="ge-transform-popup-input" id="ge-transform-persp-y" step="1" value="0" aria-label="Vertical perspective" />
+        <span class="ge-transform-spin" data-spin-for="ge-transform-persp-y">
+          <button type="button" data-spin="down" tabindex="-1" aria-label="Perspective Y -1">−</button>
+          <button type="button" data-spin="up" tabindex="-1" aria-label="Perspective Y +1">+</button>
+        </span>
+      </div>
       <span class="ge-transform-quick" aria-label="Transform actions">
         <button type="button" class="ge-transform-quick-btn" id="ge-transform-flip-h" title="Flip horizontally" aria-label="Flip horizontally">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="m8 7-4 5 4 5"/><path d="m16 7 4 5-4 5"/></svg>
@@ -79,8 +111,8 @@ export function transformPopupHTML() {
       <button type="button" class="ge-btn ge-btn-sm" id="ge-transform-cancel-btn">Cancel</button>
       <button type="button" class="ge-btn ge-btn-sm ge-btn-primary" id="ge-transform-apply">Apply</button>
     </div>
-    <label class="ge-transform-preserve-field">
-      <input type="checkbox" id="ge-transform-preserve-source" />
+    <label class="ge-transform-preserve-field" title="Preserve source pixels (applies the transform non-destructively)">
+      <input type="checkbox" id="ge-transform-preserve-source" aria-label="Preserve source pixels" />
       <span>Preserve source pixels</span>
     </label>
     <p class="ge-transform-popup-hint">Type <strong>-</strong> before W / H to flip.</p>

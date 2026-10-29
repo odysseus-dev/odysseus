@@ -34,6 +34,8 @@ export function shortcutsPopupHTML() {
           <div><kbd>W</kbd> Wand</div>
           <div><kbd>${TOOL_SHORTCUTS.marquee}</kbd> Marquee</div>
           <div><kbd>C</kbd> Crop</div>
+          <div><kbd>${TOOL_SHORTCUTS.gradient}</kbd> Gradient</div>
+          <div><kbd>${TOOL_SHORTCUTS.zoom}</kbd> Zoom <span style="opacity:0.5">(Alt-click = zoom out)</span></div>
         </div>
         <div class="ge-shortcuts-col">
           <h5>Edit</h5>
@@ -62,6 +64,13 @@ export function shortcutsPopupHTML() {
           <div><kbd>]</kbd> Brush size +</div>
           <div>Drag tolerance slider → live wand retune</div>
         </div>
+        <div class="ge-shortcuts-col">
+          <h5>Touch</h5>
+          <div>Pinch → Zoom</div>
+          <div>Two-finger drag → Pan</div>
+          <div>Two-finger tap → Undo</div>
+          <div>Three-finger tap → Redo</div>
+        </div>
       </div>
       <div style="margin-top:8px;font-size:10px;opacity:0.5;text-align:center;">Press <kbd>?</kbd> or click the keyboard icon to toggle.</div>
     `;
@@ -81,6 +90,7 @@ export function historyPanelHTML(historyIcon) {
         <button class="ge-adj-min" type="button" title="Minimise">&minus;</button>
       </span>
     </div>
+    <div class="ge-history-snapshots" id="ge-history-snapshots"></div>
     <div class="ge-history-list" id="ge-history-list"></div>
   `;
 }
@@ -95,6 +105,7 @@ export function canvasSizePromptHTML() {
         <div class="modal-content ge-canvas-prompt">
           <div class="modal-header"><h4 id="ge-canvas-prompt-title">New project</h4></div>
           <div class="modal-body">
+            <div class="ge-canvas-preview" hidden><img id="ge-canvas-prompt-preview" alt="Image preview" /></div>
             <div class="ge-canvas-prompt-section-label"><svg class="ge-canvas-prompt-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M9 3v18"></path></svg><span>Resolution templates</span></div>
             <div class="ge-canvas-preset-grid" role="group" aria-label="Resolution templates">
               <button type="button" class="ge-canvas-preset" data-canvas-preset="1024x1024"><svg class="ge-canvas-preset-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="1"></rect></svg><span>Square</span><strong>1024 × 1024</strong></button>
@@ -126,6 +137,7 @@ export function canvasSizePromptHTML() {
             <div class="ge-canvas-resize-options">
               <label class="ge-canvas-lock-option"><input type="checkbox" id="ge-canvas-prompt-lock" /> <span>Keep proportions</span></label>
               <label class="ge-canvas-interpolation-field"><span class="ge-canvas-control-label"><svg class="ge-canvas-prompt-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18 9 13l3 3 8-8"></path><path d="M15 8h5v5"></path></svg><span>Interpolation</span></span><select id="ge-canvas-prompt-interpolation"><option value="high">Smooth</option><option value="medium">Balanced</option><option value="low">Crisp</option></select></label>
+              <label class="ge-canvas-resolution-field" hidden><span class="ge-canvas-control-label"><span>Resolution</span></span><input type="number" id="ge-canvas-prompt-resolution" min="1" max="1000" value="72" /><span class="ge-canvas-resolution-unit">px/inch</span></label>
             </div>
           </div>
           <div class="modal-footer ge-canvas-prompt-footer">

@@ -57,6 +57,16 @@ def test_moves_share_pixels_but_keep_independent_offsets_and_changed_pixels():
     assert run_node(script) == {"count": 20, "bytes": 400, "first": 0, "last": 19, "shared": True, "changed": True}
 
 
+def test_moves_share_pixels_with_a_four_byte_comparison():
+    # The pixel comparison runs over every byte of every layer on each undo
+    # snapshot; comparing Uint32 words keeps pen/selection commits fast.
+    source = (ROOT / "static/js/editor/history-budget.js").read_text(encoding="utf-8")
+    assert "function samePixels(image, other) {" in source
+    assert "new Uint32Array(image.data.buffer, image.data.byteOffset, length >> 2)" in source
+    assert "new Uint32Array(other.data.buffer, other.data.byteOffset, length >> 2)" in source
+    assert "candidates.find(other => samePixels(image, other))" in source
+
+
 def test_history_budget_counts_saved_selections_and_group_masks():
     script = textwrap.dedent(
         f"""

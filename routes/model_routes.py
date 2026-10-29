@@ -7,6 +7,7 @@ import json
 import hashlib
 import ipaddress
 import socket
+import secrets
 import time as _time
 import logging
 import threading
@@ -3091,6 +3092,12 @@ def setup_model_routes(model_discovery):
     def update_tools(body: ToolsUpdate, request: Request):
         """Update which tools are disabled."""
         require_admin(request)
+        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+        internal_token = request.headers.get(INTERNAL_TOOL_HEADER)
+        if internal_token and secrets.compare_digest(internal_token, INTERNAL_TOOL_TOKEN):
+            # Owner impersonation can carry an admin username, so check the
+            # authenticated transport rather than request.state.current_user.
+            raise HTTPException(403, "Change tool policy in Settings > Agent Tools, not from chat")
         settings = _load_settings()
         settings["disabled_tools"] = body.disabled
         _save_settings(settings)
