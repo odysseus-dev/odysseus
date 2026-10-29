@@ -348,6 +348,8 @@ function moduleSource(relativePath) {
     },
     makeWindowDraggable: (...args) => dragCalls.push(args),
     clearDockSide: (...args) => dockCalls.push(args),
+    restoreMinimizedModal: () => false,
+    clearTimeout() {},
     setTimeout: callback => { callback(); return 1; },
     WeakSet,
   };
@@ -356,6 +358,7 @@ function moduleSource(relativePath) {
   vm.runInContext(moduleSource('search.js'), context, { filename: 'search.js' });
   vm.runInContext(moduleSource('sidebar.js'), context, { filename: 'sidebar.js' });
   vm.runInContext(moduleSource('navigation.js'), context, { filename: 'navigation.js' });
+  vm.runInContext(moduleSource('../modalVisibility.js'), context, { filename: 'modalVisibility.js' });
   vm.runInContext(moduleSource('lifecycle.js'), context, { filename: 'lifecycle.js' });
   vm.runInContext(moduleSource('dom.js'), context, { filename: 'dom.js' });
 

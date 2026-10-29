@@ -7,6 +7,8 @@ import { initColorPickers, attachColorPicker } from './colorPicker.js?v=20260910
 import { hexToRgb } from './color/hex.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js?v=20260910responsivebounds1';
+import { toggle as restoreMinimizedModal } from './modalManager.js';
+import { showModal, hideModal } from './modalVisibility.js';
 
 export const THEMES = {
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
@@ -1570,31 +1572,29 @@ export function makeDraggable(el, handle) {
 }
 
 // Toggle the popup
+export function openPopup() {
+  const modal = document.getElementById('theme-modal');
+  if (!modal) return;
+  restoreMinimizedModal(modal.id);
+  showModal(modal);
+}
+
 export function togglePopup() {
   const modal = document.getElementById('theme-modal');
   if (!modal) return;
-  const visible = !modal.classList.contains('hidden');
+  const visible = !modal.classList.contains('hidden')
+    && !modal.classList.contains('modal-minimized')
+    && !modal.querySelector('.modal-closing');
   if (visible) {
-    modal.classList.add('hidden');
+    closePopup();
   } else {
-    modal.classList.remove('hidden');
+    openPopup();
   }
 }
 
 export function closePopup() {
   const modal = document.getElementById('theme-modal');
-  if (!modal) return;
-  const content = modal.querySelector('.modal-content');
-  if (content && !content.classList.contains('modal-closing')) {
-    content.classList.add('modal-closing');
-    content.addEventListener('animationend', () => {
-      modal.classList.add('hidden');
-      content.classList.remove('modal-closing');
-    }, { once: true });
-    setTimeout(() => { if (!modal.classList.contains('hidden')) { modal.classList.add('hidden'); content.classList.remove('modal-closing'); } }, 250);
-  } else {
-    modal.classList.add('hidden');
-  }
+  hideModal(modal);
 }
 
 // Expose for app.js wiring + AI ui_control
@@ -2278,7 +2278,7 @@ function _initEmbers() {
   draw();
 }
 
-const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
+const themeModule = { initThemeUI, openPopup, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize, applyBgEffectSpeed,
                        applyFrostedGlass,
