@@ -1,0 +1,74 @@
+name: Brush diagnostic (non-authoritative)
+
+on:
+  push:
+    branches: [test/remediation-brush-diagnostic-ubuntu]
+
+permissions:
+  contents: read
+
+jobs:
+  browser-diagnostic:
+    name: Chromium application regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ODYSSEUS_E2E_DISPOSABLE_ARTIFACTS: '1'
+      ODYSSEUS_TEST_PYTHON: python
+      CHROMADB_HOST: 127.0.0.1
+      CHROMADB_PORT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg and establish system trust
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates
+          python scripts/check_ca_trust.py --system
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.13.5'
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+          prune-cache: false
+      - run: |
+          uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
+          python scripts/check_ca_trust.py --python
+          uv pip install --system -r requirements.txt
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      - name: Compare trace modes and preserve exact threshold
+        shell: bash
+        run: |
+          lscpu | head -30
+          python --version
+          node --version
+          for mode in retain-on-failure off on; do
+            for sample in 1 2 3; do
+              echo "DIAGNOSTIC_MODE=$mode SAMPLE=$sample"
+              BRUSH_DIAGNOSTIC_MODE="$mode-$sample" npx playwright test --config tests/e2e/playwright.config.js --grep 'long sampled strokes' --trace "$mode" --reporter=line || true
+            done
+          done
+      - name: Run normal prefix through brush case
+        shell: bash
+        run: |
+          BRUSH_DIAGNOSTIC_MODE=normal-prefix npx playwright test --config tests/e2e/playwright.config.js tests/e2e/photo-editor/adjustment-layers.spec.js tests/e2e/photo-editor/app-compare-mobile.spec.js tests/e2e/photo-editor/brush-cursor.spec.js tests/e2e/photo-editor/brush-engine.spec.js --grep-invert 'eyedropper and retouch' --reporter=line || true
+      - name: Six-second main-thread stall negative control
+        shell: bash
+        run: |
+          if BRUSH_DIAGNOSTIC_STALL=1 BRUSH_DIAGNOSTIC_MODE=stall npx playwright test --config tests/e2e/playwright.config.js --grep 'long sampled strokes' --trace off --reporter=line; then
+            echo 'ERROR: negative control was not detected'
+            exit 1
+          fi

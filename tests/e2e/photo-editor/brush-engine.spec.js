@@ -69,6 +69,8 @@ test('long sampled strokes stay responsive and undo atomically', async ({ page, 
   const metrics = browserName === 'chromium' ? await page.context().newCDPSession(page) : null;
   if (metrics) await metrics.send('Performance.enable');
   const taskTime = async () => (await metrics.send('Performance.getMetrics')).metrics.find(item => item.name === 'TaskDuration').value *1000;
+  const metricSnapshot = async () => Object.fromEntries((await metrics.send('Performance.getMetrics')).metrics.filter(x => ['TaskDuration','ScriptDuration','LayoutDuration','RecalcStyleDuration'].includes(x.name)).map(x => [x.name, x.value * 1000]));
+  const beforeMetrics = metrics ? await metricSnapshot() : {};
   const beforeTask = metrics ? await taskTime() : null;
   const startedAt = Date.now();
   await page.mouse.move(start.x, start.y);
@@ -76,7 +78,10 @@ test('long sampled strokes stay responsive and undo atomically', async ({ page, 
   await page.mouse.move(end.x, end.y, { steps: 240 });
   await page.mouse.up();
   const strokeDuration = Date.now() - startedAt;
+  if (process.env.BRUSH_DIAGNOSTIC_STALL === '1') await page.evaluate(() => { const until = performance.now() + 6000; while (performance.now() < until) {} });
   const mainThreadDuration = metrics ? (await taskTime()) - beforeTask : null;
+  const afterMetrics = metrics ? await metricSnapshot() : {};
+  console.log('BRUSH_DIAGNOSTIC ' + JSON.stringify({mode: process.env.BRUSH_DIAGNOSTIC_MODE, samples: 240, strokeDuration, controlDuration, mainThreadDuration, breakdown: Object.fromEntries(Object.keys(beforeMetrics).map(k => [k, afterMetrics[k] - beforeMetrics[k]]))}));
   if (metrics) await metrics.detach();
   await testInfo.attach('stroke-timing', { body: Buffer.from(JSON.stringify({
     samples: 240, strokeDuration, controlDuration, mainThreadDuration,
