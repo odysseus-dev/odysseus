@@ -186,7 +186,7 @@ export function handleUIControl(uiData) {
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'calendar') {
-        import('./calendar.js?v=20261028calendarinline1').then(function(mod) {
+        import('./calendar.js?v=20260914emailsource11').then(function(mod) {
           var viewFn = mod.openCalendarView || (mod.default && mod.default.openCalendarView);
           var fn = mod.openCalendar || (mod.default && mod.default.openCalendar);
           if (viewFn && (uiData.view || uiData.target_date)) viewFn(uiData.view || 'month', uiData.target_date || '');
@@ -212,6 +212,8 @@ export function handleUIControl(uiData) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
           if (fn) fn();
         }).catch(function(){});
+      } else if (panel === 'tasks') {
+        document.getElementById('tool-tasks-btn')?.click();
       } else if (panel === 'theme' || panel === 'themes') {
         import('./theme.js?v=20260911organsrain1').then(function(mod) {
           var fn = mod.togglePopup || (mod.default && mod.default.togglePopup);

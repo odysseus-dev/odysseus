@@ -810,7 +810,10 @@ async function _pick(m) {
         _renderLoading('Loading models…');
       }
       if (window.modelsModule && window.modelsModule.refreshModels) {
-        _refreshPickerModels({ force: true, showLoading: !hasCache }).then(isLatest => {
+        // Open instantly from cache; never force a re-probe on open (a dead
+        // endpoint would otherwise stall every open). The explicit refresh
+        // button still forces a full re-probe.
+        _refreshPickerModels({ force: false, showLoading: !hasCache }).then(isLatest => {
           if (isLatest && !menu.classList.contains('hidden')) _populate(search.value || '');
           updateModelPicker();
         }).catch(() => {});
