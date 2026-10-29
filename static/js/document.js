@@ -1996,6 +1996,17 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
   // Active drop mode for the PDF toolbar — toolbar buttons set this; the
   // next click on a page consumes it. null means clicks do nothing.
   let _pdfDropMode = null;
+  let _pdfAnnotationDragging = false;
+  function _setPdfAnnotationDragging(dragging) {
+    _pdfAnnotationDragging = dragging;
+    for (const ref of _pdfPaneAnnotationsByDoc.get(activeDocId) || []) {
+      ref._refreshHandles?.();
+      if (dragging) {
+        const menu = ref.wrap?.querySelector('.pdf-annotation-text-menu');
+        if (menu) menu.style.display = 'none';
+      }
+    }
+  }
   // Per-doc last-used line spacing for text annotations. Once the user picks
   // 1.6 for one box, every text box dropped after that defaults to 1.6.
   const _pdfLastLineHeight = new Map(); // docId -> number
@@ -2290,8 +2301,16 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       // active (toolbar buttons set the mode). Without a mode, clicking does
       // nothing — keeps page interactions predictable so users don't get
       // surprise boxes from stray clicks.
+      const isBlankPageTarget = target => target === pageWrap
+        || (target?.tagName === 'IMG' && target.parentElement === pageWrap);
+      let placementStartedOnPage = false;
+      pageWrap.addEventListener('pointerdown', ev => {
+        placementStartedOnPage = isBlankPageTarget(ev.target);
+      }, true);
       pageWrap.addEventListener('click', (ev) => {
-        if (ev.target !== pageWrap && ev.target.tagName !== 'IMG') return;
+        const canPlace = placementStartedOnPage;
+        placementStartedOnPage = false;
+        if (!canPlace || !isBlankPageTarget(ev.target) || _pdfAnnotationDragging) return;
         if (!_pdfDropMode) return;
         const rect = pageWrap.getBoundingClientRect();
         const xPct = ((ev.clientX - rect.left) / rect.width) * 100;
@@ -2423,9 +2442,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
 
     // Set handle visibility together; clicking/tapping the annotation itself
     // brings hidden controls back.
+    let handlesRequested = _isTouch;
     const _setHandlesVisible = (show) => {
+      if (!_pdfAnnotationDragging) handlesRequested = show;
       const dismissed = wrap.dataset.controlsDismissed === '1';
-      const v = (show && !dismissed) ? '' : 'none';
+      const v = (show && !dismissed && !_pdfAnnotationDragging) ? '' : 'none';
       del.style.display = v;
       grip.style.display = v;
       resize.style.display = v;
@@ -2446,7 +2467,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _setHandlesVisible(true);
     });
 
-    const ref = { id: ann.id, page: ann.page, x: ann.x, y: ann.y, w: ann.w, h: ann.h, el: input, wrap, kind, _setHandlesVisible };
+    const ref = { id: ann.id, page: ann.page, x: ann.x, y: ann.y, w: ann.w, h: ann.h, el: input, wrap, kind, _setHandlesVisible,
+      _refreshHandles: () => _setHandlesVisible(handlesRequested) };
 
     if (kind === 'check') {
       // Stamp checkmark — value is fixed, nothing to listen for.
@@ -2568,7 +2590,12 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       ref._autoGrow = _autoGrow;
     }
 
+    del.addEventListener('pointerdown', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
     del.addEventListener('click', (ev) => {
+      ev.preventDefault();
       ev.stopPropagation();
       _pushPdfUndoSnapshot();
       _removeAnnotation(ref);
@@ -2580,6 +2607,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       ev.stopPropagation();
       _pushPdfUndoSnapshot();
       try { grip.setPointerCapture(ev.pointerId); } catch (_) {}
+      _setPdfAnnotationDragging(true);
       // Hide the × and resize handles while moving so they don't obscure the
       // box — easier to see exactly where it lands. Restored on release.
       del.style.display = 'none';
@@ -2598,11 +2626,14 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const onUp = () => {
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        _setPdfAnnotationDragging(false);
         _setHandlesVisible(true);
         _schedulePdfPaneSave();
       };
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onUp);
     });
 
     // Drag bottom-right corner to resize. Width/height stored as percentages.
@@ -2611,6 +2642,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       ev.stopPropagation();
       _pushPdfUndoSnapshot();
       try { resize.setPointerCapture(ev.pointerId); } catch (_) {}
+      _setPdfAnnotationDragging(true);
       // Hide the × and move handles while resizing — clean view of the box edge.
       del.style.display = 'none';
       grip.style.display = 'none';
@@ -2628,11 +2660,14 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       const onUp = () => {
         document.removeEventListener('pointermove', onMove);
         document.removeEventListener('pointerup', onUp);
+        document.removeEventListener('pointercancel', onUp);
+        _setPdfAnnotationDragging(false);
         _setHandlesVisible(true);
         _schedulePdfPaneSave();
       };
       document.addEventListener('pointermove', onMove);
       document.addEventListener('pointerup', onUp);
+      document.addEventListener('pointercancel', onUp);
     });
 
     // Text options menu — opened from the floating … button so the spacing
@@ -15239,7 +15274,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     menu.style.top = (rect.bottom + 2) + 'px';
     menu.style.right = (window.innerWidth - rect.right) + 'px';
     menu.style.left = 'auto';
-    menu.style.zIndex = '9999';
+    const editorPane = document.querySelector('.doc-editor-pane');
+    menu.style.zIndex = String(Math.max(topPortalZ(), (parseInt(getComputedStyle(editorPane).zIndex, 10) || 0) + 1));
 
     const langLabel = lang ? lang.toUpperCase() : 'TXT';
     // Form-backed markdown doc → primary export is the filled PDF, not the
@@ -15314,7 +15350,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
     }
     // Outside-click AND Escape both route through the central esc-stack via
     // bindMenuDismiss; onClose owns the actual node removal.
-    const close = bindMenuDismiss(menu, () => { menu.remove(); });
+    const exportBtn = document.getElementById('doc-footer-export-btn');
+    const close = bindMenuDismiss(menu, () => { menu.remove(); }, (ev) => !menu.contains(ev.target) && !exportBtn?.contains(ev.target));
   }
 
   function _richTextExportCss() {
