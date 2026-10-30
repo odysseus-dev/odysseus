@@ -25,6 +25,10 @@ Default CI trace suppression remains intact. Only this job's explicit opt-in plu
 a newly generated authenticated synthetic fixture marker permits failure traces.
 The existing structured sanitizer runs before artifacts are uploaded; invalid
 ownership, failed sanitization and missing tooling purge sensitive artifacts.
+Unsupported or malformed sensitive records cause the affected archive to be removed
+fail-closed. An independent fail-closed verification step (.github/scripts/verify_sanitized_artifacts.py)
+runs after test suite execution or abnormal runner termination to prevent publishing
+unsanitized diagnostics while preserving safe JUnit reporting.
 Never upload the fixture directory, database or browser storage state.
 
 The stroke budget now excludes measured synthetic event-delivery pacing and also
