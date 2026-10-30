@@ -8,9 +8,25 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from core.middleware import require_admin
 from services.memory import MemoryStoreUnreadable
 from src.auth_helpers import get_current_user
-from src.settings import load_settings, save_settings, load_features, save_features
+from src.settings import (
+    DEFAULT_SETTINGS,
+    RETIRED_SETTING_KEYS,
+    load_settings,
+    save_settings,
+    load_features,
+    save_features,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _matches_default_type(value, default) -> bool:
+    """Whether an imported value has the type of the setting's default."""
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+    if isinstance(default, (int, float)):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, type(default))
 
 
 def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
@@ -94,7 +110,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                               for e in existing if e.get("owner") == user}
             added = 0
             for mem in body["memories"]:
-                if not isinstance(mem, dict) or not mem.get("text"):
+                if not isinstance(mem, dict) or not isinstance(mem.get("text"), str) or not mem["text"]:
                     continue
                 if mem["text"].strip().lower() in existing_texts:
                     continue  # skip duplicates
@@ -126,10 +142,11 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
             for skill in body["skills"]:
                 if not isinstance(skill, dict):
                     continue
-                title = (
-                    skill.get("title") or skill.get("description")
-                    or skill.get("name") or ""
-                ).strip()
+                title = next(
+                    (v.strip() for v in (skill.get("title"), skill.get("description"), skill.get("name"))
+                     if isinstance(v, str) and v.strip()),
+                    "",
+                )
                 if not title:
                     continue
                 sid = skill.get("id") or skill.get("name")
@@ -147,29 +164,35 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
                 # skills_manager.save() no longer exists. Write each new skill
                 # via add_skill (source="user" skips auto-dedup — this is an
                 # explicit backup restore).
-                result = skills_manager.add_skill(
-                    title=title,
-                    name=skill.get("name"),
-                    description=skill.get("description"),
-                    problem=skill.get("problem", ""),
-                    solution=skill.get("solution", ""),
-                    steps=skill.get("steps"),
-                    tags=skill.get("tags"),
-                    source="user",
-                    teacher_model=skill.get("teacher_model"),
-                    confidence=skill.get("confidence", 0.8),
-                    owner=owner,
-                    category=skill.get("category", "general"),
-                    when_to_use=skill.get("when_to_use"),
-                    procedure=skill.get("procedure"),
-                    pitfalls=skill.get("pitfalls"),
-                    verification=skill.get("verification"),
-                    platforms=skill.get("platforms"),
-                    requires_toolsets=skill.get("requires_toolsets"),
-                    fallback_for_toolsets=skill.get("fallback_for_toolsets"),
-                    status=skill.get("status", "draft"),
-                    version=skill.get("version", "1.0.0"),
-                )
+                try:
+                    result = skills_manager.add_skill(
+                        title=title,
+                        name=skill.get("name"),
+                        description=skill.get("description"),
+                        problem=skill.get("problem", ""),
+                        solution=skill.get("solution", ""),
+                        steps=skill.get("steps"),
+                        tags=skill.get("tags"),
+                        source="user",
+                        teacher_model=skill.get("teacher_model"),
+                        confidence=skill.get("confidence", 0.8),
+                        owner=owner,
+                        category=skill.get("category", "general"),
+                        when_to_use=skill.get("when_to_use"),
+                        procedure=skill.get("procedure"),
+                        pitfalls=skill.get("pitfalls"),
+                        verification=skill.get("verification"),
+                        platforms=skill.get("platforms"),
+                        requires_toolsets=skill.get("requires_toolsets"),
+                        fallback_for_toolsets=skill.get("fallback_for_toolsets"),
+                        status=skill.get("status", "draft"),
+                        version=skill.get("version", "1.0.0"),
+                    )
+                except (TypeError, ValueError, AttributeError) as e:
+                    # Malformed list/str fields in a hand-edited backup: skip
+                    # this skill instead of failing the whole restore.
+                    logger.warning("Skipping skill %r in import: %s", title, e)
+                    continue
                 if result.get("_deduped"):
                     continue
                 if result.get("name"):
@@ -194,14 +217,25 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         # ── Settings ──
         if "settings" in body and isinstance(body["settings"], dict):
             current = load_settings()
-            current.update(body["settings"])
+            # Same surface as POST /api/auth/settings: known, non-retired keys
+            # whose value has the type of the default. Anything else in the
+            # file is skipped rather than written into settings.json.
+            current.update({
+                k: v for k, v in body["settings"].items()
+                if k in DEFAULT_SETTINGS and k not in RETIRED_SETTING_KEYS
+                and _matches_default_type(v, DEFAULT_SETTINGS[k])
+            })
             save_settings(current)
             imported.append("settings")
 
         # ── Features ──
         if "features" in body and isinstance(body["features"], dict):
             current = load_features()
-            current.update(body["features"])
+            # Same surface as POST /api/auth/features: known keys, booleans only.
+            current.update({
+                k: v for k, v in body["features"].items()
+                if k in current and isinstance(v, bool)
+            })
             save_features(current)
             imported.append("features")
 
