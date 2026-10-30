@@ -9,7 +9,6 @@ URL shape: DELETE /api/admin/wipe/{kind}
 Kinds: chats, memory, skills, notes, tasks, documents, gallery, calendar.
 """
 
-import json
 import logging
 import os
 import shutil
@@ -36,19 +35,14 @@ from src.constants import DATA_DIR, SKILLS_DIR, SKILLS_FILE, GALLERY_DIR, GALLER
 logger = logging.getLogger(__name__)
 
 
-def _wipe_memory_files():
-    """Blank memory.json + drop the per-owner tidy-state sidecar so the
-    next audit doesn't try to diff against gone memories."""
-    for name in ("memory.json", "memory_tidy_state.json"):
+def _wipe_memory_sidecars():
+    """Drop derived memory state after the authoritative stores are empty."""
+    for name in ("memory_tidy_state.json",):
         p = os.path.join(DATA_DIR, name)
         if not os.path.exists(p):
             continue
         try:
-            if name == "memory.json":
-                with open(p, "w", encoding="utf-8") as f:
-                    json.dump([], f)
-            else:
-                os.remove(p)
+            os.remove(p)
         except OSError as e:
             logger.warning(f"Could not reset {name}: {e}")
 
@@ -62,7 +56,7 @@ def _rmtree_quiet(path: str):
             logger.warning(f"Could not remove {path}: {e}")
 
 
-def setup_admin_wipe_routes(session_manager):
+def setup_admin_wipe_routes(session_manager, memory_manager=None, memory_vector=None):
     """The session_manager is passed in so we can also clear its
     in-memory cache when wiping chats — without it the DB is empty
     but the next /api/sessions returns stale entries."""
@@ -87,20 +81,41 @@ def setup_admin_wipe_routes(session_manager):
                 return {"status": "deleted", "kind": kind, "count": count}
 
             if kind == "memory":
+                if memory_manager is None or memory_vector is None:
+                    raise HTTPException(503, "Memory stores are not available for a safe wipe")
+                if not getattr(memory_vector, "healthy", False):
+                    raise HTTPException(503, "Memory vector store is unavailable; nothing was deleted")
+
+                original_memories = memory_manager.load_all_for_update()
                 count = db.query(Memory).count()
                 db.query(Memory).delete()
-                db.commit()
-                _wipe_memory_files()
-                # Drop the vector store too so semantic search doesn't
-                # return ghosts. Lazy import — chromadb may not be
-                # initialised in every deployment.
+
                 try:
-                    from src.memory_vector import get_memory_vector_store
-                    mv = get_memory_vector_store()
-                    if mv and hasattr(mv, "clear"):
-                        mv.clear()
+                    # Clear vectors before committing SQL. Keep the clear in
+                    # the compensation boundary because a backend can fail
+                    # after deleting only some lanes.
+                    memory_vector.clear(strict=True)
+                    memory_manager.save([])
+                    db.commit()
                 except Exception as e:
-                    logger.info(f"Memory vector clear skipped: {e}")
+                    # Restore the full multi-user corpus, never only the active
+                    # request owner's slice. A failed compensation is surfaced
+                    # because silently leaving split stores would be worse.
+                    restore_errors = []
+                    try:
+                        memory_manager.save(original_memories)
+                    except Exception as restore_error:
+                        restore_errors.append(f"JSON restore failed: {restore_error}")
+                    try:
+                        memory_vector.rebuild(original_memories, strict=True)
+                    except Exception as restore_error:
+                        restore_errors.append(f"vector restore failed: {restore_error}")
+                    if restore_errors:
+                        raise RuntimeError(
+                            f"Memory wipe failed ({e}); " + "; ".join(restore_errors)
+                        ) from e
+                    raise
+                _wipe_memory_sidecars()
                 return {"status": "deleted", "kind": kind, "count": count}
 
             if kind == "skills":
@@ -165,6 +180,7 @@ def setup_admin_wipe_routes(session_manager):
 
             raise HTTPException(400, f"Unknown wipe kind: {kind!r}")
         except HTTPException:
+            db.rollback()
             raise
         except Exception as e:
             db.rollback()
