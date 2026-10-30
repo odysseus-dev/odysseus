@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+*.exe
 dist/
 build/
 !static/js/editor/build/
