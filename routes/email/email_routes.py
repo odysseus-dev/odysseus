@@ -1021,6 +1021,39 @@ def _email_index_list(owner: str, account_id: str | None, folder: str, filter_: 
     return emails, total, (total_row or [None, None])[1]
 
 
+def _index_ordered_uid_window(owner: str, account_id: str | None, folder: str, filter_: str,
+                              offset: int, limit: int, total: int) -> list[bytes] | None:
+    """Choose the page's UIDs by index date instead of by IMAP UID order.
+
+    The list path picks which messages to fetch by taking the highest UIDs, which
+    assumes a server hands out UIDs in date order. Proton Mail Bridge assigns them
+    in Proton message-id order instead, so recent mail can sit at low UIDs and
+    never enter the window at all: on a live 2,934-message INBOX, the
+    newest-by-UID page of 50 kept only 2 of the truly newest 50.
+
+    Returns None whenever the index cannot answer — a filter it does not model, a
+    cold or partial index, an index narrower than the folder, or a page wider than
+    the 200 rows `_email_index_list` will read — so the caller keeps the
+    UID-ordered window and behaves exactly as before. The caller still fetches the
+    returned UIDs live from IMAP, so flags, headers and tags stay as fresh.
+    """
+    if filter_ != "all" or total <= 0:
+        return None
+    try:
+        indexed, indexed_total, _ = _email_index_list(owner, account_id, folder, filter_, limit, offset)
+    except Exception as exc:
+        logger.debug(f"index-ordered list window skipped: {exc}")
+        return None
+    # Covering the folder is what makes a date-ordered page trustworthy: an index
+    # that has never seen some messages would drop them from the page silently.
+    if indexed_total < total:
+        return None
+    expected = min(limit, total - offset)
+    if expected <= 0 or len(indexed) < expected:
+        return None
+    return [str(e.get("uid") or "").encode() for e in indexed if e.get("uid")] or None
+
+
 def _email_index_search(owner: str, account_id: str | None, folder: str, query: str, limit: int, global_search: bool = True) -> tuple[list[dict], int, str | None]:
     q = (query or "").strip()
     if not q:
@@ -2577,6 +2610,14 @@ def setup_email_routes():
                 uid_list = uid_list[:scan_window]
             else:
                 uid_list = uid_list[offset:offset + limit]
+                # The window above is newest-by-UID, which only equals
+                # newest-by-date on servers that assign UIDs in date order. Defer
+                # to the durable index when it covers the folder; the rows are
+                # still fetched live from IMAP below, so flags stay fresh.
+                if filter_ == "all" and not from_addr and not date_from and not date_to:
+                    uid_list = _index_ordered_uid_window(
+                        owner, account_id, folder, filter_, offset, limit, total,
+                    ) or uid_list
 
             # Preload tag rows once — keyed by uid (as str) for the emails we'll render
             _tag_by_uid = {}
