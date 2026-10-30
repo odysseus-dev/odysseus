@@ -9,6 +9,7 @@ import { createNotesPersistence } from '../frontend/src/features/notes/infrastru
 import { createNotesLifecycle } from '../frontend/src/features/notes/ui/lifecycle.js';
 import { createText } from '../frontend/src/features/notes/ui/text.js';
 import { createDeletion } from '../frontend/src/features/notes/application/deletion.js';
+import { createNotesApi } from '../frontend/src/features/notes/infrastructure/http.js';
 
 const drain = () => new Promise(setImmediate);
 function owner(notes) { const app = createNotesState(); app.replaceNotes(notes); return app; }
@@ -102,6 +103,25 @@ test('submission preserves top ordering, server ID replacement and newer draft r
   assert.equal(app.state.notes[0].id, 'server-id');
   assert.equal(values.get(draftKey), '{"content":"newer"}');
   assert.equal(renders, 2);
+});
+
+test('editing text preserves the saved reminder zone and editing its date captures the current zone', async () => {
+  const app = owner([{ id: 'existing', title: 'Old', due_date: '2026-03-07T09:00', repeat: 'daily', reminder_timezone: 'America/New_York' }]);
+  const values = new Map(), requests = [];
+  const persistence = createNotesPersistence({ storage: { getItem: key => values.get(key), setItem: (key,value) => values.set(key,value), removeItem: key => values.delete(key) } });
+  const api = createNotesApi({ origin: 'https://notes.invalid', timeZone: () => 'Europe/Berlin', request: async (url, options) => {
+    const body = JSON.parse(options.body); requests.push(body);
+    return { ok: true, json: async () => ({ ...body, id: 'existing' }) };
+  } });
+  const submission = createNotesSubmission({ app, persistence, api, clock: { now: () => 0 }, uid: () => 'id',
+    effects: { render() {}, clearGlow() {}, showError() {} }, fetchNotes: async () => {} });
+  submission.submitNote({ id: 'existing', title: 'Rename', due_date: '2026-03-07T09:00', repeat: 'daily' }, app.state.notes[0], true);
+  await drain();
+  assert.equal(requests[0].reminder_timezone, 'America/New_York');
+  submission.submitNote({ id: 'existing', title: 'Reschedule', due_date: '2026-03-10T09:00', repeat: 'daily' }, app.state.notes[0], true);
+  await drain();
+  assert.equal(requests[1].reminder_timezone, 'Europe/Berlin');
+  assert.equal(app.state.notes[0].reminder_timezone, 'Europe/Berlin');
 });
 
 test('selection can exit only after synchronous acceptance', () => {

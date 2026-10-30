@@ -1,5 +1,5 @@
 /** Reminder date presets and recurrence picker interactions. */
-import { _formatRepeatLabel, _toLocalDatetimeStr, _normalizeRepeat, _DAYS, _ORDINALS } from '../domain/recurrence.js';
+import { _formatRepeatLabel, _toLocalDatetimeStr, _normalizeRepeat, _DAYS, _ORDINALS, _noteDueValue, _noteRepeatDate } from '../domain/recurrence.js';
 export function createReminderPicker({
   lifecycle,
   _ensureNotificationPermission,
@@ -12,7 +12,7 @@ export function createReminderPicker({
   bindMenuDismiss,
   dismissOrRemove
 }) {
-  function _wireReminderPicker(form) {
+  function _wireReminderPicker(form, note = null) {
     // Reminder bell : opens dropdown menu
     const remindBtn = form.querySelector('.note-form-remind-btn');
     const dueInput = form.querySelector('.note-form-due');
@@ -24,8 +24,8 @@ export function createReminderPicker({
       const v = dueInput.value;
       const rep = repeatInput.value || 'none';
       if (!v) { tagsEl.innerHTML = ''; return; }
-      const label = _formatReminderTag(v);
-      const repLabel = rep !== 'none' ? ` · ${_formatRepeatLabel(rep, new Date(v))}` : '';
+      const label = _formatReminderTag(v === note?.due_date ? _noteDueValue(note) : v);
+      const repLabel = rep !== 'none' ? ` · ${_formatRepeatLabel(rep, v === note?.due_date ? _noteRepeatDate(note) : new Date(v))}` : '';
       tagsEl.innerHTML = `<button class="note-reminder-tag" type="button" title="Edit reminder">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       <span>${_esc(label)}${_esc(repLabel)}</span>
@@ -67,7 +67,7 @@ export function createReminderPicker({
 
       function getNorm() {
         if (!dueInput.value) return 'none';
-        return _normalizeRepeat(repeatInput.value || 'none', new Date(dueInput.value));
+        return _normalizeRepeat(repeatInput.value || 'none', dueInput.value === note?.due_date ? _noteRepeatDate(note) : new Date(dueInput.value));
       }
 
       function commit(val) {
@@ -286,7 +286,8 @@ export function createReminderPicker({
       document.querySelectorAll('.note-reminder-menu').forEach(dismissOrRemove);
       const menu = document.createElement('div');
       menu.className = 'note-reminder-menu';
-      const initial = dueInput.value || _toLocalDatetimeStr(_tomorrowDate());
+      const value = dueInput.value === note?.due_date ? _noteDueValue(note) : dueInput.value;
+      const initial = value ? _toLocalDatetimeStr(new Date(value)) : _toLocalDatetimeStr(_tomorrowDate());
       menu.innerHTML = `
       <div class="note-reminder-menu-title">Pick date and time</div>
       <div class="note-reminder-menu-picker">

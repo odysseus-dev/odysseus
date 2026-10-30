@@ -1,5 +1,5 @@
 /** Pure Notes completion, tags, reminder and serialization rules. */
-import { _hasTimeComponent } from './recurrence.js';
+import { _hasTimeComponent, _noteDueValue } from './recurrence.js';
 export function _isCalendarReminderNote(n) {
   return n && n.source === 'calendar' && n.label === 'calendar';
 }
@@ -7,7 +7,7 @@ export function _isCalendarReminderNote(n) {
 export function _hasActiveReminder(n, clock) {
   if (!n || n.archived || _isNoteFullyDone(n)) return false;
   if (!n.due_date) return false;
-  const t = new Date(n.due_date).getTime();
+  const t = new Date(_noteDueValue(n)).getTime();
   return !isNaN(t) && t <= clock.now();
 }
 
@@ -49,7 +49,7 @@ export function _visibleNoteTags(n) {
 
 export function _isPastReminder(n, clock) {
   if (!n?.due_date || !_hasTimeComponent(n.due_date)) return false;
-  const due = new Date(n.due_date).getTime();
+  const due = new Date(_noteDueValue(n)).getTime();
   return !isNaN(due) && due <= clock.now();
 }
 

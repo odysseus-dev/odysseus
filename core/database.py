@@ -1379,7 +1379,7 @@ def _migrate_add_pinned_models_column():
             pass
 
 def _migrate_add_notes_sort_order():
-    """Add sort_order, image_url, repeat columns to notes if they don't exist."""
+    """Add note ordering, media and reminder metadata columns if missing."""
     import sqlite3
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
@@ -1395,6 +1395,8 @@ def _migrate_add_notes_sort_order():
             conn.execute("ALTER TABLE notes ADD COLUMN image_url TEXT")
         if columns and "repeat" not in columns:
             conn.execute("ALTER TABLE notes ADD COLUMN repeat TEXT DEFAULT 'none'")
+        if columns and "reminder_timezone" not in columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN reminder_timezone TEXT")
         if columns and "ai_classification" not in columns:
             conn.execute("ALTER TABLE notes ADD COLUMN ai_classification TEXT")
         if columns and "ai_content_hash" not in columns:
@@ -2081,7 +2083,8 @@ class Note(TimestampMixin, Base):
     sort_order = Column(Integer, default=0)
     image_url  = Column(String, nullable=True)      # uploaded image URL (relative path)
     gallery_id = Column(String, nullable=True, index=True)  # stable Gallery image for drawings
-    repeat     = Column(String, default="none")     # none, daily, weekly, monthly, yearly
+    repeat     = Column(String, default="none")     # e.g. daily, weekly:1, monthly:day:31
+    reminder_timezone = Column(String, nullable=True)  # IANA zone for browser-local due dates
     # Auto-AI fields — populated by /api/notes/{id}/classify. The classification
     # JSON shape is { kind, solvable, confidence, task_prompt, tools, items?: [...] }.
     # Content hash gates re-classification (avoid LLM spend on every save).
