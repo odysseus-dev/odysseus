@@ -21,7 +21,7 @@ _HAS_NODE = shutil.which("node") is not None
 
 def _rgb(hex_str: str):
     js = (
-        f"import {{ hexToRgb }} from '{_HELPER.as_posix()}';"
+        f"import {{ hexToRgb }} from '{_HELPER.as_uri()}';"
         f"console.log(JSON.stringify(hexToRgb({json.dumps(hex_str)})));"
     )
     proc = subprocess.run(

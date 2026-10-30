@@ -31,7 +31,7 @@ def _run(js: str) -> str:
 
 def _replace(text: str) -> str:
     js = f"""
-    import {{ replaceEmojiShortcodes }} from '{_HELPER.as_posix()}';
+    import {{ replaceEmojiShortcodes }} from '{_HELPER.as_uri()}';
     console.log(JSON.stringify(replaceEmojiShortcodes({json.dumps(text)})));
     """
     return json.loads(_run(js))
@@ -90,7 +90,7 @@ def test_known_shortcode_embedded_in_token_is_not_converted():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_has_emoji_shortcode_detector():
     js = f"""
-    import {{ hasEmojiShortcode }} from '{_HELPER.as_posix()}';
+    import {{ hasEmojiShortcode }} from '{_HELPER.as_uri()}';
     const out = [
       hasEmojiShortcode(':blush:'),
       hasEmojiShortcode('no shortcodes here'),
