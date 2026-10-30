@@ -22,6 +22,7 @@ case is driven exactly; that module's own tests pin it against real processes.
 
 import json
 
+import os
 import pytest
 
 from src import bg_jobs, containment, process_ownership, process_reaper
@@ -399,6 +400,7 @@ def test_already_finished_jobs_are_not_reconsidered(job_store, monkeypatch):
     assert bg_jobs.disown_unverified() == {"seen": 0, "retired": 0, "kept": 0}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_a_launched_job_records_an_identity_next_to_its_pid(job_store, tmp_path, monkeypatch):
     """Without this the record is unverifiable forever and the reaper can only
     refuse — the token has to be captured at launch or not at all."""

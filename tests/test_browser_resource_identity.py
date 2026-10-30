@@ -241,7 +241,10 @@ async def test_browser_control_state_is_not_user_filesystem(producer, tmp_path, 
     target = record.config
     if alias != "direct":
         target = tmp_path / "alias"
-        (os.link(record.config, target) if alias == "hardlink" else target.symlink_to(record.config))
+        try:
+            (os.link(record.config, target) if alias == "hardlink" else target.symlink_to(record.config))
+        except OSError as error:  # Windows symlinks need a privilege
+            pytest.skip("cannot create %s here: %s" % (alias, error))
     with pytest.raises(ValueError): FilesystemResource.resolve(FilesystemRoot.seal(tmp_path), str(target))
     from src.agent_runtime.process_resources import guard_launch_workspace
     with pytest.raises(ValueError): guard_launch_workspace(FilesystemRoot.seal(tmp_path))

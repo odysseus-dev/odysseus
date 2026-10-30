@@ -254,6 +254,7 @@ def test_probe_answers_without_writing_a_grant_record(workspace, monkeypatch, tm
     assert containment.active_grants() == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="enforcing containment (bubblewrap/process group) is POSIX-only; Windows has no filesystem/process_tree mechanism")
 def test_probe_and_acquire_agree_on_what_this_host_enforces(workspace, monkeypatch, tmp_path):
     """One mechanism table, one answer. A second opinion about what this host
     can enforce is the thing the probe exists to prevent."""
