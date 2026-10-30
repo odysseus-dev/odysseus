@@ -653,7 +653,18 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        result = auth_manager.set_admin(username, body.is_admin, user)
+        try:
+            result = auth_manager.set_admin(username, body.is_admin, user)
+        finally:
+            # A demotion purges the user's ApiToken rows; dirty the bearer
+            # cache so already-cached tokens stop authenticating.
+            if not body.is_admin:
+                invalidator = getattr(
+                    getattr(getattr(request, "app", None), "state", None),
+                    "invalidate_token_cache", None,
+                )
+                if callable(invalidator):
+                    invalidator()
         if result is SetAdminResult.USER_NOT_FOUND:
             raise HTTPException(404, "User not found")
         if result is SetAdminResult.NOT_AUTHORIZED:
