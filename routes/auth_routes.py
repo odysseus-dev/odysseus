@@ -361,8 +361,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        body = await request.json()
-        ok = auth_manager.set_privileges(username, body)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Request body must be a JSON object")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
+        try:
+            ok = auth_manager.set_privileges(username, body)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         if not ok:
             raise HTTPException(404, "User not found or is admin")
         return {"ok": True, "privileges": auth_manager.get_privileges(username)}
