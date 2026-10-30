@@ -6,6 +6,7 @@ that are awkward at the shell). Filters images by tag, prompt, favorite,
 album, and surfaces EXIF metadata.
 
     odysseus-gallery list --limit 20 --favorites
+    odysseus-gallery list --tag "sunset,beach"  # all tags, manual or AI
     odysseus-gallery show IMAGE_ID
     odysseus-gallery albums | jq -r '.[] | .name'
     odysseus-gallery search "sunset"          # matches prompt + tags
@@ -83,7 +84,13 @@ def cmd_list(args):
                 fail(f"no album named {args.album!r}")
             q = q.filter(GalleryImage.album_id == al.id)
         if args.tag:
-            q = q.filter(GalleryImage.tags.ilike(f"%{args.tag}%"))
+            for tag in (value.strip() for value in args.tag.split(",")):
+                if not tag:
+                    continue
+                q = q.filter(
+                    GalleryImage.tags.ilike(f"%{tag}%") |
+                    GalleryImage.ai_tags.ilike(f"%{tag}%")
+                )
         q = q.order_by(GalleryImage.created_at.desc()).limit(args.limit)
         emit([_serialize_image(i) for i in q.all()], args)
     finally:
@@ -159,7 +166,7 @@ def _build_parser():
     pl.add_argument("--limit", type=int, default=50)
     pl.add_argument("--favorites", action="store_true")
     pl.add_argument("--album", help="filter by album name")
-    pl.add_argument("--tag", help="substring match against tags column")
+    pl.add_argument("--tag", help="comma-separated tags; each matches manual or AI tags by substring")
     pl.set_defaults(func=cmd_list)
 
     psh = sub.add_parser("show", parents=[common])

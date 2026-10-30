@@ -1929,23 +1929,60 @@ def test_place_layer_reports_false_on_queued_response(monkeypatch):
     assert placed is False
 
 
-def test_bridge_await_cancellation_handled_cleanly():
+def test_bridge_await_cancellation_handled_cleanly(monkeypatch):
     import asyncio
+    from contextlib import suppress
     from httpx import ASGITransport, AsyncClient
     app = _bridge_app()
 
     async def scenario():
+        entered_wait = asyncio.Event()
+        real_wait_for = asyncio.wait_for
+        waits = []
+
+        async def observe_wait(awaitable, timeout):
+            # Observe the real wait; do not replace its result or cancellation.
+            waits.append(awaitable)
+            entered_wait.set()
+            return await real_wait_for(awaitable, timeout)
+
+        monkeypatch.setattr(eaar.asyncio, "wait_for", observe_wait)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             cmd_resp = await c.post("/api/editor/bridge/command", json={"session": "cancel-sess", "op": "document.info", "wait": False})
+            assert cmd_resp.status_code == 200
+            assert cmd_resp.json()["completed"] is False
             cid = cmd_resp.json()["queued"][0]
 
             await_task = asyncio.create_task(c.post("/api/editor/bridge/await", json={"id": cid, "timeout": 30}))
-            await asyncio.sleep(0.05)
-            await_task.cancel()
             try:
-                await await_task
-            except asyncio.CancelledError:
-                pass
+                await real_wait_for(entered_wait.wait(), 5)
+                assert len(waits) == 1
+                assert not waits[0].done()
+                assert not await_task.done(), "await returned without a queued result"
+                await_task.cancel()
+                response = await real_wait_for(await_task, 5)
+                assert response.status_code == 200
+                assert response.json() == {
+                    "ok": False, "error": "cancelled", "status": "cancelled",
+                    "completed": False, "id": cid,
+                }
+            finally:
+                if not await_task.done():
+                    await_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await await_task
+
+            # Cancelling the waiter must not cancel the queued command itself.
+            payload = {"width": 137, "height": 251}
+            delivered = await c.post("/api/editor/bridge/result", json={"id": cid, "ok": True, "result": payload})
+            assert delivered.status_code == 200
+            completed = await c.post("/api/editor/bridge/await", json={"id": cid, "timeout": 1})
+            assert completed.status_code == 200
+            assert completed.json()["status"] == "completed"
+            assert completed.json()["completed"] is True
+            assert completed.json()["ok"] is True
+            assert completed.json()["result"] == payload
+            assert len(waits) == 2
 
     asyncio.run(scenario())
 

@@ -94,7 +94,7 @@ jobs:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results/browser-junit.xml
         run: |
           npm run test:photo-editor -- --reporter=line,junit
-          python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 130
+          python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 137
       - name: Save per-test results and sanitized failure diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

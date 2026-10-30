@@ -1207,7 +1207,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
       Line 1: prompt describing the image
       Line 2: model name (optional, default auto-detects: prefers gpt-image-1.5 > gpt-image-1)
       Line 3: size (optional, defaults to 1024x1024)
-      Line 4: quality (optional, defaults to medium — options: low, medium, high, auto)
+      Line 4: quality (optional, defaults to configured quality or medium — low, medium, high, auto)
     """
     import base64
     import httpx
@@ -1225,13 +1225,13 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         prompt = str(args.get('prompt') or '').strip()
         model_spec = str(args.get('model') or '').strip()
         size = str(args.get('size') or '1024x1024')
-        quality = str(args.get('quality') or 'medium')
+        quality = str(args.get('quality') or '')
     else:
         lines = content.strip().split("\n")
         prompt = lines[0].strip() if lines else ""
         model_spec = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""
         size = lines[2].strip() if len(lines) > 2 and lines[2].strip() else "1024x1024"
-        quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else "medium"
+        quality = lines[3].strip() if len(lines) > 3 and lines[3].strip() else ""
 
     if not prompt:
         return {"error": "Image prompt is required (line 1)"}
@@ -1249,8 +1249,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     # Use admin-configured model/quality if not specified by the tool call
     if not model_spec:
         model_spec = _settings.get("image_model", "")
-    if quality == "medium" and _settings.get("image_quality"):
-        quality = _settings["image_quality"]
+    if not quality:
+        quality = _settings.get("image_quality") or "medium"
 
     # Auto-detect best available image model if still not set
     if not model_spec:
@@ -1482,7 +1482,7 @@ async def do_edit_image(
     session_id: Optional[str] = None,
     owner: Optional[str] = None,
     size: str = "auto",
-    quality: str = "medium",
+    quality: Optional[str] = None,
     progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     incognito: bool = False,
 ) -> Dict:
@@ -1509,8 +1509,8 @@ async def do_edit_image(
 
     if not model_spec:
         model_spec = _settings.get("image_model", "")
-    if quality == "medium" and _settings.get("image_quality"):
-        quality = _settings["image_quality"]
+    if quality is None:
+        quality = _settings.get("image_quality") or "medium"
     if not model_spec:
         return {"error": "No image model selected for image editing"}
 

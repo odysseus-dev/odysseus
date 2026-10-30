@@ -7,13 +7,13 @@ CalendarCal.owner; the query must join it, like routes/calendar_routes.
 """
 import uuid
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from tests.helpers.database import disposable_database
 
 from core.database import CalendarEvent, CalendarCal
-from src.task_scheduler import _checkin_calendar_events
+from src.task_scheduler import _checkin_calendar_events, _digest_windows
 
 
 @pytest.fixture(autouse=True)
@@ -68,3 +68,44 @@ def test_cancelled_excluded_and_window_respected():
         assert "cancelled" not in [ev.summary for ev in out]
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("days, expected_label", [(2, "this_week"), (7, "next_30_days")])
+def test_boundary_event_appears_in_only_one_digest_window(days, expected_label):
+    now = datetime(2026, 6, 1, 9)
+    boundary = now + timedelta(days=days)
+    with _TS() as db:
+        db.add(CalendarCal(id="boundary-cal", owner="alice", name="Boundary"))
+        db.add(CalendarEvent(
+            uid="boundary-event", calendar_id="boundary-cal", summary="Boundary meeting",
+            dtstart=boundary, dtend=boundary + timedelta(hours=1), status="confirmed",
+        ))
+        db.commit()
+
+        buckets = [
+            label for label, start, end in _digest_windows(now)
+            if _checkin_calendar_events(db, "alice", start, end)
+        ]
+        assert buckets == [expected_label]
+
+
+def test_digest_includes_start_and_excludes_end():
+    start = datetime(2026, 6, 1, 9)
+    end = start + timedelta(days=2)
+    with _TS() as db:
+        db.add(CalendarCal(id="bounds-cal", owner="alice", name="Bounds"))
+        for uid, when in [
+            ("before", start - timedelta(seconds=1)),
+            ("start", start),
+            ("inside", end - timedelta(seconds=1)),
+            ("end", end),
+        ]:
+            db.add(CalendarEvent(
+                uid=uid, calendar_id="bounds-cal", summary=uid, dtstart=when,
+                dtend=when + timedelta(hours=1), status="confirmed",
+            ))
+        db.commit()
+
+        assert [ev.uid for ev in _checkin_calendar_events(db, "alice", start, end)] == [
+            "start", "inside",
+        ]

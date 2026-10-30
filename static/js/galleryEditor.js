@@ -5759,7 +5759,20 @@ function _updateBrushCursor(e) {
     state.cursorEl.style.height = diameterY + 'px';
   }
   state.cursorEl.classList.toggle('ge-brush-cursor--pixel', pixelBrush);
-  state.cursorEl.style.transform = `translate3d(${clientX - diameterX / 2}px, ${clientY - diameterY / 2}px, 0)`;
+  // Updating an inline style on every move invalidates document-wide :has()
+  // selectors. A paused animation keeps the same transform in the rendering
+  // pipeline without mutating the cursor's style attribute on every frame.
+  const cursorTransform = `translate3d(${clientX - diameterX / 2}px, ${clientY - diameterY / 2}px, 0)`;
+  if (!state.cursorEl._positionAnimation || state.cursorEl._positionAnimation.playState === 'idle') {
+    state.cursorEl._positionAnimation = state.cursorEl.animate(
+      [{ transform: cursorTransform }, { transform: cursorTransform }],
+      { duration: 1, fill: 'both' },
+    );
+    state.cursorEl._positionAnimation.pause();
+    state.cursorEl._positionAnimation.currentTime = 0;
+  } else {
+    state.cursorEl._positionAnimation.effect.setKeyframes([{ transform: cursorTransform }, { transform: cursorTransform }]);
+  }
   if (state.cursorEl.style.display !== 'block') {
     state.cursorEl.style.display = 'block';
   }
@@ -14061,7 +14074,20 @@ export function closeEditor(options = {}) {
     const h = state.editorDocClickHandlers.pop();
     try { document.removeEventListener('click', h); } catch {}
   }
-  if (state.cursorEl) { state.cursorEl.remove(); state.cursorEl = null; }
+  if (_cursorRaf) { cancelAnimationFrame(_cursorRaf); _cursorRaf = null; }
+  _pendingCursorEvent = null;
+  _lastCursorRect = null;
+  state._lastCursorDiameterX = null;
+  state._lastCursorDiameterY = null;
+  state._lastCursorBorderColor = null;
+  if (state.cursorEl) {
+    if (state.cursorEl._positionAnimation) {
+      try { state.cursorEl._positionAnimation.cancel(); } catch {}
+      state.cursorEl._positionAnimation = null;
+    }
+    state.cursorEl.remove();
+    state.cursorEl = null;
+  }
   try { document.getElementById('ge-cursor-layer')?.remove(); } catch {}
   // Tear down all floating popups + the dock so closing the editor
   // doesn't leave stale chips/panels behind on top of the gallery.

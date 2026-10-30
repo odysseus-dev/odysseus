@@ -12,16 +12,6 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-# Names that indicate a throwaway/test session
-_THROWAWAY_NAMES = {
-    "test", "testing", "asdf", "asd", "hello", "hi", "hey",
-    "yo", "sup", "hola", "hii", "hiii", "heyo",
-    "foo", "bar", "baz", "tmp", "temp", "scratch", "untitled",
-    "new chat", "delete", "remove", "junk", "trash", "xxx",
-    "abc", "qwerty", "blah", "stuff", "whatever", "idk",
-    "ok", "lol", "bruh", "hmm", "hm", "meh",
-}
-_THROWAWAY_MAX_MESSAGES = 4
 _FRESH_EMPTY_SESSION_GRACE = timedelta(minutes=10)
 _FRESH_SESSION_GRACE = _FRESH_EMPTY_SESSION_GRACE
 
@@ -54,14 +44,15 @@ def is_session_recently_active(row, now=None, grace=_FRESH_SESSION_GRACE) -> boo
 
 
 async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bool = True) -> str:
-    """Run session cleanup + (optional) AI folder sort for the given owner.
+    """Remove empty/Incognito sessions and optionally organize saved chats.
 
     Args:
         owner: user whose sessions to process
-        skip_llm: when True, do only Phase 1 (delete empty/throwaway sessions);
+        skip_llm: when True, do only Phase 1 (delete empty/Incognito sessions);
             skip Phase 2 (AI folder assignment). Used by the built-in daily
             background sweep so it never burns LLM tokens.
-        delete_throwaway: when False, only empty/incognito sessions are deleted.
+        delete_throwaway: retained for caller compatibility. Ordinary sessions
+            with saved messages are always preserved, regardless of this flag.
 
     Returns a human-readable summary of what was done.
     """
@@ -71,7 +62,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
 
     db = SessionLocal()
     try:
-        # ── Phase 1: Delete empty/throwaway sessions ──
+        # ── Phase 1: Delete only empty and explicitly Incognito sessions ──
         deleted_empty = 0
         deleted_throwaway = 0
 
@@ -93,47 +84,13 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
             if is_session_recently_active(row, now=cleanup_now):
                 continue
 
-            msg_count = db.query(DbMsg.id).filter(
+            has_messages = db.query(DbMsg.id).filter(
                 DbMsg.session_id == row.id
-            ).limit(_THROWAWAY_MAX_MESSAGES + 1).count()
-            should_delete = False
-
-            if msg_count == 0:
+            ).first() is not None
+            if not has_messages:
                 if is_fresh:
                     continue
-                should_delete = True
                 deleted_empty += 1
-            elif delete_throwaway and msg_count <= _THROWAWAY_MAX_MESSAGES:
-                name = (row.name or "").strip().lower()
-                first_msg = db.query(DbMsg.content).filter(
-                    DbMsg.session_id == row.id, DbMsg.role == "user"
-                ).order_by(DbMsg.timestamp).first()
-                first_text = (first_msg[0] or "").strip().lower() if first_msg else ""
-                assistant_count = db.query(DbMsg.id).filter(
-                    DbMsg.session_id == row.id, DbMsg.role == "assistant"
-                ).limit(1).count()
-
-                if name in _THROWAWAY_NAMES or name.startswith("chat:") or first_text in _THROWAWAY_NAMES:
-                    should_delete = True
-                    deleted_throwaway += 1
-                elif msg_count == 1 and assistant_count == 0:
-                    should_delete = True
-                    deleted_throwaway += 1
-                elif msg_count <= 4 and first_text and len(first_text.split()) <= 8 and len(first_text) <= 80:
-                    # Short trivial chats — e.g. "write hi to a friend" → "Hi!"
-                    should_delete = True
-                    deleted_throwaway += 1
-                else:
-                    # Aggressive: total message text under 250 chars combined = trivial
-                    msg_rows = db.query(DbMsg.content).filter(
-                        DbMsg.session_id == row.id
-                    ).all()
-                    total_chars = sum(len(m[0] or "") for m in msg_rows)
-                    if total_chars <= 250:
-                        should_delete = True
-                        deleted_throwaway += 1
-
-            if should_delete:
                 db.delete(row)
 
         if deleted_empty or deleted_throwaway:

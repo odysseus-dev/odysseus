@@ -14,8 +14,9 @@ through an explicitly identified Playwright driver. The manifest validator fails
 for omitted/duplicate/unreachable entries. Node emits individual JUnit identities
 and propagates its failure exit. No native file is newly run in each pytest shard.
 
-The browser job uses the existing one-worker Chromium config and all original129
-cases, plus one driver for the native email-reply contract. Its ephemeral account,
+The browser job uses the existing one-worker Chromium config and all 136 Photo
+Editor cases (including cursor and brush regressions), plus one driver for the native
+email-reply contract (137 cases total). Its ephemeral account,
 SQLite DB and server are created by the config/setup; reuseExistingServer remains
 false. NPX startup is offline/cache-only in a private cache; Notes/editor behavior
 and Python MCP services remain real. No developer app or external account is used.

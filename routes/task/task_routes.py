@@ -20,7 +20,7 @@ from src.task_action_policy import (
     is_admin_only_task_action,
     owner_has_admin_task_privileges,
 )
-from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
+from src.task_scheduler import compute_next_run, is_valid_cron, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
@@ -475,10 +475,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         if req.trigger_type == "schedule" and req.schedule == "cron" and not req.cron_expression:
             raise HTTPException(400, "Cron expression is required for cron schedule")
         if req.trigger_type == "schedule" and req.schedule == "cron" and req.cron_expression:
-            try:
-                from croniter import croniter
-                croniter(req.cron_expression)
-            except Exception:
+            if not is_valid_cron(req.cron_expression):
                 raise HTTPException(400, "Invalid cron expression")
         if req.trigger_type == "event" and not req.trigger_event:
             raise HTTPException(400, "Event name is required for event-triggered tasks")
@@ -788,10 +785,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 task.character_id = req.character_id or None
             if req.cron_expression is not None:
                 if req.cron_expression:
-                    try:
-                        from croniter import croniter
-                        croniter(req.cron_expression)
-                    except Exception:
+                    if not is_valid_cron(req.cron_expression):
                         raise HTTPException(400, "Invalid cron expression")
                 task.cron_expression = req.cron_expression or None
 

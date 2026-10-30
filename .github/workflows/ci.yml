@@ -256,3 +256,10 @@ jobs:
         env:
           PYTEST_SHARD: ${{ matrix.shard }}
         run: python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD"
+
+      - name: Playwright mobile layout checks (shard 1/4 only)
+        if: steps.docs-check.outputs.docs_only != 'true' && matrix.shard == '1/4'
+        run: |
+          ODYSSEUS_TEST_PYTHON=python ODYSSEUS_LAYOUT_BROWSER=chromium npx --no-install playwright test \
+            --config tests/e2e/ios-layout.config.cjs \
+            --reporter=line

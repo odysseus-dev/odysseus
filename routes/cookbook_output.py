@@ -8,6 +8,20 @@ import re
 
 _FETCHING_ZERO_FILES_RE = re.compile(r"Fetching\s+0\s+files", re.IGNORECASE)
 
+# Shared source embedded in local/remote inventory and status probes. A blank
+# retry marker beside its completed, nonempty content-addressed blob is stale;
+# a blank marker alone may be a download that has not received its first byte.
+HF_PARTIAL_BLOB_HELPER = """def is_partial_blob(path):
+    if not path.endswith('.incomplete'):
+        return False
+    try:
+        completed = path[:-len('.incomplete')]
+        return (os.path.getsize(path) != 0 or not os.path.isfile(completed)
+                or os.path.getsize(completed) == 0)
+    except OSError:
+        return True
+"""
+
 # Probe scripts for the dead-session download check, run as
 # `python3 -c <PROBE> <repo_id> <cache_root>` (locally or over SSH).
 # cache_root is the task's custom download dir, '' for the default HF cache.
@@ -15,7 +29,7 @@ _FETCHING_ZERO_FILES_RE = re.compile(r"Fetching\s+0\s+files", re.IGNORECASE)
 # HF_HOME=<local_dir>, so that task's cache lives under <local_dir>/hub, and
 # the probe process's own environment knows nothing about it.
 HF_CACHE_COMPLETE_PROBE = (
-    "import os,sys;"
+    "import os,sys\n" + HF_PARTIAL_BLOB_HELPER +
     "repo=sys.argv[1];"
     "root=os.path.expanduser(sys.argv[2]) if len(sys.argv)>2 and sys.argv[2] else '';"
     "base=os.path.join(root,'hub') if root else (os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub'));"
@@ -24,18 +38,18 @@ HF_CACHE_COMPLETE_PROBE = (
     "ok=os.path.isdir(snap) and any(os.path.isdir(os.path.join(snap,x)) and os.listdir(os.path.join(snap,x)) for x in os.listdir(snap));"
     "inc=False;"
     "blobs=os.path.join(d,'blobs');"
-    "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
+    "inc=os.path.isdir(blobs) and any(is_partial_blob(os.path.join(blobs,x)) for x in os.listdir(blobs));"
     "sys.exit(0 if ok and not inc else 1)"
 )
 
 HF_CACHE_INCOMPLETE_PROBE = (
-    "import os,sys;"
+    "import os,sys\n" + HF_PARTIAL_BLOB_HELPER +
     "repo=sys.argv[1];"
     "root=os.path.expanduser(sys.argv[2]) if len(sys.argv)>2 and sys.argv[2] else '';"
     "base=os.path.join(root,'hub') if root else (os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub'));"
     "d=os.path.join(base,'models--'+repo.replace('/','--'));"
     "blobs=os.path.join(d,'blobs');"
-    "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
+    "inc=os.path.isdir(blobs) and any(is_partial_blob(os.path.join(blobs,x)) for x in os.listdir(blobs));"
     "sys.exit(0 if inc else 1)"
 )
 

@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1114-pr40-editor-precache';
+const CACHE_NAME = 'odysseus-v1115-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -38,6 +38,7 @@ const KATEX_FONTS = [
 // Both are fetched at install time, in the background. Entries must match the
 // exact URL the browser requests, query string included.
 const PRECACHE = [
+  '/static/js/compare/sse.js',
   '/',
   '/static/css/00-tokens.css?v=20260929csssplit',
   '/static/css/01-agent-chat.css?v=20260929csssplit',

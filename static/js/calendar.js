@@ -771,7 +771,13 @@ function _getModal() {
       <button class="cal-side-nav cal-side-nav-next" id="cal-side-next" title="Next" aria-label="Next">&rsaquo;</button>
     </div>`;
   document.body.appendChild(_modal);
-  _modal.querySelector('#cal-close').addEventListener('click', closeCalendar);
+  _modal.querySelector('#cal-close').addEventListener('click', () => {
+    if (_modal.querySelector('.cal-form')) {
+      _render();
+      return;
+    }
+    closeCalendar();
+  });
   _modal.querySelector('#cal-side-prev')?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();

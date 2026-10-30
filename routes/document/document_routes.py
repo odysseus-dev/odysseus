@@ -781,9 +781,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         except Exception as e:
             logger.warning("Failed to parse export request body, defaulting to empty", exc_info=e)
             data = {}
-        ids = data.get("ids") or []
+        ids = data.get("ids") if isinstance(data, dict) else None
         if not ids:
             raise HTTPException(400, "No documents specified")
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise HTTPException(400, "ids must be a list of document ids")
         _ext = {
             "javascript": ".js", "python": ".py", "html": ".html", "css": ".css",
             "markdown": ".md", "json": ".json", "yaml": ".yml", "bash": ".sh",
