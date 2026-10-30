@@ -41,6 +41,46 @@
     midnight:'#ffffff', organs:'#451616', cute:'#ff8cb8', ume:'#f5a0c0'
   };
   var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
+  // Copy of accentButtonColors() in static/js/color/contrast.js, which this
+  // synchronous script cannot import. tests/test_accent_button_contrast_js.py
+  // checks that both give the same colors for every built-in theme.
+  function accentButtonColors(accent) {
+    function rgb(hex) {
+      var n = parseInt(hex.slice(1), 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    function lum(hex) {
+      var c = rgb(hex), out = [c.r, c.g, c.b].map(function(v) {
+        v = v / 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2];
+    }
+    function ratio(a, b) {
+      var la = lum(a), lb = lum(b);
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+    function mix(a, b, weight) {
+      var x = rgb(a), y = rgb(b);
+      var ch = function(k) { return Math.round(x[k] * weight + y[k] * (1 - weight)).toString(16).padStart(2, '0'); };
+      return '#' + ch('r') + ch('g') + ch('b');
+    }
+    function clearFill(ink, away, weight) {
+      for (var w = weight; w > 0; w -= 0.02) {
+        var fill = mix(accent, away, w);
+        if (ratio(fill, ink) >= 4.5) return fill;
+      }
+      return away;
+    }
+    var white = ratio(mix(accent, '#000000', 0.78), '#ffffff') >= 4.5;
+    var ink = white ? '#ffffff' : '#111111';
+    var away = white ? '#000000' : '#ffffff';
+    return {
+      ink: ink,
+      fill: clearFill(ink, away, white ? 0.78 : 1),
+      hover: clearFill(ink, away, white ? 0.70 : 0.88)
+    };
+  }
   try {
     var t = JSON.parse(localStorage.getItem('odysseus-theme'));
     var s = document.documentElement.style;
@@ -53,6 +93,14 @@
       s.setProperty('--border', c.border);
       if (c.red) s.setProperty('--red', c.red);
       if (c.green) s.setProperty('--green', c.green);
+      // Sign-in button: same AA-safe fill and label as the app's primary
+      // buttons. Set here, before first paint, so the button never fades in.
+      if (c.red && /^#[0-9a-f]{6}$/i.test(c.red)) {
+        var btn = accentButtonColors(c.red);
+        s.setProperty('--accent-fill', btn.fill);
+        s.setProperty('--accent-fill-hover', btn.hover);
+        s.setProperty('--accent-ink', btn.ink);
+      }
       // Advanced overrides (sidebar logo color, input bg, send-button bg, etc.)
       // — mirrors ADV_KEYS in static/js/theme.js so the login page picks up
       // every customization the user has on their theme instead of falling
@@ -111,7 +159,7 @@
      localStorage — renders the login page in the same palette as the rest
      of the app instead of a different greys+offwhite scheme. */
   :root {
-    --bg: #282c34; --fg: #9cdef2; --panel: #111; --border: #355a66;
+    --bg: #131418; --fg: #ececef; --panel: #18191d; --border: #2a2b31;
     --red: #e06c75; --green: #50fa7b;
     --bg-effect-intensity: 1;
   }
@@ -156,20 +204,15 @@
     font-family: 'Fira Code', monospace;
     font-size: 2rem; font-weight: 600;
     letter-spacing: 0.04em;
-    /* Same gradient as the main app's welcome-screen "Odysseus" title
-       (the main cascade's #welcome-screen .welcome-name) so the brand
-       wordmark is consistent across login + first-launch screens. */
-    background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    /* Solid wordmark, matching the app's welcome title (static/css/refresh.css). */
+    color: var(--fg);
   }
   .setup-note { color: color-mix(in srgb, var(--fg) 60%, transparent); font-size: 0.8rem; margin-bottom: 1rem; text-align: center; }
   label { display: block; font-size: 0.85rem; margin-bottom: 0.3rem; color: color-mix(in srgb, var(--fg) 65%, transparent); }
   input:not(.remember-check) {
     width: 100%; padding: 0.6rem 0.8rem; margin-bottom: 1rem;
     background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    color: var(--fg); font-size: 0.95rem; font-family: 'Fira Code', monospace;
+    color: var(--fg); font-size: 0.95rem; font-family: inherit;
   }
   input:focus { outline: none; border-color: var(--red); }
   /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
@@ -190,13 +233,16 @@
     /* Asymmetric vertical padding nudges the label 1px down while keeping
        the button's total height the same as 0.7rem all-around. */
     padding: calc(0.7rem + 1px) 0.7rem calc(0.7rem - 1px);
-    border: none; border-radius: 6px;
-    /* Darken the brand red slightly so #fff label text clears the WCAG AA
-       4.5:1 contrast threshold (plain --red #e06c75 only reaches ~3.2:1). */
-    background: color-mix(in srgb, var(--red) 78%, #000); color: #fff; font-size: 1rem; cursor: pointer;
-    font-weight: 600; font-family: 'Fira Code', monospace;
+    border: none; border-radius: 8px; transition: background .12s cubic-bezier(.2, .8, .2, 1);
+    /* The head script sets --accent-fill/--accent-ink from the saved accent,
+       as the app does, so the label clears WCAG AA 4.5:1 on bright accents
+       too. The fallback is the darkened brand red, where #fff clears it
+       (plain #e06c75 only reaches ~3.2:1). */
+    background: var(--accent-fill, color-mix(in srgb, var(--red) 78%, #000));
+    color: var(--accent-ink, #fff); font-size: 1rem; cursor: pointer;
+    font-weight: 600; font-family: inherit;
   }
-  button:hover { background: color-mix(in srgb, var(--red) 66%, black); }
+  button:hover { background: var(--accent-fill-hover, color-mix(in srgb, var(--red) 66%, black)); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: #e55; font-size: 0.85rem; margin-bottom: 0.75rem; display: none; }
 
@@ -263,7 +309,9 @@
   .remember-toggle:hover .remember-dot {
     border-color: color-mix(in srgb, var(--fg) 40%, transparent);
   }
-  .logo-boat { width: 1.6rem; height: 1.6rem; margin-right: 0.4rem; vertical-align: -0.15em; color: var(--red); }
+  /* 1em box: the drawn sail fills ~75%, so its tip lands near cap height and
+     the -0.2em drop seats the wave on the baseline. */
+  .logo-boat { width: 1em; height: 1em; margin-right: 0.3em; vertical-align: -0.2em; color: var(--red); }
   .version-label {
     position: fixed; bottom: 12px; right: 16px;
     font-size: 0.7rem; opacity: 0.25;
