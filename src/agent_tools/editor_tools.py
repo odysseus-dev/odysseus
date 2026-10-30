@@ -191,7 +191,7 @@ def _persist_png(image_bytes: bytes, owner: Optional[str], session_id: Optional[
         db.close()
 
 
-async def _place_layer(data_url: str, name: str, owner: Optional[str], session: str, *, masked: bool = False, blend: str = "normal", opacity: float = 100.0, mode: Optional[str] = None) -> bool:
+async def _place_layer(data_url: str, name: str, owner: Optional[str], session: str, *, masked: bool = False, blend: str = "normal", opacity: float = 100.0, mode: Optional[str] = None, native_size: bool = False) -> bool:
     params: Dict[str, Any] = {
         "dataUrl": data_url,
         "name": name,
@@ -199,6 +199,8 @@ async def _place_layer(data_url: str, name: str, owner: Optional[str], session: 
         "blend": blend or "normal",
         "opacity": opacity,
     }
+    if native_size:
+        params["nativeSize"] = True
     # Forward the edit mode so the client can build a difference mask for
     # instruction-mode results: the whole image was regenerated under an
     # instruction prompt, so untouched pixels must stay pixel-identical (the
@@ -506,6 +508,8 @@ class AiEditImageTool:
             }
         _t["image"] = time.perf_counter()
         payload: Dict[str, Any] = {"image": image}
+        if args.get("_use_image_settings") is True:
+            payload["_use_image_settings"] = True
         model_choice = str(args.get("model") or "").strip()
         mask_used = False
         place_mode: Optional[str] = None
@@ -609,10 +613,11 @@ class AiEditImageTool:
                 f"AI {op}",
                 owner,
                 session,
-                masked=mask_used,
+                masked=mask_used and data.get("full_frame") is not True,
                 blend=str(args.get("blend") or "normal"),
                 opacity=float(args.get("opacity") or 100),
                 mode=place_mode,
+                native_size=data.get("full_frame") is True,
             )
             info["placed"] = placed
             if placed:
@@ -687,6 +692,7 @@ class GenerateImageLayerTool:
                 str(args.get("name") or "Generated image"),
                 owner,
                 session,
+                native_size=True,
                 masked=bool(args.get("mask")),
                 blend=str(args.get("blend") or "normal"),
                 opacity=float(args.get("opacity") or 100),

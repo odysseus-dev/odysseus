@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from PIL import Image
 
 import routes.gallery_routes as gallery
@@ -16,7 +17,10 @@ def png(image):
     return base64.b64encode(output.getvalue()).decode()
 
 
-def test_openrouter_inpaint_keeps_unmasked_pixels(monkeypatch, caplog):
+@pytest.mark.parametrize('model', ['openai/gpt-5-image', 'openai/gpt-image-2'])
+@pytest.mark.parametrize('saved_settings', [False, True])
+@pytest.mark.parametrize('full_frame', [False, True])
+def test_openrouter_inpaint_keeps_unmasked_pixels(monkeypatch, caplog, model, saved_settings, full_frame):
     import logging
     caplog.set_level(logging.DEBUG)
     endpoint = SimpleNamespace(base_url='https://openrouter.ai/api/v1', api_key='test')
@@ -29,34 +33,95 @@ def test_openrouter_inpaint_keeps_unmasked_pixels(monkeypatch, caplog):
     monkeypatch.setattr(gallery, 'require_privilege', lambda *args: 'alice')
     monkeypatch.setattr(gallery, '_visible_image_endpoint_for_base', lambda *args: endpoint)
     monkeypatch.setattr('src.url_safety.check_outbound_url', lambda *args, **kwargs: (True, ''))
+    monkeypatch.setattr('src.editor_image_settings.load_settings', lambda: {'image_model':'wrong-generation-model', 'image_edit_model':model})
+    def resolve_model(selected, **kwargs):
+        assert selected == model
+        assert kwargs['owner'] == 'alice'
+        return endpoint.base_url + '/chat/completions', model, {}
+    monkeypatch.setattr('src.ai_interaction._resolve_model', resolve_model)
     requests = []
 
     def respond(request):
         requests.append(request)
-        assert str(request.url) == endpoint.base_url + '/images'
+        assert str(request.url) == endpoint.base_url + ('/chat/completions' if model == 'openai/gpt-5-image' else '/images')
         payload = json.loads(request.content)
-        assert payload['model'] == 'openai/gpt-5-image'
-        assert len(payload['input_references']) == 2
+        assert payload['model'] == model
+        if model == 'openai/gpt-5-image':
+            assert len(payload['messages'][0]['content']) == 3
+        else:
+            assert len(payload['input_references']) == 2
         assert request.headers['authorization'] == 'Bearer test'
-        return httpx.Response(200, json={'data': [{'b64_json': png(Image.new('RGB', (2, 1), 'blue'))}]})
+        image = png(Image.new('RGB', (4, 4) if full_frame else (2, 1), 'blue'))
+        if model == 'openai/gpt-5-image':
+            return httpx.Response(200, json={'choices':[{'message':{'images':[{'image_url':{'url':'data:image/png;base64,'+image}}]}}]})
+        return httpx.Response(200, json={'data': [{'b64_json': image}]})
 
     client = httpx.AsyncClient
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: client(transport=httpx.MockTransport(respond), **kwargs))
     mask = Image.new('L', (2, 1))
+    if full_frame:
+        mask.paste(255, (0,0,2,1))
     mask.putpixel((1, 0), 255)
 
     class Request:
         async def json(self):
-            return {'_endpoint': endpoint.base_url, '_model': 'openai/gpt-5-image',
+            return {'_endpoint': endpoint.base_url, '_model': 'stale-model' if saved_settings else model,
+                    '_use_image_settings':saved_settings,
                     'image': png(Image.new('RGB', (2, 1), 'red')), 'mask': png(mask), 'prompt': 'private-cloud-prompt'}
 
     route = next(r for r in gallery.setup_gallery_routes().routes if r.path == '/api/image/inpaint')
     result = asyncio.run(route.endpoint(Request()))
     output = Image.open(io.BytesIO(base64.b64decode(result['image'])))
-    assert output.getpixel((0, 0)) == (255, 0, 0, 255)
-    assert output.getpixel((1, 0)) == (0, 0, 255, 255)
+    if full_frame:
+        assert output.size == (4,4)
+        assert result['full_frame'] is True
+    else:
+        assert output.getpixel((0, 0)) == (255, 0, 0, 255)
+        assert output.getpixel((1, 0)) == (0, 0, 255, 255)
     assert len(requests) == 1
     assert 'private-cloud-prompt' not in caplog.text
+
+
+def test_partial_image_edit_preserves_ratio_and_unmasked_pixels():
+    source = Image.new('RGBA',(4,4),'red')
+    generated = Image.new('RGBA',(4,2),'blue')
+    mask = Image.new('L',(4,4),255)
+    mask.putpixel((0,0),0)
+    result, full = gallery._compose_cloud_image_edit(source,generated,mask)
+    assert full is False
+    assert result.size == (4,4)
+    assert result.getpixel((2,0)) == source.getpixel((2,0))
+    assert result.getpixel((2,3)) == source.getpixel((2,3))
+    assert result.getpixel((2,1)) == (0,0,255,255)
+
+
+def test_quick_edit_inpaint_requests_source_ratio_without_width_height_fields(monkeypatch):
+    endpoint = SimpleNamespace(base_url='https://openrouter.ai/api/v1',api_key='test')
+    monkeypatch.setattr(gallery,'SessionLocal',lambda:SimpleNamespace(close=lambda:None))
+    monkeypatch.setattr(gallery,'require_privilege',lambda *args:'alice')
+    monkeypatch.setattr(gallery,'_visible_image_endpoint_for_base',lambda *args:endpoint)
+    monkeypatch.setattr('src.url_safety.check_outbound_url',lambda *args,**kwargs:(True,''))
+    sent = []
+    original = httpx.AsyncClient
+
+    def respond(request):
+        payload = json.loads(request.content)
+        sent.append(payload)
+        return httpx.Response(200,json={'data':[{'b64_json':png(Image.new('RGB',(1536,864),'blue'))}]})
+
+    monkeypatch.setattr(httpx,'AsyncClient',lambda **kwargs:original(transport=httpx.MockTransport(respond),**kwargs))
+
+    class Request:
+        async def json(self):
+            return {'_endpoint':endpoint.base_url,'_model':'openai/gpt-image-2','prompt':'change the sky',
+                    'image':png(Image.new('RGB',(1280,720),'red')),'mask':png(Image.new('L',(1280,720),255))}
+
+    route = next(route for route in gallery.setup_gallery_routes().routes if route.path == '/api/image/inpaint')
+    result = asyncio.run(route.endpoint(Request()))
+    assert sent[0]['aspect_ratio'] == '16:9'
+    assert 'size' not in sent[0]
+    image = Image.open(io.BytesIO(base64.b64decode(result['image'])))
+    assert image.size == (1536,864)
 
 
 def test_mixed_endpoint_requires_configured_image_model(monkeypatch):

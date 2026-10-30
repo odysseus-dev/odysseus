@@ -855,6 +855,11 @@ def _plan_special(
     left to the model.     Returns (steps, reply, note) or None. These never need an
     image provider except generative border fill, used only when one exists.
     """
+    if re.fullmatch(
+        r"\s*(?:please\s+)?(?:remove|erase|delete|clear|strip)\s+(?:the\s+)?(?:bg|background|backdrop)(?:\s+(?:from|of)\s+(?:the\s+)?(?:active|current|selected)\s+layer)?[.!\s]*",
+        prompt, re.I,
+    ):
+        return [{"op": "ai.removeBackground", "params": {}}], "Removing the active layer's background.", ""
     # Targeted recolour is fully deterministic (object mask + masked hue shift)
     # and must never be left to the model, which sometimes substitutes a
     # generative placeImage. Highest priority so it can never vary.
@@ -1647,6 +1652,13 @@ def setup_editor_agent_routes() -> APIRouter:
         screenshot = body.get("screenshot")
         # Optional user-picked image model (from the editor model selector).
         model_choice = str(body.get("model") or body.get("image_model") or "").strip()
+        generation_model_choice = str(body.get("generation_model") or "").strip()
+        use_image_settings = body.get("_use_image_settings") is True
+        if use_image_settings:
+            from src.editor_image_settings import editor_image_models
+            image_models = editor_image_models()
+            model_choice = image_models["edit"]
+            generation_model_choice = image_models["generation"]
         # Optional user-picked PLANNER model (the editor agent/planner model).
         agent_model = str(body.get("agent_model") or "").strip()
         tools_offered = [tool for tool in _scoped_editor_tools() if tool not in disabled]
@@ -1797,9 +1809,22 @@ def setup_editor_agent_routes() -> APIRouter:
                 # Planner output is untrusted: it cannot redirect this turn to
                 # another editor session or override an explicit model choice.
                 tool_payload["session"] = session
+                if use_image_settings:
+                    tool_payload["_use_image_settings"] = True
+                    if op == "generate_image" and state.get("width") and state.get("height"):
+                        try:
+                            width, height = int(state["width"]), int(state["height"])
+                            if width > 0 and height > 0:
+                                tool_payload["size"] = f"{width}x{height}"
+                        except (TypeError, ValueError):
+                            pass
                 # Route to the user-picked model when one is selected.
-                if model_choice:
-                    tool_payload["model"] = model_choice
+                selected_model = generation_model_choice if op == "generate_image" else model_choice
+                if selected_model:
+                    tool_payload["model"] = selected_model
+                elif op == "generate_image" or use_image_settings:
+                    # Let server settings resolve Auto, not a planner-invented model.
+                    tool_payload.pop("model", None)
                 # Hand the AI step the canvas image the client already captured
                 # for this request. Without it the tool falls back to a separate
                 # bridge screenshot, which is not reliably answered right after a

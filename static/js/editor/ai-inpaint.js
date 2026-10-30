@@ -41,6 +41,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { imageResultGeometry } from './image-result-geometry.js';
 import { beginAIOperation, decodeAIImage } from './ai-operation.js';
 
 export function wireInpaintButtons({
@@ -184,17 +185,30 @@ export function wireInpaintButtons({
         if (!state.editorOpen) return; // user closed mid-decode
         try {
           saveState('Inpaint result');
-          // OpenAI returns at one of its allowed sizes (1024²,
-          // 1024×1536, 1536×1024) which often differs from our
-          // canvas. Scale to canvas size with smoothing so the
-          // inpaint blends in regardless of source dims.
+          // Whole-image edits keep the provider's native frame; only masked
+          // edits need registration with the source document's coordinates.
           const shortPrompt = (prompt || '').trim().replace(/\s+/g, ' ').slice(0, 40);
           const layerName = shortPrompt ? `Inpaint: ${shortPrompt}` : 'Inpaint Result';
-          const resultLayer = createLayer(layerName, state.imgWidth, state.imgHeight);
+          const fullFrame = data.full_frame === true;
+          const geometry = imageResultGeometry(resultImg.naturalWidth, resultImg.naturalHeight, state.imgWidth, state.imgHeight);
+          const resultLayer = createLayer(layerName,
+            fullFrame ? geometry.width : state.imgWidth,
+            fullFrame ? geometry.height : state.imgHeight);
           resultLayer.ctx.imageSmoothingEnabled = true;
           resultLayer.ctx.imageSmoothingQuality = 'high';
-          resultLayer.ctx.drawImage(resultImg, 0, 0, state.imgWidth, state.imgHeight);
+          if (fullFrame) {
+            resultLayer.ctx.drawImage(resultImg, geometry.drawX, geometry.drawY, geometry.drawWidth, geometry.drawHeight);
+            state.layerOffsets.set(resultLayer.id, {
+              x: geometry.offsetX,
+              y: geometry.offsetY,
+            });
+          } else {
+            const scale = Math.min(state.imgWidth / resultImg.naturalWidth, state.imgHeight / resultImg.naturalHeight);
+            const width = resultImg.naturalWidth * scale, height = resultImg.naturalHeight * scale;
+            resultLayer.ctx.drawImage(resultImg, (state.imgWidth - width) / 2, (state.imgHeight - height) / 2, width, height);
+          }
           // Snapshot the AI result + hard mask used for this run.
+          if (!fullFrame) {
           const aiSnap = document.createElement('canvas');
           aiSnap.width = state.imgWidth; aiSnap.height = state.imgHeight;
           aiSnap.getContext('2d').drawImage(resultLayer.canvas, 0, 0);
@@ -205,6 +219,7 @@ export function wireInpaintButtons({
           resultLayer.inpaintSource = { ai: aiSnap, mask: maskSnap, base: baseSnap, padPx };
           // Apply initial alpha = hard mask (no feather, no edge shift).
           applyInpaintFeather(resultLayer, 0, 0);
+          }
           state.layers.push(resultLayer);
           state.activeLayerId = resultLayer.id;
           state.lastInpaintLayerId = resultLayer.id;
@@ -220,6 +235,10 @@ export function wireInpaintButtons({
           }
           composite();
           renderLayerPanel();
+          if (fullFrame) {
+            if (uiModule) uiModule.showToast('Image edit complete', 4500);
+            return;
+          }
           // Reveal post-generation Feather + Edge Stroke sliders.
           // Cap Edge Stroke at ±padPx so the slider can't ask for
           // more AI buffer than we generated.

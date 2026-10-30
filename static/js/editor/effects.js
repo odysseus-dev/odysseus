@@ -81,6 +81,7 @@ export function normalizeEffect(effect) {
     params.blendMode = typeof params.blendMode === 'string' ? params.blendMode : defaults.blendMode;
   }
   if (type === 'drop-shadow') {
+    params.inside = params.inside === true || params.inside === 1;
     params.color = /^#[0-9a-f]{6}$/i.test(params.color) ? params.color : defaults.color;
     for (const key of ['opacity', 'blur', 'x', 'y']) params[key] = Number(params[key]) || 0;
     params.opacity = Math.max(0, Math.min(1, params.opacity));
@@ -291,7 +292,7 @@ export function renderEffects(source, effects = [], shouldContinue = () => true)
       : next;
     const blended = copyCanvas(current);
     const blendCtx = blended.getContext('2d');
-    if (effect.type === 'drop-shadow') blendCtx.globalCompositeOperation = 'destination-over';
+    if (effect.type === 'drop-shadow' && !effect.params.inside) blendCtx.globalCompositeOperation = 'destination-over';
     blendCtx.globalAlpha = effect.opacity;
     blendCtx.drawImage(contribution, 0, 0);
     blendCtx.globalAlpha = 1;
