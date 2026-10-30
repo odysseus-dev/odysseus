@@ -567,6 +567,38 @@ def _annotate_usage_model(usage: dict, requested_model: str, actual_model: str) 
     return usage
 
 
+def _annotate_usage_effort(usage: dict, payload: dict, requested_effort: Optional[str]) -> dict:
+    """Record the picked reasoning effort when the request payload carries it.
+
+    The effort is read back from the payload actually sent (the Responses
+    ``reasoning.effort`` or the top-level ``reasoning_effort``), so an effort
+    that validation or the transport dropped is never reported.
+    """
+    effort = str(requested_effort or "").strip().lower()
+    if not effort or not isinstance(payload, dict):
+        return usage
+    reasoning = payload.get("reasoning")
+    sent = reasoning.get("effort") if isinstance(reasoning, dict) else None
+    sent = sent or payload.get("reasoning_effort")
+    if str(sent or "").strip().lower() == effort:
+        usage["reasoning_effort"] = effort
+    return usage
+
+
+def _annotate_usage_temperature(usage: dict, payload: dict) -> dict:
+    """Record temperature from the final wire payload, including native Ollama."""
+    options = payload.get("options")
+    options = options if isinstance(options, dict) else {}
+    temperature = payload.get("temperature", options.get("temperature"))
+    if (
+        isinstance(temperature, (int, float))
+        and not isinstance(temperature, bool)
+        and math.isfinite(temperature)
+    ):
+        usage["temperature"] = temperature
+    return usage
+
+
 def note_model_activity(url: str, model: str):
     """Record that a real upstream request used this endpoint/model."""
     if not url or not model:
@@ -3167,6 +3199,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     model,
                                     _responses_actual_model,
                                 )
+                                _annotate_usage_effort(normalized_usage, payload, reasoning_effort)
+                                _annotate_usage_temperature(normalized_usage, payload)
                                 yield f'data: {json.dumps({"type": "usage", "data": normalized_usage})}\n\n'
                         yield "data: [DONE]\n\n"
                         return
@@ -3273,6 +3307,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     model,
                                     _ollama_actual_model,
                                 )
+                                _annotate_usage_temperature(normalized_usage, payload)
                                 yield f'data: {json.dumps({"type": "usage", "data": normalized_usage})}\n\n'
                         yield "data: [DONE]\n\n"
                         return
@@ -3420,6 +3455,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     model,
                                     _anth_actual_model,
                                 )
+                                _annotate_usage_temperature(normalized_usage, payload)
                                 yield f'data: {json.dumps({"type": "usage", "data": normalized_usage})}\n\n'
                             yield "data: [DONE]\n\n"
                             return
@@ -3690,6 +3726,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                         _usage_data["model"] = _actual_model
                                         if not _same_model_identity(_actual_model, model):
                                             _usage_data["requested_model"] = model
+                                    _annotate_usage_effort(_usage_data, payload, reasoning_effort)
+                                    _annotate_usage_temperature(_usage_data, payload)
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
                                     _c0 = (j["choices"] or [None])[0]
