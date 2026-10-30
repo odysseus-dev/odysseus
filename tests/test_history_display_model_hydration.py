@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from core.database import Base, ChatMessage as DbChatMessage, Session as DbSession
+from core.database import Base, ChatMessage as DbChatMessage, Project, Session as DbSession
 from core.models import ChatMessage, Session
 from core.session_manager import SessionManager
 from routes import chat_routes
@@ -28,7 +28,7 @@ def _database():
     )
     Base.metadata.create_all(
         engine,
-        tables=[DbSession.__table__, DbChatMessage.__table__],
+        tables=[Project.__table__, DbSession.__table__, DbChatMessage.__table__],
     )
     return engine, sessionmaker(bind=engine, autocommit=False, autoflush=False)
 

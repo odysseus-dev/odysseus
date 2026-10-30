@@ -174,6 +174,34 @@ class EncryptedText(TypeDecorator):
         return decrypt(value)
 
 
+class Project(TimestampMixin, Base):
+    """A durable, owner-scoped collection of chat sessions."""
+    __tablename__ = "projects"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True, default="")
+    instructions = Column(Text, nullable=True, default="")
+    brief = Column(Text, nullable=True, default="")
+    archived = Column(Boolean, default=False)
+    is_pinned = Column(Boolean, default=False)
+
+    sessions = relationship("Session", back_populates="project")
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name,
+            "description": self.description or "",
+            "instructions": self.instructions or "",
+            "brief": self.brief or "",
+            "archived": bool(self.archived), "is_pinned": bool(self.is_pinned),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "session_count": len(self.sessions) if self.sessions is not None else 0,
+        }
+
+
 class Session(TimestampMixin, Base):
     """
     SQLAlchemy model for Session table.
@@ -202,6 +230,8 @@ class Session(TimestampMixin, Base):
 
     # Organization
     folder = Column(String, nullable=True, default=None)
+    project_id = Column(String, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    project = relationship("Project", back_populates="sessions")
     cwd = Column(String, nullable=True, default=None)
     # Registered ModelEndpoint this session is bound to. endpoint_url alone
     # cannot distinguish two endpoints that share a provider URL but use
@@ -268,6 +298,7 @@ class Session(TimestampMixin, Base):
             'message_count': self.message_count,
             'is_important': self.is_important,
             'folder': self.folder,
+            'project_id': self.project_id,
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
             'total_cost_usd': self.total_cost_usd or 0.0,
@@ -1456,6 +1487,40 @@ def _migrate_add_folder_column():
         except Exception:
             pass
 
+def _migrate_add_project_columns():
+    """Add project persistence columns for upgraded SQLite installs."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        changed = False
+        session_columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+        if session_columns and "project_id" not in session_columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN project_id TEXT")
+            changed = True
+        if session_columns:
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_sessions_project_id ON sessions(project_id)")
+
+        project_columns = [row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()]
+        if project_columns and "brief" not in project_columns:
+            conn.execute("ALTER TABLE projects ADD COLUMN brief TEXT DEFAULT ''")
+            changed = True
+        if project_columns and "owner" in project_columns:
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_projects_owner ON projects(owner)")
+        conn.commit()
+        if changed:
+            logging.getLogger(__name__).info("Migrated: ensured project columns")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for project columns failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 def _migrate_add_session_cwd_column():
     """Add cwd column to sessions table if it doesn't exist."""
     import sqlite3
@@ -2406,6 +2471,7 @@ def init_db():
     _migrate_add_skill_injection_enabled_column()
     _migrate_add_session_generation_settings_columns()
     _migrate_add_folder_column()
+    _migrate_add_project_columns()
     _migrate_add_session_cwd_column()
     _migrate_add_session_endpoint_id_column()
     _migrate_add_token_columns()
