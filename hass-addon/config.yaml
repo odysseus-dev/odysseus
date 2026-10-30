@@ -1,0 +1,78 @@
+name: Odysseus
+version: "1.0.0"
+slug: odysseus
+description: >-
+  Self-hosted AI workspace for chat, agents, deep research, documents, email,
+  notes, tasks and calendar, with optional local model serving.
+url: https://github.com/odysseus-dev/odysseus
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+stage: stable
+
+# ---------------------------------------------------------------------------
+# Direct port access. The web UI and API are served on this port; set the host
+# port to null in the add-on network settings to disable it.
+# ---------------------------------------------------------------------------
+ports:
+  7000/tcp: 7000
+ports_description:
+  7000/tcp: Odysseus web UI and API
+
+# "OPEN WEB UI" button on the add-on page.
+webui: "http://[HOST]:[PORT:7000]/"
+watchdog: "tcp://[HOST]:[PORT:7000]"
+
+# Share is mounted read-write at /share so file tools can exchange files with
+# other add-ons. /data (always mounted) holds all Odysseus state.
+map:
+  - type: share
+    read_only: false
+
+options:
+  # --- Odysseus native authentication ------------------------------------
+  auth_enabled: true
+  # --- Model provider ----------------------------------------------------
+  # Pick the provider the API key is for; the add-on seeds a ready-to-use model
+  # endpoint for it. "none" = configure models in the app instead.
+  llm_provider: none
+  # --- Database ----------------------------------------------------------
+  # "sqlite" keeps everything on the /data volume. "postgres" uses the server
+  # configured below; set db_url to override the whole connection string.
+  db_type: sqlite
+  # --- Web search --------------------------------------------------------
+  search_provider: none
+  # --- Networking --------------------------------------------------------
+  llm_host: localhost
+  allowed_origins: []
+  # --- Escape hatch ------------------------------------------------------
+  extra_env: []
+
+schema:
+  auth_enabled: bool
+  # Optional (no default): empty until the user sets them.
+  admin_user: str?
+  admin_password: password?
+  ollama_base_url: str?
+  llm_provider: list(openai|anthropic|openrouter|groq|deepseek|google|mistral|none)
+  llm_api_key: password?
+  llm_model: str?
+  db_type: list(sqlite|postgres)
+  db_url: str?
+  db_host: str?
+  db_port: str?
+  db_name: str?
+  db_user: str?
+  db_password: password?
+  search_provider: list(searxng|brave|tavily|serper|google_pse|duckduckgo|disabled|none)
+  search_url: str?
+  search_api_key: password?
+  llm_host: str
+  allowed_origins:
+    - str
+  bind_address: str?
+  extra_env:
+    - str
