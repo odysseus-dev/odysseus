@@ -729,6 +729,8 @@ _EXTERNAL_MESSAGE_SOURCE_PREFIXES = ("web page:",)
 _CONTROL_PLANE_CONTEXT_SOURCES = frozenset(
     {
         "skills",
+        # chat_processor's label for the same skill names/descriptions.
+        "available skills index",
         "client runtime context",
         "backend runtime context",
         "integrations",
