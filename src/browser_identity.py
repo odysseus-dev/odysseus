@@ -119,8 +119,8 @@ class TrustedProducer:
     def validate(self):
         if (self.path != PRODUCER_ROOT / ("agent-browser-" + self.platform)
                 or self.path.is_symlink() or not self.path.is_file()
-                or self.path.stat().st_mode & 0o022
-                or self.path.stat().st_uid != os.getuid() and self.path.stat().st_uid != 0
+                or (os.name != "nt" and (self.path.stat().st_mode & 0o022
+                    or self.path.stat().st_uid != os.getuid() and self.path.stat().st_uid != 0))
                 or hashlib.sha256(self.path.read_bytes()).hexdigest() != PRODUCER_HASHES.get(self.platform)):
             raise ResourceIdentityError("Browser producer is not an allowlisted release binary")
 
@@ -204,8 +204,8 @@ class RegisteredBrowser:
         if self.env != expected or self.config != self.cwd / "config.json":
             raise ResourceIdentityError("Browser producer configuration changed")
         info = self.config.lstat()
-        if (self.cwd.is_symlink() or self.cwd.stat().st_mode & 0o077
-                or self.config.is_symlink() or info.st_mode & 0o077
+        if (self.cwd.is_symlink() or os.name != "nt" and self.cwd.stat().st_mode & 0o077
+                or self.config.is_symlink() or os.name != "nt" and info.st_mode & 0o077
                 or (info.st_dev, info.st_ino) != self.config_identity or self.config.read_text() != "{}"):
             raise ResourceIdentityError("Browser owned configuration changed")
 
