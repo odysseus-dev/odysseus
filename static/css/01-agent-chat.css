@@ -6516,10 +6516,8 @@ body.bg-pattern-ascii-fireflies {
     }
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
-    #styled-confirm-ok {
-      position: relative;
-      top: 2px;
-    }
+    #styled-confirm-ok .styled-confirm-btn-label,
+    #styled-confirm-alt .styled-confirm-btn-label,
     #styled-confirm-cancel .styled-confirm-cancel-label {
       position:relative;
       top:2px;
