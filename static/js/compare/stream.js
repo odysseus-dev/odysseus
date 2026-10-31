@@ -2,7 +2,7 @@
 import state from './state.js';
 import { consumeCompareEvents } from './sse.js';
 import { addFinishBadge } from './vote.js?v=20260828resendcaldrag1';
-import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260914metricssummary1';
+import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20261029pdfattach3';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js?v=20260916largetoolscroll1';

@@ -36,6 +36,9 @@ markdown
 # content is untrusted (LLM output over crawled pages) and report pages run
 # under a relaxed CSP, so the rendered HTML is allowlist-sanitized.
 nh3
+# PDF generation for chat "make a pdf" exports (src/pdf_export.py). Pure
+# Python, so it needs no browser or system libraries on the host.
+reportlab
 # Calendar .ics import/export (routes/calendar_routes.py).
 icalendar
 # Recurrence rule expansion for calendar events (routes/calendar_routes.py).

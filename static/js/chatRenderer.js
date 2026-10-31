@@ -484,7 +484,10 @@ function _formatSize(bytes) {
 // Build the `.attach-cards` element for a message's attachment list. Shared by
 // addMessage and updateMessageAttachments so a live (optimistic) user bubble
 // can be re-rendered with real upload ids once the upload resolves.
-export function buildAttachCards(attachments) {
+// `download: true` renders non-image files as plain download links. Used for
+// files the assistant produced (create_pdf): a real <a download> is the one
+// download mechanism that behaves the same in Firefox, Safari and Chromium.
+export function buildAttachCards(attachments, { download = false } = {}) {
   const attachWrap = document.createElement('div');
   attachWrap.className = 'attach-cards';
   for (const att of attachments) {
@@ -590,10 +593,16 @@ export function buildAttachCards(attachments) {
       attachWrap.appendChild(imgWrap);
     } else {
       // Non-image file card
-      const card = document.createElement('div');
+      const asLink = download && att.id;
+      const card = document.createElement(asLink ? 'a' : 'div');
       card.className = 'attach-card';
       card.dataset.name = att.name;
-      if (att.id) {
+      if (asLink) {
+        card.dataset.fileId = att.id;
+        card.href = `/api/upload/${encodeURIComponent(att.id)}`;
+        card.setAttribute('download', att.name || '');
+        card.title = `Download ${att.name || 'file'}`;
+      } else if (att.id) {
         card.dataset.fileId = att.id;
         card.style.cursor = 'pointer';
         card.addEventListener('click', () => {
@@ -3453,6 +3462,12 @@ export function addMessage(role, content, modelName, metadata) {
         }
       }
 
+      // Files the agent produced (create_pdf) go under the final answer bubble.
+      const answerBody = lastMsgAi?.querySelector('.body');
+      if (metadata.attachments?.length && answerBody) {
+        answerBody.appendChild(buildAttachCards(metadata.attachments, { download: true }));
+      }
+
       const firstWrap = lastMsgAi || lastWrap;
       if (firstWrap && firstWrap.classList.contains('msg-ai')) {
         if (metadata?.memories_used?.length) firstWrap._memoriesUsed = metadata.memories_used;
@@ -3675,6 +3690,9 @@ export function addMessage(role, content, modelName, metadata) {
       if (attachments?.length) {
         b.appendChild(buildAttachCards(attachments));
       }
+    }
+    if (role === 'assistant' && attachments?.length) {
+      b.appendChild(buildAttachCards(attachments, { download: true }));
     }
 
     wrap.appendChild(r);

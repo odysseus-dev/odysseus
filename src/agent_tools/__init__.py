@@ -25,6 +25,7 @@ from .media_tools import ExtractTextTool, InspectMediaTool, TranscribeMediaTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, ApplyPatchTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .coding_tools import TodoWriteTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+from .pdf_tools import CreatePdfTool
 from .interaction_tools import AskUserTool, UpdatePlanTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
@@ -58,6 +59,7 @@ TOOL_HANDLERS = {
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
     "create_document": CreateDocumentTool().execute,
+    "create_pdf": CreatePdfTool().execute,
     "update_document": UpdateDocumentTool().execute,
     "edit_document": EditDocumentTool().execute,
     "suggest_document": SuggestDocumentTool().execute,

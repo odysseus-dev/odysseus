@@ -3907,6 +3907,8 @@ def setup_chat_routes(
             # the outer scope. (Was `nonlocal` but never reassigned.)
             research_sources = None
             web_sources = ctx.web_sources
+            # Files the agent produced this turn (create_pdf), saved on the reply.
+            _agent_attachments = []
 
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
@@ -4554,7 +4556,7 @@ def setup_chat_routes(
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, _response_to_save, _metrics_to_save,
                                     character_name=ctx.preset.character_name,
-                                    web_sources=web_sources,
+                                    web_sources=web_sources, attachments=_agent_attachments,
                                     rag_sources=ctx.rag_sources,
                                     research_sources=research_sources,
                                     used_memories=ctx.used_memories,
@@ -4750,6 +4752,11 @@ def setup_chat_routes(
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
                                     yield chunk
+                                elif data.get("type") == "attachments":
+                                    _agent_attachments.extend(
+                                        item for item in (data.get("data") or []) if isinstance(item, dict)
+                                    )
+                                    yield chunk
                                 elif data.get("type") in (
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
@@ -4844,7 +4851,7 @@ def setup_chat_routes(
                                             terminal_content,
                                             terminal_metadata,
                                             character_name=ctx.preset.character_name,
-                                            web_sources=web_sources,
+                                            web_sources=web_sources, attachments=_agent_attachments,
                                             rag_sources=ctx.rag_sources,
                                             used_memories=ctx.used_memories,
                                             incognito=incognito,
@@ -4907,7 +4914,7 @@ def setup_chat_routes(
                                             _saveable_no_tool_response,
                                             _metrics_to_save,
                                             character_name=ctx.preset.character_name,
-                                            web_sources=web_sources,
+                                            web_sources=web_sources, attachments=_agent_attachments,
                                             rag_sources=ctx.rag_sources,
                                             used_memories=ctx.used_memories,
                                             incognito=incognito,
@@ -4969,7 +4976,7 @@ def setup_chat_routes(
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, _response_to_save, _metrics_to_save,
                                     character_name=ctx.preset.character_name,
-                                    web_sources=web_sources,
+                                    web_sources=web_sources, attachments=_agent_attachments,
                                     rag_sources=ctx.rag_sources,
                                     used_memories=ctx.used_memories,
                                     incognito=incognito,

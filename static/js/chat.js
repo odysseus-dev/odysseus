@@ -8,7 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20261029pdfattach3';
 import chatStream from './chatStream.js?v=20261026devsync1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -3261,7 +3261,7 @@ import { invalidateSettings } from './appConfig.js';
           + markdownModule.processWithThinking(markdownModule.squashOutsideCode(markdownModule.normalizeThinkingMarkup(_streamDisplayText(text, { final: _docFenceOpened }))))
           + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
       }
-      function _renderTerminalAnswer(text, messageId = '', renderOwner, replacementScope) {
+      function _renderTerminalAnswer(text, messageId = '', renderOwner, replacementScope, attachments = holder?._attachments) {
         if (renderOwner && !_turnRendering.accepts({ type: 'final_response', render_owner: renderOwner, replacement_scope: replacementScope })) return false;
         _ensureVisibleRoundForDelta();
         const body = roundHolder?.querySelector('.body');
@@ -3270,6 +3270,10 @@ import { invalidateSettings } from './appConfig.js';
           body, html: _terminalAnswerHtml(text, body), raw: text, messageId, render_owner: renderOwner, replacement_scope: replacementScope,
         });
         if (result.changed && window.hljs) body.querySelectorAll('pre code').forEach(block => window.hljs.highlightElement(block));
+        // Re-rendering replaces the body, so put this turn's file cards (create_pdf) back.
+        if (attachments?.length && !body.querySelector('a.attach-card')) {
+          body.appendChild(chatRenderer.buildAttachCards(attachments, { download: true }));
+        }
         if (result.accepted) _turnRendering.settle();
         return result.accepted;
       }
@@ -3298,7 +3302,8 @@ import { invalidateSettings } from './appConfig.js';
           }
           if (!saved || !String(saved.content || '').trim()) return false;
           const scrollSnapshot = uiModule.captureHistoryScroll?.();
-          const rendered = _renderTerminalAnswer(saved.content, _savedAssistantMessageId, saved.metadata?.render_owner, saved.metadata?.replacement_scope);
+          const rendered = _renderTerminalAnswer(saved.content, _savedAssistantMessageId, saved.metadata?.render_owner, saved.metadata?.replacement_scope,
+            saved.metadata?.attachments || holder?._attachments);
           uiModule.restoreHistoryScroll?.(scrollSnapshot);
           if (rendered) _streamTurnMarker.remove();
           return rendered;
@@ -4726,6 +4731,12 @@ import { invalidateSettings } from './appConfig.js';
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
+              } else if (json.type === 'attachments') {
+                // Files the agent produced (create_pdf). Rendered once the
+                // stream ends; background streams re-render from saved metadata.
+                if (!_isBg && Array.isArray(json.data)) {
+                  holder._attachments = (holder._attachments || []).concat(json.data);
+                }
               } else if (json.type === 'workspace_rejected') {
                 // Server refused to bind the posted workspace (deleted folder,
                 // file path, sensitive dir, filesystem root). Clear the stored
@@ -5783,6 +5794,12 @@ import { invalidateSettings } from './appConfig.js';
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         if (!footerTarget.querySelector('.msg-footer')) {
           footerTarget.appendChild(createMsgFooter(footerTarget, { animate: true }));
+        }
+        // Download cards for files the agent produced this turn (create_pdf).
+        const _attachBody = footerTarget.querySelector('.body');
+        if (holder._attachments?.length && !_isBgFinal && _attachBody
+            && !_attachBody.querySelector('a.attach-card')) {
+          _attachBody.appendChild(chatRenderer.buildAttachCards(holder._attachments, { download: true }));
         }
         if (_generatedImagesForTurn.length && !_isBgFinal) {
           _generatedImagesForTurn.forEach(imgData => _appendGeneratedImageBubble(imgData, streamSessionId));

@@ -1445,3 +1445,60 @@ class UploadHandler:
         
         logger.info(f"File uploaded successfully: {original_filename} ({file_size} bytes)")
         return file_metadata
+
+    def save_generated_file(self, data: bytes, filename: str, mime: str, owner: str = None) -> dict:
+        """Store bytes the server produced (e.g. a chat PDF export) as an owned upload.
+
+        The row has the same shape as ``save_upload``'s, so the owner-checked
+        ``/api/upload/{id}`` route serves it unchanged. No rate limit: the caller
+        is an authorized tool run, not a client request.
+
+        :raises ValueError: empty, oversized, or an unsafe file type.
+        """
+        if not data:
+            raise ValueError("Generated file is empty")
+        if len(data) > self.max_upload_size:
+            raise ValueError(f"Generated file exceeds {format_byte_limit(self.max_upload_size)} limit")
+        original_name = str(filename or "").strip() or f"generated_{int(time.time())}"
+        safe_filename = secure_filename(original_name) or "generated"
+        if not self.is_safe_file_type(mime, safe_filename):
+            raise ValueError(f"File type not allowed: {mime}")
+
+        file_hash = hashlib.sha256(data).hexdigest()
+        storage_key = f"{owner}:{file_hash}" if owner else file_hash
+        uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
+        with self._index_lock:
+            current = self._load_upload_index()
+            existing = current.get(storage_key)
+            stored_path = (existing or {}).get("path")
+            # Same bytes for the same owner share one row, as in save_upload.
+            if stored_path and os.path.exists(stored_path) and self._inside_upload_dir(stored_path):
+                existing["last_accessed"] = datetime.now().isoformat()
+                self._atomic_write_json(uploads_db_path, current)
+                return existing
+
+            file_id = _build_upload_id(safe_filename)
+            file_path = os.path.join(self.get_upload_dir(), file_id)
+            with open(file_path, "wb") as fh:
+                fh.write(data)
+            created_at = datetime.now().isoformat()
+            file_metadata = {
+                "id": file_id,
+                "path": file_path,
+                "mime": mime,
+                "size": len(data),
+                "name": safe_filename,
+                "hash": file_hash,
+                "checksum_sha256": file_hash,
+                "original_name": original_name,
+                "uploaded_at": created_at,
+                "created_at": created_at,
+                "last_accessed": created_at,
+                "client_ip": None,
+                "owner": owner,
+                "source": "generated",
+            }
+            current[storage_key] = file_metadata
+            self._atomic_write_json(uploads_db_path, current)
+        logger.info("Generated file stored: %s (%d bytes)", original_name, len(data))
+        return file_metadata

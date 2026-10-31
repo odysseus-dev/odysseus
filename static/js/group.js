@@ -3,7 +3,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import markdownModule from './markdown.js';
-import chatRenderer from './chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer from './chatRenderer.js?v=20261029pdfattach3';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getUserTemplates } from './presets.js?v=20260908personaname1';

@@ -2530,6 +2530,9 @@ _FORMATTER_HANDLED_KEYS = {
     "response", "results", "session_id", "name", "model", "session_name",
     "success", "path", "action", "title", "doc_id", "version", "applied",
     "error", "output", "images",
+    # create_pdf's file reference is for the chat UI; small models would
+    # otherwise paste the raw id/JSON into their reply.
+    "attachment",
 }
 
 

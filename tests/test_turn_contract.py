@@ -137,6 +137,51 @@ def test_explicit_online_lookup_requests_route_to_web_search(prompt):
     assert requested_capabilities(prompt) == frozenset({"search_browser"})
 
 
+@pytest.mark.parametrize("prompt", [
+    "make a pdf",
+    "turn those instructions into a pdf",
+    "can you make that into a pdf and translate it into hungarian",
+    "export this as pdf",
+    "save that as a PDF",
+    "give me a pdf version of the steps",
+    "create a PDF of the recipe",
+    "mach daraus ein PDF",
+    "kannst du das als PDF speichern",
+    "erstelle ein PDF mit der Anleitung",
+])
+def test_pdf_export_requests_route_to_create_pdf(prompt):
+    capabilities = requested_capabilities(prompt)
+    assert "pdf_export" in capabilities
+    assert "unknown" not in capabilities
+
+
+@pytest.mark.parametrize("prompt", [
+    "what is a pdf",
+    "read this pdf",
+    "fill this pdf form",
+    "extract text from the pdf",
+    "summarize the attached pdf",
+    "convert this pdf to word",
+    "how big can a pdf be",
+])
+def test_pdf_reading_and_questions_do_not_route_to_create_pdf(prompt):
+    assert "pdf_export" not in requested_capabilities(prompt)
+
+
+def test_pdf_export_keeps_the_named_source_family():
+    assert {"pdf_export", "notes"} <= requested_capabilities("make a pdf of my notes about rats")
+
+
+def test_pdf_export_family_grants_only_create_pdf():
+    from src.agent_runtime.authority import ExactOperation, create_request_authority
+
+    assert FAMILY_TOOLS["pdf_export"] == frozenset({"create_pdf"})
+    authority = create_request_authority("turn those instructions into a pdf", owner="o", session_id="s")
+    assert authority.permits(ExactOperation.normalize("create_pdf", '{"title": "Steps"}'))
+    for other in ("web_search", "bash", "create_document"):
+        assert not authority.permits(ExactOperation.normalize(other, "{}"))
+
+
 def test_musical_notes_do_not_route_to_personal_notes_when_media_tool_is_explicit():
     prompt = (
         "Your first tool call must be inspect_media for /workspace/input/reference.png. "

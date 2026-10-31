@@ -693,6 +693,22 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "create_pdf",
+            "description": "Make a downloadable, nicely laid-out PDF when the user asks to make a PDF, export or save something as PDF, or turn earlier chat content into a PDF. Copy the relevant earlier answer into content_markdown verbatim (keep its headings, lists, code and tables); do not redesign it — the app applies a fixed A4 layout and attaches the file to your reply. If content_markdown is empty, the previous answer is used.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short document title shown at the top of the PDF"},
+                    "content_markdown": {"type": "string", "description": "The content to put in the PDF, as Markdown"},
+                    "filename": {"type": "string", "description": "Optional file name without a path; defaults to the title"}
+                },
+                "required": ["title"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "edit_document",
             "description": "Edit a document OPEN IN THE EDITOR PANEL (created via create_document) — NOT a file on disk. For files on disk (home folder, project files, anything with a path like ~/x.txt or /path/to/file) use edit_file instead. Targeted find-and-replace with multiple FIND/REPLACE pairs per call; use for any edit smaller than a full rewrite. Do NOT send the whole file back via update_document for small edits.",
             "parameters": {

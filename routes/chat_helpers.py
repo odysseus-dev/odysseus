@@ -1664,6 +1664,7 @@ def save_assistant_response(
     do_research: bool = False,
     tool_events: list = None,
     incognito: bool = False,
+    attachments: list = None,
 ):
     """Add assistant response to session history.
 
@@ -1699,6 +1700,10 @@ def save_assistant_response(
         md["research_clarification"] = True
     if tool_events:
         md["tool_events"] = tool_events
+    if attachments:
+        # Files the agent produced this turn (create_pdf); same shape as user
+        # message attachments, so cards and upload cleanup treat them alike.
+        md["attachments"] = attachments
 
     # The streaming route may have forwarded textual DSML/XML tool calls as
     # deltas before the agent loop parsed them. Strip them again at the
