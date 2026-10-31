@@ -11,6 +11,9 @@ def _clear_hwfit_cache(monkeypatch):
     monkeypatch.setattr(hardware, "_remote_host", None)
     monkeypatch.setattr(hardware, "_remote_platform", None)
     monkeypatch.setattr(hardware, "_is_containerized", lambda: False)
+    # On Windows detect_system() short-circuits into the real PowerShell probe;
+    # force the generic (Linux/macOS) path these tests stub.
+    monkeypatch.setattr(hardware, "_detect_windows", lambda *a, **k: None)
     yield
     hardware._cache_by_host.clear()
 
