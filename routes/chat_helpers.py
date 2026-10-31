@@ -411,6 +411,19 @@ class PreprocessedMessage:
     youtube_transcripts: list
     attachment_meta: list
 
+    @property
+    def images_sent_to_model(self) -> bool:
+        """True when this turn's request still carries an image part.
+
+        preprocess_message strips image parts for text-only models and when
+        vision is disabled, so this is the answering route's own decision
+        about whether it was allowed to see the image.
+        """
+        return isinstance(self.user_content, list) and any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in self.user_content
+        )
+
 
 @dataclass
 class ChatContext:
@@ -1805,6 +1818,64 @@ async def _run_extraction_jobs_sequentially(session_id: str, jobs: list, max_wai
             logger.warning("[bg-extract] %s extraction job failed for session %s", name, session_id, exc_info=True)
 
 
+async def _caption_multimodal_image_attachments(
+    attachment_meta: list, endpoint_url: str, model: str, headers: dict | None,
+    owner: str | None, upload_handler,
+) -> None:
+    """Caption images the main (multimodal) model saw, via one describe-only
+    call to the route that answered (callers pass None when it can't be
+    confirmed). attachment_meta must already exclude captioned images.
+
+    The path is re-resolved through the owner-checked upload_handler. Results
+    go to the attachment's vision cache and the gallery caption, with a
+    ``.autogen`` marker so a later turn treats them as unverified context,
+    never as an authoritative user correction. An existing cache without the
+    marker (a user correction) is never overwritten.
+    """
+    if not endpoint_url or not model or not attachment_meta or not upload_handler:
+        return
+    from src.constants import UPLOAD_DIR
+    from src.document_processor import describe_image_for_caption
+    from src.chat_handler import _sync_upload_vision_to_gallery
+
+    for ref in attachment_meta:
+        att_id = ref.get("id")
+        if not att_id:
+            continue
+        info = upload_handler.resolve_upload(att_id, owner=owner)
+        path = (info or {}).get("path")
+        if not path or not os.path.exists(path):
+            continue
+        mime = ref.get("mime") or (info or {}).get("mime") or ""
+        try:
+            text = await describe_image_for_caption(path, endpoint_url, model, headers, mime=mime)
+        except Exception as e:
+            logger.warning("[multimodal-caption] describe failed for %s: %s", att_id, e)
+            continue
+        text = (text or "").strip()
+        if not text:
+            continue
+        cache_dir = os.path.join(UPLOAD_DIR, ".vision")
+        cache_path = os.path.join(cache_dir, f"{att_id}.txt")
+        # Re-check right before writing: the user may have saved a correction
+        # (possibly an intentionally empty one) while the caption request ran.
+        # Only an absent cache or an earlier generated one may be replaced.
+        if os.path.exists(cache_path) and not os.path.exists(cache_path + ".autogen"):
+            logger.info("[multimodal-caption] %s gained a caption while describing; keeping it", att_id)
+            continue
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            # Marker only — presence, not content, is what matters. Cleared by
+            # put_vision_text() the moment a human actually reviews/edits it.
+            with open(cache_path + ".autogen", "w", encoding="utf-8") as f:
+                f.write("1")
+        except Exception as e:
+            logger.warning("[multimodal-caption] cache write failed for %s: %s", att_id, e)
+        _sync_upload_vision_to_gallery({"hash": ref.get("checksum_sha256")}, owner, text)
+
+
 def run_post_response_tasks(
     sess,
     session_manager,
@@ -1828,6 +1899,10 @@ def run_post_response_tasks(
     allow_background_extraction: bool = True,
     preset_manager=None,
     persona_memory_schema: str = "general",
+    attachment_meta: list | None = None,
+    caption_images_sent: bool = False,
+    caption_route: tuple | None = None,
+    upload_handler=None,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
@@ -1844,6 +1919,27 @@ def run_post_response_tasks(
     turn's request too.
     """
     _extraction_jobs: list = []
+
+    # Caption images the main model saw directly (no VL call captioned them).
+    # attachment_meta is this turn's preprocessed metadata, so images that
+    # already have a "vision" entry (VL path or a user correction) are skipped.
+    # caption_route is the confirmed (endpoint_url, model, headers) that
+    # answered, or None; caption_images_sent is False when a text-only or
+    # vision-disabled turn stripped the image, so captioning must not send it.
+    caption_endpoint_url, caption_model, caption_headers = caption_route or (None, None, None)
+    if (
+        allow_background_extraction and not incognito and not compare_mode
+        and caption_images_sent
+        and attachment_meta and caption_endpoint_url and caption_model and upload_handler
+    ):
+        _img_atts = [
+            r for r in attachment_meta
+            if str(r.get("mime", "")).startswith("image/") and not r.get("vision")
+        ]
+        if _img_atts:
+            _extraction_jobs.append(("image-caption", _caption_multimodal_image_attachments(
+                _img_atts, caption_endpoint_url, caption_model, caption_headers, owner, upload_handler,
+            )))
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0

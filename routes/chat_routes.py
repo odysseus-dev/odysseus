@@ -2232,6 +2232,11 @@ def _resolve_prompt_thinking_mode(explicit_mode, preset_id, preset_manager):
     return None
 
 
+def _candidate_at(candidates, index):
+    """The (endpoint_url, model, headers) candidate at index, or None."""
+    return candidates[index] if 0 <= index < len(candidates) else None
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -2447,12 +2452,18 @@ def setup_chat_routes(
         session_manager.save_sessions()
 
         # Background tasks (memory, webhook, auto-name)
+        # Caption with the candidate that answered (and so saw the image), not
+        # sess.model: explicit-fallback routing can switch candidates.
         run_post_response_tasks(
             sess, session_manager, session, message, reply, None,
             ctx.uprefs, memory_manager, memory_vector, webhook_manager,
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=not tool_policy.block_all_tool_calls,
+            attachment_meta=ctx.preprocessed.attachment_meta,
+            caption_images_sent=bool(ctx.preprocessed.attachment_meta) and ctx.preprocessed.images_sent_to_model,
+            caption_route=actual_candidate,
+            upload_handler=upload_handler,
         )
 
         return {
@@ -4574,6 +4585,10 @@ def setup_chat_routes(
                                         tool_approval_continuation=tool_approval_continuation,
                                         client_runtime_context=client_runtime_context,
                                     ),
+                                    attachment_meta=ctx.preprocessed.attachment_meta,
+                                    caption_images_sent=bool(ctx.preprocessed.attachment_meta) and ctx.preprocessed.images_sent_to_model,
+                                    caption_route=_candidate_at(_foreground_candidates, _actual_candidate_index),
+                                    upload_handler=upload_handler,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -4611,6 +4626,9 @@ def setup_chat_routes(
                 _agent_round_endpoint_ids = {1: _agent_actual_endpoint_id}
                 _agent_round_endpoint_labels = {1: _agent_actual_endpoint_label}
                 _terminal_saved = False
+                # The image is only sent in round 1, so the candidate that
+                # answered round 1 saw it; captioning below uses that one.
+                _agent_round_candidate_index = {1: 0}
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -4798,6 +4816,9 @@ def setup_chat_routes(
                                     _agent_round_models[_event_round] = _answered_by or _requested_model
                                     _agent_round_endpoint_ids[_event_round] = _agent_actual_endpoint_id
                                     _agent_round_endpoint_labels[_event_round] = _agent_actual_endpoint_label
+                                    _fallback_candidate_index = data.get("candidate_index")
+                                    if isinstance(_fallback_candidate_index, int):
+                                        _agent_round_candidate_index[_event_round] = _fallback_candidate_index
                                     data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
                                 elif data.get("type") == "model_actual":
@@ -4994,6 +5015,10 @@ def setup_chat_routes(
                                         tool_approval_continuation=tool_approval_continuation,
                                         client_runtime_context=client_runtime_context,
                                     ),
+                                    attachment_meta=ctx.preprocessed.attachment_meta,
+                                    caption_images_sent=bool(ctx.preprocessed.attachment_meta) and ctx.preprocessed.images_sent_to_model,
+                                    caption_route=_candidate_at(_foreground_candidates, _agent_round_candidate_index.get(1, 0)),
+                                    upload_handler=upload_handler,
                                 )
                             _stream_set(session, status="done")
                             yield chunk

@@ -2,6 +2,7 @@
 """Document processing: PDF/OCR extraction, text file handling, image VL analysis, user content building."""
 
 import os
+import asyncio
 import io
 import logging
 import mimetypes
@@ -495,6 +496,33 @@ def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> d
 def analyze_image_with_vl(image_path: str, owner: str | None = None) -> str:
     """Analyze an image using the admin-configured Vision-Language model."""
     return analyze_image_with_vl_result(image_path, owner=owner).get("text", "")
+
+
+# Short and verb-first: an over-specified prompt makes thinking models spend
+# their budget checking compliance instead of describing the image.
+_MAIN_MODEL_CAPTION_PROMPT = (
+    "Describe this image in one or two sentences, suitable as a photo caption. "
+    "Report only what is visible in the image itself."
+)
+
+
+async def describe_image_for_caption(
+    image_path: str, url: str, model_id: str, headers: dict | None = None, mime: str | None = None,
+) -> str:
+    """One caption-only call to the model/endpoint that answered the chat turn
+    (its reply answers the user, not a caption). ``mime`` is the upload's
+    resolved MIME, used for an extensionless path as in build_user_content.
+    """
+    ext = os.path.splitext(image_path)[1].lower()
+    fallback_format = ext[1:] or (mime.split("/", 1)[1] if (mime or "").startswith("image/") else "jpeg")
+    data_url, _ = await asyncio.to_thread(encode_image_data_url, image_path, fallback_format)
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": _MAIN_MODEL_CAPTION_PROMPT},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]}]
+    from src.llm_core import llm_call_async
+    # No max_tokens cap, and a 300s timeout: thinking models can take a while.
+    return await llm_call_async(url, model_id, messages, headers=headers, timeout=300)
 
 
 def _vision_max_side() -> int:
