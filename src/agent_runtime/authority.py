@@ -450,7 +450,16 @@ def bind_request_authority(authority):
     if not isinstance(authority, RequestAuthority):
         raise TypeError("Authority must be server-owned RequestAuthority")
     parent = _ACTIVE.get()
-    authority = parent.intersect(authority) if parent is not None else authority
+    if parent is not None:
+        narrowed = parent.intersect(authority)
+        # Re-binding the same top-level request (tool execution binds a
+        # restricted copy of the active authority) narrows grants but is not a
+        # delegation. Marking it inherited made producers refuse every
+        # exact-approved process/browser action (#6766).
+        if (parent.request_id == authority.request_id
+                and not parent.inherited and not authority.inherited):
+            narrowed = replace(narrowed, inherited=False)
+        authority = narrowed
     token = _ACTIVE.set(authority)
     try:
         yield authority
