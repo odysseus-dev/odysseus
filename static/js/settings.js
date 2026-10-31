@@ -4696,9 +4696,11 @@ async function initUnifiedIntegrations() {
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
               ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-add" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));text-decoration:none;font-weight:600;">Authorize</a>` : ''}
               <button class="admin-btn-add" id="uf-mcp-reconnect" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Reconnect</button>
+              <button class="admin-btn-add" id="uf-mcp-edit" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Edit</button>
               <button class="admin-btn-add" id="uf-mcp-toggle" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">${srv.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-add" id="uf-mcp-cancel" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));">Close</button>
             </div>
+            <div id="uf-mcp-edit-panel" style="display:none"></div>
             <div id="uf-mcp-tools-panel"></div>
           </div>`;
         // Reconnect
@@ -4711,6 +4713,66 @@ async function initUnifiedIntegrations() {
             await renderList();
             showMcpForm(editId); // refresh this view
           } catch (e) { msg.textContent = 'Failed'; }
+        });
+        // Edit in place. The server keeps its id, so tool names
+        // (mcp__<id>__<tool>) and settings that refer to them stay valid (#6328).
+        el('uf-mcp-edit').addEventListener('click', () => {
+          const panel = el('uf-mcp-edit-panel');
+          if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+          const isStdio = srv.transport === 'stdio';
+          panel.innerHTML = `
+            <div class="settings-col" style="margin-bottom:8px">
+              <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-edit-name" class="settings-input"></div>
+              ${isStdio ? `
+              <div class="settings-row"><label class="settings-label">Command</label><input id="uf-mcp-edit-cmd" class="settings-input"></div>
+              <div class="settings-row"><label class="settings-label">Args</label><input id="uf-mcp-edit-args" class="settings-input"></div>
+              <div class="settings-row"><label class="settings-label">Env</label><input id="uf-mcp-edit-env" class="settings-input"></div>` : `
+              <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-edit-url" class="settings-input"></div>`}
+              <div class="settings-row" style="margin-top:6px;align-items:center;justify-content:flex-end;gap:6px;">
+                <span id="uf-mcp-edit-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
+                <button class="admin-btn-add" id="uf-mcp-edit-save" style="background:transparent;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));font-weight:600;">Save</button>
+              </div>
+            </div>`;
+          // Set values through the DOM: JSON is full of quotes that esc() does
+          // not escape for an attribute.
+          el('uf-mcp-edit-name').value = srv.name || '';
+          if (isStdio) {
+            el('uf-mcp-edit-cmd').value = srv.command || '';
+            el('uf-mcp-edit-args').value = JSON.stringify(srv.args || []);
+            el('uf-mcp-edit-env').value = JSON.stringify(srv.env || {});
+          } else {
+            el('uf-mcp-edit-url').value = srv.url || '';
+          }
+          panel.style.display = '';
+          el('uf-mcp-edit-save').addEventListener('click', async () => {
+            const msg = el('uf-mcp-edit-msg');
+            // routes/mcp_routes.py uses FastAPI Form(...) — send multipart, not JSON.
+            const fd = new FormData();
+            fd.append('name', el('uf-mcp-edit-name').value);
+            if (isStdio) {
+              fd.append('command', el('uf-mcp-edit-cmd').value);
+              // Validated here and again by the server, which rejects bad
+              // JSON instead of replacing it, so saved env is never wiped.
+              for (const [field, id, example] of [['args', 'uf-mcp-edit-args', '["-y", "pkg"]'], ['env', 'uf-mcp-edit-env', '{"KEY": "value"}']]) {
+                try { fd.append(field, JSON.stringify(JSON.parse(el(id).value || (field === 'args' ? '[]' : '{}')))); }
+                catch (_) { msg.textContent = `${field[0].toUpperCase() + field.slice(1)} must be valid JSON, e.g. ${example}`; return; }
+              }
+            } else {
+              fd.append('url', el('uf-mcp-edit-url').value);
+            }
+            const saveBtn = el('uf-mcp-edit-save');
+            const origLabel = saveBtn.textContent;
+            _setBtnLoading(saveBtn, true, 'Saving…');
+            try {
+              const r = await fetch(`/api/mcp/servers/${srv.id}`, { method: 'PUT', body: fd, credentials: 'same-origin' });
+              const d = await r.json().catch(() => ({}));
+              if (!r.ok) { msg.textContent = d.detail || `Failed (${r.status})`; return; }
+              if (d.needs_auth) _handleMcpAuth(srv.id, d.auth_url);
+              await renderList();
+              showMcpForm(editId); // refresh this view
+            } catch (_) { msg.textContent = 'Failed'; }
+            finally { _setBtnLoading(saveBtn, false, origLabel); }
+          });
         });
         // Toggle enable/disable
         el('uf-mcp-toggle').addEventListener('click', async () => {
