@@ -105,7 +105,9 @@ def target():
 
 
 def _seed(path, text=RECIPE):
-    with open(path, "w", encoding="utf-8") as handle:
+    # newline="\n": keep the seeded bytes identical on Windows, where text mode
+    # would write CRLF and change the byte count the refusal message reports
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
     return text
 
@@ -204,6 +206,7 @@ async def test_refusal_names_the_byte_count_and_the_explicit_form(target):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason='POSIX-only: a double quote is not a legal file name character on Windows')
 async def test_refusal_suggestion_is_valid_json_for_paths_with_quotes(target):
     quoted_path = os.path.join(os.path.dirname(target), 'recipe"draft.md')
     _seed(quoted_path)
