@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.11"
       # Byte-compile sources — catches syntax errors without installing deps.
@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "22.23.4"
       - run: npm ci --ignore-scripts --no-audit --no-fund
@@ -151,7 +151,7 @@ jobs:
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           python-version: "3.11"
@@ -168,7 +168,7 @@ jobs:
 
       # uv resolves the same versions as pip but installs ~5x faster, and its
       # cache keeps each shard from re-downloading the whole requirement set.
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           version: "0.13.5"
@@ -180,7 +180,7 @@ jobs:
           python scripts/check_ca_trust.py --python
           uv pip install --system -r requirements.txt
         if: steps.docs-check.outputs.docs_only != 'true'
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           node-version: "22.23.4"
