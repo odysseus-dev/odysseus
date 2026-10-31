@@ -1,23 +1,39 @@
+import os
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
+
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    sync_playwright = None
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
 def page():
+    if sync_playwright is None:
+        pytest.fail("playwright is required for editor browser tests. Install requirements-dev.txt")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        launch_kwargs = {"headless": True, "args": ["--disable-dev-shm-usage", "--no-sandbox"]}
+        if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"):
+            launch_kwargs["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"]
+        browser = playwright.chromium.launch(**launch_kwargs)
         page = browser.new_page(viewport={"width": 1000, "height": 700})
 
         def serve(route):
-            relative = route.request.url.split('http://editor.test/', 1)[1].split('?', 1)[0]
+            url = route.request.url
+            if '/api/' in url:
+                route.fulfill(status=404, body='{}', content_type='application/json')
+                return
+            relative = url.split('http://editor.test/', 1)[1].split('?', 1)[0]
             if not relative:
                 route.fulfill(body='<html><body></body></html>', content_type='text/html')
-            else:
+            elif (ROOT / relative).is_file():
                 route.fulfill(path=str(ROOT / relative))
+            else:
+                route.fulfill(status=404, body='Not found')
 
         page.route('http://editor.test/**', serve)
         page.goto('http://editor.test/')
@@ -768,3 +784,99 @@ def test_new_project_create_initializes_canvas(page, fail_once):
     assert not errors, errors
     assert not result.get('error'), result
     assert result == {'error':None,'width':1024,'height':1024,'layers':['Background','Edit']}
+
+
+def test_undo_clears_rembg_live_layer_and_edge_tuner_cannot_corrupt(page):
+    source = (ROOT / 'static/js/galleryEditor.js').read_text()
+    restore_fn = source.split('function _restoreState(snap) {', 1)[1].split('function undo() {', 1)[0]
+    assert 'state.rembgLiveLayer = null;' in restore_fn
+    assert 'state.rembgLiveSnap = null;' in restore_fn
+
+    page.route('http://editor.test/api/**', lambda route: route.fulfill(json={}))
+    result = page.evaluate("""async () => {
+      document.body.innerHTML = '<div id="toast"></div><div id="gallery-editor-container"></div>';
+      const editor = await import('/static/js/galleryEditor.js');
+      const {state} = await import('/static/js/editor/state.js');
+      editor.openEditor(null, null, {w: 16, h: 16}, 'Rembg edge tuner undo test');
+
+      const layer = state.layers.at(-1);
+      layer.ctx.fillStyle = 'rgba(0, 255, 0, 1)';
+      layer.ctx.fillRect(0, 0, 16, 16);
+      const originalPixel = [...layer.ctx.getImageData(0, 0, 1, 1).data];
+
+      // Save a valid pre-edit snapshot to undoStack
+      const origCanvas = document.createElement('canvas');
+      origCanvas.width = origCanvas.height = 16;
+      origCanvas.getContext('2d').drawImage(layer.canvas, 0, 0);
+      const preEditSnap = {
+        imgWidth: 16, imgHeight: 16,
+        activeLayerId: layer.id,
+        selectedLayerIds: [layer.id],
+        layers: [{
+          id: layer.id,
+          name: 'Layer 1',
+          canvas: origCanvas,
+          imageData: origCanvas.getContext('2d').getImageData(0, 0, 16, 16),
+          visible: true,
+          opacity: 1,
+          blendMode: 'source-over',
+          locks: {},
+        }],
+      };
+      state.undoStack.push(preEditSnap);
+
+      // Create tuner snapshot for background removal
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = snapCanvas.height = 16;
+      const snapCtx = snapCanvas.getContext('2d');
+      snapCtx.fillStyle = 'rgba(255, 0, 0, 1)';
+      snapCtx.fillRect(4, 4, 8, 8); // cutout shape
+
+      // Attach live tuner
+      state.rembgLiveLayer = layer;
+      state.rembgLiveSnap = snapCanvas;
+      const tunerAttached = state.rembgLiveLayer === layer && state.rembgLiveSnap === snapCanvas;
+
+      // Mutate layer pixels to simulate background removal result
+      layer.ctx.clearRect(0, 0, 16, 16);
+      layer.ctx.drawImage(snapCanvas, 0, 0);
+
+      // Trigger Undo via Ctrl+Z
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true,
+      }));
+
+      const clearedAfterUndo = state.rembgLiveLayer === null && state.rembgLiveSnap === null;
+      const restoredLayer = state.layers.at(-1);
+      const restoredPixel = [...restoredLayer.ctx.getImageData(0, 0, 1, 1).data];
+
+      // Now interact with edge tuner sliders after undo
+      const featherInput = document.getElementById('ge-rembg-feather');
+      const growInput = document.getElementById('ge-rembg-grow');
+      if (featherInput) {
+        featherInput.value = '5';
+        featherInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (growInput) {
+        growInput.value = '5';
+        growInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      // Check pixel again after tuner events: restored pixels must remain untouched
+      const pixelAfterTuner = [...restoredLayer.ctx.getImageData(0, 0, 1, 1).data];
+      return {
+        tunerAttached,
+        clearedAfterUndo,
+        restoredPixel,
+        originalPixel,
+        pixelAfterTuner,
+        rembgLiveLayerNull: state.rembgLiveLayer === null,
+        rembgLiveSnapNull: state.rembgLiveSnap === null,
+      };
+    }""")
+    assert result['tunerAttached'] is True
+    assert result['clearedAfterUndo'] is True
+    assert result['rembgLiveLayerNull'] is True
+    assert result['rembgLiveSnapNull'] is True
+    assert result['restoredPixel'] == result['originalPixel']
+    assert result['pixelAfterTuner'] == result['originalPixel']

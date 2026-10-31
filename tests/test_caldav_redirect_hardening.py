@@ -13,6 +13,7 @@ import socketserver
 import threading
 
 import pytest
+import requests
 
 from src import caldav_sync, caldav_writeback
 
@@ -26,12 +27,13 @@ def test_build_dav_client_disables_redirects():
 
 def test_dav_client_does_not_follow_redirect_to_internal_host():
     """End-to-end through the real DAVClient: a 302 toward an internal host
-    must NOT be followed. Without the fix the sink is contacted (SSRF); with it
-    the redirect is refused and the sink is never reached."""
+    must NOT be followed. Exercise the session limit separately because some
+    caldav versions independently refuse cross-origin PROPFIND redirects."""
     pytest.importorskip("caldav")
 
     sink_hits: list[str] = []
     public_methods: list[str] = []
+    same_origin_hits: list[str] = []
 
     class _Internal(http.server.BaseHTTPRequestHandler):
         # Stand-in for an internal service the attacker redirects toward.
@@ -48,9 +50,15 @@ def test_dav_client_does_not_follow_redirect_to_internal_host():
     class _Public(http.server.BaseHTTPRequestHandler):
         # The "validated" public CalDAV server that redirects everything inward.
         def do_GET(self):  # noqa: N802
+            if self.path == "/landing":
+                same_origin_hits.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                return
             public_methods.append(self.command)
             self.send_response(302)
-            self.send_header("Location", f"http://127.0.0.1:{internal_port}/leak")
+            location = "/landing" if self.path == "/same" else f"http://127.0.0.1:{internal_port}/leak"
+            self.send_header("Location", location)
             self.end_headers()
 
         do_PROPFIND = do_GET
@@ -62,8 +70,10 @@ def test_dav_client_does_not_follow_redirect_to_internal_host():
     internal_port = internal.server_address[1]
     public = socketserver.TCPServer(("127.0.0.1", 0), _Public)
     public_port = public.server_address[1]
-    threading.Thread(target=internal.serve_forever, daemon=True).start()
-    threading.Thread(target=public.serve_forever, daemon=True).start()
+    internal_thread = threading.Thread(target=internal.serve_forever, daemon=True)
+    public_thread = threading.Thread(target=public.serve_forever, daemon=True)
+    internal_thread.start()
+    public_thread.start()
     try:
         public_url = f"http://127.0.0.1:{public_port}/dav"
         client = caldav_sync._build_dav_client(public_url, "u", "p")
@@ -82,17 +92,35 @@ def test_dav_client_does_not_follow_redirect_to_internal_host():
         assert public_methods in (["PROPFIND"], ["PROPFIND", "GET"]), public_methods
         assert sink_hits == [], "redirect toward an internal host must not be followed"
 
-        # Positive control: demonstrate that the sink would see the redirect
-        # if the session's redirect protection were removed.
+        # GET redirects are handled by the HTTP session even in caldav 3.7.
+        # This makes the cross-port SSRF assertion sensitive to our own limit.
+        with pytest.raises(Exception, match="Exceeded 0 redirects"):
+            client.request(public_url, "GET", "")
+        assert sink_hits == [], "GET redirect toward the internal sink must be blocked"
+
+        # requests can reach the cross-port sink when redirects are enabled,
+        # even if DAVClient independently rejects cross-origin PROPFIND redirects.
+        with requests.Session() as session:
+            response = session.get(public_url, timeout=5)
+            assert response.status_code == 207
+        assert sink_hits == ["/leak"], "the cross-port redirect must reach the sink"
+
+        # GET follows redirects at the HTTP session layer across these caldav
+        # versions. Check the application's limit on a same-origin redirect too.
+        same_url = f"http://127.0.0.1:{public_port}/same"
+        with pytest.raises(Exception, match="Exceeded 0 redirects"):
+            client.request(same_url, "GET", "")
+        assert same_origin_hits == []
         client.session.max_redirects = 30
-        try:
-            client.request(public_url, "PROPFIND", "")
-        except Exception:
-            pass  # The sink's response is intentionally not a valid DAV body.
-        assert sink_hits == ["/leak"], "the test must detect a followed redirect"
+        client.request(same_url, "GET", "")
+        assert same_origin_hits == ["/landing"]
     finally:
         internal.shutdown()
         public.shutdown()
+        internal_thread.join()
+        public_thread.join()
+        internal.server_close()
+        public.server_close()
 
 
 def test_sync_and_writeback_construct_clients_through_the_helper():

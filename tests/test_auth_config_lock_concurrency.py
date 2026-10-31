@@ -206,35 +206,50 @@ class TestDiskConsistency:
     @pytest.mark.slow
     def test_file_always_valid_json_during_concurrent_ops(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
-        mgr.create_user("admin", "adminpw", is_admin=True)
+        assert mgr.create_user("admin", "adminpw", is_admin=True)
 
         stop_event = threading.Event()
+        reader_ready = threading.Event()
         corruption_found = []
+        observations = {"reads": 0, "with_writes": 0}
 
         def reader():
             while not stop_event.is_set():
                 try:
                     with open(mgr.auth_path, "r") as f:
                         content = f.read()
-                    json.loads(content)
+                    data = json.loads(content)
+                    observations["reads"] += 1
+                    if any(name.startswith("stress") for name in data["users"]):
+                        observations["with_writes"] += 1
+                    reader_ready.set()
                 except json.JSONDecodeError as e:
                     corruption_found.append(str(e))
                     break
-                except FileNotFoundError:
-                    pass
                 time.sleep(0.001)
 
         def writer():
+            assert reader_ready.wait(5), "reader never observed the initial file"
+            results = []
             for i in range(50):
-                mgr.create_user(f"stress{i}", f"pw{i}")
+                results.append(mgr.create_user(f"stress{i}", f"pw{i}"))
+            return results
 
-        reader_thread = threading.Thread(target=reader)
-        writer_thread = threading.Thread(target=writer)
-
-        reader_thread.start()
-        writer_thread.start()
-        writer_thread.join()
-        stop_event.set()
-        reader_thread.join()
+        # Futures propagate reader/writer exceptions to the test thread.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            reading = pool.submit(reader)
+            writing = pool.submit(writer)
+            try:
+                results = writing.result(timeout=120)
+            finally:
+                stop_event.set()
+            reading.result(timeout=5)
 
         assert not corruption_found, f"Corrupt JSON detected: {corruption_found[0]}"
+        assert len(results) == 50 and all(results), "writer operations did not succeed"
+        assert observations["reads"] > 0
+        assert observations["with_writes"] > 0, "reader saw no persisted writer activity"
+        expected = {"admin"} | {f"stress{i}" for i in range(50)}
+        with open(mgr.auth_path) as persisted:
+            assert set(json.load(persisted)["users"]) == expected
+        assert set(_fresh_auth_manager(tmp_path).users) == expected

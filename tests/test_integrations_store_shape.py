@@ -177,3 +177,28 @@ def test_update_integration_rejects_invalid_base_url_without_changing_existing(
     assert exc.value.status_code == 400
     assert exc.value.detail == message
     assert integrations.load_integrations()[0]["base_url"] == "https://example.test"
+
+
+@pytest.mark.parametrize("body", [[], "x", 5, None])
+def test_create_integration_rejects_non_object_body(integrations_routes, body):
+    endpoint, session_cookie, http_exception = integrations_routes
+    create_integration = endpoint("/api/auth/integrations", "POST")
+
+    with pytest.raises(http_exception) as exc:
+        asyncio.run(create_integration(_JsonRequest(body, session_cookie)))
+
+    assert exc.value.status_code == 400
+    assert integrations.load_integrations() == []
+
+
+@pytest.mark.parametrize("body", [[], "x", 5, None])
+def test_update_integration_rejects_non_object_body(integrations_routes, body):
+    endpoint, session_cookie, http_exception = integrations_routes
+    update_integration = endpoint("/api/auth/integrations/{integration_id}", "PUT")
+    integrations.save_integrations([{"id": "existing", "name": "Original", "base_url": "https://example.test"}])
+
+    with pytest.raises(http_exception) as exc:
+        asyncio.run(update_integration("existing", _JsonRequest(body, session_cookie)))
+
+    assert exc.value.status_code == 400
+    assert integrations.load_integrations()[0]["name"] == "Original"

@@ -1767,7 +1767,7 @@ def setup_gallery_routes() -> APIRouter:
         if body.pop("_use_image_settings", False) is True:
             from src.editor_image_settings import editor_image_models
             from src.ai_interaction import _resolve_model
-            chosen_model = editor_image_models()["edit"]
+            chosen_model = editor_image_models(owner=user)["edit"]
             if not chosen_model:
                 raise HTTPException(400, "Choose an image edit model in AI settings")
             try:
@@ -2481,11 +2481,10 @@ def setup_gallery_routes() -> APIRouter:
         image_b64 = body.get("image")
         amount = body.get("amount", 50) / 100.0
 
-        from PIL import Image, ImageFilter
+        from PIL import ImageFilter
         import base64, io
 
-        img_bytes = _b64_bytes(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img = _b64_to_pil_image(image_b64, mode="RGB")
 
         # Unsharp mask: radius=2, percent=amount*200, threshold=3
         sharpened = img.filter(ImageFilter.UnsharpMask(radius=2, percent=int(amount * 200), threshold=3))
@@ -2520,8 +2519,7 @@ def setup_gallery_routes() -> APIRouter:
         except ImportError:
             raise HTTPException(500, "Server missing a required dependency")
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
-        img_bytes = _b64_bytes(image_b64)
-        src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        src = _b64_to_pil_image(image_b64, mode="RGB")
         try:
             patch_realesrgan_torchvision_compat()
             from realesrgan import RealESRGANer
@@ -2573,8 +2571,7 @@ def setup_gallery_routes() -> APIRouter:
             import numpy as np
         except ImportError:
             raise HTTPException(500, "Server missing a required dependency")
-        img_bytes = _b64_bytes(image_b64)
-        src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        src = _b64_to_pil_image(image_b64, mode="RGB")
         try:
             patch_realesrgan_torchvision_compat()
             from basicsr.archs.rrdbnet_arch import RRDBNet
@@ -2639,7 +2636,7 @@ def setup_gallery_routes() -> APIRouter:
         model_choice = str((body or {}).get("model") or "").strip()
         if body.get("_use_image_settings") is True:
             from src.editor_image_settings import editor_image_models
-            model_choice = editor_image_models()["generation"]
+            model_choice = editor_image_models(owner=user)["generation"]
         payload = {"prompt": prompt, "size": size}
         if model_choice:
             payload["model"] = model_choice
@@ -2831,8 +2828,7 @@ def setup_gallery_routes() -> APIRouter:
         from PIL import Image
         import base64, io
 
-        img_bytes = _b64_bytes(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+        img = _b64_to_pil_image(image_b64)
         W, H = img.size
 
         hint = None
@@ -2921,8 +2917,7 @@ def setup_gallery_routes() -> APIRouter:
         from PIL import Image, ImageFilter, ImageEnhance
         import numpy as np
 
-        img_bytes = _b64_bytes(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img = _b64_to_pil_image(image_b64, mode="RGB")
 
         # Try GFPGAN first (AI face restoration)
         try:

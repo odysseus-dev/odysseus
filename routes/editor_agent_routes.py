@@ -846,6 +846,64 @@ def _plan_psd_steps(prompt: str) -> Optional[List[Dict[str, Any]]]:
     return None
 
 
+def _is_background_removal_intent(prompt: str) -> bool:
+    """Linear-time, bounded intent parser for background removal commands.
+
+    Replaces the previous backtracking regular expression flagged by CodeQL
+    (#1212) while preserving the exact command grammar.
+    """
+    if not prompt or not isinstance(prompt, str):
+        return False
+    i = len(prompt)
+    while i > 0 and prompt[i - 1] in ".! \t\r\n":
+        i -= 1
+    cleaned = prompt[:i].strip()
+    if not cleaned:
+        return False
+
+    tokens = cleaned.split()
+    if not tokens:
+        return False
+
+    idx = 0
+    if tokens[idx].lower() == "please":
+        idx += 1
+        if idx >= len(tokens):
+            return False
+
+    if tokens[idx].lower() not in {"remove", "erase", "delete", "clear", "strip"}:
+        return False
+    idx += 1
+    if idx >= len(tokens):
+        return False
+
+    if tokens[idx].lower() == "the":
+        idx += 1
+        if idx >= len(tokens):
+            return False
+
+    if tokens[idx].lower() not in {"bg", "background", "backdrop"}:
+        return False
+    idx += 1
+
+    if idx == len(tokens):
+        return True
+
+    if tokens[idx].lower() in {"from", "of"}:
+        idx += 1
+        if idx < len(tokens) and tokens[idx].lower() == "the":
+            idx += 1
+        if (
+            idx + 1 < len(tokens)
+            and tokens[idx].lower() in {"active", "current", "selected"}
+            and tokens[idx + 1].lower() == "layer"
+            and idx + 2 == len(tokens)
+        ):
+            return True
+
+    return False
+
+
 def _plan_special(
     prompt: str, state: Any, provider_available: bool,
 ) -> Optional[Tuple[List[Dict[str, Any]], str, str]]:
@@ -855,10 +913,7 @@ def _plan_special(
     left to the model.     Returns (steps, reply, note) or None. These never need an
     image provider except generative border fill, used only when one exists.
     """
-    if re.fullmatch(
-        r"\s*(?:please\s+)?(?:remove|erase|delete|clear|strip)\s+(?:the\s+)?(?:bg|background|backdrop)(?:\s+(?:from|of)\s+(?:the\s+)?(?:active|current|selected)\s+layer)?[.!\s]*",
-        prompt, re.I,
-    ):
+    if _is_background_removal_intent(prompt):
         return [{"op": "ai.removeBackground", "params": {}}], "Removing the active layer's background.", ""
     # Targeted recolour is fully deterministic (object mask + masked hue shift)
     # and must never be left to the model, which sometimes substitutes a
@@ -1656,7 +1711,7 @@ def setup_editor_agent_routes() -> APIRouter:
         use_image_settings = body.get("_use_image_settings") is True
         if use_image_settings:
             from src.editor_image_settings import editor_image_models
-            image_models = editor_image_models()
+            image_models = editor_image_models(owner=owner)
             model_choice = image_models["edit"]
             generation_model_choice = image_models["generation"]
         # Optional user-picked PLANNER model (the editor agent/planner model).

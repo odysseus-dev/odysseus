@@ -80,6 +80,18 @@ def _require_user(request: Request) -> str:
     return FALLBACK_OWNER
 
 
+async def _json_object_body(request: Request) -> dict:
+    """Parse a JSON object body. An unreadable body counts as empty; a body
+    that is valid JSON but not an object (a list, string or number) is a 400."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Request body must be a JSON object")
+    return body
+
+
 def _get_or_404_calendar(db, cal_id: str, owner: str) -> CalendarCal:
     cal = db.query(CalendarCal).filter(CalendarCal.id == cal_id).first()
     if not cal:
@@ -994,10 +1006,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def save_config(request: Request):
         """Legacy single-account endpoint — upserts the first account."""
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         accounts = _get_caldav_accounts(owner)
         if not (body.get("url") or "").strip():
             _save_caldav_accounts(owner, [])
@@ -1052,10 +1061,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         """Add a new CalDAV account."""
         import uuid as _uuid
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         from src.caldav_sync import validate_caldav_url
         try:
             url = validate_caldav_url(body.get("url", ""))
@@ -1080,10 +1086,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
     async def update_caldav_account(account_id: str, request: Request):
         """Update an existing CalDAV account by id."""
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         accounts = _get_caldav_accounts(owner)
         idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
         if idx is None:
@@ -1124,10 +1127,7 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         test an already-saved account. Falls back to the first saved account
         when nothing is provided."""
         owner = _require_user(request)
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
+        body = await _json_object_body(request)
         url = (body.get("url") or "").strip()
         user = (body.get("username") or "").strip()
         pw = body.get("password") or ""

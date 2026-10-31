@@ -33,7 +33,7 @@ async def list_tools() -> list[Tool]:
                     "prompt": {"type": "string", "description": "Image description prompt"},
                     "model": {"type": "string", "description": "Model name (auto-detects if omitted)"},
                     "size": {"type": "string", "description": "Image size (default 1024x1024)"},
-                    "quality": {"type": "string", "description": "Quality: low, medium, high, auto (default medium)"},
+                    "quality": {"type": "string", "description": "Quality: low, medium, high, auto (default configured quality, otherwise medium)"},
                 },
                 "required": ["prompt"],
             },
@@ -66,7 +66,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         if not model_spec:
             model_spec = _settings.get("image_model", "")
-        if quality == "medium" and _settings.get("image_quality"):
+        if "quality" not in arguments and _settings.get("image_quality"):
             quality = _settings["image_quality"]
 
         # Auto-detect best available image model

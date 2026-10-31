@@ -1091,6 +1091,121 @@ def test_degenerate_stream_guard_allows_long_rows_with_changing_values():
     assert guard.check(rows) is None
 
 
+def _latex_matrix(cell):
+    rows = (" & ".join(cell(i, j) for j in range(8)) for i in range(8))
+    return "$$\\begin{pmatrix}\n" + " \\\\\n".join(rows) + "\n\\end{pmatrix}$$\n"
+
+
+@pytest.mark.parametrize("text", [
+    _latex_matrix(lambda i, j: "0"),
+    _latex_matrix(lambda i, j: "1" if i == j else "0"),
+    _latex_matrix(lambda i, j: "2e10"),
+    _latex_matrix(lambda i, j: "1e-5"),
+    _latex_matrix(lambda i, j: "1.25e-3"),
+    _latex_matrix(lambda i, j: "-0.125"),
+    _latex_matrix(lambda i, j: "0.0"),
+    _latex_matrix(lambda i, j: "3.14"),
+    "buf = [" + ", ".join("0" for _ in range(64)) + "]\n",
+    "buf = [" + ", ".join("1.25e-3" for _ in range(64)) + "]\n",
+    "buf = [" + ", ".join("-0.125" for _ in range(64)) + "]\n",
+    "t,v1,v2,v3\n" + "\n".join(f"{i},1.25e-3,-0.125,2e10" for i in range(25)) + "\n",
+    "\n".join(f"{i}. Solve: $\\frac{{{i}}}{{{i+1}}}x + \\frac{{1}}{{{i+2}}} = \\frac{{{i+3}}}{{{i+4}}}$" for i in range(1, 20)) + "\n",
+    "<svg>" + "".join(f'<rect x="{i*10}" y="{j*10}" width="10" height="10" fill="#abc"/>' for i in range(4) for j in range(4)) + "</svg>\n",
+    "{" + ", ".join(f'"key_{i}": "translation_{i}"' for i in range(40)) + "}\n",
+])
+@pytest.mark.parametrize("chunk", [1, 3, 6, 8, 16, 32, 64, 128])
+def test_degenerate_stream_guard_allows_numeric_data(text, chunk):
+    """#5560: legitimate matrices, scientific numbers, tables, and structured data
+    repeat values or formatting by design; they are not token collapse."""
+    guard = llm_core._DegenerateStreamGuard("math-model")
+
+    assert all(guard.check(text[i:i + chunk]) is None for i in range(0, len(text), chunk))
+
+
+@pytest.mark.parametrize("chunk", [1, 6, 64, 3000])
+def test_degenerate_stream_guard_allows_numeric_data_full_and_char_stream(chunk):
+    text = _latex_matrix(lambda i, j: "1.25e-3")
+    guard = llm_core._DegenerateStreamGuard("math-model")
+
+    assert all(guard.check(text[i:i + chunk]) is None for i in range(0, len(text), chunk))
+
+
+@pytest.mark.parametrize("loop_text", [
+    "0 " * 3000,
+    "1.25e-3 " * 3000,
+    "1 2 " * 1500,
+])
+@pytest.mark.parametrize("chunk", [1, 6, 32, 64, 3000])
+def test_degenerate_stream_guard_still_stops_an_endless_number_run(loop_text, chunk):
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+
+    stopped = False
+    for i in range(0, len(loop_text), chunk):
+        res = guard.check(loop_text[i:i + chunk])
+        if res is not None:
+            assert "numbers in a row" in res
+            stopped = True
+            break
+    assert stopped
+
+
+@pytest.mark.parametrize("loop_text", [
+    "row 0 0 0 0 " * 300,
+    "Step 1 2 3 " * 200,
+])
+@pytest.mark.parametrize("chunk", [1, 6, 32, 64, 1500])
+def test_degenerate_stream_guard_still_stops_a_mixed_word_number_loop(loop_text, chunk):
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+
+    stopped = False
+    for i in range(0, len(loop_text), chunk):
+        res = guard.check(loop_text[i:i + chunk])
+        if res is not None:
+            assert "repeated" in res
+            stopped = True
+            break
+    assert stopped
+
+
+@pytest.mark.parametrize("loop_text", [
+    "Summer " * 80,
+    "also be a software developer mode " * 30,
+])
+@pytest.mark.parametrize("chunk", [1, 6, 32, 64, 500])
+def test_degenerate_stream_guard_still_stops_repeated_words_and_phrases(loop_text, chunk):
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+
+    stopped = False
+    for i in range(0, len(loop_text), chunk):
+        res = guard.check(loop_text[i:i + chunk])
+        if res is not None:
+            assert "repeated" in res
+            stopped = True
+            break
+    assert stopped
+
+
+@pytest.mark.parametrize("bad_token", [
+    "1face ",
+    "1e ",
+    "25e ",
+    "0x12 ",
+])
+@pytest.mark.parametrize("chunk", [1, 6, 32, 64, 250])
+def test_degenerate_stream_guard_stops_alphanumeric_repetition_resembling_numbers(bad_token, chunk):
+    guard = llm_core._DegenerateStreamGuard("looping-model")
+    text = bad_token * 50
+
+    stopped = False
+    for i in range(0, len(text), chunk):
+        res = guard.check(text[i:i + chunk])
+        if res is not None:
+            assert "repeated" in res
+            stopped = True
+            break
+    assert stopped
+
+
 def test_terminal_stream_retries_degenerate_generation_before_emitting(monkeypatch):
     calls = 0
     requests = []
