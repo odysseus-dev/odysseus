@@ -999,6 +999,7 @@ function renderSkillsList() {
     // the footer too so it's not buried under the "⋯" menu.
     const testBtn = document.createElement('button');
     testBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+    testBtn.dataset.act = 'test';
     testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Test';
     testBtn.title = 'Test this skill — run it + AI judge';
     testBtn.addEventListener('click', (e) => {
@@ -1013,14 +1014,10 @@ function renderSkillsList() {
       const _origHTML = testBtn.innerHTML;
       testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Starting…';
       Promise.resolve(_testSkill(card, name)).finally(() => {
-        // The preview gets overwritten by _testSkill, which removes the
-        // testBtn from the DOM. The cleanup below only matters if the
-        // button still exists (e.g. _testSkill bailed early).
-        if (document.body.contains(testBtn)) {
-          testBtn.disabled = false;
-          testBtn.dataset.busy = '';
-          testBtn.innerHTML = _origHTML;
-        }
+        // Source controls are detached during results and reused by Edit.
+        testBtn.disabled = false;
+        testBtn.dataset.busy = '';
+        testBtn.innerHTML = _origHTML;
       });
     });
 
@@ -1285,6 +1282,10 @@ function _toggleSkillEdit(card, name) {
   if (!card._mdLoaded) return;
   const preview = card.querySelector('.skill-card-preview');
   if (!preview) return;
+  if (card._skillSourceNodes) {
+    preview.replaceChildren(...card._skillSourceNodes);
+    card._skillSourceNodes = null;
+  }
   const existing = preview.querySelector('.skill-md-editor');
   if (existing) {
     // Already editing — treat Edit as Save.
@@ -1305,7 +1306,26 @@ function _toggleSkillEdit(card, name) {
   ta.focus();
   // Flip the Edit button label to "Save".
   const editBtn = [...preview.querySelectorAll('.doclib-card-action-btn')].find(b => /Edit|Save/.test(b.textContent));
+  const editLabel = editBtn?.innerHTML;
   if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'doclib-card-text-btn doclib-card-action-btn';
+  cancel.textContent = 'Cancel';
+  const testBtn = preview.querySelector('[data-act="test"]');
+  const testDisplay = testBtn?.style.display;
+  if (testBtn) testBtn.style.display = 'none';
+  card._cancelSkillEdit = () => {
+    ta.remove();
+    if (pre) pre.style.removeProperty('display');
+    if (editBtn) editBtn.innerHTML = editLabel;
+    cancel.remove();
+    if (testBtn) testBtn.style.display = testDisplay;
+    card._cancelSkillEdit = null;
+    card._fillH?.();
+  };
+  cancel.addEventListener('click', (e) => { e.stopPropagation(); card._cancelSkillEdit?.(); });
+  if (editBtn) editBtn.after(cancel);
 }
 
 async function _saveSkillEdit(card, name) {
@@ -1454,6 +1474,12 @@ async function _testSkill(card, name, force = false) {
   if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
   const preview = card.querySelector('.skill-card-preview');
   if (!preview) return;
+  if (!preview.querySelector('.skill-test')) {
+    card._cancelSkillEdit?.();
+    // Preserve the source nodes and handlers. Result actions are nested in
+    // .skill-test, so they cannot be insertBefore references on the preview.
+    card._skillSourceNodes = Array.from(preview.childNodes);
+  }
   preview.innerHTML =
     '<div class="skill-test"><div class="skill-test-log"></div>' +
     '<div class="skill-test-verdict"></div></div>';
