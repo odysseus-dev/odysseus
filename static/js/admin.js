@@ -1074,7 +1074,8 @@ async function loadEndpoints() {
                 <span class="adm-check-dot adm-endpoint-select-dot" aria-hidden="true"></span>
               </label>` : ''}
               <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
-              <span class="admin-user-name">${esc(epTitle)}</span>
+              <span class="admin-user-name adm-ep-name" title="${esc(epTitle)}">${esc(epTitle)}</span>
+              ${_endpointSelectMode || (isChatgptAccount && ep.account_label) ? '' : `<button type="button" class="adm-ep-rename-btn" data-adm-rename-ep="${esc(ep.id)}" data-adm-ep-title="${esc(epTitle)}" title="Rename" aria-label="Rename endpoint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>`}
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
@@ -1202,6 +1203,70 @@ async function loadEndpoints() {
         await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' });
         await _refreshAfterEndpointChange();
         loadEndpoints();
+      });
+    });
+    queryAll('[data-adm-rename-ep]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nameEl = btn.previousElementSibling;
+        if (!nameEl || !nameEl.classList.contains('admin-user-name')) return;
+        const original = btn.dataset.admEpTitle || '';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = original;
+        input.placeholder = 'Endpoint name';
+        input.setAttribute('aria-label', 'Endpoint name');
+        input.maxLength = 64;
+        input.autocomplete = 'off';
+        input.setAttribute('data-bwignore', '');
+        input.className = 'admin-user-name adm-ep-rename-input';
+        input.style.minWidth = `min(${nameEl.getBoundingClientRect().width}px, 100%)`;
+        nameEl.replaceWith(input);
+        btn.style.visibility = 'hidden';
+        input.focus();
+        input.select();
+        let done = false;
+        const restore = () => {
+          input.replaceWith(nameEl);
+          btn.style.visibility = '';
+        };
+        const commit = async () => {
+          if (done) return;
+          done = true;
+          const name = input.value.trim();
+          if (!name || name === original) { restore(); return; }
+          const epId = btn.dataset.admRenameEp;
+          if (data.some(ep => String(ep.id) !== epId && (ep.name || '').trim().toLowerCase() === name.toLowerCase())) {
+            uiModule.showError(`An endpoint named "${name}" already exists`);
+            done = false;
+            input.focus();
+            return;
+          }
+          input.disabled = true;
+          try {
+            const res = await fetch(`/api/model-endpoints/${encodeURIComponent(epId)}`, {
+              method: 'PATCH',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data.detail || 'Failed to rename endpoint');
+            }
+          } catch (err) {
+            uiModule.showError(err.message || 'Failed to rename endpoint');
+            restore();
+            return;
+          }
+          await _refreshAfterEndpointChange();
+          loadEndpoints();
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+          if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done = true; restore(); }
+        });
       });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
