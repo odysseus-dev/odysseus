@@ -561,10 +561,21 @@ function initializeEventListeners() {
 
   // Export: PDF
   const exportPdfBtn = el('export-pdf-btn');
+  let preparingPdf = false;
   if (exportPdfBtn) {
-    exportPdfBtn.addEventListener('click', (e) => {
+    exportPdfBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       exportMenu.classList.remove('open');
+      if (preparingPdf) return;
+      preparingPdf = true;
+      try {
+        await sessionModule.prepareHistoryForPrint();
+      } catch (error) {
+        uiModule.showError(error?.message || 'Could not prepare the chat for PDF export.');
+        return;
+      } finally {
+        preparingPdf = false;
+      }
       const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
       const sessionName = meta ? meta.name : 'Odysseus Chat';
       const originalTitle = document.title;
