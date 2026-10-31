@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_opencode_setup_provider_aliases_resolve():
-    source = Path("static/js/slashCommands.js").read_text()
+    source = Path("static/js/slashCommands.js").read_text(encoding="utf-8")
     match = re.search(
         r"const SETUP_PROVIDER_URLS = \{[\s\S]*?\nfunction _normalizeSetupBaseUrl",
         source,

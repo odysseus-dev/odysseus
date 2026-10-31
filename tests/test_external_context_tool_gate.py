@@ -1446,10 +1446,10 @@ def test_teacher_takeover_inherits_delegated_and_tainted_run_authority(monkeypat
 
 def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     root = Path(__file__).parents[1]
-    chat = (root / "static/js/chat.js").read_text()
-    renderer = (root / "static/js/chatRenderer.js").read_text()
-    skills = (root / "static/js/skills.js").read_text()
-    index = (root / "static/index.html").read_text()
+    chat = (root / "static/js/chat.js").read_text(encoding="utf-8")
+    renderer = (root / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+    skills = (root / "static/js/skills.js").read_text(encoding="utf-8")
+    index = (root / "static/index.html").read_text(encoding="utf-8")
 
     assert "fd.append('tool_approval_id'" in chat
     assert "fd.append('tool_approval_decision'" in chat
@@ -1479,7 +1479,7 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     assert app_versions[0] == app_versions[1]
     assert "app.js?v=20260808startupshell1" not in index
     approval_module_sources = [
-        (root / path).read_text()
+        (root / path).read_text(encoding="utf-8")
         for path in (
             "static/app.js",
             "static/index.html",
@@ -1494,7 +1494,7 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
     # Both the document editor and email library are module sets.
     approval_module_sources.append(document_source())
     approval_module_sources.extend(
-        p.read_text()
+        p.read_text(encoding="utf-8")
         for p in email_library_paths(include_wrapper=True)
     )
     assert all(
@@ -1508,7 +1508,7 @@ def test_frontend_tool_approval_uses_opaque_id_and_fixed_decisions():
 
 
 def test_frontend_raw_fences_do_not_call_document_mutators():
-    source = (Path(__file__).parents[1] / "static/js/chat.js").read_text()
+    source = (Path(__file__).parents[1] / "static/js/chat.js").read_text(encoding="utf-8")
     start = source.index("// Raw model text is not authorization to mutate the editor.")
     end = source.index("// Detect thinking-in-progress:", start)
 

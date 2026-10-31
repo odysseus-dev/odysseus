@@ -5,10 +5,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_compare_mode_is_transient_and_wired_to_topbar():
-    state = (ROOT / "static/js/editor/state.js").read_text()
-    topbar = (ROOT / "static/js/editor/build/topbar.js").read_text()
-    wiring = (ROOT / "static/js/editor/wire-topbar.js").read_text()
-    editor = (ROOT / "static/js/galleryEditor.js").read_text()
+    state = (ROOT / "static/js/editor/state.js").read_text(encoding="utf-8")
+    topbar = (ROOT / "static/js/editor/build/topbar.js").read_text(encoding="utf-8")
+    wiring = (ROOT / "static/js/editor/wire-topbar.js").read_text(encoding="utf-8")
+    editor = (ROOT / "static/js/galleryEditor.js").read_text(encoding="utf-8")
 
     assert "compareBaselineCanvas: null" in state
     assert "compareActive: false" in state

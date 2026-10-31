@@ -481,7 +481,7 @@ def test_bridge_backed_local_network_turn_keeps_host_shell_after_rag(monkeypatch
 
 
 def test_tui_local_surface_reconciles_caller_denials_after_routing():
-    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "agent_loop.py").read_text(encoding="utf-8")
     assert "_caller_disabled_tools.difference_update(_local_allowed_tools)" in source
 
 

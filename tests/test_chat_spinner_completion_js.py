@@ -6,7 +6,7 @@ from pathlib import Path
 
 def test_sidebar_completion_clears_only_the_owning_finished_stream():
     root = Path(__file__).resolve().parents[1]
-    source = (root / 'static/js/chat.js').read_text()
+    source = (root / 'static/js/chat.js').read_text(encoding="utf-8")
     # The finalizer is a sibling of try, so its completion flag must be in
     # the shared outer scope alongside abortCtrl, not the SSE parser block.
     assert source.count('let _streamSawDone = false;') == 1
@@ -37,7 +37,7 @@ def test_sidebar_completion_clears_only_the_owning_finished_stream():
 
 def test_tool_wait_indicator_cannot_reappear_after_completion_or_stop():
     root = Path(__file__).resolve().parents[1]
-    source = (root / 'static/js/chat.js').read_text()
+    source = (root / 'static/js/chat.js').read_text(encoding="utf-8")
     start = source.index('      let _toolPauseTimer = null;')
     end = source.index('      // Document streaming state', start)
     # The only scheduling call belongs to tool completion, not prose deltas.
@@ -72,7 +72,7 @@ def test_tool_wait_indicator_cannot_reappear_after_completion_or_stop():
 
 
 def test_done_exits_reader_without_waiting_for_connection_close():
-    source = (Path(__file__).resolve().parents[1] / 'static/js/chat.js').read_text()
+    source = (Path(__file__).resolve().parents[1] / 'static/js/chat.js').read_text(encoding="utf-8")
     start = source.index("            if (data === '[DONE]') {")
     end = source.index('            try {\n              const json = JSON.parse(data);', start)
     body = source[start:end]

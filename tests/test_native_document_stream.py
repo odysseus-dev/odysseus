@@ -7,7 +7,7 @@ import pytest
 
 def test_document_followup_does_not_shadow_tool_inventory():
     path = Path('routes/chat_routes.py')
-    table = symtable.symtable(path.read_text(), str(path), 'exec')
+    table = symtable.symtable(path.read_text(encoding="utf-8"), str(path), 'exec')
     def descendants(scope):
         for child in scope.get_children():
             yield child

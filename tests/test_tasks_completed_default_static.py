@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_tasks_open_defaults_to_completed_with_empty_fallback():
-    src = (ROOT / "static/js/tasks.js").read_text()
+    src = (ROOT / "static/js/tasks.js").read_text(encoding="utf-8")
 
     assert "let _completedFallbackToTasksOnce = false;" in src
     assert "const openCompletedByDefault = !focusId && o.filter === undefined && !openActivityForFailure;" in src
@@ -17,8 +17,8 @@ def test_tasks_open_defaults_to_completed_with_empty_fallback():
 
 
 def test_tasks_completed_default_asset_versions_are_bumped():
-    app_src = (ROOT / "static/app.js").read_text()
-    sw_src = (ROOT / "static/sw.js").read_text()
+    app_src = (ROOT / "static/app.js").read_text(encoding="utf-8")
+    sw_src = (ROOT / "static/sw.js").read_text(encoding="utf-8")
 
     app_match = re.search(r"(?:\./js|/static/js)/tasks\.js\?v=([^'\"]+)", app_src)
     sw_match = re.search(r"/static/js/tasks\.js\?v=([^'\"]+)", sw_src)
@@ -29,7 +29,7 @@ def test_tasks_completed_default_asset_versions_are_bumped():
 
 
 def test_tasks_filter_chips_include_active_paused_switch():
-    src = (ROOT / "static/js/tasks.js").read_text()
+    src = (ROOT / "static/js/tasks.js").read_text(encoding="utf-8")
 
     assert "let _taskStatusFilter = 'active';" in src
     assert "const _taskStatus = (t) => String(t?.status || '').toLowerCase();" in src
@@ -45,7 +45,7 @@ def test_tasks_filter_chips_include_active_paused_switch():
 
 
 def test_tasks_completed_view_exposes_active_paused_shortcuts():
-    src = (ROOT / "static/js/tasks.js").read_text()
+    src = (ROOT / "static/js/tasks.js").read_text(encoding="utf-8")
 
     assert "function _renderCompletedTaskStatusShortcuts()" in src
     assert 'id="tasks-completed-status-chips"' in src
@@ -55,7 +55,7 @@ def test_tasks_completed_view_exposes_active_paused_shortcuts():
 
 
 def test_completed_task_preview_links_research_runs_to_visual_report():
-    src = (ROOT / "static/js/tasks.js").read_text()
+    src = (ROOT / "static/js/tasks.js").read_text(encoding="utf-8")
 
     assert "entry.researchId" in src
     assert "task-completed-report-btn" in src

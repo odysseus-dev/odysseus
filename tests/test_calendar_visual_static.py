@@ -19,7 +19,7 @@ def _occurrences(text, needle):
 
 
 def test_calendar_week_view_has_overlap_lanes_and_live_ruler_hooks():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "function _wkLayoutTimedEvents" in calendar_src
@@ -32,7 +32,7 @@ def test_calendar_week_view_has_overlap_lanes_and_live_ruler_hooks():
 
 
 def test_crowded_week_events_expand_left_to_reveal_full_title_on_hover():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "const crowdedClass = laneCount > 1 ? ' cal-wk-block-crowded' : '';" in calendar_src
@@ -73,7 +73,7 @@ def test_crowded_week_events_expand_left_to_reveal_full_title_on_hover():
 
 
 def test_mobile_truncated_week_event_expands_before_opening_editor():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     click_idx = calendar_src.index("body.querySelectorAll('.cal-wk-block, .cal-wk-allday-event')")
@@ -90,7 +90,7 @@ def test_mobile_truncated_week_event_expands_before_opening_editor():
 
 
 def test_mobile_empty_week_slot_selects_before_opening_new_event():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "let _selectedWeekSlot = null;" in calendar_src
@@ -112,7 +112,7 @@ def test_mobile_empty_week_slot_selects_before_opening_new_event():
 
 
 def test_week_view_hints_when_current_time_is_below_the_visible_field():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "function _updateWeekNowBelowHint(wrap)" in calendar_src
@@ -127,7 +127,7 @@ def test_week_view_hints_when_current_time_is_below_the_visible_field():
 
 
 def test_mobile_week_scroll_has_resisted_edge_pull_feedback():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "pullStartedAtTop = _wrap.scrollTop <= 1;" in calendar_src
@@ -142,7 +142,7 @@ def test_mobile_week_scroll_has_resisted_edge_pull_feedback():
 
 
 def test_calendar_view_change_recovers_a_fully_open_day_drawer():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
 
     view_idx = calendar_src.index("body.querySelectorAll('.cal-view-btn')")
     render_idx = calendar_src.index("_render();", view_idx)
@@ -155,7 +155,7 @@ def test_calendar_view_change_recovers_a_fully_open_day_drawer():
 
 
 def test_calendar_month_and_agenda_have_visual_depth_hooks():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "cal-weekend" in calendar_src
@@ -168,7 +168,7 @@ def test_calendar_month_and_agenda_have_visual_depth_hooks():
 
 
 def test_calendar_event_cards_show_compact_source_badges():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "function _eventSourceHtml" in calendar_src
@@ -178,7 +178,7 @@ def test_calendar_event_cards_show_compact_source_badges():
 
 
 def test_calendar_toolbar_previous_next_arrows_are_mobile_only():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert 'class="cal-nav cal-toolbar-arrow" id="cal-prev"' in calendar_src
@@ -193,7 +193,7 @@ def test_calendar_toolbar_previous_next_arrows_are_mobile_only():
 
 
 def test_calendar_side_arrows_center_against_calendar_pane():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "function _alignSideNavToCalendar()" in calendar_src
@@ -203,7 +203,7 @@ def test_calendar_side_arrows_center_against_calendar_pane():
 
 
 def test_calendar_splitter_double_click_snaps_to_nearest_pane_then_toggles():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "detailH >= calendarH ? 'events' : 'calendar'" in calendar_src
@@ -216,7 +216,7 @@ def test_calendar_splitter_double_click_snaps_to_nearest_pane_then_toggles():
 
 
 def test_day_selection_adjusts_drawer_for_event_count():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
 
     assert "function _adjustDayDrawerForSelection(body, dateStr)" in calendar_src
     assert "if (!events.length)" in calendar_src
@@ -234,7 +234,7 @@ def test_day_selection_adjusts_drawer_for_event_count():
 
 
 def test_calendar_week_drag_preserves_multiday_event_duration():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
 
     assert "function _eventDurationMinutes(ev)" in calendar_src
     drag_idx = calendar_src.index("body.querySelectorAll('.cal-wk-block').forEach")
@@ -246,7 +246,7 @@ def test_calendar_week_drag_preserves_multiday_event_duration():
 
 
 def test_calendar_open_restores_minimized_before_open_guard():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     open_idx = calendar_src.index("function openCalendar(options = {})")
     restore_idx = calendar_src.index("Modals.isRegistered('calendar-modal') && Modals.isMinimized('calendar-modal')", open_idx)
     open_guard_idx = calendar_src.index("if (_open)", open_idx)
@@ -257,7 +257,7 @@ def test_calendar_open_restores_minimized_before_open_guard():
 
 
 def test_calendar_targeted_open_preserves_requested_focus():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
 
     assert "const preserveFocus = !!(options && options.preserveFocus)" in calendar_src
     assert "if (!preserveFocus)" in calendar_src
@@ -265,7 +265,7 @@ def test_calendar_targeted_open_preserves_requested_focus():
 
 
 def test_calendar_event_form_can_manually_save_tags():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
 
     assert 'id="cal-f-type"' in calendar_src
     assert "existing?.event_type" in calendar_src
@@ -276,8 +276,8 @@ def test_calendar_event_form_can_manually_save_tags():
 
 
 def test_calendar_tool_guidance_preserves_manual_tags_on_unrelated_updates():
-    schema_src = (ROOT / "src/tool_schemas.py").read_text()
-    index_src = (ROOT / "src/tool_index.py").read_text()
+    schema_src = (ROOT / "src/tool_schemas.py").read_text(encoding="utf-8")
+    index_src = (ROOT / "src/tool_index.py").read_text(encoding="utf-8")
 
     assert "otherwise omit it so manually tagged events keep their existing tag" in schema_src
     assert "omitting preserves manual tags" in schema_src
@@ -287,22 +287,22 @@ def test_calendar_tool_guidance_preserves_manual_tags_on_unrelated_updates():
 def test_calendar_visual_asset_versions_are_bumped():
     versions = []
     for src in [
-        (ROOT / rel).read_text()
+        (ROOT / rel).read_text(encoding="utf-8")
         for rel in ("static/app.js", "static/js/chatRenderer.js", "static/js/emailInbox.js")
     ] + [email_library_source()]:
         match = re.search(r"calendar\.js\?v=([A-Za-z0-9_-]+)", src)
         assert match
         versions.append(match.group(1))
     assert len(set(versions)) == 1
-    index_src = (ROOT / "static/index.html").read_text()
+    index_src = (ROOT / "static/index.html").read_text(encoding="utf-8")
     app_versions = re.findall(r"/static/app\.js\?v=([A-Za-z0-9_-]+)", index_src)
     assert app_versions
     assert len(set(app_versions)) == 1
 
 
 def test_calendar_settings_are_close_only_and_color_the_name_field():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    app_src = (ROOT / "static/app.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
+    app_src = (ROOT / "static/app.js").read_text(encoding="utf-8")
 
     assert "overlay.dataset.noMinimize = 'true'" in calendar_src
     assert "modal.dataset.noMinimize === 'true'" in app_src
@@ -321,7 +321,7 @@ def test_calendar_settings_are_close_only_and_color_the_name_field():
 
 
 def test_calendar_settings_actions_sync_error_and_escape_behavior():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert calendar_src.count('class="cal-settings-actions"') >= 4
@@ -340,7 +340,7 @@ def test_calendar_settings_actions_sync_error_and_escape_behavior():
 
 
 def test_calendar_hides_navigation_in_agenda_and_event_forms():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert "_modal?.classList.toggle('cal-navigation-hidden', _view === 'agenda')" in calendar_src
@@ -352,8 +352,8 @@ def test_calendar_hides_navigation_in_agenda_and_event_forms():
 
 
 def test_calendar_event_form_escape_cancels_before_modal_close():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
-    ui_src = (ROOT / "static/js/ui.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
+    ui_src = (ROOT / "static/js/ui.js").read_text(encoding="utf-8")
 
     form_guard = ui_src.index("const calendarEventForm = calendarModal?.querySelector('.cal-form');")
     hovered_close = ui_src.index("if (_closeHoveredWindow())", form_guard)
@@ -373,7 +373,7 @@ def test_calendar_from_and_to_month_day_use_theme_highlight():
 
 
 def test_calendar_location_hint_uses_accent_map_pin():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert 'class="cal-loc-hint"' in calendar_src
@@ -384,14 +384,14 @@ def test_calendar_location_hint_uses_accent_map_pin():
 
 
 def test_calendar_tag_order_prioritizes_personal_work_travel_admin():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
 
     assert "const typeOrder = ['!', 'personal', 'work', 'travel', 'admin'" in calendar_src
     assert "const types = ['', 'personal', 'work', 'travel', 'admin'" in calendar_src
 
 
 def test_long_week_events_keep_their_label_visible_while_scrolling():
-    calendar_src = (ROOT / "static/js/calendar.js").read_text()
+    calendar_src = (ROOT / "static/js/calendar.js").read_text(encoding="utf-8")
     style_src = app_css()
 
     assert 'class="cal-wk-block-label"' in calendar_src

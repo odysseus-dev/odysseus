@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_agent_thread_chevron_uses_css_shape_in_live_and_history_renderers():
-    live = (ROOT / "static/js/chat.js").read_text()
-    history = (ROOT / "static/js/chatRenderer.js").read_text()
+    live = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
+    history = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
     css = app_css()
 
     for src in (live, history):

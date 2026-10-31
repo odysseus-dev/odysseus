@@ -7,7 +7,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_same_local_model_keeps_distinct_endpoint_keys():
-    source = (ROOT / 'static/js/modelPicker.js').read_text()
+    source = (ROOT / 'static/js/modelPicker.js').read_text(encoding="utf-8")
     helper = re.search(r'function _pickerModelKey\(m\) \{.*?\n\}', source, re.S).group()
     result = subprocess.run(['node', '-e', helper + '''
       const a = _pickerModelKey({mid:'same-model',endpointId:'normal'});
@@ -22,8 +22,8 @@ def test_same_local_model_keeps_distinct_endpoint_keys():
 
 
 def test_selected_route_is_visible_and_last_pick_is_session_scoped():
-    picker = (ROOT / 'static/js/modelPicker.js').read_text()
-    chat = (ROOT / 'static/js/chat.js').read_text()
+    picker = (ROOT / 'static/js/modelPicker.js').read_text(encoding="utf-8")
+    chat = (ROOT / 'static/js/chat.js').read_text(encoding="utf-8")
     assert 's?.endpoint_name || selectedEndpoint?.endpoint_name' in picker
     assert 'label.appendChild(document.createTextNode(displayName))' in picker
     send = chat.split('const selectedRouteForSend =', 1)[1].split('})();', 1)[0]
