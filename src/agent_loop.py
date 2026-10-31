@@ -4299,6 +4299,48 @@ def _workspace_agents_context_message(workspace: Optional[str]) -> Optional[Dict
     return untrusted_context_message("AGENTS.md", "\n".join(blocks))
 
 
+def _mcp_tools_named_in_query(
+    query: str,
+    mcp_mgr,
+    disabled_map: Optional[Dict[str, Set[str]]] = None,
+) -> Set[str]:
+    """Return qualified MCP tool names for user servers named in ``query``.
+
+    The keyword fallback only knows built-in tool hints, so when vector
+    retrieval times out a request that names a connected user MCP server
+    ("use the Obsidian tools") previously lost every tool of that server.
+    Matching the server's display name on word boundaries keeps those tools
+    selectable without offering every MCP tool on every fallback turn.
+    """
+    names: Set[str] = set()
+    if not mcp_mgr or not query:
+        return names
+    ql = query.lower()
+    try:
+        tools = mcp_mgr.get_all_tools(disabled_map or {})
+    except Exception as exc:
+        logger.warning("Failed to match MCP servers in keyword fallback: %s", exc)
+        return names
+    matched: Dict[str, bool] = {}
+    for tool in tools:
+        sid = str(tool.get("server_id") or "")
+        if not sid or tool.get("is_disabled"):
+            continue
+        try:
+            if mcp_mgr.is_builtin(sid):
+                continue
+        except Exception:
+            pass
+        if sid not in matched:
+            server_name = str(tool.get("server_name") or "").strip().lower()
+            matched[sid] = bool(server_name) and re.search(
+                r"(?<!\w)" + re.escape(server_name) + r"(?!\w)", ql
+            ) is not None
+        if matched[sid] and tool.get("qualified_name"):
+            names.add(tool["qualified_name"])
+    return names
+
+
 def _expand_browser_mcp_tools(
     tool_names: Set[str],
     mcp_mgr,
@@ -22726,6 +22768,9 @@ async def stream_agent_loop(
         for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
             if any(kw in ql for kw in keywords):
                 _relevant_tools.update(tools)
+        _relevant_tools.update(
+            _mcp_tools_named_in_query(_retrieval_query, mcp_mgr, _mcp_disabled_map)
+        )
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
     # If deterministic domain detection fired, seed the corresponding domain
