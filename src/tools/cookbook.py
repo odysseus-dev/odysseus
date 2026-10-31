@@ -539,63 +539,6 @@ def _cookbook_apply_retry_suggestion(cmd: str, suggestion: Dict[str, Any]) -> st
     return cmd
 
 
-def _cookbook_engine_from_model_info(repo_id: str, info: Optional[Dict[str, Any]], host_meta: Optional[Dict[str, Any]] = None) -> str:
-    """Choose a conservative serve engine from repo metadata and target host.
-
-    This is intentionally heuristic: the model card / file list tells us the
-    official repo and likely format, while the actual serve command still goes
-    through Cookbook and is diagnosed/retried after launch.
-    """
-    rid = (repo_id or "").lower()
-    info = info or {}
-    host_meta = host_meta or {}
-    platform = (host_meta.get("platform") or "").lower()
-    tags = {str(t).lower() for t in (info.get("tags") or []) if t is not None}
-    siblings = [str(s).lower() for s in (info.get("siblings") or []) if s is not None]
-    files = " ".join(siblings)
-    is_image = (
-        "diffusers" in tags
-        or "text-to-image" in tags
-        or "image-to-image" in tags
-        or any(k in rid for k in ("qwen-image", "z-image", "flux", "stable-diffusion", "sdxl", "hidream", "boogu", "krea-2"))
-    )
-    is_mlx_image = is_image and ("mlx" in tags or "mlx" in rid or "mlx-community/" in rid)
-    if is_mlx_image:
-        return "mlx_image"
-    if is_image:
-        return "diffusers"
-    if "mlx" in tags or "mlx" in rid or "mlx-community/" in rid or platform in {"macos", "darwin"}:
-        return "mlx"
-    if "gguf" in tags or "gguf" in rid or ".gguf" in files:
-        return "llama.cpp"
-    if "sglang" in tags or "sglang" in rid:
-        return "sglang"
-    if any(q in rid or q in files or q in tags for q in ("awq", "fp8", "gptq", "bnb", "bitsandbytes")):
-        return "vllm"
-    return "vllm"
-
-
-def _cookbook_default_launch_cmd(repo_id: str, engine: str, *, port: int = 8000, info: Optional[Dict[str, Any]] = None) -> str:
-    """Build a simple first-attempt command for a selected engine."""
-    engine = (engine or "vllm").lower()
-    port = int(port or 8000)
-    if engine in {"mlx", "mlx-lm", "mlx_lm"}:
-        return f"python3 -m mlx_lm.server --model {repo_id} --host 0.0.0.0 --port {port}"
-    if engine in {"mlx_image", "mlx-image", "mflux"}:
-        return f"python3 scripts/mlx_image_server.py --model {repo_id} --host 0.0.0.0 --port {port}"
-    if engine in {"diffusers", "diffusion", "image"}:
-        return f"python3 scripts/diffusion_server.py --model {repo_id} --host 0.0.0.0 --port {port}"
-    if engine in {"sglang", "sgl"}:
-        return f"python3 -m sglang.launch_server --model-path {repo_id} --host 0.0.0.0 --port {port}"
-    if engine in {"llama.cpp", "llamacpp", "llama"}:
-        siblings = [str(s) for s in ((info or {}).get("siblings") or []) if str(s).lower().endswith(".gguf")]
-        if siblings:
-            # llama-server accepts HF repo + filename separately on recent builds.
-            return f"llama-server -hf {repo_id} -hfr {siblings[0]} --host 0.0.0.0 --port {port}"
-        return f"llama-server -hf {repo_id} --host 0.0.0.0 --port {port}"
-    return f"vllm serve {repo_id} --host 0.0.0.0 --port {port}"
-
-
 async def _cookbook_hf_model_info(repo_id: str) -> Dict[str, Any]:
     """Fetch lightweight official Hugging Face metadata for launch planning.
 
