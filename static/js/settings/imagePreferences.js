@@ -26,6 +26,7 @@ export function saveImagePreferences(patch) {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
     });
+    invalidateSettings();
     if (response.status === 403) {
       const userEntries = Object.entries(patch).filter(([k]) => USER_PREFERENCE_KEYS.includes(k));
       for (const [key, value] of userEntries) {
