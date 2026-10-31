@@ -72,7 +72,6 @@ from src.tool_capabilities import (
     blocked_tool_result,
     capabilities_for_action,
     capabilities_for_tool,
-    messages_contain_external_untrusted_context,
     tool_result_is_successful,
     tool_result_should_arm_gate,
 )
@@ -21428,14 +21427,17 @@ async def stream_agent_loop(
                 client_runtime_context.pop(_key, None)
         logger.info("[agent-intent] SFT fixture owner=%s disabled workspace/TUI tool routing", owner)
 
-    run_security = ToolRunSecurityContext(
-        external_untrusted_context_seen=(
+    # Record which initial messages taint the run, not just that one did: the
+    # route context observed later may have trimmed them away, and the
+    # control-plane read exception needs their sources.
+    run_security = ToolRunSecurityContext.for_initial_messages(
+        messages,
+        prior_external_untrusted_context_seen=(
             bool(external_untrusted_context_seen)
             or bool(
                 exact_approval
                 and exact_approval.pending.external_untrusted_context_seen
             )
-            or messages_contain_external_untrusted_context(messages)
         ),
         approval_gate_bypassed=bool(
             exact_approval and exact_approval.allow_remaining_actions
