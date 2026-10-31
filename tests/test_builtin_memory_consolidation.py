@@ -117,7 +117,7 @@ async def test_consolidate_memory_specific_owner_does_not_absorb_ownerless_rows(
 
 
 @pytest.mark.asyncio
-async def test_consolidate_memory_removes_near_duplicates_before_ai(monkeypatch, tmp_path):
+async def test_consolidate_memory_leaves_near_duplicates_for_ai(monkeypatch, tmp_path):
     from src import constants
     from src import llm_core
     from src import task_endpoint
@@ -138,14 +138,18 @@ async def test_consolidate_memory_removes_near_duplicates_before_ai(monkeypatch,
         lambda *args, **kwargs: [("http://llm", "model", {})],
     )
 
+    received_ids = []
+
     async def fake_llm_call_async(_candidates, **kwargs):
         items = json.loads(kwargs["messages"][0]["content"].split("MEMORIES:\n", 1)[1])
+        received_ids.append({item["id"] for item in items})
         return json.dumps({
             "keep": [
                 {"id": item["id"], "text": item["text"], "category": item["category"]}
                 for item in items
+                if item["id"] != "a"
             ],
-            "drop": [],
+            "drop": [{"id": "a", "reason": "Same preference as pinned b"}],
         })
 
     monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", fake_llm_call_async)
@@ -157,3 +161,4 @@ async def test_consolidate_memory_removes_near_duplicates_before_ai(monkeypatch,
     saved = {m["id"]: m for m in _read_memories(data_dir)}
     assert set(saved) == {"b", "c"}
     assert saved["b"]["pinned"] is True
+    assert received_ids == [{"a", "b", "c"}]
