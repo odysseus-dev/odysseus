@@ -530,7 +530,7 @@ class AuthManager:
             self._config["users"][username]["totp_enabled"] = True
             self._config["users"][username].pop("totp_secret_pending", None)
             # Generate backup codes
-            backup = [secrets.token_hex(4) for _ in range(8)]
+            backup = [secrets.token_hex(16) for _ in range(8)]
             self._config["users"][username]["totp_backup_codes"] = backup
             self._save()
         logger.info(f"2FA enabled for '{username}'")
