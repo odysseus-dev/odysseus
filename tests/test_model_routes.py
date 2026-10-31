@@ -433,6 +433,40 @@ class TestIsChatModel:
         # model id; it must not crash on .lower() (treated as chat-capable).
         assert _is_chat_model(bad) is True
 
+    @pytest.mark.parametrize("model_id", [
+        "gpt-5.1-codex", "gpt-5.2-codex", "gpt-5.3-codex-spark",
+        "oc/gpt-5.2-codex", "opencode/gpt-5.3-codex",
+        "codex-reliable-coding", "codex/codex-auto-review",
+    ])
+    def test_codex_family_is_chat(self, model_id):
+        # #6218: "codex" names a chat family, not a completions-only model.
+        # ChatGPT Subscription serves only these, and gateways expose routes
+        # named after it, so the substring must not disqualify a model.
+        assert _is_chat_model(model_id) is True
+
+
+# ── _probe_endpoint: codex-named chat models (#6218) ──
+
+def test_probe_keeps_codex_named_models(monkeypatch):
+    """Codex-named models reach cached_models; real non-chat ones still don't."""
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+    served = [
+        "gpt-5.1",
+        "codex-reliable-coding",
+        "oc/gpt-5.2-codex",
+        "text-embedding-3-small",
+    ]
+
+    def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+        return httpx.Response(200, json={"data": [{"id": m} for m in served]},
+                              request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+    result = _probe_endpoint("https://gateway.example/v1", "key")
+
+    assert result == ["gpt-5.1", "codex-reliable-coding", "oc/gpt-5.2-codex"]
+
 
 # ── _classify_endpoint ──
 
@@ -1188,7 +1222,8 @@ def test_reprobe_chatgpt_subscription_does_not_hide_models(monkeypatch):
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
     monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-5.1-codex", "gpt-5.1"])
-    monkeypatch.setattr(model_routes, "_is_chat_model", lambda m: True)
+    # The real _is_chat_model runs here on purpose (#6218): this provider serves
+    # codex-named models, so a filter that drops them would silently halve the list.
     # Any completion probe would be a bug for this provider.
     monkeypatch.setattr(
         model_routes.httpx, "post",
