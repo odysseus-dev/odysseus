@@ -352,9 +352,10 @@ class DeepResearcher:
         max_urls_per_round: int = 3,
         max_content_chars: int = 15000,
         max_report_tokens: int = 8192,
-        extraction_timeout: int = 90,
-        planning_timeout: int = 90,
-        query_timeout: int = 120,
+        extraction_timeout: int = 300,
+        planning_timeout: int = 300,
+        query_timeout: int = 300,
+        helper_max_tokens: int = 4096,
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
@@ -376,9 +377,10 @@ class DeepResearcher:
         self.max_urls_per_round = max_urls_per_round
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
-        self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
-        self.planning_timeout = min(3600, max(15, int(planning_timeout or 90)))
-        self.query_timeout = min(3600, max(15, int(query_timeout or 120)))
+        self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 300)))
+        self.planning_timeout = min(3600, max(15, int(planning_timeout or 300)))
+        self.query_timeout = min(3600, max(15, int(query_timeout or 300)))
+        self.helper_max_tokens = min(32768, max(256, int(helper_max_tokens or 4096)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -625,7 +627,7 @@ class DeepResearcher:
     # LLM helper
     # ------------------------------------------------------------------
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
-                   max_tokens: int = 4096, timeout: int = 60) -> str:
+                   max_tokens: int = 4096, timeout: int = 300) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
         from src.llm_core import llm_call_async
         response = await llm_call_async(
@@ -649,8 +651,8 @@ class DeepResearcher:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=1024,
-                timeout=getattr(self, "planning_timeout", 90),
+                max_tokens=getattr(self, "helper_max_tokens", 4096),
+                timeout=getattr(self, "planning_timeout", 300),
             )
             # Try to parse as JSON for structured plan
             parsed = self._parse_json_object(response)
@@ -696,7 +698,9 @@ class DeepResearcher:
         try:
             result = await self._llm(
                 [{"role": "user", "content": prompt}],
-                temperature=0, max_tokens=20, timeout=15,
+                temperature=0,
+                max_tokens=min(getattr(self, "helper_max_tokens", 4096), 256),
+                timeout=min(getattr(self, "planning_timeout", 300), 120),
             )
             cat = (result or "").strip().lower()
             # Clean one-word answer first.
@@ -755,8 +759,8 @@ class DeepResearcher:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0.5,
-                max_tokens=512 if getattr(self, "simple_research_mode", False) else 4096,
-                timeout=getattr(self, "query_timeout", 120),
+                max_tokens=512 if getattr(self, "simple_research_mode", False) else getattr(self, "helper_max_tokens", 4096),
+                timeout=getattr(self, "query_timeout", 300),
             )
             queries = self._parse_json_array(response)
             # Deduplicate
@@ -833,8 +837,8 @@ class DeepResearcher:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0.25,
-                max_tokens=1536,
-                timeout=getattr(self, "query_timeout", 120),
+                max_tokens=getattr(self, "helper_max_tokens", 4096),
+                timeout=getattr(self, "query_timeout", 300),
             )
         except Exception as e:
             logger.warning("Research action planning failed: %s", e)
@@ -1346,7 +1350,7 @@ class DeepResearcher:
                         untrusted_context_message("webpage", content),
                     ],
                     temperature=0.2,
-                    max_tokens=2048,
+                    max_tokens=getattr(self, "helper_max_tokens", 4096),
                     timeout=self.extraction_timeout,
                 )
             except Exception as e:
@@ -1720,10 +1724,10 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                # Synthesis is a heavy generation call like the final report
-                # (which gets 180s); a slow local model (e.g. a 20B served from
-                # LM Studio) routinely needs >60s for it. The old 60s cap timed
-                # out mid-stream and discarded the round's findings (#1551).
+                # Synthesis is a heavy generation call like the final report;
+                # a slow local model (e.g. a 20B served from LM Studio) can
+                # need several minutes for it. A 60s cap times out mid-stream
+                # and discards the round's findings (#1551).
                 timeout=180,
             )
         except Exception as e:
@@ -1750,7 +1754,7 @@ class DeepResearcher:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=128,
+                max_tokens=min(getattr(self, "helper_max_tokens", 4096), 512),
             )
             # Reasoning models prepend a <think>...</think> block — strip it
             # before checking for YES/NO, otherwise the answer always looks
@@ -1831,7 +1835,9 @@ class DeepResearcher:
                 pass
 
     def _time_exceeded(self) -> bool:
-        return (time.time() - self._start_time) > self.max_time
+        # max_time=0 means "no internal cap" so the run can follow the outer
+        # hard timeout (research_run_timeout_seconds=0 disables that too).
+        return self.max_time > 0 and (time.time() - self._start_time) > self.max_time
 
     # _strip_think_tags removed — use research_utils.strip_thinking()
 

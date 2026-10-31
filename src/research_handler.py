@@ -259,7 +259,7 @@ class ResearchHandler:
         query: str,
         llm_endpoint: str,
         llm_model: str,
-        max_time: int = 300,
+        max_time: Optional[int] = None,
         hard_timeout: int = None,
         llm_headers: dict = None,
         on_complete: callable = None,
@@ -281,18 +281,28 @@ class ResearchHandler:
         if _research_json_path(session_id) is None:
             raise ValueError("Invalid research session_id")
 
-        # Resolve the hard wall-clock timeout from settings when the caller
-        # didn't pin one. Local / edge models routinely need more than the
-        # old 600s default to finish a deep-research synthesis. A setting of
-        # 0 disables the cap entirely (unlimited run); any other value is
-        # bounded to [60, 86400] so a misconfigured settings.json can't
-        # explode into a multi-day hang.
+        # Resolve the run budget from settings when the caller didn't pin one.
+        # The engine's internal max_time and the outer asyncio hard timeout
+        # must agree; both inherit research_run_timeout_seconds unless the
+        # caller explicitly pins a lower cap.
+        from src.settings import get_setting
+        try:
+            raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
+        except (TypeError, ValueError):
+            raw_timeout = 1800
+
+        if max_time is None:
+            # 0 = no internal cap; any other value is bounded to [60, 86400]
+            # so a misconfigured settings.json can't explode into a multi-day
+            # hang.
+            max_time = 0 if raw_timeout <= 0 else _bounded_int(
+                raw_timeout,
+                default=1800,
+                minimum=60,
+                maximum=86400,
+            )
+
         if hard_timeout is None:
-            from src.settings import get_setting
-            try:
-                raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
-            except (TypeError, ValueError):
-                raw_timeout = 1800
             if raw_timeout <= 0:
                 hard_timeout = None  # 0 = no wall-clock cap (asyncio.wait_for timeout=None)
             else:
@@ -984,7 +994,8 @@ class ResearchHandler:
             query: Research question
             llm_endpoint: LLM endpoint URL for chat completions
             llm_model: Model name/ID
-            max_time: Maximum research time in seconds (default 5 minutes)
+            max_time: Maximum research time in seconds. 0 disables the
+                engine's internal cap so the outer hard timeout governs.
             _task_entry: Internal - registry entry to store researcher ref
             prior_report: Previous report to continue from.
             prior_findings: Previous findings to build on.
@@ -1003,7 +1014,7 @@ class ResearchHandler:
         logger.info(f"{'Continuing' if is_continuation else 'Starting'} IterResearch Deep Research")
         logger.info(f"Query: {query}")
         logger.info(f"LLM: {llm_endpoint} / {llm_model}")
-        logger.info(f"Max time: {max_time}s")
+        logger.info("Max time: %s", f"{max_time}s" if max_time > 0 else "unlimited")
         if is_continuation:
             logger.info(f"Prior: {len(prior_findings or [])} findings, {len(prior_urls or set())} URLs")
 
@@ -1012,14 +1023,33 @@ class ResearchHandler:
             progress_callback({"phase": "probing", "model": llm_model})
         await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
 
+        # Warm up the model so the first research helper call doesn't pay the
+        # cold-start (model load) penalty and time out.
+        if progress_callback:
+            progress_callback({"phase": "warming_up", "model": llm_model})
+        try:
+            from src.llm_core import llm_call_async
+            await llm_call_async(
+                url=llm_endpoint,
+                model=llm_model,
+                messages=[{"role": "user", "content": "Reply with: ok"}],
+                temperature=0.0,
+                max_tokens=8,
+                headers=llm_headers or {},
+                timeout=600,
+            )
+            logger.info("Model warm-up completed")
+        except Exception as _wu:
+            logger.warning(f"Model warm-up failed (continuing anyway): {_wu}")
+
         try:
             from src.deep_research import DeepResearcher
 
             from src.settings import get_setting
             _max_report_tokens = int(get_setting("research_max_tokens", 16384))
             _extraction_timeout = _bounded_int(
-                extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
-                default=90,
+                extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 300),
+                default=300,
                 minimum=15,
                 maximum=3600,
             )
@@ -1033,13 +1063,19 @@ class ResearchHandler:
                 get_setting("research_planning_timeout_seconds", _extraction_timeout),
                 default=_extraction_timeout,
                 minimum=15,
-                maximum=3600,
+                maximum=7200,
             )
             _query_timeout = _bounded_int(
                 get_setting("research_query_timeout_seconds", _extraction_timeout),
                 default=_extraction_timeout,
                 minimum=15,
-                maximum=3600,
+                maximum=7200,
+            )
+            _helper_max_tokens = _bounded_int(
+                get_setting("research_helper_max_tokens", 4096),
+                default=4096,
+                minimum=256,
+                maximum=32768,
             )
 
             researcher = DeepResearcher(
@@ -1053,6 +1089,7 @@ class ResearchHandler:
                 extraction_timeout=_extraction_timeout,
                 planning_timeout=_planning_timeout,
                 query_timeout=_query_timeout,
+                helper_max_tokens=_helper_max_tokens,
                 extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,

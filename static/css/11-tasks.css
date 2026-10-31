@@ -1042,8 +1042,11 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
 .admin-card:has(#set-researchSearch) .settings-row { min-width: 0; }
 .admin-card:has(#set-researchSearch) .settings-row > .settings-label { flex: 0 0 112px; min-width: 0; }
 #set-researchSearch,
-#set-researchMaxTokens,
-#set-researchRunTimeout,
+.settings-row div:has(> #set-researchMaxTokens),
+.settings-row div:has(> #set-researchRunTimeout),
+.settings-row div:has(> #set-researchHelperTokens),
+.settings-row div:has(> #set-researchPlanTimeout),
+.settings-row div:has(> #set-researchQueryTimeout),
 .settings-row div:has(> #set-researchExtractTimeout),
 .settings-row div:has(> #set-researchExtractConcurrency) {
   width: auto !important;
@@ -1057,6 +1060,9 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
      let each control claim the card width instead of escaping the admin block. */
   .settings-row:has(#set-researchSearch),
   .settings-row:has(#set-researchMaxTokens),
+  .settings-row:has(#set-researchHelperTokens),
+  .settings-row:has(#set-researchPlanTimeout),
+  .settings-row:has(#set-researchQueryTimeout),
   .settings-row:has(#set-researchExtractTimeout),
   .settings-row:has(#set-researchExtractConcurrency),
   .settings-row:has(#set-researchRunTimeout) {
@@ -1065,14 +1071,20 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
   }
   .settings-row:has(#set-researchSearch) .settings-label,
   .settings-row:has(#set-researchMaxTokens) .settings-label,
+  .settings-row:has(#set-researchHelperTokens) .settings-label,
+  .settings-row:has(#set-researchPlanTimeout) .settings-label,
+  .settings-row:has(#set-researchQueryTimeout) .settings-label,
   .settings-row:has(#set-researchExtractTimeout) .settings-label,
   .settings-row:has(#set-researchExtractConcurrency) .settings-label,
   .settings-row:has(#set-researchRunTimeout) .settings-label {
     flex: 1 1 auto;
   }
   #set-researchSearch,
-  #set-researchMaxTokens,
-  #set-researchRunTimeout,
+  .settings-row div:has(> #set-researchMaxTokens),
+  .settings-row div:has(> #set-researchRunTimeout),
+  .settings-row div:has(> #set-researchHelperTokens),
+  .settings-row div:has(> #set-researchPlanTimeout),
+  .settings-row div:has(> #set-researchQueryTimeout),
   .settings-row div:has(> #set-researchExtractTimeout),
   .settings-row div:has(> #set-researchExtractConcurrency) {
     width: 100% !important;

@@ -1855,13 +1855,23 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Max Tokens</label>
-                <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:382.5px;flex:0 0 auto;margin-left:auto;">
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="Maximum tokens for the final research report. Default 8192." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Helper Tokens</label>
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchHelperTokens" type="text" inputmode="numeric" placeholder="4096 (default)" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="Completion budget for planning, query generation, action planning, and page extraction. Reasoning models spend tokens on hidden reasoning before the answer, so keep headroom. Default 4096." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
               </div>
               <div class="settings-row">
                 <label class="settings-label">Extract Timeout</label>
                 <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
-                  <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:100%;padding-right:30px;">
-                  <span title="How long the researcher waits for a single URL to fetch and extract before giving up on it. Slow sites get skipped. Default 90 seconds." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                  <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="300 sec" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="How long the researcher waits for a single URL to fetch and extract before giving up on it. Slow sites and reasoning models need more time. Default 300 seconds." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
                 </div>
               </div>
               <div class="settings-row">
@@ -1872,8 +1882,25 @@
                 </div>
               </div>
               <div class="settings-row">
+                <label class="settings-label">Plan Timeout</label>
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchPlanTimeout" type="text" inputmode="numeric" placeholder="300 sec" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="How long the initial research-planning call may run. A multi-thousand-token prompt on a slow local reasoning model can take several minutes. Default 300 seconds." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Query Timeout</label>
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchQueryTimeout" type="text" inputmode="numeric" placeholder="300 sec" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="How long search-query generation and action planning may run each round. Default 300 seconds." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
+              </div>
+              <div class="settings-row">
                 <label class="settings-label">Timeout</label>
-                <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:382.5px;flex:0 0 auto;margin-left:auto;">
+                <div style="position:relative;width:382.5px;flex:0 0 auto;margin-left:auto;">
+                  <input id="set-researchRunTimeout" type="text" inputmode="numeric" placeholder="1800 sec (0 = no limit)" class="settings-select" style="width:100%;padding-right:30px;">
+                  <span title="Hard wall-clock cap on a single deep-research run. 0 = no limit. Default 1800 seconds." style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:50%;border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;opacity:0.55;cursor:help;user-select:none;">?</span>
+                </div>
               </div>
             </div>
           </div>

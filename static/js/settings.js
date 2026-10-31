@@ -1132,8 +1132,11 @@ async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
   var modelSel = el('set-researchModel');
   var tokensInput = el('set-researchMaxTokens');
+  var helperTokensInput = el('set-researchHelperTokens');
   var extractTimeoutInput = el('set-researchExtractTimeout');
   var extractConcurrencyInput = el('set-researchExtractConcurrency');
+  var planTimeoutInput = el('set-researchPlanTimeout');
+  var queryTimeoutInput = el('set-researchQueryTimeout');
   var runTimeoutInput = el('set-researchRunTimeout');
   var msg = el('set-researchMsg');
   var endpoints = [];
@@ -1155,8 +1158,11 @@ async function initResearchSettings() {
     if (settings.research_endpoint_id) epSel.value = settings.research_endpoint_id;
     refreshModels(settings.research_model || '');
     if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
+    if (settings.research_helper_max_tokens) helperTokensInput.value = settings.research_helper_max_tokens;
     if (settings.research_extraction_timeout_seconds) extractTimeoutInput.value = settings.research_extraction_timeout_seconds;
     if (settings.research_extraction_concurrency) extractConcurrencyInput.value = settings.research_extraction_concurrency;
+    if (settings.research_planning_timeout_seconds) planTimeoutInput.value = settings.research_planning_timeout_seconds;
+    if (settings.research_query_timeout_seconds) queryTimeoutInput.value = settings.research_query_timeout_seconds;
     if (settings.research_run_timeout_seconds !== undefined && settings.research_run_timeout_seconds !== null) {
       runTimeoutInput.value = settings.research_run_timeout_seconds;
     }
@@ -1172,11 +1178,20 @@ async function initResearchSettings() {
     if (tokensInput.value) {
       parts.push('Max tokens: ' + tokensInput.value);
     }
+    if (helperTokensInput.value) {
+      parts.push('Helper: ' + helperTokensInput.value);
+    }
     if (extractTimeoutInput.value) {
       parts.push('Extract: ' + extractTimeoutInput.value + 's');
     }
     if (extractConcurrencyInput.value) {
       parts.push('Parallel: ' + extractConcurrencyInput.value);
+    }
+    if (planTimeoutInput.value) {
+      parts.push('Plan: ' + planTimeoutInput.value + 's');
+    }
+    if (queryTimeoutInput.value) {
+      parts.push('Query: ' + queryTimeoutInput.value + 's');
     }
     if (runTimeoutInput.value !== '') {
       var rtv = parseInt(runTimeoutInput.value, 10);
@@ -1201,10 +1216,16 @@ async function initResearchSettings() {
     };
     var tv = parseInt(tokensInput.value, 10);
     if (tv && tv >= 1024) payload.research_max_tokens = tv;
+    var ht = parseInt(helperTokensInput.value, 10);
+    if (ht && ht >= 256 && ht <= 32768) payload.research_helper_max_tokens = ht;
     var et = parseInt(extractTimeoutInput.value, 10);
     if (et && et >= 15 && et <= 3600) payload.research_extraction_timeout_seconds = et;
     var ec = parseInt(extractConcurrencyInput.value, 10);
     if (ec && ec >= 1 && ec <= 12) payload.research_extraction_concurrency = ec;
+    var pt = parseInt(planTimeoutInput.value, 10);
+    if (pt && pt >= 15 && pt <= 7200) payload.research_planning_timeout_seconds = pt;
+    var qt = parseInt(queryTimeoutInput.value, 10);
+    if (qt && qt >= 15 && qt <= 7200) payload.research_query_timeout_seconds = qt;
     if (runTimeoutInput.value !== '') {
       var rt = parseInt(runTimeoutInput.value, 10);
       // 0 = no limit (disables the hard timeout); otherwise 60s..86400s (24h)
@@ -1225,8 +1246,11 @@ async function initResearchSettings() {
   });
   modelSel.addEventListener('change', saveResearch);
   tokensInput.addEventListener('change', saveResearch);
+  helperTokensInput.addEventListener('change', saveResearch);
   extractTimeoutInput.addEventListener('change', saveResearch);
   extractConcurrencyInput.addEventListener('change', saveResearch);
+  planTimeoutInput.addEventListener('change', saveResearch);
+  queryTimeoutInput.addEventListener('change', saveResearch);
   runTimeoutInput.addEventListener('change', saveResearch);
 
   _registerAiEndpointRefresh(function(nextEndpoints) {
