@@ -735,6 +735,127 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_app_api_blocklist_checks_the_routed_path(monkeypatch):
+    # httpx resolves dot segments and the server percent-decodes the path, so
+    # the blocklist must match the path that is actually routed.
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block disguised paths before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    blocked_calls = (
+        ("POST", "/api/cookbook/./../shell/exec", "Path blocked for safety"),
+        ("POST", "/api/%73hell/exec", "Path blocked for safety"),
+        ("GET", "/api/x/../auth/users", "Path blocked for safety"),
+        ("POST", "/api/x/../admin/wipe", "Path blocked for safety"),
+        ("POST", "/api/x/../cookbook/state", "overwrites the whole cookbook state file"),
+        ("POST", "/api/x/../cookbook/kill-pid", "process signalling is host control"),
+        ("POST", "/api/x/%2e%2e/shell/exec", "must not contain '.' or '..' segments"),
+    )
+
+    for method, path, error_text in blocked_calls:
+        result = await do_app_api(
+            json.dumps({"action": "call", "method": method, "path": path, "body": {}}),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1, path
+        assert error_text in result["error"], path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base",
+    ("http://127.0.0.1:7000", "https://proxy.example/odysseus", "https://proxy.example/odysseus/"),
+)
+async def test_app_api_blocklists_are_app_relative_under_internal_base(monkeypatch, base):
+    # ODYSSEUS_INTERNAL_BASE may carry a path prefix behind a proxy; both
+    # blocklists match app-relative paths, so the prefix must not hide them.
+    import httpx
+    import src.tool_implementations as tool_implementations
+    from src.tool_implementations import do_app_api
+
+    sent = []
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"ok": True}
+
+    class RecordingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            sent.append((method, url))
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", RecordingAsyncClient)
+    monkeypatch.setattr(tool_implementations, "_INTERNAL_BASE", base.rstrip("/"))
+
+    blocked_calls = (
+        ("POST", "/api/shell/exec", "Path blocked for safety"),
+        ("GET", "/api/auth/users", "Path blocked for safety"),
+        ("POST", "/api/x/../shell/exec", "Path blocked for safety"),
+        ("POST", "/api/cookbook/state", "overwrites the whole cookbook state file"),
+        ("POST", "/api/cookbook/kill-pid", "process signalling is host control"),
+        ("POST", "/api/x/../cookbook/kill-pid", "process signalling is host control"),
+    )
+    for method, path, error_text in blocked_calls:
+        result = await do_app_api(
+            json.dumps({"action": "call", "method": method, "path": path, "body": {}}),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1, path
+        assert error_text in result["error"], path
+    assert sent == []
+
+    result = await do_app_api(
+        json.dumps({"action": "call", "method": "GET", "path": "/api/cookbook/gpus"}),
+        owner="admin",
+    )
+
+    assert result["exit_code"] == 0
+    assert sent == [("GET", f"{base.rstrip('/')}/api/cookbook/gpus")]
+
+
+@pytest.mark.asyncio
+async def test_app_api_refuses_paths_that_escape_the_internal_base(monkeypatch):
+    import httpx
+    import src.tool_implementations as tool_implementations
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should refuse paths outside the app base before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+    monkeypatch.setattr(tool_implementations, "_INTERNAL_BASE", "https://proxy.example/odysseus")
+
+    for path in ("/../api/shell/exec", "/../other-app/api/cookbook/gpus"):
+        result = await do_app_api(
+            json.dumps({"action": "call", "method": "POST", "path": path, "body": {}}),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1, path
+        assert "must stay under the app base" in result["error"], path
+
+
+@pytest.mark.asyncio
 async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
     import httpx
     from src.tool_implementations import do_app_api
