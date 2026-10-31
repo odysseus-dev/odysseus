@@ -1,5 +1,6 @@
-import os
 import logging
+import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -129,7 +130,10 @@ def _sqlite_db_path(url) -> Optional[str]:
     if authority and authority.lower() != "localhost":
         fs_path = f"//{authority}{fs_path}"
 
-    return unquote(fs_path)
+    fs_path = unquote(fs_path)
+    if os.name == "nt" and re.match(r"^/[A-Za-z]:[/\\]", fs_path):
+        fs_path = fs_path[1:]  # file:///C:/x parses as /C:/x; drop the slash
+    return fs_path
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
