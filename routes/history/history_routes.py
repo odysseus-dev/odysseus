@@ -471,10 +471,16 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
+            if not isinstance(body, dict):
+                raise HTTPException(400, "Request body must be a JSON object")
             role = body.get("role", "assistant")
             content = body.get("content", "")
+            if role not in ("user", "assistant"):
+                raise HTTPException(400, "role must be 'user' or 'assistant'")
             if not content:
                 raise HTTPException(400, "content is required")
+            if not isinstance(content, str):
+                raise HTTPException(400, "content must be a string")
             metadata = sanitize_client_message_metadata(body.get("metadata"))
             _reserve_message_uploads(request, content, metadata)
             msg = ChatMessage(role=role, content=content, metadata=metadata)
