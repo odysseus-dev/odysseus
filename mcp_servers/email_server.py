@@ -3205,7 +3205,7 @@ def _set_flag(uid, folder, flag, add=True, account=None):
     conn.select(_q(folder))
     op = "+FLAGS" if add else "-FLAGS"
     try:
-        status, data = conn.uid("STORE", _b(uid), op, flag)
+        status, data = conn.uid("STORE", _b(uid), op, f"({flag})")
         if add and flag == "\\Deleted":
             conn.expunge()
         return status == "OK" and bool(data and data[0])
@@ -3250,7 +3250,7 @@ def _bulk_set_flag(uids, folder, flag, add=True, account=None):
         touched = _uid_fetch_rows(data)
         if status != "OK" or not touched:
             return 0
-        status, data = conn.uid("STORE", _b(msg_set), op, flag)
+        status, data = conn.uid("STORE", _b(msg_set), op, f"({flag})")
         if add and flag == "\\Deleted":
             conn.expunge()
         if status != "OK":
@@ -3302,7 +3302,7 @@ def _bulk_move(uids, source_folder, dest_folder, account=None, role: str = ""):
             status, _ = conn.uid("COPY", _b(msg_set), dest_arg)
             if status != "OK":
                 return 0
-            status, _ = conn.uid("STORE", _b(msg_set), "+FLAGS", "\\Deleted")
+            status, _ = conn.uid("STORE", _b(msg_set), "+FLAGS", "(\\Deleted)")
             if status != "OK":
                 return 0
             conn.expunge()
@@ -3329,7 +3329,7 @@ def _bulk_move(uids, source_folder, dest_folder, account=None, role: str = ""):
             single_status, _ = conn.uid("COPY", _b(uid), dest_arg)
             if single_status != "OK":
                 continue
-            single_status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "\\Deleted")
+            single_status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "(\\Deleted)")
             copied_any = copied_any or single_status == "OK"
         if copied_any:
             conn.expunge()
@@ -3392,7 +3392,7 @@ def _move_message(uid, source_folder, dest_folder, account=None, role: str = "")
         status, _ = conn.uid("COPY", _b(uid), dest_arg)
         if status != "OK":
             return False
-        status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "\\Deleted")
+        status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "(\\Deleted)")
         if status != "OK":
             return False
         conn.expunge()

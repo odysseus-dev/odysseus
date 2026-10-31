@@ -1581,7 +1581,7 @@ def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str
         status, _ = c.uid("COPY", uid, _q(dest))
         if status != "OK":
             return False
-        c.uid("STORE", uid, "+FLAGS", "\\Deleted")
+        c.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
         c.expunge()
         return True
     except Exception as e:
