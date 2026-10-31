@@ -30,7 +30,7 @@ async def test_concurrent_cache_scans_keep_their_own_directories(monkeypatch, tm
             async def communicate(self, input=None):
                 await asyncio.wait_for(ready.wait(), timeout=2)
                 source = input.decode() if input is not None else Path(args[-1]).read_text()
-                selected = next(directory for directory in directories if directory in source)
+                selected = next(directory for directory in directories if repr(directory) in source)
                 return json.dumps([{'repo_id': selected, 'size_bytes': 16,
                                     'nb_files': 1, 'has_incomplete': False}]).encode(), b''
         return Process()
