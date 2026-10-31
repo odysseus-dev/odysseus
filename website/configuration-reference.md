@@ -182,6 +182,18 @@ The source tree reads **147** `ODYSSEUS_*` variables: 90 an operator may want to
 | `ODYSSEUS_INTERNAL_BASE` | *unset* | `src/constants.py` | Base URL the in-app tool layer uses for loopback HTTP calls. Set it when the app is not reachable at the port it thinks it is bound to. |
 | `ODYSSEUS_INTERNAL_TOKEN` | *unset* | `core/middleware.py` | Security-relevant. Token that lets the in-app tool layer reach admin-gated routes over loopback. Unset generates a fresh per-process token, which is what you want unless something outside the process needs the same value. |
 
+### Security perimeter
+
+| Variable | Default | Read in | What it does |
+|---|---|---|---|
+| `ODYSSEUS_GUARD_BLOCK_CLOUDS` | `'false'` | `core/guard.py` | Comma list of cloud providers whose published IP ranges are blocked at the perimeter; empty means no cloud blocking. |
+| `ODYSSEUS_GUARD_BLOCK_COUNTRIES` | *unset* | `core/guard.py` | Comma list of ISO country codes to geo-deny; needs ODYSSEUS_GUARD_GEOIP_DB and is ignored without it. |
+| `ODYSSEUS_GUARD_EMERGENCY` | `'false'` | `core/guard.py` | Starts the perimeter in emergency lock-down: only loopback is served until the flag is cleared. |
+| `ODYSSEUS_GUARD_ENABLED` | `'false'` | `core/guard.py` | Master switch for the optional guard-core perimeter (rate-limit ceilings, WAF/recon detection, honeypot auto-ban, per-route caps). Off by default; enabling it requires `pip install -r requirements-optional.txt`. |
+| `ODYSSEUS_GUARD_GEOIP_DB` | `''` | `core/guard.py` | Path to a MaxMind GeoLite2/GeoIP2 country .mmdb backing the country block list; a missing or unreadable file disables country blocking with a warning. |
+| `ODYSSEUS_GUARD_PASSIVE` | `'true'` | `core/guard.py` | Defaults to true: the perimeter only logs what it would block. Set to false to enforce once the passive log is clean for your traffic. |
+| `ODYSSEUS_GUARD_TRUSTED_PROXIES` | *unset* | `core/guard.py` | Comma list of proxy CIDRs allowed to set X-Forwarded-For; the client IP is resolved through them, and a threshold ban targeting one of them is refused so the perimeter cannot ban its own proxy. |
+
 ### Integrations (Claude, Codex)
 
 | Variable | Default | Read in | What it does |

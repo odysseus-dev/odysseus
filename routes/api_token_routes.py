@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Form
 
 from core.database import get_db_session, ApiToken
 from core.middleware import require_admin
+from core.guard_deco import content_type, usage_monitor
 from src.auth_helpers import get_current_user
 
 MAX_NAME_LEN = 100
@@ -113,6 +114,7 @@ def setup_api_token_routes() -> APIRouter:
         }
 
     @router.post("/tokens")
+    @usage_monitor(10, 3600, "log")
     def create_token(
         request: Request,
         name: str = Form(""),
@@ -153,6 +155,8 @@ def setup_api_token_routes() -> APIRouter:
         }
 
     @router.patch("/tokens/{token_id}")
+    @usage_monitor(30, 3600, "log")
+    @content_type(["application/json"])
     async def update_token(request: Request, token_id: str):
         require_admin(request)
         current_user = get_current_user(request)
@@ -193,6 +197,7 @@ def setup_api_token_routes() -> APIRouter:
         return response
 
     @router.delete("/tokens/{token_id}")
+    @usage_monitor(30, 3600, "log")
     def delete_token(request: Request, token_id: str):
         require_admin(request)
         current_user = get_current_user(request)

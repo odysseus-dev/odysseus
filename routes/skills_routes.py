@@ -27,6 +27,7 @@ from services.skills import job_coordinator as _job_coordinator
 from services.skills.dependencies import AuditDependencies
 from src.utility_effort import effort_for_call
 from core.middleware import require_admin
+from core.guard_deco import content_type, suspicious_frequency, usage_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         }
 
     @router.put("/builtin/{name}")
+    @content_type(["application/json"])
+    @usage_monitor(10, 3600, "log")
     async def set_builtin_override(name: str, request: Request):
         """Save a user override for a built-in tool's instruction block.
         WARNING surfaced in the UI — this changes how the assistant is
@@ -456,6 +459,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True, "name": name, "is_overridden": False}
 
     @router.post("/import-from-url")
+    @content_type(["application/json"])
+    @usage_monitor(5, 3600, "log")
     async def import_skill_from_url(request: Request, body: SkillImportUrlRequest):
         """Install a SKILL.md bundle from a public GitHub URL (skills.sh links supported)."""
         require_admin(request)
@@ -486,6 +491,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True, "skill": entry, "files": len(files)}
 
     @router.post("/add")
+    @content_type(["application/json"])
     async def add_skill(request: Request, body: SkillAddRequest):
         user = _owner(request)
         entry = skills_manager.add_skill(
@@ -519,6 +525,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True, "deduped": bool(entry.get("_deduped")), "skill": entry}
 
     @router.post("/{skill_id}/invoke")
+    @content_type(["application/json"])
+    @usage_monitor(60, 3600, "log")
+    @suspicious_frequency(1.0, 60, "log")
     async def invoke_skill(request: Request, skill_id: str):
         """Build a skill-pinned prompt for slash-command invocation.
 
@@ -588,6 +597,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"name": skill_name, "markdown": md}
 
     @router.post("/{skill_id}/test")
+    @content_type(["application/json"])
     async def test_skill(request: Request, skill_id: str):
         """Kick off a background skill test (agent run + LLM judge). Returns
         immediately; the run executes server-side so it survives the modal being
@@ -656,6 +666,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         )
 
     @router.post("/{skill_id}/test-approval")
+    @content_type(["application/json"])
     async def approve_skill_test_action(request: Request, skill_id: str):
         """Resume a manual skill test with one exact server-sealed action."""
         from src.tool_approvals import tool_approval_store
@@ -772,6 +783,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return _job_coordinator.cancel_audit(user, deps=_audit_dependencies())
 
     @router.post("/{skill_id}/markdown")
+    @content_type(["application/json"])
     async def save_skill_markdown(request: Request, skill_id: str):
         """Replace SKILL.md with new raw content. Parses + validates first."""
         from services.memory.skill_format import Skill
@@ -825,6 +837,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True, "name": sk.name}
 
     @router.put("/{skill_id}")
+    @content_type(["application/json"])
     async def update_skill(request: Request, skill_id: str, body: SkillUpdateRequest):
         user = _owner(request)
         skills = skills_manager.load(owner=user)
@@ -857,6 +870,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         return {"ok": True}
 
     @router.post("/search")
+    @content_type(["application/json"])
     async def search_skills(request: Request):
         body = await request.json()
         query = body.get("query", "")

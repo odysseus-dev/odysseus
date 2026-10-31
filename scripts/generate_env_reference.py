@@ -92,6 +92,7 @@ AREA_ORDER = (
     "Memory and skills",
     "Speech and vision models",
     "Auth and internal API",
+    "Security perimeter",
     "Integrations (Claude, Codex)",
     "Testing, capture and development tooling",
     "Build and release metadata",
@@ -772,6 +773,46 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "Security-relevant. Token that lets the in-app tool layer reach admin-gated "
         "routes over loopback. Unset generates a fresh per-process token, which is "
         "what you want unless something outside the process needs the same value.",
+    ),
+
+    # -- Security perimeter --------------------------------------------------
+    "ODYSSEUS_GUARD_ENABLED": (
+        "Security perimeter", USER,
+        "Master switch for the optional guard-core perimeter (rate-limit ceilings, "
+        "WAF/recon detection, honeypot auto-ban, per-route caps). Off by default; "
+        "enabling it requires `pip install -r requirements-optional.txt`.",
+    ),
+    "ODYSSEUS_GUARD_PASSIVE": (
+        "Security perimeter", USER,
+        "Defaults to true: the perimeter only logs what it would block. Set to "
+        "false to enforce once the passive log is clean for your traffic.",
+    ),
+    "ODYSSEUS_GUARD_EMERGENCY": (
+        "Security perimeter", USER,
+        "Starts the perimeter in emergency lock-down: only loopback is served "
+        "until the flag is cleared.",
+    ),
+    "ODYSSEUS_GUARD_BLOCK_CLOUDS": (
+        "Security perimeter", USER,
+        "Comma list of cloud providers whose published IP ranges are blocked at "
+        "the perimeter; empty means no cloud blocking.",
+    ),
+    "ODYSSEUS_GUARD_TRUSTED_PROXIES": (
+        "Security perimeter", USER,
+        "Comma list of proxy CIDRs allowed to set X-Forwarded-For; the client IP "
+        "is resolved through them, and a threshold ban targeting one of them is "
+        "refused so the perimeter cannot ban its own proxy.",
+    ),
+    "ODYSSEUS_GUARD_BLOCK_COUNTRIES": (
+        "Security perimeter", USER,
+        "Comma list of ISO country codes to geo-deny; needs ODYSSEUS_GUARD_GEOIP_DB "
+        "and is ignored without it.",
+    ),
+    "ODYSSEUS_GUARD_GEOIP_DB": (
+        "Security perimeter", USER,
+        "Path to a MaxMind GeoLite2/GeoIP2 country .mmdb backing the country block "
+        "list; a missing or unreadable file disables country blocking with a "
+        "warning.",
     ),
 
     # -- Integrations (Claude, Codex) ---------------------------------------
