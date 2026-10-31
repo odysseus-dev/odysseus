@@ -3,6 +3,7 @@
 P2-2 invariant: external bridge execution != local containment.
 """
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -180,6 +181,7 @@ async def test_external_record_does_not_grant_authority(tmp_path):
         await containment.run(grant, "id")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: enforcing containment (bubblewrap/process group) needed to run native bash; Windows windows_tree gives wall-clock only")
 @pytest.mark.asyncio
 async def test_native_local_bash_python_behavior_unchanged(tmp_path, monkeypatch):
     """4. Native local Bash/Python behavior is unchanged."""
