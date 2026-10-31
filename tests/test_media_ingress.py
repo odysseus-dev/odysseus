@@ -15,6 +15,7 @@ from src.media_ingress import (
     _uniform_timestamps,
     build_multimodal_user_content,
 )
+from tests.helpers.symlinks import requires_symlinks
 
 
 def _write_image(path: Path, *, size: tuple[int, int] = (320, 180)) -> None:
@@ -46,6 +47,7 @@ def test_image_ingress_hashes_normalizes_and_emits_openai_blocks(tmp_path):
     assert "base64" not in str(result.metadata())
 
 
+@requires_symlinks
 def test_ingress_rejects_symlink_without_leaking_target(tmp_path):
     target = tmp_path / "target.png"
     link = tmp_path / "link.png"

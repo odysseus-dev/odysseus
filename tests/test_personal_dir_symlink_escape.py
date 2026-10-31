@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from src.path_confinement import PathEscape, confine
+from tests.helpers.symlinks import requires_symlinks
 
 SRC = Path(__file__).resolve().parent.parent / "routes" / "personal_routes.py"
 
@@ -52,6 +53,7 @@ def test_confinement_does_not_rely_on_abspath():
     )
 
 
+@requires_symlinks
 def test_shared_boundary_refuses_a_symlink_out_of_the_base(tmp_path):
     """The behaviour the source assertion used to stand in for.
 
@@ -76,6 +78,7 @@ def test_shared_boundary_refuses_a_symlink_out_of_the_base(tmp_path):
     assert confine(base, "real") == os.path.join(os.path.realpath(base), "real")
 
 
+@requires_symlinks
 def test_realpath_catches_symlink_escape(tmp_path):
     # The principle the fix relies on: abspath keeps the symlink path inside the
     # base (confinement fooled); realpath resolves it outside (confinement holds).

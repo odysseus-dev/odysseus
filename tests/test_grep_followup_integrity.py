@@ -7,8 +7,10 @@ import shutil
 import pytest
 
 from src.agent_tools.filesystem_tools import GrepTool
+from tests.helpers.symlinks import requires_symlinks
 
 
+@requires_symlinks
 @pytest.mark.parametrize('fallback', [False, True])
 def test_bound_scan_preserves_virtual_identity_and_omits_denied_files(tmp_path, monkeypatch, fallback):
     from src.agent_runtime.authority import ExactOperation
@@ -107,6 +109,7 @@ def test_single_file_search_retains_filename_and_line_for_followup(tmp_path):
     assert str(tmp_path) not in result['output']
 
 
+@requires_symlinks
 def test_fallback_does_not_follow_file_symlink_outside_workspace(tmp_path, monkeypatch):
     workspace = tmp_path / 'workspace'
     workspace.mkdir()

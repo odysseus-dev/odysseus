@@ -7,6 +7,7 @@ import os
 
 import pytest
 from tests.runtime_evidence_helpers import server_authorized_executor
+from tests.helpers.symlinks import requires_symlinks
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +50,7 @@ def test_echoed_readback_is_not_validation():
     assert is_validation_command('cat answer.json')
 
 
+@requires_symlinks
 def test_workspace_path_aliases_and_unrelated_basenames(tmp_path):
     (tmp_path / 'nested').mkdir()
     (tmp_path / 'a.py').write_text('x')

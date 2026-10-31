@@ -11,6 +11,7 @@ from src.agent_runtime.authority import RequestAuthority, OperationGrant, ExactO
 from src.agent_runtime.resources import NativeBackendResource, ResourceIdentityError, BackgroundJobResource, FilesystemRoot, FilesystemResource
 from src.process_lifecycle import ProcessIdentity
 from tests.process_resource_helpers import seed_linkage, launch_authority
+from tests.helpers.symlinks import requires_symlinks
 
 
 @pytest.fixture
@@ -153,7 +154,7 @@ def test_matching_continuation_preserves_original_authority(store):
     assert restore_background_authority("job", owner="bob", session_id="thread").grants == ()
 
 
-@pytest.mark.parametrize("alias", ["direct", "symlink", "hardlink"])
+@pytest.mark.parametrize("alias", ["direct", pytest.param("symlink", marks=requires_symlinks), "hardlink"])
 @pytest.mark.parametrize("state", ["launch", "job_store", "sidecar", "receipt"])
 def test_launch_and_job_control_files_are_protected(store, tmp_path, alias, state):
     resource, _ = seed(store)
