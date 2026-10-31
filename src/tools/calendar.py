@@ -105,6 +105,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
         _record_caldav_delete_tombstone,
         _delete_calendar_reminders_for_event,
         _calendar_reminder_for_event,
+        _reminder_notes_for_event,
         _event_to_dict,
     )
     import uuid as _uuid
@@ -295,7 +296,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
 
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
-                                  is_utc: bool = False) -> tuple[Optional[str], Optional[str]]:
+                                  is_utc: bool = False,
+                                  event_uid: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
         remind_at = dtstart - timedelta(minutes=minutes_before)
         now = datetime.utcnow() if is_utc else datetime.now()
         if dtstart <= now:
@@ -318,6 +320,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             existing_q = existing_q.filter(Note.owner == owner)
         target_title = re.sub(r"^\s*(?:calendar\s+)?reminder\s*:\s*", "", expected_title.strip().lower())
         for existing in existing_q.limit(25).all():
+            linked_uid = getattr(existing, "calendar_event_uid", None)
+            if event_uid and linked_uid and linked_uid != event_uid:
+                continue  # same title and time, but another event's reminder
             existing_title = re.sub(r"^\s*(?:calendar\s+)?reminder\s*:\s*", "", (existing.title or "").strip().lower())
             if existing_title == target_title:
                 return existing.id, "duplicate reminder already exists"
@@ -330,6 +335,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             label="calendar",
             due_date=due_date,
             source="calendar",
+            calendar_event_uid=event_uid,
         )
         db.add(note)
         return note.id, None
@@ -564,6 +570,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                         existing.all_day,
                         minutes_before,
                         bool(existing.is_utc),
+                        event_uid=existing.uid,
                     )
                     if reminder_note_id:
                         db.commit()
@@ -637,6 +644,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     all_day,
                     minutes_before,
                     dtstart_is_utc and not all_day,
+                    event_uid=uid,
                 )
             db.commit()
             if cal.source == "caldav":
@@ -708,6 +716,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                     "error": f"Referenced upload is no longer available: {missing_id}",
                     "exit_code": 1,
                 }
+            # Look up the existing reminder before summary/start change, so a
+            # rename + reminder change in one call still finds the old note.
+            stale_reminders = (
+                _reminder_notes_for_event(db, owner, ev)
+                if _has_reminder_request(args) else []
+            )
             if args.get("summary") is not None:
                 ev.summary = args["summary"]
             if args.get("description") is not None:
@@ -763,7 +777,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
             reminder_skipped_reason = None
             minutes_before = None
             if _has_reminder_request(args):
-                _delete_calendar_reminders_for_event(db, owner, ev)
+                _delete_calendar_reminders_for_event(db, owner, ev, notes=stale_reminders)
                 minutes_before = _reminder_minutes(args)
                 if minutes_before is None:
                     reminder_text = "; reminder removed"
@@ -775,6 +789,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None, *, impor
                         bool(ev.all_day),
                         minutes_before,
                         bool(ev.is_utc),
+                        event_uid=ev.uid,
                     )
                     if reminder_note_id:
                         reminder_text = f"; reminder set {minutes_before} min before"

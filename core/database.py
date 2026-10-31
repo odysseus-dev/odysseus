@@ -1211,6 +1211,31 @@ def _migrate_add_provider_auth_id_column():
             pass
 
 
+def _migrate_add_note_calendar_event_uid_column():
+    """Add calendar_event_uid column to notes if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(notes)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "calendar_event_uid" not in columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN calendar_event_uid VARCHAR")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_notes_calendar_event_uid ON notes(calendar_event_uid)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'calendar_event_uid' column + index to notes")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"notes.calendar_event_uid migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _migrate_add_model_type_column():
     """Add model_type column to model_endpoints if it doesn't exist."""
     import sqlite3
@@ -2082,6 +2107,9 @@ class Note(TimestampMixin, Base):
     image_url  = Column(String, nullable=True)      # uploaded image URL (relative path)
     gallery_id = Column(String, nullable=True, index=True)  # stable Gallery image for drawings
     repeat     = Column(String, default="none")     # none, daily, weekly, monthly, yearly
+    # Calendar reminders: UID of the CalendarEvent this reminder belongs to.
+    # NULL for ordinary notes and for reminders created before this column.
+    calendar_event_uid = Column(String, nullable=True, index=True)
     # Auto-AI fields — populated by /api/notes/{id}/classify. The classification
     # JSON shape is { kind, solvable, confidence, task_prompt, tools, items?: [...] }.
     # Content hash gates re-classification (avoid LLM spend on every save).
@@ -2395,6 +2423,7 @@ def init_db():
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
+    _migrate_add_note_calendar_event_uid_column()
     _migrate_add_supports_tools_column()
     _migrate_add_model_tool_modes_column()
     _migrate_add_task_run_model_column()

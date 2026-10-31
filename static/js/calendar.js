@@ -679,6 +679,7 @@ async function _createEventReminder(ev, dueDate) {
     label: 'calendar',
     due_date: iso,
     source: 'calendar',
+    calendar_event_uid: ev.uid ? String(ev.uid).split('::')[0] : undefined,
     // Persist the EVENT'S absolute start so the notification body can be
     // computed live at fire time ("Starts in 5 min") instead of using a
     // stale string baked at scheduling time.
