@@ -47,7 +47,7 @@ ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 # backwards for this sentinel.
 ADMIN_PRIVILEGES["block_all_models"] = False
 
-from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH
+from src.constants import AUTH_FILE, PASSWORD_MIN_LENGTH, USERNAME_MAX_LENGTH
 from src.owner_identity import RESERVED_AUTH_USERNAMES
 DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
@@ -60,6 +60,24 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # scheduler/assistant/research paths. The Default/Local owner is a storage
 # bucket for explicit auth-disabled no-login mode, not a login username.
 RESERVED_USERNAMES = frozenset(RESERVED_AUTH_USERNAMES)
+
+
+def username_error(username: str | None) -> Optional[str]:
+    """Why a new username is not acceptable, or None when it is.
+
+    Admin routes carry the name as a URL path segment, where "/" never
+    reaches the handler, so such an account could not be managed afterwards.
+    """
+    name = (username or "").strip()
+    if not name:
+        return "Username is required"
+    if len(name) > USERNAME_MAX_LENGTH:
+        return f"Username must be at most {USERNAME_MAX_LENGTH} characters"
+    if "/" in name or "\\" in name or any(not c.isprintable() for c in name):
+        return "Username must not contain slashes or control characters"
+    if name in (".", ".."):
+        return "Username is not allowed"
+    return None
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:

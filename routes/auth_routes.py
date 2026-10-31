@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
-from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
+from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL, username_error
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.auth_helpers import _auth_disabled
 from src.rate_limiter import RateLimiter
@@ -154,8 +154,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Already configured")
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.username.strip()) < 1:
-            raise HTTPException(400, "Username is required")
+        name_error = username_error(body.username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
         ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
@@ -174,8 +175,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Registration is disabled. Ask an admin for an account.")
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.username.strip()) < 1:
-            raise HTTPException(400, "Username is required")
+        name_error = username_error(body.username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
         ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
@@ -333,8 +335,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.username.strip()) < 1:
-            raise HTTPException(400, "Username is required")
+        name_error = username_error(body.username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
         ok = auth_manager.create_user(body.username, body.password, body.is_admin)
@@ -376,6 +379,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         new_username = (body.username or "").strip().lower()
         if not new_username:
             raise HTTPException(400, "Username required")
+        name_error = username_error(new_username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if old_username == new_username:
             return {"ok": True, "username": new_username, "renamed_self": old_username == user}
         if old_username not in auth_manager.users:
