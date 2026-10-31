@@ -1,6 +1,6 @@
 # Both stages need the fixed native decoder, including curl in the builder and
 # distro Node in the runtime. A cached Python base may predate the Debian fix.
-FROM python:3.14.9-slim AS brotli-base
+FROM python:3.15.0-slim AS brotli-base
 COPY scripts/check_brotli.py /usr/local/bin/check-brotli.py
 COPY scripts/check_ca_trust.py /usr/local/bin/check-ca-trust.py
 # Check inherited trust before the first HTTPS package request, retaining Debian's
