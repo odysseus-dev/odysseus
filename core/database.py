@@ -36,7 +36,10 @@ class TimestampMixin:
         return Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
 # Ensure the writable data directory exists before SQLite connects.
-from src.constants import DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SETTINGS_FILE
+from src.constants import (
+    DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SETTINGS_FILE,
+    IMAPS_PORT, default_imap_starttls,
+)
 Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
 
 
@@ -443,10 +446,13 @@ class EmailAccount(TimestampMixin, Base):
 
     # IMAP (receiving)
     imap_host      = Column(String, default="")
-    imap_port      = Column(Integer, default=993)
+    imap_port      = Column(Integer, default=IMAPS_PORT)
     imap_user      = Column(String, default="")
     imap_password  = Column(String, default="")
-    imap_starttls  = Column(Boolean, default=True)
+    # Must stay coherent with the imap_port default above: 993 is implicit TLS,
+    # so STARTTLS defaults off. See src.constants.default_imap_starttls — the
+    # creation paths use it to derive this from whatever port is supplied.
+    imap_starttls  = Column(Boolean, default=False)
 
     # SMTP (sending)
     smtp_host      = Column(String, default="")
@@ -2309,10 +2315,11 @@ def _migrate_seed_email_account():
             "is_default": True,
             "enabled": True,
             "imap_host": imap_host,
-            "imap_port": int(s.get("imap_port") or 993),
+            "imap_port": int(s.get("imap_port") or IMAPS_PORT),
             "imap_user": s.get("imap_user") or "",
             "imap_password": s.get("imap_password") or "",
-            "imap_starttls": bool(s.get("imap_starttls", True)),
+            "imap_starttls": bool(s.get(
+                "imap_starttls", default_imap_starttls(s.get("imap_port")))),
             "smtp_host": smtp_host,
             "smtp_port": int(s.get("smtp_port") or 465),
             "smtp_user": s.get("smtp_user") or "",

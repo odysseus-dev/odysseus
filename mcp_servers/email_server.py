@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
-from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR, IMAPS_PORT, default_imap_starttls
 try:
     from src.constants import SCHEDULED_EMAILS_DB
 except Exception:
@@ -313,13 +313,19 @@ def _load_config(account: str | None = None) -> dict:
     if cache_key in _ACCOUNT_CACHE:
         return _ACCOUNT_CACHE[cache_key]
 
+    # Default port is a local plaintext Dovecot, so STARTTLS defaults on here —
+    # derive it rather than hardcoding, so an IMAP_PORT=993 override without a
+    # matching IMAP_STARTTLS=false doesn't dial plaintext into IMAPS.
+    env_imap_port = int(os.environ.get("IMAP_PORT", "31143"))
     cfg = {
         "imap_host": os.environ.get("IMAP_HOST", "localhost"),
-        "imap_port": int(os.environ.get("IMAP_PORT", "31143")),
+        "imap_port": env_imap_port,
         "imap_user": os.environ.get("IMAP_USER", ""),
         "imap_password": os.environ.get("IMAP_PASSWORD", ""),
         "imap_ssl": os.environ.get("IMAP_SSL", "false").lower() == "true",
-        "imap_starttls": os.environ.get("IMAP_STARTTLS", "true").lower() == "true",
+        "imap_starttls": os.environ.get(
+            "IMAP_STARTTLS", str(default_imap_starttls(env_imap_port)),
+        ).lower() == "true",
         "smtp_host": os.environ.get("SMTP_HOST", ""),
         "smtp_port": int(os.environ.get("SMTP_PORT", "465")),
         "smtp_security": os.environ.get("SMTP_SECURITY", ""),
@@ -367,9 +373,6 @@ def _load_config(account: str | None = None) -> dict:
             _decrypt = lambda v: v  # noqa: E731
         cfg["imap_password"] = _decrypt(row["imap_password"]) if row["imap_password"] else cfg["imap_password"]
         cfg["imap_starttls"] = bool(row["imap_starttls"])
-        # The email_accounts table stores STARTTLS but not an explicit IMAP SSL
-        # flag. Port 993 is implicit TLS for IMAP providers like Gmail.
-        cfg["imap_ssl"] = int(cfg["imap_port"]) == 993 and not cfg["imap_starttls"]
         cfg["smtp_host"] = row["smtp_host"] or cfg["smtp_host"]
         cfg["smtp_port"] = int(row["smtp_port"] or cfg["smtp_port"])
         cfg["smtp_security"] = row["smtp_security"] or cfg["smtp_security"] or ("starttls" if int(cfg["smtp_port"]) == 587 else "ssl")
@@ -391,6 +394,17 @@ def _load_config(account: str | None = None) -> dict:
                         cfg[key] = int(settings[key]) if key.endswith("_port") else settings[key]
         except Exception:
             pass
+
+    # The email_accounts table stores STARTTLS but not an explicit IMAP SSL
+    # flag, so the transport is derived here for both the DB and env-var
+    # branches. Port 993 is implicit TLS (RFC 8314) and no server offers
+    # STARTTLS there, so the port decides and the flag is cleared to match —
+    # otherwise a 993 account with STARTTLS left on (the shipped default
+    # pairing) dials plaintext into a TLS-only listener and hangs until the
+    # socket timeout, with no auth attempt ever reaching the server.
+    if int(cfg["imap_port"]) == IMAPS_PORT:
+        cfg["imap_ssl"] = True
+        cfg["imap_starttls"] = False
 
     if not cfg["from_address"]:
         cfg["from_address"] = cfg["imap_user"]
