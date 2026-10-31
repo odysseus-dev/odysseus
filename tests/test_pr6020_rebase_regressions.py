@@ -271,7 +271,12 @@ def test_qwen_notes_fallback_reenables_personal_managers(monkeypatch):
         nonlocal resolve_round
         resolve_round += 1
         if resolve_round == 1:
-            return ([agent_loop.ToolBlock("manage_notes", "{}")], False, [])
+            # Probe fallback execution with a valid note call; malformed
+            # actions are rejected earlier by argument validation.
+            return ([agent_loop.ToolBlock(
+                "manage_notes",
+                json.dumps({"action": "add", "title": "Shopping", "content": "buy milk"}),
+            )], False, [])
         return ([], False, [])
 
     async def fake_execute(block, *args, **kwargs):

@@ -73,6 +73,7 @@ from src.tool_capabilities import (
     capabilities_for_action,
     capabilities_for_tool,
     messages_contain_external_untrusted_context,
+    required_action_error,
     tool_result_is_successful,
     tool_result_should_arm_gate,
 )
@@ -33539,6 +33540,7 @@ async def stream_agent_loop(
             # executed tool call in the streamed trace so canonical decoding
             # can correlate the attempted action with its rejection result.
             _execution_attempted = False
+            _tool_argument_error = required_action_error(block.tool_type, block.content)
             if _blocked_user_bounded_execution_retry:
                 desc = f"{block.tool_type}: BLOCKED BY USER EXECUTION BOUND"
                 result = {
@@ -33704,6 +33706,14 @@ async def stream_agent_loop(
                     "Tool blocked before approval by current policy: %s",
                     block.tool_type,
                 )
+            elif _tool_argument_error:
+                desc = f"{block.tool_type}: INVALID ARGUMENTS"
+                result = {
+                    "error": _tool_argument_error,
+                    "exit_code": 1,
+                    "blocked": True,
+                    "policy": "invalid_tool_arguments",
+                }
             elif not security_decision.allowed:
                 approval_document = (
                     active_document
