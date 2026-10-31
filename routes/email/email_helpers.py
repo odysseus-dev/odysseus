@@ -1019,6 +1019,7 @@ def _init_scheduled_db():
             has_attachments INTEGER DEFAULT 0,
             attachment_names TEXT DEFAULT '',
             updated_at TEXT NOT NULL,
+            sync_generation INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (owner, account_key, folder, uid)
         )
     """)
@@ -1027,6 +1028,18 @@ def _init_scheduled_db():
     }
     if "attachment_names" not in _message_index_cols:
         conn.execute("ALTER TABLE email_message_index ADD COLUMN attachment_names TEXT DEFAULT ''")
+    if "sync_generation" not in _message_index_cols:
+        conn.execute("ALTER TABLE email_message_index ADD COLUMN sync_generation INTEGER NOT NULL DEFAULT 0")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_index_sync_state (
+            owner TEXT NOT NULL,
+            account_key TEXT NOT NULL,
+            folder TEXT NOT NULL,
+            next_generation INTEGER NOT NULL DEFAULT 0,
+            reconciled_generation INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (owner, account_key, folder)
+        )
+    """)
     conn.execute("""
         CREATE INDEX IF NOT EXISTS ix_email_message_index_folder_date
         ON email_message_index(owner, account_key, folder, date_epoch DESC)
