@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -1202,7 +1203,7 @@ async def test_write_file_inline_json_args(monkeypatch):
     for b in blocks:
         await _execute_without_run_context(execute_tool_block, b, owner="admin", workspace="/tmp")
 
-    assert captured.get("path") == "/tmp/wf.txt", (
+    assert captured.get("path") in ("/tmp/wf.txt", os.path.abspath("/tmp/wf.txt")), (
         f"write_file did not decode inline JSON args; got path {captured.get('path')!r}"
     )
 
