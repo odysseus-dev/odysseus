@@ -92,7 +92,7 @@ def test_search_escapes_backslash(monkeypatch, tmp_path, capsys):
     assert _search_ids(cli, capsys, "\\") == {"doc-backslash"}
 
 
-def test_search_empty_query_returns_all(monkeypatch, tmp_path, capsys):
+def test_search_whitespace_query_returns_all(monkeypatch, tmp_path, capsys):
     cli = _cli_with_documents(monkeypatch, tmp_path)
 
     assert _search_ids(cli, capsys, "   ") == {
