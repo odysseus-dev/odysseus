@@ -1,0 +1,5 @@
+# Specs Maintenance Checkpoints
+
+Append one entry only after a latest-`origin/dev` reconciliation and its validation are complete. Each entry records the durable comparison basis for the next run; detailed scratch notes and environment-specific paths do not belong here.
+
+- 2026-08-25: reconciled against `origin/dev` commit `e71f8ceb653aeca7ce39d98bd7c2b98a152c3291` (commit date 2026-08-25 10:26:18 +0100, `chore(release): align dev version with 1.0.3 (#6168)`). Twenty-seven affected specs were updated from final source inspection. Validation: 565 focused tests passed with 1 skipped; all 61 spec Markdown files passed structure, link, and subsystem-map checks. Spec update commit: `b5be3f1feb63487842d00ed8e20568b61952523f`.
