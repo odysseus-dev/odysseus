@@ -28,7 +28,10 @@ ownership, failed sanitization and missing tooling purge sensitive artifacts.
 Unsupported or malformed sensitive records cause the affected archive to be removed
 fail-closed. An independent fail-closed verification step (.github/scripts/verify_sanitized_artifacts.py)
 runs after test suite execution or abnormal runner termination to prevent publishing
-unsanitized diagnostics while preserving safe JUnit reporting.
+unsanitized diagnostics while preserving safe JUnit reporting. The verifier returns a nonzero
+exit code upon any inspection or deletion failure, publishable XML is restricted to recognized
+JUnit reports with sensitive tokens redacted, and workflow upload steps execute only when
+independent verification succeeds (steps.<id>.outcome == 'success').
 Never upload the fixture directory, database or browser storage state.
 
 The stroke budget now excludes measured synthetic event-delivery pacing and also

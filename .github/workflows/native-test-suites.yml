@@ -40,11 +40,12 @@ jobs:
           node .github/scripts/run_native_tests.mjs
           python .github/scripts/check_test_execution.py test-results/native-node/junit.xml --minimum 43
       - name: Verify and sanitize native test results fail-closed
+        id: verify-native-results
         if: always()
         run: |
           python .github/scripts/verify_sanitized_artifacts.py test-results/native-node/
       - name: Save native test identities and results
-        if: always()
+        if: always() && steps.verify-native-results.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-node-results
@@ -100,11 +101,12 @@ jobs:
           npm run test:photo-editor -- --reporter=line,junit
           python .github/scripts/check_test_execution.py test-results/browser-junit.xml --minimum 137
       - name: Verify and sanitize failure diagnostics fail-closed
+        id: verify-browser-results
         if: always()
         run: |
           python .github/scripts/verify_sanitized_artifacts.py test-results/
       - name: Save per-test results and sanitized failure diagnostics
-        if: always()
+        if: always() && steps.verify-browser-results.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: chromium-regression-results

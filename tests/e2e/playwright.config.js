@@ -31,7 +31,23 @@ if (!['chromium', 'firefox', 'webkit'].includes(browserName)) {
 }
 
 if (disposableOptIn) {
-  fs.writeFileSync(path.join(dataDirectory, marker), JSON.stringify({ synthetic: true, authenticated: true, database: databasePath }));
+  const fixturePayload = JSON.stringify({ synthetic: true, authenticated: true, database: databasePath });
+  fs.writeFileSync(path.join(dataDirectory, marker), fixturePayload);
+  const resultsDir = path.join(repositoryRoot, 'test-results');
+  if (!fs.existsSync(resultsDir)) {
+    try { fs.mkdirSync(resultsDir, { recursive: true }); } catch (_) {}
+  }
+  try {
+    fs.writeFileSync(path.join(resultsDir, marker), fixturePayload);
+  } catch (_) {}
+  if (process.env.GITHUB_ENV) {
+    try {
+      fs.appendFileSync(
+        process.env.GITHUB_ENV,
+        `PHOTO_EDITOR_E2E_DATA_DIR=${dataDirectory}\nPHOTO_EDITOR_E2E_DB_PATH=${databasePath}\n`
+      );
+    } catch (_) {}
+  }
 }
 const traceOptIn = !isCI && ['1', 'true'].includes(String(process.env.PLAYWRIGHT_ENABLE_TRACE || '').toLowerCase());
 

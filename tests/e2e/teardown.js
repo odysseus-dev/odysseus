@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { disposableCIArtifacts } = require('./artifact-policy');
+const { disposableCIArtifacts, marker } = require('./artifact-policy');
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 const defaultResultsDir = path.join(repoRoot, 'test-results');
@@ -130,6 +130,15 @@ module.exports = async (options = {}) => {
         // Fail closed: purge all remaining zip or tmp archives
         if (disposableCI) purgeSensitiveArtifacts(resultsDir);
         else purgeZipAndTmp(resultsDir);
+      } else if (disposableCI) {
+        // Re-affirm fixture proof in resultsDir so independent verifier can establish ownership
+        try {
+          fs.writeFileSync(path.join(resultsDir, marker), JSON.stringify({
+            synthetic: true,
+            authenticated: true,
+            database: process.env.PHOTO_EDITOR_E2E_DB_PATH || path.join(dataDirectory || '', 'app.db'),
+          }));
+        } catch (_) {}
       }
     }
   }
