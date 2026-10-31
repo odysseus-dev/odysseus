@@ -1067,6 +1067,8 @@ def test_agent_loop_policy_blocks_disabled_web_tool_call_before_execution(monkey
 
 def test_web_fetch_js_failure_exposes_private_browser_next_round(monkeypatch):
     _patch_loop_basics(monkeypatch)
+    monkeypatch.setattr(al, "_looks_like_contextual_public_web_followup", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(al, "_contextual_public_web_topic_text", lambda *a, **k: "", raising=False)
     sent_tools = []
     sent_messages = []
 
@@ -1106,6 +1108,7 @@ def test_web_fetch_js_failure_exposes_private_browser_next_round(monkeypatch):
             [{"role": "user", "content": "open the official SpaceX Starship launches page"}],
             max_rounds=2,
             relevant_tools={"web_search", "web_fetch"},
+            forced_tools={"web_search", "web_fetch"},
         )
     )
 
