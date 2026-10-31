@@ -285,6 +285,26 @@ def _contains_explicit_tool_markup(text: str) -> bool:
     ))
 
 
+def markup_tool_names(text: str) -> List[str]:
+    """Tool names that call markup in text asks for, whether or not they parse.
+
+    parse_tool_blocks drops a call whose name isn't a known tool, so a caller
+    that needs to tell the model which name was wrong reads it from here.
+    Covers Qwen `<function=NAME>`, `<invoke name="NAME">` and JSON
+    `<tool_call>{"name": ...}` envelopes.
+    """
+    text = str(text or "")
+    names = _QWEN_FUNCTION_OPEN_RE.findall(text) + _XML_INVOKE_OPEN_RE.findall(text)
+    for _, start, end, _ in _iter_delimited(text, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE):
+        try:
+            name = json.loads(text[start:end]).get("name")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(name, str):
+            names.append(name)
+    return names
+
+
 def _normalize_dsml(text: str) -> str:
     if not isinstance(text, str):
         return ""
