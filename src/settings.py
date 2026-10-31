@@ -314,6 +314,20 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
     Falls back gracefully if the prefs module can't be imported (cycle/early
     boot) — admin-global settings keep working.
     """
+    if key == "image_gen_enabled":
+        global_val = get_setting("image_gen_enabled", default if default is not None else False)
+        if not global_val:
+            return False
+        if owner:
+            try:
+                from routes.prefs_routes import _load_for_user
+                prefs = _load_for_user(owner) or {}
+                if "image_gen_enabled" in prefs and prefs["image_gen_enabled"] is not None:
+                    return bool(prefs["image_gen_enabled"])
+            except Exception:
+                pass
+        return bool(global_val)
+
     if owner and key in _PER_USER_KEYS:
         try:
             from routes.prefs_routes import _load_for_user

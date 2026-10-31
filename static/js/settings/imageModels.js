@@ -4,7 +4,7 @@
 // them from the same places, so load order and init sequence are untouched.
 
 import { byId as el } from './dom.js';
-import { saveImagePreferences as _postSettings } from './imagePreferences.js';
+import { saveImagePreferences as _postSettings, readImagePreferences } from './imagePreferences.js';
 import { modelCaps } from '../editor/ai-models.js';
 import { sortModelIds } from '../modelSort.js';
 let preferencesListener = null;
@@ -46,8 +46,7 @@ export async function initImageSettings() {
     }
   } catch (e) { console.warn('Failed to load models for image settings', e); }
   try {
-    const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await settingsRes.json();
+    const settings = await readImagePreferences();
     if (settings.image_model) modelSel.value = settings.image_model;
     if (editModelSel) editModelSel.value = settings.image_edit_model || '';
     if (settings.image_quality) qualSel.value = settings.image_quality;

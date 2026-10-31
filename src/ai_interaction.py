@@ -1181,9 +1181,9 @@ def image_editing_provider_available(owner: Optional[str] = None) -> bool:
     request on this so it never falls back to deterministic approximations.
     """
     try:
-        from src.settings import load_settings
+        from src.settings import get_user_setting, load_settings
 
-        if not load_settings().get("image_gen_enabled", True):
+        if not load_settings().get("image_gen_enabled", True) or not get_user_setting("image_gen_enabled", owner=owner or "", default=True):
             return False
     except Exception:
         pass
@@ -1283,8 +1283,12 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         def get_user_setting(key, owner="", default=None):
             return default
 
-    if not get_user_setting("image_gen_enabled", owner=owner, default=True):
+    # The administrator's global image-generation disable switch is authoritative.
+    # Non-admin preferences cannot re-enable generation when disabled globally.
+    if not _settings.get("image_gen_enabled", True):
         return {"error": "Image generation is disabled by the administrator."}
+    if not get_user_setting("image_gen_enabled", owner=owner or "", default=True):
+        return {"error": "Image generation is disabled by user preference."}
 
     # Use user- or admin-configured model/quality if not specified by the tool call
     if not model_spec:

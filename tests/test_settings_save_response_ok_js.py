@@ -118,3 +118,122 @@ def test_failed_save_shows_failure_in_simulated_dom():
     assert data["serverErrResult"] == {"text": "Failed to save", "color": "var(--red)"}
     assert data["okResult"] == {"text": "Saved", "color": "var(--fg)"}
 
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_image_preferences_js_policy_and_non_admin_fallback():
+    """Verify imagePreferences.js non-admin fallback, policy toggle isolation, and admin clearing."""
+    js = """
+    globalThis.window = { dispatchEvent: () => {} };
+    globalThis.CustomEvent = class CustomEvent {};
+
+    const { saveImagePreferences, readImagePreferences } = await import('./static/js/settings/imagePreferences.js');
+
+    const results = {};
+
+    // Scenario 1: Non-admin save (POST /api/auth/settings returns 403)
+    const prefCalls = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      if (url === '/api/auth/settings') {
+        return { status: 403, ok: false, text: async () => 'Forbidden' };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        prefCalls.push({ url, body: JSON.parse(opts.body) });
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+
+    const patch = {
+      image_gen_enabled: true,
+      image_model: 'user-gen-model',
+      image_edit_model: 'user-edit-model',
+      image_quality: 'high',
+    };
+
+    const res = await saveImagePreferences(patch);
+    results.fallbackResOk = res.ok;
+    results.fallbackResStatus = res.status;
+    results.prefCalls = prefCalls;
+
+    // Scenario 2: Non-admin save fails on prefs PUT (keeps actual failure visible)
+    globalThis.fetch = async (url) => {
+      if (url === '/api/auth/settings') return { status: 403, ok: false };
+      if (url.startsWith('/api/prefs/')) return { status: 500, ok: false, text: async () => 'Disk error' };
+      throw new Error('Unexpected URL: ' + url);
+    };
+    try {
+      await saveImagePreferences({ image_model: 'fail-model' });
+      results.prefFailureThrew = false;
+    } catch (err) {
+      results.prefFailureThrew = true;
+      results.prefFailureStatus = err.status;
+    }
+
+    // Scenario 3: Admin save clears pre-existing per-user preferences
+    const adminPrefClears = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      if (url === '/api/auth/settings') {
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        adminPrefClears.push({ url, body: JSON.parse(opts.body) });
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    const adminRes = await saveImagePreferences({ image_model: 'admin-model', image_gen_enabled: true });
+    results.adminResOk = adminRes.ok;
+    results.adminPrefClears = adminPrefClears;
+
+    // Scenario 4: readImagePreferences loads image_quality along with models
+    globalThis.fetch = async (url) => {
+      if (url === '/api/prefs') {
+        return {
+          ok: true,
+          json: async () => ({ image_model: 'pref-gen', image_quality: 'low' }),
+        };
+      }
+      if (url === '/api/auth/settings') {
+        return {
+          ok: true,
+          json: async () => ({ image_model: 'global-gen', image_edit_model: 'global-edit', image_quality: 'medium' }),
+        };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    const loaded = await readImagePreferences();
+    results.loaded = loaded;
+
+    console.log(JSON.stringify(results));
+    """
+    proc = subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True)
+    import json
+    data = json.loads(proc.stdout)
+
+    # 1. Non-admin fallback returns ok=True, status=200
+    assert data["fallbackResOk"] is True
+    assert data["fallbackResStatus"] == 200
+
+    # 2. image_gen_enabled was filtered out; only image_model, image_edit_model, image_quality written
+    written_keys = [c["url"].split("/api/prefs/")[1] for c in data["prefCalls"]]
+    assert "image_gen_enabled" not in written_keys
+    assert "image_model" in written_keys
+    assert "image_edit_model" in written_keys
+    assert "image_quality" in written_keys
+
+    # 3. Preference failure threw error and preserved status
+    assert data["prefFailureThrew"] is True
+    assert data["prefFailureStatus"] == 500
+
+    # 4. Admin save cleared per-user preferences with value: null
+    assert data["adminResOk"] is True
+    cleared_keys = [c["url"].split("/api/prefs/")[1] for c in data["adminPrefClears"]]
+    assert "image_model" in cleared_keys
+    for call in data["adminPrefClears"]:
+        assert call["body"] == {"value": None}
+
+    # 5. readImagePreferences includes image_quality from prefs
+    assert data["loaded"]["image_model"] == "pref-gen"
+    assert data["loaded"]["image_edit_model"] == "global-edit"
+    assert data["loaded"]["image_quality"] == "low"
+

@@ -454,6 +454,100 @@ def test_image_model_settings_sync_both_directions_and_survive_reopening(page):
     assert len(writes) == 2
 
 
+def test_non_admin_image_model_preferences_persist_and_reload(page):
+    global_settings = {
+        'image_model': 'global-default-gen',
+        'image_edit_model': '',
+        'image_quality': 'medium',
+        'image_gen_enabled': True,
+    }
+    user_prefs = {}
+    auth_posts = []
+    pref_puts = []
+    is_admin = False
+
+    def handle_auth_settings(route):
+        if route.request.method == 'POST':
+            auth_posts.append(route.request.post_data_json)
+            if not is_admin:
+                route.fulfill(status=403, json={'error': 'Admin access is required to change these settings.'})
+                return
+            global_settings.update(route.request.post_data_json)
+            route.fulfill(status=200, json=dict(global_settings))
+            return
+        route.fulfill(status=200, json=dict(global_settings))
+
+    def handle_prefs(route):
+        url = route.request.url
+        if route.request.method == 'PUT':
+            key = url.split('/api/prefs/')[-1]
+            data = route.request.post_data_json or {}
+            val = data.get('value')
+            pref_puts.append((key, val))
+            if val is None:
+                user_prefs.pop(key, None)
+            else:
+                user_prefs[key] = val
+            route.fulfill(status=200, json={'key': key, 'value': val})
+            return
+        route.fulfill(status=200, json=dict(user_prefs))
+
+    page.route('**/api/auth/settings', handle_auth_settings)
+    page.route('**/api/prefs**', handle_prefs)
+    page.route('**/api/model-endpoints', lambda route: route.fulfill(json=[{
+        'is_enabled': True, 'online': True, 'model_type': 'llm',
+        'models': ['global-default-gen', 'openai/gpt-5-image', 'openai/gpt-image-2'],
+    }]))
+
+    # Step 1: Non-admin loads image settings, selects a preference
+    page.evaluate("""async () => {
+      document.body.innerHTML = '<select id="set-imgModelSelect"><option value="">Auto</option></select>'
+        + '<select id="set-imgEditModelSelect"><option value="">Same</option></select>'
+        + '<select id="set-imgQualitySelect"><option value="medium">Medium</option></select>'
+        + '<input type="checkbox" id="set-imgEnabledToggle" checked><span id="set-imgSettingsMsg"></span>';
+      const {initImageSettings} = await import('/static/js/settings/imageModels.js');
+      await initImageSettings();
+    }""")
+
+    # Non-admin changes generation model
+    page.select_option('#set-imgModelSelect', 'openai/gpt-image-2')
+
+    # Wait for status message to show 'Saved'
+    page.wait_for_function("document.getElementById('set-imgSettingsMsg').textContent === 'Saved'")
+    msg_color = page.evaluate("document.getElementById('set-imgSettingsMsg').style.color")
+    assert msg_color == 'var(--fg)', f"Expected var(--fg), got {msg_color}"
+
+    # Verify per-user preference was saved and global toggle was NOT propagated
+    assert user_prefs.get('image_model') == 'openai/gpt-image-2'
+    assert 'image_gen_enabled' not in user_prefs, "Global policy toggle must not be saved to user prefs"
+
+    # Step 2: Simulate page reload / re-initialization for non-admin
+    page.evaluate("""async () => {
+      document.getElementById('set-imgModelSelect').value = '';
+      const {initImageSettings} = await import('/static/js/settings/imageModels.js');
+      await initImageSettings();
+    }""")
+    page.wait_for_function("document.getElementById('set-imgModelSelect').value === 'openai/gpt-image-2'")
+    assert page.evaluate("document.getElementById('set-imgModelSelect').value") == 'openai/gpt-image-2'
+
+    # Step 3: Admin saves settings - pre-existing per-user preferences must be cleared
+    is_admin = True
+    page.evaluate("""async () => {
+      const {saveImagePreferences} = await import('/static/js/settings/imagePreferences.js');
+      await saveImagePreferences({ image_model: 'admin-chosen-model', image_edit_model: '', image_quality: 'high', image_gen_enabled: true });
+    }""")
+    # Verify per-user preference for image_model was cleared (PUT with value: null)
+    assert 'image_model' not in user_prefs, "Admin save must clear pre-existing per-user preference"
+    assert global_settings['image_model'] == 'admin-chosen-model'
+
+    # Admin reloads settings - receives newly saved global setting, not stale pref
+    page.evaluate("""async () => {
+      const {initImageSettings} = await import('/static/js/settings/imageModels.js');
+      await initImageSettings();
+    }""")
+    assert global_settings['image_model'] == 'admin-chosen-model'
+
+
 def test_generation_places_result_without_stretching_or_refresh(page):
     result = page.evaluate("""async () => {
       const {createImageGenerationAction} = await import('/static/js/editor/image-generation.js');
