@@ -140,6 +140,7 @@ def test_every_chroma_outcome_leaves_the_app_off_a_port_we_do_not_own(cli, workt
     assert "keyword-only" in note
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: pid_command shells out to ps")
 def test_a_pid_is_never_trusted_without_its_command_line(cli, worktree, monkeypatch):
     own_pid = os.getpid()
     assert cli.pid_is_ours(own_pid, ["definitely-not-in-this-command-line"]) is False
