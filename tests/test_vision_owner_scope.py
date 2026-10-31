@@ -47,7 +47,7 @@ def test_auto_detected_vision_model_resolution_passes_owner(monkeypatch):
 def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_resolve_vl_model(configured, owner=None):
+    def fake_resolve_vl_model(configured, owner=None, session_id=None):
         seen["primary"] = (configured, owner)
         return ("http://primary.test/chat/completions", "vision-primary", {"X-Test": "1"})
 
@@ -55,8 +55,8 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
         seen["fallback_owner"] = owner
         return []
 
-    def fake_llm_call(url, model, messages, headers=None, timeout=None):
-        seen["llm"] = (url, model, headers, timeout, messages)
+    def fake_llm_call(url, model, messages, headers=None, timeout=None, max_tokens=None, temperature=None):
+        seen["llm"] = (url, model, headers, timeout, messages, max_tokens, temperature)
         return "description"
 
     monkeypatch.setattr(dp, "_load_vl_settings", lambda: {"vision_enabled": True, "vision_model": "gpt-4o"})
@@ -80,8 +80,12 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
         "http://primary.test/chat/completions",
         "vision-primary",
         {"X-Test": "1"},
-        120,
+        300,
     )
+    # Same reasoning-model-truncation fix as the ai-tag path (VISION_MAX_TOKENS,
+    # low temperature) — thinking-capable vision models otherwise spend their
+    # whole budget on <think> and return empty content.
+    assert seen["llm"][5] == dp.VISION_MAX_TOKENS
 
 
 def test_request_vision_call_sites_pass_owner():
@@ -97,5 +101,10 @@ def test_request_vision_call_sites_pass_owner():
     assert "_process_pdf(path, owner=owner)" in processor_source
     assert "_process_pdf(pdf_path, owner=user)" in document_source
     assert "_resolve_vl_model(vl_model, owner=user)" in document_source
-    assert "_resolve_vl_model(configured, owner=user)" in gallery_source
+    # Gallery OCR/AI-tag route through a shared _resolve_vision_candidates()
+    # helper (owner threaded in as a plain positional/keyword arg down the
+    # chain: route -> _call_vision_model(..., user, ...) ->
+    # _resolve_vision_candidates(model_override, owner) -> here) rather than
+    # calling _resolve_vl_model directly inline, unlike the other sites above.
+    assert "_resolve_vl_model(configured, owner=owner, session_id=session_id)" in gallery_source
     assert "_process_pdf(tmp_path, owner=_owner(request))" in memory_source
