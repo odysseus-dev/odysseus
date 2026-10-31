@@ -12,6 +12,8 @@ import tempfile
 from typing import List, Dict, Any
 
 from src.llm_core import llm_call
+from src.markitdown_runtime import is_markitdown_format
+from src.upload_handler import is_text_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -19,30 +21,25 @@ MAX_INLINE_ATTACHMENT_CHARS = 24000
 MIN_INLINE_ATTACHMENT_SLICE = 500
 
 
-def _is_text_file(path: str) -> bool:
-    """Check if file has text extension."""
-    return os.path.splitext(path.lower())[1] in {
-        ".bash", ".c", ".cpp", ".css", ".csv", ".go", ".h", ".htm",
-        ".html", ".java", ".js", ".json", ".jsx", ".log", ".md",
-        ".markdown", ".nix", ".php", ".py", ".rb", ".rs", ".sh",
-        ".sql", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
-    }
+def _is_text_file(path: str, content_type: str | None = None) -> bool:
+    """Check a file using the shared safe text-attachment classification."""
+    return is_text_attachment(path, content_type)
 
 
-def _process_text_file(path: str) -> str:
+def _process_text_file(path: str, display_name: str | None = None) -> str:
     """Process text file with enhanced formatting and metadata."""
     language_map = {
-        ".py": "python", ".js": "javascript", ".html": "html", ".css": "css",
-        ".json": "json", ".md": "markdown", ".txt": "text", ".csv": "csv",
+        ".py": "python", ".js": "javascript", ".html": "html", ".htm": "html", ".css": "css",
+        ".json": "json", ".md": "markdown", ".markdown": "markdown", ".txt": "text", ".csv": "csv",
         ".log": "log", ".sh": "bash", ".bash": "bash", ".nix": "nix",
         ".yml": "yaml", ".yaml": "yaml",
-        ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c",
+        ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c", ".h": "c",
         ".java": "java", ".go": "go", ".rs": "rust", ".php": "php",
         ".rb": "ruby", ".ts": "typescript", ".jsx": "javascript", ".tsx": "typescript",
     }
 
-    filename = os.path.basename(path)
-    _, ext = os.path.splitext(path.lower())
+    filename = os.path.basename(display_name or path)
+    _, ext = os.path.splitext(filename.lower())
     language = language_map.get(ext, "text")
     max_len = 30000 if ext != ".log" else 10000
 
@@ -97,9 +94,9 @@ def _process_text_file(path: str) -> str:
     header += f"[Type: {language}, Lines: {line_count}, Size: {size_str} bytes]"
 
     code_extensions = {
-        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".bash", ".nix",
+        ".py", ".js", ".html", ".htm", ".css", ".json", ".md", ".sh", ".bash", ".nix",
         ".yml", ".yaml", ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
-        ".ts", ".jsx", ".tsx",
+        ".ts", ".jsx", ".tsx", ".h",
     }
     if ext in code_extensions:
         code_block = f"```{language}\n{content}"
@@ -583,6 +580,7 @@ def build_user_content(
         _, ext = os.path.splitext(path.lower())
         mime = upload_info.get("mime") or mimetypes.guess_type(path)[0] or "application/octet-stream"
         display_name = upload_info.get("name") or upload_info.get("original_name") or path
+        _, display_ext = os.path.splitext(display_name.lower())
 
         if upload_handler.is_image_file(display_name, mime):
             try:
@@ -619,7 +617,7 @@ def build_user_content(
                     content.insert(0, {"type": "text", "text": "[Audio attached but could not be processed]"})
 
         elif upload_handler.is_document_file(display_name, mime):
-            if mime == "application/pdf":
+            if mime.partition(";")[0].strip().lower() == "application/pdf" or display_ext == ".pdf":
                 extracted_text = None
                 if session_id:
                     try:
@@ -719,8 +717,8 @@ def build_user_content(
                     extracted_text = _process_pdf(path, owner=owner)
             elif path.lower().endswith(".doc") or display_name.lower().endswith(".doc"):
                 extracted_text = _process_legacy_word_document(path, display_name)
-            elif mime.startswith("text/") or _is_text_file(path):
-                extracted_text = _process_text_file(path)
+            elif _is_text_file(display_name, mime) and not is_markitdown_format(display_name):
+                extracted_text = _process_text_file(path, display_name=display_name)
             else:
                 extracted_text = _process_office_document(
                     path,
