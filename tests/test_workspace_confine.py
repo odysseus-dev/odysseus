@@ -17,6 +17,7 @@ import tempfile
 from types import SimpleNamespace
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 from tests.runtime_evidence_helpers import server_authorized_executor
 
 from src.tool_execution import (
@@ -88,7 +89,7 @@ def test_active_binding_confines_shared_resolvers(ws):
     token = _active_workspace.set(ws)
     try:
         assert get_active_workspace() == ws
-        assert agent_cwd() == ws
+        assert agent_cwd() == os.path.realpath(ws)
         assert _resolve_tool_path("a.txt") == os.path.realpath(os.path.join(ws, "a.txt"))
         with pytest.raises(ValueError):          # normally-allowed root, now outside ws
             _resolve_tool_path("/tmp/whatever.txt")
@@ -99,7 +100,7 @@ def test_active_binding_confines_shared_resolvers(ws):
 
 def test_no_binding_uses_default_roots():
     assert get_active_workspace() is None
-    assert agent_cwd() == _AGENT_WORKDIR
+    assert agent_cwd() == os.path.realpath(_AGENT_WORKDIR)
     with pytest.raises(ValueError):
         _resolve_tool_path("/etc/hosts")
 
@@ -283,6 +284,7 @@ async def test_glob_skips_sensitive_files_in_workspace(ws, admin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
     """python tool runs with cwd = workspace (OS-agnostic probe)."""
     _, r = await execute_tool_block(_block("python", "import os; print(os.getcwd())"), owner="a", workspace=ws)
@@ -292,6 +294,7 @@ async def test_subprocess_cwd_is_workspace_e2e(ws, admin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_python_virtual_workspace_path_works_for_tmp_workspace(ws, admin):
     """The bwrap /tmp tmpfs must not hide a task workspace bound at /workspace."""
     _, result = await execute_tool_block(

@@ -241,7 +241,32 @@ async def test_pinned_transport_reuses_httpx_ca_trust(monkeypatch):
         await transport.aclose()
 
 
+def _loopback_alias_refuses_quickly() -> bool:
+    """True when 127.0.0.2 refuses a connection instead of silently dropping it.
+
+    Linux covers 127.0.0.0/8 with the loopback route, so a dead alias answers
+    with RST and the pinned transport falls back immediately. Stock macOS only
+    covers 127.0.0.1, so the same connect hangs until the timeout and the
+    fallback never gets to run — a host networking difference, not a transport
+    bug.
+    """
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        sock.connect(("127.0.0.2", 1))
+        return True  # something answered; a live-refusal probe still works
+    except ConnectionRefusedError:
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
 @pytest.mark.asyncio
+@pytest.mark.skipif(not _loopback_alias_refuses_quickly(),
+                    reason="127.0.0.2 does not refuse connections on this host (stock macOS lo0)")
 async def test_real_socket_falls_back_from_dead_first_to_live_second():
     """End-to-end over real loopback sockets: pin [127.0.0.2 (nothing
     listening), 127.0.0.1 (live)], and the request must succeed by falling back

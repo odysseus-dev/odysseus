@@ -26,8 +26,12 @@ def configure_runtime(config, runtime):
         # private TMPDIR, plus xdist's popen-gw<n>, overflows the 107-byte
         # AF_UNIX limit for sockets in tmp_path. Workers inherit a basetemp
         # under the controller's; an explicit --basetemp still wins.
+        # The basetemp sits INSIDE the private TMPDIR (not beside it) so
+        # tmp_path paths are under the tool-path allowlist: on macOS the
+        # runtime root is /var/folders/... and only <root>/tmp is an allowed
+        # confinement root, so a sibling basetemp lands outside it.
         if config.option.basetemp is None and not hasattr(config, "workerinput"):
-            config.option.basetemp = str(runtime.root / "pytest")
+            config.option.basetemp = str(runtime.root / "tmp" / "pytest")
     parallel = bool(getattr(config.option, "numprocesses", None)) or hasattr(config, "workerinput")
     # This consumes the existing test option; its public read and documented
     # source location remain in the static-server fixture.
@@ -46,8 +50,17 @@ def isolated_runtime(worker="main"):
     The random suffix separates simultaneous runs, even with the same worker
     name. Test-specific monkeypatches and function-scoped databases still own
     their resources; this is a fallback namespace, not a shared DB fixture.
+
+    The root sits at the short real temp root (``/private/tmp`` on macOS), not
+    the per-user ``$TMPDIR``: macOS's ``/var/folders/<2>/<30>/T`` spends 49 of
+    the 104 ``sun_path`` bytes before the runtime prefix, so sockets bound
+    under ``tmp_path`` (tmux, the agent runtime socket) overflow on the stock
+    layout. The directory is created 0700, so the shared sticky world-writable
+    parent stays private. See tests/helpers/unix_sockets.py for the same
+    tradeoff.
     """
-    with tempfile.TemporaryDirectory(prefix=f"ody-{worker}-") as directory:
+    short_root = os.path.realpath(tempfile.gettempdir() if os.name == "nt" else "/tmp")
+    with tempfile.TemporaryDirectory(prefix=f"ody-{worker}-", dir=short_root) as directory:
         root = Path(directory)
         with pytest.MonkeyPatch.context() as patcher:
             paths = {

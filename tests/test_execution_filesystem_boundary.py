@@ -31,6 +31,7 @@ import os
 import shlex
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src import containment
 from src.agent_tools import subprocess_tools
@@ -77,6 +78,7 @@ def _bind_mode(argv, dest):
 
 # ── what the namespace binds ────────────────────────────────────────────────
 @pytest.mark.skipif(os.name == "nt", reason="bwrap argv is POSIX-only")
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_home_and_mnt_are_read_only(workspace):
     argv = _argv(workspace)
     assert _bind_mode(argv, "/home") == "--ro-bind"
@@ -254,6 +256,7 @@ def test_probe_answers_without_writing_a_grant_record(workspace, monkeypatch, tm
     assert containment.active_grants() == []
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_probe_and_acquire_agree_on_what_this_host_enforces(workspace, monkeypatch, tmp_path):
     """One mechanism table, one answer. A second opinion about what this host
     can enforce is the thing the probe exists to prevent."""

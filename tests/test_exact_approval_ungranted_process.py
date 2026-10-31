@@ -7,6 +7,7 @@ card was created with no process identity and the executor refused it:
 "Approved action has no sealed process/job identity".
 """
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src.agent_runtime.authority import OperationGrant, RequestAuthority
 from src.tool_approvals import ToolApprovalStore
@@ -55,6 +56,7 @@ def test_approval_for_ungranted_bash_seals_a_launch_in_the_workspace(tmp_path):
     assert bound.request_id == authority.request_id
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_approved_ungranted_bash_runs_once(tmp_path):
     authority = _authority(tmp_path, "get_workspace")
     _, exact = _approve(authority, "bash", "printf approved-run")

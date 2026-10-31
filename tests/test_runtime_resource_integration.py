@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src import bg_jobs, containment, process_ownership, tool_execution
 from src.agent_runtime import process_resources as resources
@@ -219,6 +220,7 @@ def test_detached_publication_failure_cannot_release_workload(workspace, monkeyp
     assert containment.active_grants() == []
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_detached_release_observes_complete_durable_linkage(workspace, monkeypatch):
     real_popen = bg_jobs.subprocess.Popen
     observations = []

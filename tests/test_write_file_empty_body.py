@@ -99,9 +99,15 @@ def test_implicit_whitespace_noop_effect_digest_describes_actual_empty_bytes(tmp
 
 @pytest.fixture
 def target():
-    """A fresh directory under the system temp root, which _tool_path_roots allows."""
+    """A fresh directory under the system temp root, which _tool_path_roots allows.
+
+    The path is handed out resolved: WriteFileTool confines via os.path.realpath,
+    so interceptors in these tests must observe the same string the tool writes
+    through. On macOS the system temp root is a symlink (/tmp → /private/tmp,
+    /var → /private/var) and an unresolved yield would never compare equal.
+    """
     with tempfile.TemporaryDirectory(prefix="odysseus-6414-") as directory:
-        yield os.path.join(directory, "classic-banana-cake.md")
+        yield os.path.realpath(os.path.join(directory, "classic-banana-cake.md"))
 
 
 def _seed(path, text=RECIPE):
