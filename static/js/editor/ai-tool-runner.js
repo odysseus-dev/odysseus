@@ -76,7 +76,12 @@ export function createApplyImageTool({
         if (sel.endpoint) extraPayload._endpoint = sel.endpoint;
         if (sel.model && !extraPayload._model) extraPayload._model = sel.model;
       }
-      const flatCanvas = flatten();
+      const removeBackground = endpoint === '/api/image/remove-bg';
+      const targetLayer = removeBackground ? state.layers.find(layer => layer.id === state.activeLayerId) : null;
+      if (removeBackground && (!targetLayer?.canvas || targetLayer.kind === 'adjustment' || targetLayer.locks?.pixels)) {
+        throw new Error('Select an unlocked image layer first');
+      }
+      const flatCanvas = removeBackground ? targetLayer.canvas : flatten();
       const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
       const body = { image: imageB64, ...extraPayload };
       const res = await fetch(endpoint, {
@@ -96,6 +101,23 @@ export function createApplyImageTool({
       const img = await decodeAIImage(data.image, operation.signal);
       operation.signal.throwIfAborted();
       if (!state.editorOpen) return; // user closed mid-decode (v2 review HIGH-4)
+      if (removeBackground) {
+        if (!state.layers.includes(targetLayer)) return;
+        saveState('Remove background');
+        // The returned pixels replace the editable source, not just its preview.
+        targetLayer.kind = 'raster';
+        targetLayer.placed = null;
+        targetLayer.text = null;
+        targetLayer.shape = null;
+        targetLayer.ctx.clearRect(0, 0, targetLayer.canvas.width, targetLayer.canvas.height);
+        targetLayer.ctx.drawImage(img, 0, 0, targetLayer.canvas.width, targetLayer.canvas.height);
+        targetLayer._adjCacheKey = null;
+        targetLayer._adjFinalKey = null;
+        composite();
+        renderLayerPanel();
+        uiModule?.showToast('Background removed');
+        return targetLayer;
+      }
       {
         saveState();
         const layer = createLayer(layerName, state.imgWidth, state.imgHeight);

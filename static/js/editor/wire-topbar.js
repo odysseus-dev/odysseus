@@ -37,6 +37,7 @@
  * }} deps
  */
 import { state } from './state.js';
+import { topPortalZ } from '../toolWindowZOrder.js';
 import { isLayerPixelLocked, isLayerTransparencyLocked } from './layer-groups.js';
 
 const TOPBAR_MENU_IDS = ['ge-file-menu', 'ge-edit-menu', 'ge-view-menu', 'ge-image-menu', 'ge-layer-menu', 'ge-type-menu', 'ge-selection-menu', 'ge-filter-menu', 'ge-window-menu', 'ge-help-menu', 'ge-resize-menu', 'ge-save-menu'];
@@ -101,6 +102,7 @@ export function wireTopbar(deps) {
       };
       const positionSaveMenu = () => {
         const r = saveBtn.getBoundingClientRect();
+        saveMenu.style.zIndex = String(topPortalZ());
         saveMenu.style.top = `${r.bottom + 2}px`;
         saveMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
         saveMenu.style.left = 'auto';

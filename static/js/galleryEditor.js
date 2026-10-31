@@ -277,8 +277,11 @@ import { alphaBounds as _maskAlphaBounds, featherMaskCanvas as _featherMaskCanva
 import { analyzeAutoTone as _analyzeAutoTone, applyAutoTone as _applyAutoTone, boxBlurRGB as _boxBlurRGB, skinMaskFromData as _skinMaskFromData, frequencySeparationSmooth as _frequencySeparationSmooth, blemishRemoval as _blemishRemoval, teethWhitening as _teethWhitening, featureExclusionMask as _featureExclusionMask, dilateAlpha as _dilateAlpha, subtractMask as _subtractMask, guidedClarity as _guidedClarity } from './editor/retouch.js';
 import { wireClipboardAndDrop } from './editor/clipboard-and-drop.js';
 import { wireAIModelSelectors, resolveInpaintModel, resolveQuickEditModel, resolveQuickEditAgentModel } from './editor/ai-models.js';
-import { createPreflight } from './editor/preflight.js';
 import { createAiSettings } from './editor/ai-settings.js';
+import { waitForImagePreferences } from './settings/imagePreferences.js';
+import { createImageGenerationAction } from './editor/image-generation.js';
+import { finishQuickEditJob } from './editor/quick-edit-job.js';
+import { imageResultGeometry } from './editor/image-result-geometry.js';
 import { lookRecipeSteps } from './editor/look-recipes.js';
 import { wireInpaintButtons } from './editor/ai-inpaint.js?v=20260708match1';
 import { wireAIToolsMisc } from './editor/ai-tools-misc.js';
@@ -356,7 +359,6 @@ function _computeTransformSnap(frame, center) {
 const _INPAINT_DEFAULT_BRUSH = 100;
 let _samAbortController = null;
 let _precisionGuides = null;
-let _preflight = null;
 let _aiSettings = null;
 let _selectionAnimationFrame = null;
 let _selectionAnimationLast = 0;
@@ -394,6 +396,12 @@ if (!window.__galleryEditEscHardGuardInstalled) {
     }
     if (e.target?.closest?.('#styled-confirm-overlay')) return;
     if (e.key === 'Escape') {
+      const aiSettings = document.querySelector('.ge-ai-settings:not([hidden])');
+      if (aiSettings) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        aiSettings.querySelector('[data-ai-settings-close]')?.click();
+        return;
+      }
       // Floating dialogs/popups that live outside the editor modal must close on
       // Escape reliably (their document-capture handlers can miss when focus is
       // outside them). Close the top-most one and stop here.
@@ -838,6 +846,7 @@ function _setCanvasAiBusy(busy) {
 }
 
 let _aiProgressTimer = null;
+let _aiProgressEpoch = 0;
 function _setAiProgress(frac, label) {
   const wrap = document.getElementById('ge-ai-command-progress');
   if (!wrap) return;
@@ -857,12 +866,17 @@ function _startAiProgress(requestId) {
   const endpointId = arguments[1] || '';
   _stopAiProgress();
   if (!requestId) return;
+  const epoch = _aiProgressEpoch;
+  let pending = false;
   const tick = async () => {
+    if (pending || epoch !== _aiProgressEpoch) return;
+    pending = true;
     try {
       const epQuery = endpointId ? `&endpoint_id=${encodeURIComponent(endpointId)}` : '';
       const r = await fetch(`/api/image/edit-progress?request_id=${encodeURIComponent(requestId)}` + epQuery, { credentials: 'same-origin' });
       if (!r.ok) return;
       const p = await r.json();
+      if (epoch !== _aiProgressEpoch) return;
       const st = p.stage || '';
       if (st === 'done' || st === 'error') { _setAiProgress(1, st === 'done' ? 'Done' : 'Failed'); return; }
       const frac = typeof p.progress === 'number' ? p.progress : 0;
@@ -871,12 +885,13 @@ function _startAiProgress(requestId) {
       const verb = st === 'editing' ? 'Generating' : (st ? st[0].toUpperCase() + st.slice(1) : 'Working');
       _setAiProgress(frac, `${verb}…${stepTxt}${eta}`);
       _setAiCommandStatus(`${verb}…${stepTxt}${eta}`, 'running');
-    } catch (_) {}
+    } catch (_) {} finally { pending = false; }
   };
   _aiProgressTimer = setInterval(tick, 1000);
   tick();
 }
 function _stopAiProgress() {
+  _aiProgressEpoch++;
   if (_aiProgressTimer) { clearInterval(_aiProgressTimer); _aiProgressTimer = null; }
   _setAiProgress(null);
 }
@@ -1074,6 +1089,7 @@ const _QUICK_EDIT_TOOL_SUGGESTIONS = Object.entries(_TOOLS).map(([id, t]) => ({
   kind: 'Tool',
   icon: t.icon || '',
   toolId: id,
+  runPrompt: id === 'rembg' ? 'remove background' : null,
   aliases: [id],
 }));
 const _QUICK_EDIT_CATALOG = [..._QUICK_EDIT_TOOL_SUGGESTIONS, ..._AI_COMMAND_SUGGESTIONS];
@@ -1281,8 +1297,13 @@ function _wireAiCommandBox() {
     if (item.toolId) {
       _clickToolButton(item.toolId);
       _setAiCommandStatus(`${item.label} tool`, 'done');
+      if (item.runPrompt) {
+        input.value = item.runPrompt;
+        syncClearButton();
+      }
       hideSuggestions();
       input.focus();
+      if (run && item.runPrompt) form.requestSubmit();
       return true;
     }
     input.value = item.insert;
@@ -1471,6 +1492,24 @@ function _wireAiCommandBox() {
   // model (window.geEditorAI) just like the server would route it.
   const _executeQuickEditLocal = async (prompt) => {
     const p = prompt.toLowerCase();
+    // Background-removal intent (shared with the routing guard so the regex
+    // can never drift between the two call sites).
+    if (_looksBackgroundRemoval(p)) {
+      await _runQuickControlOp('ai.removeBackground', {});
+      // Chain a tone step when the prompt also asks for one
+      // ("remove the background and make it brighter", "...and warm it up").
+      if (/\b(bright(?:er|en)?|lighten|exposure|well[-\s]*lit)\b/.test(p)) {
+        await _runQuickControlOp('adjustments.apply', { type: 'brightness-contrast', params: { brightness: 16, contrast: 4 } });
+      } else if (/\b(dark(?:er|en)?|dimmer)\b/.test(p)) {
+        await _runQuickControlOp('adjustments.apply', { type: 'brightness-contrast', params: { brightness: -14, contrast: 4 } });
+      } else if (/\b(warm(?:er)?)\b/.test(p)) {
+        await _runQuickControlOp('adjustments.apply', { type: 'white-balance', params: { temperature: 18 } });
+      } else if (/\b(cool(?:er)?)\b/.test(p)) {
+        await _runQuickControlOp('adjustments.apply', { type: 'white-balance', params: { temperature: -18 } });
+      }
+      _setAiCommandStatus('Background removal finished.', 'done');
+      return;
+    }
     // A targeted recolour ("make only the red car blue", "recolour the rock to
     // teal") needs the model to repaint a specific object — never fake it with a
     // global colour tweak from the deterministic fast path.
@@ -1932,24 +1971,6 @@ function _wireAiCommandBox() {
           _setAiCommandStatus('Added a new layer.', 'done');
           return;
         }
-      }
-      // Background-removal intent (shared with the routing guard so the regex
-      // can never drift between the two call sites).
-      if (_looksBackgroundRemoval(p)) {
-        await _runQuickControlOp('ai.removeBackground', {});
-        // Chain a tone step when the prompt also asks for one
-        // ("remove the background and make it brighter", "...and warm it up").
-        if (/\b(bright(?:er|en)?|lighten|exposure|well[-\s]*lit)\b/.test(p)) {
-          await _runQuickControlOp('adjustments.apply', { type: 'brightness-contrast', params: { brightness: 16, contrast: 4 } });
-        } else if (/\b(dark(?:er|en)?|dimmer)\b/.test(p)) {
-          await _runQuickControlOp('adjustments.apply', { type: 'brightness-contrast', params: { brightness: -14, contrast: 4 } });
-        } else if (/\b(warm(?:er)?)\b/.test(p)) {
-          await _runQuickControlOp('adjustments.apply', { type: 'white-balance', params: { temperature: 18 } });
-        } else if (/\b(cool(?:er)?)\b/.test(p)) {
-          await _runQuickControlOp('adjustments.apply', { type: 'white-balance', params: { temperature: -18 } });
-        }
-        _setAiCommandStatus('Background removal finished.', 'done');
-        return;
       }
       if (!/\b(text|title|caption|font|heading|subtitle)\b/.test(p)
         && /\b(upscale|higher\s*res|increase\s*resolution|bigger|2x|4x)\b/.test(p)) {
@@ -2814,8 +2835,8 @@ function _wireAiCommandBox() {
     if (_looksBackgroundRemoval(prompt)) {
       _setAiCommandStatus('Removing the background…', 'running');
       try {
-        const done = await _executeQuickEditLocal(prompt);
-        if (done !== false) return { ok: true };
+        await _executeQuickEditLocal(prompt);
+        return { ok: true };
       } catch (err) {
         if (signal && signal.aborted) { _setAiCommandStatus('', ''); return { ok: false, cancelled: true }; }
         const msg = err && err.message ? err.message : String(err);
@@ -2841,6 +2862,7 @@ function _wireAiCommandBox() {
         _setAiCommandStatus('Generated an image.', 'done');
         return { ok: true, image: res };
       } catch (err) {
+        if (signal?.aborted) return { ok: false, cancelled: true };
         const msg = err && err.message ? err.message : String(err);
         _setAiCommandStatus(_isGenOfflineMsg(msg) ? msg : `Could not generate an image: ${msg}`, 'error');
         return { ok: false, error: msg };
@@ -3083,19 +3105,22 @@ function _wireAiCommandBox() {
         job.controller = controller;
         renderJobStack();
         _quickEditActiveJob = job;
+        let result;
         try {
-          await executeQuickEdit(job.prompt, { forceAi: !!job.forceAi, signal: controller ? controller.signal : null });
+          result = await executeQuickEdit(job.prompt, { forceAi: !!job.forceAi, signal: controller ? controller.signal : null });
         } catch (err) {
           if (!job.cancelled) {
             job.status = 'error';
             job.detail = err?.message || 'AI edit failed';
           }
         } finally {
+          _stopAiProgress();
+          finishQuickEditJob(job, result);
+          _setAiCommandStatus(job.cancelled ? '' : job.detail, job.cancelled ? '' : job.status);
           if (_quickEditActiveJob === job) _quickEditActiveJob = null;
           job.onChange = null;
           job.controller = null;
           if (job.cancelled) continue;
-          if (job.status === 'running') job.status = 'done';
           renderJobStack();
           setTimeout(() => dismissJob(job), job.status === 'error' ? 3200 : 1600);
         }
@@ -5304,9 +5329,14 @@ function _restoreState(snap) {
   // inside _buildEditor, so we touch the DOM here).
   const sizeLabel = document.getElementById('ge-canvas-size');
   if (sizeLabel) sizeLabel.textContent = `${state.imgWidth}×${state.imgHeight} px`;
+  state.rembgLiveLayer = null;
+  state.rembgLiveSnap = null;
 }
 
 function undo() {
+  // End sampling before restoring pixels; pointer-up must not replay the
+  // unfinished stroke into the restored layer without a new history entry.
+  if (state.drawing) _strokeTool.tryEnd();
   if (state.undoStack.length === 0) return;
   const target = state.undoStack.pop();
   const cur = _snapshotState();
@@ -6535,6 +6565,11 @@ const _nudgeTransform      = _transformSession.nudgeTransform;
 const _confirmTransform    = _transformSession.confirmTransform;
 const _cancelTransform     = _transformSession.cancelTransform;
 window.__galleryEditorHandleEscape = () => {
+  const aiSettings = document.querySelector('.ge-ai-settings:not([hidden])');
+  if (aiSettings) {
+    aiSettings.querySelector('[data-ai-settings-close]')?.click();
+    return true;
+  }
   const sizePrompt = document.getElementById('ge-canvas-size-overlay');
   if (sizePrompt && getComputedStyle(sizePrompt).display !== 'none') {
     sizePrompt._cancelCanvasSize?.();
@@ -8064,6 +8099,7 @@ async function _canMutateLayerPixels(layer, action = 'editing pixels') {
     return false;
   }
   if (!['placed', 'text', 'shape'].includes(layer.kind)) return true;
+  if (action === 'cutting pixels') return _rasterizeLayerNow(layer);
   return _confirmRasterizeLayer(layer);
 }
 
@@ -8262,10 +8298,13 @@ function _filterSliderPrompt(title, params, onPreview, onCancel) {
       // standard slim red-thumb styling instead of the bare browser
       // default. Value chip on the same line as the label.
       const isColor = p.type === 'color';
+      const isSelect = p.type === 'select';
       rows += `
         <div class="ge-filter-row ge-eraser-row">
-          <label>${p.label}${isColor ? '' : ` <span class="ge-filter-row-value" data-val-for="${p.key}">${p.value}${p.suffix || ''}</span>`}</label>
-          ${isColor
+          <label>${p.label}${isColor || isSelect ? '' : ` <span class="ge-filter-row-value" data-val-for="${p.key}">${p.value}${p.suffix || ''}</span>`}</label>
+          ${isSelect
+            ? `<select data-key="${p.key}" class="ge-ctl-select" aria-label="${p.label}">${p.options.map(option => `<option value="${option.value}"${String(option.value) === String(p.value) ? ' selected' : ''}>${option.label}</option>`).join('')}</select>`
+            : isColor
             ? `<input type="color" data-key="${p.key}" value="${p.value}" aria-label="${p.label}" />`
             : `<input type="range" data-key="${p.key}" min="${p.min}" max="${p.max}" step="${p.step || 1}" value="${p.value}" />`}
         </div>
@@ -8286,7 +8325,7 @@ function _filterSliderPrompt(title, params, onPreview, onCancel) {
     for (const p of params) values[p.key] = p.value;
     // Initial preview render.
     try { onPreview(values); } catch {}
-    overlay.querySelectorAll('input[data-key]').forEach(inp => {
+    overlay.querySelectorAll('input[data-key], select[data-key]').forEach(inp => {
       inp.addEventListener('input', (e) => {
         if (!isCurrent()) { cleanup(null); return; }
         const k = e.target.dataset.key;
@@ -8317,7 +8356,7 @@ function _filterSliderPrompt(title, params, onPreview, onCancel) {
         e.preventDefault();
         cleanup(e.target?.dataset.action === 'cancel' ? null : values);
       } else if (e.key === 'Tab') {
-        const fields = [...overlay.querySelectorAll('input, button')];
+        const fields = [...overlay.querySelectorAll('input, select, button')];
         const index = fields.indexOf(document.activeElement);
         e.preventDefault();
         fields[(index + (e.shiftKey ? -1 : 1) + fields.length) % fields.length]?.focus();
@@ -8329,7 +8368,7 @@ function _filterSliderPrompt(title, params, onPreview, onCancel) {
       if (!overlay.isConnected || !isCurrent()) cleanup(null);
     });
     observer.observe(state.container, { childList: true, subtree: true });
-    overlay.querySelector('input, button')?.focus({ preventScroll: true });
+    overlay.querySelector('input, select, button')?.focus({ preventScroll: true });
     overlay.querySelector('[data-action="apply"]').addEventListener('click', () => cleanup(values));
     overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => cleanup(null));
     // Click outside the modal (on the dim backdrop) = cancel.
@@ -8495,6 +8534,7 @@ function _shadowOffsets(values = {}) {
   return {
     x: Math.round(Math.cos(radians) * distance),
     y: Math.round(-Math.sin(radians) * distance),
+    inside: Number(values.inside) === 1,
   };
 }
 
@@ -8556,6 +8596,7 @@ async function _addRetainedEffect(type, presetName = null) {
       { key: 'color', label: 'Color', type: 'color', value: '#000000' },
       { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: 45, suffix: '%' },
       { key: 'blur', label: 'Blur', min: 0, max: 100, step: 1, value: 12, suffix: 'px' },
+      { key: 'inside', label: 'Position', type: 'select', value: 0, options: [{ value: 0, label: 'Outside' }, { value: 1, label: 'Inside' }] },
       { key: 'distance', label: 'Distance', min: 0, max: 200, step: 1, value: _shadowAngleDistance({ x: 4, y: 6 }).distance, suffix: 'px' },
       { key: 'angle', label: 'Direction', min: -180, max: 180, step: 1, value: _shadowAngleDistance({ x: 4, y: 6 }).angle, suffix: '\u00b0' },
     ];
@@ -8769,6 +8810,7 @@ async function _editRetainedEffect(layer, effect) {
         { key: 'color', label: 'Color', type: 'color', value: p.color || '#000000' },
         { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 1, value: Math.round((Number(p.opacity) || 0) * 100), suffix: '%' },
         { key: 'blur', label: 'Blur', min: 0, max: 100, step: 1, value: Number(p.blur) || 0, suffix: 'px' },
+        { key: 'inside', label: 'Position', type: 'select', value: p.inside ? 1 : 0, options: [{ value: 0, label: 'Outside' }, { value: 1, label: 'Inside' }] },
         { key: 'distance', label: 'Distance', min: 0, max: 200, step: 1, value: _shadowAngleDistance(p).distance, suffix: 'px' },
         { key: 'angle', label: 'Direction', min: -180, max: 180, step: 1, value: _shadowAngleDistance(p).angle, suffix: '\u00b0' },
       ];
@@ -9993,9 +10035,8 @@ function _buildEditor(container) {
       if (colorRow) colorRow.style.display = ['eraser', 'clone', 'heal', 'smudge', 'dodge', 'burn', 'liquify'].includes(toolId) ? 'none' : '';
       const colorLabel = colorRow?.querySelector('label');
       if (colorLabel) colorLabel.textContent = 'Color';
-      // Per-tool stroke modifiers all live in the shared brush "More" menu so
-      // every brush-family tool has the same compact strip as the Brush. Only
-      // the group for the active tool is shown; the rest stay hidden.
+      // Secondary modifiers stay in More; brush softness remains in the main
+      // strip. Only the active tool's secondary group is shown.
       const strokeTool = (toolId === 'brush' || toolId === 'pixel' || toolId === 'dodge' || toolId === 'burn') ? 'brush'
         : toolId === 'eraser' ? 'eraser'
           : (toolId === 'clone' || toolId === 'heal') ? 'clone'
@@ -10005,6 +10046,8 @@ function _buildEditor(container) {
         row.style.display = row.dataset.strokeTool === strokeTool ? '' : 'none';
       });
       const dodgeBurnRow = document.getElementById('ge-dodgeburn-intensity-row');
+      const brushSoftnessRow = document.getElementById('ge-brush-softness-row');
+      if (brushSoftnessRow) brushSoftnessRow.style.display = ['brush', 'dodge', 'burn'].includes(toolId) ? '' : 'none';
       // Intensity sits in the strip next to Size, so it must show for Dodge and
       // Burn only (and never for the other brush-family tools).
       if (dodgeBurnRow) dodgeBurnRow.style.display = (toolId === 'dodge' || toolId === 'burn') ? '' : 'none';
@@ -10457,7 +10500,6 @@ function _buildEditor(container) {
   canvasArea.appendChild(state.transformOverlay);
   canvasArea.appendChild(_buildQuickMaskBar());
   canvasArea.appendChild(_buildAiCommandBox());
-  _preflight = createPreflight({ canvasArea });
   _aiSettings = createAiSettings({ container });
   try { window.geEditorAiSettings = _aiSettings; } catch (_) {}
   // On phones the rulers eat scarce canvas width; default them off.
@@ -10650,19 +10692,10 @@ function _buildEditor(container) {
     const initialStatusTool = document.getElementById('ge-status-tool');
     if (initialStatusTool) initialStatusTool.textContent = _TOOLS[state.tool]?.label || state.tool || '';
   }
-  // Preflight checklist: greet the user on open (unless dismissed) and
-  // expose a footer button to re-open it.
+  // Keep model configuration in the AI settings dialog.
   try {
     const footer = container.querySelector('.ge-editor-footer');
     if (footer) {
-      const setupBtn = document.createElement('button');
-      setupBtn.type = 'button';
-      setupBtn.id = 'ge-setup-btn';
-      setupBtn.className = 'ge-setup-btn';
-      setupBtn.title = 'Editor setup checklist';
-      setupBtn.textContent = 'Setup';
-      setupBtn.addEventListener('click', () => _preflight?.open());
-      footer.appendChild(setupBtn);
       const aiBtn = document.createElement('button');
       aiBtn.type = 'button';
       aiBtn.id = 'ge-ai-settings-btn';
@@ -10672,7 +10705,6 @@ function _buildEditor(container) {
       aiBtn.addEventListener('click', () => _aiSettings?.open());
       footer.appendChild(aiBtn);
     }
-    _preflight?.maybeOpen();
   } catch (_) {}
   try { _initControlKit(container); } catch (_) {}
   let _lastLayoutDesktop = null;
@@ -11792,6 +11824,14 @@ function _buildEditor(container) {
   // Keyboard shortcuts — full implementation in
   // editor/keyboard-shortcuts.js.
   wireKeyboardShortcuts({
+    openLayerAdjustment: (type) => {
+      const layer = activeLayer();
+      if (!layer || !layer.canvas || layer.kind === 'adjustment') {
+        uiModule?.showToast('Select an image layer first');
+        return;
+      }
+      _openAdjPopup(layer, type, document.getElementById('ge-image-menu-btn'));
+    },
     fillSelection: _doFillSelection,
     copyPixelsToClipboard: _copyPixelsToClipboard,
     toolbar, toolKeyMap: _toolKeyMap,
@@ -12156,7 +12196,9 @@ function _buildEditor(container) {
     out.getContext('2d').drawImage(layer.canvas, off.x, off.y);
     return out;
   };
-  const _aiEditCanvas = async (endpoint, payload = {}, { keepNaturalSize = false } = {}) => {
+  const _aiEditCanvas = async (endpoint, payload = {}, { keepNaturalSize = true } = {}) => {
+    await waitForImagePreferences();
+    if (endpoint === '/api/image/inpaint') payload = { ...payload, _use_image_settings: true };
     const flat = _aiEditSourceCanvas();
     const image = flat.toDataURL('image/png').split(',')[1];
     const requestId = 'qe-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
@@ -12167,7 +12209,7 @@ function _buildEditor(container) {
     } else {
       _startAiProgress(requestId);
     }
-    const body = JSON.stringify({ image, request_id: requestId, ...payload });
+    const body = JSON.stringify({ image, width: flat.width, height: flat.height, request_id: requestId, ...payload });
     // The image servers occasionally reject a request transiently (503 while a
     // model swaps, 502/504 gateways, dropped connections). Retry those a couple
     // of times with backoff so a hiccup doesn't silently leave the canvas
@@ -12225,7 +12267,7 @@ function _buildEditor(container) {
         c.height = state.imgHeight;
       }
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      return { canvas: c, dataUrl: c.toDataURL('image/png') };
+      return { canvas: c, dataUrl: c.toDataURL('image/png'), fullFrame: data.full_frame === true };
     } finally {
       if (_timer) clearTimeout(_timer);
       if (_aiEditAbort === _ctl) _aiEditAbort = null;
@@ -12234,12 +12276,17 @@ function _buildEditor(container) {
   };
   const _placeResultLayer = (canvas, name, maskCanvas) => {
     _saveState(`AI: ${name}`);
-    const layer = createLayer(name, state.imgWidth, state.imgHeight);
-    layer.ctx.drawImage(canvas, 0, 0);
+    const geometry = imageResultGeometry(canvas.width, canvas.height, state.imgWidth, state.imgHeight);
+    const layer = createLayer(name, geometry.width, geometry.height);
+    const offset = { x: geometry.offsetX, y: geometry.offsetY };
+    state.layerOffsets.set(layer.id, offset);
+    layer.ctx.imageSmoothingEnabled = true;
+    layer.ctx.imageSmoothingQuality = 'high';
+    layer.ctx.drawImage(canvas, geometry.drawX, geometry.drawY, geometry.drawWidth, geometry.drawHeight);
     if (maskCanvas) {
       layer.ctx.save();
       layer.ctx.globalCompositeOperation = 'destination-in';
-      layer.ctx.drawImage(maskCanvas, 0, 0);
+      layer.ctx.drawImage(maskCanvas, -offset.x, -offset.y);
       layer.ctx.restore();
     }
     state.layers.push(layer);
@@ -12249,13 +12296,24 @@ function _buildEditor(container) {
     _renderLayerPanel();
     return layer.id;
   };
+  const _generateImage = createImageGenerationAction({
+    formatError: _generationErrorMessage,
+    getDocument: () => ({
+      key: state.editorOpen ? `${state.editorSessionToken}:${state.documentId}` : null,
+      width: state.imgWidth, height: state.imgHeight, mask: state.wandMask,
+    }),
+    getSignal: () => _quickEditActiveJob?.controller?.signal,
+    onProgress: seconds => _setAiCommandStatus(`Generating an image… ${seconds}s`, 'running'),
+    placeResult: _placeResultLayer,
+  });
   const _aiInpaintSelection = async (prompt) => {
     if (!state.wandMask) throw new Error('make a selection first');
     const layer = activeLayer() || _activeParentLayer();
     if (!layer) throw new Error('no layer');
     const mask = state.wandMask.toDataURL('image/png').split(',')[1];
-    const { canvas } = await _aiEditCanvas('/api/image/inpaint', { mask, prompt: prompt || '', steps: 4 });
-    return _placeResultLayer(canvas, 'Generative fill', state.wandMask);
+    const selection = state.wandMask;
+    const { canvas, fullFrame } = await _aiEditCanvas('/api/image/inpaint', { mask, prompt: prompt || '', steps: 4 });
+    return _placeResultLayer(canvas, 'Generative fill', fullFrame ? null : selection);
   };
   // Replace the background/scene while keeping the subject: the server derives
   // the subject mask, repaints the inverse (new background), harmonises colour
@@ -12548,7 +12606,7 @@ function _buildEditor(container) {
           'layers.delete': { description: 'Delete layers (defaults to selection).', run: (p) => { if (p && (p.id || p.index || p.name)) _controlSelect(_controlFindLayer(p)); _layerPanelRenderer.deleteSelectedLayers?.(); return true; } },
           'layers.setOpacity': { description: 'Set a layer opacity (0-1).', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); _saveState(`Change opacity of ${l.name}`); l.opacity = Math.max(0, Math.min(1, Number(p.opacity))); composite(); _renderLayerPanel(); return l.id; } },
           'layers.setBlend': { description: 'Set a layer blend mode.', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); _saveState(`Change blend mode of ${l.name}`); l.blendMode = p.blendMode || p.mode || 'source-over'; composite(); _renderLayerPanel(); return l.id; } },
-          'layers.placeImage': { description: 'Place an image (data URL) as a NEW layer, masked to the current selection when one exists; never overwrites the original. Instruction mode (mode:"instruction" or differenceMask:true) keeps untouched areas pixel-identical via a difference map. {dataUrl,name,masked,blend,opacity,x,y,w,h,mode,differenceMask,diffThreshold,diffGrow,diffFeather}.', run: (p) => new Promise((resolve, reject) => { if (!p || !p.dataUrl) { reject(new Error('dataUrl required')); return; } const img = new Image(); img.onload = () => { try { _saveState(`Place ${p.name || 'image'}`); const dw = state.imgWidth, dh = state.imgHeight; const useDiff = (p.differenceMask === true) || String(p.mode || '').toLowerCase() === 'instruction'; const beforeSnap = useDiff ? flatten() : null; const layer = createLayer(p.name || 'Placed image', dw, dh); let tw = Number(p.w), th = Number(p.h); if (!(tw > 0) || !(th > 0)) { if (useDiff) { tw = dw; th = dh; } else { const scale = Math.min(dw / img.naturalWidth, dh / img.naturalHeight); tw = Math.max(1, Math.round(img.naturalWidth * scale)); th = Math.max(1, Math.round(img.naturalHeight * scale)); } } let tx = Number(p.x), ty = Number(p.y); if (!Number.isFinite(tx)) tx = useDiff ? 0 : Math.round((dw - tw) / 2); if (!Number.isFinite(ty)) ty = useDiff ? 0 : Math.round((dh - th) / 2); layer.ctx.imageSmoothingEnabled = true; layer.ctx.imageSmoothingQuality = 'high'; layer.ctx.drawImage(img, tx, ty, tw, th); if (p.masked !== false && state.wandMask) { layer.ctx.save(); layer.ctx.globalCompositeOperation = 'destination-in'; layer.ctx.drawImage(state.wandMask, 0, 0); layer.ctx.restore(); } else if (useDiff && beforeSnap) { const diff = _differenceMaskCanvas(beforeSnap, layer.canvas, { threshold: p.diffThreshold, grow: p.diffGrow, feather: p.diffFeather, edgeExcludePx: 0 }); const explicitEdge = p.edgeExcludePx != null ? Number(p.edgeExcludePx) : null; const sceneReplace = diff.changedFraction > 0.5; const edgeExclude = sceneReplace ? 0 : (explicitEdge != null ? explicitEdge : 3); if (edgeExclude > 0) _clearMaskEdgeBand(diff.mask, edgeExclude); layer.ctx.save(); layer.ctx.globalCompositeOperation = 'destination-in'; layer.ctx.drawImage(diff.mask, 0, 0); layer.ctx.restore(); if (sceneReplace) _edgeFillFromInterior(layer.ctx, dw, dh, 3); } if (p.blend) layer.blendMode = p.blend; if (p.opacity != null) layer.opacity = Math.max(0, Math.min(1, Number(p.opacity))); state.layers.push(layer); state.activeLayerId = layer.id; state.selectedLayerIds = [layer.id]; _renderLayerPanel(); composite(); resolve(layer.id); } catch (e) { reject(e); } }; img.onerror = () => reject(new Error('image load failed')); img.src = p.dataUrl; }) },
+          'layers.placeImage': { description: 'Place an image (data URL) as a NEW layer, masked to the current selection when one exists; never overwrites the original. Instruction mode (mode:"instruction" or differenceMask:true) keeps untouched areas pixel-identical via a difference map. {dataUrl,name,masked,blend,opacity,x,y,w,h,mode,differenceMask,diffThreshold,diffGrow,diffFeather}.', run: (p) => new Promise((resolve, reject) => { if (!p || !p.dataUrl) { reject(new Error('dataUrl required')); return; } const img = new Image(); img.onload = () => { try { _saveState(`Place ${p.name || 'image'}`); const dw = state.imgWidth, dh = state.imgHeight; const useDiff = p.nativeSize !== true && ((p.differenceMask === true) || String(p.mode || '').toLowerCase() === 'instruction'); const beforeSnap = useDiff ? flatten() : null; const nativeSize = p.nativeSize === true && !useDiff; const geometry = imageResultGeometry(img.naturalWidth, img.naturalHeight, dw, dh); const layer = createLayer(p.name || 'Placed image', nativeSize ? geometry.width : dw, nativeSize ? geometry.height : dh); const nativeOffset = { x: geometry.offsetX, y: geometry.offsetY }; if (nativeSize) state.layerOffsets.set(layer.id, nativeOffset); let tw = Number(p.w), th = Number(p.h); if (!(tw > 0) || !(th > 0)) { if (nativeSize) { tw = geometry.drawWidth; th = geometry.drawHeight; } else if (useDiff) { tw = dw; th = dh; } else { const scale = Math.min(dw / img.naturalWidth, dh / img.naturalHeight); tw = Math.max(1, Math.round(img.naturalWidth * scale)); th = Math.max(1, Math.round(img.naturalHeight * scale)); } } let tx = Number(p.x), ty = Number(p.y); if (!Number.isFinite(tx)) tx = nativeSize ? geometry.drawX : useDiff ? 0 : Math.round((dw - tw) / 2); if (!Number.isFinite(ty)) ty = nativeSize ? geometry.drawY : useDiff ? 0 : Math.round((dh - th) / 2); layer.ctx.imageSmoothingEnabled = true; layer.ctx.imageSmoothingQuality = 'high'; layer.ctx.drawImage(img, tx, ty, tw, th); if (p.masked !== false && state.wandMask) { layer.ctx.save(); layer.ctx.globalCompositeOperation = 'destination-in'; layer.ctx.drawImage(state.wandMask, nativeSize ? -nativeOffset.x : 0, nativeSize ? -nativeOffset.y : 0); layer.ctx.restore(); } else if (useDiff && beforeSnap) { const diff = _differenceMaskCanvas(beforeSnap, layer.canvas, { threshold: p.diffThreshold, grow: p.diffGrow, feather: p.diffFeather, edgeExcludePx: 0 }); const explicitEdge = p.edgeExcludePx != null ? Number(p.edgeExcludePx) : null; const sceneReplace = diff.changedFraction > 0.5; const edgeExclude = sceneReplace ? 0 : (explicitEdge != null ? explicitEdge : 3); if (edgeExclude > 0) _clearMaskEdgeBand(diff.mask, edgeExclude); layer.ctx.save(); layer.ctx.globalCompositeOperation = 'destination-in'; layer.ctx.drawImage(diff.mask, 0, 0); layer.ctx.restore(); if (sceneReplace) _edgeFillFromInterior(layer.ctx, dw, dh, 3); } if (p.blend) layer.blendMode = p.blend; if (p.opacity != null) layer.opacity = Math.max(0, Math.min(1, Number(p.opacity))); state.layers.push(layer); state.activeLayerId = layer.id; state.selectedLayerIds = [layer.id]; _renderLayerPanel(); composite(); resolve(layer.id); } catch (e) { reject(e); } }; img.onerror = () => reject(new Error('image load failed')); img.src = p.dataUrl; }) },
           'layers.addMaskFromSelection': { description: 'Add a layer mask from the current selection (reveals the selection). {invert}.', run: (p) => { const parent = _activeParentLayer(); if (!parent) throw new Error('no layer'); _saveState('Add layer mask'); const mask = _ensureActiveMaskLayer(); if (!mask) throw new Error('could not create mask'); const w = mask.canvas.width, h = mask.canvas.height; const mctx = mask.ctx; const off = state.layerOffsets.get(parent.id) || { x: 0, y: 0 }; const ox = -(off.x || 0), oy = -(off.y || 0); mctx.globalCompositeOperation = 'source-over'; mctx.clearRect(0, 0, w, h); if (state.wandMask) { if (p && p.invert) { mctx.fillStyle = '#fff'; mctx.fillRect(0, 0, w, h); mctx.globalCompositeOperation = 'destination-out'; mctx.drawImage(state.wandMask, ox, oy); mctx.globalCompositeOperation = 'source-over'; } else { mctx.drawImage(state.wandMask, ox, oy); } } else { mctx.fillStyle = (p && p.invert) ? '#000' : '#fff'; mctx.fillRect(0, 0, w, h); } composite(); _renderLayerPanel(); return mask.id; } },
           'layers.removeMask': { description: 'Remove the active layer mask (does not affect pixels).', run: () => { const parent = _activeParentLayer(); if (!parent || !parent.masks || !parent.masks.length) throw new Error('no mask'); _saveState('Remove layer mask'); parent.masks = parent.masks.filter((m) => m.id !== parent.activeMaskId); parent.activeMaskId = parent.masks[0]?.id || null; composite(); _renderLayerPanel(); return true; } },
           'layers.applyMask': { description: 'Bake the active layer mask into the layer alpha and remove the mask.', run: () => { const parent = _activeParentLayer(); const mask = _getActiveMaskLayer(); if (!parent || !parent.ctx || !mask) throw new Error('no mask to apply'); _saveState('Apply layer mask'); _bakeMaskIntoLayer(parent.ctx, mask.canvas, 0, 0); parent.masks = parent.masks.filter((m) => m.id !== mask.id); parent.activeMaskId = parent.masks[0]?.id || null; composite(); _renderLayerPanel(); return true; } },
@@ -12564,7 +12622,7 @@ function _buildEditor(container) {
           'ai.removeObject': { description: 'Remove the selected object and fill naturally. {prompt}.', run: (p) => _aiInpaintSelection((p && p.prompt) || 'remove the object, fill the area naturally') },
           'ai.harmonize': { description: 'Harmonize the layer/selection lighting with the rest of the image; result is a NEW layer. {strength}.', run: async (p) => { const { canvas } = await _aiEditCanvas('/api/image/harmonize', { strength: Number(p && p.strength) || 0.4 }); return _placeResultLayer(canvas, 'Harmonized', state.wandMask || null); } },
           'ai.generativeUpscale': { description: 'Upscale the image 2x/4x; result is a NEW layer. Falls back to a high-quality canvas upscale labelled "basic upscale" when no Real-ESRGAN model is served. {scale}.', run: async (p) => { const scale = Number(p && p.scale) === 4 ? 4 : 2; try { const { canvas } = await _aiEditCanvas('/api/image/upscale-local', { scale }); return _placeResultLayer(canvas, `Upscaled ${scale}x`, null); } catch (e) { const src = flatten(); const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(src.width * scale)); c.height = Math.max(1, Math.round(src.height * scale)); const cx = c.getContext('2d'); cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high'; cx.drawImage(src, 0, 0, c.width, c.height); _saveState('Upscale (basic)'); _resizeCanvasDocument(state, c.width, c.height, { anchorX: 0, anchorY: 0 }); const layerId = _placeResultLayer(c, `Upscaled ${scale}x (basic upscale)`, null); return { layerId, scale, method: 'basic', reason: String(e && e.message || e) }; } } },
-          'ai.generateImage': { description: 'Generate an image from a prompt (current canvas as reference) and place it as a NEW layer. {prompt,width,height}.', run: async (p) => { const endpoint = (typeof window !== 'undefined' && window.geGenerateImageEndpoint) || '/api/image/generate'; const reference = flatten().toDataURL('image/png').split(',')[1]; const _pickedModel = (() => { try { const v = localStorage.getItem('ge-ai-command-model') || ''; return v.includes('::') ? v.split('::').pop() : ''; } catch (_) { return ''; } })(); const body = { prompt: (p && p.prompt) || '', width: Math.max(1, Math.round(Number(p && p.width) || state.imgWidth)), height: Math.max(1, Math.round(Number(p && p.height) || state.imgHeight)), reference, ...(_pickedModel ? { model: _pickedModel } : {}) }; let _gres = null; try { _gres = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); } catch (_e) { throw new Error(_generationErrorMessage({ network: true, detail: (_e && _e.message) || 'network error' })); } const res = _gres; if (!res.ok) { let _gd = res.statusText; try { const e = await res.json(); _gd = e.detail || e.error || _gd; } catch (_) {} throw new Error(_generationErrorMessage({ status: res.status, detail: _gd })); } const data = await res.json(); if (data.error) throw new Error(_generationErrorMessage({ detail: data.error })); const b64 = data.image || (Array.isArray(data.images) && data.images[0]); if (!b64) throw new Error('No image returned'); try { window.__geGenerationDisabled = 0; } catch (_) {} const img = await _decodeAIImage(b64, _aiSignal); const c = document.createElement('canvas'); c.width = state.imgWidth; c.height = state.imgHeight; c.getContext('2d').drawImage(img, 0, 0, state.imgWidth, state.imgHeight); return _placeResultLayer(c, 'Generated', state.wandMask || null); } },
+          'ai.generateImage': { description: 'Generate an image with the saved generation model and fit it proportionally as a new layer. {prompt,width,height}.', run: (p) => _generateImage(p || {}) },
           'ai.generativeExpand': { description: 'Generatively expand the canvas to width×height; only the new border is inpainted, the original pixels are kept pixel-identical, and the seam is feathered. {width,height,anchor,prompt}.', run: async (p) => { const tw = Math.max(1, Math.round(Number(p && p.width) || state.imgWidth)); const th = Math.max(1, Math.round(Number(p && p.height) || state.imgHeight)); if (tw <= state.imgWidth && th <= state.imgHeight) throw new Error('target must be larger than the current canvas'); const anchor = (p && p.anchor) || 'center'; const anchorX = anchor === 'left' ? 0 : anchor === 'right' ? 1 : 0.5; const anchorY = anchor === 'top' ? 0 : anchor === 'bottom' ? 1 : 0.5; _saveState('Generative expand'); const steps = Math.max(1, Math.round(Number(p && p.steps) || 4)); const sw = state.imgWidth; const sh = state.imgHeight; _resizeCanvasDocument(state, tw, th, { anchorX, anchorY }); const flat = flatten(); const b = _contentBounds(); const mask = document.createElement('canvas'); mask.width = tw; mask.height = th; const mctx = mask.getContext('2d'); mctx.fillStyle = '#ffffff'; mctx.fillRect(0, 0, tw, th); const prefill = document.createElement('canvas'); prefill.width = tw; prefill.height = th; const pctx = prefill.getContext('2d'); pctx.imageSmoothingEnabled = true; pctx.drawImage(flat, 0, 0, tw, th); if (b) { mctx.clearRect(b.x, b.y, b.w, b.h); const bx = b.x, by = b.y, bw = b.w, bh = b.h, rx = bx + bw, by2 = by + bh; if (bx > 0) pctx.drawImage(flat, bx, by, 1, bh, 0, by, bx, bh); if (rx < tw) pctx.drawImage(flat, rx - 1, by, 1, bh, rx, by, tw - rx, bh); if (by > 0) pctx.drawImage(flat, bx, by, bw, 1, bx, 0, bw, by); if (by2 < th) pctx.drawImage(flat, bx, by2 - 1, bw, 1, bx, by2, bw, th - by2); if (bx > 0 && by > 0) pctx.drawImage(flat, bx, by, 1, 1, 0, 0, bx, by); if (rx < tw && by > 0) pctx.drawImage(flat, rx - 1, by, 1, 1, rx, 0, tw - rx, by); if (bx > 0 && by2 < th) pctx.drawImage(flat, bx, by2 - 1, 1, 1, 0, by2, bx, th - by2); if (rx < tw && by2 < th) pctx.drawImage(flat, rx - 1, by2 - 1, 1, 1, rx, by2, tw - rx, th - by2); } else { const tx = Math.round((tw - sw) * anchorX); const ty = Math.round((th - sh) * anchorY); mctx.clearRect(tx, ty, sw, sh); } const image = prefill.toDataURL('image/png').split(',')[1]; const maskB64 = mask.toDataURL('image/png').split(',')[1]; const res = await fetch('/api/image/inpaint', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, mask: maskB64, prompt: (p && p.prompt) || 'extend the scene seamlessly, continuing the surrounding content and lighting naturally', steps }) }); if (!res.ok) { let err = res.statusText; try { const e = await res.json(); err = e.detail || e.error || err; } catch (_) {} throw new Error(err); } const data = await res.json(); if (data.error) throw new Error(data.error); if (!data.image) throw new Error('No image returned'); const img = await _decodeAIImage(data.image, _aiSignal); const seam = Math.max(12, Math.round(Math.min(tw, th) * 0.02)); let blendMask = _growMaskCanvas(mask, seam, true); blendMask = _featherMaskCanvas((cw, ch) => { const c = document.createElement('canvas'); c.width = cw; c.height = ch; return c; }, blendMask, Math.round(seam * 1.4)); const layer = createLayer('Generative expand', tw, th); layer.ctx.imageSmoothingEnabled = true; layer.ctx.imageSmoothingQuality = 'high'; layer.ctx.drawImage(img, 0, 0, tw, th); if (b) { const edge = _edgeBandAverage(flat, b); if (edge) { layer.ctx.save(); layer.ctx.globalAlpha = 0.14; layer.ctx.fillStyle = `rgb(${edge[0]}, ${edge[1]}, ${edge[2]})`; layer.ctx.fillRect(0, 0, tw, th); layer.ctx.restore(); } } _bakeMaskIntoLayer(layer.ctx, blendMask); state.layers.push(layer); state.activeLayerId = layer.id; state.selectedLayerIds = [layer.id]; composite(); _renderLayerPanel(); return { width: tw, height: th, layerId: layer.id, seam, steps }; } },
           'layers.rename': { description: 'Rename a layer {id|index|name, name|newName}.', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); const next = String(p.name || p.newName || '').trim(); if (!next) throw new Error('name required'); _saveState('Rename layer'); l.name = next; _renderLayerPanel(); return l.id; } },
           'layers.setVisibility': { description: 'Show/hide a layer {id|index|name, visible}.', run: (p) => { const l = _controlFindLayer(p) || activeLayer(); if (!l) throw new Error('layer not found'); _saveState('Toggle layer visibility'); l.visible = (p.visible === undefined) ? !l.visible : !!p.visible; composite(); _renderLayerPanel(); return l.visible; } },
@@ -12809,6 +12867,10 @@ function _buildEditor(container) {
         endpoint: window.geEditorAgentEndpoint || '/api/editor/agent',
         getSession: () => agentBridgeSession,
         getModel: () => _getSelectedQuickEditModel(),
+        getGenerationModel: () => {
+          const value = document.getElementById('ge-ai-model')?.value || '';
+          return value.includes('::') ? value.slice(value.indexOf('::') + 2) : '';
+        },
         getAgentModel: () => _getSelectedQuickEditAgentModel(),
       });
     } catch (e) { console.error('[ge-editor] agent init failed', e); }
@@ -13908,6 +13970,12 @@ export function openEditor(imageUrl, imageId, presetSize, displayName, draftId) 
         return;
       }
       _finishBlank(size.w, size.h);
+    }).catch(error => {
+      console.error('[openEditor] New project failed:', error);
+      closeEditor({ force: true });
+      window.dispatchEvent(new CustomEvent('gallery-editor-setup-cancelled'));
+      uiModule.showError(`Could not create project: ${error?.message || 'Canvas initialization failed'}`);
+      throw error;
     });
   }
 
@@ -14062,8 +14130,6 @@ export function closeEditor(options = {}) {
   _selectionNudgeTimer = null;
   _selectionNudgeHistorySaved = false;
   _precisionGuides = null;
-  try { _preflight?.destroy(); } catch {}
-  _preflight = null;
   try { _aiSettings?.destroy(); } catch {}
   _aiSettings = null;
   try { delete window.geEditorAiSettings; } catch (_) { window.geEditorAiSettings = null; }

@@ -846,6 +846,64 @@ def _plan_psd_steps(prompt: str) -> Optional[List[Dict[str, Any]]]:
     return None
 
 
+def _is_background_removal_intent(prompt: str) -> bool:
+    """Linear-time, bounded intent parser for background removal commands.
+
+    Replaces the previous backtracking regular expression flagged by CodeQL
+    (#1212) while preserving the exact command grammar.
+    """
+    if not prompt or not isinstance(prompt, str):
+        return False
+    i = len(prompt)
+    while i > 0 and prompt[i - 1] in ".! \t\r\n":
+        i -= 1
+    cleaned = prompt[:i].strip()
+    if not cleaned:
+        return False
+
+    tokens = cleaned.split()
+    if not tokens:
+        return False
+
+    idx = 0
+    if tokens[idx].lower() == "please":
+        idx += 1
+        if idx >= len(tokens):
+            return False
+
+    if tokens[idx].lower() not in {"remove", "erase", "delete", "clear", "strip"}:
+        return False
+    idx += 1
+    if idx >= len(tokens):
+        return False
+
+    if tokens[idx].lower() == "the":
+        idx += 1
+        if idx >= len(tokens):
+            return False
+
+    if tokens[idx].lower() not in {"bg", "background", "backdrop"}:
+        return False
+    idx += 1
+
+    if idx == len(tokens):
+        return True
+
+    if tokens[idx].lower() in {"from", "of"}:
+        idx += 1
+        if idx < len(tokens) and tokens[idx].lower() == "the":
+            idx += 1
+        if (
+            idx + 1 < len(tokens)
+            and tokens[idx].lower() in {"active", "current", "selected"}
+            and tokens[idx + 1].lower() == "layer"
+            and idx + 2 == len(tokens)
+        ):
+            return True
+
+    return False
+
+
 def _plan_special(
     prompt: str, state: Any, provider_available: bool,
 ) -> Optional[Tuple[List[Dict[str, Any]], str, str]]:
@@ -855,6 +913,8 @@ def _plan_special(
     left to the model.     Returns (steps, reply, note) or None. These never need an
     image provider except generative border fill, used only when one exists.
     """
+    if _is_background_removal_intent(prompt):
+        return [{"op": "ai.removeBackground", "params": {}}], "Removing the active layer's background.", ""
     # Targeted recolour is fully deterministic (object mask + masked hue shift)
     # and must never be left to the model, which sometimes substitutes a
     # generative placeImage. Highest priority so it can never vary.
@@ -1647,6 +1707,13 @@ def setup_editor_agent_routes() -> APIRouter:
         screenshot = body.get("screenshot")
         # Optional user-picked image model (from the editor model selector).
         model_choice = str(body.get("model") or body.get("image_model") or "").strip()
+        generation_model_choice = str(body.get("generation_model") or "").strip()
+        use_image_settings = body.get("_use_image_settings") is True
+        if use_image_settings:
+            from src.editor_image_settings import editor_image_models
+            image_models = editor_image_models(owner=owner)
+            model_choice = image_models["edit"]
+            generation_model_choice = image_models["generation"]
         # Optional user-picked PLANNER model (the editor agent/planner model).
         agent_model = str(body.get("agent_model") or "").strip()
         tools_offered = [tool for tool in _scoped_editor_tools() if tool not in disabled]
@@ -1797,9 +1864,22 @@ def setup_editor_agent_routes() -> APIRouter:
                 # Planner output is untrusted: it cannot redirect this turn to
                 # another editor session or override an explicit model choice.
                 tool_payload["session"] = session
+                if use_image_settings:
+                    tool_payload["_use_image_settings"] = True
+                    if op == "generate_image" and state.get("width") and state.get("height"):
+                        try:
+                            width, height = int(state["width"]), int(state["height"])
+                            if width > 0 and height > 0:
+                                tool_payload["size"] = f"{width}x{height}"
+                        except (TypeError, ValueError):
+                            pass
                 # Route to the user-picked model when one is selected.
-                if model_choice:
-                    tool_payload["model"] = model_choice
+                selected_model = generation_model_choice if op == "generate_image" else model_choice
+                if selected_model:
+                    tool_payload["model"] = selected_model
+                elif op == "generate_image" or use_image_settings:
+                    # Let server settings resolve Auto, not a planner-invented model.
+                    tool_payload.pop("model", None)
                 # Hand the AI step the canvas image the client already captured
                 # for this request. Without it the tool falls back to a separate
                 # bridge screenshot, which is not reliably answered right after a

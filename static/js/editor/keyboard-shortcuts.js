@@ -67,7 +67,7 @@ export function wireKeyboardShortcuts(deps) {
     toolbar, toolKeyMap,
     composite, saveState, undo, redo,
     toggleShortcuts, confirmTransform, cancelTransform, startTransform, nudgeTransform,
-    resizeCustomPrompt, addEmptyLayer, brushSizeSync,
+    resizeCustomPrompt, addEmptyLayer, brushSizeSync, openLayerAdjustment,
     invertSelection,
     wandDeleteSelection, wandCopyToNewLayer, copyPixelsToClipboard,
     lassoDeleteSelection, lassoCopyToLayer,
@@ -181,6 +181,12 @@ export function wireKeyboardShortcuts(deps) {
         return;
       }
       // Save shortcuts — match the hints shown in the Save dropdown.
+      if (e.shiftKey && !e.altKey && e.code === 'KeyU') {
+        e.preventDefault();
+        e.stopPropagation();
+        openLayerAdjustment?.('hue-saturation');
+        return;
+      }
       if ((e.key === 's' || e.key === 'S') && !e.altKey) {
         e.preventDefault();
         document.getElementById(e.shiftKey ? 'ge-export-gallery' : 'ge-save')?.click();
@@ -221,11 +227,12 @@ export function wireKeyboardShortcuts(deps) {
         addEmptyLayer();
         return;
       }
-      // Ctrl+Alt+L — Levels adjustment. The Image menu owns the row and its
-      // dialog, so click it instead of duplicating the adjustment here.
+      // Ctrl+Alt+L edits the current layer, leaving Levels controls open.
       if (e.altKey && e.code === 'KeyL') {
-        const row = document.querySelector('[data-image-action="adj-levels"]');
-        if (row) { e.preventDefault(); e.stopPropagation(); row.click(); return; }
+        e.preventDefault();
+        e.stopPropagation();
+        openLayerAdjustment?.('levels');
+        return;
       }
       // Ctrl/Cmd+J duplicates the active layer through the layer panel's
       // existing implementation, which preserves masks and effects.

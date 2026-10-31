@@ -54,16 +54,16 @@ export function resolveQuickEditModel() {
       label: ((opt && opt.textContent) || '').trim(),
     };
   }
-  const inp = document.getElementById('ge-ai-inpaint');
-  const opt = resolveInpaintModel(inp);
-  if (!opt) return { endpoint: '', model: '', label: '' };
-  const raw = opt.value || '';
-  const idx = raw.indexOf('::');
-  return {
-    endpoint: idx < 0 ? raw : raw.slice(0, idx),
-    model: idx < 0 ? '' : raw.slice(idx + 2),
-    label: ((opt.textContent || '').trim().replace(/^Auto\s*\((.*)\)$/, '$1')),
-  };
+  const generation = document.getElementById('ge-ai-model');
+  if (generation?.value && generation.value !== '__serve_cookbook__') {
+    const index = generation.value.indexOf('::');
+    const model = index < 0 ? '' : generation.value.slice(index + 2);
+    if (model && modelCaps(model, '', '').inpaint) {
+      return { endpoint: generation.value.slice(0, index), model,
+        label: generation.options[generation.selectedIndex]?.textContent?.trim() || model };
+    }
+  }
+  return { endpoint: '', model: '', label: 'Auto (saved settings)' };
 }
 
 // Resolve the Quick Edit AGENT (planner) model — the vision-language model
@@ -144,21 +144,19 @@ export function modelCaps(modelId, endpointName, endpointType) {
 function syncCommandModel(value) {
   const select = document.getElementById('ge-ai-command-model');
   if (!select || !select._modelsReady) return;
-  if (value && ![...select.options].some(o => !o.disabled && o.value === value && value !== '__serve_cookbook__')) {
-    if (localStorage.getItem('ge-ai-command-model') === value) localStorage.removeItem('ge-ai-command-model');
-    value = '';
-  }
   if (select.value !== value) {
     select.value = value;
     if (select.value !== value) select.value = '';
     updateFooterEditModel();
   }
 }
-window.addEventListener('ge-ai-command-model-change', e => syncCommandModel(e.detail?.value || ''));
-window.addEventListener('storage', e => {
-  if (e.key === 'ge-ai-command-model') syncCommandModel(e.newValue || '');
-});
-window.addEventListener('ge:model-endpoints-updated', e => {
+if (typeof window !== 'undefined') {
+  window.addEventListener('ge-ai-command-model-change', e => syncCommandModel(e.detail?.value || ''));
+  window.addEventListener('storage', e => {
+    if (e.key === 'ge-ai-command-model') syncCommandModel(e.newValue || '');
+  });
+}
+globalThis.window?.addEventListener('ge:model-endpoints-updated', e => {
   document.getElementById('ge-ai-command-model')?._refreshAIModels?.(e.detail?.baseUrl || '');
 });
 
@@ -256,9 +254,9 @@ export function wireAIModelSelectors({ container, apiBase = '', openCookbookForI
       const data = await res.json();
       if (listeners.signal.aborted || !root.isConnected) return;
       const modelsList = data.models || [];
-      if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">None</option>';
+      if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">Auto-detect</option>';
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = '<option value="">Auto</option>';
-      if (aiCommandSelect) aiCommandSelect.innerHTML = '<option value="">Auto (default)</option>';
+      if (aiCommandSelect) aiCommandSelect.innerHTML = '<option value="">Same as generation</option>';
       const perToolSelects = Array.from(document.querySelectorAll('select.ge-tool-model'));
       for (const ts of perToolSelects) ts.innerHTML = '<option value="">Auto</option>';
       let firstGen = null;
@@ -346,45 +344,15 @@ export function wireAIModelSelectors({ container, apiBase = '', openCookbookForI
       // Sentinel changes are handled by the component's delegated listener.
       if (aiCommandSelect) {
         aiCommandSelect._modelsReady = true;
-        try {
-          const rawSaved = localStorage.getItem('ge-ai-command-model') || '';
-          let saved = rawSaved;
-          if (saved.startsWith('http://') || saved.startsWith('https://') || saved.includes('://') || saved.startsWith('::')) {
-            const modelPart = saved.includes('::') ? saved.split('::').pop() : '';
-            const matching = loaded.filter(l => l.model === modelPart);
-            if (matching.length === 1) {
-              saved = matching[0].value;
-            } else {
-              saved = '';
-            }
-            try {
-              if (saved) localStorage.setItem('ge-ai-command-model', saved);
-              else localStorage.removeItem('ge-ai-command-model');
-            } catch {}
-          }
-          if (saved && [...aiCommandSelect.options].some(o => o.value === saved)) {
-            aiCommandSelect.value = saved;
-          } else {
-            aiCommandSelect.value = '';
-          }
-          if (aiCommandSelect.value !== rawSaved) {
-            if (aiCommandSelect.value) localStorage.setItem('ge-ai-command-model', aiCommandSelect.value);
-            else localStorage.removeItem('ge-ai-command-model');
-            window.dispatchEvent(new CustomEvent('ge-ai-command-model-change', { detail: { value: aiCommandSelect.value } }));
-          }
-        } catch {}
-
+        // Legacy URL migration check: legacy endpoints with raw URLs are scrubbed.
+        const scrubModelUrl = (saved) => (saved && saved.startsWith('http://') ? '' : saved);
         if (aiCommandSelect._commandWired !== listeners) {
           aiCommandSelect._commandWired = listeners;
           listen(aiCommandSelect, 'change', () => {
             if (aiCommandSelect.value === '__serve_cookbook__') return;
-            const val = aiCommandSelect.value || '';
-            try {
-              if (val) localStorage.setItem('ge-ai-command-model', aiCommandSelect.value);
-              else localStorage.removeItem('ge-ai-command-model');
-            } catch {}
+            const val = scrubModelUrl(aiCommandSelect.value) || '';
             updateFooterEditModel();
-            window.dispatchEvent(new CustomEvent('ge-ai-command-model-change', { detail: { value: val } }));
+            globalThis.window?.dispatchEvent?.(new CustomEvent('ge-ai-command-model-change', { detail: { value: val } }));
           });
         }
       }
@@ -409,6 +377,7 @@ export function wireAIModelSelectors({ container, apiBase = '', openCookbookForI
         });
       }
       _aiModelsStatus = { ready: true, models: loaded, error: null, at: Date.now() };
+      container.dispatchEvent(new Event('ge-image-models-ready'));
       try { window.dispatchEvent(new CustomEvent('ge:ai-models-status')); } catch {}
     } catch (e) {
       if (listeners.signal.aborted || !root.isConnected) return;

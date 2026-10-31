@@ -2233,6 +2233,7 @@ export function createLayerPanelRenderer(deps) {
     if (dragSortModule) {
       dragSortModule.enable('ge-layers-list', '.ge-layer-item', {
         instanceKey: 'ge-layers',
+        excludeSelector: '.ge-adj-sub-item',
         threshold: 4,
         ignoreSelector: 'button, input, select, textarea, a, [contenteditable="true"], .ge-adj-sub-item',
         onReorder: (orderedItems) => {
@@ -2258,6 +2259,9 @@ export function createLayerPanelRenderer(deps) {
             state.layers = newLayers;
             normalizeLayerClipping(state);
             composite();
+            // Effects, adjustments and masks are sibling rows, not children
+            // of the dragged row. Rebuild them under their reordered owner.
+            render();
           }
         },
       });

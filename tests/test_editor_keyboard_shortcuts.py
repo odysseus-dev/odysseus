@@ -49,10 +49,9 @@ def test_ctrl_zoom_shortcuts_drive_the_toolbar_and_override_the_browser():
 
 def test_ctrl_alt_l_opens_the_levels_adjustment():
     keyboard = (ROOT / "static/js/editor/keyboard-shortcuts.js").read_text(encoding="utf-8")
-    # Photoshop-style chord: reuse the Image menu row so the dialog and the
-    # adjustment-layer plumbing stay in one place.
+    # Open layer-local controls without creating/committing a new adjustment layer.
     assert "e.altKey && e.code === 'KeyL'" in keyboard
-    assert "document.querySelector('[data-image-action=\"adj-levels\"]')" in keyboard
+    assert "openLayerAdjustment?.('levels');" in keyboard
 
 
 def test_ctrl_alt_shift_e_stamps_the_visible_layers():

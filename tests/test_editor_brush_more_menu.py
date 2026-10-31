@@ -29,8 +29,10 @@ def test_secondary_brush_controls_live_after_the_menu_open():
     block = CONTROLS[i:j]
     for marker in ('id="ge-brush-spacing"', 'id="ge-brush-smoothing"',
                    'id="ge-brush-blend"', 'ge-brush-pressure-row',
-                   'id="ge-brush-flow-row"', 'id="ge-brush-softness-row"'):
+                   'id="ge-brush-flow-row"'):
         assert marker in block, marker
+    assert 'id="ge-brush-softness-row"' not in block
+    assert CONTROLS.index('id="ge-brush-softness-row"') < i
 
 
 def test_brush_size_label_drops_the_redundant_word():
@@ -98,7 +100,7 @@ def test_brush_strip_fits_and_smudge_row_respects_inline_hide():
     # The Opacity/Flow/Softness sliders are wound tighter so the strip fits.
     assert ".ge-controls--in-options #ge-brush-section { gap: 6px; }" in CSS
     # The brush controls hug their content so the sliders sit next to the caret.
-    assert ".ge-controls--in-options #ge-brush-controls { flex: 0 0 auto; }" in CSS
+    assert ".ge-controls--in-options #ge-brush-controls { flex: 0 0 auto; flex-direction: row;" in CSS
     # The smudge Strength row is hidden with an inline display:none on other
     # tools; the `.ge-eraser-row { display:flex !important }` rule must not
     # override that.
