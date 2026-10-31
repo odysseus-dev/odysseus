@@ -332,6 +332,17 @@ def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypa
     ("qwq 06:46:02 AM", True),
     ("claude-sonnet-4 8:05:17 am", True),
 
+    # Other browser locales: the default name comes from toLocaleTimeString()
+    ("gemma-4-26b-a4b-qat 8.35.24", True),       # fi-FI (#6654)
+    ("gemma-4-26b-a4b-qat 20.05.09", True),      # fi-FI
+    ("qwq 08.35.24", True),                      # da-DK
+    ("qwq 8:05:09 p.m.", True),                  # es-MX
+    ("qwq 08:35:24 ч.", True),                   # bg-BG
+    ("qwq 오전 8:35:24", True),                   # ko-KR
+    ("qwq 上午8:35:24", True),                    # zh-TW
+    ("qwq ٨:٣٥:٢٤ ص", True),                     # ar-EG
+    ("qwq ۲۰:۰۵:۰۹", True),                      # fa-IR
+
     # empty / default
     ("", True),
     ("  ", False),
@@ -342,6 +353,8 @@ def test_build_uploaded_file_manifest_hides_paths_read_file_cannot_open(monkeypa
     ("CW Decoder for STM32", False),
     ("my chat about python", False),
     ("Fix the login bug", False),
+    ("Release notes 2.10", False),
+    ("Mixed separators 8:35.24", False),
 ])
 def test_needs_auto_name(name, expected):
     assert needs_auto_name(name) == expected, f"needs_auto_name({name!r}) should be {expected}"
