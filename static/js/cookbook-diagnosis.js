@@ -678,6 +678,23 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /No module named 'flash_attn\.ops'|flash_attn\.ops\.triton/i,
+    // flash-attn 4.x rewrote the package under flash_attn.cute.* and dropped
+    // the legacy flash_attn.ops API that vLLM's Qwen3.x/Gemma vision rotary
+    // code imports (#500). vLLM runs fine without flash-attn, so the fix is
+    // to downgrade onto the compatible 2.x/3.x line.
+    message: 'flash-attn was resolved to the incompatible v4 rewrite: vLLM\'s Qwen/Gemma vision code imports the legacy flash_attn.ops API that 4.x dropped.',
+    fixes: [
+      { label: 'Downgrade flash-attn below 4', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('downgrade-flash-attn', 'pip-update', `${_vp} -m pip install --user --break-system-packages "flash-attn<4"`);
+      }},
+      { label: 'Copy downgrade command', action: () => _copyText('python3 -m pip install --user --break-system-packages "flash-attn<4"') },
+      { label: 'Switch to vllm/vllm-openai container', action: (panel) => _openServeEditFromDiagnosis(panel) },
+    ],
+  },
+  {
     pattern: /ollama.*command not found/i,
     message: 'Ollama is not installed on this server. Run: curl -fsSL https://ollama.com/install.sh | sh',
     fixes: [
