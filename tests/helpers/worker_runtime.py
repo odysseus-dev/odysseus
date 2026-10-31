@@ -1,5 +1,6 @@
 """Private filesystem defaults established before application imports."""
 
+import logging
 import os
 import tempfile
 from contextlib import contextmanager
@@ -39,6 +40,18 @@ def configure_runtime(config, runtime):
         )
 
 
+def close_log_handlers_under(root):
+    """Release log files beneath root; Windows cannot delete an open file."""
+    loggers = [logging.getLogger(), *logging.Logger.manager.loggerDict.values()]
+    for logger in loggers:
+        # loggerDict also holds PlaceHolder entries, which have no handlers.
+        for handler in list(getattr(logger, "handlers", ())):
+            filename = getattr(handler, "baseFilename", None)
+            if filename and Path(filename).is_relative_to(root):
+                logger.removeHandler(handler)
+                handler.close()
+
+
 @contextmanager
 def isolated_runtime(worker="main"):
     """Own mutable defaults for one pytest process, including subprocesses.
@@ -68,4 +81,7 @@ def isolated_runtime(worker="main"):
                 patcher.setenv(name, str(tmp))
             # tempfile may already have cached the caller's directory.
             patcher.setattr(tempfile, "tempdir", str(tmp))
-            yield root
+            try:
+                yield root
+            finally:
+                close_log_handlers_under(root)
