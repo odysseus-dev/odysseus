@@ -42,18 +42,20 @@ logger = logging.getLogger("verify_sanitized_artifacts")
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 ALLOWED_JUNIT_ROOT_TAGS = frozenset({"testsuites", "testsuite"})
-ALLOWED_JUNIT_ELEMENT_TAGS = frozenset({
-    "testsuites",
-    "testsuite",
-    "testcase",
-    "failure",
-    "error",
-    "skipped",
-    "system-out",
-    "system-err",
-    "properties",
-    "property",
-})
+ALLOWED_PUBLISHED_JUNIT_TAGS = frozenset({"testsuites", "testsuite", "testcase", "failure", "error", "skipped"})
+DISALLOWED_JUNIT_TAGS = frozenset({"properties", "property", "system-out", "system-err"})
+
+ALLOWED_ATTRIBUTES_BY_TAG = {
+    "testsuites": frozenset({"name", "tests", "failures", "errors", "skipped", "time", "id", "disabled"}),
+    "testsuite": frozenset({
+        "name", "tests", "failures", "errors", "skipped", "time", "timestamp", "hostname",
+        "id", "package", "disabled", "file"
+    }),
+    "testcase": frozenset({"name", "classname", "time", "file", "line", "assertions", "status"}),
+    "failure": frozenset({"message", "type"}),
+    "error": frozenset({"message", "type"}),
+    "skipped": frozenset({"message", "type"}),
+}
 
 SENSITIVE_KEY_PATTERN = re.compile(
     r"(?i)(password|passwd|secret|token|api_key|apikey|access_token|refresh_token|"
@@ -155,8 +157,67 @@ def sanitize_text_content(text: str) -> tuple[str, bool]:
     return out, modified
 
 
+def prune_and_sanitize_junit_element(elem: ET.Element) -> bool:
+    """Recursively enforce restrictive published-JUnit representation.
+
+    Removes properties, property entries, system-out, system-err, and any
+    unnecessary free-form content. Preserves test identities, counts, outcomes,
+    and safe failure classifications.
+    Returns True if any modifications were made.
+    """
+    modified = False
+
+    # 1. Prune child elements not permitted in restrictive published representation
+    for child in list(elem):
+        tag_lower = child.tag.lower()
+        if tag_lower in DISALLOWED_JUNIT_TAGS or tag_lower not in ALLOWED_PUBLISHED_JUNIT_TAGS:
+            elem.remove(child)
+            modified = True
+        else:
+            if prune_and_sanitize_junit_element(child):
+                modified = True
+
+    tag_lower = elem.tag.lower()
+
+    # 2. Prune attributes not permitted in restrictive published representation
+    allowed_attrs = ALLOWED_ATTRIBUTES_BY_TAG.get(tag_lower, frozenset())
+    for attr_name in list(elem.attrib.keys()):
+        attr_lower = attr_name.lower()
+        if attr_lower not in allowed_attrs:
+            del elem.attrib[attr_name]
+            modified = True
+        else:
+            val = elem.attrib[attr_name]
+            if isinstance(val, str):
+                new_val, changed = sanitize_text_content(val)
+                if changed:
+                    elem.attrib[attr_name] = new_val
+                    modified = True
+
+    # 3. Handle text content: structural elements do not carry free-form text
+    if tag_lower in ("testsuites", "testsuite", "testcase"):
+        if elem.text and elem.text.strip():
+            elem.text = None
+            modified = True
+    elif tag_lower in ("failure", "error"):
+        if elem.text:
+            new_text, changed = sanitize_text_content(elem.text)
+            if changed:
+                elem.text = new_text
+                modified = True
+
+    # Clean up tails
+    if elem.tail and elem.tail.strip():
+        new_tail, changed = sanitize_text_content(elem.tail)
+        if changed:
+            elem.tail = new_tail
+            modified = True
+
+    return modified
+
+
 def sanitize_and_verify_junit_xml(filepath: str | Path) -> bool:
-    """Verify that an XML file is an authentic JUnit report and redact credentials.
+    """Verify that an XML file is an authentic JUnit report and enforce published representation.
 
     Returns True if the XML file is a valid recognized JUnit report and was safely sanitized.
     Returns False if the file is invalid, unrecognized, corrupted, or failed sanitization.
@@ -182,47 +243,17 @@ def sanitize_and_verify_junit_xml(filepath: str | Path) -> bool:
         logger.warning("XML report %s has invalid root element <%s>; not a JUnit report", filepath, root.tag)
         return False
 
-    # 4. Check element tags and redact sensitive content
-    file_modified = False
-    for elem in tree.iter():
-        if elem.tag.lower() not in ALLOWED_JUNIT_ELEMENT_TAGS:
-            logger.warning("XML report %s contains unrecognized element tag <%s>", filepath, elem.tag)
-            return False
+    # 4. Enforce restrictive published representation on root and all descendants
+    prune_and_sanitize_junit_element(root)
 
-        # Sanitize attributes
-        for k, v in list(elem.attrib.items()):
-            if SENSITIVE_KEY_PATTERN.search(k.lower()):
-                elem.attrib[k] = "[REDACTED]"
-                file_modified = True
-            elif isinstance(v, str):
-                new_v, changed = sanitize_text_content(v)
-                if changed:
-                    elem.attrib[k] = new_v
-                    file_modified = True
-
-        # Sanitize text
-        if elem.text:
-            new_text, changed = sanitize_text_content(elem.text)
-            if changed:
-                elem.text = new_text
-                file_modified = True
-
-        # Sanitize tail
-        if elem.tail:
-            new_tail, changed = sanitize_text_content(elem.tail)
-            if changed:
-                elem.tail = new_tail
-                file_modified = True
-
-    # 5. If content was sanitized, write back safely
-    if file_modified:
-        try:
-            tree.write(str(p), encoding="utf-8", xml_declaration=True)
-            # Verify rewritten XML parses cleanly
-            ET.parse(p)
-        except Exception as exc:
-            logger.error("Failed to write sanitized XML report %s: %s", filepath, exc)
-            return False
+    # 5. Normalize and rewrite sanitized report
+    try:
+        tree.write(str(p), encoding="utf-8", xml_declaration=True)
+        # Verify rewritten XML parses cleanly
+        ET.parse(p)
+    except Exception as exc:
+        logger.error("Failed to write sanitized XML report %s: %s", filepath, exc)
+        return False
 
     return True
 

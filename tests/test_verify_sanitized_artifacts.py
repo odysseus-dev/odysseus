@@ -136,6 +136,120 @@ def test_valid_xml_containing_synthetic_secret_not_published_unchanged(tmp_path)
     assert tree.getroot().tag == "testsuites"
 
 
+def test_exact_property_api_key_cannot_appear_unchanged_in_uploaded_report(tmp_path):
+    """Regression: <property name="api_key" value="sk-example-123" /> cannot appear unchanged in uploaded report."""
+    results_dir = tmp_path / "test-results"
+    results_dir.mkdir()
+    junit = results_dir / "browser-junit.xml"
+    xml_with_property = """<testsuites name="photo-editor" tests="1" failures="0">
+  <testsuite name="brush-engine.spec.js" tests="1" failures="0">
+    <properties>
+      <property name="api_key" value="sk-example-123" />
+    </properties>
+    <property name="api_key" value="sk-example-123" />
+    <testcase name="brush presets and shared stroke controls remain reusable" classname="photo-editor/brush-engine.spec.js" time="0.5" />
+  </testsuite>
+</testsuites>"""
+    junit.write_text(xml_with_property)
+
+    ok = verify_and_sanitize_artifacts(str(results_dir))
+    assert ok is True
+    assert junit.exists()
+
+    sanitized_xml = junit.read_text()
+    # The exact sensitive property and value MUST NOT appear anywhere in the published report
+    assert "sk-example-123" not in sanitized_xml
+    assert "api_key" not in sanitized_xml
+    assert "<property" not in sanitized_xml
+    assert "<properties" not in sanitized_xml
+
+    # Test identity and structure must remain valid
+    tree = ET.parse(junit)
+    root = tree.getroot()
+    assert root.tag == "testsuites"
+    cases = list(root.iter("testcase"))
+    assert len(cases) == 1
+    assert cases[0].get("name") == "brush presets and shared stroke controls remain reusable"
+    assert cases[0].get("classname") == "photo-editor/brush-engine.spec.js"
+
+
+def test_standard_node_and_playwright_reports_remain_valid_and_retain_identities(tmp_path):
+    """Standard Node and Playwright JUnit reports remain structurally valid and retain test identities."""
+    results_dir = tmp_path / "test-results"
+    results_dir.mkdir()
+
+    # 1. Standard Node report representation (similar to node:test runner output)
+    node_dir = results_dir / "native-node"
+    node_dir.mkdir()
+    node_junit = node_dir / "junit.xml"
+    node_junit.write_text("""<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testcase name="research cards distinguish live work, handoff, completion and no evidence" time="0.000549" classname="test" file="tests/backgroundToolJobs.test.mjs" />
+  <testcase name="Chat Photo Editor Action Integrity and Turn Scoping" time="0.499862" classname="test" file="tests/chatPhotoEditorIntegrity.test.mjs" />
+</testsuites>""")
+
+    # 2. Standard Playwright report representation (with suites, timing, counts, and failure classifications)
+    browser_junit = results_dir / "browser-junit.xml"
+    browser_junit.write_text("""<testsuites id="" name="" tests="2" failures="1" skipped="0" errors="0" time="12.5">
+  <testsuite name="photo-editor/brush-engine.spec.js" timestamp="2026-10-31T00:00:00Z" hostname="chromium" tests="2" failures="1" skipped="0" time="12.5" errors="0">
+    <properties>
+      <property name="platform" value="linux" />
+      <property name="api_key" value="sk-example-123" />
+    </properties>
+    <testcase name="brush presets and shared stroke controls remain reusable" classname="photo-editor/brush-engine.spec.js" time="1.2" />
+    <testcase name="long sampled strokes stay responsive and undo atomically" classname="photo-editor/brush-engine.spec.js" time="2.4">
+      <failure message="expect(strokeDuration - controlDuration).toBeLessThan(5000)" type="FAILURE">
+        Error: expect(strokeDuration - controlDuration).toBeLessThan(5000)
+          at brush-engine.spec.js:84:10
+      </failure>
+      <system-out>Captured console stdout dump with session_token=abc12345</system-out>
+      <system-err>Captured console stderr dump</system-err>
+    </testcase>
+  </testsuite>
+</testsuites>""")
+
+    ok_node = verify_and_sanitize_artifacts(str(node_dir))
+    assert ok_node is True
+    ok_browser = verify_and_sanitize_artifacts(str(results_dir))
+    assert ok_browser is True
+
+    # Validate Node report
+    node_tree = ET.parse(node_junit)
+    node_cases = list(node_tree.iter("testcase"))
+    assert len(node_cases) == 2
+    assert node_cases[0].get("name") == "research cards distinguish live work, handoff, completion and no evidence"
+    assert node_cases[1].get("name") == "Chat Photo Editor Action Integrity and Turn Scoping"
+    assert node_cases[0].get("file") == "tests/backgroundToolJobs.test.mjs"
+
+    # Validate Playwright report
+    pw_tree = ET.parse(browser_junit)
+    pw_root = pw_tree.getroot()
+    assert pw_root.tag == "testsuites"
+    assert pw_root.get("tests") == "2"
+    assert pw_root.get("failures") == "1"
+
+    pw_cases = list(pw_tree.iter("testcase"))
+    assert len(pw_cases) == 2
+    assert pw_cases[0].get("name") == "brush presets and shared stroke controls remain reusable"
+    assert pw_cases[1].get("name") == "long sampled strokes stay responsive and undo atomically"
+
+    # Verify failure classification is preserved
+    failures = list(pw_cases[1].iter("failure"))
+    assert len(failures) == 1
+    assert "toBeLessThan(5000)" in failures[0].get("message")
+    assert failures[0].get("type") == "FAILURE"
+
+    # Verify properties and system-out/err were pruned
+    pw_text = browser_junit.read_text()
+    assert "sk-example-123" not in pw_text
+    assert "api_key" not in pw_text
+    assert "<properties" not in pw_text
+    assert "<property" not in pw_text
+    assert "<system-out" not in pw_text
+    assert "<system-err" not in pw_text
+    assert "session_token" not in pw_text
+
+
 def test_unrecognized_xml_purged(tmp_path):
     """Negative control: XML reports that are not recognized JUnit reports are purged."""
     results_dir = tmp_path / "test-results"
