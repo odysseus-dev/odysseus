@@ -355,6 +355,7 @@ class DeepResearcher:
         extraction_timeout: int = 90,
         planning_timeout: int = 90,
         query_timeout: int = 120,
+        llm_timeout: int = 180,
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
@@ -379,6 +380,9 @@ class DeepResearcher:
         self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
         self.planning_timeout = min(3600, max(15, int(planning_timeout or 90)))
         self.query_timeout = min(3600, max(15, int(query_timeout or 120)))
+        # Non-streaming synthesis/final-report calls must fit their whole
+        # prefill + decode inside this read timeout (#6986).
+        self.llm_timeout = min(3600, max(15, int(llm_timeout or 180)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -1721,10 +1725,13 @@ class DeepResearcher:
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
                 # Synthesis is a heavy generation call like the final report
-                # (which gets 180s); a slow local model (e.g. a 20B served from
-                # LM Studio) routinely needs >60s for it. The old 60s cap timed
-                # out mid-stream and discarded the round's findings (#1551).
-                timeout=180,
+                # (both bounded by research_llm_timeout_seconds, default 180s);
+                # a slow local model (e.g. a 20B served from LM Studio)
+                # routinely needs >60s for it. The old 60s cap timed out
+                # mid-stream and discarded the round's findings (#1551); the
+                # fixed 180s then still killed ~30 t/s local backends
+                # mid-generation (#6986), so the budget is now tunable.
+                timeout=self.llm_timeout,
             )
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
@@ -1786,7 +1793,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                timeout=180,
+                timeout=self.llm_timeout,
             )
 
             # If report is too short, ask the LLM to expand it
@@ -1809,7 +1816,7 @@ class DeepResearcher:
                     ],
                     temperature=0.4,
                     max_tokens=self.max_report_tokens,
-                    timeout=180,
+                    timeout=self.llm_timeout,
                 )
                 if len(expanded.split()) > len(result.split()):
                     return expanded
