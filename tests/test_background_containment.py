@@ -5,6 +5,7 @@ import time
 from collections import namedtuple
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src import bg_jobs, containment, process_ownership, process_reaper, tool_execution
 from src.tool_execution import NO_TOOL_SECURITY_CONTEXT
@@ -105,6 +106,7 @@ async def test_bg_marker_refuses_without_spawning_and_authority_still_gates(jobs
     assert denied["failure_kind"] == "request_authority_denied"
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_detached_supervisor_enforces_timeout(jobs):
     path, launched = jobs
     record = launch("sleep 60", "chat", cwd=str(path), max_runtime_s=1)

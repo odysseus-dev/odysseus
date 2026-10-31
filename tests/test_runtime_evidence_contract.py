@@ -6,6 +6,7 @@ import json
 import os
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 from tests.runtime_evidence_helpers import server_authorized_executor
 
 
@@ -360,6 +361,7 @@ async def test_cancellation_unwinds_bound_journal_without_done_or_claims():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_real_unittest_dispatch_and_policy_denial_have_distinct_receipts(tmp_path, monkeypatch):
     from src.tool_execution import execute_tool_block, NO_TOOL_SECURITY_CONTEXT
     monkeypatch.setattr('src.tool_execution.owner_is_admin_or_single_user', lambda owner: True)
@@ -381,6 +383,7 @@ async def test_real_unittest_dispatch_and_policy_denial_have_distinct_receipts(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_shell_writing_same_basename_elsewhere_is_not_required_mutation(tmp_path, monkeypatch):
     from src.tool_execution import execute_tool_block, NO_TOOL_SECURITY_CONTEXT
     monkeypatch.setattr('src.tool_execution.owner_is_admin_or_single_user', lambda owner: True)

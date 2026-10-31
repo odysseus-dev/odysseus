@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 
 @pytest.fixture(autouse=True)
@@ -2166,6 +2167,7 @@ def test_python_http_download_is_rejected_before_subprocess():
     assert urlretrieve["exit_code"] == 1
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_python_surfaces_failed_child_viewer_even_when_script_exits_zero():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2179,6 +2181,7 @@ def test_python_surfaces_failed_child_viewer_even_when_script_exits_zero():
     assert "child operation failed" in result["error"]
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_python_keeps_warning_only_stderr_successful():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2191,6 +2194,7 @@ def test_python_keeps_warning_only_stderr_successful():
     assert result["exit_code"] == 0
 
 
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_python_emits_one_final_bare_expression_without_duplicating_print():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool

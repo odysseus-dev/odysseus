@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src import containment
 from src.agent_tools import subprocess_tools
@@ -181,6 +182,7 @@ async def test_external_record_does_not_grant_authority(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_native_local_bash_python_behavior_unchanged(tmp_path, monkeypatch):
     """4. Native local Bash/Python behavior is unchanged."""
     tool_bash = subprocess_tools.BashTool()

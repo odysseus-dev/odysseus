@@ -6,6 +6,7 @@ import sys
 from dataclasses import replace
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src import containment, tool_execution
 from src.agent_tools import subprocess_tools
@@ -84,6 +85,7 @@ async def test_fully_overclaimed_group_grant_cannot_spawn(workspace, monkeypatch
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX namespace recipe")
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 def test_home_interpreter_is_bound_read_only(workspace, monkeypatch):
     original = containment.shutil.which
     monkeypatch.setattr(containment.shutil, "which", lambda name:

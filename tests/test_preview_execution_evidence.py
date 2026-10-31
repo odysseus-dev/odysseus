@@ -2,12 +2,14 @@
 import json
 
 import pytest
+from tests.helpers.containment_gate import enforcing_containment_available
 
 from src.agent_tools.subprocess_tools import BashTool
 from src.clean_agent_preview import preview_tool_result_text
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not enforcing_containment_available(), reason="host cannot enforce filesystem+process_tree containment (no bubblewrap)")
 async def test_failed_shell_retains_exit_status_and_both_streams_for_followup(tmp_path):
     from tests.process_resource_helpers import launch_authority
     cmd = "printf 'PHASE_ONE_DONE\\n'; printf 'CHECK_FAILED\\n' >&2; exit 7"
