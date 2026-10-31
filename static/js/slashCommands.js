@@ -5637,7 +5637,7 @@ async function _cmdProbe(args, ctx) {
 
   let html = '<div style="font-family:inherit;font-size:0.9em">';
   let currentEndpoint = '';
-  let summary = { total: 0, ok: 0 };
+  let summary = { total: 0, ok: 0, skipped: 0 };
 
   try {
     const res = await fetch(url, { credentials: 'same-origin' });
@@ -5659,9 +5659,11 @@ async function _cmdProbe(args, ctx) {
 
           if (data.type === 'probe_start') {
             currentEndpoint = data.endpoint;
-            const skipNote = data.skipped ? ' + ' + data.skipped + ' non-chat skipped' : '';
+            const skipNote = (data.skipped ? ' + ' + data.skipped + ' non-chat skipped' : '')
+              + (data.hidden_skipped ? ' + ' + data.hidden_skipped + ' disabled skipped' : '');
+            const modelLabel = data.discovery_only ? ' listed models' : ' chat models';
             html += '<div style="margin-top:8px;font-weight:600;color:var(--fg);opacity:0.8">'
-              + ctx.esc(data.endpoint) + ' <span style="opacity:0.4;font-weight:400">(' + data.model_count + ' chat models' + skipNote + ')</span></div>';
+              + ctx.esc(data.endpoint) + ' <span style="opacity:0.4;font-weight:400">(' + data.model_count + modelLabel + skipNote + ')</span></div>';
             if (data.error) {
               html += '<div style="padding:2px 0 2px 20px;opacity:0.5;font-size:0.9em">' + ctx.esc(data.error) + '</div>';
             }
@@ -5670,10 +5672,11 @@ async function _cmdProbe(args, ctx) {
           } else if (data.type === 'probe_result') {
             const isOk = data.status === 'ok';
             const isTimeout = data.status === 'timeout';
-            const dot = isOk ? '\u25CF' : (isTimeout ? '\u25D0' : '\u25CB');
-            const color = isOk ? 'var(--color-success)' : (isTimeout ? 'var(--color-blind-orange)' : 'var(--color-error)');
-            const latency = data.latency_ms != null ? data.latency_ms + 'ms' : '--';
-            const latencyColor = isOk
+            const isListed = data.skipped === true;
+            const dot = isOk && !isListed ? '\u25CF' : (isTimeout ? '\u25D0' : '\u25CB');
+            const color = isListed ? 'var(--fg)' : isOk ? 'var(--color-success)' : (isTimeout ? 'var(--color-blind-orange)' : 'var(--color-error)');
+            const latency = isListed ? 'not tested' : data.latency_ms != null ? data.latency_ms + 'ms' : '--';
+            const latencyColor = isListed ? 'var(--fg)' : isOk
               ? (data.latency_ms < 2000 ? 'var(--color-success)' : 'var(--color-blind-orange)')
               : 'var(--color-error)';
             const modelName = (data.model || '').split('/').pop();
@@ -5688,17 +5691,20 @@ async function _cmdProbe(args, ctx) {
             if (uiModule) uiModule.scrollHistory();
 
           } else if (data.type === 'probe_done') {
-            summary = { total: data.total || 0, ok: data.ok || 0 };
+            summary = { total: data.total || 0, ok: data.ok || 0, skipped: data.skipped || 0 };
           }
         } catch (e) { /* skip parse errors */ }
       }
     }
 
     // Final summary
-    const pct = summary.total > 0 ? Math.round((summary.ok / summary.total) * 100) : 0;
-    const sumColor = pct === 100 ? 'var(--color-success)' : pct >= 50 ? 'var(--color-blind-orange)' : 'var(--color-error)';
+    const tested = summary.total - summary.skipped;
+    const responding = summary.ok - summary.skipped;
+    const pct = tested > 0 ? Math.round((responding / tested) * 100) : 0;
+    const sumColor = tested === 0 ? 'var(--fg)' : pct === 100 ? 'var(--color-success)' : pct >= 50 ? 'var(--color-blind-orange)' : 'var(--color-error)';
     html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-weight:600;color:' + sumColor + '">';
-    html += summary.ok + '/' + summary.total + ' models responding (' + pct + '%)';
+    html += tested > 0 ? responding + '/' + tested + ' models responding (' + pct + '%)' : 'No completion probes run';
+    if (summary.skipped) html += '; ' + summary.skipped + ' models listed without completion probes';
     html += '</div>';
     bodyEl.innerHTML = html + '</div>';
     if (uiModule) uiModule.scrollHistory();
