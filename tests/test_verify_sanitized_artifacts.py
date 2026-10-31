@@ -250,6 +250,50 @@ def test_standard_node_and_playwright_reports_remain_valid_and_retain_identities
     assert "session_token" not in pw_text
 
 
+def test_skipped_element_content_tail_and_attributes_leak_prevented(tmp_path):
+    """Regression: <skipped>PRIVATE_VALUE_123</skipped>, attributes, and tails cannot leak sensitive values."""
+    results_dir = tmp_path / "test-results"
+    results_dir.mkdir()
+    junit = results_dir / "browser-junit.xml"
+    xml_with_skipped = """<testsuites>
+  <testsuite name="sample" tests="1" skipped="1">
+    <testcase name="skipped-case" classname="sample">
+      <skipped message="PRIVATE_VALUE_123" type="UNOFFICIAL_SECRET_456">PRIVATE_VALUE_123</skipped>PRIVATE_VALUE_123
+    </testcase>
+  </testsuite>
+</testsuites>"""
+    junit.write_text(xml_with_skipped)
+
+    ok = verify_and_sanitize_artifacts(str(results_dir))
+    assert ok is True
+    assert junit.exists()
+
+    sanitized_xml = junit.read_text()
+    # Synthetic sensitive values that do not match secret regexes must be absent
+    assert "PRIVATE_VALUE_123" not in sanitized_xml
+    assert "UNOFFICIAL_SECRET_456" not in sanitized_xml
+
+    # The output must remain valid JUnit XML
+    tree = ET.parse(junit)
+    root = tree.getroot()
+    assert root.tag == "testsuites"
+    cases = list(root.iter("testcase"))
+    assert len(cases) == 1
+
+    # Testcase identity remains intact
+    testcase = cases[0]
+    assert testcase.get("name") == "skipped-case"
+    assert testcase.get("classname") == "sample"
+
+    # Skipped element remains present and classified as skipped
+    skipped_elems = list(testcase.iter("skipped"))
+    assert len(skipped_elems) == 1
+    skipped_elem = skipped_elems[0]
+    assert skipped_elem.text is None or not skipped_elem.text.strip()
+    assert skipped_elem.get("message") == "skipped"
+    assert skipped_elem.get("type") == "skipped"
+
+
 def test_unrecognized_xml_purged(tmp_path):
     """Negative control: XML reports that are not recognized JUnit reports are purged."""
     results_dir = tmp_path / "test-results"

@@ -57,6 +57,8 @@ ALLOWED_ATTRIBUTES_BY_TAG = {
     "skipped": frozenset({"message", "type"}),
 }
 
+SAFE_SKIPPED_STATUSES = frozenset({"skipped", "todo", "ignored", "disabled", "pending", "omitted", "test skipped"})
+
 SENSITIVE_KEY_PATTERN = re.compile(
     r"(?i)(password|passwd|secret|token|api_key|apikey|access_token|refresh_token|"
     r"private_key|auth_token|client_secret|session|session_id|sid|csrf|xsrf|jwt|credential|authorization)"
@@ -186,6 +188,15 @@ def prune_and_sanitize_junit_element(elem: ET.Element) -> bool:
         if attr_lower not in allowed_attrs:
             del elem.attrib[attr_name]
             modified = True
+        elif tag_lower == "skipped":
+            val = elem.attrib[attr_name].strip()
+            if val.lower() in SAFE_SKIPPED_STATUSES:
+                if elem.attrib[attr_name] != val.lower():
+                    elem.attrib[attr_name] = val.lower()
+                    modified = True
+            else:
+                elem.attrib[attr_name] = "skipped"
+                modified = True
         else:
             val = elem.attrib[attr_name]
             if isinstance(val, str):
@@ -194,9 +205,9 @@ def prune_and_sanitize_junit_element(elem: ET.Element) -> bool:
                     elem.attrib[attr_name] = new_val
                     modified = True
 
-    # 3. Handle text content: structural elements do not carry free-form text
-    if tag_lower in ("testsuites", "testsuite", "testcase"):
-        if elem.text and elem.text.strip():
+    # 3. Handle text content: structural and skipped elements do not carry free-form text
+    if tag_lower in ("testsuites", "testsuite", "testcase", "skipped"):
+        if elem.text:
             elem.text = None
             modified = True
     elif tag_lower in ("failure", "error"):
@@ -206,11 +217,11 @@ def prune_and_sanitize_junit_element(elem: ET.Element) -> bool:
                 elem.text = new_text
                 modified = True
 
-    # Clean up tails
+    # 4. Clean up tails: strip any non-whitespace characters from tails to prevent leaks
     if elem.tail and elem.tail.strip():
-        new_tail, changed = sanitize_text_content(elem.tail)
-        if changed:
-            elem.tail = new_tail
+        cleaned_tail = re.sub(r"\S+", "", elem.tail)
+        if cleaned_tail != elem.tail:
+            elem.tail = cleaned_tail
             modified = True
 
     return modified
