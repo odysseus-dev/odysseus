@@ -41,7 +41,8 @@ def test_claim_is_fsynced_to_disk_before_returning(tmp_path, target, monkeypatch
     on_disk = records(log.path)
     assert [r["type"] for r in on_disk] == ["claim"]
     assert fx.EffectClaim.from_dict(on_disk[0]["record"]) == made
-    assert oct(log.path.stat().st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows has no POSIX permission bits: os.open's 0o600 is not reflected in st_mode
+        assert oct(log.path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_claim_persistence_failure_raises_and_records_nothing(tmp_path, target):
