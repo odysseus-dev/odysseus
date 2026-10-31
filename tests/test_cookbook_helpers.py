@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -495,7 +496,10 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
-    snippet = _pip_install_attempt("python3 -c 'pass'")
+    # sys.executable, not "python3": on Windows bash resolves that name to the
+    # Microsoft Store shim, which exits non-zero.
+    interpreter = shlex.quote(Path(sys.executable).as_posix())
+    snippet = _pip_install_attempt(f"{interpreter} -c 'pass'")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
