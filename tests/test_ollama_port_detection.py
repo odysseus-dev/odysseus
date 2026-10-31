@@ -51,6 +51,35 @@ class TestIsOllamaNativeUrlRejectsV1Paths:
 
 
 # ---------------------------------------------------------------------------
+# _is_ollama_native_url: OpenAI-compatible APIs under /api/v1 (e.g. Lemonade
+# Server on localhost:13305) are NOT native Ollama
+# ---------------------------------------------------------------------------
+
+class TestIsOllamaNativeUrlRejectsApiV1Paths:
+    def test_localhost_api_v1(self):
+        assert not llm_core._is_ollama_native_url("http://localhost:13305/api/v1")
+
+    def test_localhost_api_v1_trailing_slash(self):
+        assert not llm_core._is_ollama_native_url("http://localhost:13305/api/v1/")
+
+    def test_localhost_api_v1_chat_completions(self):
+        assert not llm_core._is_ollama_native_url("http://localhost:13305/api/v1/chat/completions")
+
+    def test_ollama_port_api_v1(self):
+        assert not llm_core._is_ollama_native_url("http://127.0.0.1:11434/api/v1")
+
+    def test_api_v1_lookalike_stays_native(self):
+        # Only the exact /api/v1 segment is excluded, not paths that merely start with it.
+        assert llm_core._is_ollama_native_url("http://localhost:11434/api/v1x")
+
+    def test_build_models_url_uses_openai_models(self):
+        assert endpoint_resolver.build_models_url("http://localhost:13305/api/v1") == "http://localhost:13305/api/v1/models"
+
+    def test_build_chat_url_uses_openai_chat(self):
+        assert build_chat_url("http://localhost:13305/api/v1") == "http://localhost:13305/api/v1/chat/completions"
+
+
+# ---------------------------------------------------------------------------
 # _is_ollama_native_url: /api paths and ollama.com ARE native Ollama
 # ---------------------------------------------------------------------------
 
