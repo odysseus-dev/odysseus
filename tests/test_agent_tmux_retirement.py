@@ -1,5 +1,6 @@
 """Native Bash does not resurrect tmux; legacy cleanup requires identity."""
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,12 @@ async def test_a_chat_session_always_uses_the_owned_runner(monkeypatch, tmp_path
     assert result["teardown"]["dead"] is True
     assert "tmux_session" not in result
     assert captured["kwargs"].get("start_new_session") is True
+
+
+_POSIX_TMUX = pytest.mark.skipif(
+    os.name == "nt",
+    reason="legacy tmux retirement is a no-op on Windows (reap_legacy_agent_tmux returns early); the fake pane table models POSIX tmux",
+)
 
 
 @pytest.fixture
@@ -58,6 +65,7 @@ def legacy(monkeypatch, tmp_path):
     return state
 
 
+@_POSIX_TMUX
 def test_legacy_cleanup_checks_home_and_identity_and_kills_children_first(legacy):
     report = process_reaper.reap_legacy_agent_tmux()
     assert report["torn_down"] == 1
@@ -66,6 +74,7 @@ def test_legacy_cleanup_checks_home_and_identity_and_kills_children_first(legacy
     assert legacy["calls"][-2][1:] == ["kill-session", "-t", "$8"]
 
 
+@_POSIX_TMUX
 def test_a_name_prefix_alone_never_authorizes_cleanup(legacy):
     legacy["rows"] = "$8\tody-agent-chat\t1234\t4200\t%9\t4100\t/bin/bash\n"
     report = process_reaper.reap_legacy_agent_tmux()
@@ -74,6 +83,7 @@ def test_a_name_prefix_alone_never_authorizes_cleanup(legacy):
     assert all(call[1] != "kill-session" for call in legacy["calls"])
 
 
+@_POSIX_TMUX
 def test_a_recycled_pane_pid_is_never_signalled(legacy, monkeypatch):
     monkeypatch.setattr(process_ownership, "verify", lambda pid, token: process_ownership.FOREIGN if pid == 4200 else process_ownership.OWNED)
     report = process_reaper.reap_legacy_agent_tmux()
@@ -81,6 +91,7 @@ def test_a_recycled_pane_pid_is_never_signalled(legacy, monkeypatch):
     assert legacy["released"] == []
 
 
+@_POSIX_TMUX
 def test_a_stale_pane_pid_pointing_at_another_parent_is_not_signalled(legacy, monkeypatch):
     monkeypatch.setattr(process_ownership, "process_table", lambda: {
         4200: process_ownership.ProcessInfo(4200, 9999, "/bin/bash --noprofile --norc"),
@@ -89,6 +100,7 @@ def test_a_stale_pane_pid_pointing_at_another_parent_is_not_signalled(legacy, mo
     assert legacy["released"] == []
 
 
+@_POSIX_TMUX
 def test_a_session_changed_during_discovery_is_never_killed(legacy, monkeypatch):
     original = process_ownership.process_table
     def table():
@@ -153,6 +165,7 @@ def test_a_descendant_reissued_after_the_table_read_is_never_released(legacy, mo
     assert 4201 not in [pid for pid, _ in legacy["released"]]
 
 
+@_POSIX_TMUX
 def test_an_unidentifiable_descendant_keeps_the_session_unsignalled(legacy, monkeypatch):
     def start_token(pid):
         if pid == 4201:
