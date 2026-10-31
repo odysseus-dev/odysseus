@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHAT = (ROOT / "static/js/chat.js").read_text()
-RENDERER = (ROOT / "static/js/chatRenderer.js").read_text()
+CHAT = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
+RENDERER = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
 
 
 def test_processing_indicator_shows_live_ttft_timer():

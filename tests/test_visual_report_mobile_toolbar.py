@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from src.visual_report import generate_visual_report
 
 
-SOURCE = (Path(__file__).resolve().parents[1] / "src/visual_report.py").read_text()
+SOURCE = (Path(__file__).resolve().parents[1] / "src/visual_report.py").read_text(encoding="utf-8")
 
 
 def test_export_bookmark_is_anchored_and_expands_on_demand():
