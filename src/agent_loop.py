@@ -5310,7 +5310,10 @@ def _calendar_list_summary_from_tool_output(
             return raw_when
 
         def time_label(dt: datetime) -> str:
-            return dt.strftime("%-I:%M %p")
+            # Not "%-I": the no-padding flag is glibc-only and raises
+            # ValueError on Windows.
+            from src.user_time import _clock_label
+            return _clock_label(dt)
 
         start_date = f"{start.strftime('%b')} {start.day}"
         if start.date() == end.date():
@@ -6338,13 +6341,17 @@ def _friendly_email_date(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
+    from src.user_time import _clock_label
+
+    def label(parsed: datetime) -> str:
+        # Not "%-d"/"%-I": glibc-only, they raise ValueError on Windows.
+        return f"{parsed.strftime('%b')} {parsed.day}, {_clock_label(parsed)}"
+
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return parsed.strftime("%b %-d, %-I:%M %p")
+        return label(datetime.fromisoformat(text.replace("Z", "+00:00")))
     except Exception:
         try:
-            parsed = datetime.fromisoformat(text[:19])
-            return parsed.strftime("%b %-d, %-I:%M %p")
+            return label(datetime.fromisoformat(text[:19]))
         except Exception:
             return text
 
