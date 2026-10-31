@@ -336,6 +336,9 @@ import { invalidateSettings } from './appConfig.js';
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
+  // The user bubble a regenerate keeps on screen. Its resubmitted message is
+  // a new DB row, so the saved id is attached here.
+  let _regenKeptUserBubble = null;
   let _contextHeaderSeq = 0;
   let _contextHeaderData = null;
   let _contextHeaderBound = false;
@@ -4995,6 +4998,15 @@ import { invalidateSettings } from './appConfig.js';
                   refreshChatContextHeader('metrics');
                 }
 
+              } else if (json.type === 'user_message_saved') {
+                // The user bubble gets its DB id too, so regenerating or
+                // editing it later cuts the chat by id, not page position.
+                if (!_isBg && json.id) {
+                  if (_userMsgEl) _userMsgEl.dataset.dbId = json.id;
+                  else if (_regenKeptUserBubble) _regenKeptUserBubble.dataset.dbId = json.id;
+                  _regenKeptUserBubble = null;
+                }
+
               } else if (json.type === 'message_saved') {
                 // Wire the persisted DB id onto the just-streamed bubble so it
                 // can be edited/deleted immediately, without reloading the chat.
@@ -7287,13 +7299,36 @@ import { invalidateSettings } from './appConfig.js';
       const sessionId = sessionModule.getCurrentSessionId();
       if (!sessionId) return;
 
+      // Everything after the original reply to this message would also be
+      // destroyed. Cancelling leaves the editor open with the draft intact.
+      const extraCount = allMsgs.length - msgIndex - 2;
+      const choice = await _confirmTruncateIfDestructive(extraCount, 'edit');
+      if (!choice) return;
+      if (choice === 'fork') {
+        // Branch just before this user turn and send the edit there; this
+        // chat keeps the original message and everything after it.
+        bodyEl.innerHTML = originalHTML;
+        try {
+          await _forkAndSend(msgIndex, userMsgElement.dataset.dbId || '', newText);
+        } catch (err) {
+          console.error('Fork failed:', err);
+          if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+        }
+        return;
+      }
+
       const keepCount = msgIndex;
+      // Cut at the message's database id: msgIndex counts only the messages
+      // loaded in the page, so it is too small when older history has not
+      // been scrolled in yet.
+      const editBeforeId = userMsgElement.dataset.dbId || '';
       try {
-        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+        const editTruncate = await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keep_count: keepCount })
+          body: JSON.stringify(editBeforeId ? { before_msg_id: editBeforeId } : { keep_count: keepCount })
         });
+        if (!editTruncate.ok) throw new Error('Server error ' + editTruncate.status);
 
         // Remove DOM elements from msgIndex onward
         for (let i = allMsgs.length - 1; i >= msgIndex; i--) {
@@ -7321,6 +7356,59 @@ import { invalidateSettings } from './appConfig.js';
         saveBtn.click();
       }
     });
+  }
+
+  // Regenerate, resend and edit permanently delete (server-side truncate)
+  // everything after the point clicked. Ask first unless nothing comes after
+  // it (extraCount 0), offering a fork that leaves this chat untouched.
+  // Resolves to 'proceed', 'fork', or null (cancelled).
+  const _TRUNCATE_ACTIONS = {
+    regenerate: { lead: 'Regenerating here', confirmText: 'Delete and regenerate' },
+    resend: { lead: 'Resending this message', confirmText: 'Delete and resend' },
+    edit: { lead: 'Sending this edit', confirmText: 'Delete and send' },
+  };
+  async function _confirmTruncateIfDestructive(extraCount, action = 'regenerate') {
+    if (extraCount <= 0) return 'proceed';
+    const { lead, confirmText } = _TRUNCATE_ACTIONS[action] || _TRUNCATE_ACTIONS.regenerate;
+    const result = await uiModule.styledConfirm(
+      `${lead} will also permanently delete the ${extraCount} ` +
+      `message${extraCount === 1 ? '' : 's'} after it. This can't be undone. ` +
+      `Fork from here keeps this chat as it is and continues in a new one instead.`,
+      { confirmText, alternateText: 'Fork from here', cancelText: 'Cancel', danger: true }
+    );
+    if (result === 'alternate') return 'fork';
+    return result ? 'proceed' : null;
+  }
+
+  // Copy the first `keepCount` messages of the current chat into a new chat
+  // and switch to it. Returns the new session id; throws on failure so callers
+  // that replay an action in the fork can stop before sending anything.
+  // Fork by message id when the element has one (before it, or through it);
+  // keepCount is only a fallback, since it counts loaded messages only.
+  async function _forkSessionAt(keepCount, beforeMsgId = '', throughMsgId = '') {
+    const sessionId = sessionModule.getCurrentSessionId();
+    if (!sessionId) throw new Error('No active chat');
+    const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keep_count: keepCount,
+        ...(beforeMsgId ? { before_msg_id: beforeMsgId } : throughMsgId ? { through_msg_id: throughMsgId } : {}) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    await sessionModule.loadSessions();
+    await sessionModule.selectSession(data.id);
+    if (uiModule) uiModule.showToast(`Forked → ${data.name}`);
+    return data.id;
+  }
+
+  // Fork before a user message and send `text` there; this chat is untouched.
+  // `attachments` (if given) are re-sent only once the fork has succeeded.
+  async function _forkAndSend(keepCount, beforeMsgId, text, attachments) {
+    await _forkSessionAt(keepCount, beforeMsgId);
+    if (attachments !== undefined) _pendingRegenAttachments = attachments;
+    uiModule.el('message').value = text;
+    document.querySelector('.send-btn')?.click();
   }
 
   /**
@@ -7378,6 +7466,18 @@ import { invalidateSettings } from './appConfig.js';
 
     try {
       if (replaceFromHere) {
+        // Everything strictly after the immediate AI reply to this user
+        // message would also be destroyed — that's the part a click on
+        // Resend / "Regenerate message" doesn't expect to lose.
+        const extraCount = allMsgs.length - msgIndex - 2;
+        const choice = await _confirmTruncateIfDestructive(extraCount, 'resend');
+        if (!choice) return;
+        if (choice === 'fork') {
+          // Branch just before this user turn and send it again there; this
+          // chat keeps every message.
+          await _forkAndSend(msgIndex, userMsgElement.dataset.dbId || '', text, _ids);
+          return;
+        }
         // Resend/regenerate trims history to this point before resubmitting so
         // the replacement request is the only copy the backend sees.
         const keepCount = msgIndex;
@@ -7442,6 +7542,13 @@ import { invalidateSettings } from './appConfig.js';
       return;
     }
 
+    // Everything strictly after the AI reply being regenerated would also
+    // be destroyed — that's the part a click on "Regenerate from here"
+    // doesn't expect to lose.
+    const extraCount = allMsgs.length - aiIndex - 1;
+    const choice = await _confirmTruncateIfDestructive(extraCount, 'regenerate');
+    if (!choice) return;
+
     // Collect any file_ids attached to the original user message so the
     // regenerated send re-uses them. Without this the AI is regenerated on
     // text alone — photos (and the user-edited OCR text cached server-side
@@ -7485,6 +7592,20 @@ import { invalidateSettings } from './appConfig.js';
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
+    if (choice === 'fork') {
+      // Branch just before the user turn and send it again there, so the new
+      // chat gets a fresh reply to the same message; this chat keeps every
+      // message. No variants or hidden bubble: the fork starts without them.
+      try {
+        await _forkAndSend(userIndex, (userMsgEl && userMsgEl.dataset.dbId) || '', userText, _regenIds);
+      } catch (err) {
+        _pendingRegenAttachments = null;
+        console.error('Fork failed:', err);
+        if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+      }
+      return;
+    }
+
     // Save current response as a variant
     const oldRaw = aiMsgElement.dataset.raw || aiMsgElement.querySelector('.body')?.textContent || '';
     const oldHtml = aiMsgElement.querySelector('.body')?.innerHTML || '';
@@ -7496,13 +7617,18 @@ import { invalidateSettings } from './appConfig.js';
     }
 
     const keepCount = userIndex;
+    // Same as resend: cut at the user message's database id, because
+    // userIndex counts only the messages loaded in the page.
+    const regenBeforeId = (userMsgEl && userMsgEl.dataset.dbId) || '';
 
     try {
-      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+      const regenTruncate = await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount })
+        body: JSON.stringify(regenBeforeId ? { before_msg_id: regenBeforeId } : { keep_count: keepCount })
       });
+      // A refused cut (e.g. a stale id) must not stack a second reply.
+      if (!regenTruncate.ok) throw new Error('Server error ' + regenTruncate.status);
 
       // Keep the original user bubble, but remove every rendered trace after
       // it, including agent-thread tool history between the user and AI bubble.
@@ -7519,6 +7645,7 @@ import { invalidateSettings } from './appConfig.js';
       _pendingVariantLabel = 'regen';
 
       _hideUserBubble = true;
+      _regenKeptUserBubble = userMsgEl;
       const messageInput = uiModule.el('message');
       messageInput.value = userText;
       const submitBtn = document.querySelector('.send-btn');
@@ -7536,6 +7663,8 @@ import { invalidateSettings } from './appConfig.js';
   // File-ids carried over from the original user message during a regen, so
   // photos / OCR overrides survive into the new send. Consumed once.
   let _pendingRegenAttachments = null;
+  // Read-only view for tests.
+  export function _pendingRegenAttachmentIds() { return _pendingRegenAttachments; }
 
   /**
    * Called after streaming completes to attach variant navigation if this was a regen.
@@ -7675,20 +7804,8 @@ import { invalidateSettings } from './appConfig.js';
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
-    const keepCount = aiIndex + 1;
-
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-
-      await sessionModule.loadSessions();
-      await sessionModule.selectSession(data.id);
-      if (uiModule) uiModule.showToast(`Forked → ${data.name}`);
+      await _forkSessionAt(aiIndex + 1, '', aiMsgElement.dataset.dbId || '');
     } catch (err) {
       console.error('Fork failed:', err);
       if (uiModule) uiModule.showError('Fork failed: ' + err.message);
