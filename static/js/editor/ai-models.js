@@ -140,6 +140,22 @@ export function modelCaps(modelId, endpointName, endpointType) {
   return { gen: false, inpaint: false };
 }
 
+// Global listeners resolve live controls instead of retaining editor instances.
+function syncCommandModel(value) {
+  const select = document.getElementById('ge-ai-command-model');
+  if (!select || !select._modelsReady) return;
+  if (select.value !== value) {
+    select.value = value;
+    if (select.value !== value) select.value = '';
+    updateFooterEditModel();
+  }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('ge-ai-command-model-change', e => syncCommandModel(e.detail?.value || ''));
+  window.addEventListener('storage', e => {
+    if (e.key === 'ge-ai-command-model') syncCommandModel(e.newValue || '');
+  });
+}
 globalThis.window?.addEventListener('ge:model-endpoints-updated', e => {
   document.getElementById('ge-ai-command-model')?._refreshAIModels?.(e.detail?.baseUrl || '');
 });
@@ -328,11 +344,15 @@ export function wireAIModelSelectors({ container, apiBase = '', openCookbookForI
       // Sentinel changes are handled by the component's delegated listener.
       if (aiCommandSelect) {
         aiCommandSelect._modelsReady = true;
+        // Legacy URL migration check: legacy endpoints with raw URLs are scrubbed.
+        const scrubModelUrl = (saved) => (saved && saved.startsWith('http://') ? '' : saved);
         if (aiCommandSelect._commandWired !== listeners) {
           aiCommandSelect._commandWired = listeners;
           listen(aiCommandSelect, 'change', () => {
             if (aiCommandSelect.value === '__serve_cookbook__') return;
+            const val = scrubModelUrl(aiCommandSelect.value) || '';
             updateFooterEditModel();
+            globalThis.window?.dispatchEvent?.(new CustomEvent('ge-ai-command-model-change', { detail: { value: val } }));
           });
         }
       }
