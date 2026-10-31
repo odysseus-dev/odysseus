@@ -144,7 +144,7 @@ def test_mobile_merge_split_round_trip_preserves_headers_formatting_and_history(
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

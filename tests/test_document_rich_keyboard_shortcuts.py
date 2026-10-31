@@ -101,7 +101,7 @@ def test_rich_document_shortcuts_work_at_desktop_and_mobile_widths():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

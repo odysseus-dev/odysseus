@@ -11,7 +11,7 @@ MODULE = (ROOT / "static/js/editor/history-budget.js").as_uri()
 def run_node(script: str):
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script], cwd=ROOT,
-        text=True, capture_output=True, check=True,
+        text=True, encoding="utf-8", capture_output=True, check=True,
     )
     return json.loads(result.stdout)
 

@@ -79,7 +79,7 @@ def test_mobile_heading_enter_exits_cleanly_and_is_one_step_undoable():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
@@ -159,7 +159,7 @@ def test_heading_enter_preserves_shift_middle_and_empty_heading_semantics():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

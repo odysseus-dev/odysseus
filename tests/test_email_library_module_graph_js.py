@@ -256,7 +256,7 @@ def test_every_package_module_evaluates_on_its_own_in_a_browser():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         env={
             **__import__("os").environ,
             "ODYSSEUS_EMAIL_MODULE_URLS": json.dumps(urls),
@@ -301,7 +301,7 @@ def test_wrapper_and_entry_module_hand_out_the_same_functions():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

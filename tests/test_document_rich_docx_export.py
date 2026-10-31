@@ -97,7 +97,7 @@ def test_browser_word_export_contains_native_rich_docx_ooxml():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     try:
         assert result.returncode == 0, result.stderr
@@ -189,7 +189,7 @@ def test_browser_markdown_word_export_keeps_heading_and_inline_formatting():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     try:
         assert result.returncode == 0, result.stderr

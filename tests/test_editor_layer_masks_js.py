@@ -31,7 +31,7 @@ def test_true_layer_masks_clip_in_document_coordinates():
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script], cwd=ROOT,
-        text=True, capture_output=True, check=True,
+        text=True, encoding="utf-8", capture_output=True, check=True,
     )
     data = json.loads(result.stdout)
 
@@ -115,7 +115,7 @@ def test_brush_uses_independently_positioned_layer_mask_origin():
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script], cwd=ROOT,
-        text=True, capture_output=True, check=True,
+        text=True, encoding="utf-8", capture_output=True, check=True,
     )
     data = json.loads(result.stdout)
 

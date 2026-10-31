@@ -25,7 +25,7 @@ def test_settings_js_syntax():
         proc = subprocess.run(
             ["node", "--check", str(js_file)],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             cwd=str(_REPO),
         )
         assert proc.returncode == 0, f"JS syntax error in {js_file.name}:\n{proc.stderr}"
@@ -111,7 +111,7 @@ def test_failed_save_shows_failure_in_simulated_dom():
     }
     run();
     """
-    proc = subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True)
+    proc = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", check=True)
     import json
     data = json.loads(proc.stdout)
     assert data["rejectedResult"] == {"text": "Failed to save", "color": "var(--red)"}

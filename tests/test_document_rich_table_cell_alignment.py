@@ -126,7 +126,7 @@ def test_mobile_table_cell_alignment_tracks_state_and_native_history():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

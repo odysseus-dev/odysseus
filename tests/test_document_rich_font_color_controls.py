@@ -198,7 +198,7 @@ def test_numeric_font_size_and_custom_colors_work_on_desktop_and_mobile():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

@@ -7,6 +7,6 @@ def test_turn_rendering_browser_suite():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         ["node", "--test", "tests/turnRendering.test.mjs"],
-        cwd=root, capture_output=True, text=True, timeout=120,
+        cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr

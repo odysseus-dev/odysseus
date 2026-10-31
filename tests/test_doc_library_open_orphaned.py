@@ -141,7 +141,7 @@ def test_mobile_explicit_load_restores_full_editor_from_bottom_dock():
         cwd=SRC.parents[1],
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

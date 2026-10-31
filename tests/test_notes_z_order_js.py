@@ -25,7 +25,7 @@ def _node_eval(source: str):
         input=source,
         cwd=ROOT,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
