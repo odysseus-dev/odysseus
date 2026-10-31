@@ -33,6 +33,7 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.email_mime import decode_text_part as _decode_text_part
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
 from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
@@ -923,29 +924,25 @@ def _extract_text(msg):
     """Extract plain text body from email message."""
     if msg.is_multipart():
         text_parts = []
+        html_parts = []
         for part in msg.walk():
             ct = part.get_content_type()
             cd = str(part.get("Content-Disposition", ""))
             if ct == "text/plain" and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
-            elif ct == "text/html" and not text_parts and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+                text = _decode_text_part(part)
+                if text:
+                    text_parts.append(text)
+            elif ct == "text/html" and not html_parts and "attachment" not in cd:
+                raw_html = _decode_text_part(part)
+                if raw_html:
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts)
+                    html_parts.append(text.strip())
+        return "\n".join(text_parts or html_parts)
     else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="replace")
+        text = _decode_text_part(msg)
+        if text:
             if msg.get_content_type() == "text/html":
                 text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
                 text = re.sub(r"</(?:p|div|li|tr|h[1-6])\s*>", "\n", text, flags=re.I)
