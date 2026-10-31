@@ -464,8 +464,11 @@ def _resolve_vl_model(configured: str, owner: str | None = None, session_id: str
         "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash",
         "grok-4",
         "glm-4.6v", "glm-4.5v", "glm-5v-turbo",
-        # open / local (Ollama/llama.cpp stock tags)
-        "gemma4", "gemma3", "qwen3-vl", "qwen2-vl", "llama3.2-vision", "llama4",
+        # open / local (Ollama/llama.cpp stock tags). Candidates are substring
+        # matches, so "qwen2-vl" alone misses Ollama's "qwen2.5vl:7b" and
+        # HF-style "Qwen2.5-VL-7B-Instruct" (#6487, #6489).
+        "gemma4", "gemma3", "qwen3-vl", "qwen2.5vl", "qwen2.5-vl", "qwen2-vl",
+        "llama3.2-vision", "llama4",
         "llava", "pixtral", "minicpm-v",
         "mistral-small3.2", "phi4",
         "internvl", "cogvlm", "moondream", "bakllava",
