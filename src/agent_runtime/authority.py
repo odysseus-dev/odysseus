@@ -445,6 +445,27 @@ def request_authority_for_http(request, request_text, **context):
     return create_request_authority(request_text, **context)
 
 
+def approval_can_admit(authority, tool_name, content, *, owner=None, session_id=None, workspace=None,
+                       policy=None, disabled_tools=()):
+    """Whether only a missing grant blocks this exact call.
+
+    True means the user, not the model or the request text, can admit it with
+    one exact approval: the authority is a valid root for this context and no
+    hard restriction denies the operation. A child authority never qualifies,
+    because an approval may not widen it. Mirrors the dispatcher's admission.
+    """
+    if not isinstance(authority, RequestAuthority) or authority.inherited:
+        return False
+    if not authority.bound_to(owner=owner, session_id=session_id, workspace=workspace):
+        return False
+    try:
+        operation = ExactOperation.normalize(tool_name, content)
+    except (ValueError, TypeError):
+        return False
+    authority = authority.restrict(policy, disabled_tools)
+    return not authority.restricted(operation) and not authority.permits(operation)
+
+
 @contextmanager
 def bind_request_authority(authority):
     if not isinstance(authority, RequestAuthority):

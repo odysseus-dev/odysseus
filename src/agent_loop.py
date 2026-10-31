@@ -68,6 +68,7 @@ from src.tool_policy import GUIDE_ONLY_DIRECTIVE, WEB_TOOL_NAMES, ToolPolicy, kn
 from src.client_tool_contract import TUI_CLIENT_TOOL_NAMES
 from src.tool_capabilities import (
     ResultIntegrity,
+    ToolGateDecision,
     ToolRunSecurityContext,
     blocked_tool_result,
     capabilities_for_action,
@@ -21057,7 +21058,13 @@ def _spec_unavailable_reply(unavailable) -> str:
             "I have not performed the requested lookup or action.")
 
 
-from src.agent_runtime.authority import MISSING_AUTHORITY, active_request_authority, with_request_authority
+from src.agent_runtime.authority import (
+    MISSING_AUTHORITY, active_request_authority, approval_can_admit, with_request_authority,
+)
+
+_AUTHORITY_GAP_REASON = (
+    "Your request did not cover this action, so it needs your approval before it runs."
+)
 
 
 
@@ -21268,6 +21275,7 @@ async def stream_agent_loop(
     _parent_run_id: Optional[str] = None,
     request_authority=MISSING_AUTHORITY,
     context_resolution=None,
+    authority_gap_approvals: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -25856,16 +25864,17 @@ async def stream_agent_loop(
             _approved_read_completed = True
             _approved_result_injected = True
         elif not tool_result_is_successful(approved_result) and (
-            approved_result.get("error")
-            or approved_result.get("blocked")
+            approved_result.get("blocked")
             or approved_result.get("approval_required")
-            or approved_result.get("exit_code") not in (None, 0)
         ):
             # An approval continuation is a sealed action, not a fresh agent
             # turn. If dispatch rejects that exact action (for example because
             # the tool was disabled between proposal and approval), report the
             # authoritative failure instead of asking the model to improvise a
-            # different domain or invent a generic synthesis.
+            # different domain or invent a generic synthesis. An action that
+            # ran and failed (HTTP 403, timeout, non-zero exit) is ordinary
+            # evidence: its result goes back to the model, which may recover
+            # under the same request authority (#6631).
             _approval_error = str(
                 approved_result.get("error")
                 or approved_result.get("output")
@@ -33534,6 +33543,25 @@ async def stream_agent_loop(
                     full_command,
                 )
             )
+            # A call the run-security gate allows can still be outside request
+            # authority. When a person can answer, ask for that exact action
+            # instead of letting dispatch silently deny it (#6631). Policy and
+            # hard denials are excluded by approval_can_admit and by the
+            # policy branch below, which runs first.
+            _authority_gap = bool(
+                authority_gap_approvals
+                and security_decision.allowed
+                and not _auto_local_media_evidence
+                and not run_security.delegated_credential
+                and approval_can_admit(
+                    active_request_authority(), block.tool_type, block.content,
+                    owner=owner, session_id=session_id, workspace=workspace,
+                    policy=tool_policy,
+                    disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                )
+            )
+            if _authority_gap:
+                security_decision = ToolGateDecision(False, _AUTHORITY_GAP_REASON)
             # A parsed model action can be rejected by a schema, policy, or
             # recovery guard before dispatch.  Keep that distinct from an
             # executed tool call in the streamed trace so canonical decoding
@@ -33768,6 +33796,7 @@ async def stream_agent_loop(
                         request_text=_last_user,
                         request_authority=active_request_authority(),
                         client_runtime_context=client_runtime_context,
+                        authority_gap=_authority_gap,
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
                     result = {

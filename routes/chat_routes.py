@@ -2854,6 +2854,10 @@ def setup_chat_routes(
                 decision = str(tool_approval_decision or "").strip().lower()
                 if decision not in {"approve", "approve_task", "deny"}:
                     raise HTTPException(400, "Invalid tool approval decision.")
+                if pending_tool_approval.authority_gap and decision == "approve":
+                    # An authority-gap card offers only "Allow this action". Never
+                    # turn it into a signed chat-session gate bypass.
+                    decision = "approve_task"
                 if plan_mode:
                     raise HTTPException(
                         409,
@@ -4716,6 +4720,14 @@ def setup_chat_routes(
                         external_untrusted_context_seen=external_untrusted_context_seen,
                         delegated_credential=_delegated_credential,
                         exact_approval=exact_tool_approval,
+                        # Ask for ungranted actions only when a person can
+                        # answer: not tool loopback, API tokens, or unattended
+                        # terminal runs.
+                        authority_gap_approvals=bool(
+                            not is_internal_tool_request(request)
+                            and not _delegated_credential
+                            and (client_runtime_context or {}).get("unattended_mode") is not True
+                        ),
                         client_runtime_context=client_runtime_context,
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
