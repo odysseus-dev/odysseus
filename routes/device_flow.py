@@ -73,12 +73,20 @@ class PendingDeviceFlowStore:
             for key in [k for k, v in self._pending.items() if v.get("expires_at", 0) < now]:
                 self._pending.pop(key, None)
 
-    def add(self, payload: Mapping[str, Any], *, interval: int, expires_in: int) -> str:
+    def add(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        interval: int,
+        expires_in: int,
+        principal: Optional[str] = None,
+    ) -> str:
         self.prune_expired()
         poll_id = uuid.uuid4().hex
         with self._lock:
             self._pending[poll_id] = {
                 "payload": dict(payload),
+                "principal": principal,
                 "interval": max(int(interval or 5), 1),
                 "expires_at": self._now() + max(int(expires_in or 900), 1),
                 "next_poll_at": 0.0,
@@ -92,6 +100,12 @@ class PendingDeviceFlowStore:
             if entry is None:
                 return None
             return dict(entry.get("payload") or {})
+
+    def principal_matches(self, poll_id: str, principal: Optional[str]) -> bool:
+        """True when the entry was started by `principal` (or is unknown)."""
+        with self._lock:
+            entry = self._pending.get(poll_id)
+            return entry is None or entry.get("principal") == principal
 
     def is_throttled(self, poll_id: str) -> bool:
         with self._lock:
@@ -139,26 +153,48 @@ def create_device_flow_router(
     store: PendingDeviceFlowStore,
     start_flow: Callable[[Request, Mapping[str, Any]], DeviceFlowStart],
     poll_flow: Callable[[Request, Mapping[str, Any]], DeviceFlowPoll],
+    authorize: Optional[Callable[[Request], Optional[str]]] = None,
 ) -> APIRouter:
-    """Create standard `/device/start|poll|cancel` routes for a provider."""
+    """Create standard `/device/start|poll|cancel` routes for a provider.
+
+    By default every route is admin-only. A provider whose setup belongs to an
+    ordinary user (e.g. connecting their own mailbox) passes `authorize`, which
+    must raise for unauthenticated callers and return the caller's identity;
+    the pending flow is then bound to that identity so only the user who
+    started it can poll or cancel it.
+    """
 
     router = APIRouter(prefix=prefix, tags=list(tags))
 
+    def _principal(request: Request) -> Optional[str]:
+        if authorize is None:
+            require_admin(request)
+            return None
+        return authorize(request)
+
+    def _require_same_principal(request: Request, poll_id: str) -> None:
+        principal = _principal(request)
+        if not store.principal_matches(poll_id, principal):
+            # 404, not 403: don't confirm another user's poll id exists.
+            raise HTTPException(404, "Unknown or expired login session")
+
     @router.post("/device/start")
     async def device_start(request: Request):
-        require_admin(request)
+        principal = _principal(request)
         form = await request.form()
         start = await _maybe_await(start_flow(request, form))
         interval = int(start.interval or 5)
         expires_in = int(start.expires_in or 900)
-        poll_id = store.add(start.pending, interval=interval, expires_in=expires_in)
+        poll_id = store.add(
+            start.pending, interval=interval, expires_in=expires_in, principal=principal,
+        )
         response = dict(start.response)
         response.update({"poll_id": poll_id, "interval": interval, "expires_in": expires_in})
         return response
 
     @router.post("/device/poll")
     async def device_poll(request: Request, poll_id: str = Form(...)):
-        require_admin(request)
+        _require_same_principal(request, poll_id)
         payload = store.get_payload(poll_id)
         if payload is None:
             raise HTTPException(404, "Unknown or expired login session")
@@ -186,7 +222,7 @@ def create_device_flow_router(
 
     @router.post("/device/cancel")
     def device_cancel(request: Request, poll_id: str = Form(...)):
-        require_admin(request)
+        _require_same_principal(request, poll_id)
         store.pop(poll_id)
         return {"status": "cancelled"}
 
