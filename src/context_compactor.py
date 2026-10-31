@@ -7,6 +7,7 @@ Summarizes older messages via the same LLM, preserving key context.
 
 import json
 import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -172,6 +173,9 @@ def keep_recent_image_turns(messages: List[Dict], *, keep: int = 2) -> List[Dict
 
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
+# Seconds to wait for the summary call. Slow local models (about 15 tok/s) need
+# more than the default for a long summary; raise it with COMPACT_SUMMARY_TIMEOUT.
+SUMMARY_TIMEOUT_SECONDS = float(os.getenv("COMPACT_SUMMARY_TIMEOUT", "30"))
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
 
 
@@ -664,7 +668,7 @@ async def maybe_compact(
             temperature=0.2,
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
-            timeout=30,
+            timeout=SUMMARY_TIMEOUT_SECONDS,
             reasoning_effort=effort_for_call(compact_url, compact_model, owner, session),
         )
     except Exception as e:
