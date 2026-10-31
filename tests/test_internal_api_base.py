@@ -50,3 +50,12 @@ def test_no_hardcoded_loopback_left_in_call_sites():
             if stripped.startswith("#"):
                 continue
             assert "localhost:7000" not in ln, f"{rel}: hardcoded loopback URL: {ln.strip()}"
+
+
+def test_bridge_compose_loopback_targets_container_port():
+    # Bridge mode maps APP_PORT (host) -> 7000 (container); APP_PORT is not
+    # passed in, so the loopback must point at the container port explicitly.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for rel in ("docker-compose.yml", "docker-compose.gpu-amd.yml", "docker-compose.gpu-nvidia.yml"):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "ODYSSEUS_INTERNAL_BASE=${ODYSSEUS_INTERNAL_BASE:-http://127.0.0.1:7000}" in text, rel
