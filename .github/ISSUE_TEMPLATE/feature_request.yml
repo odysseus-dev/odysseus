@@ -14,6 +14,8 @@ body:
         If your idea needs community input before it becomes a concrete proposal,
         start a [discussion](https://github.com/odysseus-dev/odysseus/discussions/categories/ideas) instead.
 
+        How a proposal is triaged and decided: [product and feature proposals](https://github.com/odysseus-dev/odysseus/blob/dev/docs/maintainers/product-and-features.md#feature-proposal-workflow).
+
   - type: checkboxes
     id: prerequisites
     attributes:
@@ -78,6 +80,32 @@ body:
     attributes:
       label: Prior Art / Related Issues
       description: Link any related issues, discussions, or external references that informed this proposal.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Size and reversibility
+      description: Your best guess; the triager decides. Definitions are in the maintainer handbook (product-and-features.md).
+      multiple: true
+      options:
+        - "Small, reversible change within ROADMAP"
+        - "Big (more than one PR, or changes existing default behaviour)"
+        - "New direction (new area, multi-user, data leaving the machine, ...)"
+        - "Hard to undo (migration, deleted data, changed contract or permissions)"
+        - "Not sure"
+
+  - type: textarea
+    id: decision_questions
+    attributes:
+      label: Questions for the Product Owner
+      description: If this needs a product decision, the exact yes/no questions — one per independent part.
+      placeholder: "1. Should notes be shareable between accounts on one instance? (yes/no)"
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, recording or demo
+      description: For anything that renders, attach screenshots or a short recording. Link a demo branch if you have one.
 
   - type: dropdown
     id: willing_to_implement

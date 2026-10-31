@@ -26,6 +26,8 @@ Record what is known and distinguish it from what remains unverified:
 - Priority, ownership, and relevant domain expertise.
 - Remaining unknowns, risks, and safe recovery or workaround when available.
 
+Feature requests follow the [feature proposal workflow](product-and-features.md#feature-proposal-workflow): triage within 7 days, and a product label on every triaged feature issue.
+
 Small and obvious fixes may go straight to a focused PR, consistent with [CONTRIBUTING.md](../../CONTRIBUTING.md) and [changes and review](changes-and-review.md).
 
 ## Practical priority language

@@ -13,6 +13,9 @@
 
      Private maintainer-preview PRs may instead use:
      N/A — maintainer integration work
+
+     New features: the linked issue carries `product: approved` or
+     `product: maintainer decision` (docs/maintainers/product-and-features.md).
 -->
 
 Fixes #
