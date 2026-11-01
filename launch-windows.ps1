@@ -131,7 +131,8 @@ if (-not (Test-Path $venvPy)) {
 
 # 3. Install / update dependencies
 Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
+& $venvPy -m pip install --quiet --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
+if ($LASTEXITCODE -ne 0) { Fail "TLS dependency bootstrap failed." }
 & $venvPy -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
 
@@ -163,6 +164,10 @@ if (Test-Path $cudaBase) {
 }
 
 # 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# -Port only reaches uvicorn as a flag. Everything that builds a URL for this
+# instance - internal_api_base(), companion pairing, the MCP OAuth callback -
+# reads APP_PORT, so set it too or they all assume 7000.
+$env:APP_PORT = $Port
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""

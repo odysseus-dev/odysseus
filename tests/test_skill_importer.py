@@ -1,4 +1,6 @@
 """Skill URL importer — GitHub path parsing."""
+import ipaddress
+
 import pytest
 
 from services.memory.skill_importer import (
@@ -9,6 +11,13 @@ from services.memory.skill_importer import (
     _list_github_dir,
     parse_skill_source,
 )
+
+
+def _allow_fetch(monkeypatch):
+    monkeypatch.setattr(
+        "services.memory.skill_importer._resolve_and_check_url",
+        lambda url: [ipaddress.ip_address("93.184.216.34")],
+    )
 
 
 def test_parse_github_blob_skill_md():
@@ -69,10 +78,7 @@ def test_fetch_bytes_rejects_cross_host_redirect(monkeypatch):
             return _Resp()
 
     monkeypatch.setattr("services.memory.skill_importer.httpx.Client", _Client)
-    monkeypatch.setattr(
-        "services.memory.skill_importer.check_outbound_url",
-        lambda url, **kwargs: (True, ""),
-    )
+    _allow_fetch(monkeypatch)
     with pytest.raises(SkillImportError, match="redirect target"):
         _fetch_bytes("https://raw.githubusercontent.com/o/r/main/SKILL.md")
 
@@ -89,10 +95,7 @@ def test_list_github_dir_accepts_api_github_response(monkeypatch):
         "services.memory.skill_importer._fetch_text",
         lambda url: "# skill\n",
     )
-    monkeypatch.setattr(
-        "services.memory.skill_importer.check_outbound_url",
-        lambda url, **kwargs: (True, ""),
-    )
+    _allow_fetch(monkeypatch)
 
     class _Resp:
         url = "https://api.github.com/repos/o/r/contents?ref=main"
@@ -144,10 +147,7 @@ def _mock_httpx_client(monkeypatch, response):
             return response
 
     monkeypatch.setattr("services.memory.skill_importer.httpx.Client", _Client)
-    monkeypatch.setattr(
-        "services.memory.skill_importer.check_outbound_url",
-        lambda url, **kwargs: (True, ""),
-    )
+    _allow_fetch(monkeypatch)
 
 
 def test_list_github_dir_surfaces_rate_limit(monkeypatch):

@@ -130,3 +130,365 @@ def test_update_recovers_from_non_dict_oauth_tokens():
     srv, storage = _fake_storage('["stale", "data"]')
     storage._update("tokens", {"access_token": "new"})
     assert json.loads(srv.oauth_tokens) == {"tokens": {"access_token": "new"}}
+
+
+# ── Callback origin ───────────────────────────────────────────────
+#
+# The redirect URI is registered with the authorization server (dynamically for
+# remote MCP servers, by hand for Google ones) and the browser is sent to it
+# after authorizing. It is resolved once, outside any request, so it cannot be
+# derived from the request the way the email OAuth routes derive theirs — an
+# operator-supplied origin is the only thing that can be right behind a proxy.
+# What the default can get right is the port, which the app knows.
+
+_REDIRECT_ENV = ("OAUTH_REDIRECT_BASE_URL", "APP_PUBLIC_URL", "APP_PORT")
+
+
+def _resolve_base(monkeypatch, **env):
+    for key in _REDIRECT_ENV:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return mcp_oauth._resolve_redirect_base()
+
+
+def test_redirect_base_defaults_to_the_bound_port(monkeypatch):
+    # The macOS launcher serves on 7860 because AirPlay Receiver holds 7000; a
+    # callback pinned to 7000 lands on AirPlay instead of Odysseus.
+    assert _resolve_base(monkeypatch, APP_PORT="7860") == "http://localhost:7860"
+
+
+def test_redirect_base_keeps_7000_when_app_port_is_unset(monkeypatch):
+    assert _resolve_base(monkeypatch) == "http://localhost:7000"
+
+
+def test_redirect_base_prefers_the_explicit_origin(monkeypatch):
+    # Only an operator-supplied origin can be right behind a TLS proxy, so it
+    # outranks the derived default — and its trailing slash is trimmed.
+    resolved = _resolve_base(
+        monkeypatch, OAUTH_REDIRECT_BASE_URL="https://odysseus.example/", APP_PORT="7860"
+    )
+    assert resolved == "https://odysseus.example"
+
+
+def test_redirect_base_accepts_app_public_url_as_the_alias(monkeypatch):
+    assert (
+        _resolve_base(monkeypatch, APP_PUBLIC_URL="https://public.example", APP_PORT="7860")
+        == "https://public.example"
+    )
+
+
+# ── Paste-back form origin ────────────────────────────────────────
+
+def _authorize_page():
+    from routes.mcp.mcp_routes import _oauth_authorize_page
+
+    return _oauth_authorize_page(
+        "https://accounts.google.com/o/oauth2/v2/auth?state=srv-1",
+        "srv-1",
+        "https://odysseus.example.com/api/mcp/oauth/callback",
+    )
+
+
+def test_paste_back_form_action_is_relative():
+    # Remote users finish the flow by pasting the callback URL into this form,
+    # so it has to post back to the origin they are on. An absolute action
+    # cannot: an http:// one is mixed content on an HTTPS page and gets blocked,
+    # and the app cannot reliably tell that it is behind TLS, because uvicorn
+    # only honours X-Forwarded-Proto from a peer inside --forwarded-allow-ips
+    # (default 127.0.0.1, which a proxy on the Docker bridge is not). A relative
+    # action is resolved by the browser and is right in every one of those cases.
+    page = _authorize_page()
+    assert 'action="/api/mcp/oauth/exchange/srv-1"' in page
+    assert 'action="http' not in page
+
+
+# ── Docker configurability ────────────────────────────────────────
+#
+# The override above is the only fix available to a Docker install: the
+# container always listens on 7000 and cannot see the host port map, so the
+# derived default cannot be right there. Compose has to forward the variable
+# or the escape hatch does not exist.
+
+_COMPOSE_FILES = (
+    "docker-compose.yml",
+    "docker-compose.gpu-nvidia.yml",
+    "docker-compose.gpu-amd.yml",
+)
+
+
+def _repo_root():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parent.parent
+
+
+def test_redirect_base_override_is_forwarded_into_the_container():
+    import yaml
+
+    for name in _COMPOSE_FILES:
+        path = _repo_root() / name
+        compose = yaml.safe_load(path.read_text(encoding="utf-8"))
+        environment = set(compose["services"]["odysseus"]["environment"])
+        assert "OAUTH_REDIRECT_BASE_URL=${OAUTH_REDIRECT_BASE_URL:-}" in environment, name
+
+
+def test_redirect_base_override_is_documented():
+    import pytest
+
+    env_example = _repo_root() / ".env.example"
+    if not env_example.exists():
+        pytest.skip("this checkout does not include the optional .env.example file")
+    assert "# OAUTH_REDIRECT_BASE_URL=" in env_example.read_text(encoding="utf-8")
+
+
+# ── Launcher port propagation ─────────────────────────────────────
+#
+# The derived default is only as good as APP_PORT, and every launcher hands the
+# port to uvicorn as a command-line flag, which the app cannot read back. Each
+# one has to put the same value in the environment or the callback falls back to
+# 7000 — which is the macOS-launcher-on-7860 case this whole change is about.
+# internal_api_base() and companion pairing read APP_PORT too, so they go wrong
+# in the same way.
+
+_LAUNCHERS = (
+    # file, the export, the uvicorn flag it has to agree with
+    ("start-macos.sh", 'export APP_PORT="$PORT"', '--port "$PORT"'),
+    ("build-macos-app.sh", 'export APP_PORT="$PORT"', '--port "$PORT"'),
+    ("launch-windows.ps1", "$env:APP_PORT = $Port", "--port $Port"),
+)
+
+
+def test_launchers_export_the_port_they_serve_on():
+    for name, export, uvicorn_flag in _LAUNCHERS:
+        text = (_repo_root() / name).read_text(encoding="utf-8")
+        assert uvicorn_flag in text, f"{name}: launcher no longer passes {uvicorn_flag}"
+        assert export in text, f"{name}: serves on a port the app cannot read back"
+
+
+# ── Callback & Exchange Expired State Handling ───────────────────
+
+def test_oauth_callback_expired_state_returns_dedicated_expired_page(monkeypatch):
+    """An unknown or expired generic MCP OAuth state in the callback must return
+    the dedicated 'Authorization Expired' page instead of a bare 403 'Admin only'
+    or a 404 'Server not found'."""
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from routes.mcp import mcp_routes
+
+    # Simulate unauthenticated request that would fail admin check if invoked
+    def _deny_admin(request):
+        raise HTTPException(403, "Admin only")
+
+    monkeypatch.setattr(mcp_routes, "require_admin", _deny_admin)
+
+    # Empty DB / no matching server
+    class FakeQuery:
+        def filter(self, *a):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeSession:
+        def query(self, *a):
+            return FakeQuery()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_routes, "SessionLocal", lambda: FakeSession())
+
+    app = FastAPI()
+    manager = MagicMock()
+    router = mcp_routes.setup_mcp_routes(manager)
+    app.include_router(router)
+    client = TestClient(app)
+
+    # Both code and state are provided, but state is not in _pending (expired/unknown)
+    resp = client.get("/api/mcp/oauth/callback?code=some-code&state=expired-state-123")
+    assert resp.status_code == 400
+    assert "Authorization Expired" in resp.text
+    assert (
+        "This authorization round has expired. Press Reconnect in Odysseus and try again."
+        in resp.text
+    )
+    # Ensure it did not return the bare 403 "Admin only"
+    assert "Admin only" not in resp.text
+
+
+def test_oauth_callback_active_pending_state_succeeds_without_admin(monkeypatch):
+    """An active pending generic MCP OAuth state resolves without requiring admin auth."""
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from routes.mcp import mcp_routes
+
+    # Admin check fails if invoked
+    def _deny_admin(request):
+        raise HTTPException(403, "Admin only")
+
+    monkeypatch.setattr(mcp_routes, "require_admin", _deny_admin)
+
+    app = FastAPI()
+    manager = MagicMock()
+    router = mcp_routes.setup_mcp_routes(manager)
+    app.include_router(router)
+    client = TestClient(app)
+
+    async def go():
+        fut = mcp_oauth.register_pending("pending-round-1")
+        resp = client.get("/api/mcp/oauth/callback?code=auth-code-xyz&state=pending-round-1")
+        assert resp.status_code == 200
+        assert "Authorization Successful" in resp.text
+        code, state = await asyncio.wait_for(fut, timeout=1)
+        assert code == "auth-code-xyz"
+        assert state == "pending-round-1"
+
+    asyncio.run(go())
+
+
+def test_oauth_callback_legacy_google_server_requires_admin(monkeypatch):
+    """Legacy Google OAuth callbacks (where state is server_id of a server with
+    oauth_config) still enforce require_admin."""
+    import json
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from routes.mcp import mcp_routes
+    from core.database import McpServer
+
+    # Server exists in DB with Google oauth_config
+    google_srv = McpServer(
+        id="google-srv-1",
+        name="Google Workspace",
+        oauth_config=json.dumps({"provider": "google", "keys_file": "k.json", "token_file": "t.json"}),
+    )
+
+    class FakeQuery:
+        def filter(self, *a):
+            return self
+
+        def first(self):
+            return google_srv
+
+    class FakeSession:
+        def query(self, *a):
+            return FakeQuery()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_routes, "SessionLocal", lambda: FakeSession())
+
+    # When require_admin denies, 403 is raised for the legacy Google path
+    def _deny_admin(request):
+        raise HTTPException(403, "Admin only")
+
+    monkeypatch.setattr(mcp_routes, "require_admin", _deny_admin)
+
+    app = FastAPI()
+    manager = MagicMock()
+    router = mcp_routes.setup_mcp_routes(manager)
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.get("/api/mcp/oauth/callback?code=code-123&state=google-srv-1")
+    assert resp.status_code == 403
+    assert "Admin only" in resp.text
+
+
+def test_oauth_exchange_expired_generic_state_returns_expired_page(monkeypatch):
+    """Remote paste-back flow for a generic MCP server returns the dedicated expired
+    page when the state is no longer pending, instead of 'No OAuth config.'."""
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes.mcp import mcp_routes
+    from core.database import McpServer
+
+    monkeypatch.setattr(mcp_routes, "require_admin", lambda r: None)
+
+    # Server exists in DB without oauth_config (generic MCP server)
+    generic_srv = McpServer(
+        id="http-srv-1",
+        name="Remote HTTP MCP",
+        oauth_config=None,
+    )
+
+    class FakeQuery:
+        def filter(self, *a):
+            return self
+
+        def first(self):
+            return generic_srv
+
+    class FakeSession:
+        def query(self, *a):
+            return FakeQuery()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_routes, "SessionLocal", lambda: FakeSession())
+
+    app = FastAPI()
+    manager = MagicMock()
+    router = mcp_routes.setup_mcp_routes(manager)
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/mcp/oauth/exchange/http-srv-1",
+        data={"callback_url": "http://localhost:7000/api/mcp/oauth/callback?code=code-1&state=expired-state"},
+    )
+    assert resp.status_code == 400
+    assert "Authorization Expired" in resp.text
+    assert (
+        "This authorization round has expired. Press Reconnect in Odysseus and try again."
+        in resp.text
+    )
+    assert "No OAuth config." not in resp.text
+
+
+def test_oauth_callback_missing_state_returns_malformed_error_not_expired():
+    """Missing state parameter in callback must return a bad-request error and must
+    not be treated as an expired authorization round."""
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes.mcp import mcp_routes
+
+    app = FastAPI()
+    manager = MagicMock()
+    router = mcp_routes.setup_mcp_routes(manager)
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.get("/api/mcp/oauth/callback?code=some-code")
+    assert resp.status_code == 400
+    assert "No OAuth state parameter found in the callback URL." in resp.text
+    assert "Authorization Expired" not in resp.text
+    assert "This authorization round has expired" not in resp.text
+
+
+def test_oauth_callback_missing_code_returns_malformed_error_not_expired():
+    """Missing code parameter in callback must return a bad-request error and must
+    not be treated as an expired authorization round."""
+    from unittest.mock import MagicMock
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes.mcp import mcp_routes
+
+    app = FastAPI()
+    manager = MagicMock()
+    router = mcp_routes.setup_mcp_routes(manager)
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.get("/api/mcp/oauth/callback?state=some-state")
+    assert resp.status_code == 400
+    assert "No authorization code found in the URL." in resp.text
+    assert "Authorization Expired" not in resp.text
+    assert "This authorization round has expired" not in resp.text

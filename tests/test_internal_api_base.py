@@ -15,8 +15,8 @@ def _base(monkeypatch, **env):
     return cc.internal_api_base()
 
 
-def test_default_is_legacy_7000(monkeypatch):
-    assert _base(monkeypatch) == "http://127.0.0.1:7000"
+def test_default_matches_app_bind_port(monkeypatch):
+    assert _base(monkeypatch) == "http://127.0.0.1:7011"
 
 
 def test_app_port_is_honored(monkeypatch):
@@ -41,7 +41,7 @@ def test_no_hardcoded_loopback_left_in_call_sites():
         "src/tools/_common.py",
         "src/cookbook_serve_lifecycle.py",
         "src/builtin_actions.py",
-        "routes/task_routes.py",
+        "routes/task/task_routes.py",
     ):
         text = (root / rel).read_text(encoding="utf-8")
         # Allow it only inside comments; flag any code occurrence.

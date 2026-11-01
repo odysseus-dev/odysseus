@@ -1,11 +1,12 @@
 import json
 
 import routes.prefs_routes as prefs_routes
+from core import atomic_io
 
 
 def test_save_replaces_prefs_file_atomically(monkeypatch, tmp_path):
     calls = []
-    real_replace = prefs_routes.os.replace
+    real_replace = atomic_io.os.replace
 
     def fake_replace(src, dst):
         calls.append((src, dst))
@@ -13,7 +14,7 @@ def test_save_replaces_prefs_file_atomically(monkeypatch, tmp_path):
 
     prefs_file = tmp_path / "data" / "user_prefs.json"
     monkeypatch.setattr(prefs_routes, "PREFS_FILE", str(prefs_file))
-    monkeypatch.setattr(prefs_routes.os, "replace", fake_replace)
+    monkeypatch.setattr(atomic_io.os, "replace", fake_replace)
 
     prefs_routes._save({"theme": "dark"})
 

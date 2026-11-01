@@ -1,11 +1,12 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
-import { addFinishBadge } from './vote.js';
-import { getModelCost, safeDisplayImageSrc } from '../chatRenderer.js';
+import { consumeCompareEvents } from './sse.js';
+import { addFinishBadge } from './vote.js?v=20260828resendcaldrag1';
+import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260914metricssummary1';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
-import uiModule from '../ui.js';
-import presetsModule from '../presets.js';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
+import presetsModule from '../presets.js?v=20260908personaname1';
 
 var escapeHtml = uiModule.esc;
 
@@ -24,11 +25,212 @@ function _safeHttpHref(raw) {
 // ── Lazy-registered functions from compare.js (avoids circular deps) ──
 let _rerollPane = null;
 let _autoPreviewHtml = null;
+let _setSendBtn = null;
 
 /** Register external functions that live in compare.js. */
-function registerStreamActions({ rerollPane, autoPreviewHtml }) {
+function registerStreamActions({ rerollPane, autoPreviewHtml, setSendBtn }) {
   _rerollPane = rerollPane;
   _autoPreviewHtml = autoPreviewHtml;
+  _setSendBtn = setSendBtn;
+}
+
+function _paneSessionIsCurrent(paneIdx, sessionId) {
+  return Boolean(
+    state.isActive
+    && state._paneSessionIds[paneIdx] === sessionId
+    && document.getElementById('cmp-history-' + paneIdx)
+  );
+}
+
+function _setCompareBusy(active) {
+  state._streaming = Boolean(active);
+  if (_setSendBtn) _setSendBtn(active ? 'stop' : 'send');
+  document.querySelectorAll('#compare-shuffle-btn, #compare-check-btn, #compare-add-btn').forEach((button) => {
+    button.disabled = Boolean(active);
+    button.style.opacity = active ? '0.25' : '0.7';
+    button.style.pointerEvents = active ? 'none' : '';
+  });
+}
+
+function _syncCompareBusyFromPanes() {
+  _setCompareBusy((state._abortControllers || []).some(Boolean));
+}
+
+function _compareTimezoneHeaders() {
+  const headers = { 'X-Tz-Offset': String(-new Date().getTimezoneOffset()) };
+  try {
+    headers['X-Tz-Name'] = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch (_) {
+    headers['X-Tz-Name'] = '';
+  }
+  return headers;
+}
+
+function _compactNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  if (Math.abs(num) >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (Math.abs(num) >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(Math.round(num));
+}
+
+function _formatCost(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  if (num < 0.001) return '<$0.001';
+  return '$' + (num < 0.01 ? num.toFixed(4) : num.toFixed(3));
+}
+
+function _setPaneSummary(paneIdx, metrics, cost) {
+  const summary = document.getElementById('cmp-summary-' + paneIdx);
+  if (!summary) return;
+  if (!metrics) {
+    summary.textContent = '';
+    summary.title = '';
+    return;
+  }
+  const outputTokens = metrics.output_tokens;
+  const responseTime = metrics.response_time ?? metrics.total_time;
+  const ttft = metrics.client_ttft ?? metrics.time_to_first_token;
+  const explicitTps = metrics.tokens_per_second ?? metrics.gen_tps ?? metrics.tps;
+  const numericOutput = Number(outputTokens);
+  const numericTime = Number(responseTime);
+  const numericTps = Number(explicitTps);
+  const derivedTps = Number.isFinite(numericTps)
+    ? numericTps
+    : (Number.isFinite(numericOutput) && Number.isFinite(numericTime) && numericTime > 0)
+      ? numericOutput / numericTime
+      : null;
+  const bits = [];
+  if (Number.isFinite(Number(ttft)) && Number(ttft) > 0) bits.push('TTFT ' + Number(ttft).toFixed(3) + 's');
+  if (outputTokens != null && outputTokens !== 'undefined') bits.push(_compactNumber(outputTokens) + ' tok');
+  if (derivedTps != null) bits.push((derivedTps >= 100 ? String(Math.round(derivedTps)) : derivedTps.toFixed(1).replace(/\.0$/, '')) + '/s');
+  if (metrics.context_percent > 0) bits.push(metrics.context_percent + '% ctx');
+  if (cost !== null && cost !== undefined) bits.push(_formatCost(cost));
+  summary.textContent = bits.join(' · ');
+  summary.title = bits.length ? 'Response summary: ' + bits.join(', ') : '';
+}
+
+function _appendPaneMessage(hist, role, text) {
+  const message = document.createElement('div');
+  message.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
+  const roleEl = document.createElement('div');
+  roleEl.className = 'role';
+  roleEl.textContent = role === 'user' ? 'You' : 'AI';
+  const body = document.createElement('div');
+  body.className = 'body';
+  body.textContent = text || '';
+  message.appendChild(roleEl);
+  message.appendChild(body);
+  hist.appendChild(message);
+  return message;
+}
+
+function _createPaneContinuationMessage(hist) {
+  const message = _appendPaneMessage(hist, 'assistant', '');
+  const body = message.querySelector('.body');
+  if (spinnerModule) {
+    const spinner = spinnerModule.create('Continuing...', 'right');
+    body.appendChild(spinner.createElement());
+    spinner.start();
+    message._spinner = spinner;
+  }
+  return message;
+}
+
+function _restorePaneAskUserCard(paneIdx, sessionId, submission, originController) {
+  const hist = document.getElementById('cmp-history-' + paneIdx);
+  const restored = _renderPaneAskUserCard(
+    paneIdx,
+    sessionId,
+    submission.payload || {},
+    hist,
+    null,
+    originController,
+  );
+  if (uiModule) {
+    uiModule.showError(
+      restored
+        ? 'This pane is still streaming — choose again once it settles.'
+        : 'Compare pane is still streaming; the choice was not sent.',
+    );
+  }
+  return restored;
+}
+
+function _resumePaneChoiceWhenIdle(paneIdx, sessionId, originController, submission) {
+  if (!_paneSessionIsCurrent(paneIdx, sessionId)) return false;
+
+  const startedAt = Date.now();
+  const resume = () => {
+    if (!_paneSessionIsCurrent(paneIdx, sessionId)) return;
+    const activeController = state._abortControllers[paneIdx];
+    if (activeController === originController) {
+      if (Date.now() - startedAt < 10000) {
+        setTimeout(resume, 25);
+        return;
+      }
+      // The originating stream never released the pane. The card was already
+      // removed when the choice was accepted, so put it back rather than
+      // swallowing a decision the user made.
+      _restorePaneAskUserCard(paneIdx, sessionId, submission, originController);
+      return;
+    }
+    // A reroll/model replacement already owns this pane. Never send the stale
+    // choice into that replacement stream or session UI.
+    if (activeController) return;
+
+    const hist = document.getElementById('cmp-history-' + paneIdx);
+    if (!hist) return;
+    hist.querySelectorAll('.ask-user-card').forEach((card) => card.remove());
+
+    const isApproval = submission.kind === 'tool_approval';
+    const message = isApproval ? '' : String(submission.text || submission.label || '');
+    if (!isApproval) _appendPaneMessage(hist, 'user', message);
+    const aiMessage = _createPaneContinuationMessage(hist);
+    hist.scrollTop = hist.scrollHeight;
+
+    const resumeOptions = { skipBadge: true };
+    if (isApproval) {
+      resumeOptions.toolApproval = {
+        approval_id: String(submission.approval_id || ''),
+        decision: String(submission.decision || '').toLowerCase(),
+      };
+    }
+
+    _setCompareBusy(true);
+    streamToPane(paneIdx, sessionId, message, aiMessage, resumeOptions)
+      .catch((error) => {
+        console.error('Compare pane continuation failed:', error);
+        if (uiModule) uiModule.showError('Compare continuation failed: ' + error.message);
+      })
+      .finally(_syncCompareBusyFromPanes);
+  };
+
+  setTimeout(resume, 0);
+  return true;
+}
+
+function _renderPaneAskUserCard(paneIdx, sessionId, payload, hist, aiMsgEl, originController) {
+  if (!hist || !hist.isConnected || !_paneSessionIsCurrent(paneIdx, sessionId)) return null;
+  if (aiMsgEl && aiMsgEl._spinner) {
+    if (aiMsgEl._spinner.element) aiMsgEl._spinner.destroy();
+    aiMsgEl._spinner = null;
+  }
+  const card = renderAskUserCard(payload, {
+    root: hist,
+    onSubmit: (submission) => _resumePaneChoiceWhenIdle(
+      paneIdx,
+      sessionId,
+      originController,
+      submission,
+    ),
+  });
+  if (card) {
+    card.dataset.comparePane = String(paneIdx);
+    card.dataset.compareSession = String(sessionId);
+  }
+  return card;
 }
 
 /** Format milliseconds as human-readable duration (e.g. "120ms", "1.23s", "4.5s"). */
@@ -156,6 +358,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
   // Show stop button for this pane
   const _paneEl = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
   if (_paneEl) {
+    _paneEl.classList.remove('is-done', 'is-failed', 'is-awaiting-input');
+    _paneEl.classList.add('is-streaming');
+    _setPaneSummary(paneIdx, null, null);
     const _stopBtn = _paneEl.querySelector('.pane-stop-btn');
     if (_stopBtn) _stopBtn.style.display = '';
   }
@@ -164,6 +369,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
   let metrics = null;
   let timedOut = false;
   let streamOk = false;
+  let awaitingChoice = false;
   let currentToolBlock = null;  // track active agent tool block
   // Idle timeout — abort only if no data is received for this many seconds.
   // Long generations (SVG, big code) are fine as long as the stream stays
@@ -219,6 +425,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     const fd = new FormData();
     fd.append('message', message);
     fd.append('session', sessionId);
+    if (opts.toolApproval) {
+      fd.append('tool_approval_id', opts.toolApproval.approval_id || '');
+      fd.append('tool_approval_decision', opts.toolApproval.decision || '');
+    }
 
     // Compare mode determines what tools/features are enabled
     const isAgent = state._compareMode === 'agent';
@@ -256,29 +466,16 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     }
 
     const response = await fetch(`${state.API_BASE}/api/chat_stream`, {
-      method: 'POST', body: fd, signal: ac.signal
+      method: 'POST',
+      body: fd,
+      headers: _compareTimezoneHeaders(),
+      signal: ac.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      _resetIdleTimeout();  // any chunk = stream is alive
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
-        if (data === '[DONE]') break;
+    await consumeCompareEvents(response,
+      (json) => {
         try {
-          const json = JSON.parse(data);
           if (json.type === 'metrics') {
             metrics = json.data;
 
@@ -321,6 +518,38 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
                 aiMsgEl._spinner = newSpinner;
               }
             }
+
+          // ── Pane-local question / approval selector ──
+          } else if (json.type === 'ask_user') {
+            awaitingChoice = true;
+            const paneEl = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
+            if (paneEl) paneEl.classList.add('is-awaiting-input');
+            _renderPaneAskUserCard(
+              paneIdx,
+              sessionId,
+              json.data || {},
+              hist,
+              aiMsgEl,
+              ac,
+            );
+            if (hist) hist.scrollTop = hist.scrollHeight;
+
+          // Deny ends as a tiny resolution-only stream, so replace the
+          // continuation spinner with an explicit pane-local result.
+          } else if (json.type === 'tool_approval_resolved') {
+            if (aiMsgEl._spinner) {
+              if (aiMsgEl._spinner.element) aiMsgEl._spinner.destroy();
+              aiMsgEl._spinner = null;
+            }
+            accumulated = json.decision === 'deny' ? 'Denied.' : 'Approval recorded.';
+            let target = aiMsgEl._textEl;
+            if (!target) {
+              target = document.createElement('div');
+              target.className = 'compare-text-content';
+              aiBody.appendChild(target);
+              aiMsgEl._textEl = target;
+            }
+            target.textContent = accumulated;
 
           // ── Tool start (bash, web search agent tool) ──
           } else if (json.type === 'tool_start') {
@@ -416,7 +645,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               }
               const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${escapeHtml(cmd)}</pre>` : '';
               currentToolBlock.className = 'agent-thread-node' + (ok ? '' : ' error');
-              currentToolBlock.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${escapeHtml(tLabel)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml}${outHtml}</div>`;
+              // The chevron is drawn by CSS; leaving a literal ▶ here created
+              // two arrows in the completed tool rows.
+              currentToolBlock.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${escapeHtml(tLabel)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron"></span></div><div class="agent-thread-content">${cmdHtml}${outHtml}</div>`;
               currentToolBlock.querySelector('.agent-thread-header').addEventListener('click', () => currentToolBlock.classList.toggle('open'));
               currentToolBlock = null;
               // Reset text element so next deltas create a fresh container
@@ -426,7 +657,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             if (hist) hist.scrollTop = hist.scrollHeight;
           } else if (json.delta) {
             // Skip text deltas if we already rendered an image
-            if (aiMsgEl._imageData) continue;
+            if (aiMsgEl._imageData) return;
             // Capture TTFT on very first text delta
             if (!accumulated && !_ttft) _ttft = performance.now() - _timerStart;
             // On first delta, destroy spinner and prepare text area
@@ -455,8 +686,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             _scheduleLiveRender(target);
           }
         } catch (e) { console.warn('Compare stream render error:', e); }
-      }
-    }
+      }, _resetIdleTimeout);
 
     streamOk = true;
     // Destroy any remaining spinner
@@ -471,6 +701,12 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     }
     if (window.hljs) {
       finalTarget.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
+    }
+
+    // Preserve the client-side time-to-first-token measurement with the
+    // server metrics so it appears in the compare summary and footer.
+    if (metrics && _ttft > 0 && metrics.client_ttft == null) {
+      metrics.client_ttft = Number((_ttft / 1000).toFixed(3));
     }
 
     // ── Show play button if response contains HTML ──
@@ -554,6 +790,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       const outputTokens = metrics.output_tokens;
       const responseTime = metrics.response_time ?? metrics.total_time;
       const explicitTps = metrics.tokens_per_second ?? metrics.gen_tps ?? metrics.tps;
+      const ttft = metrics.client_ttft ?? metrics.time_to_first_token;
       const numericOutput = Number(outputTokens);
       const numericTime = Number(responseTime);
       const numericTps = Number(explicitTps);
@@ -566,6 +803,9 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
         ? (derivedTps >= 100 ? String(Math.round(derivedTps)) : derivedTps.toFixed(2).replace(/\.?0+$/, ''))
         : null;
       const parts = [];
+      if (Number.isFinite(Number(ttft)) && Number(ttft) > 0) {
+        parts.push('TTFT ' + Number(ttft).toFixed(3) + 's');
+      }
       if (outputTokens != null && outputTokens !== 'undefined') {
         parts.push(outputTokens + ' tokens');
       }
@@ -578,6 +818,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       // Add per-request cost and cost per 1000
       const _model = metrics.model || (state._selectedModels[paneIdx] && state._selectedModels[paneIdx].model) || '';
       const _cost = getModelCost(_model, metrics.input_tokens || 0, metrics.output_tokens || 0);
+      _setPaneSummary(paneIdx, metrics, _cost);
       // Build the metrics span with optional cost and context
       span.textContent = parts.join(' | ');
       if (_cost !== null) {
@@ -597,6 +838,21 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
       footer.appendChild(span);
       aiMsgEl.appendChild(footer);
+    }
+    const footerMetrics = aiMsgEl?.querySelector('.msg-footer:last-child .response-metrics');
+    if (footerMetrics) {
+      const thinkingMode = state._paneGenerationSettings[paneIdx]?.thinking_mode;
+      if (thinkingMode === 'off') {
+        const thinkingState = document.createElement('span');
+        thinkingState.className = 'response-thinking-state';
+        thinkingState.textContent = (footerMetrics.textContent ? ' | ' : '') + 'Thinking off';
+        footerMetrics.appendChild(thinkingState);
+      }
+      footerMetrics.dataset.action = 'settings';
+      footerMetrics.dataset.pane = String(paneIdx);
+      footerMetrics.setAttribute('role', 'button');
+      footerMetrics.setAttribute('tabindex', '0');
+      footerMetrics.title = 'Response details and inference settings';
     }
     if (hist) hist.scrollTop = hist.scrollHeight;
 
@@ -628,9 +884,15 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
     } else {
       console.error('Compare stream error:', error);
-      aiBody.innerHTML = '<span style="color:var(--color-error);">Error: ' + escapeHtml(error.message) + '</span>';
+      awaitingChoice = false;
+      const message = state._blindMode ? 'Model request failed. Try again.' : error.message;
+      aiBody.innerHTML = '<span style="color:var(--color-error);">Error: ' + escapeHtml(message) + '</span>';
     }
   } finally {
+    if (aiMsgEl._spinner) {
+      aiMsgEl._spinner.destroy();
+      aiMsgEl._spinner = null;
+    }
     clearTimeout(timeoutId);
     _timerDone = true;
     cancelAnimationFrame(_rafId);
@@ -640,19 +902,25 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       // TTFT removed from the header per user request — just show total time.
       _timerEl.textContent = _formatMs(_totalMs);
     }
-    state._abortControllers[paneIdx] = null;
+    if (state._abortControllers[paneIdx] === ac) {
+      state._abortControllers[paneIdx] = null;
+    }
     // Hide stop button, show response action buttons
     const _paneElFinal = document.querySelector(`.compare-pane[data-pane="${paneIdx}"]`);
     if (_paneElFinal) {
+      _paneElFinal.classList.remove('is-streaming');
+      _paneElFinal.classList.toggle('is-awaiting-input', awaitingChoice);
+      _paneElFinal.classList.toggle('is-done', streamOk && !awaitingChoice);
+      _paneElFinal.classList.toggle('is-failed', !streamOk && !awaitingChoice);
       const _stopBtnFinal = _paneElFinal.querySelector('.pane-stop-btn');
       if (_stopBtnFinal) _stopBtnFinal.style.display = 'none';
-      if (accumulated.trim()) {
+      if (!awaitingChoice && accumulated.trim()) {
         _paneElFinal.querySelectorAll('.pane-needs-response').forEach(b => b.style.display = '');
       }
     }
     state._paneMetrics[paneIdx] = metrics;
     state._paneElapsed[paneIdx] = _totalMs;
-    if (!opts.skipBadge) {
+    if (!opts.skipBadge && !awaitingChoice) {
       if (streamOk) {
         state._finishOrder++;
         if (state._parallel) {
@@ -682,12 +950,14 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
     }
     // Auto-grade against expected answer — stamps ✓ or ✗ on the pane header.
-    if (streamOk && state._expectedAnswer) {
+    if (streamOk && !awaitingChoice && state._expectedAnswer) {
       _stampGradeBadge(paneIdx, accumulated, state._expectedAnswer);
     }
     // Show copy/reroll buttons now that response exists
     const paneEl = document.querySelector('.compare-pane:nth-child(' + (paneIdx + 1) + ')');
-    if (paneEl) paneEl.querySelectorAll('.pane-needs-response').forEach(b => b.style.display = '');
+    if (paneEl && !awaitingChoice && accumulated.trim()) {
+      paneEl.querySelectorAll('.pane-needs-response').forEach(b => b.style.display = '');
+    }
   }
 }
 
@@ -727,9 +997,12 @@ function _stampGradeBadge(paneIdx, response, expected) {
   badge.className = 'pane-grade-badge ' + (pass ? 'pass' : 'fail');
   badge.title = pass ? 'Response contains the expected answer' : 'Expected answer not found in response';
   badge.textContent = pass ? '✓' : '✗';
-  // Insert just before the finish badge if present, else after the title
+  // The two-row pane header keeps result badges inside .pane-stats.
+  // Always insert relative to the finish badge's actual parent.
   const finBadge = header.querySelector('.pane-finish-badge');
-  if (finBadge) header.insertBefore(badge, finBadge);
+  const stats = header.querySelector('.pane-stats');
+  if (finBadge?.parentNode) finBadge.parentNode.insertBefore(badge, finBadge);
+  else if (stats) stats.appendChild(badge);
   else header.appendChild(badge);
 }
 

@@ -34,6 +34,10 @@ fi
 # values (APP_PORT / APP_BIND), then built-in defaults.
 PORT="${ODYSSEUS_PORT:-${APP_PORT:-7860}}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
 HOST="${ODYSSEUS_HOST:-${APP_BIND:-127.0.0.1}}" # Set APP_BIND=0.0.0.0 in .env for LAN/Tailscale access.
+# The port only reaches uvicorn as a flag, so export it too: everything that
+# builds a URL for this instance — internal_api_base(), the companion pairing
+# code, the MCP OAuth callback — reads APP_PORT and would otherwise assume 7000.
+export APP_PORT="$PORT"
 PROBE_HOST="$HOST"
 if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
     PROBE_HOST="127.0.0.1"
@@ -136,11 +140,11 @@ if [ ! -x "$VENV_PY" ] || ! "$VENV_PY" -m pip --version >/dev/null 2>&1; then
     echo "▶ Creating Python environment…"
     "$PY" -m venv venv
 fi
-REQ_HASH="$(md5 -q requirements.txt 2>/dev/null || md5sum requirements.txt | cut -d' ' -f1)"
+REQ_HASH="$("$VENV_PY" -c 'import hashlib, pathlib; print(hashlib.sha256(b"".join(pathlib.Path(p).read_bytes() for p in ("requirements.txt", "requirements-bootstrap.txt"))).hexdigest())')"
 REQ_HASH_FILE="venv/.requirements_hash"
 if [ ! -f "$REQ_HASH_FILE" ] || [ "$REQ_HASH" != "$(cat "$REQ_HASH_FILE" 2>/dev/null)" ]; then
   echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-  "$VENV_PY" -m pip install --quiet --upgrade pip
+  "$VENV_PY" -m pip install --quiet --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
   # Not --quiet: this is the slow step, so show progress (and any real errors).
   "$VENV_PY" -m pip install -r requirements.txt
   echo "$REQ_HASH" > "$REQ_HASH_FILE"

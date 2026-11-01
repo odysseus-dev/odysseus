@@ -3,35 +3,49 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
-import uiModule from './js/ui.js';
+import uiModule from './js/ui.js?v=20260916largetoolscroll1';
 import workspaceModule from './js/workspace.js';
-import fileHandlerModule from './js/fileHandler.js';
-import modelsModule from './js/models.js?v=20260715startupcalm2';
+import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
+import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
-import presetsModule from './js/presets.js';
+import presetsModule from './js/presets.js?v=20260908personaname1';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260722ctxheader4';
-import compareModule from './js/compare/index.js?v=20260723compareicon2';
-import documentModule from './js/document.js?v=20260722emailfastindex1';
+import chatModule from './js/chat.js?v=20260917toolttft1';
+import compareModule from './js/compare/index.js?v=20260909mobilepaneaddscroll1';
+import documentModule from './js/document.js?v=20260916docctx2';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
+import {
+  revealApplicationShellAfterPaint,
+  runDeferredRouteOpener,
+  deferRouteOpener,
+  settleSessionHydration
+} from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260722emailfastindex1';
-import sessionModule from './js/sessions.js?v=20260722ctxheader4';
-import memoryModule from './js/memory.js?v=20260722memoryloading1';
+import chatRenderer from './js/chatRenderer.js?v=20260914metricssummary1';
+// Keep this specifier identical to every consumer (especially chat.js).
+// Different query strings create separate ES-module instances with separate
+// current-session state, so the picker can display one model while chat sends
+// through another session.
+import sessionModule from './js/sessions.js';
+import { startBackgroundToolJobs } from './js/backgroundToolJobs.js';
+import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js';
-import tasksModule from './js/tasks.js?v=20260723tasksbulkfeedback1';
-import calendarModule from './js/calendar.js';
-import notesModule from './js/notes.js';
-import adminModule from './js/admin.js?v=20260716openrouter3';
-import settingsModule from './js/settings.js?v=20260722emailfastindex1';
+import galleryModule from './js/gallery.js?v=20260910promptcopy1';
+import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=20260829chatstyle12';
+import tasksModule from './js/tasks.js?v=20260914taskmodel1';
+import calendarModule from './js/calendar.js?v=20260914emailsource11';
+import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
+import adminModule from './js/admin.js?v=20260929csssplit';
+import settingsModule from './js/settings.js?v=20260912writingstyle3';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
-import './js/modalManager.js?v=20260723compareicon2';
+import './js/modalManager.js';
+import './js/chipScroll.js?v=20260903calendarchips1';
+import './js/mobileBulkSelect.js?v=20260910selecthold1';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
-import './js/tileManager.js';
-import themeModule from './js/theme.js';
+import './js/tileManager.js?v=20260910responsivebounds1';
+import themeModule from './js/theme.js?v=20260911organsrain1';
 // IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
 // every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
 // mismatch makes the browser load cookbook.js twice as separate modules (two
@@ -39,11 +53,12 @@ import themeModule from './js/theme.js';
 // unversioned so this can't recur.
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js?v=20260630researchthumb';
+import * as researchPanelModule from './js/research/panel.js?v=20260913researchrailerrors1';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
-import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260715startupclean';
+import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js?v=20260829chatstyle12';
+import { getSettings } from './js/appConfig.js';
+import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js?v=20260910sidebarbounce1';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
@@ -168,8 +183,9 @@ function initRailHoverLabels() {
     'rail-email': 'Email',
     'rail-gallery': 'Gallery',
     'rail-archive': 'Library',
-    'rail-memory': 'Brain',
+    'rail-memory': 'Memory',
     'rail-notes': 'Notes',
+    'rail-skills': 'Skills',
     'rail-tasks': 'Tasks',
     'rail-theme': 'Theme',
     'rail-settings': 'Settings',
@@ -264,12 +280,12 @@ async function _refreshDefaultChat() {
 // synchronously; later reads should call _refreshDefaultChat() first.
 _refreshDefaultChat();
 
-async function _createDirectChatFromPreferredModel() {
+async function _createDirectChatFromPreferredModel(opts = {}) {
   if (!sessionModule) return false;
 
   const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
   if (pending && pending.url && pending.modelId && pending.endpointId) {
-    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId, { source: pending.source || 'manual' });
+    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId, { source: pending.source || 'manual', keepDocument: !!opts.keepDocument });
     return true;
   }
 
@@ -277,20 +293,20 @@ async function _createDirectChatFromPreferredModel() {
   const currentId = sessionModule.getCurrentSessionId();
   const current = sessions.find(s => s.id === currentId);
   if (current && current.endpoint_url && current.model && current.endpoint_id) {
-    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id, { keepDocument: !!opts.keepDocument });
     return true;
   }
 
   const dc = await _refreshDefaultChat();
   if (dc) {
-    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default', keepDocument: !!opts.keepDocument });
     return true;
   }
 
   const withModel = sessions.filter(s => s.endpoint_url && s.model);
   if (withModel.length > 0) {
     const last = withModel[0]; // sessions are sorted by recent
-    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
+    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id, { keepDocument: !!opts.keepDocument });
     return true;
   }
 
@@ -317,6 +333,9 @@ function initializeEventListeners() {
 
   // Paste handler
   window.addEventListener('paste', async (e)=>{
+    // Document editors own image paste. The global chat attachment listener
+    // must not stage the same clipboard file a second time.
+    if (e.defaultPrevented || e.target?.closest?.('#doc-editor-pane, [contenteditable="true"]')) return;
     if (!e.clipboardData) return;
     let changed = false;
     for (const item of e.clipboardData.items){
@@ -356,6 +375,12 @@ function initializeEventListeners() {
   // Scrolling
   el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
     const box = el('chat-history');
+    // scrollHistory() advances in several animation frames.  Its early frames
+    // are intentionally not at the bottom yet, so treating those events as a
+    // user scroll cancels the animation before a synthesis below a large tool
+    // trace can become visible.  Wheel/touch handlers still disable follow
+    // mode immediately for real user input.
+    if (uiModule.isAutoScrolling?.()) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     uiModule.setAutoScroll(atBottom);
   }, 100));
@@ -382,7 +407,8 @@ function initializeEventListeners() {
     const link = e.target.closest('a.chat-link');
     if (!link) return;
     const href = link.getAttribute('href');
-    if (href && href.startsWith('#') && sessionModule) {
+    const isListExpander = /^#(?:notes|skills|memories|events|sessions)-more-/.test(href || '');
+    if (href && href.startsWith('#') && !isListExpander && sessionModule) {
       e.preventDefault();
       sessionModule.selectSession(href.slice(1));
     }
@@ -419,19 +445,55 @@ function initializeEventListeners() {
 
   const exportMenu = el('export-dropdown-menu');
   if (exportDlBtn && exportMenu) {
-    exportDlBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
+    // Keep Settings available from the chat menu even before a new chat has
+    // received its first prompt (when the header has no session actions yet).
+    if (!el('export-settings-btn')) {
+      const settingsItem = document.createElement('div');
+      settingsItem.className = 'export-dropdown-item';
+      settingsItem.id = 'export-settings-btn';
+      settingsItem.classList.add('export-settings-text-only');
+      settingsItem.innerHTML = '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06A2 2 0 1 1 7.04 4.3l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"></path></svg></span><span>Settings</span>';
+      const deleteItem = exportMenu.querySelector('#export-delete-btn');
+      if (deleteItem) exportMenu.insertBefore(settingsItem, deleteItem);
+      else exportMenu.appendChild(settingsItem);
+      settingsItem.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        exportMenu.classList.remove('open');
+        if (window.chatModule?.openContextSettings
+            && await window.chatModule.openContextSettings()) return;
+        if (typeof settingsModule !== 'undefined' && settingsModule?.open) settingsModule.open();
+        else if (typeof adminModule !== 'undefined' && adminModule?.open) adminModule.open();
+        else if (window.settingsModule?.open) window.settingsModule.open();
+        else if (window.adminModule?.open) window.adminModule.open();
+      });
+    }
+    const openExportMenuFrom = (anchorEl, { align = 'right' } = {}) => {
       if (exportMenu.classList.contains('open')) {
         exportMenu.classList.remove('open');
       } else {
         // Move menu to body so it's not affected by ancestor transforms
         if (exportMenu.parentElement !== document.body) document.body.appendChild(exportMenu);
-        const rect = exportDlBtn.getBoundingClientRect();
+        const rect = (anchorEl || exportDlBtn).getBoundingClientRect();
         exportMenu.style.top = (rect.bottom + 4) + 'px';
-        exportMenu.style.left = 'auto';
-        exportMenu.style.right = (window.innerWidth - rect.right) + 'px';
+        if (align === 'left') {
+          exportMenu.style.left = Math.max(8, rect.left) + 'px';
+          exportMenu.style.right = 'auto';
+        } else {
+          exportMenu.style.left = 'auto';
+          exportMenu.style.right = (window.innerWidth - rect.right) + 'px';
+        }
         exportMenu.classList.add('open');
+        if (align === 'left') {
+          const menuRect = exportMenu.getBoundingClientRect();
+          if (menuRect.right > window.innerWidth - 8) {
+            exportMenu.style.left = `${Math.max(8, window.innerWidth - menuRect.width - 8)}px`;
+          }
+        }
       }
+    };
+    exportDlBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openExportMenuFrom(exportDlBtn);
     });
     document.addEventListener('click', () => exportMenu.classList.remove('open'));
     document.addEventListener('keydown', (e) => {
@@ -456,8 +518,17 @@ function initializeEventListeners() {
     if (currentMeta) {
       currentMeta.style.cursor = 'pointer';
       currentMeta.addEventListener('click', (e) => {
+        const incognitoChk = el('incognito-toggle');
+        const mobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+        if (mobile && incognitoChk && incognitoChk.checked) {
+          e.preventDefault();
+          e.stopPropagation();
+          const incognitoBtnForTitle = el('incognito-btn');
+          if (incognitoBtnForTitle) incognitoBtnForTitle.click();
+          return;
+        }
         e.stopPropagation();
-        exportDlBtn.click();
+        openExportMenuFrom(currentMeta, { align: 'left' });
       });
     }
   }
@@ -523,20 +594,6 @@ function initializeEventListeners() {
     });
   }
 
-  // Export menu: Compact current chat context
-  const exportCompactBtn = el('export-compact-btn');
-  if (exportCompactBtn) {
-    exportCompactBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      exportMenu.classList.remove('open');
-      if (window.compactCurrentChatContext) {
-        await window.compactCurrentChatContext();
-      } else {
-        uiModule.showError('Compact action is not ready yet');
-      }
-    });
-  }
-
   // Export: PDF
   const exportPdfBtn = el('export-pdf-btn');
   if (exportPdfBtn) {
@@ -559,33 +616,6 @@ function initializeEventListeners() {
         d.removeAttribute('open');
         d.removeAttribute('data-print-opened');
       });
-    });
-  }
-
-  // Export: Save to Docs
-  const exportDocBtn = el('export-doc-btn');
-  if (exportDocBtn) {
-    exportDocBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      exportMenu.classList.remove('open');
-      try {
-        const sessionId = sessionModule.getCurrentSessionId();
-        const texts = _serializeChatTranscript();
-        const meta = sessionModule.getSessions().find(s => s.id === sessionId);
-        const title = meta?.name || 'Untitled';
-        const res = await fetch(`${API_BASE}/api/document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, title, content: texts }),
-        });
-        if (!res.ok) throw new Error('Failed');
-        const doc = await res.json();
-        if (documentModule) documentModule.loadDocument(doc.id);
-        uiModule.showToast('Saved to documents');
-      } catch (err) {
-        console.error('Save to docs failed:', err);
-        uiModule.showError('Failed to save to documents');
-      }
     });
   }
 
@@ -1121,6 +1151,14 @@ function initializeEventListeners() {
       }
     });
   }
+  const notesNewNoteBtn = el('notes-new-note-btn');
+  if (notesNewNoteBtn) {
+    notesNewNoteBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      notesModule?.newNote?.();
+    });
+  }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -1247,17 +1285,19 @@ function initializeEventListeners() {
       setTimeout(_goFullscreen, 200);
     },
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
+    '/skills':   () => document.getElementById('tool-skills-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
   const _opener = _routeOpen[urlPath];
-  // Defer the opener — at this point in init, the modules whose handlers
-  // we trigger (#rail-new-session click handler, the email-section header
-  // click handler in emailInbox, sessionModule's loaded session list) are
-  // still being wired up further down in this same function. Stash the
-  // opener so it runs from sessionModule.loadSessions().finally() below.
-  if (_opener) window._odysseusRouteOpener = _opener;
+  // Defer the opener — at this point in init, the modules whose handlers we
+  // trigger (#rail-new-session click handler, the email-section header click
+  // handler in emailInbox, sessionModule) are still being wired up further
+  // down in this same function. startupShell decides when it can run: as soon
+  // as wiring completes, or — for the routes that read the session list —
+  // once /api/sessions has settled.
+  deferRouteOpener(urlPath, _opener);
 
   // Archive browser tool button
   const toolLibraryBtn = el('tool-library-btn');
@@ -1545,13 +1585,11 @@ function initializeEventListeners() {
     })
     .catch(() => {});
 
-  // Hide Gallery when image generation is disabled in settings
-  const _prefetchedSettings = sessionStorage.getItem('ody-prefetch-settings');
-  sessionStorage.removeItem('ody-prefetch-settings');
-  window._initSettingsReady = (_prefetchedSettings
-    ? Promise.resolve(JSON.parse(_prefetchedSettings))
-    : fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' }).then(r => r.json())
-  ).then(settings => {
+  // Hide Gallery when image generation is disabled in settings.
+  // getSettings() consumes the login prefetch itself, so every other module
+  // that asks for settings this load gets the same snapshot without a request.
+  window._initSettingsReady = getSettings()
+    .then(settings => {
       // NOTE: image_gen_enabled only governs *generating* images in chat — the
       // tool is blocked server-side (chat_routes / agent_loop). The Gallery
       // holds uploads and past images too, so it stays visible regardless;
@@ -1703,9 +1741,24 @@ function initializeEventListeners() {
   const toolMemoryBtn = el('tool-memory-btn');
   if (toolMemoryBtn && memoryModal) {
     toolMemoryBtn.addEventListener('click', () => {
-      memoryModal.classList.remove('hidden');
-      if (memoryModule && memoryModule.renderMemoryList) memoryModule.renderMemoryList();
-      if (memoryModule && memoryModule.updateMemoryCount) memoryModule.updateMemoryCount();
+      if (memoryModule && memoryModule.openMemoryModal) memoryModule.openMemoryModal('browse');
+      else {
+        memoryModal.classList.remove('hidden');
+        if (memoryModule && memoryModule.renderMemoryList) memoryModule.renderMemoryList();
+        if (memoryModule && memoryModule.updateMemoryCount) memoryModule.updateMemoryCount();
+      }
+    });
+  }
+
+  // Sidebar Skills button
+  const toolSkillsBtn = el('tool-skills-btn');
+  if (toolSkillsBtn && memoryModal) {
+    toolSkillsBtn.addEventListener('click', () => {
+      if (memoryModule && memoryModule.openMemoryModal) memoryModule.openMemoryModal('skills');
+      else {
+        memoryModal.classList.remove('hidden');
+        document.querySelector('.memory-tab[data-memory-tab="skills"]')?.click();
+      }
     });
   }
 
@@ -1724,11 +1777,19 @@ function initializeEventListeners() {
   
   const newMemoryInput = el('new-memory-input');
   if (newMemoryInput) {
-    newMemoryInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
+    // keydown, not the deprecated keypress: keypress is not guaranteed to
+    // fire for Enter everywhere, which left the Add Memory form with no
+    // working submit path (#5828).
+    newMemoryInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
         memoryModule.addNewMemory();
       }
     });
+  }
+  const newMemoryAddBtn = el('new-memory-add-btn');
+  if (newMemoryAddBtn) {
+    newMemoryAddBtn.addEventListener('click', () => memoryModule.addNewMemory());
   }
 
 // Voice recording is handled by the dual-purpose send/mic button (see below)
@@ -1856,8 +1917,10 @@ function initializeEventListeners() {
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
       // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
       try { workspaceModule.applyMode(mode); } catch (_) {}
-      // Delay tool glow-up for a staggered effect
-      setTimeout(() => applyModeToToggles(mode), 500);
+      // Tool state is request authority, so synchronize it immediately. A
+      // delayed callback could overwrite a user's fast toggle click and send
+      // a different allow_bash/allow_web_search value than the UI showed.
+      applyModeToToggles(mode);
     }
     window.__odysseusSetChatMode = setMode;
     agentBtn.addEventListener('click', () => {
@@ -2198,13 +2261,12 @@ function initializeEventListeners() {
       menu.classList.add('closing');
       plusBtn.classList.remove('expanded');
       if (pickerWrap) pickerWrap.style.visibility = '';
-      // Item delays max at 0.18s + 0.20s anim = 0.38s for items, container
-      // delay 0.16s + 0.22s = 0.38s. 400ms covers both with margin.
+      // Keep closing nearly immediate so the tools button feels direct.
       setTimeout(() => {
         menu.classList.add('hidden');
         menu.classList.remove('closing');
         if (ownerWrap) ownerWrap.appendChild(menu);  // restore from <body> portal
-      }, 400);
+      }, 100);
     }
     // Close menu when clicking any item inside it. preventDefault on pointerdown
     // so tapping an item (e.g. Attach files) doesn't steal focus from the message
@@ -2588,9 +2650,15 @@ function initializeEventListeners() {
   // ── Group toggle button (chatbox indicator) — click to deactivate ──
   const groupToggleBtn = el('group-toggle-btn');
   if (groupToggleBtn) {
-    groupToggleBtn.addEventListener('click', () => {
-      _syncGroupIndicator(false);
-      groupModule.stopGroup();
+    groupToggleBtn.addEventListener('click', (e) => {
+      if (e.target.closest('.tool-indicator-x')) {
+        _syncGroupIndicator(false);
+        groupModule.stopGroup();
+        return;
+      }
+      if (presetsModule && presetsModule.openCustomPresetModal) {
+        presetsModule.openCustomPresetModal('group');
+      }
     });
   }
 
@@ -2612,14 +2680,16 @@ function initializeEventListeners() {
   if (incognitoBtn) {
     incognitoBtn.addEventListener('mousedown', (e) => e.preventDefault());
     incognitoBtn.addEventListener('click', () => {
-      // Don't toggle mid-chat — incognito only changeable from welcome screen
       const ws = el('welcome-screen');
-      if (ws && ws.classList.contains('hidden')) return;
       const chk = el('incognito-toggle');
+      // Starting Nobody is only available from the welcome screen, but ending
+      // it must work after the first message too. The active header/title
+      // controls depend on this path once the welcome button is hidden.
+      if (ws && ws.classList.contains('hidden') && !chk.checked) return;
       chk.checked = !chk.checked;
       incognitoBtn.classList.toggle('active', chk.checked);
       const tipEl = el('welcome-tip');
-      incognitoBtn.title = chk.checked ? 'Disable Nobody mode' : 'Enable Nobody mode — no memory, no history saved';
+      incognitoBtn.title = chk.checked ? 'Disable Nobody mode' : 'Enable Nobody mode — no memory or skill injection, no history saved';
       const welcomeName = document.querySelector('.welcome-name');
       if (chk.checked) {
         try {
@@ -2643,7 +2713,13 @@ function initializeEventListeners() {
           welcomeSub.textContent = "Who am I? I'm nobody.";
           welcomeSub.style.display = '';
         }
-        if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
+        if (tipEl) {
+          tipEl.dataset.originalTip = tipEl.textContent;
+          tipEl.classList.add('nobody-session-note');
+          tipEl.innerHTML = '<span>No memory or skill activation.</span><span>Temporary session \u2014 won\u2019t be saved.</span>';
+          tipEl.style.opacity = '0.5';
+          tipEl.style.marginTop = '16px';
+        }
         // Default to plain chat: disable tools visually, switch to chat mode.
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
         // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
@@ -2693,7 +2769,13 @@ function initializeEventListeners() {
           }
           welcomeSub2.style.display = '';
         }
-        if (tipEl && tipEl.dataset.originalTip) { tipEl.textContent = tipEl.dataset.originalTip; tipEl.style.opacity = ''; tipEl.style.marginTop = ''; }
+        if (tipEl && Object.prototype.hasOwnProperty.call(tipEl.dataset, 'originalTip')) {
+          tipEl.textContent = tipEl.dataset.originalTip;
+          delete tipEl.dataset.originalTip;
+          tipEl.classList.remove('nobody-session-note');
+          tipEl.style.opacity = '';
+          tipEl.style.marginTop = '';
+        }
         // Heal any previously-persisted false values from the old Nobody bug
         // so agent-mode defaults (web/bash ON) come back.
         const _ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
@@ -2745,46 +2827,6 @@ function initializeEventListeners() {
   // ── UI Visibility (Customize UI modal) ──
   const UI_VIS_KEY = 'odysseus-ui-visibility';
 
-  // Selector map: key → CSS selector(s) for targets
-  const UI_VIS_MAP = {
-    'sidebar-brand':       '.sidebar-brand-title',
-    'sidebar-new-chat':    '#sidebar-new-chat-btn',
-    'sidebar-search':      '#sidebar-search-btn',
-	    'sessions-section':    '#sessions-section',
-	    'email-section':       '#email-section',
-	    'tools-section':       '#tools-section',
-    // Per-tool visibility — fine-grained control over which entries show
-    // inside the Tools section in the sidebar.
-    'tool-calendar':       '#tool-calendar-btn',
-    'tool-compare':        '#tool-compare-btn',
-    'tool-cookbook':       '#tool-cookbook-btn',
-    'tool-research':       '#tool-research-btn',
-    'tool-gallery':        '#tool-gallery-btn',
-    'tool-library':        '#tool-library-btn',
-    'tool-memory':         '#tool-memory-btn',
-    'tool-notes':          '#tool-notes-btn',
-    'tool-tasks':          '#tool-tasks-btn',
-    'tool-theme':          '#tool-theme-btn',
-    'user-bar':            '#user-bar-profile',
-    'sidebar-settings-btn':'#user-bar-settings',
-    'chat-meta':           '.chat-meta-overlay',
-    'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
-    'incognito-btn':       '.incognito-btn',
-    'web-toggle-btn':      '#web-toggle-btn',
-    'doc-toggle-btn':      '#overflow-doc-btn',
-    'rag-toggle-btn':      '#overflow-rag-btn',
-    'bash-toggle-btn':     '#bash-toggle-btn',
-    'overflow-plus-btn':   '.overflow-wrapper',
-    'mode-toggle':         '.mode-toggle',
-    'preset-mini-btn':     '#overflow-preset-btn',
-    'attach-btn':          '#overflow-attach-btn',
-    'research-btn':        '#overflow-research-btn',
-    'rail-new-chat':       '#rail-new-session',
-  };
-
-  // Keys hidden by default on first run (no localStorage yet)
-	  const UI_VIS_DEFAULT_OFF = new Set(['rag-toggle-btn', 'text-emojis', 'chat-fullwidth']);
-
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
 
@@ -2797,14 +2839,14 @@ function initializeEventListeners() {
   }
 
   function applyUIVis(state) {
-    Object.entries(UI_VIS_MAP).forEach(([key, selector]) => {
-      // section-drag-reorder uses a body class instead of inline styles
-      if (key === 'section-drag-reorder') return;
-      const visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
+    // resolveVisibility computes selector→visible (pure; ui_visibility.js),
+    // including the tools-section parent rule that hides every tool rail
+    // launcher when Tools is off. Apply the result to the DOM here.
+    for (const [selector, visible] of Object.entries(resolveVisibility(state))) {
       document.querySelectorAll(selector).forEach(el => {
         el.style.display = visible ? '' : 'none';
       });
-    });
+    }
     // Drag reorder: use body class so dynamically created handles are covered
     const dragEnabled = state['section-drag-reorder'] === true;
     document.body.classList.toggle('rearrange-mode', dragEnabled);
@@ -3205,6 +3247,7 @@ function initializeEventListeners() {
 
     function injectMinimizeButton(modal) {
       if (!modal || !modal.classList || !modal.classList.contains('modal')) return;
+      if (modal.dataset.noMinimize === 'true') return;
       if (modal.id && SKIP_IDS.has(modal.id)) return;
       // Modals managed by the new modalManager (Modals.register) get their own
       // .modal-minimize-btn and chips via the .minimized-dock-chip system.
@@ -3373,13 +3416,40 @@ function initializeEventListeners() {
   async function _handleNewChatAction({ preferModel = true, focus = true } = {}) {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
+      const hasOpenDocument = !!(
+        documentModule
+        && documentModule.isPanelOpen
+        && documentModule.isPanelOpen()
+        && documentModule.getCurrentDocId
+        && documentModule.getCurrentDocId()
+      );
+      const shouldCarryDocument = hasOpenDocument && !!(
+        uiModule?.styledConfirm
+          ? await uiModule.styledConfirm('Bring open document to new chat?', {
+              title: 'New chat',
+              confirmText: 'Bring →',
+              cancelText: 'Drop',
+            })
+          : window.confirm('Bring open document to new chat?')
+      );
       _deactivateIncognito();
       // Clear character on new chat
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear research mode if active
       const _resChk = el('research-toggle');
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);
-      if (preferModel && await _createDirectChatFromPreferredModel()) return;
+      if (preferModel && await _createDirectChatFromPreferredModel({ keepDocument: shouldCarryDocument })) {
+        if (shouldCarryDocument) {
+          try {
+            await sessionModule.materializePendingSession();
+            await documentModule.moveActiveDocumentToCurrentChat?.({ quiet: true });
+          } catch (e) {
+            console.warn('Failed to carry document into new chat:', e);
+            uiModule?.showError?.('Could not bring document into the new chat');
+          }
+        }
+        return;
+      }
       // No models at all — show welcome screen
       _startFreshChat();
       const docBtn3 = el('overflow-doc-btn');
@@ -3406,17 +3476,8 @@ function initializeEventListeners() {
   // the default model attaches when they hit send.
   const mobileNewChat = el('mobile-new-chat-btn');
   if (mobileNewChat) {
-    mobileNewChat.addEventListener('click', () => {
-      if (!sessionModule) return;
-      if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
-      _startFreshChat();
-      document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
-      // Focus the composer synchronously so mobile keyboards pop open.
-      // iOS Safari only honours programmatic focus inside the original click
-      // callback — a setTimeout breaks the user-gesture chain.
-      const _input = el('message-input');
-      if (_input) { try { _input.focus(); } catch (_) {} }
+    mobileNewChat.addEventListener('click', async () => {
+      await _handleNewChatAction();
     });
   }
 
@@ -3433,6 +3494,11 @@ function initializeEventListeners() {
   if (sidebarNewChatBtn) {
     sidebarNewChatBtn.addEventListener('click', async (e) => {
       if (e) { e.preventDefault(); e.stopImmediatePropagation(); }
+      if (window.innerWidth < 768) {
+        el('sidebar')?.classList.add('hidden');
+        el('sidebar-backdrop')?.classList.remove('visible');
+        window.syncRailSide?.();
+      }
       await _handleNewChatAction();
     });
   }
@@ -3764,9 +3830,11 @@ function startOdysseusApp() {
   modelsModule.init(API_BASE);
   ragModule.init(API_BASE);
   presetsModule.init(API_BASE);
-  searchModule.init(API_BASE);
+  searchModule.init();
   chatModule.init(API_BASE);
   chatModule.initListeners();
+  startBackgroundToolJobs({ getSessionId: () => sessionModule.getCurrentSessionId(),
+    addMessage: (...args) => chatRenderer.addMessage(...args), base: API_BASE });
   groupModule.init(API_BASE);
   // Initialize compare module
   if (compareModule) {
@@ -3797,15 +3865,16 @@ function startOdysseusApp() {
 
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
-    'rail-compare':   'tool-compare-btn',
-    'rail-research':  'tool-research-btn',
-    'rail-cookbook':   'tool-cookbook-btn',
-    'rail-archive':   'tool-library-btn',
-    'rail-gallery':   'tool-gallery-btn',
-    'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
-    'rail-notes':     'tool-notes-btn',
+    'rail-compare':   'tool-compare-btn',
+    'rail-cookbook':   'tool-cookbook-btn',
+    'rail-research':  'tool-research-btn',
+    'rail-gallery':   'tool-gallery-btn',
+    'rail-archive':   'tool-library-btn',
     'rail-memory':    'tool-memory-btn',
+    'rail-notes':     'tool-notes-btn',
+    'rail-skills':    'tool-skills-btn',
+    'rail-tasks':     'tool-tasks-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',
   };
@@ -3943,85 +4012,10 @@ function startOdysseusApp() {
   const messageInput = el('message');
   const modelPickerWrap = document.getElementById('model-picker-wrap');
 
-  function _readComposerPromptHistory() {
-    const chatBox = document.getElementById('chat-history');
-    if (!chatBox) return [];
-    return Array.from(chatBox.querySelectorAll('.msg-user'))
-      .reverse()
-      .map(msg => {
-        const body = msg.querySelector('.body');
-        return msg.dataset?.raw || (body ? body.textContent : '') || '';
-      })
-      .filter(Boolean);
-  }
-
-  if (messageInput && !messageInput._odysseusPromptRecallCapture) {
-    messageInput._odysseusPromptRecallCapture = true;
-    let recallHistory = [];
-    let recallIndex = -1;
-    let lastRecalled = '';
-    const norm = (v) => String(v || '').replace(/\r\n/g, '\n').trimEnd();
-    messageInput.addEventListener('input', () => {
-      if (norm(messageInput.value) === norm(lastRecalled)) return;
-      recallHistory = [];
-      recallIndex = -1;
-      lastRecalled = '';
-      try { delete messageInput.dataset.odysseusRecallIndex; } catch {}
-    }, true);
-    messageInput.addEventListener('keydown', (e) => {
-      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-      if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
-      if (window._ghostAutocomplete?.isActive?.()) return;
-      const fresh = _readComposerPromptHistory();
-      const history = fresh.length ? fresh : recallHistory;
-      if (!history.length) return;
-      const current = norm(messageInput.value);
-      let currentIndex = current ? history.findIndex(item => norm(item) === current) : -1;
-      if (current && currentIndex < 0 && current === norm(lastRecalled)) currentIndex = recallIndex;
-      if (current && currentIndex < 0) {
-        const markedIndex = Number(messageInput.dataset.odysseusRecallIndex);
-        if (Number.isInteger(markedIndex) && markedIndex >= 0 && markedIndex < history.length) {
-          currentIndex = markedIndex;
-        }
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      if (e.key === 'ArrowDown') {
-        if (currentIndex < 0) return;
-        const nextIndex = currentIndex - 1;
-        if (nextIndex < 0) {
-          recallHistory = history;
-          recallIndex = -1;
-          lastRecalled = '';
-          try { delete messageInput.dataset.odysseusRecallIndex; } catch {}
-          messageInput.value = '';
-          try { messageInput.selectionStart = messageInput.selectionEnd = 0; } catch {}
-          try { uiModule.autoResize(messageInput); } catch {}
-          return;
-        }
-        const recalled = history[nextIndex];
-        recallHistory = history;
-        recallIndex = nextIndex;
-        lastRecalled = recalled;
-        try { messageInput.dataset.odysseusRecallIndex = String(nextIndex); } catch {}
-        messageInput.value = recalled;
-        try { messageInput.selectionStart = messageInput.selectionEnd = recalled.length; } catch {}
-        try { uiModule.autoResize(messageInput); } catch {}
-        return;
-      }
-      const nextIndex = currentIndex >= 0 ? Math.min(currentIndex + 1, history.length - 1) : 0;
-      const recalled = history[nextIndex];
-      if (!recalled) return;
-      recallHistory = history;
-      recallIndex = nextIndex;
-      lastRecalled = recalled;
-      try { messageInput.dataset.odysseusRecallIndex = String(nextIndex); } catch {}
-      messageInput.value = recalled;
-      try { messageInput.selectionStart = messageInput.selectionEnd = recalled.length; } catch {}
-      try { uiModule.autoResize(messageInput); } catch {}
-    }, true);
-  }
+  // ArrowUp/ArrowDown prompt recall on #message lives in
+  // static/js/composerArrowUpRecall.js (wired from chat.js). Do not re-add a
+  // copy here: two capture-phase listeners on the same textarea meant the one
+  // without the draft guard won and ate unsent multi-line prompts (#5862).
 
   const _sendIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
   const _micIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>';
@@ -4165,12 +4159,18 @@ function startOdysseusApp() {
         return;
       }
 
-      // New chat mode — empty input, no attachments, no STT
-      if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
-        if (sessionModule) {
-          const sessions = sessionModule.getSessions();
-          const currentId = sessionModule.getCurrentSessionId();
-          const current = sessions.find(s => s.id === currentId);
+	      // New chat mode — empty input, no attachments, no STT
+	      if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
+	        const isAlreadyNewChat = document.getElementById('chat-container')?.classList.contains('welcome-active');
+	        if (isAlreadyNewChat) {
+	          if (messageInput) messageInput.focus();
+	          _updateSendBtnIcon();
+	          return;
+	        }
+	        if (sessionModule) {
+	          const sessions = sessionModule.getSessions();
+	          const currentId = sessionModule.getCurrentSessionId();
+	          const current = sessions.find(s => s.id === currentId);
           if (current && current.endpoint_url && current.model) {
             sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
           } else {
@@ -4211,13 +4211,18 @@ function startOdysseusApp() {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the
-        // stale 'newchat' mode and open a new chat instead of sending.
-        try { _updateSendBtnIcon(); } catch {}
-        if (sendBtn && sendBtn.dataset.mode === 'newchat') {
-          const railNew = el('rail-new-session');
-          if (railNew) railNew.click();
-          return;
-        }
+	        // stale 'newchat' mode and open a new chat instead of sending.
+	        try { _updateSendBtnIcon(); } catch {}
+	        if (sendBtn && sendBtn.dataset.mode === 'newchat') {
+	          const isAlreadyNewChat = document.getElementById('chat-container')?.classList.contains('welcome-active');
+	          if (isAlreadyNewChat) {
+	            if (messageInput) messageInput.focus();
+	            return;
+	          }
+	          const railNew = el('rail-new-session');
+	          if (railNew) railNew.click();
+	          return;
+	        }
         if (_isForegroundChatBusy() && messageInput.value && messageInput.value.trim()) {
           if (chatModule && chatModule.queueStreamingComposerRequest && chatModule.queueStreamingComposerRequest()) {
             return;
@@ -4302,12 +4307,14 @@ function startOdysseusApp() {
   }
 
   chatContainer.addEventListener('dragover', (e) => {
+    if (e.target?.closest?.('#doc-editor-pane')) return;
     e.preventDefault();
     e.stopPropagation();
     _showDropHighlight();
   });
 
   chatContainer.addEventListener('drop', async (e) => {
+    if (e.target?.closest?.('#doc-editor-pane')) return;
     e.preventDefault();
     e.stopPropagation();
     _hideDropHighlight();
@@ -4417,6 +4424,10 @@ function startOdysseusApp() {
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
 
+  // Core wiring is complete for this turn — reveal the shell independently of
+  // the session-list request.
+  revealApplicationShellAfterPaint();
+
   if (sessionModule) {
     sessionModule.initDependencies({
       API_BASE: API_BASE,
@@ -4428,21 +4439,19 @@ function startOdysseusApp() {
       scrollHistory: uiModule.scrollHistoryInstant
     });
 
-    // Load sessions first (critical path) — remove loader when done
-    sessionModule.loadSessions()
-      .catch(e => console.warn('loadSessions error:', e))
-      .finally(() => {
-        const loader = document.getElementById('app-loader');
-        if (loader) { loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
-        // Fire any URL route opener now that sessions + module wiring are
-        // ready. Deferred from up top of init for exactly this reason.
-        if (window._odysseusRouteOpener) {
-          try { window._odysseusRouteOpener(); } catch (_) {}
-          window._odysseusRouteOpener = null;
-        }
-      });
+    // sessionModule is now wired, so every route opener has the modules it
+    // drives. The ones that read no session data open here rather than
+    // queueing behind /api/sessions.
+    runDeferredRouteOpener();
+
+    // The shell is already usable at this point; session hydration is
+    // sidebar-local and settles on its own schedule.
+    settleSessionHydration(() => sessionModule.loadSessions());
   } else {
     console.error('Session module not loaded!');
+    // Nothing will hydrate. Settle immediately so the sidebar exposes the
+    // failure; session-dependent routes must remain unopened without data.
+    settleSessionHydration(null);
   }
 
   const runNonCriticalStartup = (fn, delay = 4000) => {

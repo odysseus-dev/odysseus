@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS snapshot bench</title>
+  <!-- Replaced at capture time by whatever <link rel="stylesheet"> tags
+       static/index.html ships, in shell order, so the bench keeps measuring
+       the real stylesheet set after style.css is split. This fallback is only
+       for opening the page by hand; it is deliberately unversioned so the
+       cache-bust string has one home (tests/test_static_stylesheet_manifest.py
+       pins the shipped ones). -->
+  <link rel="stylesheet" href="/static/css/00-tokens.css">
+  <link rel="stylesheet" href="/static/css/01-agent-chat.css">
+  <link rel="stylesheet" href="/static/css/02-compare.css">
+  <link rel="stylesheet" href="/static/css/03-agent-chat.css">
+  <link rel="stylesheet" href="/static/css/04-memory.css">
+  <link rel="stylesheet" href="/static/css/05-documents.css">
+  <link rel="stylesheet" href="/static/css/06-admin-settings.css">
+  <link rel="stylesheet" href="/static/css/07-documents.css">
+  <link rel="stylesheet" href="/static/css/08-skills.css">
+  <link rel="stylesheet" href="/static/css/09-gallery.css">
+  <link rel="stylesheet" href="/static/css/10-cookbook.css">
+  <link rel="stylesheet" href="/static/css/11-tasks.css">
+  <link rel="stylesheet" href="/static/css/12-gallery.css">
+  <link rel="stylesheet" href="/static/css/13-image-editor.css">
+  <link rel="stylesheet" href="/static/css/14-email.css">
+  <link rel="stylesheet" href="/static/css/15-notes.css">
+  <link rel="stylesheet" href="/static/css/16-calendar.css">
+  <link rel="stylesheet" href="/static/css/17-research.css">
+  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css">
+  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css">
+  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css">
+</head>
+<body>
+  <!-- Intentionally empty. tests/css_snapshot/capture.mjs mounts one subtree
+       per bench selector from tests/css_snapshot/inventory.json, measures the
+       leaf, and removes it again - so adding coverage is a one-line inventory
+       change and this file never drifts from the selector list. -->
+</body>
+</html>

@@ -12,6 +12,88 @@ what is threaded back.
 import src.agent_loop as al
 
 
+def test_email_backend_error_is_not_rendered_as_empty_inbox():
+    raw = (
+        "[EMAIL ACCOUNT ERRORS: Primary: [Errno 111] Connection refused]\n"
+        "No unread/unresponded emails found."
+    )
+
+    summary = al._email_list_summary_from_tool_output(raw)
+
+    assert "currently unavailable" in summary
+    assert "No emails found" not in summary
+
+
+def test_private_browser_product_query_extracts_short_storefront_term():
+    assert al._private_browser_product_query(
+        "Browse IKEA and find the best chair."
+    ) == "chair"
+    assert al._private_browser_product_query(
+        "Search for a standing desk on IKEA"
+    ) == "a standing desk"
+    assert al._private_browser_product_query("Where is IKEA?") == ""
+
+
+def test_unrequested_browser_placeholder_is_rejected():
+    block = al.ToolBlock(
+        "private_browser",
+        '{"action":"batch","commands":[["open","https://www.example.com"],["snapshot"]]}',
+    )
+    assert al._private_browser_uses_unrequested_placeholder(
+        block, "Open the best IKEA chair option"
+    )
+    assert not al._private_browser_uses_unrequested_placeholder(
+        block, "Open https://www.example.com"
+    )
+
+
+def test_browser_placeholder_named_by_prior_user_turn_remains_allowed():
+    block = al.ToolBlock(
+        "private_browser",
+        '{"action":"batch","commands":[["open","https://example.com"],["snapshot"]]}',
+    )
+    history = [
+        {"role": "user", "content": "Open https://example.com and report its heading."},
+        {"role": "assistant", "content": "The heading is Example Domain."},
+        {"role": "user", "content": "Return to that browser page and open Learn more."},
+    ]
+    assert not al._private_browser_uses_unrequested_placeholder(
+        block, history[-1]["content"], history,
+    )
+
+
+def test_ordinal_task_mutation_binds_to_prior_list_order():
+    first = "11111111-1111-4111-8111-111111111111"
+    second = "22222222-2222-4222-8222-222222222222"
+    history = [{
+        "role": "assistant",
+        "content": "Found two tasks.",
+        "metadata": {"tool_events": [{
+            "tool": "manage_tasks", "command": '{"action":"list"}', "exit_code": 0,
+            "output": f"AI: Found 2 tasks:\n1. Beta ({first}) — active\n2. Alpha ({second}) — active",
+        }]},
+    }]
+    assert al._ordinal_collection_mutation_target(
+        "Delete the second task from that list.", history, None, "tasks",
+    ) == second
+
+
+def test_ordinal_calendar_mutation_binds_to_prior_list_order():
+    first = "33333333-3333-4333-8333-333333333333"
+    second = "44444444-4444-4444-8444-444444444444"
+    history = [{
+        "role": "assistant",
+        "content": "Two calendar events.",
+        "metadata": {"tool_events": [{
+            "tool": "manage_calendar", "command": '{"action":"list_events"}', "exit_code": 0,
+            "output": f"- [Alpha](#event-{first})\n- [Beta](#event-{second})",
+        }]},
+    }]
+    assert al._ordinal_collection_mutation_target(
+        "Delete the second event from that list.", history, None, "calendar",
+    ) == second
+
+
 def test_resolve_returns_converted_calls_aligned():
     native = [
         {"name": "bogus_unknown_tool", "arguments": "{}", "id": "A"},

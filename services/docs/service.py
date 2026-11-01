@@ -50,16 +50,46 @@ class DocsService:
             List of DocChunk objects
         """
         results = self.rag.search(query, k=top_k)
-        return [
-            DocChunk(
-                text=r.get("text", r.get("content", "")),
-                source=r.get("source", r.get("metadata", {}).get("source", "unknown")),
-                score=r.get("score", 0.0),
-                metadata=r.get("metadata"),
+        chunks = []
+
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            metadata = result.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            text = result.get("document")
+            if text is None:
+                text = result.get("text")
+            if text is None:
+                text = result.get("content")
+            if text is None:
+                text = ""
+
+            source = result.get("source")
+            if source is None:
+                source = metadata.get("source")
+            if source is None:
+                source = "unknown"
+
+            score = result.get("similarity")
+            if score is None:
+                score = result.get("score")
+            if score is None:
+                score = 0.0
+
+            chunks.append(
+                DocChunk(
+                    text=text,
+                    source=source,
+                    score=score,
+                    metadata=metadata,
+                )
             )
-            for r in results
-            if isinstance(r, dict)
-        ]
+
+        return chunks
 
     async def index(self, directory: str) -> IndexResult:
         """
@@ -73,8 +103,8 @@ class DocsService:
         """
         result = self.rag.index_personal_documents(directory)
         return IndexResult(
-            indexed=result.get("indexed", 0),
-            failed=result.get("failed", 0),
+            indexed=result.get("indexed_count", result.get("indexed", 0)),
+            failed=result.get("failed_count", result.get("failed", 0)),
             errors=result.get("errors", []),
         )
 

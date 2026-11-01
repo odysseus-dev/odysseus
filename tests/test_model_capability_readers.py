@@ -30,6 +30,15 @@ def test_detect_vendor_uses_endpoint_kind_then_host_and_common_local_ports():
     assert detect_vendor("http://localhost:7000/v1") == VENDOR_GENERIC_OPENAI
 
 
+def test_detect_vendor_requires_a_dns_label_boundary():
+    assert detect_vendor("https://api.openai.com./v1") == VENDOR_OPENAI
+    assert detect_vendor("https://notopenai.com/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("https://fakeopenrouter.ai/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("https://notgoogleapis.com/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("https://evilanthropic.com/v1") == VENDOR_GENERIC_OPENAI
+    assert detect_vendor("https://fakeollama.com/v1") == VENDOR_GENERIC_OPENAI
+
+
 def test_generic_openai_reader_keeps_basic_model_payload_unknown():
     records = generic_openai.records_from_payload(
         {

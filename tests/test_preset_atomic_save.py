@@ -41,3 +41,39 @@ def test_save_round_trip(tmp_path):
 
     reloaded = PresetManager(str(tmp_path))
     assert reloaded.presets["custom"]["name"] == "X"
+
+
+def test_custom_persona_memory_follows_persona_lifecycle(tmp_path):
+    mgr = PresetManager(str(tmp_path))
+    assert mgr.save({
+        "custom": {
+            "name": "Old",
+            "character_name": "Old",
+            "persona_memory": "- Existing note",
+            "enabled": True,
+        },
+        "user_templates": [
+            {
+                "id": "p1",
+                "name": "Saved",
+                "system_prompt": "Be saved.",
+                "persona_memory": "- Saved note",
+                "persona_memory_schema": "health",
+            }
+        ],
+    })
+
+    assert mgr.update_custom(1.0, 0, "Be old.", name="Old", enabled=True)
+    assert mgr.presets["custom"]["persona_memory"] == "- Existing note"
+
+    assert mgr.update_custom(1.0, 0, "Be saved.", name="Saved", enabled=True)
+    assert mgr.presets["custom"]["persona_memory"] == "- Saved note"
+    assert mgr.presets["custom"]["persona_memory_schema"] == "health"
+
+    assert mgr.update_persona_memory("Saved", "- Updated note")
+    assert mgr.presets["custom"]["persona_memory"] == "- Updated note"
+    assert mgr.presets["user_templates"][0]["persona_memory"] == "- Updated note"
+
+    assert mgr.update_custom(1.0, 0, "", name="Saved", enabled=False)
+    assert mgr.presets["custom"]["persona_memory"] == ""
+    assert mgr.presets["custom"]["persona_memory_schema"] == "general"

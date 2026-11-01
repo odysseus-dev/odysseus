@@ -84,10 +84,14 @@ _FM_KEY_RE = re.compile(r"^([a-z_][a-z0-9_]*):\s*(.*)$", re.IGNORECASE)
 _FM_BLOCK_LIST_RE = re.compile(r"^\s*-\s*(.*)$")
 
 
-def _parse_scalar(raw: str) -> Any:
+def _parse_scalar(raw: str, *, string_only: bool = False) -> Any:
     raw = raw.strip()
     if raw == "":
         return ""
+    # String fields keep their spelling; quoted values still use the decoder
+    # below so existing escapes round-trip as before.
+    if string_only and not (raw[0] == raw[-1] and raw[0] in ("'", '"')):
+        return raw
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
         if not inner:
@@ -100,6 +104,18 @@ def _parse_scalar(raw: str) -> Any:
     if raw.lower() in ("null", "none", "~"):
         return None
     if (raw[0] == raw[-1]) and raw[0] in ("'", '"'):
+        if raw[0] == '"':
+            # _emit_scalar writes double-quoted scalars with json.dumps, so
+            # decode the escapes instead of only stripping the quotes. Without
+            # this, `\"` / `\\` / `\uXXXX` stayed verbatim in the value and the
+            # next save escaped their backslashes again, doubling them on every
+            # load/save cycle (issue #5210).
+            try:
+                return json.loads(raw)
+            except ValueError:
+                # Hand-written file using escapes JSON rejects (e.g. a bare
+                # Windows path). Keep the previous literal reading.
+                pass
         return raw[1:-1]
     # Try number
     try:
@@ -114,10 +130,15 @@ def _parse_scalar(raw: str) -> Any:
 def _split_top_level(s: str, sep: str) -> List[str]:
     """Split `s` on `sep` ignoring separators inside [] or quotes."""
     out, buf, depth, quote = [], [], 0, None
+    escaped = False
     for ch in s:
         if quote:
             buf.append(ch)
-            if ch == quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\" and quote == '"':
+                escaped = True
+            elif ch == quote:
                 quote = None
             continue
         if ch in ("'", '"'):
@@ -159,7 +180,7 @@ def parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
                 pending_key = key
                 fm[key] = []
             else:
-                fm[key] = _parse_scalar(val)
+                fm[key] = _parse_scalar(val, string_only=(key == "version"))
                 pending_key = None
             continue
         m2 = _FM_BLOCK_LIST_RE.match(line)
@@ -169,6 +190,26 @@ def parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
                 fm[pending_key] = []
             fm[pending_key].append(_parse_scalar(m2.group(1)))
     return fm, body
+
+
+# Characters that force a quoted scalar. The punctuation would otherwise change
+# how the value reads back; the second row is every character str.splitlines()
+# treats as a line break, and parse_frontmatter() reads one scalar per line, so
+# emitting one of those bare would split the value across lines.
+_FM_MUST_QUOTE = (
+    ":", "#", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "'", '"', "%", "@",
+    "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029",
+)
+
+# json.dumps escapes every C0 control character, but with ensure_ascii=False it
+# passes NEL / LINE SEPARATOR / PARAGRAPH SEPARATOR through literally, and
+# str.splitlines() still breaks on all three. Re-escape exactly those, which
+# json.loads decodes again on the way in, so the pair stays symmetric.
+_FM_POST_DUMPS_ESCAPES = (
+    ("\x85", "\\u0085"),
+    ("\u2028", "\\u2028"),
+    ("\u2029", "\\u2029"),
+)
 
 
 def _emit_scalar(v: Any) -> str:
@@ -181,8 +222,15 @@ def _emit_scalar(v: Any) -> str:
     if isinstance(v, list):
         return "[" + ", ".join(_emit_scalar(x) for x in v) + "]"
     s = str(v)
-    if any(c in s for c in (":", "#", "\n", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">", "'", '"', "%", "@")):
-        return json.dumps(s)
+    if any(c in s for c in _FM_MUST_QUOTE):
+        # ensure_ascii=False keeps non-ASCII text as itself. SKILL.md is UTF-8 at
+        # both ends (skills.py reads it, atomic_write_text writes it), so the
+        # \uXXXX form bought nothing and leaked into the parsed value (#5210).
+        out = json.dumps(s, ensure_ascii=False)
+        for ch, esc in _FM_POST_DUMPS_ESCAPES:
+            if ch in out:
+                out = out.replace(ch, esc)
+        return out
     return s
 
 

@@ -76,7 +76,7 @@ def _load_webhook_routes_for_test(monkeypatch):
     module_name = "routes.webhook_routes_under_test"
     spec = importlib.util.spec_from_file_location(
         module_name,
-        Path(__file__).resolve().parent.parent / "routes" / "webhook_routes.py",
+        Path(__file__).resolve().parent.parent / "routes" / "webhook" / "webhook_routes.py",
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

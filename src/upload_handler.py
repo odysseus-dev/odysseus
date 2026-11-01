@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
 
+from src.path_confinement import is_inside
 from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
 
 
@@ -35,6 +36,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+UploadIndexFileSignature = tuple[
+    str,
+    Optional[int],
+    Optional[int],
+    Optional[int],
+    Optional[int],
+    Optional[int],
+]
+UploadIndexSignature = tuple[UploadIndexFileSignature, ...]
+
 
 class UploadCleanupSafetyError(RuntimeError):
     """Raised when cleanup cannot prove that destructive work is safe."""
@@ -52,17 +63,78 @@ INTERNAL_UPLOAD_URL_RE = re.compile(
     r"([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)"
     r"(?=$|[\s\"'<>\[\](){},;!?:&#]|\.(?![A-Za-z0-9]))"
 )
-PDF_SOURCE_UPLOAD_RE = re.compile(
-    r"<!--\s*pdf(?:_form)?_source\b[^>]*\bupload_id="
-    r"[\"']([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)[\"'][^>]*-->",
+# `<!--\s*pdf(?:_form)?_source\b[^>]*\bupload_id=["'](id)["'][^>]*-->` and
+# `\[Attachment:[^\]\r\n]*\|\s*id=(id)(?:\s*\||\s*\])` are matched by the
+# forward-only scanners below. As single regexes, every opener in a run with no
+# closing `>` / `]` rescanned to the end of that run: O(n^2) on chat content,
+# which is unbounded on persisted assistant output (CodeQL py/polynomial-redos).
+_PDF_SOURCE_OPEN_RE = re.compile(r"<!--\s*pdf(?:_form)?_source\b", re.IGNORECASE)
+_PDF_SOURCE_ID_RE = re.compile(
+    r"\bupload_id=[\"']([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)[\"']",
     re.IGNORECASE,
 )
-ATTACHMENT_REFERENCE_LINE_RE = re.compile(
-    r"\[Attachment:[^\]\r\n]*\|\s*id="
-    r"([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)"
-    r"(?:\s*\||\s*\])",
+_ATTACHMENT_REFERENCE_OPEN_RE = re.compile(r"\[Attachment:", re.IGNORECASE)
+_ATTACHMENT_REFERENCE_STOP_RE = re.compile(r"[\]\r\n]")
+_ATTACHMENT_REFERENCE_TAIL_RE = re.compile(
+    r"\|\s*id=([0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?)(?:\s*\||\s*\])",
     re.IGNORECASE,
 )
+
+
+def _pdf_source_upload_ids(value: str) -> list[str]:
+    """IDs from `<!-- pdf_source ... upload_id="<id>" ... -->` comments.
+
+    Every opener before the next `>` shares that `>`: the comment matches only
+    if `--` sits right before it, and then with the last `upload_id=` (the
+    greedy `[^>]*` backtracks from the right). Otherwise all of those openers
+    fail together, so the scan resumes after the `>`.
+    """
+    found: list[str] = []
+    pos = 0
+    while True:
+        opener = _PDF_SOURCE_OPEN_RE.search(value, pos)
+        if opener is None:
+            return found
+        close = value.find(">", opener.end())
+        if close < 0:
+            return found
+        if value[close - 2:close] == "--":
+            last = None
+            for last in _PDF_SOURCE_ID_RE.finditer(value, opener.end(), close):
+                pass
+            if last is not None:
+                found.append(last.group(1))
+        pos = close + 1
+
+
+def _attachment_reference_ids(value: str) -> list[str]:
+    """IDs from `[Attachment: name | id=<id> | ...]` reference lines.
+
+    The label scan stops at the first `]`/CR/LF, so every opener before that
+    stop shares it and can only use the last `|` (scanning right to left)
+    whose tail matches. If none does, all of those openers fail together and
+    the scan resumes at the stop.
+    """
+    found: list[str] = []
+    pos = 0
+    while True:
+        opener = _ATTACHMENT_REFERENCE_OPEN_RE.search(value, pos)
+        if opener is None:
+            return found
+        stop = _ATTACHMENT_REFERENCE_STOP_RE.search(value, opener.end())
+        end = stop.start() if stop else len(value)
+        tail = None
+        pipe = value.rfind("|", opener.end(), end)
+        while pipe >= 0:
+            tail = _ATTACHMENT_REFERENCE_TAIL_RE.match(value, pipe)
+            if tail is not None:
+                break
+            pipe = value.rfind("|", opener.end(), pipe)
+        if tail is None:
+            pos = end
+        else:
+            found.append(tail.group(1))
+            pos = tail.end()
 
 
 def is_valid_upload_id(upload_id: str) -> bool:
@@ -99,8 +171,8 @@ def extract_internal_upload_ids(value: Any) -> set[str]:
         return set()
     return (
         set(INTERNAL_UPLOAD_URL_RE.findall(value))
-        | set(PDF_SOURCE_UPLOAD_RE.findall(value))
-        | set(ATTACHMENT_REFERENCE_LINE_RE.findall(value))
+        | set(_pdf_source_upload_ids(value))
+        | set(_attachment_reference_ids(value))
     )
 
 
@@ -242,16 +314,11 @@ class UploadHandler:
 
         # In-memory index cache to avoid O(N) disk I/O on every request
         self._index_cache: Optional[Dict[str, Any]] = None
-        self._index_mtime: float = 0.0
+        self._index_signature: Optional[UploadIndexSignature] = None
     
     def inside_base_dir(self, path: str) -> bool:
         """Check if path is inside base directory"""
-        base = os.path.realpath(self.base_dir)
-        p = os.path.realpath(path)
-        try:
-            return os.path.commonpath([base, p]) == base
-        except Exception:
-            return False
+        return is_inside(self.base_dir, path)
     
     def get_upload_dir(self):
         """Get date-based upload directory"""
@@ -308,14 +375,16 @@ class UploadHandler:
     def is_document_file(self, filename: str, content_type: str = None) -> bool:
         """Check if a file is a document based on extension or content type."""
         document_extensions = {
-            '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
+            '.pdf', '.doc', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
             '.txt', '.py', '.js', '.html', '.htm',
             '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml',
             '.yaml', '.nix', '.sql', '.sh', '.bash', '.c', '.cpp', '.h',
-            '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
+            '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx',
+            '.calendar', '.ics', '.ical'
         }
         document_mime_types = {
-            'application/pdf', 
+            'application/pdf',
+            'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -672,12 +741,7 @@ class UploadHandler:
 
     def _inside_upload_dir(self, path: str) -> bool:
         """Check if path is inside the upload directory."""
-        base = os.path.normcase(os.path.realpath(self.upload_dir))
-        p = os.path.normcase(os.path.realpath(path))
-        try:
-            return os.path.commonpath([base, p]) == base
-        except Exception:
-            return False
+        return is_inside(self.upload_dir, path)
 
     def _atomic_write_json(
         self,
@@ -727,62 +791,119 @@ class UploadHandler:
         # Update cache if this is the main index
         if path.endswith("uploads.json"):
             self._index_cache = data
+            self._index_signature = self._upload_index_signature(
+                (path, path + ".bak")
+            )
+
+    @staticmethod
+    def _upload_index_signature(
+        paths: tuple[str, ...],
+    ) -> Optional[UploadIndexSignature]:
+        """Return file identities strong enough to validate the index cache.
+
+        Modification time alone is insufficient: a torn write can change a
+        file without receiving a strictly newer timestamp on some filesystems.
+        Size, inode, and nanosecond change times make those mutations visible
+        while preserving the cache fast path for unchanged files.
+        """
+        signature: list[UploadIndexFileSignature] = []
+        for candidate in paths:
             try:
-                self._index_mtime = os.path.getmtime(path)
+                stat_result = os.stat(candidate)
+            except FileNotFoundError:
+                signature.append((candidate, None, None, None, None, None))
+                continue
             except OSError:
-                self._index_mtime = time.time()
+                return None
+            signature.append(
+                (
+                    candidate,
+                    stat_result.st_dev,
+                    stat_result.st_ino,
+                    stat_result.st_size,
+                    stat_result.st_mtime_ns,
+                    stat_result.st_ctime_ns,
+                )
+            )
+        return tuple(signature)
 
     def _load_upload_index(self, *, fail_on_error: bool = False) -> Dict[str, Any]:
-        """Load the upload index from disk/cache. Uses mtime-based validation
-        to avoid redundant parsing on hot paths. When ``fail_on_error`` is
-        true, a missing, malformed, or unreadable live index raises so
-        destructive callers cannot mistake corruption for an empty store.
+        """Load the upload index from disk/cache. Uses file-identity validation
+        to avoid redundant parsing on hot paths without missing same-timestamp
+        mutations. When ``fail_on_error`` is true, a missing, malformed, or
+        unreadable live index raises so destructive callers cannot mistake
+        corruption for an empty store.
         """
         uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
         candidates = (uploads_db_path, uploads_db_path + ".bak")
-        if fail_on_error:
-            # A backup is intentionally the previous snapshot. It is useful for
-            # non-destructive reads, but cannot authorize deletion when the live
-            # index is missing or corrupt.
-            if not os.path.exists(uploads_db_path):
-                raise ValueError("live uploads database is missing")
-            existing_candidates = [uploads_db_path]
-        else:
-            existing_candidates = [path for path in candidates if os.path.exists(path)]
-        if not existing_candidates:
-            self._index_cache = {}
-            self._index_mtime = 0.0
-            return {}
+        for _attempt in range(3):
+            signature = self._upload_index_signature(candidates)
+            if fail_on_error:
+                # A backup is intentionally the previous snapshot. It is useful for
+                # non-destructive reads, but cannot authorize deletion when the live
+                # index is missing or corrupt.
+                if not os.path.exists(uploads_db_path):
+                    raise ValueError("live uploads database is missing")
+                existing_candidates = [uploads_db_path]
+            else:
+                existing_candidates = [
+                    path for path in candidates if os.path.exists(path)
+                ]
+            if not existing_candidates:
+                self._index_cache = {}
+                self._index_signature = signature
+                return {}
 
-        # Check cache validity
-        try:
-            mtime = max(os.path.getmtime(path) for path in existing_candidates)
+            # Check cache validity
             if (
                 not fail_on_error
+                and signature is not None
                 and self._index_cache is not None
-                and mtime <= self._index_mtime
+                and signature == self._index_signature
             ):
                 return self._index_cache
-        except OSError:
-            mtime = 0.0
 
-        # Try the live file first, fall back to the .bak sibling if the
-        # live file is truncated/corrupted.
-        for candidate in existing_candidates:
-            try:
-                with open(candidate, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    self._index_cache = data
-                    self._index_mtime = mtime
-                    return data
-            except Exception as e:
-                logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+            # Try the live file first, fall back to the .bak sibling if the
+            # live file is truncated/corrupted. A candidate parsed from an old
+            # inode is accepted only when the whole index signature stays
+            # stable through the read; otherwise retry so the cache cannot pair
+            # stale data with a fresh replacement signature.
+            index_changed_during_read = False
+            for candidate in existing_candidates:
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    verified_signature = self._upload_index_signature(candidates)
+                    if (
+                        signature is not None
+                        and verified_signature is not None
+                        and verified_signature != signature
+                    ):
+                        index_changed_during_read = True
+                        break
+                    if isinstance(data, dict):
+                        self._index_cache = data
+                        self._index_signature = verified_signature
+                        return data
+                except Exception as e:
+                    logger.warning(f"Failed to read uploads database ({candidate}): {e}")
+                    verified_signature = self._upload_index_signature(candidates)
+                    if (
+                        signature is not None
+                        and verified_signature is not None
+                        and verified_signature != signature
+                    ):
+                        index_changed_during_read = True
+                        break
+                    continue
+            if index_changed_during_read:
                 continue
+            break
 
         if fail_on_error:
             raise ValueError("live uploads database is unreadable")
         self._index_cache = {}
+        self._index_signature = self._upload_index_signature(candidates)
         return {}
 
     def get_upload_info(self, upload_id: str) -> Optional[Dict[str, Any]]:

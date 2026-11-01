@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -15,7 +16,7 @@ from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
-from src.model_context import estimate_tokens
+from src.model_context import estimate_tokens, get_context_length
 from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
 from src.attachment_refs import attachment_ref
@@ -24,6 +25,83 @@ from routes.prefs_routes import _load_for_user as load_prefs_for_user
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
+
+_INVISIBLE_RESPONSE_CHARS = "\u2063\u200b\u200c\u200d\ufeff"
+
+
+def youtube_prefetch_sources(message: str, transcripts: list) -> list[dict[str, str]]:
+    """Expose successful automatic YouTube acquisition as answer provenance."""
+    evidence = "\n".join(str(item or "") for item in transcripts)
+    has_transcript = "[YOUTUBE VIDEO TRANSCRIPT]" in evidence
+    has_comments = "[YOUTUBE VIDEO COMMENTS" in evidence
+    if not (has_transcript or has_comments):
+        return []
+    title_match = re.search(r"(?m)^Title:\s*(.+?)\s*$", evidence)
+    sources = []
+    for raw in re.findall(r"https?://[^\s<>\"']+", str(message or ""), re.I):
+        url = raw.rstrip(".,;:!?)]}")
+        if not re.match(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)(?:/|$)", url, re.I):
+            continue
+        if any(source["url"] == url for source in sources):
+            continue
+        sources.append({
+            "url": url,
+            "title": title_match.group(1).strip() if title_match else "YouTube video",
+            "acquisition": "automatic_youtube_context",
+            "evidence": "transcript+comments" if has_transcript and has_comments
+                        else "transcript" if has_transcript else "comments",
+        })
+    return sources
+
+
+def _skill_run_is_complex(agent_rounds: int, agent_tool_calls: int) -> bool:
+    """Keep one-off TUI edit loops out of automatic skill extraction."""
+    return agent_tool_calls >= 4 or (agent_rounds >= 5 and agent_tool_calls >= 3)
+
+
+def clean_repeated_assistant_content(text: object) -> str:
+    """Collapse repeated terminal assistant prose before history/SFT storage."""
+    value = str(text or "")
+    for char in _INVISIBLE_RESPONSE_CHARS:
+        value = value.replace(char, "")
+    value = value.strip()
+    if not value:
+        return ""
+
+    # Stream rejoin/finalization races can concatenate the same complete
+    # answer without separators. Collapse only exact 2-4x repetitions.
+    for copies in range(4, 1, -1):
+        if len(value) % copies == 0:
+            width = len(value) // copies
+            unit = value[:width]
+            if unit and unit * copies == value:
+                value = unit.strip()
+                break
+
+    # Interrupted/rejoined streams can leave a short suffix before a closing
+    # think tag at the edge of visible prose, e.g. "ls.\n</think>\n\nHere's...".
+    edge_close_re = re.compile(r"(?is)^\s*(?!<\s*think\b)[^<\n]{0,120}\s*</\s*think\s*>\s*")
+    while True:
+        cleaned = edge_close_re.sub("", value, count=1).strip()
+        if cleaned == value:
+            break
+        value = cleaned
+
+    first_line = next((line.strip() for line in value.splitlines() if line.strip()), "")
+    if 8 <= len(first_line) <= 180:
+        matches = list(re.finditer(r"(?m)^" + re.escape(first_line) + r"\s*$", value))
+        if len(matches) >= 2:
+            value = value[matches[0].start():matches[1].start()].strip()
+
+    value = re.sub(
+        r"(?is)(?<=[.!?])(?:[a-z]{1,12}\.)\s*</\s*think\s*>\s*$",
+        "",
+        value,
+    ).strip()
+    # No leading `\s*`: .strip() removes that whitespace anyway, and scanning
+    # it from every offset of a long whitespace run was quadratic (ReDoS).
+    value = re.sub(r"(?is)</\s*think\s*>\s*$", "", value).strip()
+    return value
 
 _CASUAL_OPENING_RE = re.compile(
     r"^\s*(?:h+i+|hey+|hello+|yo+|sup+|what'?s up|wass?up|hiya|howdy|"
@@ -34,6 +112,14 @@ _CASUAL_BLOCKLIST_RE = re.compile(
     r"\b(?:cookbook|serve|serving|launch|start|vllm|sglang|llama\.?cpp|ollama|"
     r"download|model|email|document|doc|note|calendar|task|search|web|research|"
     r"file|folder|repo|git|settings?|endpoint|api|token|mcp)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_TOOL_CONTEXT_RE = re.compile(
+    r"\b(?:"
+    r"email|emails|mail|inbox|gmail|"
+    r"calendar|events?|meetings?|appointments?|schedule|"
+    r"notes?|todo|checklist|reminders?|tasks?"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -51,6 +137,14 @@ def _is_casual_low_signal(text: str) -> bool:
     return len(tail_words) <= 2
 
 
+def _truthy_request_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Strong references to in-flight fire-and-forget tasks scheduled from this
 # module. asyncio only keeps weak references to tasks created via
 # create_task, so without this the GC can collect a task mid-execution and
@@ -60,6 +154,197 @@ _BG_TASKS: set[asyncio.Task] = set()
 _INCOGNITO_CONTEXTS: dict[str, dict[str, Any]] = {}
 _INCOGNITO_CONTEXT_TTL_SECONDS = 6 * 60 * 60
 _INCOGNITO_CONTEXT_MAX_MESSAGES = 80
+_SFT_TRACE_CAPTURE_ENV = "ODYSSEUS_SFT_TRACE_CAPTURE"
+_SFT_TRACE_DIR_ENV = "ODYSSEUS_SFT_TRACE_DIR"
+_RUNTIME_REVISION_ENV = "ODYSSEUS_RUNTIME_REVISION"
+
+
+def _sft_trace_capture_enabled(owner: str | None) -> bool:
+    flag = os.getenv(_SFT_TRACE_CAPTURE_ENV, "1").strip().lower()
+    return flag not in {"0", "false", "no", "off"} and str(owner or "").startswith("sft_")
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
+def _last_user_message_for_trace(sess) -> str:
+    for msg in reversed(getattr(sess, "history", []) or []):
+        if getattr(msg, "role", None) == "user":
+            return str(getattr(msg, "content", "") or "").strip()
+    return ""
+
+
+def _append_sft_trace_record(
+    *,
+    owner: str | None,
+    session_id: str,
+    sess,
+    assistant_content: str,
+    metadata: dict,
+    message_id: Any = None,
+) -> None:
+    """Append one training-ready trace record for synthetic SFT users."""
+    if not _sft_trace_capture_enabled(owner):
+        return
+    try:
+        from src.constants import DATA_DIR
+
+        trace_dir = os.getenv(_SFT_TRACE_DIR_ENV) or os.path.join(DATA_DIR, "sft_traces")
+        os.makedirs(trace_dir, exist_ok=True)
+        path = os.path.join(trace_dir, f"{owner}.jsonl")
+        runtime_revision = os.getenv(_RUNTIME_REVISION_ENV, "").strip()
+        record = {
+            "format": "odysseus_sft_trace_turn_v1",
+            "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "owner": owner,
+            "session_id": session_id,
+            "session_name": getattr(sess, "name", "") or "",
+            "message_id": message_id,
+            "user": _last_user_message_for_trace(sess),
+            "assistant": str(assistant_content or "").strip(),
+            "thinking": str((metadata or {}).get("thinking") or "").strip(),
+            "tool_events": _json_safe((metadata or {}).get("tool_events") or []),
+            "round_texts": _json_safe((metadata or {}).get("round_texts") or []),
+            "runtime_revision": runtime_revision,
+            "metadata": {
+                "model": (metadata or {}).get("model"),
+                "requested_model": (metadata or {}).get("requested_model"),
+                "endpoint_label": (metadata or {}).get("endpoint_label"),
+                "endpoint_id": (metadata or {}).get("endpoint_id"),
+                "response_time": (metadata or {}).get("response_time"),
+                "input_tokens": (metadata or {}).get("input_tokens"),
+                "output_tokens": (metadata or {}).get("output_tokens"),
+                "usage_buckets": _json_safe((metadata or {}).get("usage_buckets") or []),
+                "runtime_revision": runtime_revision,
+            },
+        }
+        _prune_sft_retry_rows_before_append(path, record)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("Failed to append SFT trace record for %s/%s: %s", owner, session_id, exc)
+
+
+def remove_session_sft_trace_rows(owner: str | None, session_id: str) -> int:
+    """Remove every captured training row for a deleted synthetic session."""
+    if not _sft_trace_capture_enabled(owner) or not str(session_id or "").strip():
+        return 0
+    try:
+        from src.constants import DATA_DIR
+
+        trace_dir = os.getenv(_SFT_TRACE_DIR_ENV) or os.path.join(DATA_DIR, "sft_traces")
+        path = os.path.join(trace_dir, f"{owner}.jsonl")
+        if not os.path.exists(path):
+            return 0
+        kept: list[str] = []
+        removed: list[str] = []
+        with open(path, "r", encoding="utf-8") as source:
+            for line in source:
+                raw = line.rstrip("\n")
+                if not raw.strip():
+                    continue
+                try:
+                    row = json.loads(raw)
+                except json.JSONDecodeError:
+                    kept.append(raw)
+                    continue
+                if str(row.get("session_id") or "") != session_id:
+                    kept.append(raw)
+                    continue
+                row["deleted_from_training"] = True
+                removed.append(json.dumps(row, ensure_ascii=False))
+        if not removed:
+            return 0
+        tmp_path = f"{path}.{os.getpid()}.{time.time_ns()}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as target:
+            for raw in kept:
+                target.write(raw + "\n")
+        os.replace(tmp_path, path)
+        with open(path + ".trash", "a", encoding="utf-8") as trash:
+            for raw in removed:
+                trash.write(raw + "\n")
+        logger.info("Removed %d SFT trace row(s) for deleted session %s", len(removed), session_id)
+        return len(removed)
+    except Exception as exc:
+        logger.warning("Failed to remove SFT trace rows for session %s: %s", session_id, exc)
+        return 0
+
+
+def _prune_sft_retry_rows_before_append(path: str, record: dict[str, Any]) -> None:
+    """For SFT traces, keep only the latest retry for a repeated user send.
+
+    The browser resend flow can append a second identical user turn without
+    first calling the delete endpoint. Training wants the final attempt, not
+    both sends, so remove prior trailing rows in the same session with the same
+    user prompt before appending the replacement.
+    """
+    current_session = str(record.get("session_id") or "")
+    current_user = str(record.get("user") or "").strip()
+    if not current_session or not current_user or not os.path.exists(path):
+        return
+    kept: list[str] = []
+    parsed: list[tuple[str, dict | None]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                raw = line.rstrip("\n")
+                if not raw.strip():
+                    continue
+                try:
+                    parsed.append((raw, json.loads(raw)))
+                except json.JSONDecodeError:
+                    parsed.append((raw, None))
+
+        last_different_same_session = -1
+        for idx, (_raw, row) in enumerate(parsed):
+            if not isinstance(row, dict) or row.get("session_id") != current_session:
+                continue
+            if str(row.get("user") or "").strip() != current_user:
+                last_different_same_session = idx
+
+        removed: list[str] = []
+        for idx, (raw, row) in enumerate(parsed):
+            should_remove = (
+                idx > last_different_same_session
+                and isinstance(row, dict)
+                and row.get("session_id") == current_session
+                and str(row.get("user") or "").strip() == current_user
+            )
+            if should_remove:
+                tombstone = dict(row)
+                tombstone["deleted_from_training"] = True
+                tombstone["delete_reason"] = "sft_retry_replaced"
+                removed.append(json.dumps(tombstone, ensure_ascii=False))
+            else:
+                kept.append(raw)
+
+        if not removed:
+            return
+        with open(path, "w", encoding="utf-8") as f:
+            for raw in kept:
+                f.write(raw + "\n")
+        with open(path + ".trash", "a", encoding="utf-8") as f:
+            for raw in removed:
+                f.write(raw + "\n")
+        logger.info(
+            "Removed %d prior SFT retry row(s) before appending replacement for session %s",
+            len(removed),
+            current_session,
+        )
+    except Exception as exc:
+        logger.warning("Failed to prune prior SFT retry rows for %s: %s", current_session, exc)
+
+
+def strip_tui_local_context(content: Any) -> Any:
+    """Remove client-only workspace metadata before persistence/display."""
+    if not isinstance(content, str):
+        return content
+    return re.sub(r"\s*<local_context\b[^>]*>.*?</local_context>\s*", "", content, flags=re.IGNORECASE | re.DOTALL).strip()
 
 
 def _spawn_bg(coro) -> asyncio.Task:
@@ -113,6 +398,8 @@ class PresetInfo:
     max_tokens: Optional[int]
     system_prompt: Optional[str]
     character_name: Optional[str]
+    persona_memory: Optional[str] = None
+    persona_memory_schema: str = "general"
 
 
 @dataclass
@@ -152,9 +439,37 @@ class ChatContext:
     # Uploads attached to this user turn, resolved and owner-checked for the
     # agent's private context. This is not emitted to the browser.
     uploaded_files: list = field(default_factory=list)
+    # Route-neutral prompt before any model-window compaction/trimming. This is
+    # retained only when explicit foreground fallbacks are enabled so each
+    # concrete candidate can apply its own context budget independently.
+    route_messages: list = field(default_factory=list)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────── #
+
+def _allowed_models_from_privileges(privs: dict) -> Optional[frozenset[str]]:
+    if privs.get("block_all_models"):
+        return frozenset()
+    allowed_raw = privs.get("allowed_models")
+    allowed = allowed_raw if isinstance(allowed_raw, list) else []
+    restricted = bool(privs.get("allowed_models_restricted")) or bool(allowed)
+    return frozenset(model for model in allowed if isinstance(model, str)) if restricted else None
+
+
+def _allowed_models_for_request(request) -> Optional[frozenset[str]]:
+    """Return the caller's model allowlist, or ``None`` when unrestricted."""
+
+    try:
+        user = effective_user(request)
+    except Exception:
+        user = None
+    if not user:
+        return None
+    auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
+    if not auth_manager:
+        return None
+    privs = auth_manager.get_privileges(user) or {}
+    return _allowed_models_from_privileges(privs)
 
 def _enforce_chat_privileges(request, sess) -> None:
     """Apply the per-user privilege gates (allowed_models + max_messages_per_day)
@@ -185,10 +500,8 @@ def _enforce_chat_privileges(request, sess) -> None:
     if privs.get("block_all_models"):
         raise HTTPException(403, f"Your account is not allowed to use model '{sess.model}'.")
 
-    allowed_raw = privs.get("allowed_models")
-    allowed = allowed_raw if isinstance(allowed_raw, list) else []
-    restricted = bool(privs.get("allowed_models_restricted")) or bool(allowed)
-    if restricted and sess.model and sess.model not in allowed:
+    allowed_models = _allowed_models_from_privileges(privs)
+    if allowed_models is not None and sess.model and sess.model not in allowed_models:
         raise HTTPException(403, f"Your account is not allowed to use model '{sess.model}'.")
 
     cap = int(privs.get("max_messages_per_day") or 0)
@@ -225,11 +538,20 @@ def needs_auto_name(name: str) -> bool:
     return False
 
 
+def fallback_session_title(text: str, *, max_words: int = 6) -> str:
+    words = re.findall(r"[A-Za-z0-9@._'-]+", text)
+    if not words:
+        return "New chat"
+    title = " ".join(words[:max_words]).strip()
+    return title[:60] or "New chat"
+
+
 async def auto_name_session(session_manager, sess):
     """Generate a short title for a session from its first user message."""
     try:
         from src.llm_core import llm_call_async
         from src.task_endpoint import resolve_task_endpoint
+        from src.utility_effort import effort_for_call
 
         # Find first user message
         first_msg = ""
@@ -247,7 +569,90 @@ async def auto_name_session(session_manager, sess):
         if not first_msg:
             return
 
+        from src.owner_identity import is_request_sentinel_owner
         owner = getattr(sess, "owner", None)
+        invalid_owner = (
+            not isinstance(owner, str) or not owner.strip()
+            or owner != owner.strip() or is_request_sentinel_owner(owner)
+        )
+        if invalid_owner:
+            session_manager.update_session_name(sess.id, fallback_session_title(first_msg))
+            return
+
+        endpoint_url = str(getattr(sess, "endpoint_url", "") or "")
+        model_name = str(getattr(sess, "model", "") or "")
+
+        # The spec ("Ajax") model names its own chats from the user's first
+        # prompt. This function only runs after the first response stream has
+        # settled (auto_name_session_after_stream), so titling does not
+        # contend with the visible answer. Thinking is disabled and the
+        # budget kept small so the model returns a bare title.
+        try:
+            from src.model_profiles import uses_odysseus_progressive_thinking
+            _is_spec_model = bool(model_name) and uses_odysseus_progressive_thinking(model_name)
+        except Exception:
+            _is_spec_model = False
+        if _is_spec_model and endpoint_url:
+            try:
+                from src.database import SessionLocal
+                from src.endpoint_resolver import (build_chat_url, build_headers,
+                    resolve_endpoint_runtime, resolve_owner_registered_endpoint)
+                from src.owner_identity import auth_disabled
+
+                owner = getattr(sess, "owner", None)
+                if not owner and not auth_disabled():
+                    raise ValueError("Session has no owner")
+                db = SessionLocal()
+                try:
+                    endpoint = resolve_owner_registered_endpoint(db, endpoint_url, owner)
+                    base, key = resolve_endpoint_runtime(endpoint, owner=owner)
+                    title_url = build_chat_url(base)
+                    title_headers = build_headers(key, base)
+                finally:
+                    db.close()
+                title = await llm_call_async(
+                    title_url,
+                    model_name,
+                    [
+                        {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation \u2014 just the title."},
+                        {"role": "user", "content": first_msg},
+                    ],
+                    temperature=0.3,
+                    max_tokens=32,
+                    headers=title_headers,
+                    timeout=20,
+                    thinking_mode="off",
+                )
+            except Exception as e:
+                logger.warning("[auto-name] spec title call failed for %s: %s", sess.id, e)
+                title = ""
+            title = str(title or "").strip().strip('"\'').strip()
+            from src.text_helpers import strip_think
+            title = strip_think(title, prose=False, prompt_echo=False)
+            if not title or len(title) >= 80 or "\n" in title:
+                title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named spec session {sess.id}: {title}")
+            return
+
+        if (
+            "ttft" in model_name.lower()
+            or re.search(r":18\d{3}\b", endpoint_url)
+        ):
+            title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named session {sess.id} deterministically: {title}")
+            return
+
+        owner = getattr(sess, "owner", None)
+        from src.owner_identity import auth_disabled
+        if not owner and not auth_disabled():
+            title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named unowned session {sess.id} deterministically: {title}")
+            return
+
+        from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
             sess.endpoint_url, sess.model, sess.headers, owner=owner
         )
@@ -255,131 +660,111 @@ async def auto_name_session(session_manager, sess):
             logger.debug("[auto-name] No model provided, skipping")
             return
 
+        sess_url = getattr(sess, "endpoint_url", None)
+        if t_url and sess_url and t_url == sess_url:
+            from src.database import SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url,
+                build_headers,
+                resolve_endpoint,
+                resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
+            db = SessionLocal()
+            try:
+                endpoint = resolve_owner_registered_endpoint(db, t_url, owner)
+                base, key = resolve_endpoint_runtime(endpoint, owner=owner)
+                t_url = build_chat_url(base)
+                t_headers = build_headers(key, base)
+            except Exception as e:
+                logger.debug("[auto-name] session fallback endpoint %s unauthorized for %s: %s", t_url, owner, e)
+                t_url, t_model, t_headers = None, None, None
+                for prefix in ("utility", "default"):
+                    try:
+                        u, m, h = resolve_endpoint(prefix, owner=owner)
+                        if u and m:
+                            t_url, t_model, t_headers = u, m, h
+                            break
+                    except Exception:
+                        pass
+            finally:
+                db.close()
+
+        if not t_url or not t_model:
+            title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named session {sess.id} deterministically (no authorized model endpoint): {title}")
+            return
+
         # max_tokens big enough that reasoning models (Minimax M2,
         # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
         # plus the actual title — 200 used to clip them mid-reasoning
         # so strip_think left an empty string and no rename happened.
         # Timeout matches: 60s gives slow local reasoners room to finish.
-        title = await llm_call_async(
-            t_url,
-            t_model,
-            [
-                {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
-                {"role": "user", "content": first_msg},
-            ],
-            temperature=0.3,
-            max_tokens=4096,
-            headers=t_headers,
-            timeout=60,
-        )
+        try:
+            title = await llm_call_async(
+                t_url,
+                t_model,
+                [
+                    {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
+                    {"role": "user", "content": first_msg},
+                ],
+                temperature=0.3,
+                max_tokens=64,
+                headers=t_headers,
+                timeout=15,
+                reasoning_effort=effort_for_call(t_url, t_model, owner, sess),
+            )
+        except Exception as e:
+            logger.warning("[auto-name] non-spec title call failed for %s: %s", sess.id, e)
+            title = ""
 
         title = title.strip().strip('"\'').strip()
         # Strip <think>/<thinking> blocks (closed, dangling, or stray tags)
         # via the central helper.
         from src.text_helpers import strip_think
         title = strip_think(title, prose=False, prompt_echo=False)
-        if title and len(title) < 80:
-            session_manager.update_session_name(sess.id, title)
-            logger.info(f"Auto-named session {sess.id}: {title}")
+        if not title or len(title) >= 80 or "\n" in title:
+            fallback = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, fallback)
+            logger.info(
+                "Auto-named session %s with fallback title after unusable model title: %s",
+                sess.id,
+                fallback,
+            )
+            return
+
+        session_manager.update_session_name(sess.id, title)
+        logger.info(f"Auto-named session {sess.id}: {title}")
 
     except Exception as e:
         import traceback
         logger.error(f"Auto-name failed for {sess.id}: {e}\n{traceback.format_exc()}")
 
 
-def try_fallback_endpoint(sess, session_id: str) -> dict | None:
-    """Find an alternative working endpoint when the current one fails.
-
-    Returns {"model": ..., "endpoint_url": ..., "endpoint_name": ...} or None.
-    """
-    import requests as _req
-    from src.endpoint_resolver import (
-        build_chat_url,
-        build_headers,
-        build_models_url,
-        normalize_base,
-        resolve_endpoint_runtime,
-    )
-    from src.chatgpt_subscription import is_chatgpt_subscription_base
-
-    current_url = sess.endpoint_url or ""
-    owner = getattr(sess, "owner", None)
-    db = SessionLocal()
+async def auto_name_session_after_stream(session_id: str, session_manager, sess):
+    """Delay chat title generation until the first response stream is settled."""
     try:
-        q = db.query(ModelEndpoint).filter(
-            ModelEndpoint.is_enabled == True
-        )
-        if owner:
-            from src.auth_helpers import owner_filter
-            q = owner_filter(q, ModelEndpoint, owner)
-        endpoints = q.all()
-    finally:
-        db.close()
-
-    for ep in endpoints:
-        base = normalize_base(ep.base_url)
-        # Skip current endpoint
-        if current_url and base in current_url:
-            continue
+        waited = 0.0
+        while _is_session_stream_active(session_id) and waited < 30.0:
+            await asyncio.sleep(0.25)
+            waited += 0.25
+        # Let the final SSE chunk/message_saved bookkeeping clear before any
+        # title model call can contend with the user's visible response.
+        await asyncio.sleep(0.5)
         try:
-            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
-        except Exception:
-            continue
-        ping_url = build_models_url(base)
-        headers = build_headers(api_key, base)
-        try:
-            if ping_url:
-                r = _req.get(ping_url, headers=headers, timeout=5)
-                r.raise_for_status()
-                data = r.json()
-                models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                if not models:
-                    models = [
-                        m.get("name") or m.get("model")
-                        for m in (data.get("models") or [])
-                        if m.get("name") or m.get("model")
-                    ]
-            else:
-                models = json.loads(ep.cached_models or "[]")
-            if not models:
-                continue
-            # Found a working endpoint — update session
-            new_model = models[0]
-            chat_url = build_chat_url(base)
-            new_headers = build_headers(api_key, base)
-            persisted_headers = {} if is_chatgpt_subscription_base(base) else new_headers
-
-            sess.model = new_model
-            sess.endpoint_url = chat_url
-            sess.headers = new_headers
-
-            # Persist
-            _db = SessionLocal()
-            try:
-                _db.query(DBSession).filter(DBSession.id == session_id).update({
-                    "model": new_model,
-                    "endpoint_url": chat_url,
-                    "headers": persisted_headers,
-                })
-                _db.commit()
-            finally:
-                _db.close()
-
-            logger.info(f"Fallback: switched session {session_id} from {current_url} to {ep.name} ({new_model})")
-            return {
-                "model": new_model,
-                "endpoint_url": chat_url,
-                "endpoint_name": ep.name,
-            }
-        except Exception:
-            continue
-
-    return None
+            sess = session_manager.get_session(session_id)
+        except Exception as e:
+            logger.warning("[auto-name] Could not reload session %s before naming: %s", session_id, e)
+        await auto_name_session(session_manager, sess)
+    except Exception as e:
+        import traceback
+        logger.error(f"Deferred auto-name failed for {session_id}: {e}\n{traceback.format_exc()}")
 
 
 def extract_preset(chat_handler, preset_id) -> PresetInfo:
     """Extract preset parameters via chat_handler."""
-    temperature, max_tokens, system_prompt, char_name = (
+    temperature, max_tokens, system_prompt, char_name, persona_memory, persona_memory_schema = (
         chat_handler.validate_and_extract_preset(preset_id)
     )
     return PresetInfo(
@@ -387,6 +772,8 @@ def extract_preset(chat_handler, preset_id) -> PresetInfo:
         max_tokens=max_tokens,
         system_prompt=system_prompt,
         character_name=char_name,
+        persona_memory=persona_memory,
+        persona_memory_schema=persona_memory_schema,
     )
 
 
@@ -470,14 +857,28 @@ def build_uploaded_file_manifest(att_ids: list, upload_handler, owner: Optional[
     return manifest
 
 
-def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, incognito: bool = False):
+def add_user_message(
+    sess,
+    chat_handler,
+    preprocessed: PreprocessedMessage,
+    incognito: bool = False,
+    interaction_mode: str | None = None,
+    auto_escalated: bool = False,
+):
     """Add user message to session history and update session name.
     Incognito messages must not mutate persistent session history, even in
     memory, because a later normal turn can persist the same session object."""
     if incognito:
         return
-    user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
-    sess.add_message(ChatMessage("user", preprocessed.user_content, metadata=user_meta))
+    user_meta = {}
+    if preprocessed.attachment_meta:
+        user_meta["attachments"] = preprocessed.attachment_meta
+    if interaction_mode in {"chat", "agent", "research"}:
+        user_meta["interaction_mode"] = interaction_mode
+    if auto_escalated:
+        user_meta["auto_escalated"] = True
+    clean_content = strip_tui_local_context(preprocessed.user_content)
+    sess.add_message(ChatMessage("user", clean_content, metadata=user_meta or None))
     chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
 
 
@@ -509,6 +910,52 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
         return False
 
 
+def _endpoint_created_sort_key(ep) -> tuple:
+    created = getattr(ep, "created_at", None)
+    try:
+        ts = float(created.timestamp()) if created else 0.0
+    except Exception:
+        ts = 0.0
+    return (ts, str(getattr(ep, "id", "") or ""))
+
+
+def _select_session_endpoint(sess, target_url: str, endpoints) -> tuple:
+    """Pick the endpoint a session should use for credential resolution.
+
+    Two endpoints may share one provider URL but not credentials (e.g. two
+    ChatGPT Subscription accounts), so an explicit ``sess.endpoint_id`` binding
+    wins whenever it still matches the session URL. Without a binding the
+    oldest URL-matching endpoint is chosen deterministically and persisted.
+
+    Returns ``(endpoint, bound_by_fallback)``; ``bound_by_fallback`` is True
+    when the choice came from URL matching and may be persisted as a binding.
+    """
+    matching = [ep for ep in endpoints if _session_url_matches_endpoint(target_url, getattr(ep, "base_url", "") or "")]
+    if not matching:
+        return None, False
+    bound_id = getattr(sess, "endpoint_id", None) or None
+    if bound_id:
+        for ep in matching:
+            if str(ep.id) == str(bound_id):
+                sess.endpoint_id = ep.id
+                return ep, False
+        # The bound endpoint is gone or disabled. Never silently borrow another
+        # endpoint's credentials when several routes share this URL.
+        return None, False
+    matching.sort(key=_endpoint_created_sort_key)
+    chosen = matching[0]
+    if len(matching) > 1:
+        logger.warning(
+            "Session %s has no endpoint binding and %d endpoints share its URL; using oldest endpoint %s",
+            getattr(sess, "id", "?"), len(matching), chosen.id,
+        )
+    try:
+        sess.endpoint_id = chosen.id
+    except Exception:
+        pass
+    return chosen, True
+
+
 def _has_auth_keys(headers) -> bool:
     """True if a headers dict carries an Authorization/x-api-key entry."""
     return isinstance(headers, dict) and any(
@@ -518,6 +965,7 @@ def _has_auth_keys(headers) -> bool:
 
 def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
+    owner = owner or getattr(sess, "owner", None)
     try:
         from src.chatgpt_subscription import is_chatgpt_subscription_base
         is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(sess, "endpoint_url", "") or "")
@@ -526,11 +974,22 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     has_auth = _has_auth_keys(sess.headers)
     if has_auth and not is_chatgpt_subscription:
         return
+    if is_chatgpt_subscription:
+        # Never reuse a stale bearer after deletion, disablement or failed refresh.
+        sess.headers = {}
 
     try:
         from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
         db = SessionLocal()
         try:
+            stored_q = db.query(DBSession).filter(DBSession.id == session_id)
+            if owner:
+                stored_q = stored_q.filter(DBSession.owner == owner)
+            if is_chatgpt_subscription:
+                stored = stored_q.first()
+                if stored is not None and _has_auth_keys(stored.headers):
+                    stored_q.update({"headers": {}})
+                    db.commit()
             target_url = getattr(sess, "endpoint_url", "") or ""
             if not target_url:
                 return
@@ -541,44 +1000,36 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
                 # with similar endpoint URLs can borrow each other's API key.
                 from src.auth_helpers import owner_filter
                 q = owner_filter(q, ModelEndpoint, owner)
-            for ep in q.all():
-                if not _session_url_matches_endpoint(target_url, ep.base_url or ""):
-                    continue
-                try:
-                    base, api_key = resolve_endpoint_runtime(ep, owner=owner)
-                except Exception as e:
-                    logger.warning("Failed to resolve provider auth for session %s: %s", session_id, e)
-                    return
-                if not api_key:
-                    # No usable key (e.g. ChatGPT Subscription needs re-auth).
-                    return
-                sess.headers = build_headers(api_key, base)
-                if is_chatgpt_subscription:
-                    # The bearer is short-lived and re-resolved per request, so it
-                    # stays request-local and is never written to the plaintext
-                    # sessions.headers column. Proactively strip any bearer an
-                    # older code path may have persisted so it does not linger.
-                    stale_q = db.query(DBSession).filter(DBSession.id == session_id)
-                    if owner:
-                        stale_q = stale_q.filter(DBSession.owner == owner)
-                    stored = stale_q.first()
-                    if stored is not None and _has_auth_keys(stored.headers):
-                        stale_q.update({"headers": {}})
-                        db.commit()
-                        logger.info(f"Cleared persisted ChatGPT Subscription bearer from session {session_id}")
-                    logger.debug(f"Resolved request-local ChatGPT Subscription auth for session {session_id}")
-                    return
-                update_q = db.query(DBSession).filter(DBSession.id == session_id)
-                if owner:
-                    update_q = update_q.filter(DBSession.owner == owner)
-                update_q.update({"headers": sess.headers})
-                db.commit()
-                logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
+            ep, bound_here = _select_session_endpoint(sess, target_url, q.all())
+            if ep is None:
                 return
+            if bound_here:
+                # Bind before authentication, including failed/expired credentials.
+                stored_q.filter(DBSession.endpoint_id == None).update({"endpoint_id": ep.id})
+                db.commit()
+            try:
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            except Exception as e:
+                logger.warning("Failed to resolve provider auth for session %s: %s", session_id, type(e).__name__)
+                return
+            if not api_key:
+                # No usable key (e.g. ChatGPT Subscription needs re-auth).
+                return
+            sess.headers = build_headers(api_key, base)
+            if is_chatgpt_subscription:
+                # Request-local only; persistence was cleaned before resolution.
+                return
+            update_q = db.query(DBSession).filter(DBSession.id == session_id)
+            if owner:
+                update_q = update_q.filter(DBSession.owner == owner)
+            update_q.update({"headers": sess.headers})
+            db.commit()
+            logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
+            return
         finally:
             db.close()
     except Exception as e:
-        logger.warning(f"Failed to resolve session headers: {e}")
+        logger.warning("Failed to resolve session headers: %s", type(e).__name__)
 
 
 def _match_cached_model_id(requested: str, models) -> Optional[str]:
@@ -673,6 +1124,7 @@ async def build_chat_context(
     chat_processor,
     message: str,
     session_id: str,
+    selected_notes_context: str | None = None,
     preset_id=None,
     att_ids: list = None,
     use_web=None,
@@ -687,11 +1139,20 @@ async def build_chat_context(
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
+    defer_context_shaping: bool = False,
+    continuation_context_message: str | None = None,
+    persist_user_message: bool = True,
+    interaction_mode: str | None = None,
+    auto_escalated: bool = False,
+    context_resolution=None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
     This is the shared logic between /chat and /chat_stream — preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
+
+    ``context_resolution`` is the turn's already resolved context window. When
+    supplied, history shaping sizes against it instead of probing the endpoint.
     """
     # Preset
     preset = extract_preset(chat_handler, preset_id)
@@ -710,14 +1171,27 @@ async def build_chat_context(
     # Add user message to history. Nobody/incognito uses a request-local
     # transcript store instead of session history so stale saved chats cannot
     # bleed into context and the turn is not persisted.
-    if incognito:
-        user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
+    if persist_user_message and incognito:
+        user_meta = {}
+        if preprocessed.attachment_meta:
+            user_meta["attachments"] = preprocessed.attachment_meta
+        if interaction_mode in {"chat", "agent", "research"}:
+            user_meta["interaction_mode"] = interaction_mode
+        if auto_escalated:
+            user_meta["auto_escalated"] = True
         _append_incognito_message(session_id, "user", preprocessed.user_content, user_meta)
-    else:
-        add_user_message(sess, chat_handler, preprocessed, incognito=False)
+    elif persist_user_message:
+        add_user_message(
+            sess,
+            chat_handler,
+            preprocessed,
+            incognito=False,
+            interaction_mode=interaction_mode,
+            auto_escalated=auto_escalated,
+        )
 
     # Fire events
-    if not incognito:
+    if persist_user_message and not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
@@ -729,13 +1203,27 @@ async def build_chat_context(
         getattr(chat_handler, "upload_handler", None),
         getattr(sess, "owner", None),
     )
-    casual_low_signal = _is_casual_low_signal(message)
+    context_message = (
+        str(continuation_context_message).strip()
+        if continuation_context_message
+        else message
+    )
+    casual_low_signal = _is_casual_low_signal(context_message)
 
     # Memory enabled?
-    mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
+    mem_enabled = (
+        not incognito
+        and not no_memory
+        and uprefs.get("memory_enabled", True)
+        and getattr(sess, "memory_injection_enabled", True) is not False
+    )
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
-    skills_enabled = not incognito and uprefs.get("skills_enabled", True)
+    skills_enabled = (
+        not incognito
+        and uprefs.get("skills_enabled", True)
+        and getattr(sess, "skill_injection_enabled", True) is not False
+    )
     if not allow_tool_preprocessing:
         mem_enabled = False
         skills_enabled = False
@@ -760,22 +1248,40 @@ async def build_chat_context(
     if incognito or not allow_tool_preprocessing or is_research_spinoff or casual_low_signal:
         use_rag_val = False
 
-    # If pre-fetched search context was provided (compare mode), skip live web search
-    skip_web = bool(search_context) or not allow_tool_preprocessing or casual_low_signal
+    use_web_val = _truthy_request_flag(use_web)
+    # If pre-fetched search context was provided (compare mode), skip live web
+    # search. Personal app requests should be served by their tools; pre-search
+    # here caused calendar/email turns with use_web="false" to run irrelevant
+    # web searches before the agent even saw the tool surface.
+    skip_web = (
+        bool(search_context)
+        or not allow_tool_preprocessing
+        or casual_low_signal
+        or bool(agent_mode and _PERSONAL_TOOL_CONTEXT_RE.search(context_message or ""))
+    )
 
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
     # the sync path uses text_for_context.
-    _ctx_msg = preprocessed.enhanced_message if use_enhanced_message else preprocessed.text_for_context
+    _ctx_msg = (
+        context_message
+        if continuation_context_message
+        else (
+            preprocessed.enhanced_message
+            if use_enhanced_message
+            else preprocessed.text_for_context
+        )
+    )
     _preface_kwargs = dict(
         message=_ctx_msg,
         session=sess,
-        use_web=use_web and not skip_web,
+        use_web=use_web_val and not skip_web,
         use_memory=mem_enabled,
         time_filter=time_filter,
         preset_system_prompt=preset.system_prompt,
         owner=user,
         character_name=preset.character_name,
+        persona_memory=preset.persona_memory,
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,
@@ -791,9 +1297,31 @@ async def build_chat_context(
     if search_context and allow_tool_preprocessing and not casual_low_signal:
         preface.append(untrusted_context_message("prefetched search context", search_context))
 
+    # Inject selected notes as context
+    if selected_notes_context:
+        selected_notes_context = (
+            "The following selected notes and todos are reference context explicitly chosen "
+            "by the user. Use them directly when relevant to the user's request. Do not "
+            "ask for permission to use this context, and do not call note-management "
+            "tools just to retrieve the same notes; use those tools only for a requested "
+            "change or when this context is insufficient.\n\n"
+            + selected_notes_context
+        )
+        preface.append(
+            untrusted_context_message(
+                "Selected notes and todos",
+                selected_notes_context,
+            )
+        )
+
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:
         preface.append(untrusted_context_message("youtube transcript", transcript))
+    for source in youtube_prefetch_sources(
+        preprocessed.text_for_context, preprocessed.youtube_transcripts
+    ):
+        if not any(existing.get("url") == source["url"] for existing in web_sources):
+            web_sources.append(source)
 
     # Normalize model ID. Prefer cached endpoint models so group chat does not
     # re-hit slow local /models endpoints on every participant turn.
@@ -830,13 +1358,30 @@ async def build_chat_context(
         except Exception:
             logger.debug("Failed to add current date/time context", exc_info=True)
 
-    # Auto-compact
-    messages, context_length, was_compacted = await maybe_compact(
-        sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
-    )
+    route_messages = list(messages)
+    # Explicit fallback routing must shape from the same route-neutral prompt
+    # for every candidate. Running selected-model compaction here would mutate
+    # session history before we know which route can answer and would make a
+    # later larger-context candidate unable to recover discarded history.
+    if context_resolution is not None:
+        prepared_window = {"context_length": context_resolution.shaping_window}
+    else:
+        prepared_window = {}
+    if defer_context_shaping:
+        context_length = (
+            prepared_window.get("context_length")
+            or get_context_length(sess.endpoint_url, sess.model)
+        )
+        was_compacted = False
+    else:
+        messages, context_length, was_compacted = await maybe_compact(
+            sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
+            **prepared_window,
+        )
     _before_trim_messages = len(messages)
     _before_trim_tokens = estimate_tokens(messages)
-    messages = trim_for_context(messages, context_length)
+    if not defer_context_shaping:
+        messages = trim_for_context(messages, context_length)
     _after_trim_messages = len(messages)
     _after_trim_tokens = estimate_tokens(messages)
     _context_trimmed = _after_trim_messages < _before_trim_messages or _after_trim_tokens < _before_trim_tokens
@@ -860,14 +1405,22 @@ async def build_chat_context(
         context_tokens_after_trim=_after_trim_tokens,
         auto_opened_docs=auto_opened_docs,
         uploaded_files=uploaded_files,
+        route_messages=route_messages,
     )
 
 
 def accumulate_token_usage(session_id: str, metrics: dict):
-    """Add input/output token counts to the session's running totals."""
+    """Add input/output token counts (and USD cost) to the session's totals."""
     in_t = metrics.get("input_tokens", 0)
     out_t = metrics.get("output_tokens", 0)
-    if not (in_t or out_t):
+    cost = metrics.get("cost_usd")
+    try:
+        cost = float(cost) if cost is not None else 0.0
+        if not math.isfinite(cost) or cost < 0:
+            cost = 0.0
+    except (TypeError, ValueError):
+        cost = 0.0
+    if not (in_t or out_t or cost):
         return
     db = SessionLocal()
     try:
@@ -875,6 +1428,8 @@ def accumulate_token_usage(session_id: str, metrics: dict):
         if db_s:
             db_s.total_input_tokens = (db_s.total_input_tokens or 0) + in_t
             db_s.total_output_tokens = (db_s.total_output_tokens or 0) + out_t
+            if cost:
+                db_s.total_cost_usd = (db_s.total_cost_usd or 0.0) + cost
             db.commit()
     except Exception:
         db.rollback()
@@ -903,13 +1458,17 @@ def _normalize_thinking(text: str) -> str:
 
     # Handle garbled <think> tags: reasoning text followed by <think> as separator
     # e.g. "The user said...I should respond.\n<think>Hey! What's up?"
+    # Linear form of `^([\s\S]+?)\n*<think>\s*([\s\S]*?)(?:</think>)?\s*$`:
+    # the lookbehind stops the lazy prefix re-scanning a newline run from every
+    # offset, and the optional trailing closer is dropped after the match
+    # instead of being retried at every body offset (both were quadratic).
     garbled = re.match(
-        r'^([\s\S]+?)\n*<think(?:ing)?>\s*([\s\S]*?)(?:</think(?:ing)?>)?\s*$',
+        r'^([\s\S]+?)(?<![\s\S]\n)\n*<think(?:ing)?>\s*([\s\S]*)$',
         text, re.IGNORECASE
     )
     if garbled:
         before = garbled.group(1).strip()
-        after = garbled.group(2).strip()
+        after = re.sub(r'</think(?:ing)?>$', '', garbled.group(2).rstrip(), flags=re.IGNORECASE).strip()
         # Only treat as garbled if the part before <think> looks like reasoning
         reasoning_starts = (
             'The user ', 'I need ', 'I should ', 'I will ',
@@ -927,6 +1486,21 @@ def _normalize_thinking(text: str) -> str:
 
     # Qwen3.5: "Thinking Process:" or "Thinking:" prefix
     if thinking_prefix_re.match(text.lstrip()):
+        # Tool-router checkpoints sometimes narrate several drafts and then
+        # emit an explicit final marker near the end. Prefer the last marker;
+        # the first ordinary-looking paragraph can still be internal review.
+        final_markers = list(re.finditer(
+            r"(?im)^\s*Final\s+(?:decision|answer|output(?:\s+generation)?)\s*:\s*",
+            text,
+        ))
+        if final_markers:
+            marker = final_markers[-1]
+            think = thinking_prefix_re.sub('', text[:marker.start()]).strip()
+            reply = text[marker.end():].strip()
+            if len(reply) >= 2 and reply[0] in {'\"', '\u201c'} and reply[-1] in {'\"', '\u201d'}:
+                reply = reply[1:-1].strip()
+            if reply:
+                return '<think>' + think + '</think>\n\n' + reply
         # Try clean boundary first
         m = re.match(
             r'^(Thinking(?:\s+Process)?:[\s\S]*?)(\n\n(?=[A-Z]|Hey|Yo|Hi|Sure|I |What|Here|Let|The |This |OK|Ok|Yes|No |So |Well |Thank|Alright|Of course|Absolutely|Great|Hello|As ))',
@@ -1055,6 +1629,23 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
         if info.get("time"):
             md["thinking_time"] = info["time"]
         return info["reply"], md
+    # A stopped stream can end before producing any answer prose. Preserve its
+    # partial reasoning as structured metadata so history rendering and the
+    # next Resume request can both recover it. Normal reasoning-only completed
+    # turns retain the legacy raw-content behavior.
+    if md.get("stopped"):
+        raw = str(content or "")
+        partial = re.match(
+            r'^\s*<think(?:ing)?(?:\s+time="([\d.]+)")?>([\s\S]*?)(?:</think(?:ing)?>\s*)?$',
+            raw,
+            re.IGNORECASE,
+        )
+        if partial and partial.group(2).strip():
+            md["thinking"] = partial.group(2).strip()
+            md["thinking_interrupted"] = True
+            if partial.group(1):
+                md["thinking_time"] = partial.group(1)
+            return "", md
     return content, md
 
 
@@ -1109,6 +1700,16 @@ def save_assistant_response(
     if tool_events:
         md["tool_events"] = tool_events
 
+    # The streaming route may have forwarded textual DSML/XML tool calls as
+    # deltas before the agent loop parsed them. Strip them again at the
+    # persistence boundary so raw tool markup cannot survive in history.
+    try:
+        from src.tool_parsing import strip_tool_blocks
+        full_response = strip_tool_blocks(str(full_response or "")).strip()
+    except Exception:
+        full_response = str(full_response or "")
+    full_response = clean_repeated_assistant_content(full_response)
+
     # Extract thinking into metadata (don't pollute message content with <think> tags)
     _think_info = _extract_thinking_meta(full_response)
     if _think_info:
@@ -1134,10 +1735,25 @@ def save_assistant_response(
     try:
         _last = sess.history[-1]
         _meta = getattr(_last, "metadata", None)
+        _message_id = _meta.get("_db_id") if isinstance(_meta, dict) else None
+        _append_sft_trace_record(
+            owner=getattr(sess, "owner", None),
+            session_id=session_id,
+            sess=sess,
+            assistant_content=_content,
+            metadata=md,
+            message_id=_message_id,
+        )
         if isinstance(_meta, dict):
-            return _meta.get("_db_id")
+            return _message_id
     except (IndexError, AttributeError):
-        pass
+        _append_sft_trace_record(
+            owner=getattr(sess, "owner", None),
+            session_id=session_id,
+            sess=sess,
+            assistant_content=_content,
+            metadata=md,
+        )
     return None
 
 
@@ -1210,6 +1826,8 @@ def run_post_response_tasks(
     owner: str = None,
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
+    preset_manager=None,
+    persona_memory_schema: str = "general",
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
@@ -1230,7 +1848,8 @@ def run_post_response_tasks(
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
-    if allow_background_extraction and not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
+    _chat_memory_extract = getattr(sess, "memory_extraction_enabled", True) is not False
+    if allow_background_extraction and not incognito and not compare_mode and _chat_memory_extract and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
         from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
@@ -1240,6 +1859,27 @@ def run_post_response_tasks(
             sess, memory_manager, memory_vector,
             t_url, t_model, t_headers,
         )))
+
+    if (
+        allow_background_extraction
+        and not incognito
+        and not compare_mode
+        and _chat_memory_extract
+        and _should_extract
+        and uprefs.get("auto_memory", True)
+        and character_name
+    ):
+        if preset_manager is not None:
+            from services.memory.memory_extractor import update_persona_memory
+            from src.task_endpoint import resolve_task_endpoint
+            p_url, p_model, p_headers = resolve_task_endpoint(
+                sess.endpoint_url, sess.model, sess.headers, owner=owner,
+            )
+            _extraction_jobs.append(("persona-memory", update_persona_memory(
+                sess, preset_manager, character_name,
+                p_url, p_model, p_headers,
+                schema=persona_memory_schema,
+            )))
 
     # Skill extraction from complex agent runs. Only when the user actually
     # chose agent mode — not a chat we auto-escalated for a notes/calendar
@@ -1255,13 +1895,17 @@ def run_post_response_tasks(
         extract_skills, auto_skills_enabled, incognito, compare_mode,
         agent_rounds, agent_tool_calls, "set" if skills_manager else "MISSING",
     )
+    # A normal inspect/edit/verify turn is commonly three calls. Treating that
+    # as a reusable skill creates one-off titles and makes the skill library
+    # noisy. Automatic extraction is reserved for runs that demonstrate a
+    # genuinely longer procedure; explicit skill tools remain unaffected.
     if (
         extract_skills
         and allow_background_extraction
         and auto_skills_enabled
         and not incognito
         and not compare_mode
-        and (agent_rounds >= 2 or agent_tool_calls >= 2)
+        and _skill_run_is_complex(agent_rounds, agent_tool_calls)
     ):
         if skills_manager is None:
             logger.warning(
@@ -1298,4 +1942,4 @@ def run_post_response_tasks(
 
     # Auto-name
     if needs_auto_name(sess.name):
-        _spawn_bg(auto_name_session(session_manager, sess))
+        _spawn_bg(auto_name_session_after_stream(session_id, session_manager, sess))

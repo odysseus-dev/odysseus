@@ -5,9 +5,9 @@ The in-memory branch skips messages whose metadata has ``hidden`` (e.g.
 compaction summaries that are kept for AI context but not shown to the user).
 The DB fallback (taken when the in-memory history is empty, e.g. after a
 restart) built the client response from every DB row with no such filter, so
-hidden messages leaked to the client on DB-served sessions. The rebuilt
-in-memory ``session.history`` must still keep them, though, so only the response
-is filtered.
+hidden messages leaked to the client on DB-served sessions. Hydration of
+``session.history`` belongs to ``get_session``; this fallback only shapes the
+response, so only the response is filtered.
 
 get_session_history depends on the DB, the session manager and a FastAPI
 request, so this pins the regression at the source level (as other route tests

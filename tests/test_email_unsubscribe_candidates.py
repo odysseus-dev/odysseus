@@ -83,3 +83,26 @@ def test_dedupe_unsubscribe_candidates_collapses_same_list():
     assert len(deduped) == 1
     assert deduped[0]["duplicate_count"] == 2
     assert deduped[0]["duplicate_uids"] == ["12", "13"]
+
+
+def test_dedupe_unsubscribe_candidates_collapses_tokenized_links_from_same_sender():
+    first = {
+        "uid": "12",
+        "from_address": "no-reply@example.com",
+        "subject": "Sale one",
+        "list_id": "list-one.example.com",
+        "recommended_method": {"kind": "url", "target": "https://example.com/u/a"},
+    }
+    second = {
+        "uid": "13",
+        "from_address": "NO-REPLY@example.com",
+        "subject": "Sale two",
+        "list_id": "list-two.example.com",
+        "recommended_method": {"kind": "url", "target": "https://example.com/u/b"},
+    }
+
+    deduped = _dedupe_unsubscribe_candidates([first, second])
+
+    assert len(deduped) == 1
+    assert deduped[0]["duplicate_count"] == 2
+    assert deduped[0]["duplicate_uids"] == ["12", "13"]

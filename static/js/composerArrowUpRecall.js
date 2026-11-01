@@ -143,9 +143,9 @@ export function wireArrowUpRecall(composer, getUserMessages, options = {}) {
       return;
     }
 
-    // ArrowUp owns prompt history in the chat composer. If the current text
-    // is not already a recalled prompt, start from newest instead of letting
-    // the browser move the caret inside the textarea.
+    // ArrowUp walks older prompts. An unmatched draft already returned above,
+    // so reaching here means the composer is empty or holds a recalled prompt
+    // — the caret-navigation case is never hijacked.
     const nextIndex = currentIndex >= 0 ? Math.min(currentIndex + 1, history.length - 1) : 0;
     const recalled = history[nextIndex];
     if (!recalled) {

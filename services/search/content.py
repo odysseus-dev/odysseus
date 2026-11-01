@@ -2,22 +2,19 @@
 
 import copy
 import io
-import ipaddress
 import json
 import os
 import re
 import logging
-import socket
-import ssl
 from datetime import datetime, timedelta
-from typing import Iterable, List, cast
-from urllib.parse import urljoin, urlparse
+from typing import List
+from urllib.parse import urljoin, urlsplit, quote
 
 import httpx
-import httpcore
 from bs4 import BeautifulSoup
 
 from src.constants import WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES, WEB_FETCH_USER_AGENT
+from src import outbound_fetch as _outbound_fetch
 
 from .analytics import RateLimitError, error_logger
 from .cache import (
@@ -29,341 +26,88 @@ from .cache import (
 
 logger = logging.getLogger(__name__)
 
-_PRIVATE_NETWORKS = (
-    ipaddress.ip_network("0.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-)
+def _is_private_address(addr):
+    return _outbound_fetch._is_private_address(addr)
 
 
-def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        addr = addr.ipv4_mapped
-    return (
-        addr.is_private
-        or addr.is_loopback
-        or addr.is_link_local
-        or addr.is_reserved
-        or addr.is_multicast
-        or addr.is_unspecified
-        or any(addr in net for net in _PRIVATE_NETWORKS)
+def _resolve_hostname_ips(hostname):
+    return _outbound_fetch._resolve_hostname_ips(hostname)
+
+
+def _public_http_url(url):
+    return _outbound_fetch._public_http_url(url, resolver=_resolve_hostname_ips)
+
+
+def _resolve_public_ips(url):
+    return _outbound_fetch._resolve_public_ips(url, resolver=_resolve_hostname_ips)
+
+
+_PinnedBackend = _outbound_fetch._PinnedBackend
+_PinnedTransport = _outbound_fetch._PinnedTransport
+BodyTooLargeError = _outbound_fetch.BodyTooLargeError
+_CappedFetch = _outbound_fetch._CappedFetch
+
+
+def _get_public_url(url, headers, timeout, max_redirects=5, max_bytes=None):
+    return _outbound_fetch._get_public_url(
+        url,
+        headers=headers,
+        timeout=timeout,
+        max_redirects=max_redirects,
+        max_bytes=max_bytes,
+        resolve_public_ips=_resolve_public_ips,
+        transport_factory=_PinnedTransport,
     )
 
-
-def _resolve_hostname_ips(hostname: str) -> list[ipaddress._BaseAddress]:
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-    except Exception:
-        return []
-    out = []
-    for info in infos:
-        try:
-            out.append(ipaddress.ip_address(info[4][0]))
-        except Exception:
-            continue
-    return out
-
-
-def _public_http_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
-            return False
-        host = (parsed.hostname or "").strip()
-        if not host:
-            return False
-        lower = host.lower()
-        if lower in ("localhost", "metadata", "metadata.google.internal"):
-            return False
-        if lower.endswith((".local", ".localhost", ".internal", ".lan", ".intranet")):
-            return False
-        try:
-            return not _is_private_address(ipaddress.ip_address(host))
-        except ValueError:
-            pass
-        addrs = _resolve_hostname_ips(host)
-        return bool(addrs) and not any(_is_private_address(a) for a in addrs)
-    except Exception:
-        return False
-
-
-def _resolve_public_ips(url: str) -> list[ipaddress._BaseAddress]:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise httpx.RequestError(f"Blocked non-public URL: {url}")
-    host = (parsed.hostname or "").strip().lower()
-    if host in ("localhost", "metadata", "metadata.google.internal"):
-        raise httpx.RequestError(f"Blocked non-public hostname: {host}")
-    try:
-        ip = ipaddress.ip_address(host)
-        if _is_private_address(ip):
-            raise httpx.RequestError(f"Blocked non-public IP literal: {host}")
-        return [ip]
-    except httpx.RequestError:
-        raise
-    except ValueError:
-        pass
-    addrs = _resolve_hostname_ips(host)
-    if not addrs or any(_is_private_address(a) for a in addrs):
-        raise httpx.RequestError(f"Blocked non-public URL: {url}")
-    return addrs
-
-
-class _PinnedBackend(httpcore.NetworkBackend):
-    """Network backend that connects to a pre-resolved IP.
-
-    httpcore derives the TLS SNI and the ``Host`` header from the URL's
-    origin, not from the host argument passed to ``connect_tcp``. So
-    routing the TCP connect to a resolved IP while leaving the URL
-    untouched keeps SNI / vhost behaviour correct and closes the
-    DNS-rebinding TOCTOU between the SSRF check and the connect.
-    """
-
-    def __init__(self, ip: ipaddress._BaseAddress):
-        self._ip = str(ip)
-        self._real = httpcore.SyncBackend()
-
-    def connect_tcp(
-        self,
-        host: str,
-        port: int,
-        timeout: float | None = None,
-        local_address: str | None = None,
-        socket_options=None,
-    ):
-        return self._real.connect_tcp(
-            self._ip, port, timeout, local_address, socket_options
-        )
-
-    def connect_unix_socket(self, path, timeout=None, socket_options=None):
-        return self._real.connect_unix_socket(path, timeout, socket_options)
-
-    def sleep(self, seconds: float) -> None:
-        return self._real.sleep(seconds)
-
-
-# Map httpcore exception classes to their httpx equivalents. Built
-# once at import time from the public exception classes; avoids any
-# import of httpx's private transport machinery. httpcore's
-# ``ConnectionNotAvailable`` is a pool-internal signal (the pool will
-# close and retry on its own) — we never expect to see it surface to
-# a transport caller, so it has no httpx counterpart here.
-_HTTPCORE_TO_HTTPX_EXC = {
-    httpcore.ConnectError: httpx.ConnectError,
-    httpcore.ConnectTimeout: httpx.ConnectTimeout,
-    httpcore.LocalProtocolError: httpx.LocalProtocolError,
-    httpcore.NetworkError: httpx.NetworkError,
-    httpcore.PoolTimeout: httpx.PoolTimeout,
-    httpcore.ProtocolError: httpx.ProtocolError,
-    httpcore.ProxyError: httpx.ProxyError,
-    httpcore.ReadError: httpx.ReadError,
-    httpcore.ReadTimeout: httpx.ReadTimeout,
-    httpcore.RemoteProtocolError: httpx.RemoteProtocolError,
-    httpcore.TimeoutException: httpx.TimeoutException,
-    httpcore.UnsupportedProtocol: httpx.UnsupportedProtocol,
-    httpcore.WriteError: httpx.WriteError,
-    httpcore.WriteTimeout: httpx.WriteTimeout,
-}
-
-
-class _PinnedTransport(httpx.BaseTransport):
-    """Transport that pins every TCP connect to a pre-resolved IP.
-
-    Uses only the public ``httpcore`` and ``httpx`` APIs — no
-    subclassing of ``httpx.HTTPTransport``, no reads of private
-    ``httpcore.ConnectionPool`` attributes, no imports from
-    ``httpx private transport internals``. The URL is passed through unchanged so SNI
-    / vhost work as if httpx had been given the hostname directly;
-    only the TCP destination is pinned, closing the DNS-rebinding
-    TOCTOU between the SSRF check and the connect.
-    """
-
-    def __init__(self, ip: ipaddress._BaseAddress, *, http2: bool = False):
-        self._pool = httpcore.ConnectionPool(
-            ssl_context=ssl.create_default_context(),
-            http1=True,
-            http2=http2,
-            network_backend=_PinnedBackend(ip),
-        )
-
-    def __enter__(self):
-        self._pool.__enter__()
-        return self
-
-    def __exit__(self, exc_type=None, exc_value=None, traceback=None) -> None:
-        self._pool.__exit__(exc_type, exc_value, traceback)
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        httpcore_req = httpcore.Request(
-            method=request.method,
-            url=httpcore.URL(
-                scheme=request.url.raw_scheme,
-                host=request.url.raw_host,
-                port=request.url.port,
-                target=request.url.raw_path,
-            ),
-            headers=request.headers.raw,
-            content=request.stream,
-            extensions=request.extensions,
-        )
-        try:
-            httpcore_resp = self._pool.handle_request(httpcore_req)
-            # Eager materialisation matches the original
-            # ``response.text`` usage in fetch_webpage_content. The
-            # sync pool's stream is a plain Iterable[bytes] despite
-            # the httpcore type hint unioning the async variant.
-            content = b"".join(cast(Iterable[bytes], httpcore_resp.stream))
-        except Exception as exc:
-            mapped = _HTTPCORE_TO_HTTPX_EXC.get(type(exc))
-            if mapped is not None:
-                raise mapped(str(exc)) from exc
-            raise
-
-        return httpx.Response(
-            status_code=httpcore_resp.status,
-            headers=httpcore_resp.headers,
-            content=content,
-            extensions=httpcore_resp.extensions,
-        )
-
-    def close(self) -> None:
-        self._pool.close()
-
-class BodyTooLargeError(Exception):
-    """The server declared a body larger than the hard fetch ceiling."""
-
-    def __init__(self, url: str, declared_bytes: int):
-        self.url = url
-        self.declared_bytes = declared_bytes
-        super().__init__(
-            f"response body is {declared_bytes:,} bytes, over the "
-            f"{WEB_FETCH_HARD_MAX_BYTES:,}-byte hard cap"
-        )
-
-
-class _CappedFetch:
-    """Result of a size-capped streaming GET.
-
-    Carries just what fetch_webpage_content needs from an httpx.Response,
-    plus the cap bookkeeping: the (possibly truncated) body, whether the
-    cap cut it short, and the size the server declared via Content-Length
-    (wire bytes; None when absent).
-    """
-
-    __slots__ = ("status_code", "headers", "content", "truncated",
-                 "declared_bytes", "encoding", "url")
-
-    def __init__(self, status_code, headers, content, truncated,
-                 declared_bytes, encoding, url):
-        self.status_code = status_code
-        self.headers = headers
-        self.content = content
-        self.truncated = truncated
-        self.declared_bytes = declared_bytes
-        self.encoding = encoding
-        self.url = url
-
-    @property
-    def text(self) -> str:
-        return self.content.decode(self.encoding or "utf-8", errors="replace")
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            request = httpx.Request("GET", self.url)
-            raise httpx.HTTPStatusError(
-                f"HTTP {self.status_code} for {self.url}",
-                request=request,
-                response=httpx.Response(self.status_code, request=request),
-            )
-
-
-def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 5,
-                    max_bytes: int = None) -> "_CappedFetch":
-    """Capped streaming GET with SSRF-guarded, DNS-pinned manual redirects.
-
-    Each hop is resolved once, validated as public, and then the actual TCP
-    connection is pinned to that resolved IP. The request URL is left unchanged
-    so Host and TLS SNI keep the original hostname.
-    """
-    cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
-    current = url
-    for _ in range(max_redirects + 1):
-        ips = _resolve_public_ips(current)
-
-        # Force identity transfer-encoding. With gzip/deflate the wire bytes
-        # and Content-Length can be a small fraction of the decoded body, so a
-        # tiny compressed response could pass the hard-cap preflight and then
-        # expand past the ceiling in one decoded chunk before the streamed cap
-        # below can slice it.
-        req_headers = dict(headers or {})
-        req_headers["Accept-Encoding"] = "identity"
-
-        with httpx.Client(
-            headers=req_headers,
-            timeout=timeout,
-            follow_redirects=False,
-            transport=_PinnedTransport(ips[0]),
-        ) as client:
-            with client.stream("GET", current) as response:
-                if response.status_code in (301, 302, 303, 307, 308):
-                    location = response.headers.get("location")
-                    if not location:
-                        return _CappedFetch(response.status_code, response.headers, b"",
-                                            False, None, response.encoding, str(response.url))
-                    current = urljoin(str(response.url), location)
-                    continue
-
-                # A server can ignore the identity request and still return a
-                # compressed body; httpx.iter_bytes would then decode it, and a
-                # tiny gzip can balloon into one decoded chunk far past the cap.
-                # Refuse compressed Content-Encoding so the streamed cap stays
-                # a real memory bound.
-                enc = (response.headers.get("content-encoding") or "").strip().lower()
-                if enc and enc != "identity":
-                    raise httpx.RequestError(
-                        f"Refusing compressed response (Content-Encoding: {enc}) after "
-                        "requesting identity: cannot bound decoded body size",
-                        request=httpx.Request("GET", current),
-                    )
-
-                declared = None
-                raw_len = response.headers.get("content-length")
-                if raw_len and raw_len.isdigit():
-                    declared = int(raw_len)
-
-                if declared is not None and declared > WEB_FETCH_HARD_MAX_BYTES:
-                    raise BodyTooLargeError(current, declared)
-
-                chunks = []
-                read = 0
-                truncated = False
-                for chunk in response.iter_bytes():
-                    read += len(chunk)
-                    if read > cap:
-                        keep = cap - (read - len(chunk))
-                        if keep > 0:
-                            chunks.append(chunk[:keep])
-                        truncated = True
-                        break
-                    chunks.append(chunk)
-
-                return _CappedFetch(response.status_code, response.headers,
-                                    b"".join(chunks), truncated, declared,
-                                    response.encoding, str(response.url))
-
-    raise httpx.RequestError("Too many redirects", request=httpx.Request("GET", current))
 
 # PDF extraction (optional dependency)
 try:
     from pdfminer.high_level import extract_text as pdf_extract_text
 except ImportError:
     pdf_extract_text = None  # type: ignore
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None  # type: ignore
+
+
+def _extract_pdf_text(pdf_bytes: bytes, url: str = "") -> str:
+    """Extract PDF text with available permissive dependencies."""
+    # Prefer pypdf's layout mode. Plain text extraction and pdfminer often
+    # collapse table columns into an ambiguous number stream, which makes a
+    # correct source passage easy for the model to misread.
+    if PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            pages: List[str] = []
+            for idx, page in enumerate(reader.pages):
+                try:
+                    try:
+                        page_text = page.extract_text(extraction_mode="layout") or ""
+                    except TypeError:
+                        page_text = page.extract_text() or ""
+                except Exception as e:
+                    logger.warning(f"pypdf extraction failed for {url} page {idx + 1}: {e}")
+                    page_text = ""
+                if page_text.strip():
+                    pages.append(f"[Page {idx + 1}]\n{page_text.strip()}")
+            if pages:
+                return "\n\n".join(pages)
+        except Exception as e:
+            logger.warning(f"pypdf extraction failed for {url}: {e}")
+
+    if pdf_extract_text is not None:
+        try:
+            text = pdf_extract_text(io.BytesIO(pdf_bytes)) or ""
+            if text.strip():
+                return text
+        except Exception as e:
+            logger.warning(f"pdfminer extraction failed for {url}: {e}")
+
+    if PdfReader is None and pdf_extract_text is None:
+        logger.error("No PDF text extractor installed; install pdfminer.six or pypdf.")
+    return ""
 
 
 # ----------------------------------------------------------------------
@@ -402,6 +146,69 @@ def _extract_og_image(soup: BeautifulSoup) -> str:
         if url.startswith(("https://", "http://")) and not url.endswith((".svg", ".ico")):
             return url
     return ""
+
+
+def _linked_text(area, base_url: str) -> str:
+    """Preserve observed anchor destinations and block order without fetching links."""
+    area = copy.copy(area)
+    for anchor in area.find_all('a', href=True):
+        label = ' '.join(anchor.get_text(' ', strip=True).split())
+        href = str(anchor.get('href') or '').strip()
+        if not label or not href or href.startswith('#'):
+            continue
+        target = urljoin(base_url, href)
+        try:
+            parsed = urlsplit(target)
+            if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
+                continue
+        except ValueError:
+            continue
+        label = re.sub(r'([\\\[\]])', r'\\\1', label)
+        target = quote(target, safe=":/?#[]@!$&'()*+,;=%~_-.")
+        anchor.replace_with(f'[{label}](<{target}>)')
+    for block in area.find_all(['p', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'article', 'br']):
+        block.insert_before('\n')
+        block.insert_after('\n')
+    return '\n'.join(' '.join(line.split()) for line in area.get_text(' ', strip=False).splitlines() if line.strip())
+
+
+def _page_entries(areas, base_url: str) -> list[dict]:
+    """Recognize repeated listing structures, retaining DOM order, not popularity."""
+    entries = []
+    seen = set()
+    for area in areas:
+        nodes = ([area] if area.name == 'article' else []) + area.find_all(['li', 'article', 'tr'])
+        for node in nodes:
+            anchor = None
+            if node.name == 'tr':
+                cells = node.find_all(['td', 'th'], recursive=False)
+                if cells and re.fullmatch(r'\d+[.)]?', cells[0].get_text(strip=True)):
+                    anchor = next((a for a in node.find_all('a', href=True)
+                                   if a.get_text(strip=True)), None)
+            elif node.name == 'article':
+                heading = node.find(['h1', 'h2', 'h3', 'h4'])
+                anchor = heading.find('a', href=True) if heading else None
+            elif node.parent and node.parent.name == 'ol':
+                anchor = node.find('a', href=True)
+            if not anchor:
+                continue
+            title = ' '.join(anchor.get_text(' ', strip=True).split())
+            href = str(anchor.get('href') or '').strip()
+            if not title or not href or href.startswith('#'):
+                continue
+            url = urljoin(base_url, href)
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username or parsed.password:
+                    continue
+            except ValueError:
+                continue
+            if (title, url) not in seen:
+                seen.add((title, url))
+                entries.append({'title': title, 'url': url})
+            if len(entries) == 100:
+                return entries
+    return entries if len(entries) >= 2 else []
 
 
 def _extract_lists(soup: BeautifulSoup) -> List[List[str]]:
@@ -490,7 +297,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     effective_cap = min(max_bytes or WEB_FETCH_SOFT_MAX_BYTES, WEB_FETCH_HARD_MAX_BYTES)
     # The cap is part of the cache identity: a truncated soft-cap fetch must
     # not be served to a later full-budget request for the same URL.
-    cache_key = generate_cache_key(f"{url}#cap={effective_cap}")
+    cache_key = generate_cache_key(f"{url}#cap={effective_cap}#extract=semantic-links-v7")
     cache_file = CONTENT_CACHE_DIR / f"{cache_key}.cache"
 
     # Check cache
@@ -516,9 +323,6 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             "User-Agent": WEB_FETCH_USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            # identity so the streamed size cap in _get_public_url stays honest
-            # (a compressed body can decode to far more than Content-Length).
-            "Accept-Encoding": "identity",
             "Connection": "keep-alive",
         }
         response = _get_public_url(url, headers=headers, timeout=timeout,
@@ -552,26 +356,43 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # PDF handling
     content_type = response.headers.get("Content-Type", "").lower()
     if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+        if (
+            _size_fields["truncated"]
+            and effective_cap < WEB_FETCH_HARD_MAX_BYTES
+            and (
+                _size_fields["total_bytes"] is None
+                or _size_fields["total_bytes"] <= WEB_FETCH_HARD_MAX_BYTES
+            )
+        ):
+            try:
+                response = _get_public_url(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    max_bytes=WEB_FETCH_HARD_MAX_BYTES,
+                )
+                _size_fields = {
+                    "truncated": getattr(response, "truncated", False),
+                    "fetched_bytes": len(response.content),
+                    "total_bytes": getattr(response, "declared_bytes", None),
+                }
+                effective_cap = WEB_FETCH_HARD_MAX_BYTES
+            except BodyTooLargeError as e:
+                error_logger.warning(f"Refused oversized PDF body for {url}: {e}")
+                return _empty_result(url, f"TooLarge: {e}")
+            except Exception as e:
+                logger.warning(f"Full-budget PDF retry failed for {url}: {e}")
         if _size_fields["truncated"]:
             # A PDF cut mid-stream is not parseable; unlike text there is no
             # useful partial result, so report the budget problem instead.
             _declared = _size_fields["total_bytes"]
-            return _empty_result(
-                url,
-                f"TooLarge: PDF exceeds the {effective_cap:,}-byte fetch budget"
-                + (f" (size {_declared:,} bytes)" if _declared else "")
-                + "; retry with a larger budget if it fits under the hard cap",
+            error = (
+                f"TooLarge: PDF decoded body exceeded the {effective_cap:,}-byte fetch budget"
+                + (f" (declared compressed size {_declared:,} bytes)" if _declared else "")
+                + "; retry with a larger budget if it fits under the hard cap"
             )
-        if pdf_extract_text is None:
-            logger.error("pdfminer.six is not installed; cannot extract PDF text.")
-            pdf_text = ""
-        else:
-            try:
-                pdf_bytes = io.BytesIO(response.content)
-                pdf_text = pdf_extract_text(pdf_bytes)
-            except Exception as e:
-                logger.warning(f"PDF extraction failed for {url}: {e}")
-                pdf_text = ""
+            return {**_empty_result(url, error), **_size_fields}
+        pdf_text = _extract_pdf_text(response.content, url)
         result = {
             "url": url,
             "title": os.path.basename(url),
@@ -601,11 +422,19 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     # catches servers that mislabel text files as `application/octet-stream`.
     is_html = "html" in content_type
     is_json = "json" in content_type
+    # Atom and XML are common public API formats (for example scholarly,
+    # release, and government feeds). Parsing them through the HTML content
+    # heuristic can yield an empty body even though the response contains
+    # complete structured evidence. Preserve the source text so the caller
+    # can inspect the fields or process it with workspace tools.
+    is_xml = "xml" in content_type
     url_path = url.lower().split("?", 1)[0].split("#", 1)[0]
     looks_like_text_file = url_path.endswith(
         (".md", ".markdown", ".txt", ".text", ".json", ".jsonl")
     )
-    if not is_html and (content_type.startswith("text/") or is_json or looks_like_text_file):
+    if not is_html and (
+        content_type.startswith("text/") or is_json or is_xml or looks_like_text_file
+    ):
         text_body = (response.text or "").strip()
         result = {
             "url": url,
@@ -637,28 +466,53 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
     title_tag = soup.find("title")
     title_text = title_tag.get_text(strip=True) if title_tag else ""
     meta_info = _extract_meta(soup)
+    link_base = str(getattr(response, 'url', None) or url)
+    base_tag = soup.find('base', href=True)
+    if base_tag:
+        candidate_base = urljoin(link_base, str(base_tag['href']))
+        if candidate_base.startswith(('https://', 'http://')):
+            link_base = candidate_base
     og_image = _extract_og_image(soup)
     js_rendered = _detect_js_frameworks(soup)
     js_message = "Page appears to be rendered by a JavaScript framework; content may be incomplete." if js_rendered else ""
 
-    # Main textual content (heuristic): prefer semantic / "content"-classed
-    # containers to skip nav/footer/boilerplate; tuned for article pages.
+    # Prefer semantic containers even without CSS classes. Work on a copy so
+    # lists/tables and metadata extraction below still see the original DOM.
+    text_soup = copy.copy(soup)
+    for noise in text_soup.select('script, style, noscript, template, nav, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"]'):
+        noise.extract()
     main_content = ""
-    content_areas = soup.find_all(
-        ["main", "article", "section", "div"],
-        class_=re.compile("content|main|body|article|post|entry|text", re.I),
-    )
+    semantic_main = text_soup.find('main') or text_soup.find(attrs={'role': 'main'})
+    articles = semantic_main.find_all('article') if semantic_main else text_soup.find_all('article')
+    # A single substantive article is a more precise content boundary than
+    # main, which commonly also contains tags, related links and comment forms.
+    # Multiple article cards usually form a listing: keep its main context.
+    if semantic_main and len(articles) == 1 and len(articles[0].get_text(strip=True)) >= 200:
+        content_areas = articles
+    else:
+        content_areas = [semantic_main] if semantic_main else articles
+    if not content_areas:
+        content_areas = text_soup.find_all(
+            ["section", "div"],
+            class_=re.compile("content|main|body|article|post|entry|text", re.I),
+        )
+    # Ancestor and child matches contain the same text. Emit each subtree once,
+    # while retaining separate sibling articles/cards.
+    candidate_ids = {id(area) for area in content_areas}
+    content_areas = [area for area in content_areas
+                     if not any(id(parent) in candidate_ids for parent in area.parents)]
     if content_areas:
-        for area in content_areas[:3]:
+        for area in content_areas:
             main_content += area.get_text(separator=" ", strip=True) + " "
+    linked_areas = content_areas
     main_content = re.sub(r"\s+", " ", main_content).strip()
 
     # If the heuristic finds only a tiny wrapper, fall back to body text with
     # obvious boilerplate stripped so UI/deep-research search results do not
     # look empty for app/landing pages.
     THIN_CONTENT_CHARS = 600
-    if len(main_content) < THIN_CONTENT_CHARS:
-        body = soup.find("body")
+    if len(main_content) < THIN_CONTENT_CHARS and not semantic_main:
+        body = text_soup.find("body")
         if body:
             body_copy = copy.copy(body)
             for noise in body_copy.find_all(
@@ -668,11 +522,28 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             body_text = re.sub(r"\s+", " ", body_copy.get_text(separator=" ", strip=True)).strip()
             if len(body_text) > len(main_content):
                 main_content = body_text
+                linked_areas = [body_copy]
+
+    # HTTP 200 does not imply an article was retrieved. Classify only short
+    # interstitials with both a challenge title and corroborating body text;
+    # ordinary articles mentioning CAPTCHA must remain readable evidence.
+    challenge_title = title_text.strip().lower().rstrip('.!')
+    challenge_titles = {'client challenge', 'just a moment', 'security verification', 'verify you are human'}
+    if (challenge_title in challenge_titles and len(main_content) < 2000
+            and re.search(r"required part of this site|verify (?:that )?you are human|checking your browser|enable javascript|security verification|performing security", main_content, re.I)):
+        return {
+            **_empty_result(url, 'Page access challenge: article content was not retrieved. Try private_browser or another authoritative source; do not treat the challenge page as evidence.'),
+            'title': title_text,
+            'error_kind': 'access_challenge',
+            **_size_fields,
+        }
 
     result = {
         "url": url,
         "title": title_text,
         "content": main_content,
+        "linked_content": '\n'.join(_linked_text(area, link_base) for area in linked_areas),
+        "page_entries": _page_entries(linked_areas, link_base),
         "lists": _extract_lists(soup),
         "tables": _extract_tables(soup),
         "code_blocks": _extract_code_blocks(soup),

@@ -10,10 +10,21 @@
 entrypoint.sh text eol=lf
 docker/entrypoint.sh text eol=lf
 
+# Maintained frontend modules and this lane's byte-identical deployment output.
+frontend/src/** text eol=lf
+static/js/actionMenuOrder.js text eol=lf
+
 # Windows-native scripts stay CRLF.
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# Vendored third-party bundles in static/lib/ are published minified artifacts
+# and must stay byte-identical to what npm ships — stripping trailing whitespace
+# to satisfy `git diff --check` would desync them from the upstream release. Turn
+# the whitespace check off for that tree instead, and keep the bundles out of
+# GitHub's language statistics.
+static/lib/** -whitespace linguist-vendored
 
 # Binary assets — never normalize.
 *.png  binary
@@ -25,3 +36,7 @@ docker/entrypoint.sh text eol=lf
 *.ico  binary
 *.woff binary
 *.woff2 binary
+
+# Notes reference deployment modules.
+static/js/features/notes/** text eol=lf
+static/js/shared/ui/confetti.js text eol=lf

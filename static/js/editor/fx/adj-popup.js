@@ -43,11 +43,14 @@ import modalManager from '../../modalManager.js';
 import {
   ADJ_ICONS,
   adjLayerLabel,
+  adjustmentPresetOptions,
+  adjustmentPresetParams,
   defaultAdjParams,
 } from '../layer-helpers.js';
 import { drawHistogram } from './histogram.js';
+import { parseCubeLut, generateCubeLut } from './cube-lut.js';
 
-export function createAdjPopupSystem({ composite, saveState, renderLayerPanel }) {
+export function createAdjPopupSystem({ composite, saveState, renderLayerPanel, getAdjustmentSource = null, schedulePersist = null }) {
   function suppressLayerGhostTap() {
     window.__geSuppressLayerTapUntil = Date.now() + 650;
   }
@@ -104,6 +107,10 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
   }
 
   function openFxPopup(layer, anchorEl) {
+    if (layer?.kind === 'adjustment') {
+      openAdjPopup(layer, layer.adjustment?.type || 'levels', anchorEl, layer.adjustment);
+      return;
+    }
     // Toggle off ONLY if a menu for this layer is genuinely on-screen.
     // `state` is a shared singleton that survives editor close/reopen,
     // so a stale `fxMenuEl` from a previous session (whose detached
@@ -135,9 +142,23 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
     menu.style.pointerEvents = 'auto';
     const items = [
       { type: 'brightness-contrast', label: 'Brightness / Contrast' },
+      { type: 'exposure',            label: 'Exposure' },
+      { type: 'white-balance',       label: 'White Balance' },
       { type: 'hue-saturation',      label: 'Hue / Saturation' },
+      { type: 'vibrance',            label: 'Vibrance' },
+      { type: 'black-white',         label: 'Black & White' },
+      { type: 'shadows-highlights',  label: 'Shadows / Highlights' },
       { type: 'levels',              label: 'Levels' },
+      { type: 'curves',              label: 'Curves' },
       { type: 'color-balance',       label: 'Color Balance' },
+      { type: 'selective-color',     label: 'Selective Color' },
+      { type: 'gradient-map',        label: 'Gradient Map' },
+      { type: 'invert',              label: 'Invert' },
+      { type: 'posterize',           label: 'Posterize' },
+      { type: 'threshold',           label: 'Threshold' },
+      { type: 'photo-filter',        label: 'Photo Filter' },
+      { type: 'channel-mixer',       label: 'Channel Mixer' },
+      { type: 'color-lookup',        label: 'Color Lookup' },
     ];
     menu.innerHTML = items.map(i =>
       `<button class="ge-fx-menu-item" data-fx-type="${i.type}"><span class="ge-fx-menu-icon">${ADJ_ICONS[i.type] || ''}</span><span>${i.label}</span></button>`
@@ -257,7 +278,21 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
       suppressLayerGhostTap();
       const layer = state.adjPopupEl._layer;
       if (layer) {
+        if (state.adjPreviewLayer === layer) state.adjPreviewLayer = null;
+        layer._adjPreview = false;
+        layer._adjCompare = false;
         if (layer._stagedAdj) layer._stagedAdj = null;
+        if (layer._newAdjustmentLayer) {
+          const index = state.layers.findIndex(item => item.id === layer.id);
+          if (index >= 0) state.layers.splice(index, 1);
+          state.layerOffsets.delete(layer.id);
+          if (Number.isInteger(layer._newAdjustmentUndoLength) && state.undoStack.length > layer._newAdjustmentUndoLength) {
+            state.undoStack.length = layer._newAdjustmentUndoLength;
+          }
+          state.activeLayerId = state.layers[state.layers.length - 1]?.id || null;
+          layer._newAdjustmentLayer = false;
+          renderLayerPanel();
+        }
         if (layer._editingAdjId) layer._editingAdjId = null;
         layer._adjFinalKey = null;
         composite();
@@ -277,11 +312,15 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
     closeAdjPopup();
     // Editing an existing sub-layer? Pre-load its params as the staged
     // preview and mark the popup so Apply updates instead of appending.
+    const firstClass = layer?.kind === 'adjustment';
     const editing = !!existingAdj;
+    const presetOptions = adjustmentPresetOptions(type);
     const startParams = editing
       ? JSON.parse(JSON.stringify(existingAdj.params))
       : defaultAdjParams(type);
     layer._stagedAdj = { type, params: startParams };
+    layer._adjPreview = true;
+    state.adjPreviewLayer = layer;
     if (editing) {
       // Hide the existing sub-layer from the render stack so the
       // staged preview shows correctly without doubling the effect.
@@ -300,11 +339,20 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
       <span class="ge-adj-icon">${ADJ_ICONS[type] || ''}</span>
       <span class="ge-adj-title">${adjLayerLabel(type)}</span>
       <span class="ge-head-btns">
-        <button class="ge-adj-min" type="button" title="Minimise">&minus;</button>
+        <button class="ge-adj-close" type="button" title="Close" aria-label="Close">&times;</button>
       </span>
     </div>
+    <label class="ge-adj-preset-field">Preset
+      <select class="ge-adj-preset-select">
+        <option value="custom"${editing ? ' selected' : ''}>Custom</option>
+        ${presetOptions.map(name => `<option value="${name}"${!editing && name === 'Default' ? ' selected' : ''}>${name}</option>`).join('')}
+      </select>
+    </label>
     <div class="ge-adj-body" data-adj-body></div>
     <div class="ge-adj-foot">
+      <button class="ge-btn ge-btn-sm ge-adj-reset-btn" data-adj-action="reset">Reset</button>
+      <span class="ge-adj-foot-spacer"></span>
+      <button class="ge-btn ge-btn-sm ge-adj-compare-btn" data-adj-action="compare" aria-pressed="false">Compare</button>
       <button class="ge-btn ge-btn-sm ge-adj-cancel-btn" data-adj-action="cancel">Cancel</button>
       <button class="ge-btn ge-btn-sm ge-btn-primary ge-adj-apply-btn" data-adj-action="ok">Apply</button>
     </div>
@@ -330,9 +378,17 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
 
     const body = pop.querySelector('[data-adj-body]');
     buildAdjBody(layer, type, body, pop);
+    body.addEventListener('input', () => {
+      const presetSelect = pop.querySelector('.ge-adj-preset-select');
+      if (presetSelect) presetSelect.value = 'custom';
+    });
+    const popupRect = pop.getBoundingClientRect();
+    if (!window.matchMedia('(max-width: 820px)').matches) {
+      const clampedTop = Math.max(8, Math.min(Number.parseFloat(pop.style.top) || 8, window.innerHeight - popupRect.height - 8));
+      pop.style.top = `${clampedTop}px`;
+    }
 
     pop.querySelector('.ge-adj-close')?.addEventListener('click', closeAdjPopup);
-    pop.querySelector('.ge-adj-min')?.addEventListener('click', () => minimiseAdjPopup(pop));
     // Drag by head — anywhere except buttons. Mobile pins via !important
     // rules; setProperty with 'important' lets inline styles win during drag.
     const head = pop.querySelector('[data-adj-drag]');
@@ -391,14 +447,52 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
       e.stopPropagation();
       closeAdjPopup();
     });
+    pop.querySelector('[data-adj-action="reset"]')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      layer._stagedAdj.params = defaultAdjParams(type);
+      const presetSelect = pop.querySelector('.ge-adj-preset-select');
+      if (presetSelect) presetSelect.value = 'Default';
+      body.innerHTML = '';
+      buildAdjBody(layer, type, body, pop);
+      scheduleAdjRefresh(layer);
+    });
+    pop.querySelector('.ge-adj-preset-select')?.addEventListener('change', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const preset = e.currentTarget.value;
+      layer._stagedAdj.params = adjustmentPresetParams(type, preset);
+      layer._adjFinalKey = null;
+      body.innerHTML = '';
+      buildAdjBody(layer, type, body, pop);
+      scheduleAdjRefresh(layer);
+    });
+    pop.querySelector('[data-adj-action="compare"]')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      layer._adjCompare = !layer._adjCompare;
+      e.currentTarget.setAttribute('aria-pressed', layer._adjCompare ? 'true' : 'false');
+      e.currentTarget.classList.toggle('is-active', layer._adjCompare);
+      layer._adjFinalKey = null;
+      composite();
+    });
     pop.querySelector('[data-adj-action="ok"]')?.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       suppressLayerGhostTap();
-      saveState(editing ? `Edit ${adjLayerLabel(type)}` : `Add ${adjLayerLabel(type)}`);
+      if (!layer._newAdjustmentLayer) {
+        saveState(editing ? `Edit ${adjLayerLabel(type)}` : `Add ${adjLayerLabel(type)}`);
+      }
       const params = layer._stagedAdj.params;
       layer._stagedAdj = null;
-      if (editing) {
+      layer._adjPreview = false;
+      layer._adjCompare = false;
+      if (firstClass) {
+        layer.adjustment = { type, params };
+        layer.name = layer.name || adjLayerLabel(type);
+        layer._newAdjustmentLayer = false;
+        layer._newAdjustmentUndoLength = null;
+      } else if (editing) {
         const existing = (layer.adjLayers || []).find(a => a.id === existingAdj.id);
         if (existing) existing.params = params;
         layer._editingAdjId = null;
@@ -417,6 +511,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
       composite();
       renderLayerPanel();
       closeAdjPopup();
+      schedulePersist?.();
     });
   }
 
@@ -426,6 +521,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
     state.adjRafPending = true;
     requestAnimationFrame(() => {
       state.adjRafPending = false;
+      if (state.adjPreviewLayer !== layer || !layer._stagedAdj) return;
       layer._adjFinalKey = null;
       composite();
     });
@@ -433,15 +529,29 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
 
   function buildAdjBody(layer, type, body, popEl) {
     const p = layer._stagedAdj.params;
+    const levelValues = () => {
+      const channel = ['red', 'green', 'blue'].includes(p.channel) ? p.channel : 'rgb';
+      if (channel === 'rgb') return p;
+      if (!p.channels) p.channels = {};
+      if (!p.channels[channel]) p.channels[channel] = defaultAdjParams('levels').channels[channel];
+      return p.channels[channel];
+    };
+    // Params come from project files and drafts, which only validate the
+    // adjustment type; coerce anything interpolated into markup below.
+    const finite = value => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    const hexColor = (value, fallback) => (/^#[0-9a-f]{6}$/i.test(value) ? value : fallback);
     const revertIcon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
-    const sliderRow = (key, label, min, max, value, suffix) => `
-      <div class="ge-adj-row" data-adj-key="${key}">
+    const sliderRow = (key, label, min, max, rawValue, suffix, defaultValue) => {
+      const value = finite(rawValue);
+      return `
+      <div class="ge-adj-row" data-adj-key="${key}"${defaultValue != null ? ` data-default="${defaultValue}"` : ''}>
         <label>${label}</label>
         <input type="range" min="${min}" max="${max}" value="${value}" data-key="${key}" />
         <span class="ge-adj-value">${value}${suffix || ''}</span>
         <button class="ge-adj-revert" type="button" title="Reset this slider" data-revert-key="${key}">${revertIcon}</button>
       </div>
     `;
+    };
     if (type === 'brightness-contrast') {
       const bSlider = Math.round((p.brightness - 1) * 100);
       const cSlider = Math.round((p.contrast - 1) * 100);
@@ -449,14 +559,65 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
       ${sliderRow('brightness', 'Brightness', -100, 100, bSlider, '')}
       ${sliderRow('contrast',   'Contrast',   -100, 100, cSlider, '')}
     `;
+    } else if (type === 'exposure') {
+      body.innerHTML = `
+      ${sliderRow('exposure', 'Exposure', -500, 500, Math.round(p.exposure * 100), ' EV')}
+      ${sliderRow('offset', 'Offset', -50, 50, Math.round(p.offset * 100), '')}
+      ${sliderRow('gamma', 'Gamma', 10, 300, Math.round(p.gamma * 100), 'γ')}
+    `;
+    } else if (type === 'develop') {
+      body.innerHTML = `
+      <div class="ge-adj-develop">
+      <div class="ge-adj-group-label">Basic</div>
+      ${sliderRow('temperature', 'Temperature', -100, 100, Math.round(p.temperature || 0), '', 0)}
+      ${sliderRow('tint', 'Tint', -100, 100, Math.round(p.tint || 0), '', 0)}
+      ${sliderRow('exposure', 'Exposure', -500, 500, Math.round((p.exposure || 0) * 100), ' EV', 0)}
+      ${sliderRow('contrast', 'Contrast', -100, 100, Math.round(p.contrast || 0), '', 0)}
+      ${sliderRow('highlights', 'Highlights', -100, 100, Math.round(p.highlights || 0), '', 0)}
+      ${sliderRow('shadows', 'Shadows', -100, 100, Math.round(p.shadows || 0), '', 0)}
+      ${sliderRow('whites', 'Whites', -100, 100, Math.round(p.whites || 0), '', 0)}
+      ${sliderRow('blacks', 'Blacks', -100, 100, Math.round(p.blacks || 0), '', 0)}
+      <div class="ge-adj-group-label">Presence</div>
+      ${sliderRow('clarity', 'Clarity', -100, 100, Math.round(p.clarity || 0), '', 0)}
+      ${sliderRow('vibrance', 'Vibrance', -100, 100, Math.round(p.vibrance || 0), '', 0)}
+      ${sliderRow('saturation', 'Saturation', -100, 100, Math.round(p.saturation || 0), '', 0)}
+      <p class="ge-adj-help">Camera-Raw-style Basic panel: white balance, exposure and tone, then clarity, vibrance and saturation.</p>
+      </div>
+    `;
+    } else if (type === 'white-balance') {
+      body.innerHTML = `
+      ${sliderRow('temperature', 'Temperature', -100, 100, Math.round(p.temperature), '')}
+      ${sliderRow('tint', 'Tint', -100, 100, Math.round(p.tint), '')}
+    `;
     } else if (type === 'hue-saturation') {
       const hSlider = Math.round(p.hue);
       const sSlider = Math.round((p.saturation - 1) * 100);
       body.innerHTML = `
       ${sliderRow('hue',        'Hue',        -180, 180, hSlider, ' °')}
       ${sliderRow('saturation', 'Saturation', -100, 100, sSlider, '')}
+      ${sliderRow('lightness',  'Lightness',  -100, 100, Math.round(p.lightness || 0), '')}
+    `;
+    } else if (type === 'vibrance') {
+      body.innerHTML = `
+      ${sliderRow('vibrance', 'Vibrance', -100, 100, Math.round(p.vibrance || 0), '')}
+      <p class="ge-adj-help">Boosts muted colors more than already-saturated colors.</p>
+    `;
+    } else if (type === 'black-white') {
+      body.innerHTML = `
+      ${sliderRow('red', 'Red', 0, 100, Math.round(p.red ?? 30), '%')}
+      ${sliderRow('green', 'Green', 0, 100, Math.round(p.green ?? 59), '%')}
+      ${sliderRow('blue', 'Blue', 0, 100, Math.round(p.blue ?? 11), '%')}
+      ${sliderRow('constant', 'Constant', -100, 100, Math.round(p.constant || 0), '')}
+      <p class="ge-adj-help">Mixes the source channels into a neutral grayscale result.</p>
+    `;
+    } else if (type === 'shadows-highlights') {
+      body.innerHTML = `
+      ${sliderRow('shadows', 'Shadows', -100, 100, Math.round(p.shadows || 0), '')}
+      ${sliderRow('highlights', 'Highlights', -100, 100, Math.round(p.highlights || 0), '')}
+      <p class="ge-adj-help">Recover detail in dark and bright tones without shifting midtones.</p>
     `;
     } else if (type === 'levels') {
+      const values = levelValues();
       // Histogram canvas + sliders. Histogram is computed from the
       // layer's pixel data (after any adjLayers below this one) so
       // the user is matching levels against what they're really seeing.
@@ -464,6 +625,14 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
       // vertical space; open by default on desktop.
       const isMobile = window.matchMedia('(max-width: 820px)').matches;
       body.innerHTML = `
+      <label class="ge-adj-channel-field">Channel
+        <select class="ge-adj-channel-select">
+          <option value="rgb"${(p.channel || 'rgb') === 'rgb' ? ' selected' : ''}>RGB</option>
+          <option value="red"${p.channel === 'red' ? ' selected' : ''}>Red</option>
+          <option value="green"${p.channel === 'green' ? ' selected' : ''}>Green</option>
+          <option value="blue"${p.channel === 'blue' ? ' selected' : ''}>Blue</option>
+        </select>
+      </label>
       <details class="ge-adj-hist-details"${isMobile ? '' : ' open'}>
         <summary>Histogram</summary>
         <div class="ge-adj-hist-wrap">
@@ -474,24 +643,64 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
             <div class="ge-adj-hist-handle hist-h-white"  data-handle="inWhite"  title="Input white — drag"></div>
           </div>
         </div>
+        <div class="ge-adj-clip-status" aria-live="polite"></div>
       </details>
-      ${sliderRow('inBlack',  'Input black',  0, 254, p.inBlack, '')}
-      ${sliderRow('inWhite',  'Input white',  1, 255, p.inWhite, '')}
-      ${sliderRow('gamma',    'Gamma',        10, 990, Math.round((p.gamma || 1) * 100), 'γ')}
-      ${sliderRow('outBlack', 'Output black', 0, 255, p.outBlack, '')}
-      ${sliderRow('outWhite', 'Output white', 0, 255, p.outWhite, '')}
+      ${sliderRow('inBlack',  'Input black',  0, 254, values.inBlack, '')}
+      ${sliderRow('inWhite',  'Input white',  1, 255, values.inWhite, '')}
+      ${sliderRow('gamma',    'Gamma',        10, 990, Math.round((values.gamma || 1) * 100), 'γ')}
+      ${sliderRow('outBlack', 'Output black', 0, 255, values.outBlack, '')}
+      ${sliderRow('outWhite', 'Output white', 0, 255, values.outWhite, '')}
     `;
       const hist = body.querySelector('.ge-adj-histogram');
-      drawHistogram(hist, layer);
+      const histogramLayer = layer.kind === 'adjustment' && getAdjustmentSource
+        ? { canvas: getAdjustmentSource(layer), _stagedAdj: { params: values } }
+        : layer;
+      const clipStatus = body.querySelector('.ge-adj-clip-status');
+      const renderHistogram = () => {
+        const channel = ['red', 'green', 'blue'].includes(p.channel) ? p.channel : 'rgb';
+        const stats = drawHistogram(hist, histogramLayer, channel);
+        if (clipStatus) {
+          const channelLabel = channel === 'rgb' ? 'RGB' : channel[0].toUpperCase() + channel.slice(1);
+          clipStatus.textContent = `${channelLabel} clipping: black ${stats.black.toFixed(1)}% · white ${stats.white.toFixed(1)}%`;
+        }
+      };
+      renderHistogram();
       wireHistogramHandles(body, layer, type);
       // Redraw histogram when the user opens the disclosure (canvas
       // dimensions are layout-dependent).
       body.querySelector('.ge-adj-hist-details')?.addEventListener('toggle', (e) => {
-        if (e.target.open) drawHistogram(hist, layer);
+        if (e.target.open) renderHistogram();
+      });
+      body.querySelector('.ge-adj-channel-select')?.addEventListener('change', event => {
+        p.channel = event.target.value;
+        buildAdjBody(layer, type, body, popEl);
+      });
+    } else if (type === 'curves') {
+      if (!p.points) p.points = defaultAdjParams('curves').points;
+      if (!p.channel) p.channel = 'rgb';
+      body.innerHTML = `
+        <label class="ge-adj-channel-field">Channel
+          <select class="ge-adj-channel-select">
+            <option value="rgb"${p.channel === 'rgb' ? ' selected' : ''}>RGB</option>
+            <option value="red"${p.channel === 'red' ? ' selected' : ''}>Red</option>
+            <option value="green"${p.channel === 'green' ? ' selected' : ''}>Green</option>
+            <option value="blue"${p.channel === 'blue' ? ' selected' : ''}>Blue</option>
+          </select>
+        </label>
+        <div class="ge-curves-wrap">
+          <canvas class="ge-curves-canvas" width="280" height="180" aria-label="Editable tone curve"></canvas>
+        </div>
+        <p class="ge-adj-help">Click the curve to add a point. Drag to adjust. Double-click a point to remove it.</p>
+      `;
+      const canvas = body.querySelector('.ge-curves-canvas');
+      wireCurveEditor(canvas, layer);
+      body.querySelector('.ge-adj-channel-select')?.addEventListener('change', event => {
+        p.channel = event.target.value;
+        buildAdjBody(layer, type, body, popEl);
       });
     } else if (type === 'color-balance') {
       // Color-tinted slider ends so the user sees what direction does what.
-      const cbRow = (key, leftCol, rightCol, label, value) => `
+      const cbRow = (key, leftCol, rightCol, label, rawValue, value = finite(rawValue)) => `
       <div class="ge-adj-row ge-adj-cb-row" data-adj-key="${key}">
         <span class="ge-adj-cb-dot" style="background:${leftCol}"></span>
         <input type="range" min="-100" max="100" value="${value}" data-key="${key}" />
@@ -527,6 +736,180 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
         body.innerHTML = '';
         buildAdjBody(layer, type, body, popEl);
       });
+    } else if (type === 'selective-color') {
+      if (!p.range) p.range = 'reds';
+      if (!p.ranges?.[p.range]) p.ranges = defaultAdjParams(type).ranges;
+      const values = p.ranges[p.range];
+      const ranges = ['reds', 'yellows', 'greens', 'cyans', 'blues', 'magentas', 'neutrals', 'blacks'];
+      body.innerHTML = `
+        <label class="ge-adj-channel-field">Colors
+          <select class="ge-adj-selective-range">
+            ${ranges.map(name => `<option value="${name}"${p.range === name ? ' selected' : ''}>${name[0].toUpperCase() + name.slice(1)}</option>`).join('')}
+          </select>
+        </label>
+        ${sliderRow('cyan', 'Cyan', -100, 100, values.cyan, '')}
+        ${sliderRow('magenta', 'Magenta', -100, 100, values.magenta, '')}
+        ${sliderRow('yellow', 'Yellow', -100, 100, values.yellow, '')}
+        ${sliderRow('black', 'Black', -100, 100, values.black, '')}
+      `;
+      body.querySelector('.ge-adj-selective-range')?.addEventListener('change', event => {
+        p.range = event.target.value;
+        buildAdjBody(layer, type, body, popEl);
+      });
+    } else if (type === 'gradient-map') {
+      const gradientDefaults = defaultAdjParams('gradient-map');
+      p.shadows = hexColor(p.shadows, gradientDefaults.shadows);
+      p.highlights = hexColor(p.highlights, gradientDefaults.highlights);
+      body.innerHTML = `
+        <div class="ge-gradient-map-preview" style="--ge-gradient-start:${p.shadows};--ge-gradient-end:${p.highlights}"></div>
+        <div class="ge-gradient-color-row">
+          <label>Shadows <input type="color" data-gradient-key="shadows" value="${p.shadows}"></label>
+          <label>Highlights <input type="color" data-gradient-key="highlights" value="${p.highlights}"></label>
+        </div>
+        ${sliderRow('midpoint', 'Midpoint', 1, 99, Math.round(p.midpoint), '%')}
+        <label class="ge-adj-toggle-row"><span>Reverse</span><input type="checkbox" data-gradient-reverse${p.reverse ? ' checked' : ''}><span class="ge-toggle-track"></span></label>
+      `;
+      body.querySelectorAll('[data-gradient-key]').forEach(input => {
+        input.addEventListener('input', () => {
+          p[input.dataset.gradientKey] = input.value;
+          const preview = body.querySelector('.ge-gradient-map-preview');
+          preview?.style.setProperty('--ge-gradient-start', p.shadows);
+          preview?.style.setProperty('--ge-gradient-end', p.highlights);
+          scheduleAdjRefresh(layer);
+        });
+      });
+      body.querySelector('[data-gradient-reverse]')?.addEventListener('change', event => {
+        p.reverse = event.target.checked;
+        scheduleAdjRefresh(layer);
+      });
+    } else if (type === 'invert') {
+      body.innerHTML = `
+      <p class="ge-adj-help">Inverts every color channel in the source layer.</p>
+    `;
+    } else if (type === 'posterize') {
+      body.innerHTML = `
+      ${sliderRow('levels', 'Levels', 2, 255, Math.round(p.levels ?? 4), '')}
+      <p class="ge-adj-help">Reduces each channel to a limited number of tonal steps.</p>
+    `;
+    } else if (type === 'threshold') {
+      body.innerHTML = `
+      ${sliderRow('level', 'Threshold', 0, 255, Math.round(p.level ?? 128), '')}
+      <p class="ge-adj-help">Pixels brighter than the threshold become white, the rest black.</p>
+    `;
+    } else if (type === 'photo-filter') {
+      body.innerHTML = `
+        <div class="ge-adj-row">
+          <label>Color</label>
+          <input type="color" data-photo-key="color" value="${hexColor(p.color, '#ec8a00')}">
+        </div>
+        ${sliderRow('density', 'Density', 0, 100, Math.round(p.density ?? 25), '%')}
+        <label class="ge-adj-toggle-row"><span>Preserve luminosity</span><input type="checkbox" data-photo-preserve${p.preserve_luminosity ? ' checked' : ''}><span class="ge-toggle-track"></span></label>
+      `;
+      body.querySelector('[data-photo-key="color"]')?.addEventListener('input', event => {
+        p.color = event.target.value;
+        scheduleAdjRefresh(layer);
+      });
+      body.querySelector('[data-photo-preserve]')?.addEventListener('change', event => {
+        p.preserve_luminosity = event.target.checked;
+        scheduleAdjRefresh(layer);
+      });
+    } else if (type === 'channel-mixer') {
+      const channels = ['red', 'green', 'blue'];
+      const ch = channels.includes(popEl._cmMixChannel) ? popEl._cmMixChannel : 'red';
+      popEl._cmMixChannel = ch;
+      if (!p[ch]) p[ch] = defaultAdjParams(type)[ch];
+      if (!p.constant) p.constant = defaultAdjParams(type).constant;
+      const values = p[ch];
+      body.innerHTML = `
+        <label class="ge-adj-channel-field">Output channel
+          <select class="ge-adj-cm-channel-select">
+            <option value="red"${ch === 'red' ? ' selected' : ''}>Red</option>
+            <option value="green"${ch === 'green' ? ' selected' : ''}>Green</option>
+            <option value="blue"${ch === 'blue' ? ' selected' : ''}>Blue</option>
+          </select>
+        </label>
+        ${sliderRow(`${ch}-r`, 'Red', -200, 200, Math.round(values.r ?? 0), '%')}
+        ${sliderRow(`${ch}-g`, 'Green', -200, 200, Math.round(values.g ?? 0), '%')}
+        ${sliderRow(`${ch}-b`, 'Blue', -200, 200, Math.round(values.b ?? 0), '%')}
+        ${sliderRow(`${ch}-c`, 'Constant', -100, 100, Math.round(p.constant[ch] ?? 0), '')}
+        <label class="ge-adj-toggle-row"><span>Monochrome</span><input type="checkbox" data-cm-monochrome${p.monochrome ? ' checked' : ''}><span class="ge-toggle-track"></span></label>
+        <p class="ge-adj-help">Mixes source channels into the selected output channel.</p>
+      `;
+      body.querySelector('.ge-adj-cm-channel-select')?.addEventListener('change', event => {
+        popEl._cmMixChannel = event.target.value;
+        body.innerHTML = '';
+        buildAdjBody(layer, type, body, popEl);
+      });
+      body.querySelector('[data-cm-monochrome]')?.addEventListener('change', event => {
+        p.monochrome = event.target.checked;
+        scheduleAdjRefresh(layer);
+      });
+    } else if (type === 'color-lookup') {
+      const presets = ['none', 'teal_orange', 'cold', 'warm', 'high_contrast', 'sepia'];
+      const presetLabels = { none: 'None', teal_orange: 'Teal & Orange', cold: 'Cold', warm: 'Warm', high_contrast: 'High Contrast', sepia: 'Sepia' };
+      const strength = p.strength == null ? 100 : p.strength;
+      const hasCube = !!(p.cube && p.cube.size && p.cube.data);
+      const lutName = hasCube ? `Loaded LUT · ${finite(p.cube.size)}³` : 'No .cube loaded';
+      body.innerHTML = `
+        <label class="ge-adj-channel-field">Lookup preset
+          <select class="ge-adj-lut-select">
+            ${presets.map(name => `<option value="${name}"${(p.preset || 'none') === name ? ' selected' : ''}>${presetLabels[name]}</option>`).join('')}
+          </select>
+        </label>
+        <div class="ge-adj-lut-actions">
+          <label class="ge-btn ge-btn-sm ge-adj-lut-load">Load .cube…
+            <input type="file" accept=".cube,text/plain" hidden />
+          </label>
+          <button type="button" class="ge-btn ge-btn-sm ge-adj-lut-export"${hasCube ? '' : ' disabled'}>Export .cube</button>
+        </div>
+        <div class="ge-adj-lut-name">${lutName}</div>
+        ${sliderRow('strength', 'Strength', 0, 100, strength, '%', 100)}
+        <p class="ge-adj-help">Import an Adobe .cube 3D LUT (or pick a built-in look). Strength blends the LUT with the original pixels.</p>
+      `;
+      body.querySelector('.ge-adj-lut-select')?.addEventListener('change', event => {
+        p.preset = event.target.value;
+        scheduleAdjRefresh(layer);
+      });
+      const fileInput = body.querySelector('.ge-adj-lut-load input[type="file"]');
+      fileInput?.addEventListener('change', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const lut = parseCubeLut(text);
+          p.cube = {
+            size: lut.size,
+            domainMin: Array.from(lut.domainMin),
+            domainMax: Array.from(lut.domainMax),
+            data: Array.from(lut.data),
+          };
+          if (p.strength == null) p.strength = 100;
+          const nameEl = body.querySelector('.ge-adj-lut-name');
+          if (nameEl) nameEl.textContent = `Loaded ${file.name} · ${lut.size}³`;
+          const exp = body.querySelector('.ge-adj-lut-export');
+          if (exp) exp.disabled = false;
+          scheduleAdjRefresh(layer);
+        } catch (err) {
+          const nameEl = body.querySelector('.ge-adj-lut-name');
+          if (nameEl) nameEl.textContent = 'Could not read .cube: ' + (err?.message || err);
+        }
+      });
+      body.querySelector('.ge-adj-lut-export')?.addEventListener('click', () => {
+        const cube = p.cube && p.cube.size ? p.cube : null;
+        if (!cube) return;
+        const text = generateCubeLut({
+          size: cube.size,
+          domainMin: cube.domainMin || [0, 0, 0],
+          domainMax: cube.domainMax || [1, 1, 1],
+          data: cube.data,
+        });
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'look.cube';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
     }
     // Wire all sliders.
     body.querySelectorAll('input[type="range"]').forEach(sl => {
@@ -550,13 +933,22 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
   function revertAdjKey(layer, type, key) {
     const defaults = defaultAdjParams(type);
     const p = layer._stagedAdj.params;
-    if (type === 'brightness-contrast' || type === 'hue-saturation') {
+    if (['brightness-contrast', 'exposure', 'white-balance', 'hue-saturation', 'vibrance', 'black-white', 'shadows-highlights', 'gradient-map', 'posterize', 'threshold', 'photo-filter', 'color-lookup'].includes(type)) {
       p[key] = defaults[key];
     } else if (type === 'levels') {
-      p[key] = defaults[key];
+      const channel = ['red', 'green', 'blue'].includes(p.channel) ? p.channel : 'rgb';
+      const values = channel === 'rgb' ? p : p.channels[channel];
+      const defaultValues = channel === 'rgb' ? defaults : defaults.channels[channel];
+      values[key] = defaultValues[key];
     } else if (type === 'color-balance') {
       const [tone, ch] = key.split('-');
       p[tone][ch] = defaults[tone][ch];
+    } else if (type === 'channel-mixer') {
+      const [ch, comp] = key.split('-');
+      if (comp === 'c') p.constant[ch] = defaults.constant[ch];
+      else p[ch][comp] = defaults[ch][comp];
+    } else if (type === 'selective-color') {
+      p.ranges[p.range][key] = defaults.ranges[p.range][key];
     }
     layer._adjFinalKey = null;
     composite();
@@ -567,25 +959,167 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
     const raw = parseInt(sl.value, 10);
     const valEl = sl.parentElement.querySelector('.ge-adj-value');
     const p = layer._stagedAdj.params;
+    const row = sl.closest('.ge-adj-row');
+    if (row && row.hasAttribute('data-default')) {
+      row.classList.toggle('is-modified', Number(sl.value) !== Number(row.getAttribute('data-default')));
+    }
     let display = String(raw);
     if (type === 'brightness-contrast' || type === 'hue-saturation') {
       if (key === 'brightness' || key === 'contrast' || key === 'saturation') {
         p[key] = 1 + raw / 100;
       } else if (key === 'hue') {
         p.hue = raw; display = raw + ' °';
+      } else if (key === 'lightness') {
+        p.lightness = raw;
       }
+    } else if (type === 'exposure') {
+      if (key === 'exposure') { p.exposure = raw / 100; display = (raw / 100).toFixed(2) + ' EV'; }
+      else if (key === 'offset') { p.offset = raw / 100; display = (raw / 100).toFixed(2); }
+      else if (key === 'gamma') { p.gamma = raw / 100; display = (raw / 100).toFixed(2) + 'γ'; }
+    } else if (type === 'develop') {
+      if (key === 'exposure') { p.exposure = raw / 100; display = (raw / 100).toFixed(2) + ' EV'; }
+      else { p[key] = raw; }
+    } else if (type === 'color-lookup') {
+      p.strength = raw; display = raw + '%';
+    } else if (type === 'white-balance') {
+      p[key] = raw;
+    } else if (type === 'vibrance') {
+      p[key] = raw;
+    } else if (type === 'black-white') {
+      p[key] = raw;
+    } else if (type === 'shadows-highlights') {
+      p[key] = raw;
     } else if (type === 'levels') {
+      const channel = ['red', 'green', 'blue'].includes(p.channel) ? p.channel : 'rgb';
+      const values = channel === 'rgb' ? p : p.channels[channel];
       if (key === 'gamma') {
-        p.gamma = raw / 100; display = (raw / 100).toFixed(2) + 'γ';
+        values.gamma = raw / 100; display = (raw / 100).toFixed(2) + 'γ';
       } else {
-        p[key] = raw;
+        values[key] = raw;
       }
     } else if (type === 'color-balance') {
       const [tone, ch] = key.split('-');
       p[tone][ch] = raw;
+    } else if (type === 'selective-color') {
+      p.ranges[p.range][key] = raw;
+    } else if (type === 'gradient-map') {
+      p.midpoint = raw;
+      display = raw + '%';
+    } else if (type === 'posterize') {
+      p.levels = raw;
+    } else if (type === 'threshold') {
+      p.level = raw;
+    } else if (type === 'photo-filter') {
+      p.density = raw;
+      display = raw + '%';
+    } else if (type === 'channel-mixer') {
+      const [ch, comp] = key.split('-');
+      if (comp === 'c') p.constant[ch] = raw;
+      else p[ch][comp] = raw;
+      display = raw + (comp === 'c' ? '' : '%');
     }
     if (valEl) valEl.textContent = display;
     scheduleAdjRefresh(layer);
+  }
+
+  function wireCurveEditor(canvas, layer) {
+    if (!canvas) return;
+    const params = layer._stagedAdj.params;
+    const channelColor = { rgb: '#f1f5f9', red: '#ff6b78', green: '#57d68d', blue: '#69a7ff' };
+    const points = () => params.points[params.channel] || params.points.rgb;
+    const canvasPoint = event => {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.min(255, ((event.clientX - rect.left) / rect.width) * 255)),
+        y: Math.max(0, Math.min(255, (1 - (event.clientY - rect.top) / rect.height) * 255)),
+      };
+    };
+    const draw = () => {
+      const source = layer.kind === 'adjustment' && getAdjustmentSource
+        ? getAdjustmentSource(layer)
+        : layer.canvas;
+      drawHistogram(canvas, { canvas: source });
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.strokeStyle = 'rgba(255,255,255,.12)';
+      ctx.lineWidth = 1;
+      for (let index = 1; index < 4; index += 1) {
+        const x = Math.round(width * index / 4) + .5;
+        const y = Math.round(height * index / 4) + .5;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      }
+      const list = points();
+      ctx.strokeStyle = channelColor[params.channel] || channelColor.rgb;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      list.forEach((point, index) => {
+        const x = point[0] / 255 * width;
+        const y = height - point[1] / 255 * height;
+        if (index) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+      for (const point of list) {
+        const x = point[0] / 255 * width;
+        const y = height - point[1] / 255 * height;
+        ctx.fillStyle = '#0b0d10';
+        ctx.strokeStyle = channelColor[params.channel] || channelColor.rgb;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    };
+    const nearestIndex = event => {
+      const point = canvasPoint(event);
+      let nearest = -1;
+      let distance = 14;
+      points().forEach((candidate, index) => {
+        const next = Math.hypot(candidate[0] - point.x, candidate[1] - point.y);
+        if (next < distance) { distance = next; nearest = index; }
+      });
+      return nearest;
+    };
+    canvas.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      const list = points();
+      let index = nearestIndex(event);
+      if (index < 0) {
+        const point = canvasPoint(event);
+        list.push([Math.round(point.x), Math.round(point.y)]);
+        list.sort((a, b) => a[0] - b[0]);
+        index = list.findIndex(item => item[0] === Math.round(point.x) && item[1] === Math.round(point.y));
+      }
+      canvas.setPointerCapture(event.pointerId);
+      const move = moveEvent => {
+        const next = canvasPoint(moveEvent);
+        const current = list[index];
+        const endpoint = index === 0 || index === list.length - 1;
+        current[0] = endpoint
+          ? (index === 0 ? 0 : 255)
+          : Math.round(Math.max(list[index - 1][0] + 1, Math.min(list[index + 1][0] - 1, next.x)));
+        current[1] = Math.round(next.y);
+        draw();
+        scheduleAdjRefresh(layer);
+      };
+      const up = () => {
+        canvas.releasePointerCapture(event.pointerId);
+        canvas.removeEventListener('pointermove', move);
+        canvas.removeEventListener('pointerup', up);
+      };
+      canvas.addEventListener('pointermove', move);
+      canvas.addEventListener('pointerup', up);
+      draw();
+      scheduleAdjRefresh(layer);
+    });
+    canvas.addEventListener('dblclick', event => {
+      const index = nearestIndex(event);
+      const list = points();
+      if (index <= 0 || index >= list.length - 1) return;
+      list.splice(index, 1);
+      draw();
+      scheduleAdjRefresh(layer);
+    });
+    draw();
   }
 
   // Position the three histogram triangle handles by current staged
@@ -595,9 +1129,14 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
     const canvas = bodyEl.querySelector('.ge-adj-histogram');
     if (!wrap || !canvas) return;
     const handles = bodyEl.querySelectorAll('.ge-adj-hist-handle');
+    const levelParams = () => {
+      const root = layer._stagedAdj.params;
+      const channel = ['red', 'green', 'blue'].includes(root.channel) ? root.channel : 'rgb';
+      return channel === 'rgb' ? root : root.channels[channel];
+    };
     const placeHandles = () => {
       const w = canvas.getBoundingClientRect().width;
-      const p = layer._stagedAdj.params;
+      const p = levelParams();
       const xB = (p.inBlack  / 255) * w;
       const xW = (p.inWhite  / 255) * w;
       // Gamma handle sits at a fraction of the (xB..xW) span, mapped
@@ -623,7 +1162,7 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
         const onMove = (ev) => {
           const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
           const v = Math.round((x / rect.width) * 255);
-          const p = layer._stagedAdj.params;
+          const p = levelParams();
           if (which === 'inBlack') {
             p.inBlack = Math.min(p.inWhite - 1, v);
           } else if (which === 'inWhite') {
@@ -642,14 +1181,26 @@ export function createAdjPopupSystem({ composite, saveState, renderLayerPanel })
           // Update visible slider rows + value labels.
           const updateRow = (key, displayVal) => {
             const sl = bodyEl.querySelector(`input[type="range"][data-key="${key}"]`);
-            if (sl) sl.value = String(key === 'gamma' ? Math.round(layer._stagedAdj.params.gamma * 100) : layer._stagedAdj.params[key]);
+            const values = levelParams();
+            if (sl) sl.value = String(key === 'gamma' ? Math.round(values.gamma * 100) : values[key]);
             const val = sl?.parentElement.querySelector('.ge-adj-value');
             if (val) val.textContent = displayVal;
           };
-          if (which === 'inBlack') updateRow('inBlack', String(layer._stagedAdj.params.inBlack));
-          if (which === 'inWhite') updateRow('inWhite', String(layer._stagedAdj.params.inWhite));
-          if (which === 'gamma')   updateRow('gamma',   layer._stagedAdj.params.gamma.toFixed(2) + 'γ');
-          drawHistogram(canvas, layer);
+          const values = levelParams();
+          if (which === 'inBlack') updateRow('inBlack', String(values.inBlack));
+          if (which === 'inWhite') updateRow('inWhite', String(values.inWhite));
+          if (which === 'gamma')   updateRow('gamma',   values.gamma.toFixed(2) + 'γ');
+          const histogramLayer = layer.kind === 'adjustment' && getAdjustmentSource
+            ? { canvas: getAdjustmentSource(layer), _stagedAdj: { params: values } }
+            : layer;
+          const channel = ['red', 'green', 'blue'].includes(layer._stagedAdj.params.channel)
+            ? layer._stagedAdj.params.channel : 'rgb';
+          const stats = drawHistogram(canvas, histogramLayer, channel);
+          const clipStatus = bodyEl.querySelector('.ge-adj-clip-status');
+          if (clipStatus) {
+            const channelLabel = channel === 'rgb' ? 'RGB' : channel[0].toUpperCase() + channel.slice(1);
+            clipStatus.textContent = `${channelLabel} clipping: black ${stats.black.toFixed(1)}% · white ${stats.white.toFixed(1)}%`;
+          }
           scheduleAdjRefresh(layer);
         };
         const onUp = () => {

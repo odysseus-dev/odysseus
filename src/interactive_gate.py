@@ -63,8 +63,11 @@ _PASSIVE_EXACT_PATHS = {
     "/api/activity/heartbeat",
     "/api/client-perf",
     "/api/tasks/notifications",
+    "/api/tasks/runs/recent",
     "/api/research/active",
     "/api/email/urgency-state",
+    # UI idle poll sibling of urgency-state; must not pre-empt background tasks.
+    "/api/email/unread-state",
 }
 
 _PASSIVE_PREFIXES = (
@@ -72,6 +75,19 @@ _PASSIVE_PREFIXES = (
     "/api/health",
     "/api/prefs",
 )
+
+
+async def maybe_stop_background_tasks_for_heartbeat(stop_background) -> bool:
+    """Stop background work for browser activity only when the gate is enabled.
+
+    ``stop_background`` is injected by the application boundary so this policy
+    remains independently testable without importing the full FastAPI app.
+    """
+    if not _enabled():
+        return False
+
+    await stop_background(reason="browser heartbeat")
+    return True
 
 
 def should_track_interactive_request(path: str, method: str = "GET") -> bool:

@@ -1,0 +1,12 @@
+{
+  "fixture": "basic-shapes.png",
+  "required_facts": {
+    "text": "ODYSSEUS 42",
+    "left_object": "red circle",
+    "right_object": "blue square"
+  },
+  "followup": {
+    "prompt": "What color was the shape on the right?",
+    "required_answer": "blue"
+  }
+}

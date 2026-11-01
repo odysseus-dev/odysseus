@@ -144,10 +144,10 @@ def test_get_default_chat_user_no_prefs_share_disabled_resolves_nothing(monkeypa
     assert test_data["model"] == "", "Should get empty model"
 
 
-def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults_fallbacks(monkeypatch):
+def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults(monkeypatch):
     """
     Non-admin user without personal preferences should resolve to global
-    defaults for ep_id, model, and fallbacks when share_defaults_with_users is enabled.
+    defaults for ep_id and model when share_defaults_with_users is enabled.
     """
 
     test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=True)
@@ -158,16 +158,45 @@ def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults_f
     assert test_data["endpoint_id"] == "global-ep-123", \
         "Should get global endpoint_id"
 
-def test_get_default_chat_user_no_prefs_share_enabled_resolves_global_defaults(monkeypatch):
+def test_get_default_chat_does_not_read_legacy_fallbacks(monkeypatch):
     """
-    Non-admin user without personal preferences should resolve to global
-    defaults for ep_id, model, and fallbacks when share_defaults_with_users is enabled.
+    The preserved legacy list must not influence default model resolution.
     """
 
-    test_data = _run_get_default_chat_test(monkeypatch, share_defaults_enabled=True, second_endpoint_only=True)
+    class LegacyReadGuard(dict):
+        def get(self, key, default=None):
+            if key == "default_model_fallbacks":
+                raise AssertionError("legacy fallback list was read")
+            return super().get(key, default)
 
-    assert test_data["model"] == "qwen-3.6", \
-        "model should be resolved from global default_model"
+    guarded_settings = LegacyReadGuard({
+        "default_endpoint_id": "global-ep-123",
+        "default_model": "qwen-3.6",
+        "default_model_fallbacks": [
+            {"endpoint_id": "fallback-ep", "model": "fallback-model"}
+        ],
+        "share_defaults_with_users": True,
+    })
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: guarded_settings)
+    monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user: LegacyReadGuard({}))
 
-    assert test_data["endpoint_id"] == "fallback-ep", \
-        "Should get global endpoint_id"
+    fake_auth_manager = MagicMock()
+    fake_auth_manager.is_admin = lambda user: False
+    endpoint = _FakeEndpoint(
+        id="global-ep-123",
+        base_url="http://global-endpoint:8000/v1",
+        is_enabled=True,
+    )
+    fake_db = _make_db_session([endpoint], user="regular_user")
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat")
+
+    router = model_routes.setup_model_routes(model_discovery=None)
+    get_default_chat = _get_default_chat_route(router)
+    fake_request = _make_request(user="regular_user", auth_manager=fake_auth_manager)
+
+    test_data = get_default_chat(fake_request)
+
+    assert test_data["endpoint_id"] == "global-ep-123"
+    assert test_data["model"] == "qwen-3.6"
