@@ -112,7 +112,7 @@ export function createCardInteractions({
     if (state.selectMode) {
       body.querySelectorAll('.note-card').forEach(card => {
         card.addEventListener('click', (e) => {
-          if (e.target.closest('.note-card-cb')) return; // checkbox handles itself
+          if (e.target.closest('.note-card-cb, a')) return; // links open without toggling selection
           e.stopPropagation();
           tapToEditOrSelect(card);
         });

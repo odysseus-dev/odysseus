@@ -480,9 +480,12 @@ def test_spinoff_detected_from_chatmessage_history():
     assert _session_is_research_spinoff(sess) is True
 
 
-def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch):
+def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch, tmp_path):
+    import src.database as database
+    import src.endpoint_resolver as resolver
     import src.llm_core as llm_core
     import src.task_endpoint as task_endpoint
+    from tests.helpers.database import disposable_database
 
     resolver_calls = []
     llm_calls = []
@@ -500,24 +503,33 @@ def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch)
         llm_calls.append((url, model, messages, kwargs))
         return "Focused Fix"
 
-    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", fake_resolve_task_endpoint)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call)
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(resolver, "resolve_endpoint_runtime", lambda ep, **kwargs: (ep.base_url, ep.api_key))
+        monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", fake_resolve_task_endpoint)
+        monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call)
+        with factory() as db:
+            db.add(database.ModelEndpoint(
+                id="ep-1", name="Session EP", owner="alice",
+                base_url="http://session.example/v1", api_key="registered-key", is_enabled=True,
+            ))
+            db.commit()
 
-    session_headers = {"Authorization": "Bearer session"}
-    sess = SimpleNamespace(
-        id="session-1",
-        owner="alice",
-        endpoint_url="http://session.example/v1/chat/completions",
-        model="session-model",
-        headers=session_headers,
-        history=[SimpleNamespace(role="user", content="Please fix the endpoint fallback bug.")],
-    )
-    updates = []
-    session_manager = SimpleNamespace(
-        update_session_name=lambda session_id, title: updates.append((session_id, title))
-    )
+        session_headers = {"Authorization": "Bearer session"}
+        sess = SimpleNamespace(
+            id="session-1",
+            owner="alice",
+            endpoint_url="http://session.example/v1/chat/completions",
+            model="session-model",
+            headers=session_headers,
+            history=[SimpleNamespace(role="user", content="Please fix the endpoint fallback bug.")],
+        )
+        updates = []
+        session_manager = SimpleNamespace(
+            update_session_name=lambda session_id, title: updates.append((session_id, title))
+        )
 
-    asyncio.run(auto_name_session(session_manager, sess))
+        asyncio.run(auto_name_session(session_manager, sess))
 
     assert resolver_calls == [(
         "http://session.example/v1/chat/completions",
@@ -527,8 +539,81 @@ def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch)
     )]
     assert llm_calls[0][0] == "http://session.example/v1/chat/completions"
     assert llm_calls[0][1] == "session-model"
-    assert llm_calls[0][3]["headers"] == session_headers
+    assert llm_calls[0][3]["headers"] == {"Authorization": "Bearer registered-key"}
     assert updates == [("session-1", "Focused Fix")]
+
+
+@pytest.mark.parametrize("owner,enabled,expected", [
+    ("alice", True, True), ("bob", True, False), ("alice", False, False), ("alice", None, False),
+])
+def test_ajax_auto_title_uses_current_owner_endpoint_authority(monkeypatch, tmp_path, owner, enabled, expected):
+    import src.database as database
+    import src.endpoint_resolver as resolver
+    import src.llm_core as llm_core
+    from tests.helpers.database import disposable_database
+
+    calls, updates = [], []
+    async def fake_call(url, model, messages, **kwargs):
+        calls.append((url, kwargs.get("headers")))
+        return "A useful title"
+
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(resolver, "resolve_endpoint_runtime", lambda ep, **kwargs: (ep.base_url, ep.api_key))
+        monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+        if enabled is not None:
+            with factory() as db:
+                db.add(database.ModelEndpoint(id="ajax", name="Ajax", owner="alice",
+                       base_url="https://ajax.example/v1", api_key="current", is_enabled=enabled))
+                db.commit()
+        sess = SimpleNamespace(id="s", owner=owner, model="ajax_c375",
+            endpoint_url="https://ajax.example/v1/chat/completions",
+            headers={"Authorization": "Bearer stale"},
+            history=[SimpleNamespace(role="user", content="Private title request")])
+        manager = SimpleNamespace(update_session_name=lambda sid, title: updates.append(title))
+        asyncio.run(auto_name_session(manager, sess))
+
+    assert bool(calls) is expected
+    assert updates == (["A useful title"] if expected else ["Private title request"])
+    if expected:
+        assert calls == [("https://ajax.example/v1/chat/completions", {"Authorization": "Bearer current"})]
+
+
+@pytest.mark.parametrize("owner, enabled, expected", [
+    ("alice", True, True), ("bob", True, False), ("alice", False, False), ("alice", None, False),
+    (None, True, False),
+])
+def test_non_ajax_auto_title_uses_current_owner_endpoint_authority(monkeypatch, tmp_path, owner, enabled, expected):
+    import src.database as database
+    import src.endpoint_resolver as resolver
+    import src.llm_core as llm_core
+    from tests.helpers.database import disposable_database
+
+    calls, updates = [], []
+    async def fake_call(url, model, messages, **kwargs):
+        calls.append((url, kwargs.get("headers")))
+        return "Non-spec title"
+
+    with disposable_database(tmp_path) as factory:
+        monkeypatch.setattr(database, "SessionLocal", factory)
+        monkeypatch.setattr(resolver, "resolve_endpoint_runtime", lambda ep, **kwargs: (ep.base_url, ep.api_key))
+        monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
+        if enabled is not None:
+            with factory() as db:
+                db.add(database.ModelEndpoint(id="claude", name="Claude", owner="alice",
+                       base_url="https://claude.example/v1", api_key="current", is_enabled=enabled))
+                db.commit()
+        sess = SimpleNamespace(id="s2", owner=owner, model="claude-3-5-sonnet",
+            endpoint_url="https://claude.example/v1/chat/completions",
+            headers={"Authorization": "Bearer stale"},
+            history=[SimpleNamespace(role="user", content="Private title request")])
+        manager = SimpleNamespace(update_session_name=lambda sid, title: updates.append(title))
+        asyncio.run(auto_name_session(manager, sess))
+
+    assert bool(calls) is expected
+    assert updates == (["Non-spec title"] if expected else ["Private title request"])
+    if expected:
+        assert calls == [("https://claude.example/v1/chat/completions", {"Authorization": "Bearer current"})]
 
 
 def test_spinoff_detected_from_dict_history():

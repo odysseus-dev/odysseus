@@ -2,6 +2,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
 from PIL import Image
 
 from src.tools.image import do_edit_image
@@ -122,7 +123,8 @@ def test_edit_image_rejects_actions_without_complete_input_contract():
     assert "Use prompt, upscale or rembg" in result["error"]
 
 
-def test_prompt_edit_forwards_owned_pixels_and_preserves_original(monkeypatch, tmp_path):
+@pytest.mark.parametrize('incognito', [False, True])
+def test_prompt_edit_forwards_owned_pixels_and_preserves_original(monkeypatch, tmp_path, incognito):
     source_path = tmp_path / 'source.png'
     Image.new('RGB', (3, 2), 'red').save(source_path)
     original = source_path.read_bytes()
@@ -135,9 +137,9 @@ def test_prompt_edit_forwards_owned_pixels_and_preserves_original(monkeypatch, t
         return {'image_id': 'edited', 'image_url': '/api/generated-image/edited.png'}
     from pathlib import Path
     monkeypatch.setattr('src.ai_interaction.do_edit_image', edit)
-    result = asyncio.run(do_edit_image(json.dumps({'image_id': 'source-id', 'action': 'prompt', 'prompt': 'Add another cow'}), owner='alice'))
+    result = asyncio.run(do_edit_image(json.dumps({'image_id': 'source-id', 'action': 'prompt', 'prompt': 'Add another cow'}), owner='alice', incognito=incognito))
     assert result['image_id'] == 'edited'
-    assert calls == [('Add another cow', original, {'session_id': 'session-1', 'owner': 'alice', 'size': 'auto'})]
+    assert calls == [('Add another cow', original, {'session_id': 'session-1', 'owner': 'alice', 'size': 'auto', 'incognito': incognito})]
     assert source_path.read_bytes() == original
     denied = asyncio.run(do_edit_image('{"image_id":"source-id","action":"prompt","prompt":"edit"}', owner=None))
     assert denied['error'] == 'Image not found'
@@ -165,7 +167,7 @@ def test_uploaded_image_edit_uses_owner_scoped_reference(monkeypatch, tmp_path):
     monkeypatch.setattr('src.ai_interaction.do_edit_image', edit)
     args = '{"image_id":"odysseus://attachment/upload.jpg","action":"prompt","prompt":"Make more realistic"}'
     assert asyncio.run(do_edit_image(args, owner='alice')) == {'image_id': 'edited'}
-    assert calls == [('Make more realistic', str(path), {'owner': 'alice', 'size': 'auto'})]
+    assert calls == [('Make more realistic', str(path), {'owner': 'alice', 'size': 'auto', 'incognito': False})]
     assert resolutions == [('upload.jpg', {'owner': 'alice', 'allow_admin': False})]
     assert 'error' in asyncio.run(do_edit_image(args, owner='bob'))
     assert len(calls) == 1
@@ -173,3 +175,23 @@ def test_uploaded_image_edit_uses_owner_scoped_reference(monkeypatch, tmp_path):
     disabled = asyncio.run(do_edit_image(args, owner='alice'))
     assert 'disabled' in disabled['error']
     assert len(calls) == 1
+
+
+def test_private_upscale_does_not_save_image_or_gallery_record(monkeypatch, tmp_path):
+    source_path = tmp_path / 'source.png'
+    Image.new('RGB', (3, 2), 'red').save(source_path)
+    original = source_path.read_bytes()
+    db = _Db(_source(source_path.name))
+    monkeypatch.setattr('core.database.SessionLocal', lambda: db)
+    monkeypatch.setattr('src.constants.GENERATED_IMAGES_DIR', str(tmp_path))
+    result = asyncio.run(do_edit_image(
+        '{"image_id":"source-id","action":"upscale","scale":2}',
+        owner='alice', incognito=True,
+    ))
+    assert result['exit_code'] == 0
+    assert result['image_url'].startswith('data:image/png;base64,')
+    assert not result['image_id']
+    assert db.added == []
+    assert not db.committed
+    assert list(tmp_path.iterdir()) == [source_path]
+    assert source_path.read_bytes() == original

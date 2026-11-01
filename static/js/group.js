@@ -801,7 +801,8 @@ async function _sendRoundRobin(msg, box) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages: [{
               role: 'user',
-              content: `[${m._groupName || m.display}]: ${response}`
+              content: `[${m._groupName || m.display}]: ${response}`,
+              metadata: { group_peer: true, group_model: m._groupName || m.display, model: m.mid }
             }]}),
           });
         } catch (e) { console.warn('[group] sync failed:', e); }
@@ -828,7 +829,8 @@ async function _syncAllResponses(holders) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: [{
             role: 'user',
-            content: `[${model._groupName || model.display}]: ${response}`
+            content: `[${model._groupName || model.display}]: ${response}`,
+            metadata: { group_peer: true, group_model: model._groupName || model.display, model: model.mid }
           }]}),
         });
       } catch (e) { /* silent */ }
