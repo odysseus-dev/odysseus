@@ -101,12 +101,14 @@ function suggestionsForHsv(h, s, v) {
   ];
 }
 
+// ── Reusable helpers for hosts that surface swatches inline ──────────
+// (e.g. the editor's SWATCHES panel showing suggestions + recents).
 function computeSuggestions() { return suggestionsForHsv(_h, _s, _v); }
 
 export function getRecentColors() { return getRecents(); }
 export function recordRecentColor(hex) { addRecent(hex); }
 export function suggestColorsFor(hex) {
-  const { h, s, v } = hexToHsv(hex);
+  const { h, s, v } = hexToHsv(hex || '#000000');
   return suggestionsForHsv(h, s, v);
 }
 

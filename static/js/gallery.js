@@ -1321,7 +1321,12 @@ function _renderEditorLanding() {
     // openEditor() now returns a Promise — it's async because the size
     // prompt is a styled modal. Await it before checking whether the
     // editor actually opened (the user may have cancelled).
-    await openEditor(null, null, null, 'New canvas');
+    try {
+      await openEditor(null, null, null, 'New canvas');
+    } catch (error) {
+      // openEditor reports the initialization error and tears down its shell.
+      console.error('[gallery] New canvas failed', error);
+    }
     if (!document.querySelector('#gallery-editor-container .gallery-editor')) {
       _renderEditorLanding();
     }
@@ -2229,6 +2234,36 @@ function _makeGalleryDraggable(content) {
 // Re-export the manager for the rail click handler
 import * as Modals from './modalManager.js';
 
+// Module-owned listeners resolve the current picker; closed modals are never retained.
+window.addEventListener('ge-ai-command-model-change', (e) => {
+  const imageModelSelect = document.getElementById('gallery-image-model');
+  if (!imageModelSelect || !imageModelSelect._modelsReady) return;
+  let val = (e && e.detail && typeof e.detail.value === 'string') ? e.detail.value : '';
+  if (val && ![...imageModelSelect.options].some(o => o.value === val)) {
+    if (localStorage.getItem('ge-ai-command-model') === val) localStorage.removeItem('ge-ai-command-model');
+    val = '';
+  }
+  if (imageModelSelect.value !== val) {
+    imageModelSelect.value = val;
+    if (imageModelSelect.value !== val) imageModelSelect.value = '';
+  }
+});
+window.addEventListener('storage', (e) => {
+  const imageModelSelect = document.getElementById('gallery-image-model');
+  if (e && e.key === 'ge-ai-command-model' && imageModelSelect?._modelsReady) {
+    let val = e.newValue || '';
+    if (val && ![...imageModelSelect.options].some(o => o.value === val)) {
+      if (localStorage.getItem('ge-ai-command-model') === val) localStorage.removeItem('ge-ai-command-model');
+      val = '';
+    }
+    if (imageModelSelect.value !== val) {
+      imageModelSelect.value = val;
+      if (imageModelSelect.value !== val) imageModelSelect.value = '';
+    }
+  }
+});
+
+
 export function openGallery() {
   // If already minimized — restore in place, preserve all state
   if (Modals.isRegistered('gallery-modal') && Modals.isMinimized('gallery-modal')) {
@@ -2607,7 +2642,7 @@ export function openGallery() {
 
   // ── Image model (Settings tab) ──
   // Mirror of the Quick Edit picker: same source (GET /api/editor/image-models)
-  // and the SAME localStorage key `ge-ai-command-model` (value `<base_url>::<id>`)
+  // and the SAME localStorage key `ge-ai-command-model` (value `<endpoint_id>::<id>`)
   // so the two stay in sync.
   const _GE_MODEL_KEY = 'ge-ai-command-model';
   const imageModelSelect = document.getElementById('gallery-image-model');
@@ -2617,7 +2652,8 @@ export function openGallery() {
         const r = await fetch(`${API_BASE}/api/editor/image-models`, { credentials: 'same-origin' });
         const data = r.ok ? await r.json() : null;
         const models = (data && Array.isArray(data.models)) ? data.models : [];
-        const saved = localStorage.getItem(_GE_MODEL_KEY) || '';
+        const rawSaved = localStorage.getItem(_GE_MODEL_KEY) || '';
+        let saved = rawSaved;
         imageModelSelect.innerHTML = '';
         const def = document.createElement('option');
         def.value = '';
@@ -2625,12 +2661,34 @@ export function openGallery() {
         imageModelSelect.appendChild(def);
         for (const m of models) {
           const opt = document.createElement('option');
-          opt.value = `${m.base_url || ''}::${m.id}`;
+          const endpointKey = m.endpoint_id ? String(m.endpoint_id) : (m.source === 'local' ? 'local' : '');
+          opt.value = endpointKey ? `${endpointKey}::${m.id}` : m.id;
           opt.textContent = `${m.id} · ${m.provider || ''} (${m.kind || 'edit'})`.trim();
           imageModelSelect.appendChild(opt);
         }
+        imageModelSelect._modelsReady = true;
+        // Invalidate or migrate legacy localStorage values containing URLs or leading ::
+        if (saved.startsWith('http://') || saved.startsWith('https://') || saved.includes('://') || saved.startsWith('::')) {
+          const modelPart = saved.includes('::') ? saved.split('::').pop() : '';
+          const matching = models.filter(m => m.id === modelPart);
+          if (matching.length === 1) {
+            const epKey = matching[0].endpoint_id ? String(matching[0].endpoint_id) : (matching[0].source === 'local' ? 'local' : '');
+            saved = epKey ? `${epKey}::${matching[0].id}` : matching[0].id;
+          } else {
+            saved = '';
+          }
+          try {
+            if (saved) localStorage.setItem(_GE_MODEL_KEY, saved);
+            else localStorage.removeItem(_GE_MODEL_KEY);
+          } catch (_) {}
+        }
         imageModelSelect.value = saved;
         if (imageModelSelect.value !== saved) imageModelSelect.value = '';
+        if (imageModelSelect.value !== rawSaved) {
+          if (imageModelSelect.value) localStorage.setItem(_GE_MODEL_KEY, imageModelSelect.value);
+          else localStorage.removeItem(_GE_MODEL_KEY);
+          window.dispatchEvent(new CustomEvent('ge-ai-command-model-change', { detail: { value: imageModelSelect.value } }));
+        }
       } catch (e) {
         imageModelSelect.innerHTML = '<option value="">Default (configured provider)</option>';
       }
@@ -2645,11 +2703,7 @@ export function openGallery() {
     });
     _fillImageModels();
   }
-  window.addEventListener('storage', (e) => {
-    if (e && e.key === _GE_MODEL_KEY && imageModelSelect) {
-      imageModelSelect.value = e.newValue || '';
-    }
-  });
+
 
   // ── Tag All Untagged ──
   let _tagCancelRequested = false;

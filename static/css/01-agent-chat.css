@@ -4592,7 +4592,9 @@ body.bg-pattern-ascii-fireflies {
       width:100%; background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       padding:8px; font-family:inherit; font-size:0.95rem;
-      resize:vertical; outline:none;
+      resize:both; outline:none;
+      field-sizing:content;
+      max-width:100%; box-sizing:border-box;
       min-height:80px;
     }
     .edit-textarea:focus { border-color:var(--red); }
@@ -7254,6 +7256,39 @@ body.bg-pattern-ascii-fireflies {
       margin-top: 6px;
       font-style: italic;
       text-align: center;
+    }
+
+    /* Inline assistant markdown images (`![alt](url)`) — rendered by
+       static/js/markdown.js as a.clickable <a class="chat-image"> wrapper. */
+    a.chat-image {
+      display: inline-block;
+      max-width: 100%;
+      margin: 0.35rem 0;
+    }
+    a.chat-image img.chat-inline-image {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+      cursor: zoom-in;
+    }
+    a.chat-image .chat-image-fallback {
+      display: none;
+      font-size: 0.8rem;
+      color: var(--color-muted, #94a3b8);
+      word-break: break-all;
+      padding: 0.5rem 0.75rem;
+      border: 1px dashed var(--border, #475569);
+      border-radius: 8px;
+      background: var(--panel, #202428);
+    }
+    a.chat-image.image-broken img.chat-inline-image {
+      display: none;
+    }
+    a.chat-image.image-broken .chat-image-fallback {
+      display: block;
+      text-decoration: underline;
+      cursor: pointer;
     }
 
     /* Setup wizard */

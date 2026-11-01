@@ -142,7 +142,10 @@ def _process_pdf(
                         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                             temp_img_path = tmp.name
                         try:
-                            img.image.save(temp_img_path, "PNG")  # pypdf -> PIL image
+                            image = img.image
+                            if image.mode == "CMYK":
+                                image = image.convert("RGB")
+                            image.save(temp_img_path, "PNG")
                             ocr_text = analyze_image_with_vl(temp_img_path, owner=owner)
                             if ocr_text and "unavailable" not in ocr_text.lower():
                                 pdf_text += f"\n\n[Page {page_num + 1} image {img_index + 1} text]: {ocr_text}"

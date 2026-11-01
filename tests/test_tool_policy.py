@@ -48,6 +48,7 @@ def _patch_loop_basics(monkeypatch):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    monkeypatch.setattr("src.tool_capabilities.TOOL_APPROVAL_GATE_ENABLED", False)
 
 
 def test_detects_strong_guide_only_turns():
