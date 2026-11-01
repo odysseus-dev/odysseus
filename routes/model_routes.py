@@ -3044,20 +3044,44 @@ def setup_model_routes(model_discovery):
         return {"dependents": _settings_using_endpoint(ep_id)}
 
     @router.delete("/model-endpoints/{ep_id}")
-    def delete_model_endpoint(ep_id: str, request: Request):
+    def delete_model_endpoint(
+        ep_id: str,
+        request: Request,
+        expected_cookbook_serve_session_id: Optional[str] = None,
+    ):
         require_admin(request)
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
+            if expected_cookbook_serve_session_id is not None:
+                # The DELETE itself checks ownership. An old serve must never
+                # mutate the settings of an endpoint reused by another serve.
+                if (
+                    not ep_id.startswith(("local-", "img-"))
+                    or not expected_cookbook_serve_session_id
+                ):
+                    raise HTTPException(409, "Cookbook endpoint ownership mismatch")
+                deleted = (
+                    db.query(ModelEndpoint)
+                    .filter(
+                        ModelEndpoint.id == ep_id,
+                        ModelEndpoint.cookbook_serve_session_id
+                        == expected_cookbook_serve_session_id,
+                    )
+                    .delete(synchronize_session=False)
+                )
+                if not deleted:
+                    raise HTTPException(409, "Cookbook endpoint ownership changed")
             # Clean up any settings that reference this endpoint
             cleared = _clear_settings_for_endpoint(ep_id)
             cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
             cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url, ep.id, ep.owner)
             cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url, ep.id, ep.owner)
             auth_id = getattr(ep, "provider_auth_id", None)
-            db.delete(ep)
+            if expected_cookbook_serve_session_id is None:
+                db.delete(ep)
             cleared_provider_auth = _delete_orphaned_provider_auth(db, auth_id, exclude_ep_id=ep_id)
             db.commit()
             _invalidate_models_cache()

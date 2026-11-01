@@ -38,6 +38,24 @@ _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
 
 
+def _compose_cloud_image_edit(source, generated, mask, *, instruction=False):
+    from PIL import Image, ImageChops, ImageOps
+
+    full_frame = instruction or mask.getextrema() == (255, 255)
+    if full_frame:
+        return generated, True
+    # Partial edits must share the source coordinate system, but resizing
+    # width/height independently distorts the subject when the provider changes ratio.
+    fitted = ImageOps.contain(generated, source.size, Image.Resampling.LANCZOS)
+    offset = ((source.width - fitted.width) // 2, (source.height - fitted.height) // 2)
+    aligned = Image.new("RGBA", source.size)
+    aligned.paste(fitted, offset)
+    coverage = Image.new("L", source.size)
+    coverage.paste(255, (offset[0], offset[1], offset[0] + fitted.width, offset[1] + fitted.height))
+    effective_mask = ImageChops.multiply(mask, coverage)
+    return Image.composite(aligned, source, effective_mask), False
+
+
 def _rss_mb() -> float:
     """Current process RSS in MB (from /proc; -1.0 when unavailable)."""
     try:
@@ -586,6 +604,7 @@ def _is_openai_api_base(url: str) -> bool:
 
 
 _GALLERY_ENDPOINT_PATHS = frozenset({
+    "/chat/completions",
     "/images",
     "/images/edits",
     "/images/generations",
@@ -1767,6 +1786,17 @@ def setup_gallery_routes() -> APIRouter:
             if not ok:
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
+        if body.pop("_use_image_settings", False) is True:
+            from src.editor_image_settings import editor_image_models
+            from src.ai_interaction import _resolve_model
+            chosen_model = editor_image_models(owner=user)["edit"]
+            if not chosen_model:
+                raise HTTPException(400, "Choose an image edit model in AI settings")
+            try:
+                edit_url, chosen_model, _ = await asyncio.to_thread(_resolve_model, chosen_model, owner=user)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            requested_base = edit_url.removesuffix("/chat/completions").rstrip("/")
         # Optional client-supplied id so GET /api/image/edit-progress can poll the
         # provider's step progress for this op. Ignored by providers that do not
         # implement the progress contract.
@@ -1884,14 +1914,30 @@ def setup_gallery_routes() -> APIRouter:
                         mask_png.save(reference_mask, format="PNG")
                         references = [src_buf.getvalue(), reference_mask.getvalue()]
                         payload = {
-                            "model": oa_model, "size": size, "n": 1,
+                            "model": oa_model, "n": 1,
                             "output_format": "png",
                             "prompt": "Edit the first image. The second image is a mask: white marks the region to edit, black marks the region to preserve. Keep composition and framing unchanged. Requested edit: " + str(body.get("prompt", "")),
                             "input_references": [{"type": "image_url", "image_url": {
                                 "url": "data:image/png;base64," + base64.b64encode(value).decode(),
                             }} for value in references],
                         }
-                        r = await client.post(_join_checked_gallery_endpoint(base, "/images"), headers=headers, json=payload)
+                        from src.image_model_ids import image_aspect_ratio
+                        payload["aspect_ratio"] = image_aspect_ratio(source_png.width, source_png.height)
+                        from src.ai_interaction import _uses_openrouter_chat_images
+                        if _uses_openrouter_chat_images(oa_model):
+                            payload = {
+                                "model": oa_model,
+                                "messages": [{"role": "user", "content": [
+                                    {"type": "text", "text": payload["prompt"]},
+                                    *[{"type": "image_url", "image_url": ref["image_url"]}
+                                      for ref in payload["input_references"]],
+                                ]}],
+                                "modalities": ["image", "text"], "stream": False,
+                                "image_config": {"aspect_ratio": payload["aspect_ratio"]},
+                            }
+                            r = await client.post(_join_checked_gallery_endpoint(base, "/chat/completions"), headers=headers, json=payload)
+                        else:
+                            r = await client.post(_join_checked_gallery_endpoint(base, "/images"), headers=headers, json=payload)
                     else:
                         r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
@@ -1907,6 +1953,12 @@ def setup_gallery_routes() -> APIRouter:
                             pass
                         raise HTTPException(r.status_code, f"{_detail} (provider HTTP {r.status_code})")
                     result = r.json()
+                    from src.ai_interaction import _chat_image_results, _image_response_error
+                    provider_error = _image_response_error(result, oa_model)
+                    if provider_error:
+                        raise HTTPException(400 if "deprecated" in provider_error.lower() else 502, provider_error)
+                    if is_openrouter and _uses_openrouter_chat_images(oa_model):
+                        result = {"data": _chat_image_results(result)}
                     raw_b64 = None
                     if result.get("data"):
                         item = result["data"][0]
@@ -1926,17 +1978,13 @@ def setup_gallery_routes() -> APIRouter:
                     # the masked region actually changes.
                     try:
                         generated = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
-                        # Match the generated image to the source dims.
-                        if generated.size != source_png.size:
-                            generated = generated.resize(source_png.size, Image.LANCZOS)
-                        # mask_png: white = regenerate (use generated),
-                        #           black = keep (use source).
-                        # Composite: result = source * (1 - mask_norm) + generated * mask_norm
-                        # Image.composite does exactly that with `mask`.
-                        blended = Image.composite(generated, source_png, mask_png)
+                        blended, full_frame = _compose_cloud_image_edit(
+                            source_png, generated, mask_png,
+                            instruction=body.get("mode") == "instruction",
+                        )
                         out_buf = io.BytesIO()
                         blended.save(out_buf, format="PNG")
-                        return {"image": base64.b64encode(out_buf.getvalue()).decode(), "model": oa_model}
+                        return {"image": base64.b64encode(out_buf.getvalue()).decode(), "model": oa_model, "full_frame": full_frame}
                     except Exception as comp_err:
                         # Never return a full-image edit when masking fails.
                         logger.warning(f"Inpaint compose failed: {comp_err}")
@@ -2593,7 +2641,9 @@ def setup_gallery_routes() -> APIRouter:
             height = int((body or {}).get("height") or 0)
         except (TypeError, ValueError):
             width = height = 0
-        if height > width:
+        if width > 0 and height > 0:
+            size = f"{width}x{height}"
+        elif height > width:
             size = "1024x1536"
         elif width > height:
             size = "1536x1024"
@@ -2606,6 +2656,9 @@ def setup_gallery_routes() -> APIRouter:
         # The editor's model picker may choose a specific (cloud) image model;
         # forward it so settings defaults only apply when none is selected.
         model_choice = str((body or {}).get("model") or "").strip()
+        if body.get("_use_image_settings") is True:
+            from src.editor_image_settings import editor_image_models
+            model_choice = editor_image_models(owner=user)["generation"]
         payload = {"prompt": prompt, "size": size}
         if model_choice:
             payload["model"] = model_choice
