@@ -2533,5 +2533,90 @@ class TestMalformedFilenameRejection(unittest.TestCase):
                 self.assertEqual(res["artifacts"][0]["status"], auditor.INVALID)
 
 
+# ---------------------------------------------------------------------------
+# Security: command-line diagnostics must not disclose untrusted input values
+# ---------------------------------------------------------------------------
+
+class TestCliDiagnosticConfidentiality(unittest.TestCase):
+    """Keep detailed diagnostics in the structured API, not in terminal logs."""
+
+    def test_invalid_manifest_category_does_not_leak_into_stderr(self):
+        import subprocess
+        marker = "SENSITIVE_MARKER_CATEGORY_0183"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest([], expected_sets={marker: {"expected_count": 1}})))
+            result = auditor.audit(str(manifest), str(root))
+            self.assertTrue(any(marker in err for err in result["errors"]))
+            proc = subprocess.run(
+                [sys.executable, str(_ROOT / "scripts" / "audit_c5_benchmark_evidence.py"), str(manifest), str(root)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("audit error: manifest is unreadable or invalid", proc.stderr)
+            self.assertNotIn(marker, proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_unreadable_trusted_config_path_does_not_leak_into_stderr(self):
+        import subprocess
+        marker = "SENSITIVE_MARKER_TRUSTED_PATH_0294"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest([])))
+            trusted_path = root / (marker + ".json")
+            proc = subprocess.run(
+                [sys.executable, str(_ROOT / "scripts" / "audit_c5_benchmark_evidence.py"), str(manifest), str(root),
+                 "--trusted-expected-sets", str(trusted_path)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("audit error: invalid trusted expected-sets configuration", proc.stderr)
+            self.assertNotIn(marker, proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_preflight_conflict_does_not_leak_path_or_modify_manifest(self):
+        import subprocess
+        marker = "SENSITIVE_MARKER_DESTINATION_0312"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / (marker + ".json")
+            manifest.write_text(json.dumps(_manifest([])))
+            original = manifest.read_bytes()
+            proc = subprocess.run(
+                [sys.executable, str(_ROOT / "scripts" / "audit_c5_benchmark_evidence.py"), str(manifest), str(root),
+                 "--output", str(manifest)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("preflight error: unsafe or conflicting output destination", proc.stderr)
+            self.assertNotIn(marker, proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+            self.assertEqual(manifest.read_bytes(), original)
+
+    def test_publication_error_does_not_leak_exception_text(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        from unittest.mock import patch
+        marker = "SENSITIVE_MARKER_PUBLISH_0489"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest([])))
+            for option, expected in (
+                ("--output", "publication error: unable to write output"),
+                ("--summary", "publication error: unable to write summary"),
+            ):
+                stderr = StringIO()
+                with patch.object(auditor, "_publish_file_securely", side_effect=OSError(marker)):
+                    with redirect_stderr(stderr):
+                        code = auditor.main([str(manifest), str(root), option, str(root / "output.txt")])
+                self.assertEqual(code, 2)
+                self.assertIn(expected, stderr.getvalue())
+                self.assertNotIn(marker, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

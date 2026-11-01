@@ -1531,13 +1531,19 @@ def main(argv: list[str] | None = None) -> int:
         extra_input_paths=extra_inputs,
     )
     if preflight_errors:
-        for err in preflight_errors:
-            print(f"preflight error: {err}", file=sys.stderr)
+        # Input paths may contain credentials. Do not echo validation details to stderr.
+        print("preflight error: unsafe or conflicting output destination", file=sys.stderr)
         return 2
 
     if not result.get("manifest_valid") or result.get("configuration_valid") is False or result.get("errors"):
-        for err in result.get("errors", []):
-            print(f"audit error: {err}", file=sys.stderr)
+        # The structured audit result retains diagnostics for trusted callers.
+        # Never log its untrusted error strings, paths, or configuration values.
+        if not result.get("manifest_valid"):
+            print("audit error: manifest is unreadable or invalid", file=sys.stderr)
+        elif result.get("configuration_valid") is False:
+            print("audit error: invalid trusted expected-sets configuration", file=sys.stderr)
+        else:
+            print("audit error: invalid audit input", file=sys.stderr)
         return 2
 
     output_json = json.dumps(result, indent=2, sort_keys=False) + "\n"
@@ -1554,8 +1560,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         try:
             _publish_file_securely(args.output, output_json, protected_paths, protected_inodes)
-        except OSError as exc:
-            print(f"publication error writing output: {exc}", file=sys.stderr)
+        except OSError:
+            print("publication error: unable to write output", file=sys.stderr)
             return 2
     else:
         print(output_json, end="")
@@ -1563,8 +1569,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary:
         try:
             _publish_file_securely(args.summary, summary_md, protected_paths, protected_inodes)
-        except OSError as exc:
-            print(f"publication error writing summary: {exc}", file=sys.stderr)
+        except OSError:
+            print("publication error: unable to write summary", file=sys.stderr)
             return 2
 
     # Determine exit code
