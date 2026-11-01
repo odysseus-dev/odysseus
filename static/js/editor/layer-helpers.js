@@ -54,6 +54,7 @@ export function defaultAdjParams(type) {
   switch (type) {
     case 'brightness-contrast': return { brightness: 1, contrast: 1 };
     case 'exposure':            return { exposure: 0, offset: 0, gamma: 1 };
+    case 'develop':             return { exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, temperature: 0, tint: 0, clarity: 0, vibrance: 0, saturation: 0 };
     case 'white-balance':       return { temperature: 0, tint: 0 };
     case 'hue-saturation':      return { hue: 0, saturation: 1, lightness: 0 };
     case 'vibrance':            return { vibrance: 0 };
@@ -95,6 +96,18 @@ export function defaultAdjParams(type) {
       midpoint: 50,
       reverse: false,
     };
+    case 'invert':              return {};
+    case 'posterize':           return { levels: 4 };
+    case 'threshold':           return { level: 128 };
+    case 'photo-filter':        return { color: '#ec8a00', density: 25, preserve_luminosity: true };
+    case 'channel-mixer':       return {
+      monochrome: false,
+      red:      { r: 100, g: 0, b: 0 },
+      green:    { r: 0, g: 100, b: 0 },
+      blue:     { r: 0, g: 0, b: 100 },
+      constant: { r: 0, g: 0, b: 0 },
+    };
+    case 'color-lookup':        return { preset: 'none', strength: 100 };
   }
   return {};
 }
@@ -102,7 +115,7 @@ export function defaultAdjParams(type) {
 /** Preset names for the retained adjustment popup. */
 export function adjustmentPresetOptions(type) {
   const options = {
-    'brightness-contrast': ['Default', 'High Contrast'],
+    'brightness-contrast': ['Default', 'Brighten', 'Darken', 'Punch', 'High Contrast', 'Low Contrast', 'Faded'],
     'exposure': ['Default', 'Lift Exposure', 'Lower Exposure'],
     'white-balance': ['Default', 'Warm', 'Cool'],
     'hue-saturation': ['Default', 'Desaturate', 'Boost Color'],
@@ -122,8 +135,18 @@ export function adjustmentPresetOptions(type) {
 export function adjustmentPresetParams(type, preset) {
   const params = defaultAdjParams(type);
   switch (`${type}:${preset}`) {
+    case 'brightness-contrast:Brighten':
+      return { ...params, brightness: 1.18 };
+    case 'brightness-contrast:Darken':
+      return { ...params, brightness: 0.82 };
+    case 'brightness-contrast:Punch':
+      return { ...params, brightness: 1.04, contrast: 1.22 };
     case 'brightness-contrast:High Contrast':
       return { ...params, contrast: 1.28 };
+    case 'brightness-contrast:Low Contrast':
+      return { ...params, contrast: 0.75 };
+    case 'brightness-contrast:Faded':
+      return { ...params, brightness: 1.1, contrast: 0.85 };
     case 'exposure:Lift Exposure':
       return { ...params, exposure: 0.45 };
     case 'exposure:Lower Exposure':
@@ -171,6 +194,7 @@ export function adjLayerLabel(type) {
   return {
     'brightness-contrast': 'Brightness/Contrast',
     'exposure': 'Exposure',
+    'develop': 'Develop',
     'white-balance': 'White Balance',
     'hue-saturation': 'Hue/Saturation',
     'vibrance': 'Vibrance',
@@ -181,6 +205,12 @@ export function adjLayerLabel(type) {
     'color-balance': 'Color Balance',
     'selective-color': 'Selective Color',
     'gradient-map': 'Gradient Map',
+    'invert': 'Invert',
+    'posterize': 'Posterize',
+    'threshold': 'Threshold',
+    'photo-filter': 'Photo Filter',
+    'channel-mixer': 'Channel Mixer',
+    'color-lookup': 'Color Lookup',
   }[type] || type;
 }
 
@@ -193,6 +223,7 @@ export function adjLayerLabel(type) {
 export const ADJ_ICONS = {
   'brightness-contrast': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg>',
   'exposure': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13H11l-1 9 8.5-11H12z"/></svg>',
+  'develop': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="8" cy="18" r="2" fill="currentColor" stroke="none"/></svg>',
   'white-balance': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><circle cx="12" cy="17" r="4"/><path d="M9 6h3"/></svg>',
   'hue-saturation': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="12" r="4"/><circle cx="15" cy="9.5" r="4"/><circle cx="15" cy="14.5" r="4"/></svg>',
   'vibrance': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 10 6l4 12 6-12"/><path d="M7 14h10"/></svg>',
@@ -203,6 +234,12 @@ export const ADJ_ICONS = {
   'color-balance': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12a9 9 0 0 1 9-9v18a9 9 0 0 1-9-9z" fill="currentColor" stroke="none"/></svg>',
   'selective-color': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v6M21 12h-6M12 21v-6M3 12h6"/></svg>',
   'gradient-map': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M12 6v12"/></svg>',
+  'invert': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg>',
+  'posterize': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="6" width="5" height="12" rx="1"/><rect x="10" y="6" width="4" height="12" rx="1"/><rect x="16" y="6" width="5" height="12" rx="1"/></svg>',
+  'threshold': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="12" r="6"/><path d="M10 6a6 6 0 0 1 0 12Z" fill="currentColor" stroke="none"/><path d="M18 8v8M16 12h4"/></svg>',
+  'photo-filter': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9.5" cy="9.5" r="2.5"/><circle cx="14.5" cy="14.5" r="2.5"/></svg>',
+  'channel-mixer': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V4M12 20V4M19 20V4"/><path d="M2 9h6M9 15h6M16 9h6"/></svg>',
+  'color-lookup': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/><circle cx="16" cy="8" r="2"/></svg>',
 };
 
 

@@ -171,7 +171,7 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
-          version: "0.13.4"
+          version: "0.13.5"
           enable-cache: true
           cache-dependency-glob: requirements.txt
           prune-cache: false
@@ -179,6 +179,7 @@ jobs:
           uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
           python scripts/check_ca_trust.py --python
           uv pip install --system -r requirements.txt
+          uv pip install --system "playwright==1.62.0"
         if: steps.docs-check.outputs.docs_only != 'true'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         if: steps.docs-check.outputs.docs_only != 'true'
@@ -256,3 +257,10 @@ jobs:
         env:
           PYTEST_SHARD: ${{ matrix.shard }}
         run: python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD"
+
+      - name: Playwright mobile layout checks (shard 1/4 only)
+        if: steps.docs-check.outputs.docs_only != 'true' && matrix.shard == '1/4'
+        run: |
+          ODYSSEUS_TEST_PYTHON=python ODYSSEUS_LAYOUT_BROWSER=chromium npx --no-install playwright test \
+            --config tests/e2e/ios-layout.config.cjs \
+            --reporter=line

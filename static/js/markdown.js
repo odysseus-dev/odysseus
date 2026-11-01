@@ -294,13 +294,60 @@ function moreListPayloadFromHref(href) {
   return _moreListPayloads.get(`${match[1]}:${match[2]}`) || '';
 }
 
+// Assistant markdown images (`![alt](url)`) render inline as a clickable
+// thumbnail that opens the full-size image in a new tab. Only https URLs are
+// allowed — an http URL (or anything unparseable) is downgraded to its alt
+// text rather than rendered as an image. A broken image (the model can
+// fabricate a URL) must never leave an empty gap, so each image is paired with
+// a hidden fallback caption (alt text + URL) that _bindChatImageFallback()
+// reveals when the load fails.
 function imageHtml(alt, url, title) {
-  const safeUrl = safeLinkUrl(url);
-  if (!safeUrl || safeUrl.startsWith('#')) return escapeHtml(alt || '');
+  const rawUrl = String(url || '').trim();
+  let safeUrl = '';
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    if (parsed.protocol === 'https:') safeUrl = parsed.href;
+  } catch (_) {
+    safeUrl = '';
+  }
+  if (!safeUrl) return escapeHtml(alt || rawUrl || '');
   const safeAlt = escapeHtml(alt || '');
   const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
-  return `<img src="${escapeHtml(safeUrl)}" alt="${safeAlt}"${safeTitle} loading="lazy" decoding="async">`;
+  const displayUrl = escapeHtml(safeUrl);
+  const fallbackLabel = escapeHtml(alt || 'Image');
+  // The fallback caption shows the URL as readable text, but a bare
+  // `https://` in that text would be caught by the later bare-URL autolink
+  // pass and wrapped in a nested <a> — which then truncates this outer <a>
+  // when it is extracted as an allowed-HTML block. Encode the `//` so it
+  // displays as `https://` yet is invisible to the autolink regex.
+  const fallbackUrl = displayUrl.replace('://', ':&#47;&#47;');
+  return (
+    `<a class="chat-image" href="${displayUrl}" target="_blank" rel="noopener noreferrer" title="Open image in a new tab">` +
+    `<img class="chat-inline-image" src="${displayUrl}" alt="${safeAlt}"${safeTitle} loading="lazy" decoding="async" referrerpolicy="no-referrer">` +
+    `<span class="chat-image-fallback">${fallbackLabel} — ${fallbackUrl}</span>` +
+    `</a>`
+  );
 }
+
+// Reveal the alt-text + link fallback whenever an inline chat image fails to
+// load, and hide it again if a late load succeeds. `error`/`load` on <img> do
+// not bubble, so this listens in the capture phase (document → target).
+function _bindChatImageFallback() {
+  if (typeof document === 'undefined' || !document.addEventListener) return;
+  const wrapOf = (target) => {
+    if (!target || target.tagName !== 'IMG' || !target.classList || !target.classList.contains('chat-inline-image')) return null;
+    return target.closest ? target.closest('a.chat-image') : null;
+  };
+  document.addEventListener('error', (event) => {
+    const wrap = wrapOf(event && event.target);
+    if (wrap) wrap.classList.add('image-broken');
+  }, true);
+  document.addEventListener('load', (event) => {
+    const wrap = wrapOf(event && event.target);
+    if (wrap) wrap.classList.remove('image-broken');
+  }, true);
+}
+_bindChatImageFallback();
 
 function _isModelEndpointUrl(rawUrl) {
   try {

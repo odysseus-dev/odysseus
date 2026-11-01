@@ -3,8 +3,8 @@ from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHAT = (ROOT / "static/js/chat.js").read_text()
-SESSIONS = (ROOT / "static/js/sessions.js").read_text()
+CHAT = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
+SESSIONS = (ROOT / "static/js/sessions.js").read_text(encoding="utf-8")
 CSS = app_css()
 
 

@@ -132,7 +132,7 @@ class CATrustTests(unittest.TestCase):
             custom = directory / "custom.pem"
             fingerprint = next(iter(INCIDENT["intermediates"]))
             custom.write_text(clean.read_text() + INCIDENT["certificates"][fingerprint])
-            self.assertEqual(len(INCIDENT["chains"]), 12)
+            self.assertEqual(len(INCIDENT["chains"]), 14)
             custom_accepted = []
             for hostname, chain in INCIDENT["chains"].items():
                 leaf, intermediates = directory / "leaf.pem", directory / "chain.pem"
@@ -156,9 +156,11 @@ class CATrustTests(unittest.TestCase):
                     self.assertIn("unable to get local issuer certificate", negative.stderr)
                     if verify(custom).returncode == 0:
                         custom_accepted.append(hostname)
-            self.assertEqual(custom_accepted, [
+            self.assertCountEqual(custom_accepted, [
                 "dv-g3b-aaa-emudhra.we-have-a-problem.com",
+                "dv-g3b-aaa-noct-emudhra.we-have-a-problem.com",
                 "dv-g3b-emudhra.we-have-a-problem.com",
+                "dv-g3b-noct-emudhra.we-have-a-problem.com",
             ])
             checker.check_bundle(clean)
             for bundle in (affected, custom):

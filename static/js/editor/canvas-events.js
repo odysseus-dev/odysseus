@@ -16,6 +16,12 @@
  *     touchmove  1 finger    → continueDraw
  *     touchend → endDraw; touchcancel → cancelDraw
  *     touchstart 2 fingers   → pinch-zoom + 2-finger pan
+ *     2-finger tap           → undo (onTwoFingerTap)
+ *     3-finger tap           → redo (onThreeFingerTap)
+ *
+ *   A multi-finger gesture reverts the accidental single-finger stroke
+ *   begun by the first finger to land (cancelDraw), so a pinch or a
+ *   tap never leaves a stray dab behind.
  *
  *   Pan:
  *     Hand tool / held Space / middle mouse can drag directly over the
@@ -33,23 +39,54 @@
  *   cancelDraw?:       () => void,
  *   updateBrushCursor: (e: Event) => void,
  *   syncZoomControls?: () => void,
+ *   onTwoFingerTap?:  () => void,
+ *   onThreeFingerTap?: () => void,
  * }} ctx
  */
 import { state } from './state.js';
+import { invalidateCanvasCoordsCache } from './canvas-coords.js';
 import {
   applyCanvasPan,
   isDirectPanIntent,
   nextPanOffset,
   syncPanCursor,
 } from './canvas-navigation.js';
+import { wireCanvasContextMenu } from './canvas-context-menu.js';
 
 let canvasWindowBindings;
 
-export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw, cancelDraw, updateBrushCursor, updateEyedropperPreview, syncZoomControls, onViewportChange }) {
+export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw, cancelDraw, updateBrushCursor, updateEyedropperPreview, syncZoomControls, onViewportChange, onTwoFingerTap, onThreeFingerTap }) {
   canvasWindowBindings?.abort();
   canvasWindowBindings = new AbortController();
   const { signal } = canvasWindowBindings;
+
+  // Invalidate coordinate cache on layout, scroll, resize or orientation shifts
+  window.addEventListener('resize', invalidateCanvasCoordsCache, { signal, passive: true });
+  window.addEventListener('scroll', invalidateCanvasCoordsCache, { signal, passive: true });
+  window.addEventListener('orientationchange', invalidateCanvasCoordsCache, { signal, passive: true });
+  canvasArea.addEventListener('scroll', invalidateCanvasCoordsCache, { passive: true });
   let suppressMouseUntil = 0;
+  // Tool-aware right-click menu on the image and the surrounding area.
+  wireCanvasContextMenu(canvasArea, { signal });
+  // Window-level drag handlers exist so a gesture can continue past the
+  // canvas edge. But the direct-manipulation selection/crop rects are
+  // built from raw pointer coords, so pointer motion over editor chrome
+  // (topbar, toolbars, panels) must not feed the rect. Brush/transform/
+  // move/resize gestures DO keep tracking over chrome — overshooting the
+  // canvas edge is normal for those and was the reason for the window
+  // binding.
+  const UI_CHROME_SELECTOR = '.ge-topbar, .ge-toolbar, .ge-controls, .ge-right-panel, '
+    + '.ge-dock, .ge-options-bar, .ge-canvas-toolbar, button, input, select, textarea';
+  const isUiChrome = e => !!e.target?.closest?.(UI_CHROME_SELECTOR);
+  const canStartOutside = () => ['marquee', 'lasso', 'crop'].includes(state.tool);
+  // Only in-progress selection/crop drags are affected by the chrome
+  // guard. A committed cropRect/selection is a resting state — clicking
+  // its Apply button must not be treated as "strayed onto chrome".
+  const directGestureActive = () => !!(
+    state.selectionMoving || state.marqueeActive ||
+    state.lassoActive || (state.lassoPoints && state.lassoPoints.length) ||
+    state.cropping || state.cropMoving
+  );
   // Mouse — mousedown stays on the canvas; mousemove/up are bound to
   // the WINDOW so a drag can continue (and end) past the canvas edge.
   // Critical for the Resize tool where users overshoot.
@@ -60,12 +97,25 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   });
   window.addEventListener('mousemove', (e) => {
     if (Date.now() < suppressMouseUntil) return;
+    // Only shield the raw-coordinate selection/crop rects from chrome.
+    if (directGestureActive() && isUiChrome(e)) return;
     continueDraw(e);
   }, { signal });
   window.addEventListener('mouseup', (e) => {
     if (Date.now() < suppressMouseUntil) return;
+    // Releasing over chrome commits the gesture; the marquee/crop end
+    // paths clamp the rect to the document, so an overshoot onto a panel
+    // is kept (Photoshop behaviour), not discarded.
     endDraw(e);
   }, { signal });
+  // A tool switch happens on the tool button, before the release. Cancel
+  // any in-progress direct gesture first so its move is reverted rather
+  // than committed by the subsequent chrome mouseup. Explicit tool
+  // switches are the only place we abandon a selection/crop gesture.
+  window.addEventListener('mousedown', (e) => {
+    if (!directGestureActive()) return;
+    if (e.target?.closest?.('.ge-tool-btn')) cancelDraw?.();
+  }, { capture: true, signal });
   // Preserve pressure and browser-coalesced samples for pen input.
   // Compatibility mouse events are briefly suppressed to avoid a
   // duplicate stroke after pointerup.
@@ -94,12 +144,16 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   };
   state.mainCanvas.addEventListener('pointerup', endPen);
   state.mainCanvas.addEventListener('pointercancel', endPen);
-  // Lasso can start OUTSIDE the canvas — fallback mousedown on the
-  // surrounding canvas-area so the user can begin a lasso path in
-  // the empty space around the image. Other tools stay canvas-only.
+  // Selection and Crop can start OUTSIDE the canvas — fallback mousedown on the
+  // surrounding canvas-area so the user can begin a path/rect in the empty
+  // space around the image. Other tools stay canvas-only.
   canvasArea.addEventListener('mousedown', (e) => {
-    if (state.tool !== 'lasso') return;
+    if (!canStartOutside() || Date.now() < suppressMouseUntil) return;
+    if (e.button !== 0 || isDirectPanIntent(state.tool, state.spacePanActive, e.button)) return;
     if (e.target === state.mainCanvas) return; // already handled
+    // Ignore presses on editor chrome inside the area (the crop Apply panel,
+    // popups, buttons) so clicking Apply does not start a fresh crop.
+    if (isUiChrome(e) || e.target.closest?.('.ge-crop-apply, .ge-adj-popup, .ge-transform-popup, .ge-fx-popup, .ge-inpaint-popup, .ge-fx-menu')) return;
     beginDraw(e);
   });
   state.mainCanvas.addEventListener('mouseenter', (e) => {
@@ -121,11 +175,22 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   });
 
   // Touch — single finger draws; two fingers pan + pinch-zoom.
+  // A quick two-finger tap = undo, a quick three-finger tap = redo.
   let multiActive = false;
   let multiStartDist = 0;
   let multiStartZoom = 1;
   let multiStartCenter = { x: 0, y: 0 };
   let multiStartPan = { x: 0, y: 0 };
+  // Tap-gesture tracking (mobile undo/redo). A gesture starts when the
+  // first finger lands and is decided when the last finger lifts: at
+  // most TAP_MAX_MS elapsed, the centre never moved more than
+  // TAP_MAX_MOVE px, and the peak finger count was 2 (undo) or 3 (redo).
+  const TAP_MAX_MS = 300;
+  const TAP_MAX_MOVE = 12;
+  let gesturePeakTouches = 0;
+  let gestureStartAt = 0;
+  let gestureStartCenter = null;
+  let gestureMoved = false;
   const touchInfo = (e) => {
     const t1 = e.touches[0], t2 = e.touches[1];
     const cx = (t1.clientX + t2.clientX) / 2;
@@ -134,12 +199,30 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     const dy = t2.clientY - t1.clientY;
     return { cx, cy, dist: Math.hypot(dx, dy) };
   };
+  const touchCenter = (e) => {
+    if (!e.touches || !e.touches.length) return null;
+    let x = 0, y = 0;
+    for (const t of e.touches) { x += t.clientX; y += t.clientY; }
+    return { x: x / e.touches.length, y: y / e.touches.length };
+  };
   const applyCanvasOffset = (x, y) => applyCanvasPan(state, canvasArea, x, y);
   state.mainCanvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
+    if (gesturePeakTouches === 0) {
+      // First contact of a fresh gesture (finger counts are read from
+      // e.touches so simultaneous touches are handled too).
+      gesturePeakTouches = Math.max(1, e.touches.length);
+      gestureStartAt = Date.now();
+      gestureStartCenter = touchCenter(e);
+      gestureMoved = false;
+    } else if (e.touches.length > gesturePeakTouches) {
+      gesturePeakTouches = e.touches.length;
+    }
     if (e.touches.length >= 2) {
-      // End any in-progress single-finger draw before switching modes.
-      if (!multiActive) endDraw();
+      // Revert the accidental single-finger stroke the first finger
+      // began, then switch to pinch/pan so multi-finger input never
+      // leaves a stray dab behind.
+      if (!multiActive) cancelDraw?.();
       multiActive = true;
       const info = touchInfo(e);
       multiStartDist = info.dist;
@@ -154,17 +237,26 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   }, { passive: false });
   state.mainCanvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
+    if (!gestureMoved && gestureStartCenter) {
+      const c = touchCenter(e);
+      if (c && Math.hypot(c.x - gestureStartCenter.x, c.y - gestureStartCenter.y) > TAP_MAX_MOVE) {
+        gestureMoved = true;
+      }
+    }
     if (multiActive && e.touches.length >= 2) {
       const info = touchInfo(e);
       const ratio = info.dist / Math.max(1, multiStartDist);
       const newZoom = Math.max(0.1, Math.min(5, multiStartZoom * ratio));
       if (Math.abs(newZoom - state.zoom) > 0.001) {
         state.zoom = newZoom;
+        // A pinch is an explicit zoom; layout refits must not undo it.
+        state.zoomViewMode = 'scale';
         state.mainCanvas.style.width = (state.imgWidth * state.zoom) + 'px';
         state.mainCanvas.style.height = (state.imgHeight * state.zoom) + 'px';
         const label = state.container.querySelector('.ge-zoom-label');
         if (label) label.textContent = Math.round(state.zoom * 100) + '%';
         syncZoomControls?.();
+        invalidateCanvasCoordsCache();
         onViewportChange?.();
       }
       const dx = info.cx - multiStartCenter.x;
@@ -177,14 +269,36 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     continueDraw(e);
   }, { passive: false });
   state.mainCanvas.addEventListener('touchend', (e) => {
+    // Decide the gesture only once every finger has lifted.
+    if (e.touches.length === 0 && gesturePeakTouches >= 2) {
+      const quick = !gestureMoved && (Date.now() - gestureStartAt) <= TAP_MAX_MS;
+      const peak = gesturePeakTouches;
+      gesturePeakTouches = 0;
+      gestureStartCenter = null;
+      gestureMoved = false;
+      multiActive = false;
+      if (quick) {
+        if (peak === 2) onTwoFingerTap?.();
+        else if (peak >= 3) onThreeFingerTap?.();
+      }
+      return;
+    }
     if (multiActive) {
       if (e.touches.length < 2) multiActive = false;
       return;
     }
     endDraw(e);
+    if (e.touches.length === 0) {
+      gesturePeakTouches = 0;
+      gestureStartCenter = null;
+      gestureMoved = false;
+    }
   });
   state.mainCanvas.addEventListener('touchcancel', () => {
     multiActive = false;
+    gesturePeakTouches = 0;
+    gestureStartCenter = null;
+    gestureMoved = false;
     cancelDraw?.();
   });
 
@@ -193,6 +307,7 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   let panning = false;
   let pid = null;
   let transformPointerId = null;
+  let outsideDrawPointerId = null;
   let startX = 0, startY = 0;
   let startPanX = 0, startPanY = 0;
   const getOffset = () => ({ x: state.panX || 0, y: state.panY || 0 });
@@ -203,7 +318,23 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
   };
   canvasArea.addEventListener('pointerdown', (e) => {
     const directPan = isDirectPanIntent(state.tool, state.spacePanActive, e.button);
-    if (state.tool === 'lasso' && !directPan) return;
+    // With a selection or crop tool, an empty-area press draws a rect/path
+    // rather than panning — so the crop can be pulled out past the image.
+    // Space-held / middle-mouse (directPan) still pans.
+    if (canStartOutside() && !directPan) {
+      if (e.target === state.mainCanvas || isUiChrome(e) ||
+          e.target.closest?.('.ge-crop-apply, .ge-adj-popup, .ge-transform-popup, .ge-fx-popup, .ge-inpaint-popup, .ge-fx-menu')) return;
+      // Mouse starts through mousedown; pen/touch need their own captured path.
+      if (e.pointerType === 'pen' || e.pointerType === 'touch') {
+        if (outsideDrawPointerId !== null || e.button !== 0) return;
+        outsideDrawPointerId = e.pointerId;
+        suppressMouseUntil = Date.now() + 500;
+        try { canvasArea.setPointerCapture(e.pointerId); } catch {}
+        beginDraw(e);
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.target.closest('button, input, .ge-adj-popup, .ge-transform-popup, .ge-fx-popup, .ge-inpaint-popup, .ge-controls, .ge-right-panel, .ge-fx-menu')) return;
     const onImage = e.target === state.mainCanvas || e.target === state.transformOverlay;
     if (onImage && !directPan) return;
@@ -242,6 +373,12 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     e.preventDefault();
   });
   canvasArea.addEventListener('pointermove', (e) => {
+    if (outsideDrawPointerId !== null && e.pointerId === outsideDrawPointerId) {
+      suppressMouseUntil = Date.now() + 500;
+      if (!isUiChrome(e)) continueDraw(e);
+      e.preventDefault();
+      return;
+    }
     if (transformPointerId !== null && e.pointerId === transformPointerId) {
       continueDraw(e);
       return;
@@ -255,6 +392,14 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     applyOffset(next.x, next.y);
   });
   const endPan = (e) => {
+    if (outsideDrawPointerId !== null && (!e || e.pointerId === outsideDrawPointerId)) {
+      const capturedId = outsideDrawPointerId;
+      outsideDrawPointerId = null;
+      suppressMouseUntil = Date.now() + 500;
+      if (e?.type === 'pointercancel') cancelDraw?.();
+      else if (e) endDraw(e);
+      try { canvasArea.releasePointerCapture(capturedId); } catch {}
+    }
     if (transformPointerId !== null && (!e || e.pointerId === transformPointerId)) {
       const capturedId = transformPointerId;
       transformPointerId = null;

@@ -887,6 +887,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         """Create a new integration (admin only)."""
         _require_admin_user(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
         item = add_integration(body)
         return {"ok": True, "integration": mask_integration_secret(item)}
 
@@ -895,6 +897,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         """Update an existing integration (admin only)."""
         _require_admin_user(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
         item = update_integration(integration_id, body)
         if not item:
             raise HTTPException(404, "Integration not found")

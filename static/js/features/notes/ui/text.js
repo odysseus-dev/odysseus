@@ -31,7 +31,7 @@ export function createText({
         url = url.slice(0, -1);
       }
       const href = url.startsWith('www.') ? `https://${url}` : url;
-      return `<a href="${_attrEsc(href)}" class="note-link" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${url}</a>` + (url !== m ? m.slice(url.length) : '');
+      return `<a href="${_attrEsc(href)}" class="note-link" target="_blank" rel="noopener noreferrer">${url}</a>` + (url !== m ? m.slice(url.length) : '');
     });
   }
 

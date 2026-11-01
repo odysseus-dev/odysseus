@@ -38,11 +38,25 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 
         elif action == "add":
             import uuid as _uuid
+            from src.url_safety import check_outbound_url
             name = args.get("name", "")
             base_url = args.get("base_url", "")
             api_key = args.get("api_key", "")
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
+            # SSRF hardening: validate the URL before storing it. Every entry
+            # point that accepts an external base_url must run this guard.
+            # The HTTP route (POST /api/model-endpoints) gets the same guard
+            # in #6316; this tool bypasses that route entirely, so it needs
+            # its own validation. A prompt-injection payload smuggled into a
+            # skill, note, fetched page, or email could instruct the model to
+            # register a cloud-metadata or internal-network endpoint.
+            ok, reason = check_outbound_url(
+                base_url,
+                block_private=os.getenv("MODELENDPOINT_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                return {"error": f"Rejected endpoint URL: {reason}", "exit_code": 1}
             eid = str(_uuid.uuid4())[:8]
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
@@ -75,7 +89,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             return {"error": f"Unknown action: {action}", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_endpoints error: {e}")
-        return {"error": str(e), "exit_code": 1}
+        return {"error": "An internal error occurred while managing endpoints", "exit_code": 1}
     finally:
         db.close()
 
@@ -571,7 +585,9 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             return _ALIASES_SET.get(k2, (k or "").strip())
 
         def _is_managed_key(key):
-            return key in DEFAULT_SETTINGS and key not in RETIRED_SETTING_KEYS
+            # Tool policy is not a general setting, even if a future default
+            # is added: resetting it must never re-enable disabled tools.
+            return key != "disabled_tools" and key in DEFAULT_SETTINGS and key not in RETIRED_SETTING_KEYS
 
         _ENUMS = {
             "image_quality": ["low", "medium", "high"],
@@ -699,13 +715,35 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             save_settings(s)
             return {"response": f"Reset {key} to default ({DEFAULT_SETTINGS[key]}).", "exit_code": 0}
 
-        elif action in ("disable_tool", "enable_tool", "list_tools"):
+        elif action == "enable_tool":
+            # The global disabled_tools denylist is the one hard permission
+            # boundary the Settings -> Agent Tools panel offers admins. It
+            # must only ever be *narrowed* from inside an agent turn: a
+            # model that can call enable_tool can undo the boundary itself,
+            # and any web page, email, or document the agent reads can ask
+            # it to (prompt injection re-enabling bash/email/etc.). Widening
+            # the tool set stays a human action in the Settings panel.
+            tool_name = (args.get("tool") or args.get("name") or "").strip().lower()
+            return {
+                "error": (
+                    f"Re-enabling tools is not available from chat"
+                    f"{f' (requested: {tool_name})' if tool_name else ''}. "
+                    "Disabled tools are an admin policy: ask the user to turn the tool "
+                    "back on in Settings > Agent Tools. You can still disable tools "
+                    "(disable_tool) or list the current state (list_tools)."
+                ),
+                "exit_code": 1,
+            }
+
+        elif action in ("disable_tool", "list_tools"):
             # Tool-toggle actions. These edit settings.json:disabled_tools
             # (the global list read on every chat request) rather than
             # prefs.json. Friendly aliases accepted: "shell" -> "bash",
             # "search" -> "web_search", "browser" -> browser tools,
             # "documents" -> the document tool set, "memory" ->
-            # manage_memory, etc.
+            # manage_memory, etc. Only disable_tool mutates: see the
+            # enable_tool branch above for why the agent can never widen
+            # the denylist.
             from src.settings import get_setting, save_settings, load_settings
             _ALIASES = {
                 "shell": ["bash"],
@@ -739,7 +777,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                     "response": (
                         f"Currently disabled: {', '.join(current) if current else '(none)'}.\n"
                         "Common toggles: shell (bash), search (web_search), browser, documents, "
-                        "memory, skills, images, tasks, notes, calendar, email."
+                        "memory, skills, images, tasks, notes, calendar, email. "
+                        "To re-enable a tool, open Settings > Agent Tools."
                     ),
                     "disabled": list(current),
                     "exit_code": 0,
@@ -753,22 +792,19 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             settings = load_settings()
             current = list(settings.get("disabled_tools") or [])
             before = set(current)
-            if action == "disable_tool":
-                for t in targets:
-                    if t not in current:
-                        current.append(t)
-            else:  # enable_tool
-                current = [t for t in current if t not in targets]
+            for t in targets:
+                if t not in current:
+                    current.append(t)
             after = set(current)
             settings["disabled_tools"] = current
             save_settings(settings)
 
-            verb = "Disabled" if action == "disable_tool" else "Enabled"
             changed = sorted(after.symmetric_difference(before))
             return {
                 "response": (
-                    f"{verb} {tool_name} ({', '.join(targets)}). "
-                    f"Now disabled: {', '.join(current) if current else '(none)'}."
+                    f"Disabled {tool_name} ({', '.join(targets)}). "
+                    f"Now disabled: {', '.join(current) if current else '(none)'}. "
+                    "Re-enabling is done by the user in Settings > Agent Tools."
                 ),
                 "changed": changed,
                 "disabled": list(current),

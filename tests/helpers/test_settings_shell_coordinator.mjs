@@ -24,6 +24,7 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/speech.js'),
   path.join(JS, 'settings/writingStyle.js'),
   path.join(JS, 'settings/imageModels.js'),
+  path.join(JS, 'settings/imagePreferences.js'),
   path.join(JS, 'settings/agent.js'),
   path.join(JS, 'settings/shell.js'),
   path.join(JS, 'settings/peek.js'),
