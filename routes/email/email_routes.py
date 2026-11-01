@@ -60,6 +60,7 @@ from .email_helpers import (
     make_oauth_state, verify_oauth_state,
     EmailNotConfiguredError,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
+    _folder_name_from_list_line, _list_imap_folders, _resolve_mail_folder,
     _extract_attachment_text, _list_attachments_from_msg, _has_visible_attachments, _is_likely_signature_image_attachment,
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
@@ -479,60 +480,6 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
                 logger.debug("No running event loop for immediate away-reply check")
     except Exception:
         logger.debug("email_received event detection skipped", exc_info=True)
-
-
-def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not match:
-        return None
-    return match.group(1) or match.group(2)
-
-
-def _list_imap_folders(conn) -> tuple[list, list[str]]:
-    try:
-        status, folders = conn.list()
-        if status != "OK" or not folders:
-            return [], []
-        names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
-        return folders, names
-    except Exception:
-        return [], []
-
-
-def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
-    """Resolve provider-specific names such as Gmail's [Gmail]/Bin/Spam."""
-    folders, names = _list_imap_folders(conn)
-    if preferred and preferred in names:
-        return preferred
-    role_flags = {
-        "trash": ("\\Trash",),
-        "archive": ("\\Archive", "\\All"),
-        "junk": ("\\Junk",),
-        "sent": ("\\Sent",),
-        "drafts": ("\\Drafts",),
-        "starred": ("\\Flagged",),
-    }.get(role, ())
-    for f in folders:
-        decoded = f.decode() if isinstance(f, bytes) else str(f)
-        if any(flag in decoded for flag in role_flags):
-            name = _folder_name_from_list_line(f)
-            if name:
-                return name
-    candidates = {
-        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "[Gmail]/Bin", "Deleted Messages", "Deleted Items"),
-        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail", "All Mail"),
-        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
-        "sent": ("Sent", "[Gmail]/Sent Mail", "[Google Mail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent"),
-        "drafts": ("Drafts", "[Gmail]/Drafts", "[Google Mail]/Drafts", "Draft", "INBOX.Drafts"),
-        "starred": ("Starred", "[Gmail]/Starred", "[Google Mail]/Starred", "Flagged"),
-    }.get(role, ())
-    lower_map = {n.lower(): n for n in names}
-    for candidate in candidates:
-        found = lower_map.get(candidate.lower())
-        if found:
-            return found
-    return preferred
 
 
 def _mail_folder_role_hint(name: str) -> str:
@@ -7009,7 +6956,7 @@ def setup_email_routes():
             # Owner-scoped so pre-retrieval never crosses tenants.
             context_snippets, _terms = ([], [])
             if not fast_reply:
-                context_snippets, _terms = await asyncio.to_thread(_pre_retrieve_context, original_body, to, owner=owner)
+                context_snippets, _terms = await asyncio.to_thread(_pre_retrieve_context, original_body, to, account_id=account_id, owner=owner)
 
             # NEW: also pull the last few emails from the original sender +
             # their attachments. The "to" field on this endpoint is the
@@ -7025,6 +6972,7 @@ def setup_email_routes():
                         exclude_uid=source_uid,
                         exclude_folder=source_folder,
                         limit=3,
+                        account_id=account_id,
                         owner=owner,
                     )
                 except Exception as _e:

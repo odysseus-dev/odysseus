@@ -1479,6 +1479,93 @@ def _decode_header(raw):
         return "".join(decoded)
 
 
+def _folder_name_from_list_line(line) -> str | None:
+    decoded = line.decode() if isinstance(line, bytes) else str(line)
+    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
+
+
+def _list_imap_folders(conn) -> tuple[list, list[str]]:
+    try:
+        status, folders = conn.list()
+        if status != "OK" or not folders:
+            return [], []
+        names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
+        return folders, names
+    except Exception:
+        return [], []
+
+
+def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
+    """Resolve provider-specific names such as Gmail's [Gmail]/Bin/Spam."""
+    folders, names = _list_imap_folders(conn)
+    if preferred and preferred in names:
+        return preferred
+    role_flags = {
+        "trash": ("\\Trash",),
+        "archive": ("\\Archive", "\\All"),
+        "junk": ("\\Junk",),
+        "sent": ("\\Sent",),
+        "drafts": ("\\Drafts",),
+        "starred": ("\\Flagged",),
+    }.get(role, ())
+    for f in folders:
+        decoded = f.decode() if isinstance(f, bytes) else str(f)
+        if any(flag in decoded for flag in role_flags):
+            name = _folder_name_from_list_line(f)
+            if name:
+                return name
+    candidates = {
+        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "[Gmail]/Bin", "Deleted Messages", "Deleted Items"),
+        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail", "All Mail"),
+        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
+        "sent": ("Sent", "[Gmail]/Sent Mail", "[Google Mail]/Sent Mail", "Sent Mail", "Sent Items", "INBOX.Sent"),
+        "drafts": ("Drafts", "[Gmail]/Drafts", "[Google Mail]/Drafts", "Draft", "INBOX.Drafts"),
+        "starred": ("Starred", "[Gmail]/Starred", "[Google Mail]/Starred", "Flagged"),
+    }.get(role, ())
+    lower_map = {n.lower(): n for n in names}
+    for candidate in candidates:
+        found = lower_map.get(candidate.lower())
+        if found:
+            return found
+    return preferred
+
+
+def _reply_context_folders(conn) -> list[str]:
+    """INBOX plus the account's real Sent / Archive / Drafts mailboxes.
+
+    Used by the AI reply context paths. Providers name these differently
+    (Gmail: "[Gmail]/Sent Mail", "[Gmail]/All Mail", "[Gmail]/Drafts"), so a
+    hardcoded list silently searched INBOX only on Gmail (#6249). Falls back
+    to the generic names when the server gives us nothing to resolve against.
+    """
+    folders = ["INBOX"]
+    for preferred, role in (("Sent", "sent"), ("Archive", "archive"), ("Drafts", "drafts")):
+        name = _resolve_mail_folder(conn, preferred, role) or preferred
+        if name.lower() not in {f.lower() for f in folders}:
+            folders.append(name)
+    return folders
+
+
+def _message_id_for_uid(conn, folder: str, uid: str) -> str:
+    """Message-ID of `uid` in `folder`, or "" when it can't be read."""
+    try:
+        status, _ = conn.select(_q(folder), readonly=True)
+        if status != "OK":
+            return ""
+        status, data = conn.uid("FETCH", str(uid), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+        if status != "OK" or not data:
+            return ""
+        for part in data:
+            if isinstance(part, tuple) and len(part) >= 2 and part[1]:
+                return str(email_mod.message_from_bytes(part[1]).get("Message-ID") or "").strip()
+    except Exception as e:
+        logger.debug(f"message-id lookup failed uid={uid}: {e}")
+    return ""
+
+
 def _detect_sent_folder(conn):
     """Find the server's Sent folder name. Returns 'Sent' if nothing matches.
 
@@ -1850,13 +1937,22 @@ def _fetch_sender_thread_context(sender_addr: str,
 
     blocks: list[str] = []
     seen_uids: set[tuple[str, str]] = set()  # (folder, uid)
+    # Gmail's archive is "[Gmail]/All Mail", which also holds INBOX/Sent
+    # copies, so dedupe on Message-ID as well as (folder, uid).
+    seen_message_ids: set[str] = set()
     if exclude_uid:
         seen_uids.add((exclude_folder or "INBOX", str(exclude_uid)))
 
     conn = None
     try:
         conn = _imap_connect(account_id, owner=owner)
-        for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
+        if exclude_uid:
+            # The message being answered also lives in All Mail under another
+            # UID, so exclude it by Message-ID too.
+            excluded_id = _message_id_for_uid(conn, exclude_folder or "INBOX", exclude_uid)
+            if excluded_id:
+                seen_message_ids.add(excluded_id)
+        for folder in _reply_context_folders(conn):
             if len(blocks) >= limit:
                 break
             try:
@@ -1900,6 +1996,12 @@ def _fetch_sender_thread_context(sender_addr: str,
                 except Exception as e:
                     logger.debug(f"sender-thread-context fetch fail uid={uid}: {e}")
                     continue
+
+                message_id = str(msg.get("Message-ID") or "").strip()
+                if message_id:
+                    if message_id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(message_id)
 
                 try:
                     subj = _decode_header(msg.get("Subject", "(no subject)"))
@@ -2033,9 +2135,11 @@ def _pre_retrieve_context(
             return context_snippets, terms_list
 
         ctx_conn = None
+        # Gmail's "[Gmail]/All Mail" repeats INBOX/Sent copies.
+        seen_matches: set[tuple[str, str]] = set()  # (term, Message-ID)
         try:
             ctx_conn = _imap_connect(account_id, owner=owner)
-            for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
+            for folder in _reply_context_folders(ctx_conn):
                 try:
                     st_sel, _sd = ctx_conn.select(_q(folder), readonly=True)
                     if st_sel != "OK":
@@ -2049,14 +2153,23 @@ def _pre_retrieve_context(
                         if st != "OK" or not data2 or not data2[0]:
                             continue
                         all_hits = data2[0].split()
-                        hit_uids = all_hits[-2:]
                         logger.info(f"  [{folder}] term={term!r} hits={len(all_hits)}")
-                        for huid in hit_uids:
+                        # Newest first, looking past All Mail copies of mail
+                        # already found, for at most 2 new matches per folder.
+                        kept = 0
+                        for huid in reversed(all_hits[-6:]):
+                            if kept >= 2:
+                                break
                             try:
                                 st2, hd = ctx_conn.fetch(huid, "(RFC822)")
                                 if st2 != "OK" or not hd or not hd[0]:
                                     continue
                                 hmsg = email_mod.message_from_bytes(hd[0][1])
+                                message_id = str(hmsg.get("Message-ID") or "").strip()
+                                if message_id:
+                                    if (term, message_id) in seen_matches:
+                                        continue
+                                    seen_matches.add((term, message_id))
                                 hsubj = _decode_header(hmsg.get("Subject", ""))
                                 hfrom = _decode_header(hmsg.get("From", ""))
                                 hdate = hmsg.get("Date", "")
@@ -2064,6 +2177,7 @@ def _pre_retrieve_context(
                                 context_snippets.append(
                                     f"[{folder} match for \"{term}\"]\nFrom: {hfrom}\nDate: {hdate}\nSubject: {hsubj}\n{hbody}"
                                 )
+                                kept += 1
                             except Exception:
                                 continue
                     except Exception as _e:
