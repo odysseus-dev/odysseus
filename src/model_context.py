@@ -8,6 +8,7 @@ Provides token estimation for context usage tracking.
 import ipaddress
 import logging
 import sys
+import time
 from typing import Dict, List, Optional, Tuple
 
 from urllib.parse import urlparse
@@ -53,38 +54,56 @@ def _normalize_base_for_compare(url: str) -> str:
     return url
 
 
-def _configured_endpoint_kind(url: str) -> Optional[str]:
-    """Return configured endpoint kind for a chat/base URL when available."""
+def _matching_endpoints(url: str) -> List[Tuple[str, object]]:
+    """Return (normalized base, row) for enabled endpoints covering a URL, in table order."""
     target = _normalize_base_for_compare(url)
     if not target:
-        return None
+        return []
     if "core.database" not in sys.modules:
-        return None
+        return []
     try:
         from core.database import SessionLocal, ModelEndpoint
         db = SessionLocal()
         try:
+            matches = []
             rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
             for ep in rows:
                 base = _normalize_base_for_compare(getattr(ep, "base_url", "") or "")
-                if not base:
+                # "http://models" normalizes to the bare scheme "http:", which would
+                # cover every http URL.
+                if not base or base.endswith(":"):
                     continue
                 if target != base and not target.startswith(base + "/"):
                     continue
-                kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
-                if kind in ("local", "api", "proxy"):
-                    return kind
-                if getattr(ep, "api_key", None):
-                    parsed = urlparse(base)
-                    host = (parsed.hostname or "").lower()
-                    path = (parsed.path or "").rstrip("/")
-                    if parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
-                        return "proxy"
-                return "auto"
+                matches.append((base, ep))
+            return matches
         finally:
             db.close()
     except Exception:
+        return []
+
+
+def _row_kind(base: str, ep: object) -> Optional[str]:
+    """Return a row's endpoint kind, inferring "proxy" for keyed Auto /v1 rows."""
+    try:
+        kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
+        if kind in ("local", "api", "proxy"):
+            return kind
+        if getattr(ep, "api_key", None):
+            parsed = urlparse(base)
+            host = (parsed.hostname or "").lower()
+            path = (parsed.path or "").rstrip("/")
+            if parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
+                return "proxy"
+        return "auto"
+    except Exception:
         return None
+
+
+def _configured_endpoint_kind(url: str) -> Optional[str]:
+    """Return configured endpoint kind for a chat/base URL when available."""
+    matches = _matching_endpoints(url)
+    return _row_kind(*matches[0]) if matches else None
 
 
 def is_local_endpoint(url: str) -> bool:
@@ -99,6 +118,101 @@ def is_local_endpoint(url: str) -> bool:
         return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
     except Exception:
         return False
+
+
+def _is_self_hosted_base(base: str) -> bool:
+    """True for a base on a host no public provider can live on (private IP,
+    tailnet address or MagicDNS name, internal suffix, single-label name)."""
+    from src.endpoint_resolver import endpoint_cost_tracked
+    from src.url_security import _INTERNAL_SUFFIXES
+
+    host = (urlparse(base).hostname or "").lower().rstrip(".")
+    return host.endswith(_INTERNAL_SUFFIXES + (".ts.net",)) or not endpoint_cost_tracked(base)
+
+
+def _static_key(ep: object) -> Optional[str]:
+    """A row's own API key. Session-backed rows (provider_auth_id) hold none."""
+    return None if getattr(ep, "provider_auth_id", None) else getattr(ep, "api_key", None)
+
+
+def _owning_endpoint(url: str) -> Optional[Tuple[str, object]]:
+    """The (normalized base, row) that owns a URL for probing: the most specific
+    base covering it, whatever the table order. Rows can share a base, one per
+    owner, so one holding a usable key wins that tie."""
+    matches = _matching_endpoints(url)
+    if not matches:
+        return None
+    best = max(len(base) for base, _ in matches)
+    owners = [match for match in matches if len(match[0]) == best]
+    return next((match for match in owners if _static_key(match[1])), owners[0])
+
+
+def _context_probe_kind(url: str) -> Optional[str]:
+    """Endpoint kind as context-window discovery should see it.
+
+    The keyed-/v1 heuristic in _configured_endpoint_kind stays right for request
+    shaping: a private gateway on Auto must not receive llama.cpp fields. For the
+    window it is wrong, because a key-protected vLLM or llama.cpp server looks just
+    like that gateway and would skip every probe in favour of the static table. So
+    a keyed Auto endpoint on a self-hosted host is probed like a local server;
+    explicit kinds and public hosts keep their cheap path.
+
+    This reads the row that owns the URL, the one whose key the probe would send,
+    so overlapping rows give the same answer in any table order.
+    """
+    kind = _configured_endpoint_kind(url)
+    try:
+        from src.copilot import is_copilot_base
+        owner = None if is_copilot_base(url) else _owning_endpoint(url)
+        if owner:
+            base, ep = owner
+            declared = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
+            if declared not in ("local", "api", "proxy") and _static_key(ep) and _is_self_hosted_base(base):
+                return "local"
+            return _row_kind(base, ep)
+    except Exception as e:
+        logger.debug(f"Failed to classify endpoint for context probing: {e}")
+    return kind
+
+
+def context_probe_is_local(url: str) -> bool:
+    """Whether context discovery should treat a URL as a restartable local server."""
+    return _context_probe_kind(url) == "local" or is_local_endpoint(url)
+
+
+def _probe_auth_headers(url: str, serving_root: Optional[str] = None) -> Dict[str, str]:
+    """Auth headers for probing a configured endpoint, or {} when none apply.
+
+    Only the row owning the URL qualifies, so a key never leaks to a sibling path
+    on the same host. Copilot's catalog needs headers this layer doesn't own.
+
+    llama.cpp's /slots and /props sit at the server root, beside /v1. Their root is
+    cut from the URL's text and can land outside the endpoint, or on a bogus host
+    for a pathless URL, so pass it as serving_root: the key then goes there only if
+    it is the row's base, or that base without its /v1.
+    """
+    try:
+        from src.copilot import is_copilot_base
+        owner = None if is_copilot_base(url) else _owning_endpoint(url)
+        api_key = _static_key(owner[1]) if owner else None
+        if not api_key:
+            return {}
+        base = owner[0]
+        if serving_root is not None and serving_root not in (base, base.removesuffix("/v1")):
+            return {}
+        from src.endpoint_resolver import build_headers
+        return build_headers(api_key, base)
+    except Exception as e:
+        logger.debug(f"Failed to build context probe headers: {e}")
+    return {}
+
+
+def _probe_get(url: str, headers: Dict[str, str]) -> httpx.Response:
+    # httpx.get never follows redirects by default, so a key can't be forwarded.
+    if headers:
+        return httpx.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    return httpx.get(url, timeout=REQUEST_TIMEOUT)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -241,13 +355,32 @@ KNOWN_CONTEXT_WINDOWS = {
 # Cache
 # ---------------------------------------------------------------------------
 _context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
+# Endpoints whose last /models probe was refused (401/403), with when to ask again.
+# A refusal says nothing about the server, so the table value a lookup falls back to
+# must not be cached as its window, or a corrected key would never be seen. But
+# lookups run on the request path, so a key that can't list models must not cost a
+# blocking GET every time either. Same period as PROBE_FAILURE_TTL_SECONDS in
+# agent_runtime/context_resolution.py.
+REFUSED_PROBE_RETRY_SECONDS = 60.0
+_refused_until: Dict[str, float] = {}
+
+
+def _note_models_probe(endpoint_url: str, response: httpx.Response) -> None:
+    if getattr(response, "status_code", None) in (401, 403):
+        _refused_until[endpoint_url] = time.monotonic() + REFUSED_PROBE_RETRY_SECONDS
+    else:
+        _refused_until.pop(endpoint_url, None)
+
+
+def _probe_refused(endpoint_url: str) -> bool:
+    return time.monotonic() < _refused_until.get(endpoint_url, 0.0)
 
 
 def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool]:
     """Return (context_length, known). ``known`` is False only when the value is a
     bare DEFAULT_CONTEXT fallback (no endpoint report and not in the known table)."""
-    configured_kind = _configured_endpoint_kind(endpoint_url)
-    is_local = is_local_endpoint(endpoint_url)
+    configured_kind = _context_probe_kind(endpoint_url)
+    is_local = context_probe_is_local(endpoint_url)
     # Key on (endpoint_url, model): the same model id can be served by two
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
@@ -255,12 +388,16 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     cache_key = (endpoint_url, model)
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
+    if not is_local and _probe_refused(endpoint_url):
+        table_ctx = _lookup_known(model)
+        return (table_ctx, True) if table_ctx else (DEFAULT_CONTEXT, False)
 
     ctx, known = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
+    cacheable = ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")
+    if not is_local and cacheable and not _probe_refused(endpoint_url):
         _context_cache[cache_key] = (ctx, known)
     logger.info(f"Context length for {model}: {ctx}")
     return ctx, known
@@ -369,10 +506,11 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     if cat is None:
         from src.endpoint_resolver import build_models_url
         try:
-            r = httpx.get(build_models_url(endpoint_url), timeout=REQUEST_TIMEOUT)
+            r = _probe_get(build_models_url(endpoint_url), _probe_auth_headers(endpoint_url))
         except Exception as e:
             logger.debug(f"Failed to fetch proxy catalog for context length: {e}")
             return None
+        _note_models_probe(endpoint_url, r)
         if not r.is_success:
             return None
         cat = {}
@@ -403,7 +541,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
     api_ctx = None
-    configured_kind = _configured_endpoint_kind(endpoint_url)
+    configured_kind = _context_probe_kind(endpoint_url)
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
@@ -422,11 +560,15 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
             return api_ctx, True
         return DEFAULT_CONTEXT, False
 
+    auth_headers = _probe_auth_headers(endpoint_url)
+    probe_local = context_probe_is_local(endpoint_url)
+
     # Try llama.cpp /slots endpoint first — reports actual serving context
-    if is_local_endpoint(endpoint_url):
+    if probe_local:
         base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
+        serving_headers = _probe_auth_headers(endpoint_url, serving_root=base)
         try:
-            r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
+            r = _probe_get(f"{base}/slots", serving_headers)
             if r.is_success:
                 slots = r.json()
                 if isinstance(slots, list) and slots:
@@ -440,7 +582,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         # /props endpoint still reports the active serving context, and is the
         # authoritative value for single-slot servers.
         try:
-            r = httpx.get(f"{base}/props", timeout=REQUEST_TIMEOUT)
+            r = _probe_get(f"{base}/props", serving_headers)
             if r.is_success:
                 props = r.json()
                 generation = props.get("default_generation_settings") if isinstance(props, dict) else None
@@ -466,7 +608,8 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
 
     models_url = build_models_url(endpoint_url)
     try:
-        r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
+        r = _probe_get(models_url, auth_headers)
+        _note_models_probe(endpoint_url, r)
         if r.is_success:
             data = r.json()
             models_list = data.get("data") or []
@@ -482,8 +625,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     # For local/self-hosted endpoints, trust the API value (user set --max-model-len)
     # For cloud APIs, use the larger value (API can report low defaults)
     if api_ctx and known:
-        _is_local = is_local_endpoint(endpoint_url)
-        if _is_local and api_ctx < known:
+        if probe_local and api_ctx < known:
             logger.info(f"Local endpoint reports {api_ctx} for {model} (known max: {known}) — using API value")
             return api_ctx, True
         result = max(api_ctx, known)

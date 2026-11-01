@@ -421,13 +421,13 @@ async def probe_provider_context(
 
 
 async def _is_local(endpoint_url: str) -> bool:
-    from src.model_context import is_local_endpoint
+    from src.model_context import context_probe_is_local
 
     try:
         # Reads configured endpoints from the local database on the calling
         # thread, as the regular runtime does. Moving it to worker threads
         # gives SQLite sessions per-thread connections the app never uses.
-        return bool(is_local_endpoint(endpoint_url))
+        return bool(context_probe_is_local(endpoint_url))
     except Exception:
         return False
 
