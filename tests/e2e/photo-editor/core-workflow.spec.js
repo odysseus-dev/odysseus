@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const {
   compareExportPixels,
   dragOnCanvas,
@@ -16,7 +17,7 @@ test('layered document survives edit, mask, transform, crop, reopen, and export'
   await openBlankEditor(page);
   const initial = await editorState(page);
 
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.20, y: 0.30 }, { x: 0.72, y: 0.60 });
   const painted = await editorState(page);
   const paintedLayer = painted.layers.find(layer => layer.name === 'Edit');
@@ -25,11 +26,11 @@ test('layered document survives edit, mask, transform, crop, reopen, and export'
 
   const editItem = page.locator('.ge-layer-item').filter({ hasText: 'Edit' }).first();
   await editItem.click();
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await editItem.locator('.ge-true-mask-btn').click();
   let current = await editorState(page);
   expect(current.layers.find(layer => layer.name === 'Edit').masks).toHaveLength(1);
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('#ge-transform-w')).toBeVisible();
   await page.locator('#ge-transform-w').fill('560');
   await page.locator('#ge-transform-apply').click();
@@ -43,7 +44,7 @@ test('layered document survives edit, mask, transform, crop, reopen, and export'
   await page.locator('#ge-redo').click();
   expect((await editorState(page)).layers.find(layer => layer.name === 'Edit').size[0]).toBe(560);
 
-  await page.locator('.ge-tool-btn[data-tool="text"]').click();
+  await selectTool(page, 'text');
   await expect(page.locator('#ge-text-section')).toBeVisible();
   const canvasBox = await page.locator('.ge-main-canvas').boundingBox();
   await page.mouse.click(canvasBox.x + canvasBox.width * 0.28, canvasBox.y + canvasBox.height * 0.22);
@@ -52,7 +53,7 @@ test('layered document survives edit, mask, transform, crop, reopen, and export'
   await page.locator('#ge-text-size').press('Enter');
   await expect(page.locator('.ge-layer-item').filter({ hasText: 'Durable photo edit' })).toBeVisible();
 
-  await page.locator('.ge-tool-btn[data-tool="crop"]').click();
+  await selectTool(page, 'crop');
   await dragOnCanvas(page, { x: 0.08, y: 0.10 }, { x: 0.92, y: 0.88 });
   await expect(page.locator('.ge-crop-apply-btn')).toBeVisible();
   await page.locator('.ge-crop-apply-btn').click();

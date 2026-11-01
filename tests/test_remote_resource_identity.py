@@ -117,7 +117,8 @@ async def test_remote_approval_is_bound_to_operation_and_request(manager, change
         content = '{"record":"two"}'
     else:
         authority = replace(authority, **{"request": {"request_id": "other"}, "owner": {"owner": "bob"},
-                                         "session": {"session_id": "other"}}[change])
+                                         "session": {"session_id": "other"}}[change],
+                            resource_roots=None)  # re-seal the root for the changed owner
     _, result = await dispatch(authority, tool, content, exact_approval=exact,
         security_context=ToolRunSecurityContext(external_untrusted_context_seen=True))
     assert result["exit_code"] == 1
