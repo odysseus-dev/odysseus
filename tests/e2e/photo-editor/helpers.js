@@ -1,40 +1,22 @@
 const { expect } = require('@playwright/test');
 
 async function openBlankEditor(page, size = { width: 640, height: 480 }, name = 'Photo editor E2E') {
-  let lastError = null;
-  for (let pageAttempt = 0; pageAttempt < 3; pageAttempt += 1) {
-    try {
-      await page.goto('/', { waitUntil: 'domcontentloaded' });
-      await page.locator('#tool-gallery-btn').waitFor({ state: 'attached', timeout: 20_000 });
-      await page.evaluate(async () => {
-        window.__photoEditorImport = async path => {
-          let lastImportError = null;
-          for (let attempt = 0; attempt < 4; attempt += 1) {
-            const url = attempt === 0 ? path : `${path}?e2e_retry=${attempt}-${Date.now()}`;
-            try { return await import(url); } catch (error) { lastImportError = error; }
-            await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
-          }
-          throw lastImportError;
-        };
-        const gallery = await window.__photoEditorImport('/static/js/gallery.js?v=20260830editor4');
-        gallery.openGallery();
-      });
-      await page.locator('#gallery-editor-tab').waitFor({ state: 'visible', timeout: 20_000 });
-      await page.locator('#gallery-editor-tab').click();
-      await page.evaluate(async ({ size: nextSize, name: nextName }) => {
-        const editor = await window.__photoEditorImport('/static/js/galleryEditor.js');
-        editor.openEditor(null, null, { w: nextSize.width, h: nextSize.height }, nextName);
-      }, { size, name });
-      await page.locator('.ge-main-canvas').waitFor({ state: 'visible', timeout: 20_000 });
-      lastError = null;
-      break;
-    } catch (error) {
-      lastError = error;
-      await page.goto('about:blank');
-      await page.waitForTimeout(250 * (pageAttempt + 1));
-    }
-  }
-  if (lastError) throw lastError;
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  // Workflow tests exercise the canvas, not the optional setup overlay.
+  await page.evaluate(() => localStorage.setItem('ge-preflight-dismissed', '1'));
+  await page.locator('#tool-gallery-btn').waitFor({ state: 'attached', timeout: 20_000 });
+  await page.evaluate(async () => {
+    window.__photoEditorImport = path => import(path);
+    const gallery = await window.__photoEditorImport('/static/js/gallery.js?v=20260830editor4');
+    gallery.openGallery();
+  });
+  await page.locator('#gallery-editor-tab').waitFor({ state: 'visible', timeout: 20_000 });
+  await page.locator('#gallery-editor-tab').click();
+  await page.evaluate(async ({ size: nextSize, name: nextName }) => {
+    const editor = await window.__photoEditorImport('/static/js/galleryEditor.js');
+    editor.openEditor(null, null, { w: nextSize.width, h: nextSize.height }, nextName);
+  }, { size, name });
+  await page.locator('.ge-main-canvas').waitFor({ state: 'visible', timeout: 20_000 });
   await expect.poll(async () => page.evaluate(async () => {
     const { state } = await import('/static/js/editor/state.js');
     return state.layers.length;
@@ -362,7 +344,57 @@ async function compareExportPixels(page, bytes, size) {
   }, { base64: bytes.toString('base64'), targetSize: size });
 }
 
+async function selectTool(page, toolId) {
+  const face = page.locator(`.ge-tool-slot-face[data-tool="${toolId}"]`);
+  if (await face.count() > 0) {
+    await face.first().click();
+    return;
+  }
+  // Open the flyout via its corner triangle, wait for item visibility, and click realistically
+  const slot = page.locator('.ge-tool-slot', { has: page.locator(`[data-tool-option="${toolId}"]`) }).first();
+  const tri = slot.locator('.ge-tool-flyout-tri');
+  if (await tri.count() > 0) {
+    await tri.click();
+  }
+  const item = slot.locator(`.ge-tool-flyout-item[data-tool-option="${toolId}"]`);
+  await expect(item).toBeVisible({ timeout: 3000 });
+  await item.click();
+}
+
+// On phones, picking a tool minimizes the Layers sheet and refits the canvas.
+// Wait for the canvas to stop moving before aiming at it.
+async function settledCanvasBox(page) {
+  let box = null;
+  await expect.poll(async () => {
+    const previous = box;
+    box = await page.locator('.ge-main-canvas').boundingBox();
+    return JSON.stringify(previous) === JSON.stringify(box);
+  }).toBe(true);
+  return box;
+}
+
+// Rare text/shape options live in the options strip's "More" popover, which
+// closes on any outside press. Open it (idempotently) before using them.
+async function openOptionsMore(page, kind) {
+  const menu = page.locator(`#ge-${kind}-more`);
+  if (await menu.isHidden()) await page.locator(`#ge-${kind}-more-toggle`).click();
+  await expect(menu).toBeVisible();
+}
+
+// Filter actions live in Photoshop-style flyouts (Blur, Retained effects, ...).
+// Open the menu, then the item's parent row, as a user would.
+async function chooseFilterAction(page, action, opener = '#ge-filter-menu-btn') {
+  await page.locator(opener).click();
+  const menu = page.locator('#ge-filter-menu');
+  await expect(menu).toBeVisible();
+  const item = menu.locator(`[data-filter-action="${action}"]`);
+  const panel = await item.evaluate(node => node.closest('.ge-submenu')?.dataset.submenuPanel || null);
+  if (panel) await menu.locator(`.ge-menu-parent[data-submenu="${panel}"]`).click();
+  await item.click();
+}
+
 module.exports = {
+  chooseFilterAction,
   compareExportPixels,
   dragOnCanvas,
   encodedImagePixelDigest,
@@ -370,6 +402,9 @@ module.exports = {
   flattenedPixelDigest,
   openBlankEditor,
   openExportDialog,
+  openOptionsMore,
   reopenDraft,
+  selectTool,
+  settledCanvasBox,
   waitForDraft,
 };

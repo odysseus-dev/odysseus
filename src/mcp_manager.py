@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import asyncio 
+import contextlib
 from typing import Any, Dict, List, Optional, Set, Tuple
 from src.database import McpServer, SessionLocal
 
@@ -383,12 +384,21 @@ class McpManager:
 
             provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
-            read_stream, write_stream, _get_session_id = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-            await session.initialize()
+            try:
+                transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+                read_stream, write_stream, _get_session_id = transport
+                session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+                await session.initialize()
 
-            tools_result = await session.list_tools()
+                tools_result = await session.list_tools()
+            except BaseException:
+                # Close the half-open transport here, in the task that entered
+                # it. Left for the garbage collector, its AnyIO cancel scope is
+                # exited from the wrong task and the event loop keeps spinning
+                # (#5518). Its own teardown error would only mask the real one.
+                with contextlib.suppress(Exception):
+                    await stack.aclose()
+                raise
             tools = []
             for tool in tools_result.tools:
                 tools.append({
