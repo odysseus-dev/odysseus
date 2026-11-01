@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -39,7 +39,7 @@ This spec covers mail and contacts in:
 
 Exactly one default account per owner is enforced as a serialized database transition. Startup normalizes legacy duplicate defaults and installs a unique per-owner default constraint/index; first create, delete/promotion, set-default, demo teardown, and owner rename lock the relevant owner rows and commit atomically. Multi-owner rename acquires locks in canonical order so stale concurrent writers fail closed.
 
-`routes.email_helpers` owns:
+`routes.email.email_helpers` owns (flat imports remain compatibility aliases):
 
 - account owner assertions and config fallback order;
 - IMAP/SMTP connection helpers and related transport utilities;
@@ -57,11 +57,9 @@ Email owner semantics are route-local and compatibility-sensitive:
 - `routes.email_helpers._require_auth()` returns `""` in `AUTH_ENABLED=false` mode, rejects configured auth with no user, and only tolerates first-run anonymous loopback fallback.
 - Empty owner is treated as single-user compatibility: account-ownership assertions no-op, default/first-enabled account fallback can be global, and email cache clauses include `owner = '' OR owner IS NULL`.
 - Non-empty owners scope account/config/cache queries. Legacy ownerless account
-  rows are visible to an authenticated owner only when the row's IMAP username
-  or from-address matches that owner, so old unowned rows do not become global
-  cross-user accounts in configured multi-user deployments.
+  rows are visible to an authenticated owner only when the row's IMAP username or from-address matches that owner, so old unowned rows do not become global cross-user accounts in configured multi-user deployments.
 
-`routes.email_routes` owns the HTTP mail surface:
+`routes.email.email_routes` owns the HTTP mail surface:
 
 - account CRUD, test, default, and masked config reads;
 - Google OAuth authorize/callback for Workspace and .edu Gmail-style accounts;
@@ -91,7 +89,7 @@ IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messa
 
 Scheduled email rows live in `data/scheduled_emails.db` and are owner-scoped. Scheduled send times are normalized before storage.
 
-`routes.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Before SMTP work, each poller atomically claims a due row with a conditional `pending` to `sending` update; concurrent in-process/CLI pollers that lose the claim skip the row instead of sending a duplicate. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Background email automation can also consult the foreground activity gate so auto actions do not compete with active browser/model work. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
+`routes.email.email_pollers` owns the scheduled-send poller and single-shot/task/CLI automation passes. Before SMTP work, each poller atomically claims a due row with a conditional `pending` to `sending` update; concurrent in-process/CLI pollers that lose the claim skip the row instead of sending a duplicate. Only the scheduled-send poller starts in-process by default when `ODYSSEUS_INPROCESS_POLLERS` allows it; Docker forwards that gate. Background email automation can also consult the foreground activity gate so auto actions do not compete with active browser/model work. Native cron/systemd can drive one-shot pollers through `scripts/odysseus-mail`.
 
 Manual and scheduled summaries use the shared LLM adapter and owner-scoped cache instead of constructing provider calls locally. Scheduled summaries use background fallback policy and yield to foreground work; provider exception text is shaped before it can reach the browser.
 
@@ -107,9 +105,9 @@ Transport degraded behavior:
 
 ## Caching And Staleness
 
-Email list/read behavior uses short route caches, longer read caches, capped warm prefetch, and owner/account-aware pool/cache keys. The frontend email library has its own session SWR cache, cache-buster refreshes, scheduled/search cache exclusions, and stale-row behavior when refresh fails.
+Email list/read behavior uses short route caches, longer read caches, capped warm prefetch, and owner/account-aware pool/cache keys. The frontend email library has bounded in-memory and local caches, cache-buster refreshes, scheduled/search cache exclusions and stale rows on refresh failure. A cached early return is not a universal stale-while-revalidate guarantee.
 
-Opening an unread message is one authoritative backend IMAP operation. The read route fetches/parses the message and applies `\Seen` over the same connection; cached bodies still await one UID STORE, read-only mailboxes serve content without claiming a mark, and STORE failure returns the body with explicit failure state rather than caching a false read. Inbox/library clients deduplicate opens, carry immutable mailbox context, and ignore late responses after account, folder, or message changes.
+Opening an unread message is one authoritative backend IMAP operation. The read route fetches/parses the message and applies `\Seen` over the same connection; cached bodies still await one UID STORE, read-only mailboxes serve content without claiming a mark, and STORE failure returns the body with explicit failure state rather than caching a false read. Inbox/library clients deduplicate opens and carry mailbox context with selected request-generation guards. Those guards are not universal: some detached/inline completions still use mutable account/folder state, so late-response safety must be assessed per path.
 
 Library prewarm runs only while genuinely idle, as one bounded single-flight request for the default or last-used enabled account and initial page. Visible foreground work, panel lifecycle, account changes, or explicit reads cancel or join it so delayed duplicate IMAP work cannot escape the idle gate.
 
@@ -117,7 +115,7 @@ List/read route caches are owner/account-aware. Helper-side summary, AI-reply, t
 
 ## Attachments And Signed Replies
 
-Compose uploads live under `ODYSSEUS_MAIL_ATTACHMENTS_DIR`; missing staged files are skipped with warnings. Attachment-to-document supports PDF, DOCX, TXT, and MD. DOCX depends on `python-docx`; PDF form/open-in-doc flows can depend on optional PyMuPDF.
+Compose uploads live under `ODYSSEUS_MAIL_ATTACHMENTS_DIR`; missing staged files are skipped with warnings. Attachment-to-document supports PDF, DOCX, TXT, and MD. DOCX attachment-to-document extraction uses MarkItDown first; optional LibreOffice conversion has a 60-second bound and can supply a PDF preview, otherwise extracted Markdown remains available; PDF form/open-in-doc flows can depend on optional PyMuPDF.
 
 Email attachment-as-document flows stamp `Document.source_email_*` provenance. `GET /api/email/attachments-download/{uid}` builds an owner-scoped ZIP of visible non-signature attachments using safe names. `compose-from-odysseus` and `compose-from-odysseus-zip` can stage owner-visible documents and gallery images as compose uploads, preserving legacy session fallback only where the source object remains visible to the owner. `prepare-signed-reply` verifies document ownership, reconstructs reply headers, flattens/stages signed PDFs as compose uploads, and leaves final send/draft review to the compose flow.
 
@@ -135,12 +133,7 @@ When the email reader is active, browser chat sends selected-message metadata. `
 
 `mcp_servers/email_server.py` exposes email tools for MCP/agent use. It has its own account discovery, IMAP/SMTP, attachment, cache, and send paths, but account visibility now mirrors the HTTP owner policy. The active owner comes from a hidden `_odysseus_owner` argument when the caller provides one, or from `ODYSSEUS_MCP_EMAIL_OWNER` / `ODYSSEUS_EMAIL_OWNER`. If any enabled account is owner-scoped and no current/configured owner exists, email MCP returns an owner-scope error instead of listing global accounts.
 
-MCP email account filtering includes owner-owned rows and legacy ownerless rows
-whose mailbox/from-address matches the owner. Confirmation-first `send_email`
-resolves the selected account before stashing an `agent_draft`, so drafts cannot
-be staged against another owner's account. MCP-created draft documents use the
-resolved hidden/configured owner when available, with `ODYSSEUS_DOCUMENT_OWNER`
-and single-admin fallback only as document-visibility compatibility.
+MCP email account filtering includes owner-owned rows and legacy ownerless rows whose mailbox/from-address matches the owner. Confirmation-first `send_email` resolves the selected account before stashing an `agent_draft`, so drafts cannot be staged against another owner's account. MCP-created draft documents use the resolved hidden/configured owner when available, with `ODYSSEUS_DOCUMENT_OWNER` and single-admin fallback only as document-visibility compatibility.
 
 MCP email send behavior is confirmation-first by default: `send_email` and reply send paths stash a `scheduled_emails` row with `status='agent_draft'` when `agent_email_confirm` is true, and browser routes expose pending drafts for approval or cancellation. Separate MCP draft tools create Odysseus compose documents for user review without sending.
 
@@ -161,7 +154,7 @@ Contact runtime behavior:
 - the native contacts CLI is CardDAV-oriented and does not fully match web JSON fallback behavior;
 - agent contact tools reuse helper functions in-process because the HTTP routes require browser/admin auth.
 
-Contacts are global admin-only data today. There is no per-user contact sharing model unless a future spec defines one.
+HTTP contact administration remains admin-gated, but in-process helpers have owner-aware local rows and per-owner caches. Named owners see their own rows plus legacy ownerless contacts; synthetic `sft_` owners do not see ownerless rows and bypass CardDAV. This compatibility does not establish a general cross-user sharing API.
 
 ## Security Policy
 
@@ -177,7 +170,7 @@ Known security policy details:
 - Google OAuth state and callback owner checks are part of the account-boundary contract;
 - scheduled emails must remain owner-scoped;
 - email pre-retrieval contacts context is allowed only for admin/single-user situations;
-- MCP attachment downloads need route-level path-containment parity; current MCP paths are separate from the HTTP compose/attachment helper path.
+- HTTP and MCP attachment extraction share `src.mail_attachment_paths.attachment_scope_dir()` for hashed owner/account/folder/message directories; remaining attachment consumers still need end-to-end scope/path coverage.
 
 CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and derived href writes/deletes pass through outbound URL validation; absolute hrefs from a CardDAV server are constrained back to the configured origin before credentials are reused. CardDAV passwords in settings are encrypted and masked on read; environment-sourced legacy password values are used as supplied.
 
@@ -195,6 +188,30 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 Existing coverage includes header/envelope/IMAP/SMTP behavior, serialized default accounts, Google OAuth state/callback/token-refresh/XOAUTH2/redirect/settings behavior, shared-adapter summaries, authoritative read/mark-seen and frontend dedup, idle prewarm, UID-only mutations, scheduled-email claims and urgency checkpoint transactions, MCP full-message/owner behavior, owner scope/caches/signatures, thread/sanitizer behavior, CardDAV password encryption, mail CLI behavior, contacts basics, and selected frontend/security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security outside the OAuth path, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
+
+## Mail Safety And New Library Flows
+
+Mail connection helpers resolve host addresses once and connect only to policy-approved addresses through `src.url_safety.connect_outbound_tcp()`, retaining hostname TLS verification. Link-local, non-loopback reserved, multicast and unspecified destinations are denied. IPv6 loopback and IPv4-mapped loopback follow the private-address policy rather than unconditional reserved-address denial. Exactly `64:ff9b::/96` is decoded to its IPv4 target and evaluated strictly, including all DNS answers; network-specific NAT64 prefixes are not inferred. Private/loopback/shared destinations are denied for ordinary multi-user owners, allowed for admins/auth-disabled operators, and configurable with `EMAIL_ALLOW_PRIVATE_IPS=true`; `EMAIL_BLOCK_PRIVATE_IPS=true` takes precedence and denies them for everyone.
+
+The library adds owner-scoped unread-state, attachment metadata caches, bulk attachment ZIP, flagged-message actions, translation, and reviewed unsubscribe flows. `/unsubscribe/scan` reads newsletter/spam candidates; `/unsubscribe/execute` refetches the chosen message and supports mailto unsubscribe by sending through the selected account. HTTP unsubscribe links remain a manual-open path. `/unsubscribe/cleanup` moves reviewed candidates to Junk/Trash and can expand a sender's unsubscribe-header messages. Scanning alone does not send or move mail.
+
+`src.mail_attachment_paths` hashes the full owner/account/folder/UID scope into an extraction directory so legacy ownerless paths cannot reuse another mailbox's staged attachment. `src.email_attachment_text` centralizes readable attachment extraction. Email calendar pollers apply ICS revisions through `src.email_calendar_import`; invitation state and reminder semantics are described in `calendar-tasks-notes.md`. `src.email_task_intent` supplies email-task intent helpers, and `src.email_reply_stream` handles reply-stream text behavior.
+
+## Mailbox State And Delivery Boundaries
+
+MCP email binds owner and active session in request-local contexts and resets them on exit. Cross-account list caching is short-lived (20 seconds) and listing can use four concurrent workers; it does not promise single-flight freshness. Nonempty local header-index results can suppress a live lookup. MCP sent-time ISO ranges normalize missing zones to UTC and use an inclusive start/exclusive end; browser date-only received-time filters include the end date. Cached/fixture paths do not uniformly apply every date filter. Search pills combine terms; index fallback and at-most-six attachment search terms do not guarantee complete provider search.
+
+MCP bulk UID move fallback checks command statuses and verifies absence from the source; this is not proof of destination delivery. Browser and MCP single-message move paths instead rely on MOVE or COPY/STORE/expunge acknowledgements without a post-move source read.
+
+Browser bulk delete requires a successful native MOVE or recoverable Trash COPY before removing originals. COPY failure retains source/index; fallback STORE batches only copied UIDs for selective RFC 4315 UID EXPUNGE, never mailbox-wide EXPUNGE. Index rows are removed only after confirmed deletion. Failed selective expunge retains the index and attempts to remove newly added `\Deleted` flags while preserving observed pre-existing flags; disconnects can prevent rollback, and a lost acknowledgement is not proof the source survived. Servers without selective expunge can therefore report failure despite a Trash copy. Responses distinguish confirmed deleted and failed UIDs, total failure, and partial success; source and Trash list caches invalidate in `finally` when any deletion was confirmed. Single-message paths retain their separate behavior.
+
+Draft replacement appends the new mailbox draft before removing the old one. Sent draft cleanup follows successful Sent append; SMTP, IMAP and local database state are not one transaction. Scheduled send claims prevent concurrent claim winners, not exactly-once SMTP across a crash after send and before checkpoint.
+
+Composer sends first save a recovery mailbox draft, then use `wait_for_delivery` and preserve exact draft UID/folder for delivery cleanup. Failures/cancellation retain recoverable draft state. AI reply application checks generation/document/body snapshots and intervening manual input before overwriting. Confirmation-first MCP pending drafts are a distinct workflow. Reply-by-Message-ID resolves owner/account/UID context rather than trusting a global id; recursive fallback work is bounded and gathered on cancellation. Reply generation disables thinking, uses bounded initial output and one larger retry; this does not guarantee provider delivery.
+
+Unsubscribe scanning inspects at most the newest 500 candidates and deduplicates senders; bulk operations are bounded and can partially fail. A sent mailto attempt can move its source to Trash, while pending confirmation leaves it untouched; successful send-attempt bookkeeping is not confirmation that a remote subscription ended. Blocked-sender JSON is owner-keyed but not transactionally coupled to mailbox changes. Bulk attachment ZIP is capped at 250 messages in batches of twenty, skips failed messages, uses safe names and assembles in memory.
+
+Reader HTML snapshots use inert parsing/sanitization and sandbox/CSP constraints; blocked network in browser tests is a test condition rather than universal runtime network isolation. Attachment-only/media-only bodies remain meaningful; a thumbnail `img.src` is not itself a URL sanitizer. Local reminder metadata can identify folder/UID without an account and is a narrower compatibility path than canonical mailbox identity. Contact cache success/failure windows and shared refresh locking do not turn a CardDAV outage into local-write success.
 
 ## Current Gaps
 

@@ -500,6 +500,19 @@ class SkillsManager:
         sk.path = self._skill_file(cat, nm)
         return sk.to_dict()
 
+    def has_skill(self, name: str, owner: Optional[str] = None) -> bool:
+        """Whether `owner` already has a skill called `name`, in any category.
+
+        Update and delete find a skill by name within its owner, so two of
+        one owner's skills sharing a name would make them act on whichever
+        file is walked first.
+        """
+        for path in self._iter_skill_files():
+            sk = self._read_skill(path)
+            if sk and sk.name == name and (sk.owner or "") == (owner or ""):
+                return True
+        return False
+
     def update_skill(self, skill_id: str, updates: Dict, owner: Optional[str] = None) -> bool:
         """`skill_id` is the slug name. Allows updating any field plus
         renames if `name` changes (file is moved on disk).
@@ -551,6 +564,9 @@ class SkillsManager:
             # Rename
             new_name = slugify(updates.get("name") or sk.name)
             if new_name != sk.name:
+                if self.has_skill(new_name, owner=owner):
+                    logger.warning(f"Skill rename target name in use: {new_name}")
+                    return False
                 sk.name = new_name
 
             # Write to potentially new path
@@ -674,6 +690,7 @@ class SkillsManager:
         *,
         active_toolsets: Optional[List[str]] = None,
         platform: Optional[str] = None,
+        local_model: Optional[bool] = None,
     ) -> List[Dict]:
         """Return the `[{name, description, category, status}]` list the
         agent sees in its system prompt.
@@ -710,6 +727,11 @@ class SkillsManager:
             # Platform gating
             if platform and s.get("platforms") and platform not in s["platforms"]:
                 continue
+            # remote-only tag: hide from local/private-endpoint models. Big
+            # on-demand reference lookups overwhelm small local contexts.
+            # local_model=None (API listings, UI) never gates.
+            if local_model and "remote-only" in (s.get("tags") or []):
+                continue
             # requires_toolsets: hide unless every required toolset is active.
             # active_toolsets=None means the caller doesn't know the active
             # set (API listings, chat preface) — don't gate in that case;
@@ -745,6 +767,7 @@ class SkillsManager:
         min_confidence: float = 0.0,
         available_toolsets: Optional[Iterable[str]] = None,
         platform: Optional[str] = None,
+        published_only: bool = False,
     ) -> List[Dict]:
         if skills is None:
             skills = self.load_all()
@@ -775,9 +798,15 @@ class SkillsManager:
                 if not skill.get("platforms") or platform in skill.get("platforms", [])
             ]
         # Prompt injection is fail-closed for user skills. Built-ins are
-        # shipped procedures; every other skill needs a passing audit and a
-        # confidence score at the user's current threshold.
-        if min_confidence > 0:
+        # shipped procedures. With Auto-approve OFF (published_only), the
+        # user's publish is the approval; otherwise a skill needs a passing
+        # audit and a confidence score at the user's current threshold.
+        if published_only:
+            skills = [
+                s for s in skills
+                if s.get("source") == "builtin" or s.get("status") == "published"
+            ]
+        elif min_confidence > 0:
             def _passes(s):
                 if s.get("source") == "builtin":
                     return True

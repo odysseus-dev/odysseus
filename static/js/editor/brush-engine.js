@@ -24,6 +24,32 @@ export function createBrushSampler({ getDiameter, getSpacing, getSmoothing, emit
     emit(emitted);
   };
 
+  // Emit evenly spaced dabs from the last emitted sample toward `target`,
+  // carrying the sub-spacing remainder forward. Shared by drag updates and
+  // the final pointer-up so a stroke ends on the same spacing grid instead
+  // of stamping one detached dab (which reads as a dot where drawing stopped).
+  const emitSpaced = (target) => {
+    if (!emitted) return;
+    const start = { ...emitted };
+    const dx = target.x - start.x;
+    const dy = target.y - start.y;
+    const distance = Math.hypot(dx, dy);
+    if (!distance) return;
+    const diameter = Math.max(1, Number(getDiameter()) || 1);
+    const spacing = Math.max(0.5, diameter * Math.max(0.01, Number(getSpacing()) || 0.01));
+    let travelled = spacing - remainder;
+    while (travelled <= distance) {
+      const t = travelled / distance;
+      output({
+        x: start.x + dx * t,
+        y: start.y + dy * t,
+        pressure: start.pressure + (target.pressure - start.pressure) * t,
+      });
+      travelled += spacing;
+    }
+    remainder = Math.max(0, distance - (travelled - spacing));
+  };
+
   const begin = (sample) => {
     emitted = null;
     filtered = { ...sample, pressure: normalisePressure(sample.pressure) };
@@ -41,30 +67,14 @@ export function createBrushSampler({ getDiameter, getSpacing, getSmoothing, emit
       y: filtered.y + (raw.y - filtered.y) * response,
       pressure: filtered.pressure + (raw.pressure - filtered.pressure) * response,
     };
-    const start = { ...emitted };
-    const dx = filtered.x - start.x;
-    const dy = filtered.y - start.y;
-    const distance = Math.hypot(dx, dy);
-    if (!distance) return;
-    const diameter = Math.max(1, Number(getDiameter()) || 1);
-    const spacing = Math.max(0.5, diameter * Math.max(0.01, Number(getSpacing()) || 0.01));
-    let travelled = spacing - remainder;
-    while (travelled <= distance) {
-      const t = travelled / distance;
-      output({
-        x: start.x + dx * t,
-        y: start.y + dy * t,
-        pressure: start.pressure + (filtered.pressure - start.pressure) * t,
-      });
-      travelled += spacing;
-    }
-    remainder = Math.max(0, distance - (travelled - spacing));
+    emitSpaced(filtered);
   };
 
   const end = (sample) => {
+    // Reach the true pointer-up point along the spacing grid rather than with
+    // a single far dab, so the stroke does not terminate in a detached dot.
     if (sample && emitted) {
-      const finalSample = { ...sample, pressure: normalisePressure(sample.pressure) };
-      if (Math.hypot(finalSample.x - emitted.x, finalSample.y - emitted.y) > 0.25) output(finalSample);
+      emitSpaced({ ...sample, pressure: normalisePressure(sample.pressure) });
     }
     emitted = null;
     filtered = null;

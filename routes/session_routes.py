@@ -509,6 +509,7 @@ def setup_session_routes(
                     "has_documents": s.id in doc_session_ids,
                     "has_images": s.id in img_session_ids,
                     "mode": s.mode,
+                    "thinking_mode": s.thinking_mode or "off",
                     "message_count": s.message_count or 0,
                 })
         finally:
@@ -1042,6 +1043,7 @@ def setup_session_routes(
                     "id": s.id,
                     "name": s.name,
                     "model": s.model,
+                    "thinking_mode": s.thinking_mode or "off",
                     "message_count": s.message_count or 0,
                     "created_at": s.created_at.isoformat() if s.created_at else None,
                     "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -1238,9 +1240,16 @@ def setup_session_routes(
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
+        from src.utility_effort import effort_for_call
 
         owner = getattr(session, "owner", None) or effective_user(request)
-        url, model, headers = resolve_endpoint("utility", owner=owner)
+        url, model, headers = resolve_endpoint(
+            "utility",
+            fallback_url=getattr(session, "endpoint_url", None),
+            fallback_model=getattr(session, "model", None),
+            fallback_headers=getattr(session, "headers", None),
+            owner=owner,
+        )
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
@@ -1268,6 +1277,7 @@ def setup_session_routes(
                 max_tokens=1024,
                 headers=headers,
                 timeout=60,
+                reasoning_effort=effort_for_call(url, model, owner, session),
             )
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)
@@ -1305,31 +1315,22 @@ def setup_session_routes(
     def auto_sort_sessions(request: Request, skip_llm: bool = False):
         """Use AI to categorize all sessions into folders.
 
-        Phase 1 deletes empty/throwaway sessions and Phase 2 asks the LLM
+        Phase 1 deletes empty/Incognito sessions and Phase 2 asks the LLM
         to assign folders. When `skip_llm=true` the endpoint returns
         after Phase 1 — used by the "Tidy (no AI)" UI affordance so
         users can clean junk without spending tokens.
         """
-        from src.llm_core import llm_call
+        from src.llm_core import llm_call, llm_call_with_fallback
+        from src.utility_effort import effort_for_call
         user = effective_user(request)
         single_user_mode = not user and _auth_disabled()
         user_sessions = session_manager.get_sessions_for_user(user)
 
-        # Delete empty and throwaway sessions before sorting
+        # Saved conversations are never disposable based on their title or prompt.
         from core.database import ChatMessage as DbMsg
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
-        # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
-        _THROWAWAY_NAMES = {
-            "test", "testing", "asdf", "asd", "hello", "hi", "hey",
-            "yo", "sup", "hola", "hii", "hiii", "heyo",
-            "foo", "bar", "baz", "tmp", "temp", "scratch", "untitled",
-            "new chat", "delete", "remove", "junk", "trash", "xxx",
-            "abc", "qwerty", "blah", "stuff", "whatever", "idk",
-            "ok", "lol", "bruh", "hmm", "hm", "meh",
-        }
-        _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
             rows_q = db.query(DbSession).filter(DbSession.archived == False)
             if user:
@@ -1338,15 +1339,11 @@ def setup_session_routes(
                 rows_q = rows_q.filter(DbSession.owner == user)
             rows = rows_q.limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
-            # Precompute per-session message counts in TWO aggregate queries
+            # Precompute per-session message counts in one aggregate query
             # instead of 1–3 queries PER session — with many chats the per-row
             # loop was doing thousands of round-trips and blowing the timeout.
             from sqlalchemy import func as _sa_func
             _counts = dict(db.query(DbMsg.session_id, _sa_func.count(DbMsg.id)).group_by(DbMsg.session_id).all())
-            _asst_counts = dict(
-                db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
-                .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
-            )
             cleanup_now = utcnow_naive()
             for row in rows:
                 # Never delete important sessions
@@ -1356,9 +1353,10 @@ def setup_session_routes(
                 if (row.name or "").strip() == "Incognito":
                     should_delete = True
                     deleted_throwaway += 1
-                    db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
+                    else:
+                        db.delete(row)
                     continue
                 if is_session_recently_active(row, now=cleanup_now):
                     continue
@@ -1367,31 +1365,11 @@ def setup_session_routes(
                 if msg_count == 0:
                     should_delete = True
                     deleted_empty += 1
-                elif msg_count <= _THROWAWAY_MAX_MESSAGES:
-                    name = (row.name or "").strip().lower()
-                    # Check first user message content (AI renames sessions, so
-                    # "hi" becomes "Casual Greeting Exchange" — name alone won't match)
-                    first_msg = db.query(DbMsg.content).filter(
-                        DbMsg.session_id == row.id, DbMsg.role == "user"
-                    ).order_by(DbMsg.timestamp).first()
-                    first_text = (first_msg[0] or "").strip().lower() if first_msg else ""
-                    # Count assistant messages — if user sent something but AI never replied, it's dead
-                    assistant_count = _asst_counts.get(row.id, 0)
-                    if name in _THROWAWAY_NAMES or name.startswith("chat:") or first_text in _THROWAWAY_NAMES:
-                        should_delete = True
-                        deleted_throwaway += 1
-                    # Single user message with no AI response = dead session
-                    elif msg_count == 1 and assistant_count == 0:
-                        should_delete = True
-                        deleted_throwaway += 1
-                    # Short phrase (1-3 words) with no real AI conversation (<=2 msgs)
-                    elif msg_count <= 2 and first_text and len(first_text.split()) <= 3 and len(first_text) <= 40:
-                        should_delete = True
-                        deleted_throwaway += 1
                 if should_delete:
-                    db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
+                    else:
+                        db.delete(row)
             if deleted_empty or deleted_throwaway:
                 db.commit()
                 logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
@@ -1456,7 +1434,7 @@ def setup_session_routes(
             return {"status": "skipped", "reason": "No unfiled sessions to sort"}
 
         # Pick an endpoint — prefer admin-configured task endpoint
-        from src.task_endpoint import resolve_task_endpoint
+        from src.task_endpoint import resolve_task_endpoint, resolve_task_candidates
         url, model, headers = resolve_task_endpoint(owner=user)
         if not url:
             url, model, headers = _pick_endpoint_for_sort(owner=user)
@@ -1482,8 +1460,12 @@ def setup_session_routes(
             # 16384 (was 4096): with many chats the folder JSON is large, and a
             # reasoning model spends tokens thinking first — 4096 truncated the
             # JSON mid-output, so it never parsed ("invalid JSON for auto-sort").
-            raw = llm_call(url, model, [{"role": "user", "content": prompt}],
-                           temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
+            raw = llm_call_with_fallback(
+                resolve_task_candidates(fallback_url=url, fallback_model=model,
+                                        fallback_headers=headers, owner=user),
+                [{"role": "user", "content": prompt}],
+                temperature=0.3, max_tokens=16384, timeout=120,
+                reasoning_effort=effort_for_call(url, model, user))
             logger.info(f"Auto-sort raw response ({len(raw)} chars): {raw[:300]}")
             # Extract JSON from response — handle markdown fences, leading text,
             # reasoning-model <think> blocks, and trailing commas.

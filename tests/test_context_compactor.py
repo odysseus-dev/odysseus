@@ -311,7 +311,14 @@ class TestMaybeCompactFourthMessage:
 
         cc.get_context_length = lambda url, model: context_length
         cc.llm_call_async = _fake_summary
-        cc.resolve_endpoint = lambda which, owner=None: (None, None, None)
+        def fake_resolve_endpoint(which, **kwargs):
+            assert which == "utility"
+            assert kwargs["fallback_url"] == "http://local/v1/chat/completions"
+            assert kwargs["fallback_model"] == "local-model"
+            assert kwargs["fallback_headers"] == {}
+            return None, None, None
+
+        cc.resolve_endpoint = fake_resolve_endpoint
         cc._update_session_history = lambda *a, **k: None
         try:
             return asyncio.run(
@@ -492,3 +499,20 @@ class TestResearchPrimerPreserved:
         trimmed = trim_for_context(msgs, context_length=1024, reserve_tokens=256)
         joined = "\n".join(str(m.get("content", "")) for m in trimmed)
         assert "You are Odysseus." in joined
+
+
+def test_unterminated_image_label_with_long_whitespace_finishes_promptly():
+    """Untrusted captions must not make image-history compaction quadratic."""
+    import subprocess
+    import sys
+
+    script = '''
+from src.context_compactor import keep_recent_image_turns
+messages = [
+    {'role': 'user', 'content': [{'type': 'text', 'text': '[Image:' + ' ' * 100000},
+                                 {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]},
+    {'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]},
+]
+assert '[Image]' in keep_recent_image_turns(messages, keep=1)[0]['content'][0]['text']
+'''
+    subprocess.run([sys.executable, '-c', script], check=True, timeout=8)

@@ -3,13 +3,16 @@ uvicorn
 python-multipart
 python-dotenv
 httpx
+# HTTPS clients using certifi must distrust the compromised eMudhra CA paths.
+certifi>=2026.10.23
 httpcore>=1.0,<2.0
 pydantic>=2.13.4
 pydantic-settings>=2.14.1
 SQLAlchemy
 pypdf
 pypdfium2
-Pillow
+# Pillow 13 fixes known image-processing advisories; keep local embeddings compatible.
+Pillow>=13.0.0
 faster-whisper
 pdfplumber
 beautifulsoup4
@@ -21,7 +24,9 @@ numpy
 # chromadb-client is the lightweight HTTP client (talks to a standalone
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
-fastembed
+# gRPC vendors independent roots; 1.84.1 removes the incident trust anchors.
+grpcio>=1.84.1
+fastembed>=0.9.1
 youtube-transcript-api
 yt-dlp
 # Markdown rendering for research reports (src/visual_report.py).
