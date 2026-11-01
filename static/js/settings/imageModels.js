@@ -96,8 +96,13 @@ export async function initImageSettings() {
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) {
-      msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
-      msg.style.color = 'var(--red)';
+      if (e.globalSaved) {
+        msg.textContent = 'Policy saved, but failed to clear preferences: ' + (e.message || 'cleanup error');
+        msg.style.color = 'var(--red)';
+      } else {
+        msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
+        msg.style.color = 'var(--red)';
+      }
     }
   }
 
@@ -109,16 +114,37 @@ export async function initImageSettings() {
       msg.style.color = 'var(--red)';
       return;
     }
+    const targetState = enabledToggle ? enabledToggle.checked : false;
     try {
-      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false });
+      const res = await _postSettings({ image_gen_enabled: targetState });
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
       if (enabledToggle) currentEnabled = enabledToggle.checked;
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) {
-      if (enabledToggle) enabledToggle.checked = currentEnabled;
-      syncImgDisabled();
-      msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
-      msg.style.color = 'var(--red)';
+      if (e.globalSaved) {
+        currentEnabled = targetState;
+        try {
+          const authSettings = await readImagePreferences();
+          if (typeof authSettings.image_gen_enabled === 'boolean') {
+            currentEnabled = authSettings.image_gen_enabled;
+          }
+        } catch (_) {}
+        if (enabledToggle) enabledToggle.checked = currentEnabled;
+        syncImgDisabled();
+        msg.textContent = 'Policy saved, but failed to clear preferences: ' + (e.message || 'cleanup error');
+        msg.style.color = 'var(--red)';
+      } else {
+        try {
+          const authSettings = await readImagePreferences();
+          if (typeof authSettings.image_gen_enabled === 'boolean') {
+            currentEnabled = authSettings.image_gen_enabled;
+          }
+        } catch (_) {}
+        if (enabledToggle) enabledToggle.checked = currentEnabled;
+        syncImgDisabled();
+        msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
+        msg.style.color = 'var(--red)';
+      }
     }
   }
 

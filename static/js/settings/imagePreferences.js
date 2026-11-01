@@ -22,16 +22,24 @@ let saveQueue = Promise.resolve();
 export function waitForImagePreferences() { return saveQueue; }
 export function saveImagePreferences(patch) {
   const save = async () => {
-    let response = await fetch('/api/auth/settings', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-    });
+    let response;
+    try {
+      response = await fetch('/api/auth/settings', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      });
+    } catch (netErr) {
+      invalidateSettings();
+      netErr.globalSaved = false;
+      throw netErr;
+    }
     invalidateSettings();
     if (response.status === 403) {
       const userEntries = Object.entries(patch).filter(([k]) => USER_PREFERENCE_KEYS.includes(k));
       if (userEntries.length === 0) {
         const err = new Error('Admin access is required to change these settings.');
         err.status = 403;
+        err.globalSaved = false;
         throw err;
       }
       for (const [key, value] of userEntries) {
@@ -43,6 +51,7 @@ export function saveImagePreferences(patch) {
         if (!prefRes.ok) {
           const err = new Error(await prefRes.text().catch(() => 'Could not save image preferences'));
           err.status = prefRes.status;
+          err.globalSaved = false;
           throw err;
         }
       }
@@ -70,16 +79,26 @@ export function saveImagePreferences(patch) {
       const failure = clearResults.find(r => !r.ok);
       if (failure) {
         invalidateSettings();
+        if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('image-preferences-changed', { detail: patch }));
+        }
         const err = new Error(failure.error?.message || 'Could not clear personal preferences');
         err.status = failure.error?.status || 500;
         err.cause = failure.error;
+        err.globalSaved = true;
+        err.phase = 'cleanup';
         throw err;
       }
     } else {
-      throw new Error('Could not save image settings');
+      const err = new Error('Could not save image settings');
+      err.status = response.status;
+      err.globalSaved = false;
+      throw err;
     }
     invalidateSettings();
-    window.dispatchEvent(new CustomEvent('image-preferences-changed', { detail: patch }));
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('image-preferences-changed', { detail: patch }));
+    }
     return response;
   };
   const result = saveQueue.then(save);

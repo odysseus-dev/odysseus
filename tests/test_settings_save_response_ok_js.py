@@ -265,6 +265,8 @@ def test_admin_cleanup_failure_and_rejection_surfaced():
     } catch (err) {
       results.http500Threw = true;
       results.http500Status = err.status;
+      results.http500GlobalSaved = err.globalSaved;
+      results.http500Phase = err.phase;
     }
 
     // 2. Network rejection during admin preference cleanup
@@ -283,6 +285,8 @@ def test_admin_cleanup_failure_and_rejection_surfaced():
     } catch (err) {
       results.networkRejectThrew = true;
       results.networkRejectStatus = err.status;
+      results.networkRejectGlobalSaved = err.globalSaved;
+      results.networkRejectPhase = err.phase;
     }
 
     // 3. Successful cleanup
@@ -308,10 +312,212 @@ def test_admin_cleanup_failure_and_rejection_surfaced():
     data = json.loads(proc.stdout)
     assert data["http500Threw"] is True
     assert data["http500Status"] == 500
+    assert data["http500GlobalSaved"] is True
+    assert data["http500Phase"] == "cleanup"
     assert data["networkRejectThrew"] is True
     assert data["networkRejectStatus"] == 500
+    assert data["networkRejectGlobalSaved"] is True
+    assert data["networkRejectPhase"] == "cleanup"
     assert data["okResStatus"] == 200
     assert data["clearedKeysCount"] == 3
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_admin_toggle_reconciliation_and_partial_failure_reporting():
+    """Verify admin toggle reconciles with authoritative server state and reports partial success accurately."""
+    js = """
+    const { initImageSettings } = await import('./static/js/settings/imageModels.js');
+
+    function createEnv() {
+      const elements = {};
+      function makeElement(id, tag = 'div') {
+        const listeners = {};
+        const el = {
+          id, tagName: tag.toUpperCase(),
+          value: '', checked: false, disabled: false, title: '',
+          style: {},
+          parentElement: { title: '', style: {} },
+          closest: () => ({ style: {} }),
+          addEventListener: (evt, cb) => { listeners[evt] = listeners[evt] || []; listeners[evt].push(cb); },
+          dispatchEvent: (evt) => Promise.all((listeners[evt] || []).map(cb => cb())),
+          length: 0, appendChild: () => {}, remove: () => {}
+        };
+        elements[id] = el;
+        return el;
+      }
+
+      const modelSel = makeElement('set-imgModelSelect', 'select');
+      const editModelSel = makeElement('set-imgEditModelSelect', 'select');
+      const qualSel = makeElement('set-imgQualitySelect', 'select');
+      const msg = makeElement('set-imgSettingsMsg', 'span');
+      const enabledToggle = makeElement('set-imgEnabledToggle', 'input');
+
+      globalThis.document = {
+        getElementById: (id) => elements[id] || null,
+        createElement: (tag) => makeElement('anon-' + Math.random(), tag),
+      };
+      globalThis.window = {
+        _isAdmin: true,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => {}
+      };
+      globalThis.CustomEvent = class CustomEvent {};
+
+      return { modelSel, editModelSel, qualSel, msg, enabledToggle };
+    }
+
+    const testResults = {};
+
+    // 1. Global POST 200 + cleanup HTTP 500 failure
+    {
+      const { enabledToggle, msg } = createEnv();
+      let serverGlobal = true;
+      globalThis.fetch = async (url, opts = {}) => {
+        if (url === '/api/model-endpoints') return { ok: true, json: async () => [] };
+        if (url === '/api/prefs') return { ok: true, json: async () => ({}) };
+        if (url === '/api/auth/settings') {
+          if (opts.method === 'POST') {
+            const body = JSON.parse(opts.body);
+            serverGlobal = body.image_gen_enabled;
+            return { status: 200, ok: true, json: async () => ({ ok: true }) };
+          }
+          return { ok: true, json: async () => ({ image_gen_enabled: serverGlobal }) };
+        }
+        if (url.startsWith('/api/prefs/')) {
+          return { status: 500, ok: false, text: async () => 'DB lock' };
+        }
+        throw new Error('Unexpected URL: ' + url);
+      };
+      await initImageSettings();
+      enabledToggle.checked = false;
+      await enabledToggle.dispatchEvent('change');
+      testResults.s1_checked = enabledToggle.checked;
+      testResults.s1_server = serverGlobal;
+      testResults.s1_msg = msg.textContent;
+      testResults.s1_color = msg.style.color;
+    }
+
+    // 2. Global POST 200 + cleanup network rejection
+    {
+      const { enabledToggle, msg } = createEnv();
+      let serverGlobal = true;
+      globalThis.fetch = async (url, opts = {}) => {
+        if (url === '/api/model-endpoints') return { ok: true, json: async () => [] };
+        if (url === '/api/prefs') return { ok: true, json: async () => ({}) };
+        if (url === '/api/auth/settings') {
+          if (opts.method === 'POST') {
+            const body = JSON.parse(opts.body);
+            serverGlobal = body.image_gen_enabled;
+            return { status: 200, ok: true, json: async () => ({ ok: true }) };
+          }
+          return { ok: true, json: async () => ({ image_gen_enabled: serverGlobal }) };
+        }
+        if (url.startsWith('/api/prefs/')) {
+          throw new Error('Network offline');
+        }
+        throw new Error('Unexpected URL: ' + url);
+      };
+      await initImageSettings();
+      enabledToggle.checked = false;
+      await enabledToggle.dispatchEvent('change');
+      testResults.s2_checked = enabledToggle.checked;
+      testResults.s2_server = serverGlobal;
+      testResults.s2_msg = msg.textContent;
+      testResults.s2_color = msg.style.color;
+    }
+
+    // 3. Successful cleanup
+    {
+      const { enabledToggle, msg } = createEnv();
+      let serverGlobal = true;
+      globalThis.fetch = async (url, opts = {}) => {
+        if (url === '/api/model-endpoints') return { ok: true, json: async () => [] };
+        if (url === '/api/prefs') return { ok: true, json: async () => ({}) };
+        if (url === '/api/auth/settings') {
+          if (opts.method === 'POST') {
+            const body = JSON.parse(opts.body);
+            serverGlobal = body.image_gen_enabled;
+            return { status: 200, ok: true, json: async () => ({ ok: true }) };
+          }
+          return { ok: true, json: async () => ({ image_gen_enabled: serverGlobal }) };
+        }
+        if (url.startsWith('/api/prefs/')) {
+          return { status: 200, ok: true, json: async () => ({ ok: true }) };
+        }
+        throw new Error('Unexpected URL: ' + url);
+      };
+      await initImageSettings();
+      enabledToggle.checked = false;
+      await enabledToggle.dispatchEvent('change');
+      testResults.s3_checked = enabledToggle.checked;
+      testResults.s3_server = serverGlobal;
+      testResults.s3_msg = msg.textContent;
+      testResults.s3_color = msg.style.color;
+    }
+
+    // 4. Failed global POST (HTTP 500)
+    {
+      const { enabledToggle, msg } = createEnv();
+      let serverGlobal = true;
+      globalThis.fetch = async (url, opts = {}) => {
+        if (url === '/api/model-endpoints') return { ok: true, json: async () => [] };
+        if (url === '/api/prefs') return { ok: true, json: async () => ({}) };
+        if (url === '/api/auth/settings') {
+          if (opts.method === 'POST') {
+            return { status: 500, ok: false, text: async () => 'Internal Server Error' };
+          }
+          return { ok: true, json: async () => ({ image_gen_enabled: serverGlobal }) };
+        }
+        if (url.startsWith('/api/prefs/')) {
+          return { status: 200, ok: true, json: async () => ({ ok: true }) };
+        }
+        throw new Error('Unexpected URL: ' + url);
+      };
+      await initImageSettings();
+      enabledToggle.checked = false;
+      await enabledToggle.dispatchEvent('change');
+      testResults.s4_checked = enabledToggle.checked;
+      testResults.s4_server = serverGlobal;
+      testResults.s4_msg = msg.textContent;
+      testResults.s4_color = msg.style.color;
+    }
+
+    console.log(JSON.stringify(testResults));
+    """
+    proc = subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True)
+    import json
+    data = json.loads(proc.stdout)
+
+    # 1. Successful global POST followed by HTTP 500 cleanup failure:
+    # Toggle does not revert, server policy was persisted, and message reports partial success + cleanup error
+    assert data["s1_checked"] is False
+    assert data["s1_server"] is False
+    assert "Policy saved, but failed to clear preferences" in data["s1_msg"]
+    assert "DB lock" in data["s1_msg"]
+    assert data["s1_color"] == "var(--red)"
+
+    # 2. Successful global POST followed by network rejection during cleanup:
+    # Toggle does not revert, server policy was persisted, and message reports network failure
+    assert data["s2_checked"] is False
+    assert data["s2_server"] is False
+    assert "Policy saved, but failed to clear preferences" in data["s2_msg"]
+    assert "Network offline" in data["s2_msg"]
+    assert data["s2_color"] == "var(--red)"
+
+    # 3. Successful cleanup:
+    # Toggle saved, server updated, success message displayed
+    assert data["s3_checked"] is False
+    assert data["s3_server"] is False
+    assert data["s3_msg"] == "Saved"
+    assert data["s3_color"] == "var(--fg)"
+
+    # 4. Failed global POST:
+    # Toggle reverts to authoritative server state, error displayed
+    assert data["s4_checked"] is True
+    assert data["s4_server"] is True
+    assert data["s4_msg"] == "Failed to save"
+    assert data["s4_color"] == "var(--red)"
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
