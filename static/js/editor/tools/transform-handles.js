@@ -30,16 +30,43 @@ import {
  * Position the transform overlay canvas + size its backing bitmap.
  * Margin is screen-space slack on each side so controls remain visible
  * at every zoom. It is converted to image pixels for the backing canvas.
+ *
+ * `extents` (image px, optional) is an extra rectangle the overlay must
+ * also cover — used so the skeleton frame + handles stay inside the
+ * bitmap once the frame is scaled/moved OUTSIDE the image bounds. When
+ * it is omitted the overlay only covers the image (+margin), matching
+ * the original behaviour. Returns the overlay's top-left in image
+ * coordinates (the draw translate origin), or null when hidden.
  */
-export function syncOverlay(margin) {
-  if (!state.transformOverlay || !state.mainCanvas) return;
+export function syncOverlay(margin, extents = null) {
+  if (!state.transformOverlay || !state.mainCanvas) return null;
   if (!state.transformActive) {
     state.transformOverlay.style.display = 'none';
-    return;
+    return null;
   }
   const imageMargin = margin / Math.max(0.0001, state.zoom);
-  const W = Math.ceil(state.mainCanvas.width + 2 * imageMargin);
-  const H = Math.ceil(state.mainCanvas.height + 2 * imageMargin);
+  const imgW = state.mainCanvas.width;
+  const imgH = state.mainCanvas.height;
+  // Union of the image and any extra extent the frame reaches, plus the
+  // handle slack on every side. Cap the bitmap so an extreme pending
+  // size can never allocate a runaway canvas.
+  const MAX_BITMAP = 8192;
+  let left = Math.min(0, extents?.left ?? 0) - imageMargin;
+  let top = Math.min(0, extents?.top ?? 0) - imageMargin;
+  let right = Math.max(imgW, extents?.right ?? imgW) + imageMargin;
+  let bottom = Math.max(imgH, extents?.bottom ?? imgH) + imageMargin;
+  const centerX = (left + right) / 2;
+  const centerY = (top + bottom) / 2;
+  if (right - left > MAX_BITMAP) {
+    left = centerX - MAX_BITMAP / 2;
+    right = centerX + MAX_BITMAP / 2;
+  }
+  if (bottom - top > MAX_BITMAP) {
+    top = centerY - MAX_BITMAP / 2;
+    bottom = centerY + MAX_BITMAP / 2;
+  }
+  const W = Math.ceil(right - left);
+  const H = Math.ceil(bottom - top);
   if (state.transformOverlay.width !== W) state.transformOverlay.width = W;
   if (state.transformOverlay.height !== H) state.transformOverlay.height = H;
   // Overlay must scale with state.zoom so its handles render at the
@@ -53,15 +80,35 @@ export function syncOverlay(margin) {
   state.transformOverlay.style.pointerEvents = 'none';
   state.transformOverlay.style.zIndex = '5';
   // Position the overlay at the main canvas's LAYOUT position
-  // (offsetLeft/Top — unaffected by CSS transforms), shifted up-left by
-  // the overlay's `margin` image-px of handle slack. Then SHARE the
-  // canvas's transform (the pan handler writes the same translate3d to
-  // both canvas + overlay), so pan moves them together. Reading the
-  // layout offset (not getBoundingClientRect, which includes the pan
-  // transform) is what avoids the double-pan "bounce".
-  state.transformOverlay.style.left = Math.round(state.mainCanvas.offsetLeft - margin) + 'px';
-  state.transformOverlay.style.top  = Math.round(state.mainCanvas.offsetTop  - margin) + 'px';
+  // (offsetLeft/Top — unaffected by CSS transforms), shifted by the
+  // covered extent in screen px. Then SHARE the canvas's transform (the
+  // pan handler writes the same translate3d to both canvas + overlay),
+  // so pan moves them together. Reading the layout offset (not
+  // getBoundingClientRect, which includes the pan transform) is what
+  // avoids the double-pan "bounce".
+  state.transformOverlay.style.left = Math.round(state.mainCanvas.offsetLeft + left * state.zoom) + 'px';
+  state.transformOverlay.style.top  = Math.round(state.mainCanvas.offsetTop  + top  * state.zoom) + 'px';
   state.transformOverlay.style.transform = state.mainCanvas.style.transform || 'none';
+  return { left, top };
+}
+
+/** Image-space AABB of the frame (incl. rotation knob + skew) or null. */
+function frameExtents(geometry) {
+  if (!geometry) return null;
+  const points = [
+    geometry.corners?.tl, geometry.corners?.tr,
+    geometry.corners?.br, geometry.corners?.bl,
+    geometry.rotationHandle,
+  ].filter(Boolean);
+  if (!points.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { left: minX, top: minY, right: maxX, bottom: maxY };
 }
 
 
@@ -103,6 +150,9 @@ function transformFrame() {
       width: state.transformPendingW || state.transformSelectionBounds.width,
       height: state.transformPendingH || state.transformSelectionBounds.height,
       rotation: state.transformPendingRot || 0,
+      skewX: state.transformPendingSkewX || 0,
+      skewY: state.transformPendingSkewY || 0,
+      distort: state.transformPendingDistort || null,
     };
   }
   const layer = state.transformLayer;
@@ -118,6 +168,9 @@ function transformFrame() {
     width: state.transformPendingW || layer.canvas.width,
     height: state.transformPendingH || layer.canvas.height,
     rotation: state.transformPendingRot || 0,
+    skewX: state.transformPendingSkewX || 0,
+    skewY: state.transformPendingSkewY || 0,
+    distort: state.transformPendingDistort || null,
   };
 }
 
@@ -129,7 +182,6 @@ function transformFrame() {
  */
 export function drawHandles(margin) {
   if (!state.transformActive || (state.transformTarget !== 'selection' && !state.transformLayer)) return;
-  syncOverlay(margin);
   if (!state.transformOverlayCtx) return;
   const frame = transformFrame();
   if (!frame) return;
@@ -138,13 +190,18 @@ export function drawHandles(margin) {
     zoom: state.zoom,
     rotationInside: rotInside,
   });
+  // Grow the overlay so the whole frame + handles fit even when the
+  // frame extends well past the image bounds (otherwise the skeleton
+  // gets clipped at the bitmap edge during a resize).
+  const cover = syncOverlay(margin, frameExtents(geometry));
+  if (!cover) return;
   const ctx = state.transformOverlayCtx;
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#e06c75';
-  const imageMargin = margin / Math.max(0.0001, state.zoom);
-  // Clear + shift drawing by margin so image (0,0) maps to overlay (M,M).
+  // Clear + shift drawing so image (cover.left, cover.top) maps to
+  // overlay (0, 0).
   ctx.clearRect(0, 0, state.transformOverlay.width, state.transformOverlay.height);
   ctx.save();
-  ctx.translate(imageMargin, imageMargin);
+  ctx.translate(-cover.left, -cover.top);
   // Zoom-corrected handle size + stroke so they stay readable at any zoom.
   const sz = 10 / state.zoom;
   const stroke = 1.5 / state.zoom;
