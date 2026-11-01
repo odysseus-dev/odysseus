@@ -7,6 +7,7 @@ import json
 import hashlib
 import ipaddress
 import socket
+import secrets
 import time as _time
 import logging
 import threading
@@ -658,7 +659,7 @@ _NON_CHAT_CONTAINS = (
     "gliner", "riva", "-parse", "-embedqa", "-nemoretriever",
     "topic-control", "calibration",
     "ai-synthetic-video", "cosmos-reason2",
-    "bge", "llama-guard",
+    "bge", "llama-guard", "-embed", "rerank",
 )
 _NON_CHAT_EXACT_PREFIXES = (
     "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
@@ -2845,11 +2846,12 @@ def setup_model_routes(model_discovery):
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
+            if model and not _is_chat_model(model):
+                model = ""
             if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
                 try:
                     visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
-                    if visible:
-                        model = visible[0]
+                    model = next((mid for mid in visible if _is_chat_model(mid)), "")
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
@@ -3042,20 +3044,44 @@ def setup_model_routes(model_discovery):
         return {"dependents": _settings_using_endpoint(ep_id)}
 
     @router.delete("/model-endpoints/{ep_id}")
-    def delete_model_endpoint(ep_id: str, request: Request):
+    def delete_model_endpoint(
+        ep_id: str,
+        request: Request,
+        expected_cookbook_serve_session_id: Optional[str] = None,
+    ):
         require_admin(request)
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
+            if expected_cookbook_serve_session_id is not None:
+                # The DELETE itself checks ownership. An old serve must never
+                # mutate the settings of an endpoint reused by another serve.
+                if (
+                    not ep_id.startswith(("local-", "img-"))
+                    or not expected_cookbook_serve_session_id
+                ):
+                    raise HTTPException(409, "Cookbook endpoint ownership mismatch")
+                deleted = (
+                    db.query(ModelEndpoint)
+                    .filter(
+                        ModelEndpoint.id == ep_id,
+                        ModelEndpoint.cookbook_serve_session_id
+                        == expected_cookbook_serve_session_id,
+                    )
+                    .delete(synchronize_session=False)
+                )
+                if not deleted:
+                    raise HTTPException(409, "Cookbook endpoint ownership changed")
             # Clean up any settings that reference this endpoint
             cleared = _clear_settings_for_endpoint(ep_id)
             cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
             cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url, ep.id, ep.owner)
             cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url, ep.id, ep.owner)
             auth_id = getattr(ep, "provider_auth_id", None)
-            db.delete(ep)
+            if expected_cookbook_serve_session_id is None:
+                db.delete(ep)
             cleared_provider_auth = _delete_orphaned_provider_auth(db, auth_id, exclude_ep_id=ep_id)
             db.commit()
             _invalidate_models_cache()
@@ -3091,6 +3117,12 @@ def setup_model_routes(model_discovery):
     def update_tools(body: ToolsUpdate, request: Request):
         """Update which tools are disabled."""
         require_admin(request)
+        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+        internal_token = request.headers.get(INTERNAL_TOOL_HEADER)
+        if internal_token and secrets.compare_digest(internal_token, INTERNAL_TOOL_TOKEN):
+            # Owner impersonation can carry an admin username, so check the
+            # authenticated transport rather than request.state.current_user.
+            raise HTTPException(403, "Change tool policy in Settings > Agent Tools, not from chat")
         settings = _load_settings()
         settings["disabled_tools"] = body.disabled
         _save_settings(settings)

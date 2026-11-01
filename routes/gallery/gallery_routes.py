@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.session_search import escape_like_pattern
 from src.upload_limits import (
     read_upload_limited,
     GALLERY_UPLOAD_MAX_BYTES,
@@ -209,6 +210,24 @@ async def _call_vision_model(
 
 _SAM_STATE: Dict[str, Any] = {}
 _GROUNDING_STATE: Dict[str, Any] = {}
+
+
+def _compose_cloud_image_edit(source, generated, mask, *, instruction=False):
+    from PIL import Image, ImageChops, ImageOps
+
+    full_frame = instruction or mask.getextrema() == (255, 255)
+    if full_frame:
+        return generated, True
+    # Partial edits must share the source coordinate system, but resizing
+    # width/height independently distorts the subject when the provider changes ratio.
+    fitted = ImageOps.contain(generated, source.size, Image.Resampling.LANCZOS)
+    offset = ((source.width - fitted.width) // 2, (source.height - fitted.height) // 2)
+    aligned = Image.new("RGBA", source.size)
+    aligned.paste(fitted, offset)
+    coverage = Image.new("L", source.size)
+    coverage.paste(255, (offset[0], offset[1], offset[0] + fitted.width, offset[1] + fitted.height))
+    effective_mask = ImageChops.multiply(mask, coverage)
+    return Image.composite(aligned, source, effective_mask), False
 
 
 def _rss_mb() -> float:
@@ -479,6 +498,23 @@ def _b64_bytes(value: str, *, label: str = "image") -> bytes:
         raise HTTPException(400, f"Invalid {label}") from exc
 
 
+async def _json_object(request: Request) -> dict:
+    try:
+        data = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Invalid JSON body")
+    if not isinstance(data, dict):
+        raise HTTPException(400, "JSON object body required")
+    return data
+
+
+async def _image_ids(request: Request) -> list:
+    ids = (await _json_object(request)).get("image_ids", [])
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise HTTPException(400, "image_ids must be a list of image ids")
+    return ids
+
+
 def _pil_image_to_b64(img, *, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
     img.save(buf, format=fmt)
@@ -742,6 +778,7 @@ def _is_openai_api_base(url: str) -> bool:
 
 
 _GALLERY_ENDPOINT_PATHS = frozenset({
+    "/chat/completions",
     "/images",
     "/images/edits",
     "/images/generations",
@@ -857,9 +894,15 @@ def _visible_image_endpoint_for_base(db, base: str, owner: str | None, model: st
                     configured.update(v for v in values if isinstance(v, str))
                 except (TypeError, ValueError):
                     pass
-            if model not in configured or not looks_like_image_generation_model(model):
-                continue
-        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if model:
+                if model not in configured or not looks_like_image_generation_model(model):
+                    continue
+            else:
+                if not any(looks_like_image_generation_model(v) for v in configured):
+                    continue
+        ep_id = str(getattr(ep, "id", "") or "")
+        ep_base = _normalize_image_endpoint_base(getattr(ep, "base_url", ""))
+        if (ep_id and (base == ep_id or target == ep_id)) or (ep_base and ep_base == target):
             if owner and getattr(ep, "owner", None) == owner:
                 return ep
             if fallback is None:
@@ -886,7 +929,7 @@ async def _fetch_result_image_b64(url: str) -> Optional[str]:
     )
     if not ok:
         raise HTTPException(502, f"Upstream returned an unsafe image URL: {reason}")
-    async with httpx.AsyncClient(timeout=60) as c2:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False) as c2:
         ir = await c2.get(url)
         if ir.status_code == 200:
             return base64.b64encode(ir.content).decode()
@@ -1352,15 +1395,18 @@ def setup_gallery_routes() -> APIRouter:
             )
             q = _owner_filter(q, user)
 
-            # Search filter (prompt + tags + ai_tags)
+            # Per-term AND search: a single `%foo bar%` LIKE only matched the
+            # exact phrase, so "red car" missed "a car that is red".
+            # LIKE wildcards are escaped per token.
             if search:
-                term = f"%{search}%"
                 from sqlalchemy import or_
-                q = q.filter(or_(
-                    GalleryImage.prompt.ilike(term),
-                    GalleryImage.tags.ilike(term),
-                    GalleryImage.ai_tags.ilike(term),
-                ))
+                for tok in search.split():
+                    term = f"%{escape_like_pattern(tok)}%"
+                    q = q.filter(or_(
+                        GalleryImage.prompt.ilike(term, escape="\\"),
+                        GalleryImage.tags.ilike(term, escape="\\"),
+                        GalleryImage.ai_tags.ilike(term, escape="\\"),
+                    ))
 
             # Tag filter. The UI stacks multiple tag pills by passing them
             # comma-separated — each tag adds a separate AND-filter so the
@@ -1371,9 +1417,10 @@ def setup_gallery_routes() -> APIRouter:
                 for one in (t.strip() for t in tag.split(",")):
                     if not one:
                         continue
+                    safe_tag = f"%{escape_like_pattern(one)}%"
                     q = q.filter(_or(
-                        GalleryImage.tags.ilike(f"%{one}%"),
-                        GalleryImage.ai_tags.ilike(f"%{one}%"),
+                        GalleryImage.tags.ilike(safe_tag, escape="\\"),
+                        GalleryImage.ai_tags.ilike(safe_tag, escape="\\"),
                     ))
 
             # Model filter
@@ -1931,7 +1978,7 @@ def setup_gallery_routes() -> APIRouter:
         requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
-        if requested_base:
+        if requested_base and "://" in requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
@@ -1940,6 +1987,17 @@ def setup_gallery_routes() -> APIRouter:
             if not ok:
                 raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
+        if body.pop("_use_image_settings", False) is True:
+            from src.editor_image_settings import editor_image_models
+            from src.ai_interaction import _resolve_model
+            chosen_model = editor_image_models(owner=user)["edit"]
+            if not chosen_model:
+                raise HTTPException(400, "Choose an image edit model in AI settings")
+            try:
+                edit_url, chosen_model, _ = await asyncio.to_thread(_resolve_model, chosen_model, owner=user)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            requested_base = edit_url.removesuffix("/chat/completions").rstrip("/")
         # Optional client-supplied id so GET /api/image/edit-progress can poll the
         # provider's step progress for this op. Ignored by providers that do not
         # implement the progress contract.
@@ -2057,14 +2115,30 @@ def setup_gallery_routes() -> APIRouter:
                         mask_png.save(reference_mask, format="PNG")
                         references = [src_buf.getvalue(), reference_mask.getvalue()]
                         payload = {
-                            "model": oa_model, "size": size, "n": 1,
+                            "model": oa_model, "n": 1,
                             "output_format": "png",
                             "prompt": "Edit the first image. The second image is a mask: white marks the region to edit, black marks the region to preserve. Keep composition and framing unchanged. Requested edit: " + str(body.get("prompt", "")),
                             "input_references": [{"type": "image_url", "image_url": {
                                 "url": "data:image/png;base64," + base64.b64encode(value).decode(),
                             }} for value in references],
                         }
-                        r = await client.post(_join_checked_gallery_endpoint(base, "/images"), headers=headers, json=payload)
+                        from src.image_model_ids import image_aspect_ratio
+                        payload["aspect_ratio"] = image_aspect_ratio(source_png.width, source_png.height)
+                        from src.ai_interaction import _uses_openrouter_chat_images
+                        if _uses_openrouter_chat_images(oa_model):
+                            payload = {
+                                "model": oa_model,
+                                "messages": [{"role": "user", "content": [
+                                    {"type": "text", "text": payload["prompt"]},
+                                    *[{"type": "image_url", "image_url": ref["image_url"]}
+                                      for ref in payload["input_references"]],
+                                ]}],
+                                "modalities": ["image", "text"], "stream": False,
+                                "image_config": {"aspect_ratio": payload["aspect_ratio"]},
+                            }
+                            r = await client.post(_join_checked_gallery_endpoint(base, "/chat/completions"), headers=headers, json=payload)
+                        else:
+                            r = await client.post(_join_checked_gallery_endpoint(base, "/images"), headers=headers, json=payload)
                     else:
                         r = await client.post(_join_checked_gallery_endpoint(base, "/images/edits"), headers=headers, data=data, files=files)
                     if r.status_code != 200:
@@ -2080,6 +2154,12 @@ def setup_gallery_routes() -> APIRouter:
                             pass
                         raise HTTPException(r.status_code, f"{_detail} (provider HTTP {r.status_code})")
                     result = r.json()
+                    from src.ai_interaction import _chat_image_results, _image_response_error
+                    provider_error = _image_response_error(result, oa_model)
+                    if provider_error:
+                        raise HTTPException(400 if "deprecated" in provider_error.lower() else 502, provider_error)
+                    if is_openrouter and _uses_openrouter_chat_images(oa_model):
+                        result = {"data": _chat_image_results(result)}
                     raw_b64 = None
                     if result.get("data"):
                         item = result["data"][0]
@@ -2099,17 +2179,13 @@ def setup_gallery_routes() -> APIRouter:
                     # the masked region actually changes.
                     try:
                         generated = Image.open(io.BytesIO(base64.b64decode(raw_b64))).convert("RGBA")
-                        # Match the generated image to the source dims.
-                        if generated.size != source_png.size:
-                            generated = generated.resize(source_png.size, Image.LANCZOS)
-                        # mask_png: white = regenerate (use generated),
-                        #           black = keep (use source).
-                        # Composite: result = source * (1 - mask_norm) + generated * mask_norm
-                        # Image.composite does exactly that with `mask`.
-                        blended = Image.composite(generated, source_png, mask_png)
+                        blended, full_frame = _compose_cloud_image_edit(
+                            source_png, generated, mask_png,
+                            instruction=body.get("mode") == "instruction",
+                        )
                         out_buf = io.BytesIO()
                         blended.save(out_buf, format="PNG")
-                        return {"image": base64.b64encode(out_buf.getvalue()).decode(), "model": oa_model}
+                        return {"image": base64.b64encode(out_buf.getvalue()).decode(), "model": oa_model, "full_frame": full_frame}
                     except Exception as comp_err:
                         # Never return a full-image edit when masking fails.
                         logger.warning(f"Inpaint compose failed: {comp_err}")
@@ -2277,7 +2353,7 @@ def setup_gallery_routes() -> APIRouter:
         runs off the event loop (large images).
         """
         requested_base = (body.pop("_endpoint", "") or "").rstrip("/")
-        if requested_base:
+        if requested_base and "://" in requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
@@ -2370,26 +2446,38 @@ def setup_gallery_routes() -> APIRouter:
         try:
             ep = None
             if endpoint_id:
-                ep = owner_filter(
-                    db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id),
-                    ModelEndpoint, user,
-                ).first()
-            if ep is None and requested_base:
+                ep = _visible_image_endpoint_for_base(db, endpoint_id, user)
+                if ep is None:
+                    return {"available": False, "reason": "endpoint not found or disabled"}
+            elif requested_base:
                 ep = _visible_image_endpoint_for_base(db, requested_base, user)
-            if ep is None:
+                if ep is None:
+                    return {"available": False, "reason": "endpoint not found or disabled"}
+            else:
                 ep = _first_visible_image_endpoint(db, user)
             if ep is None:
                 return {"available": False, "reason": "no image endpoint configured"}
             base = ep.base_url.rstrip("/")
         finally:
             db.close()
+
+        from src.url_safety import check_outbound_url
+        block_private = os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+        ok, reason = check_outbound_url(base, block_private=block_private)
+        if not ok:
+            # CodeQL #1203: Never expose internal addresses, resolver errors or raw
+            # exception details to clients or logs. Use a stable diagnostic message
+            # without interpolating untrusted exception content or destination strings.
+            logger.warning("edit-progress endpoint rejected: outbound URL policy check failed")
+            return {"available": False, "reason": "endpoint URL rejected"}
+
         if not base.endswith("/v1"):
             base += "/v1"
         # Dynamic path segment (validated token above), so not routed through
         # _join_checked_gallery_endpoint's exact-match whitelist.
         url = f"{base}/images/progress/{request_id}"
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
                 r = await client.get(url)
             if r.status_code == 200:
                 data = r.json()
@@ -2427,7 +2515,7 @@ def setup_gallery_routes() -> APIRouter:
         # below, so validate it first (mirrors routes/embedding_routes.py).
         # Local-first means loopback/LAN is allowed by default; the cloud
         # metadata range and non-HTTP(S) schemes are always rejected.
-        if requested_base:
+        if requested_base and "://" in requested_base:
             from src.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 requested_base,
@@ -2454,7 +2542,7 @@ def setup_gallery_routes() -> APIRouter:
             # so the outbound URL never depends directly on request-body input.
             db = SessionLocal()
             try:
-                ep = _visible_image_endpoint_for_base(db, requested_base, user)
+                ep = _visible_image_endpoint_for_base(db, requested_base, user, model)
                 if not ep:
                     raise HTTPException(403, "Choose a registered image endpoint")
                 base = ep.base_url.rstrip("/")
@@ -2616,11 +2704,10 @@ def setup_gallery_routes() -> APIRouter:
         image_b64 = body.get("image")
         amount = body.get("amount", 50) / 100.0
 
-        from PIL import Image, ImageFilter
+        from PIL import ImageFilter
         import base64, io
 
-        img_bytes = _b64_bytes(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img = _b64_to_pil_image(image_b64, mode="RGB")
 
         # Unsharp mask: radius=2, percent=amount*200, threshold=3
         sharpened = img.filter(ImageFilter.UnsharpMask(radius=2, percent=int(amount * 200), threshold=3))
@@ -2655,8 +2742,7 @@ def setup_gallery_routes() -> APIRouter:
         except ImportError:
             raise HTTPException(500, "Server missing a required dependency")
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
-        img_bytes = _b64_bytes(image_b64)
-        src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        src = _b64_to_pil_image(image_b64, mode="RGB")
         try:
             patch_realesrgan_torchvision_compat()
             from realesrgan import RealESRGANer
@@ -2708,8 +2794,7 @@ def setup_gallery_routes() -> APIRouter:
             import numpy as np
         except ImportError:
             raise HTTPException(500, "Server missing a required dependency")
-        img_bytes = _b64_bytes(image_b64)
-        src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        src = _b64_to_pil_image(image_b64, mode="RGB")
         try:
             patch_realesrgan_torchvision_compat()
             from basicsr.archs.rrdbnet_arch import RRDBNet
@@ -2757,7 +2842,9 @@ def setup_gallery_routes() -> APIRouter:
             height = int((body or {}).get("height") or 0)
         except (TypeError, ValueError):
             width = height = 0
-        if height > width:
+        if width > 0 and height > 0:
+            size = f"{width}x{height}"
+        elif height > width:
             size = "1024x1536"
         elif width > height:
             size = "1536x1024"
@@ -2770,6 +2857,9 @@ def setup_gallery_routes() -> APIRouter:
         # The editor's model picker may choose a specific (cloud) image model;
         # forward it so settings defaults only apply when none is selected.
         model_choice = str((body or {}).get("model") or "").strip()
+        if body.get("_use_image_settings") is True:
+            from src.editor_image_settings import editor_image_models
+            model_choice = editor_image_models(owner=user)["generation"]
         payload = {"prompt": prompt, "size": size}
         if model_choice:
             payload["model"] = model_choice
@@ -2961,8 +3051,7 @@ def setup_gallery_routes() -> APIRouter:
         from PIL import Image
         import base64, io
 
-        img_bytes = _b64_bytes(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+        img = _b64_to_pil_image(image_b64)
         W, H = img.size
 
         hint = None
@@ -3051,8 +3140,7 @@ def setup_gallery_routes() -> APIRouter:
         from PIL import Image, ImageFilter, ImageEnhance
         import numpy as np
 
-        img_bytes = _b64_bytes(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img = _b64_to_pil_image(image_b64, mode="RGB")
 
         # Try GFPGAN first (AI face restoration)
         try:
@@ -3127,14 +3215,22 @@ def setup_gallery_routes() -> APIRouter:
     @router.put("/api/gallery/albums/{album_id}")
     async def update_album(request: Request, album_id: str):
         user = get_current_user(request)
-        data = await request.json()
+        data = await _json_object(request)
+        name = data.get("name")
+        if name is not None:
+            if not isinstance(name, str) or not name.strip():
+                raise HTTPException(400, "Album name required")
+            name = name.strip()
+        description = data.get("description")
+        if description is not None and not isinstance(description, str):
+            raise HTTPException(400, "Album description must be a string")
         db = SessionLocal()
         try:
             album = _get_or_404_album(db, album_id, user)
-            if data.get("name") is not None:
-                album.name = data["name"]
-            if data.get("description") is not None:
-                album.description = data["description"]
+            if name is not None:
+                album.name = name
+            if description is not None:
+                album.description = description
             if data.get("cover_id") is not None:
                 cover_id = data["cover_id"] or None
                 if cover_id:
@@ -3164,8 +3260,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/albums/{album_id}/add")
     async def add_to_album(request: Request, album_id: str):
         user = get_current_user(request)
-        data = await request.json()
-        ids = data.get("image_ids", [])
+        ids = await _image_ids(request)
         db = SessionLocal()
         try:
             _get_or_404_album(db, album_id, user)
@@ -3182,8 +3277,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/albums/{album_id}/remove")
     async def remove_from_album(request: Request, album_id: str):
         user = get_current_user(request)
-        data = await request.json()
-        ids = data.get("image_ids", [])
+        ids = await _image_ids(request)
         db = SessionLocal()
         try:
             _get_or_404_album(db, album_id, user)

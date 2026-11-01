@@ -56,75 +56,36 @@ def test_cold_start_with_no_snapshot_and_no_index_is_not_marked_stale(monkeypatc
     # falls through to the real (blocking) path, so the response is not a
     # stale-marked snapshot.
     endpoint = _list_endpoint()
+    calls = []
+
+    class EmptyMailbox:
+        def select(self, folder, readonly=False):
+            calls.append(("select", folder, readonly))
+            return "OK", [b"0"]
+
+        def uid(self, command, *args):
+            assert command == "SEARCH"
+            calls.append(("search", args))
+            return "OK", [b""]
+
+        def logout(self):
+            pass
+
+    def connect(*args, **kwargs):
+        calls.append(("connect", args, kwargs))
+        return EmptyMailbox()
+
+    monkeypatch.setattr(er, "_start_poller", lambda: None)
     monkeypatch.setattr(er, "_email_index_list", lambda *a, **k: ([], 0, None))
-    monkeypatch.setattr(er, "_imap_connect", lambda *a, **k: (_ for _ in ()).throw(
-        RuntimeError("offline test")))
-    try:
-        result = _call(endpoint)
-    except Exception:
-        return  # the cold path legitimately attempted real IMAP
+    monkeypatch.setattr(er, "_imap_connect", connect)
+    result = _call(endpoint)
+    assert [call[0] for call in calls] == ["connect", "select", "search"]
+    assert calls[1][2] is True
     assert isinstance(result, dict)
+    assert result["emails"] == []
+    assert result["total"] == 0
+    assert not result.get("error")
     assert not (result.get("sync") or {}).get("stale")
-
-
-def test_manual_refresh_does_not_serve_index_snapshot(monkeypatch):
-    endpoint = _list_endpoint()
-    monkeypatch.setattr(er, "_email_index_list", lambda *a, **k: ([{"uid": "11"}], 1, "now"))
-    attempts = []
-
-    def offline(*args, **kwargs):
-        attempts.append(True)
-        raise RuntimeError("offline test")
-
-    monkeypatch.setattr(er, "_imap_connect", offline)
-    result = _call(endpoint, refresh=1)
-    assert attempts
-    assert not (result.get("sync") or {}).get("stale")
-
-
-def test_list_invalidation_discards_stale_snapshot(monkeypatch):
-    endpoint = _list_endpoint()
-    state = dict(zip(endpoint.__code__.co_freevars, (cell.cell_contents for cell in endpoint.__closure__)))
-    key = ("account", "INBOX", "all", 50, 0, "", 0, "", "", "alice")
-    state["_list_cache_put"](key, {"emails": [{"uid": "11"}]})
-    state["_invalidate_list_cache"]("account", "INBOX")
-    monkeypatch.setattr(er, "_email_index_list", lambda *a, **k: ([], 0, None))
-    monkeypatch.setattr(er, "_imap_connect", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
-    result = _call(endpoint, account_id="account", owner="alice")
-    assert not (result.get("sync") or {}).get("stale")
-
-
-def test_invalidation_prevents_inflight_refresh_from_restoring_stale_snapshot():
-    import threading
-    import time
-    endpoint = _list_endpoint()
-    state = dict(zip(endpoint.__code__.co_freevars, (cell.cell_contents for cell in endpoint.__closure__)))
-    schedule = state["_schedule_list_refresh"]
-    cells = dict(zip(schedule.__code__.co_freevars, schedule.__closure__))
-    started, release = threading.Event(), threading.Event()
-    original = cells["_list_emails_sync"].cell_contents
-
-    def fake_fetch(*args):
-        started.set()
-        assert release.wait(3)
-        return {"emails": [{"uid": "stale"}]}
-
-    cells["_list_emails_sync"].cell_contents = fake_fetch
-    key = ("account", "INBOX", "all", 50, 0, "", 0, "", "", "alice")
-    try:
-        schedule((), key, "INBOX", "account", "alice")
-        assert started.wait(3)
-        state["_invalidate_list_cache"]("account", "INBOX")
-        release.set()
-        refreshing = cells["_LIST_REFRESHING"].cell_contents
-        deadline = time.monotonic() + 3
-        while key in refreshing and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert key not in refreshing
-        assert state["_list_stale_get"](key) is None
-    finally:
-        release.set()
-        cells["_list_emails_sync"].cell_contents = original
 
 
 def test_swr_contract_is_wired_into_the_list_path():
@@ -137,3 +98,149 @@ def test_swr_contract_is_wired_into_the_list_path():
     assert "manual_refresh = bool(refresh)" in SRC
     assert "_invalidate_list_cache(account_id, folder)" in SRC
     assert "cached_rows = {} if refresh else _email_index_rows" in SRC
+
+
+def test_frontend_email_library_recognizes_skip_fast_path():
+    lib_path = pathlib.Path(__file__).resolve().parent.parent / "static" / "js" / "emailLibrary" / "index.js"
+    email_lib_src = lib_path.read_text(encoding="utf-8")
+    assert "skipFastPath: true" in email_lib_src
+    assert "skipFastPath = false" in email_lib_src
+    assert "!skipFastPath" in email_lib_src
+
+
+def test_manual_refresh_fetches_mailbox_instead_of_returning_stale_index(monkeypatch):
+    class EmptyMailbox:
+        def select(self, folder, readonly=False):
+            return 'OK', [b'0']
+        def uid(self, command, *args):
+            assert command == 'SEARCH'
+            return 'OK', [b'']
+        def logout(self):
+            pass
+
+    endpoint = _list_endpoint()
+    monkeypatch.setattr(er, '_start_poller', lambda: None)
+    monkeypatch.setattr(er, '_imap_connect', lambda *a, **k: EmptyMailbox())
+    monkeypatch.setattr(er, '_email_index_list', lambda *a, **k: (
+        [{'uid': 'old', 'subject': 'Old'}], 1, 'yesterday'))
+
+    result = _call(endpoint, refresh=1)
+    assert result['emails'] == []
+    assert result['total'] == 0
+    assert not result.get('sync', {}).get('stale')
+
+
+def test_stale_index_is_scoped_to_authenticated_owner(monkeypatch):
+    endpoint = _list_endpoint()
+    monkeypatch.setattr(er, '_start_poller', lambda: None)
+    monkeypatch.setattr(er, '_email_index_list', lambda owner, *a: (
+        [{'uid': owner, 'subject': owner}], 1, 'yesterday'))
+    monkeypatch.setattr(er, '_imap_connect', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('offline')))
+
+    alice = _call(endpoint, owner='alice')
+    bob = _call(endpoint, owner='bob')
+    assert [mail['uid'] for mail in alice['emails']] == ['alice']
+    assert [mail['uid'] for mail in bob['emails']] == ['bob']
+
+
+def test_inflight_refresh_cannot_restore_old_index_flags_after_mark_read(monkeypatch, tmp_path):
+    """A delayed mailbox snapshot must not undo a completed owner mutation."""
+    import threading
+    from contextlib import contextmanager
+    from routes.email import email_helpers
+
+    database = tmp_path / 'email.db'
+    monkeypatch.setattr(email_helpers, 'SCHEDULED_DB', database)
+    monkeypatch.setattr(er, 'SCHEDULED_DB', database)
+    email_helpers._init_scheduled_db()
+    er._email_index_upsert('alice', 'acct', 'INBOX', [{
+        'uid': '42', 'subject': 'Example', 'flags': '', 'date_epoch': 1,
+    }])
+    fetched = threading.Event()
+    release = threading.Event()
+    threads = []
+
+    class Mailbox:
+        def __init__(self, mutation=False):
+            self.mutation = mutation
+        def select(self, *args, **kwargs):
+            return 'OK', [b'1']
+        def uid(self, command, *args):
+            if command == 'SEARCH':
+                return 'OK', [b'42']
+            if command == 'FETCH':
+                if self.mutation:
+                    return 'OK', [b'1 (UID 42)']
+                threads.append(threading.current_thread())
+                fetched.set()
+                assert release.wait(5)
+                return 'OK', [(b'1 (UID 42 FLAGS () RFC822.SIZE 100 RFC822.HEADER {20}',
+                               b'Subject: Example\r\n\r\n')]
+            if command == 'STORE':
+                return 'OK', []
+            raise AssertionError(command)
+        def logout(self):
+            pass
+
+    @contextmanager
+    def mailbox(*args, **kwargs):
+        yield Mailbox(mutation=True)
+
+    monkeypatch.setattr(er, '_start_poller', lambda: None)
+    monkeypatch.setattr(er, '_imap_connect', lambda *a, **kw: Mailbox())
+    monkeypatch.setattr(er, '_imap', mailbox)
+    router = er.setup_email_routes()
+    listing = next(r.endpoint for r in router.routes if getattr(r, 'name', '') == 'list_emails')
+    mark_read = next(r.endpoint for r in router.routes if getattr(r, 'name', '') == 'mark_read')
+    try:
+        assert _call(listing, owner='alice', account_id='acct')['emails'][0]['is_read'] is False
+        assert fetched.wait(5)
+        refresh_thread = threads[0]
+        result = asyncio.run(mark_read('42', folder='INBOX', account_id='acct', owner='alice'))
+        assert result['success'] is True
+    finally:
+        release.set()
+    refresh_thread.join(timeout=5)
+    assert not refresh_thread.is_alive()
+    rows, _, _ = er._email_index_list('alice', 'acct', 'INBOX', 'all', 50, 0)
+    assert rows[0]['is_read'] is True
+
+
+def test_mark_read_keeps_other_owners_default_mailbox_unread(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from routes.email import email_helpers
+
+    database = tmp_path / 'email.db'
+    monkeypatch.setattr(email_helpers, 'SCHEDULED_DB', database)
+    monkeypatch.setattr(er, 'SCHEDULED_DB', database)
+    email_helpers._init_scheduled_db()
+    for owner in ('alice', 'bob'):
+        er._email_index_upsert(owner, None, 'INBOX', [{
+            'uid': '42', 'subject': owner, 'flags': '', 'date_epoch': 1,
+        }])
+
+    class Mailbox:
+        def select(self, *args, **kwargs):
+            return 'OK', [b'1']
+        def uid(self, command, *args):
+            if command == 'FETCH':
+                return 'OK', [b'1 (UID 42)']
+            if command == 'STORE':
+                return 'OK', []
+            raise AssertionError(command)
+
+    @contextmanager
+    def mailbox(*args, **kwargs):
+        yield Mailbox()
+
+    monkeypatch.setattr(er, '_start_poller', lambda: None)
+    monkeypatch.setattr(er, '_imap', mailbox)
+    monkeypatch.setattr(er, '_imap_connect', lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('offline')))
+    router = er.setup_email_routes()
+    listing = next(r.endpoint for r in router.routes if getattr(r, 'name', '') == 'list_emails')
+    mark_read = next(r.endpoint for r in router.routes if getattr(r, 'name', '') == 'mark_read')
+    assert _call(listing, owner='bob')['emails'][0]['is_read'] is False
+    assert asyncio.run(mark_read('42', folder='INBOX', account_id=None, owner='alice'))['success'] is True
+    assert _call(listing, owner='bob')['emails'][0]['is_read'] is False
+    rows, _, _ = er._email_index_list('alice', None, 'INBOX', 'all', 50, 0)
+    assert rows[0]['is_read'] is True

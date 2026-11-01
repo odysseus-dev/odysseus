@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -1050,12 +1051,14 @@ async def test_disable_tool_email_covers_full_builtin_set(monkeypatch):
         assert tool_name in disabled, tool_name
         assert f"mcp__email__{tool_name}" in disabled, tool_name
 
-    # enable_tool email must remove the full set again.
+    # enable_tool is refused from chat: the denylist is admin policy and can
+    # only be widened in Settings > Agent Tools (issue #5523). The full set
+    # must stay disabled.
     result = await do_manage_settings(
         '{"action": "enable_tool", "tool": "email"}', owner="admin"
     )
-    assert result["exit_code"] == 0
-    assert store["disabled_tools"] == []
+    assert result["exit_code"] == 1
+    assert set(store["disabled_tools"]) == disabled
 
 
 def _install_admin_auth_stub(monkeypatch):
@@ -1200,7 +1203,7 @@ async def test_write_file_inline_json_args(monkeypatch):
     for b in blocks:
         await _execute_without_run_context(execute_tool_block, b, owner="admin", workspace="/tmp")
 
-    assert captured.get("path") == "/tmp/wf.txt", (
+    assert captured.get("path") in ("/tmp/wf.txt", os.path.abspath("/tmp/wf.txt")), (
         f"write_file did not decode inline JSON args; got path {captured.get('path')!r}"
     )
 
