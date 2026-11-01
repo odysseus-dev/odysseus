@@ -350,3 +350,101 @@ async def test_runtime_denial_still_blocks_tool_selected_by_contract(monkeypatch
     assert "disabled" in result["error"] or "policy" in result["error"]
     assert result.get("failure_kind") != "turn_contract_denied"
     handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mcp_rag_candidate_is_offered_by_turn_contract(monkeypatch):
+    from routes import chat_routes
+    from src import tool_index
+    from src.turn_contract import resolve_turn_contract, ToolPolicy
+
+    mcp_name = "mcp__test_server__execute"
+    schemas = [{
+        "type": "function",
+        "function": {
+            "name": mcp_name,
+            "description": "Execute an operation in the test server",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }]
+
+    class FakeIndex:
+        def index_mcp_tools(self, manager, disabled_map):
+            assert manager is fake_manager
+
+        def get_tools_for_query(self, query, k):
+            assert query == "Execute in test server"
+            return {mcp_name, "mcp__unknown__tool"}
+
+    fake_manager = object()
+    monkeypatch.setattr(tool_index, "get_tool_index", lambda: FakeIndex())
+    from src import agent_loop
+    monkeypatch.setattr(agent_loop, "_load_mcp_disabled_map", lambda: {})
+
+    candidates = await chat_routes._select_mcp_contract_candidates(
+        message="Execute in test server",
+        manager=fake_manager,
+        schemas=schemas,
+        disabled_tools=set(),
+        owner_blocked=set(),
+        selected_tools=None,
+        plan_mode=False,
+        disable_mcp=False,
+    )
+
+    assert candidates == {mcp_name}
+
+    contract = resolve_turn_contract(
+        capabilities=set(),
+        schemas=schemas,
+        policy=ToolPolicy(),
+        mcp_candidates=candidates,
+        message="Execute in test server",
+    )
+    assert mcp_name in contract.offered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"disable_mcp": True},
+        {"selected_tools": set()},
+        {"selected_tools": {"web_search"}},
+        {"plan_mode": True},
+        {"owner_blocked": {"some_other_tool"}},
+        {"message": "Answer without using any tools"},
+    ],
+)
+async def test_mcp_rag_respects_routing_restrictions(monkeypatch, overrides):
+    from routes import chat_routes
+    from src import tool_index
+
+    class FakeIndex:
+        def index_mcp_tools(self, *args):
+            raise AssertionError("MCP indexing must not run")
+
+        def get_tools_for_query(self, *args):
+            raise AssertionError("MCP retrieval must not run")
+
+    monkeypatch.setattr(tool_index, "get_tool_index", lambda: FakeIndex())
+
+    arguments = {
+        "message": "Use the test MCP server",
+        "manager": object(),
+        "schemas": [{
+            "type": "function",
+            "function": {"name": "mcp__test__execute"},
+        }],
+        "disabled_tools": set(),
+        "owner_blocked": set(),
+        "selected_tools": None,
+        "plan_mode": False,
+        "disable_mcp": False,
+    }
+    arguments.update(overrides)
+
+    candidates = await chat_routes._select_mcp_contract_candidates(
+        **arguments
+    )
+    assert candidates == set()

@@ -104,13 +104,13 @@ def test_narrow_lookups_are_not_misclassified_as_broad_briefings(prompt):
 
 def resolve(capabilities=(), *, schemas=FUNCTION_TOOL_SCHEMAS, policy=None, required_tools=(),
             required_capabilities=None, selected_tools=None, always_available_tools=(),
-            warm_tools=(), message=None):
+            warm_tools=(), mcp_candidates=(), message=None):
     return resolve_turn_contract(capabilities=capabilities, schemas=schemas,
                                  policy=policy or ToolPolicy(), required_tools=required_tools,
                                  required_capabilities=required_capabilities,
                                  selected_tools=selected_tools,
                                  always_available_tools=always_available_tools,
-                                 warm_tools=warm_tools, message=message)
+                                 warm_tools=warm_tools, mcp_candidates=mcp_candidates, message=message)
 
 
 def test_latest_topic_info_and_common_news_typo_route_to_web_search():
@@ -4413,3 +4413,90 @@ def test_chinese_video_to_image_artifact_keeps_media_and_workspace_tools():
         "请完整浏览 /workspace/input/video.mp4，为每款零食截图并拼成清单图，"
         "输出到 /workspace/snack_checklist.jpg，交付前打开成品图检查。"
     ) == {"media_inspection", "shell_files"}
+
+
+def test_mcp_candidates_respect_explicit_tool_selection():
+    mcp_name = "mcp__blender__execute_blender_code"
+    schema = {
+        "type": "function",
+        "function": {
+            "name": mcp_name,
+            "description": "Execute Blender code",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    inventory = [*FUNCTION_TOOL_SCHEMAS, schema]
+
+    automatic = resolve(
+        schemas=inventory,
+        mcp_candidates={mcp_name},
+    )
+    assert mcp_name in automatic.offered
+
+    explicit = resolve(
+        schemas=inventory,
+        selected_tools=(),
+        mcp_candidates={mcp_name},
+    )
+    assert explicit.offered == frozenset()
+    assert not explicit.permits(mcp_name)
+
+
+@pytest.mark.parametrize("policy", [
+    ToolPolicy(disable_mcp=True),
+    ToolPolicy(disabled_tools=frozenset({"mcp__blender__execute_blender_code"})),
+    ToolPolicy(hidden_tools=frozenset({"mcp__blender__execute_blender_code"})),
+    ToolPolicy(block_all_tool_calls=True),
+])
+def test_mcp_candidates_cannot_override_policy_denials(policy):
+    mcp_name = "mcp__blender__execute_blender_code"
+    schema = {
+        "type": "function",
+        "function": {
+            "name": mcp_name,
+            "description": "Execute Blender code",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    contract = resolve(
+        schemas=[*FUNCTION_TOOL_SCHEMAS, schema],
+        policy=policy,
+        mcp_candidates={mcp_name},
+    )
+    assert mcp_name not in contract.offered
+    assert not contract.permits(mcp_name)
+
+
+def test_mcp_candidates_do_not_expand_required_read_operation():
+    mcp_name = "mcp__test_server__execute"
+    schemas = [
+        {
+            "type": "function",
+            "function": {
+                "name": "manage_notes",
+                "description": "Manage notes",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": mcp_name,
+                "description": "Execute MCP action",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    ]
+
+    contract = resolve_turn_contract(
+        capabilities={"notes"},
+        schemas=schemas,
+        policy=ToolPolicy(),
+        required_read_operation=RequiredReadOperation(
+            "manage_notes", {"action": "list"}
+        ),
+        mcp_candidates={mcp_name},
+    )
+
+    assert "manage_notes" in contract.offered
+    assert mcp_name not in contract.offered
