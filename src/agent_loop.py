@@ -162,7 +162,7 @@ def _resolved_tool_call_id(
 
 logger = logging.getLogger(__name__)
 
-_MODEL_TOOL_SURFACES = {"none", "compact", "full"}
+_MODEL_TOOL_SURFACES = {"none", "compact", "full", "spec"}
 _ROUTE_THINKING_MODES = {"auto", "on", "off"}
 _NO_THINKING_COMPACT_DOMAINS = {
     "email",
@@ -2834,7 +2834,7 @@ def _parse_qwen_explicit_admin_request(text: str) -> Optional[tuple[str, str]]:
     if re.search(r"\b(?:disabled\s+tools?|tools?\s+(?:are\s+)?(?:currently\s+)?disabled)\b", q):
         return "manage_settings", json.dumps({"action": "list_tools"})
     if re.search(r"\b(?:turn|enable|re-enable|reenable)\b.{0,40}\b(?:image\s+generation|images?|generate_image)\b", q):
-        return "manage_settings", json.dumps({"action": "enable_tool", "tool": "images"})
+        return "manage_settings", json.dumps({"action": "list_tools"})
     if re.search(r"\b(?:disable|turn\s+off)\b.{0,40}\b(?:image\s+generation|images?|generate_image)\b", q):
         return "manage_settings", json.dumps({"action": "disable_tool", "tool": "images"})
     if listish and re.search(r"\bapi\s+tokens?\b|\btokens?\b", q):
@@ -6933,6 +6933,7 @@ _AGENT_RULES = """\
 - If the user asks for multiple specific emails and you call `read_email` more than once, your final answer MUST include every successfully read email, clearly separated and linked by UID. Do not answer with only the last email you read.
 - Multiple email accounts: if tool output says "Other accounts" or the user asks "my Gmail?", "other inbox?", "work mail?", "custom domain mail?", or names any mailbox/account, DO NOT answer from memory. Call `list_email_accounts` if needed, then call `list_emails`/`read_email`/`bulk_email` with the exact `account` value for that mailbox. Account names are user-defined labels; if the user typo-matches a known account, use the closest listed account instead of claiming it does not exist. NEVER use `app_api` or `/api/email/accounts` to discover email accounts; that route is owner-filtered in tool context and can falsely return empty.
 - User identity facts/preferences ("my name is <name>", "I live in <place>", "I prefer concise replies", "call me <name>") → use `manage_memory` with action=add. NEVER use `manage_contact` for facts about the user unless the user explicitly says to create/update a contact and provides contact details such as an email or phone.
+- When the prompt contains "Selected notes and todos", treat that content as already-provided reference context. Use it directly when it answers the request; do not call `manage_notes` to list/search/view the same notes, and do not ask for permission merely to use the selected context. Call `manage_notes` only when the user requests a note change or the selected context is insufficient and a fresh lookup is needed.
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate.
 - "Do X every morning / daily / on a schedule / automatically" (e.g. "summarize my inbox every morning") → this is a request to CREATE A SCHEDULED TASK, not to do X once right now. Call `manage_tasks` with action=create (prompt = what to do, schedule + cron/time). Do NOT just perform the action inline this turn — the user wants it to recur. After creating, return a clickable `[Task name](#task-<id>)` link and tell them it'll run on schedule and show in the Tasks panel. If you also want to show a sample of this run, do that AFTER creating the task, not instead of it.
 - There is NO generic sleep / auto-wakeup / resume-after-this-turn primitive. Background jobs and subagent-style work should return a job/task id and notify the session automatically when finished; do not sleep or poll for their progress. If the user explicitly asks you to retry or do something later, call `manage_tasks` with action=create, `task_type=llm`, `schedule=once`, and a self-contained prompt. NEVER claim you will wake up, retry later, or handle something later unless a `manage_tasks` create call succeeds.
@@ -7041,6 +7042,7 @@ _AGENT_RULES = """\
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
+- When the prompt contains "Selected notes and todos", treat that content as already-provided reference context. Use it directly when it answers the request; do not call `manage_notes` to list/search/view the same notes, and do not ask for permission merely to use the selected context. Call `manage_notes` only when the user requests a note change or the selected context is insufficient and a fresh lookup is needed.
 """
 
 _API_AGENT_RULES = """\
@@ -7099,7 +7101,7 @@ _DOMAIN_RULES = {
 - After a successful serve, verify with `list_served_models`; if an external server is running but invisible, use `adopt_served_model`.""",
     "notes_calendar_tasks": """\
 ## Notes/calendar/tasks rules
-- Notes/todos/reminders use `manage_notes`, not memory.
+- Notes/todos/reminders use `manage_notes`, not memory. However, when the prompt contains "Selected notes and todos", those notes are already available as reference context: use them directly and do not list/search/view them again or ask permission to use them. Use `manage_notes` only for a requested change or when a fresh lookup is genuinely needed.
 - Calendar create/update/delete should call `manage_calendar` with `action=list_calendars` first.
 - Recurring/automatic/scheduled requests create a `manage_tasks` task; do not just perform the action once.""",
     "memory": """\
@@ -8055,7 +8057,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "manage_tokens": "- ```manage_tokens``` — Generate or revoke API access tokens for external integrations. Args (JSON): {\"action\": \"list|create|delete\", ...}",
     "manage_documents": "- ```manage_documents``` — List, read/open, delete, or tidy documents in the editor panel. Args (JSON): {\"action\": \"list|read|delete|tidy\", ...}. `list` returns rows like `[Title](#document-<id>) — lang, size, updated 5m ago` sorted MOST-RECENT FIRST; the user clicks the anchor to open. `read` (aliases: view/open/get) takes `document_id` and returns the content. When the user asks \"open/show/read my notes\" or \"what documents do I have\", use this — do NOT shell out, do NOT curl.",
     "manage_research": "- ```manage_research``` — List, read/open, or delete saved DEEP RESEARCH results from the Library. Args (JSON): {\"action\": \"list|read|delete\", \"id\": \"<id>\", \"search\": \"...\"}. `list` returns rows like `[query](#research-<id>) — N sources` MOST-RECENT FIRST; the user clicks to open. `read` (aliases: open/view/get) takes `id` and returns the report text + sources. Use when the user says \"open/read/find/delete my research\" or \"that report\". This IS how you read a finished report: when the user refers to a just-completed deep-research job (\"check it out\", \"read that report\", \"summarize the research\") WITHOUT giving an id, call `manage_research` with `action:list` to get the most-recent id, then `action:read` with that id, and answer from the returned text. Do NOT `web_fetch`/`app_api` the `/api/research/report/{id}` URL — that endpoint renders HTML for the browser, not clean text — and do NOT start a fresh `web_search`/`trigger_research` just to read an existing report. To START new research, use trigger_research instead.",
-    "manage_settings": "- ```manage_settings``` — View/change the REAL app settings (same ones the Settings panel writes) AND turn tools on/off. Change a setting: `{\"action\":\"set\",\"key\":\"...\",\"value\":\"...\"}` — keys accept friendly aliases, e.g. voice→tts_voice, \"search engine\"→search_provider, \"default model\"→default_model, \"teacher model\"→teacher_model, \"task/background model\"→task_model, \"image quality\"→image_quality, \"reminder channel\"→reminder_channel (browser|email|ntfy), \"agent timeout\"/\"max tool calls\"/\"token budget\". Read: `{\"action\":\"get\",\"key\":\"...\"}`; see all: `{\"action\":\"list\"}`; reset one: `{\"action\":\"reset\",\"key\":\"...\"}`. Use this when the user asks to change ANY preference instead of making them open Settings. Secrets/API keys are read-only (tell them to set those in the panel). Tool toggles: `{\"action\":\"disable_tool|enable_tool\",\"tool\":\"shell\"}` (aliases: shell/search/browser/documents/memory/skills/images/tasks/notes/calendar/email), list disabled: `{\"action\":\"list_tools\"}`.",
+    "manage_settings": "- ```manage_settings``` — View/change the REAL app settings (same ones the Settings panel writes) AND turn tools on/off. Change a setting: `{\"action\":\"set\",\"key\":\"...\",\"value\":\"...\"}` — keys accept friendly aliases, e.g. voice→tts_voice, \"search engine\"→search_provider, \"default model\"→default_model, \"teacher model\"→teacher_model, \"task/background model\"→task_model, \"image quality\"→image_quality, \"reminder channel\"→reminder_channel (browser|email|ntfy), \"agent timeout\"/\"max tool calls\"/\"token budget\". Read: `{\"action\":\"get\",\"key\":\"...\"}`; see all: `{\"action\":\"list\"}`; reset one: `{\"action\":\"reset\",\"key\":\"...\"}`. Use this when the user asks to change ANY preference instead of making them open Settings. Secrets/API keys are read-only (tell them to set those in the panel). Tool toggles: `{\"action\":\"disable_tool\",\"tool\":\"shell\"}` (aliases: shell/search/browser/documents/memory/skills/images/tasks/notes/calendar/email), list disabled: `{\"action\":\"list_tools\"}`. You cannot re-enable a disabled tool: that is done by the user in Settings > Agent Tools.",
     "manage_notes": """\
 ```manage_notes
 {"action": "add", "title": "<short todo>", "due_date": "<natural language or ISO datetime>"}
@@ -8470,7 +8472,7 @@ def _agent_route_tool_mode(
     return is_api_model, is_ollama_native, ollama_openai_compat
 
 
-def _configured_model_tool_surface(
+def _configured_model_tool_surface_raw(
     endpoint_url: str,
     model: str,
     owner: Optional[str] = None,
@@ -8558,6 +8560,19 @@ _ADMIN_KEYWORDS = [
     "document", "documents", "doc", "docs", "library", "tidy",
     "note", "notes", "todo", "todos", "reminder", "reminders",
 ]
+
+
+def _configured_model_tool_surface(
+    endpoint_url: str,
+    model: str,
+    owner: Optional[str] = None,
+    headers: Optional[Dict] = None,
+    endpoint_id: Optional[str] = None,
+) -> str:
+    """Tool surface as the harness sees it: Ajax Spec runs the compact runtime
+    (same dispatch, prompts, completions); only Spec hooks read the raw mode."""
+    value = _configured_model_tool_surface_raw(endpoint_url, model, owner, headers=headers, endpoint_id=endpoint_id)
+    return "compact" if value == "spec" else value
 
 def _detect_admin_intent(messages: List[Dict]) -> bool:
     """Check if the last user message suggests admin/management tool usage."""
@@ -10323,9 +10338,10 @@ def _has_matching_skill_for_turn(
         ))))
         if max_items == 0:
             return False
+        published_only = not prefs.get("auto_approve_skills", True)
         min_confidence = (
-            2.0
-            if not prefs.get("auto_approve_skills", True)
+            0.0
+            if published_only
             else float(prefs.get(
                 "skill_min_confidence",
                 get_setting("skill_autosave_min_confidence", 0.85),
@@ -10342,6 +10358,7 @@ def _has_matching_skill_for_turn(
             threshold=0.25,
             max_items=max_items,
             min_confidence=min_confidence,
+            published_only=published_only,
         ))
     except Exception as exc:
         logger.debug("skill preflight failed (non-fatal): %s", exc)
@@ -13561,6 +13578,20 @@ def _ody_qwen_terminal_tool_summary(tool_event: dict[str, Any], user_text: str =
     """Return a deterministic user-facing answer for tools we can render safely."""
     tool_name = _resolved_tool_event_name(tool_event)
     output = str(tool_event.get("output") or "")
+    if tool_name in {
+        "mcp__email__list_email_accounts", "mcp__email__list_emails",
+        "mcp__email__search_emails", "mcp__email__read_email",
+    } and output.lstrip().startswith("{"):
+        # The external email bridge wraps stdout in a JSON result. Render its
+        # successful read payload, never the wrapper or a failed result.
+        try:
+            email_result = json.loads(output)
+        except (TypeError, ValueError):
+            email_result = None
+        if isinstance(email_result, dict) and isinstance(email_result.get("stdout"), str):
+            if email_result.get("exit_code") not in (None, 0) or email_result.get("error"):
+                return ""
+            output = email_result["stdout"]
     command = str(tool_event.get("command") or "")
     action = ""
     try:
@@ -14419,6 +14450,7 @@ def _build_system_prompt(
     suppress_skills: bool = False,
     active_email: Optional[Dict[str, str]] = None,
     workspace: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
     client_runtime_context: Optional[Dict[str, Any]] = None,
     preserve_conversation: bool = False,
 ) -> List[Dict]:
@@ -14520,6 +14552,7 @@ def _build_system_prompt(
             mcp_disabled_map=mcp_disabled_map, compact=compact, owner=owner,
             suppress_local_context=suppress_local_context,
             suppress_skills=suppress_skills,
+            endpoint_url=endpoint_url,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -14532,6 +14565,7 @@ def _build_system_prompt(
             owner=owner,
             suppress_local_context=suppress_local_context,
             suppress_skills=suppress_skills,
+            endpoint_url=endpoint_url,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -14950,8 +14984,9 @@ def _build_system_prompt(
                 # confidence threshold. Approve OFF → published-only (no draft
                 # passes). Approve ON → drafts at/above the chosen confidence
                 # (0 = "All"). Falls back to the global default setting.
-                if not _prefs.get("auto_approve_skills", True):
-                    _skill_min_conf = 2.0  # nothing draft clears it → published only
+                _skill_published_only = not _prefs.get("auto_approve_skills", True)
+                if _skill_published_only:
+                    _skill_min_conf = 0.0  # published_only decides eligibility
                 else:
                     try:
                         _skill_min_conf = float(_prefs.get(
@@ -14974,6 +15009,7 @@ def _build_system_prompt(
                         max_items=_skill_max_injected,
                         min_confidence=_skill_min_conf,
                         available_toolsets=relevant_tools,
+                        published_only=_skill_published_only,
                     ) if _skill_max_injected > 0 else []
                 else:
                     # Explicit client activation chooses which eligible skill
@@ -15195,7 +15231,7 @@ _ADMIN_TOOLS = {
     "manage_documents", "manage_settings", "create_session", "list_sessions",
     "send_to_session", "search_chats", "pipeline", "ask_teacher", "list_models",
     "list_cached_models", "list_downloads", "list_cookbook_servers",
-    "list_serve_presets", "list_served_models",
+    "list_serve_presets", "list_served_models", "tail_serve_output", "search_hf_models",
 }
 
 def _build_base_prompt(
@@ -15208,6 +15244,7 @@ def _build_base_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     suppress_skills: bool = False,
+    endpoint_url: Optional[str] = None,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -15266,7 +15303,11 @@ def _build_base_prompt(
             from src.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
             active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
-            skill_idx = _sm.index_for(owner=owner, active_toolsets=active_tools)
+            skill_idx = _sm.index_for(
+                owner=owner,
+                active_toolsets=active_tools,
+                local_model=bool(endpoint_url) and is_local_endpoint(endpoint_url),
+            )
             if skill_idx:
                 lines = ["## Available skills",
                          "Procedures the assistant should consult before doing domain work. "
@@ -21005,7 +21046,177 @@ def _blocks_before_inference(turn_contract) -> bool:
     )
 
 
+def _spec_unavailable_reply(unavailable) -> str:
+    blocked = set(unavailable or ())
+    if blocked & (set(WEB_TOOL_NAMES) | {"private_browser", "youtube_tool"}):
+        return ("Web or browser access is unavailable for this chat. Enable Web search "
+                "in the chat controls, if available, and ask me to check again. "
+                "I have not opened the page or verified its contents.")
+    return ("The tool needed for this request is unavailable in this chat. "
+            "Enable the required capability, if available, and try again. "
+            "I have not performed the requested lookup or action.")
+
+
 from src.agent_runtime.authority import MISSING_AUTHORITY, active_request_authority, with_request_authority
+
+
+
+def _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy):
+    from src.turn_contract import _ACTIVE_CONTRACT as _spec_active_contract
+    disabled = set(disabled_tools or ())
+    from src.spec_router import latest_decision
+    _spec_decision = latest_decision() or {}
+    _spec_choice = _spec_decision.get("choice")
+    _spec_direct = (os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() == "strict"
+                                           and decided and _spec_choice == "answer_directly")
+    try:
+        _mgr = get_mcp_manager()
+        mcp_schemas = _mgr.get_all_openai_schemas(_load_mcp_disabled_map()) if _mgr else []
+    except Exception:
+        mcp_schemas = []
+    mcp_names = {(sc.get("function") or {}).get("name") for sc in mcp_schemas}
+    if _spec_choice == "ask_user":
+        # ask_user = a tool is needed but a detail may be missing: offer Spec's top tool too, so the model
+        # can act when the detail is there or ask when it is not.
+        _top = _spec_decision.get("top") or []
+        if _top:
+            picks = set(picks) | {_top[0][0]}
+    picks = {(f"mcp__email__{n}" if f"mcp__email__{n}" in mcp_names else n) for n in picks}
+    strict = os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() == "strict"
+    base_offered = set(turn_contract.offered)
+    # The router sees the full catalog, while this request's policy may
+    # deny a tool (for example, a browser turn with Web access switched
+    # off). Preserve that conflict as an unavailable contract. Keeping the
+    # old empty menu instead lets the model invent a tool result in prose.
+    _top = _spec_decision.get("top") or []
+    _primary = str(_top[0][0]) if _spec_choice and str(_spec_choice).startswith("t") and _top else ""
+    if _primary and f"mcp__email__{_primary}" in mcp_names:
+        _primary = f"mcp__email__{_primary}"
+    # A policy denial is surfaced even if the router chose outside the
+    # base inventory; it never grants access to that tool.
+    def _denied(name):
+        return (name in disabled
+                or (tool_policy is not None and (
+                    tool_policy.blocks(name)
+                    or (tool_policy.disable_mcp and name.startswith("mcp__")))))
+    _unavailable_pick = ""
+    if _primary in picks and _denied(_primary):
+        _unavailable_pick = _primary
+    elif picks and all(_denied(name) for name in picks):
+        _unavailable_pick = sorted(picks)[0]
+    if _unavailable_pick:
+        blocked = replace(
+            turn_contract, required=frozenset(), offered=frozenset(),
+            unavailable=frozenset({_unavailable_pick}), schema_json=(),
+            required_read_operation=None, routing_experiment="spec-policy-denied",
+        )
+        _spec_active_contract.set(blocked)
+        logger.info("[spec-harness] router pick %s unavailable under request policy", _unavailable_pick)
+        return blocked
+    want = set(picks) - disabled
+    # Always-on basics only when the base turn offers them, so the Spec
+    # arm never offers a tool the base arm would not.
+    if not _spec_direct:
+        want |= {"ask_user", "update_plan"} & base_offered
+    if not (strict and decided):
+        want |= base_offered
+    want &= base_offered
+    if not want:
+        logger.info("[spec-harness] router picks %s outside base offered %s; base contract kept",
+                    sorted(picks), sorted(base_offered))
+        return turn_contract
+    offer = want & base_offered & set(turn_contract.executable)
+    # A router may narrow the menu only when every existing obligation
+    # remains satisfiable. It cannot redefine the user's requested work.
+    required_read = getattr(turn_contract, "required_read_operation", None)
+    if (not set(turn_contract.required) <= offer or turn_contract.unavailable
+            or (required_read is not None and required_read.tool not in offer)):
+        return turn_contract
+    by_name = {}
+    for sc in list(FUNCTION_TOOL_SCHEMAS) + list(mcp_schemas):
+        nm = (sc.get("function") or {}).get("name")
+        if nm in offer and nm not in by_name:
+            by_name[nm] = sc
+    for sc in turn_contract.schemas():
+        nm = (sc.get("function") or {}).get("name")
+        if nm in offer:
+            by_name[nm] = sc
+    if not by_name and not _spec_direct:
+        logger.info("[spec-harness] router picks %s not executable this turn; contract kept", sorted(picks))
+        return turn_contract
+    # Required tools and the required read carry over unchanged: harness
+    # completion logic keys on them (e.g. a calendar list is a read, not an
+    # effect that may end with "Done."). If one lost its schema, contract
+    # validation fails and the original contract is retained below.
+    new = replace(
+        turn_contract, offered=frozenset(by_name),
+        schema_json=tuple(json.dumps(by_name[n], ensure_ascii=False, sort_keys=True) for n in sorted(by_name)),
+        routing_experiment="spec-router")
+    _spec_active_contract.set(new)
+    logger.info("[spec-harness] contract replaced by router: offered=%s (was %s, decided=%s)",
+                sorted(by_name), sorted(turn_contract.offered), decided)
+    return new
+
+
+def _spec_router_contract(turn_contract, messages, disabled_tools, endpoint_url, model, owner, headers,
+                          tool_policy=None):
+    """Ajax Spec: return a copy of the turn contract whose offered tools are the
+    router's picks (plus ask_user/update_plan), or the contract unchanged.
+
+    Runs before any runtime dispatch so the compact preview runtime and the
+    main loop both serve the router's set; only the offered tools change.
+    """
+    # Contexts can be inherited by a child task; a turn must never inherit a
+    # previous turn's decision when routing is disabled or unavailable.
+    from src import spec_router as _router_context
+    if hasattr(_router_context, "clear_decision"):
+        _router_context.clear_decision()
+    if (turn_contract is None
+            or getattr(turn_contract, "routing_experiment", "") in {"spec-router", "spec-policy-denied"}
+            or (tool_policy is not None and tool_policy.block_all_tool_calls)):
+        return turn_contract
+    if os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() not in {"strict", "additive"}:
+        return turn_contract
+    try:
+        if _configured_model_tool_surface_raw(endpoint_url, model, owner, headers=headers) != "spec":
+            return turn_contract
+    except Exception:
+        return turn_contract
+    try:
+        from src.spec_router import spec_route_tools as _spec_route_tools_early
+        picks, decided = _spec_route_tools_early(
+            _extract_last_user_message(messages), FUNCTION_TOOL_SCHEMAS, set(), messages, return_decision=True)
+        return _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy)
+    except Exception as exc:
+        logger.warning("[spec-harness] router failed; retaining original contract: %s", exc)
+        return turn_contract
+
+
+async def _spec_router_contract_async(turn_contract, messages, disabled_tools, endpoint_url, model, owner, headers,
+                                      tool_policy=None):
+    """Asynchronous non-blocking turn contract routing."""
+    from src import spec_router as _router_context
+    if hasattr(_router_context, "clear_decision"):
+        _router_context.clear_decision()
+    if (turn_contract is None
+            or getattr(turn_contract, "routing_experiment", "") in {"spec-router", "spec-policy-denied"}
+            or (tool_policy is not None and tool_policy.block_all_tool_calls)):
+        return turn_contract
+    if os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() not in {"strict", "additive"}:
+        return turn_contract
+    try:
+        if _configured_model_tool_surface_raw(endpoint_url, model, owner, headers=headers) != "spec":
+            return turn_contract
+    except Exception:
+        return turn_contract
+    try:
+        from src.spec_router import spec_route_tools_async as _spec_route_tools_early_async
+        picks, decided = await _spec_route_tools_early_async(
+            _extract_last_user_message(messages), FUNCTION_TOOL_SCHEMAS, set(), messages, return_decision=True)
+        return _apply_spec_decision_to_contract(turn_contract, picks, decided, disabled_tools, tool_policy)
+    except Exception as exc:
+        logger.warning("[spec-harness] router failed; retaining original contract: %s", exc)
+        return turn_contract
 
 
 @with_request_authority
@@ -21084,6 +21295,41 @@ async def stream_agent_loop(
     _caller_hard_denials = frozenset(disabled_tools | (
         set(tool_policy.all_disabled_names()) if tool_policy else set()
     ))
+
+    # Ajax Spec driver: the Spec router picks every step (src/spec_driver.py).
+    if (os.getenv("ODYSSEUS_SPEC_MODE", "").strip().lower() == "driver"
+            and not (tool_policy and tool_policy.block_all_tool_calls)
+            and _configured_model_tool_surface_raw(endpoint_url, model, owner, headers=headers) == "spec"):
+        yield 'data: ' + json.dumps({"delta": "Spec driver mode is unavailable because its authority and completion checks are not supported. No action was performed."}) + '\n\n'
+        yield 'data: [DONE]\n\n'
+        return
+
+    turn_contract = await _spec_router_contract_async(
+        turn_contract, messages, disabled_tools, endpoint_url, model, owner, headers,
+        tool_policy=tool_policy)
+    if (turn_contract is not None
+            and getattr(turn_contract, "routing_experiment", "") == "spec-policy-denied"):
+        # A selected but disallowed tool is a policy outcome, not an invitation
+        # to generate an ungrounded answer with an empty tool menu.
+        reply = _spec_unavailable_reply(turn_contract.unavailable)
+        yield 'data: ' + json.dumps({"type": "turn_contract", **turn_contract.audit()}) + '\n\n'
+        yield 'data: ' + json.dumps({"delta": reply}) + '\n\n'
+        yield 'data: [DONE]\n\n'
+        return
+
+    try:
+        _spec_turn = _configured_model_tool_surface_raw(endpoint_url, model, owner, headers=headers) == "spec"
+    except Exception:
+        _spec_turn = False
+    # Without a turn contract (scheduled, skill and monitor runs) no Spec
+    # routing applies; the turn runs on the compact surface as usual.
+    if _spec_turn and _blocks_before_inference(turn_contract):
+        unavailable = ", ".join(sorted(turn_contract.unavailable))
+        yield 'data: ' + json.dumps({"type": "turn_contract", **turn_contract.audit()}) + '\n\n'
+        yield 'data: ' + json.dumps({"delta": "I can’t perform this request with the currently permitted tools "
+                                   f"(unavailable: {unavailable}). I haven’t substituted another tool."}) + '\n\n'
+        yield 'data: [DONE]\n\n'
+        return
 
     if is_compact_preview_contract(turn_contract):
         from src.clean_agent_preview import stream_preview
@@ -23947,11 +24193,14 @@ async def stream_agent_loop(
                 budget_is_explicit,
                 hard_max=hard_max,
             )
-            if candidate_context <= 8192:
+            if 0 < candidate_context <= 8192:
                 # Small local servers often tokenize chat wrappers and tool
                 # results much more generously than our rough estimator. Keep
                 # substantial headroom for those wrappers and generation so a
                 # follow-up tool round cannot exceed the server's n_ctx.
+                # 0 means the window is unknown, which already gets the
+                # conservative default budget; clamping it as well cut every
+                # request to 1200 tokens and dropped open documents (#6678).
                 effective_budget = min(
                     effective_budget,
                     max(1200, int(candidate_context * 0.40)),
@@ -24112,6 +24361,15 @@ async def stream_agent_loop(
             headers=candidate_headers,
             endpoint_id=(route_descriptor or {}).get("endpoint_id"),
         )
+        # "spec" = compact tools plus a small-model router; the harness-facing
+        # surface already reads "compact", so detect spec from the raw mode.
+        try:
+            _spec_surface = getattr(turn_contract, "routing_experiment", "") == "spec-router" and _configured_model_tool_surface_raw(
+                candidate_url, candidate_model, owner, headers=candidate_headers,
+                endpoint_id=(route_descriptor or {}).get("endpoint_id")) == "spec"
+        except Exception:
+            _spec_surface = False
+        _spec_offered = None
         textual_tools = (
             force_textual_tool_transport
             or force_textual_tools
@@ -24145,6 +24403,57 @@ async def stream_agent_loop(
                 _last_user,
                 _intent_domains,
             )
+            if _spec_surface:
+                from src.spec_router import spec_route_tools as _spec_route_tools
+
+                if turn_contract is not None and getattr(turn_contract, "routing_experiment", "") == "spec-router":
+                    _spec_added, _spec_decided = set(turn_contract.offered) - {"ask_user", "update_plan"}, True
+                else:
+                    _spec_added, _spec_decided = _spec_route_tools(
+                        _last_user,
+                        FUNCTION_TOOL_SCHEMAS,
+                        disabled_tools,
+                        compacted_source,
+                        return_decision=True,
+                    )
+                _spec_added = _spec_added - set(disabled_tools)
+                # The router catalog uses the legacy native email names; the
+                # live tools are the MCP ones, and the legacy alias schemas are
+                # dropped when the MCP server is connected. Map picks over.
+                try:
+                    from src.tool_utils import get_mcp_manager as _spec_mcp_mgr
+                    _mgr = _spec_mcp_mgr()
+                    _mcp_names = {
+                        (schema.get("function") or {}).get("name")
+                        for schema in (_mgr.get_all_openai_schemas(_load_mcp_disabled_map()) if _mgr else [])
+                    }
+                except Exception:
+                    _mcp_names = set()
+                _spec_added = {
+                    (f"mcp__email__{name}" if f"mcp__email__{name}" in _mcp_names else name)
+                    for name in _spec_added
+                }
+                _spec_mode = os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower()
+                _compact_before = set(route_tools)
+                if _spec_mode == "strict" and _spec_decided:
+                    # The router decides which tools are injected: its pick(s),
+                    # tools already used in this chat, and the always-on basics.
+                    _spec_strict = (_spec_added | {"ask_user", "update_plan"}) & set(turn_contract.offered) - set(disabled_tools)
+                    if _spec_strict:
+                        route_tools = _spec_strict
+                        _spec_offered = frozenset(route_tools)
+                    else:
+                        logger.info("[spec-harness] strict set empty after disabled-tool filter; keeping compact set")
+                        route_tools = set(route_tools) | _spec_added
+                else:
+                    route_tools = set(route_tools) | _spec_added
+                logger.info("[spec-debug] disabled_tools (%d): %s | policy block_all=%s disable_mcp=%s",
+                            len(set(disabled_tools)), sorted(set(disabled_tools))[:80],
+                            getattr(tool_policy, "block_all_tool_calls", None), getattr(tool_policy, "disable_mcp", None))
+                logger.info(
+                    "[spec-harness] mode=%s decided=%s compact=%s final=%s",
+                    _spec_mode, _spec_decided, sorted(_compact_before), sorted(route_tools),
+                )
             # The compact router only receives user text, while native task
             # inputs may be declared out-of-band by the runner. Reapply that
             # concrete input contract after compaction so an implicit video
@@ -24185,7 +24494,7 @@ async def stream_agent_loop(
                         _irrelevant_local_media_web_tools.add("private_browser")
                     route_tools.difference_update(_irrelevant_local_media_web_tools)
         if turn_contract is not None and tool_surface != "full":
-            route_tools = set(turn_contract.offered)
+            route_tools = set(_spec_offered) if _spec_offered else set(turn_contract.offered)
         if prompt_compact:
             route_tools.update(
                 _blocked_network_recovery_tools(tool_events)
@@ -24285,7 +24594,7 @@ async def stream_agent_loop(
                 disabled_tools,
                 needs_admin=_needs_admin,
                 relevant_tools=prompt_route_tools,
-                preserve_conversation=turn_contract is not None,
+                preserve_conversation=(turn_contract is not None) or _spec_surface,
                 mcp_disabled_map=_mcp_disabled_map,
                 compact=prompt_compact,
                 owner=owner,
@@ -24297,6 +24606,7 @@ async def stream_agent_loop(
                 active_email=active_email,
                 workspace=workspace,
                 client_runtime_context=client_runtime_context,
+                endpoint_url=candidate_url,
             )
         # The request user turn is authoritative and must never disappear
         # while rebuilding the route prompt.  Some native terminal requests
@@ -24496,6 +24806,13 @@ async def stream_agent_loop(
             _prepend_agent_directive(route_messages, build_active_plan_note(approved_plan))
         if guide_only:
             _prepend_agent_directive(route_messages, GUIDE_ONLY_DIRECTIVE)
+        if _spec_offered and os.getenv("ODYSSEUS_SPEC_TRIM_PROMPT", "1") != "0":
+            from src.spec_router import trim_system_prompt as _spec_trim
+
+            route_messages = _spec_trim(route_messages, _spec_offered)
+            from src.spec_router import drop_skills_index as _spec_drop_skills
+
+            route_messages = _spec_drop_skills(route_messages, _spec_offered)
         return {
             "messages": route_messages,
             "mcp_schemas": route_mcp_schemas,
@@ -24504,6 +24821,8 @@ async def stream_agent_loop(
             "is_ollama_native": is_native_ollama,
             "ollama_openai_compat": is_ollama_compat,
             "tool_surface": tool_surface,
+            "spec_offered": _spec_offered,
+            "spec_surface": _spec_surface,
             "ody_qwen_finetune_model": is_ody,
             "qwen38_tool_router": _is_qwen38_tool_router(candidate_model) and not _full_inventory_mode,
             "ody_doc_finetune_mode": doc_mode,
@@ -25061,6 +25380,15 @@ async def stream_agent_loop(
                 if (schema.get("function", {}).get("name") or schema.get("name"))
                 not in disabled_tools
             ]
+            _spec_names = route_state.get("spec_offered")
+            if _spec_names:
+                # Ajax Spec: the router, not the turn contract, decides which
+                # tools are injected for this turn.
+                contract_schemas = [
+                    schema for schema in contract_schemas
+                    if (schema.get("function", {}).get("name") or schema.get("name"))
+                    in _spec_names
+                ]
             return _filter_route_tool_schemas(_apply_tool_surface_to_schemas(contract_schemas, tool_surface))
         if route_state["is_api_model"]:
             if tool_surface == "full":
@@ -25122,15 +25450,18 @@ async def stream_agent_loop(
                     and schema.get("name") not in disabled_tools
                 ]
             if _pure_web_turn and tool_surface != "full":
-                allowed = _web_only_route_tools(_last_user, disabled_tools)
-                schemas = [
-                    schema for schema in schemas
-                    if (
-                        schema.get("function", {}).get("name")
-                        or schema.get("name")
-                    ) in allowed
-                    or schema.get("function", {}).get("name") in external_names
-                ]
+                strict_spec = (route_state.get("spec_surface") and
+                               os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() == "strict")
+                if not strict_spec:
+                    allowed = _web_only_route_tools(_last_user, disabled_tools)
+                    schemas = [
+                        schema for schema in schemas
+                        if (
+                            schema.get("function", {}).get("name")
+                            or schema.get("name")
+                        ) in allowed
+                        or schema.get("function", {}).get("name") in external_names
+                    ]
             schemas = _drop_legacy_email_alias_schemas_when_mcp_available(schemas)
             schemas = _apply_tool_surface_to_schemas(schemas, tool_surface)
             if (
@@ -25982,6 +26313,8 @@ async def stream_agent_loop(
             "is_ollama_native": _is_ollama_native,
             "ollama_openai_compat": _ollama_openai_compat,
             "tool_surface": _route_state.get("tool_surface", ""),
+            "spec_offered": _route_state.get("spec_offered"),
+            "spec_surface": _route_state.get("spec_surface"),
             "ody_qwen_finetune_model": _ody_qwen_finetune_model,
             "qwen38_tool_router": _qwen38_tool_router,
             "ody_doc_finetune_mode": _ody_doc_finetune_mode,
@@ -25997,10 +26330,19 @@ async def stream_agent_loop(
             _active_route_state["request_messages"] = _initial_route_request_messages
         all_tool_schemas = _tool_schemas_for_route(_active_route_state)
         if turn_contract is not None:
-            _relevant_tools = set(turn_contract.offered)
+            _relevant_tools = (
+                set(_route_state.get("spec_offered"))
+                if _route_state.get("spec_offered")
+                else set(turn_contract.offered)
+            )
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
+        if round_num == 1:
+            try:
+                logger.info("[spec-debug] prompt composition (chars): %s", [(m.get("role"), len(str(m.get("content") or ""))) for m in messages])
+            except Exception:
+                pass
         logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent} relevant_tools={sorted(_relevant_tools)[:50] if _relevant_tools else 'ALL'}")
         _routing_intentional_exclusions = set(disabled_tools)
         if (
@@ -27494,16 +27836,25 @@ async def stream_agent_loop(
                                 if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
                                     _streamed_tool_markup += _delta_text
                                     if not _streamed_tool_markup_complete(_streamed_tool_markup):
-                                        continue
-                                    _visible_markup_tail = strip_tool_blocks(
-                                        _streamed_tool_markup,
-                                        skip_fenced=True,
-                                    ).strip()
-                                    _streamed_tool_markup = ""
-                                    if not _visible_markup_tail:
-                                        continue
-                                    _delta_text = _visible_markup_tail
-                                    data["delta"] = _delta_text
+                                        if _streamed_tool_markup_starts(_streamed_tool_markup):
+                                            continue
+                                        # False alarm: a bare "<" (e.g. ``x < 2``) looked like
+                                        # a tag prefix, but the buffer can no longer become a
+                                        # tool tag. Release it as prose instead of holding the
+                                        # rest of the answer forever.
+                                        _delta_text = _streamed_tool_markup
+                                        _streamed_tool_markup = ""
+                                        data["delta"] = _delta_text
+                                    else:
+                                        _visible_markup_tail = strip_tool_blocks(
+                                            _streamed_tool_markup,
+                                            skip_fenced=True,
+                                        ).strip()
+                                        _streamed_tool_markup = ""
+                                        if not _visible_markup_tail:
+                                            continue
+                                        _delta_text = _visible_markup_tail
+                                        data["delta"] = _delta_text
                             full_response += _delta_text
                         if not _suppress_unavailable_web_delta:
                             _qwen_buffered_route = bool(
@@ -27590,7 +27941,11 @@ async def stream_agent_loop(
             ),
             active_document=active_document,
             last_user=_last_user,
-            offered_tool_names=(set(turn_contract.offered) if turn_contract is not None else set(_tool_names_sent)),
+            offered_tool_names=(
+                set(turn_contract.offered)
+                if turn_contract is not None and not _active_route_state.get("spec_offered")
+                else set(_tool_names_sent)
+            ),
             recover_unoffered_tool_names=_recover_unoffered_local_tools,
             passthrough_tool_names={
                 schema["function"]["name"]
@@ -32154,6 +32509,29 @@ async def stream_agent_loop(
         budget_hit = False
         local_network_budget_hit = False
         local_inspection_budget_hit = False
+        if _active_route_state.get("spec_offered") and os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() == "strict" and tool_blocks and not used_native and _is_api_model:
+            # Ajax Spec with a native-API model: a round without a native call
+            # carries only harness-synthesized recovery blocks. Drop them all.
+            logger.info("[spec-harness] dropped %d synthesized tool block(s) (no native call): %s",
+                        len(tool_blocks), [b.tool_type for b in tool_blocks])
+            tool_blocks = []; converted_calls = []
+        if (
+            _active_route_state.get("spec_offered") and os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() == "strict" and used_native and tool_blocks
+            and len(converted_calls) == len(tool_blocks)
+        ):
+            # Ajax Spec: only the model's own native calls run; harness-
+            # synthesized recovery blocks (no native call) are dropped. When
+            # converted_calls was reset (singleton collapse) keep every block.
+            _spec_keep = [
+                i for i in range(len(tool_blocks))
+                if i < len(converted_calls) and converted_calls[i] is not None
+            ]
+            if len(_spec_keep) != len(tool_blocks):
+                logger.info("[spec-harness] dropped %d synthesized tool block(s): %s",
+                            len(tool_blocks) - len(_spec_keep),
+                            [tool_blocks[i].tool_type for i in range(len(tool_blocks)) if i not in _spec_keep])
+                tool_blocks = [tool_blocks[i] for i in _spec_keep]
+                converted_calls = [converted_calls[i] for i in _spec_keep]
         for i, block in enumerate(tool_blocks):
             native_call = converted_calls[i] if i < len(converted_calls) else None
             tool_call_id = _resolved_tool_call_id(
@@ -33448,7 +33826,8 @@ async def stream_agent_loop(
                                 ),
                             }
                         if (
-                            (_qwen38_tool_router or _full_inventory_mode) and (_pure_web_turn or _contextual_public_web_followup)
+                            not (_active_route_state.get("spec_offered") and os.getenv("ODYSSEUS_SPEC_MODE", "strict").strip().lower() == "strict" and block.tool_type == "private_browser")
+                            and (_qwen38_tool_router or _full_inventory_mode) and (_pure_web_turn or _contextual_public_web_followup)
                             and not _artifact_creation_requested
                             and (block.tool_type == "web_search" or _web_execution_budget.searches)
                             and not _web_execution_budget.admit(

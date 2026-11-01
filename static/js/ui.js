@@ -8,7 +8,7 @@ import themeModule from './theme.js?v=20260911organsrain1';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
-import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import { nextToolWindowZ, topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -31,9 +31,43 @@ function _targetEl(target) {
   return target && target.nodeType === 1 ? target : target?.parentElement || null;
 }
 
+function _editorPanelVisible() {
+  if (!document.body || !document.body.classList.contains('ge-editor-open')) return false;
+  const sel = '.ge-adj-popup, .ge-fx-popup, .ge-fx-menu, .ge-transform-popup, .ge-filter-overlay, .ge-history-panel';
+  return [...document.querySelectorAll(sel)].some((candidate) => {
+    if (!document.contains(candidate)) return false;
+    const style = getComputedStyle(candidate);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = candidate.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+}
+
 function _positionToastForOpenPanel(el) {
   if (!el) return;
+  // The Free Transform hint is pinned by CSS to one fixed spot under the
+  // canvas; letting the panel rules move it made it hop between the top-right
+  // corner and the bottom banner depending on which panel happened to be open.
+  if (el.classList.contains('toast-transform-hint')) {
+    el.classList.remove('toast-editor-bottom', 'toast-panel-offset');
+    el.style.left = '';
+    el.style.right = '';
+    el.style.maxWidth = '';
+    return;
+  }
   const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  el.classList.remove('toast-editor-bottom');
+  // In the editor, a floating panel (Adjust/Develop, FX, Transform, filter
+  // modal, History) is anchored to the top/right; drop the toast to the
+  // bottom-centre so it can never cover a control (EVAL: "never over an
+  // active panel"). On phones the CSS already anchors it at the bottom.
+  if (_editorPanelVisible()) {
+    el.style.left = '';
+    el.style.right = '';
+    el.style.maxWidth = '';
+    el.classList.add('toast-editor-bottom');
+    return;
+  }
   const panel = [...document.querySelectorAll('.notes-pane')]
     .filter((candidate) => {
       if (!document.contains(candidate)) return false;
@@ -174,7 +208,9 @@ function _closeHoveredWindow() {
 function _spaceIsBlocked(e, surface) {
   const target = _targetEl(e.target);
   if (!target) return false;
-  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  // Space must always type in a field, even when that field lives in a fixed
+  // overlay outside the hovered surface (e.g. the editor's on-canvas text box).
+  if (_isTextEditingTarget(target)) return true;
   const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
   return !!(blocked && (!surface || surface.contains(blocked)));
 }
@@ -221,6 +257,10 @@ function _initHoverCardSpaceToggle() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
+    // The image editor owns Space (hold to pan, otherwise text fields type a
+    // space). A card/window toggle must never fire while it is open, or the
+    // hovered gallery card can click itself closed underneath the editor.
+    if (document.body?.classList.contains('ge-editor-open')) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
       if (_spaceIsBlocked(e, hoveredToggleCard)) return;
       e.preventDefault();
@@ -342,7 +382,7 @@ export function showToast(msg, durationOrOpts) {
   _wireToastSwipe(toastEl);
   toastEl.textContent = '';
   toastEl.classList.remove('error');
-  toastEl.classList.remove('toast-ai-reply-progress', 'toast-ai-reply-result', 'toast-sending', 'toast-message-sent');
+  toastEl.classList.remove('toast-ai-reply-progress', 'toast-ai-reply-result', 'toast-sending', 'toast-message-sent', 'toast-transform-hint');
 
   let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null, toastClass = null, aiReplyProgress = false, aiReplyResult = false;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
@@ -357,6 +397,14 @@ export function showToast(msg, durationOrOpts) {
     aiReplyResult = !!durationOrOpts.aiReplyResult;
   } else if (typeof durationOrOpts === 'number') {
     duration = durationOrOpts;
+  }
+  // While the editor is open, cap every toast so it auto-dismisses within
+  // ~2.5s and can never linger over the canvas or a panel (EVAL: "auto-dismiss
+  // in 2.5s"). Longer informational durations (persist warnings etc.) are
+  // still readable but do not pile up.
+  if (typeof document !== 'undefined' && document.body
+      && document.body.classList.contains('ge-editor-open')) {
+    duration = Math.min(duration, 2500);
   }
   if (aiReplyProgress) toastEl.classList.add('toast-ai-reply-progress');
   if (aiReplyResult) toastEl.classList.add('toast-ai-reply-result');
@@ -473,6 +521,7 @@ export function showError(msg) {
   _wireToastSwipe(toastEl);
   toastEl.textContent = '';
   toastEl.classList.add('error');
+  toastEl.classList.remove('toast-transform-hint');
   toastEl.style.pointerEvents = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
@@ -744,10 +793,12 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
+    overlay.style.zIndex = String(topPortalZ() + 1000);
 
     function cleanup(result) {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
+      overlay.style.zIndex = '';
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       altBtn.removeEventListener('click', onAlt);

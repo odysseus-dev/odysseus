@@ -240,11 +240,13 @@ def _artifact_match_is_callable(instruction: str, match: re.Match[str], path: st
 
 
 def _artifact_match_is_email_host(instruction: str, match: re.Match[str]) -> bool:
-    """Reject the domain portion of an email address as an output path."""
+    """Reject either dotted portion of an email address as an output path."""
 
     start = match.start("path")
     prefix = instruction[max(0, start - 80):start]
-    return bool(re.search(r"[A-Za-z0-9_.+-]+@$", prefix))
+    return instruction[match.end("path"):].startswith("@") or bool(
+        re.search(r"[A-Za-z0-9_.+-]+@$", prefix)
+    )
 
 
 def _workspace_path_identity(value: str) -> str:

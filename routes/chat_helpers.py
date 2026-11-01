@@ -551,6 +551,7 @@ async def auto_name_session(session_manager, sess):
     try:
         from src.llm_core import llm_call_async
         from src.task_endpoint import resolve_task_endpoint
+        from src.utility_effort import effort_for_call
 
         # Find first user message
         first_msg = ""
@@ -568,8 +569,72 @@ async def auto_name_session(session_manager, sess):
         if not first_msg:
             return
 
+        from src.owner_identity import is_request_sentinel_owner
+        owner = getattr(sess, "owner", None)
+        invalid_owner = (
+            not isinstance(owner, str) or not owner.strip()
+            or owner != owner.strip() or is_request_sentinel_owner(owner)
+        )
+        if invalid_owner:
+            session_manager.update_session_name(sess.id, fallback_session_title(first_msg))
+            return
+
         endpoint_url = str(getattr(sess, "endpoint_url", "") or "")
         model_name = str(getattr(sess, "model", "") or "")
+
+        # The spec ("Ajax") model names its own chats from the user's first
+        # prompt. This function only runs after the first response stream has
+        # settled (auto_name_session_after_stream), so titling does not
+        # contend with the visible answer. Thinking is disabled and the
+        # budget kept small so the model returns a bare title.
+        try:
+            from src.model_profiles import uses_odysseus_progressive_thinking
+            _is_spec_model = bool(model_name) and uses_odysseus_progressive_thinking(model_name)
+        except Exception:
+            _is_spec_model = False
+        if _is_spec_model and endpoint_url:
+            try:
+                from src.database import SessionLocal
+                from src.endpoint_resolver import (build_chat_url, build_headers,
+                    resolve_endpoint_runtime, resolve_owner_registered_endpoint)
+                from src.owner_identity import auth_disabled
+
+                owner = getattr(sess, "owner", None)
+                if not owner and not auth_disabled():
+                    raise ValueError("Session has no owner")
+                db = SessionLocal()
+                try:
+                    endpoint = resolve_owner_registered_endpoint(db, endpoint_url, owner)
+                    base, key = resolve_endpoint_runtime(endpoint, owner=owner)
+                    title_url = build_chat_url(base)
+                    title_headers = build_headers(key, base)
+                finally:
+                    db.close()
+                title = await llm_call_async(
+                    title_url,
+                    model_name,
+                    [
+                        {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation \u2014 just the title."},
+                        {"role": "user", "content": first_msg},
+                    ],
+                    temperature=0.3,
+                    max_tokens=32,
+                    headers=title_headers,
+                    timeout=20,
+                    thinking_mode="off",
+                )
+            except Exception as e:
+                logger.warning("[auto-name] spec title call failed for %s: %s", sess.id, e)
+                title = ""
+            title = str(title or "").strip().strip('"\'').strip()
+            from src.text_helpers import strip_think
+            title = strip_think(title, prose=False, prompt_echo=False)
+            if not title or len(title) >= 80 or "\n" in title:
+                title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named spec session {sess.id}: {title}")
+            return
+
         if (
             "ttft" in model_name.lower()
             or re.search(r":18\d{3}\b", endpoint_url)
@@ -580,6 +645,14 @@ async def auto_name_session(session_manager, sess):
             return
 
         owner = getattr(sess, "owner", None)
+        from src.owner_identity import auth_disabled
+        if not owner and not auth_disabled():
+            title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named unowned session {sess.id} deterministically: {title}")
+            return
+
+        from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
             sess.endpoint_url, sess.model, sess.headers, owner=owner
         )
@@ -587,23 +660,64 @@ async def auto_name_session(session_manager, sess):
             logger.debug("[auto-name] No model provided, skipping")
             return
 
+        sess_url = getattr(sess, "endpoint_url", None)
+        if t_url and sess_url and t_url == sess_url:
+            from src.database import SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url,
+                build_headers,
+                resolve_endpoint,
+                resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
+            db = SessionLocal()
+            try:
+                endpoint = resolve_owner_registered_endpoint(db, t_url, owner)
+                base, key = resolve_endpoint_runtime(endpoint, owner=owner)
+                t_url = build_chat_url(base)
+                t_headers = build_headers(key, base)
+            except Exception as e:
+                logger.debug("[auto-name] session fallback endpoint %s unauthorized for %s: %s", t_url, owner, e)
+                t_url, t_model, t_headers = None, None, None
+                for prefix in ("utility", "default"):
+                    try:
+                        u, m, h = resolve_endpoint(prefix, owner=owner)
+                        if u and m:
+                            t_url, t_model, t_headers = u, m, h
+                            break
+                    except Exception:
+                        pass
+            finally:
+                db.close()
+
+        if not t_url or not t_model:
+            title = fallback_session_title(first_msg)
+            session_manager.update_session_name(sess.id, title)
+            logger.info(f"Auto-named session {sess.id} deterministically (no authorized model endpoint): {title}")
+            return
+
         # max_tokens big enough that reasoning models (Minimax M2,
         # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
         # plus the actual title — 200 used to clip them mid-reasoning
         # so strip_think left an empty string and no rename happened.
         # Timeout matches: 60s gives slow local reasoners room to finish.
-        title = await llm_call_async(
-            t_url,
-            t_model,
-            [
-                {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
-                {"role": "user", "content": first_msg},
-            ],
-            temperature=0.3,
-            max_tokens=64,
-            headers=t_headers,
-            timeout=15,
-        )
+        try:
+            title = await llm_call_async(
+                t_url,
+                t_model,
+                [
+                    {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
+                    {"role": "user", "content": first_msg},
+                ],
+                temperature=0.3,
+                max_tokens=64,
+                headers=t_headers,
+                timeout=15,
+                reasoning_effort=effort_for_call(t_url, t_model, owner, sess),
+            )
+        except Exception as e:
+            logger.warning("[auto-name] non-spec title call failed for %s: %s", sess.id, e)
+            title = ""
 
         title = title.strip().strip('"\'').strip()
         # Strip <think>/<thinking> blocks (closed, dangling, or stray tags)
@@ -1010,6 +1124,7 @@ async def build_chat_context(
     chat_processor,
     message: str,
     session_id: str,
+    selected_notes_context: str | None = None,
     preset_id=None,
     att_ids: list = None,
     use_web=None,
@@ -1181,6 +1296,23 @@ async def build_chat_context(
     # Inject pre-fetched search context (compare mode)
     if search_context and allow_tool_preprocessing and not casual_low_signal:
         preface.append(untrusted_context_message("prefetched search context", search_context))
+
+    # Inject selected notes as context
+    if selected_notes_context:
+        selected_notes_context = (
+            "The following selected notes and todos are reference context explicitly chosen "
+            "by the user. Use them directly when relevant to the user's request. Do not "
+            "ask for permission to use this context, and do not call note-management "
+            "tools just to retrieve the same notes; use those tools only for a requested "
+            "change or when this context is insufficient.\n\n"
+            + selected_notes_context
+        )
+        preface.append(
+            untrusted_context_message(
+                "Selected notes and todos",
+                selected_notes_context,
+            )
+        )
 
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:

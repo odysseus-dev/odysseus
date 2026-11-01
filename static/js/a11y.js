@@ -18,7 +18,13 @@
   'use strict';
 
   // Click-as-button rows we want reachable by keyboard.
-  var ROW_SELECTOR = ['#sidebar .list-item', '#user-bar-profile'].join(',');
+  var ROW_SELECTOR = [
+    '#sidebar .list-item',
+    '#user-bar-profile',
+    '.sidebar-brand',
+    '.export-dropdown-item',
+    '.dropdown-item'
+  ].join(',');
 
   // Native interactive descendants. If a row contains one of these we must
   // NOT give the row role="button" — a button inside a button is invalid
@@ -53,6 +59,31 @@
 
   function enhanceAll(root) {
     (root || document).querySelectorAll(ROW_SELECTOR).forEach(enhanceRow);
+  }
+
+  // Settings form labels are written as <label class="settings-label">Text</label>
+  // with the control as a sibling/descendant, but are not associated via for/id,
+  // so screen readers cannot name the inputs. Associate each label with its
+  // control when the mapping is unambiguous (a single form control per row).
+  var settingsLabelSeq = 0;
+  function associateSettingsLabels(root) {
+    (root || document).querySelectorAll('.settings-label').forEach(function (label) {
+      if (label.hasAttribute('for')) return;
+      var control = null;
+      var sib = label.nextElementSibling;
+      if (sib && /^(INPUT|SELECT|TEXTAREA)$/.test(sib.tagName)) {
+        control = sib;
+      } else {
+        var row = label.closest('.settings-row') || label.parentElement;
+        if (row) {
+          var controls = row.querySelectorAll('input,select,textarea');
+          if (controls.length === 1) control = controls[0];
+        }
+      }
+      if (!control || control.closest('label')) return;
+      if (!control.id) control.id = 'a11y-settings-' + (++settingsLabelSeq);
+      if (!control.getAttribute('aria-label')) label.setAttribute('for', control.id);
+    });
   }
 
   // ---- Modal dialogs -----------------------------------------------------
@@ -118,9 +149,38 @@
     el.click();
   });
 
+  // Disclosure buttons: keep aria-expanded in sync with their controlled
+  // menu/dropdown, regardless of which module toggles its visibility.
+  var DISCLOSURE_MAP = [
+    { button: 'session-sort-btn', menu: 'session-sort-dropdown' },
+    { button: 'export-dl-btn', menu: 'export-dropdown-menu' },
+    { button: 'overflow-plus-btn', menu: 'overflow-menu' }
+  ];
+
+  function syncDisclosures() {
+    DISCLOSURE_MAP.forEach(function (d) {
+      var btn = document.getElementById(d.button);
+      if (!btn) return;
+      var menu = document.getElementById(d.menu);
+      var open = false;
+      if (menu) {
+        var cs = window.getComputedStyle(menu);
+        open = cs.display !== 'none' && menu.offsetWidth > 0;
+      }
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  }
+
   function init() {
     enhanceAll(document);
     enhanceModals(document);
+    associateSettingsLabels(document);
+
+    // Any click (the dropdown toggles, outside-click closes, etc.) may change
+    // a disclosure's open state; re-sync on the next tick.
+    document.addEventListener('click', function () {
+      if (window.setTimeout) setTimeout(syncDisclosures, 0);
+    });
 
     // Sidebar content is re-rendered as the user navigates (session lists,
     // tool sub-rows, etc.). Watch for new rows and enhance them too.
