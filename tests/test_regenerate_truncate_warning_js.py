@@ -228,6 +228,7 @@ def _scenario_script(func_call_js: str, roles: list, target_index: int, confirm_
         selectedSessions,
         sendClicks,
         sentAttachments,
+        pendingAttachments: chat._pendingRegenAttachmentIds(),
       }}));
       process.exit(0);
     """
@@ -509,3 +510,32 @@ def test_edit_stops_when_the_server_refuses_the_cut():
     assert result["truncateCalled"] is True
     assert result["sendClicks"] == []
 
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_edit_fork_choice_keeps_original_attachments():
+    roles = ["user", "ai", "user", "ai", "user", "ai"]
+    script = _scenario_script("chat.editUserMessage(target)", roles, 2, "alternate", _EDIT_AND_SEND, file_ids={2: "file-abc"})
+    result = _run_node(script)
+    _assert_forked_instead(result, keep_count=2, sent_text="edited question")
+    assert result["sentAttachments"] == [["file-abc"]]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_edit_destructive_resend_keeps_original_attachments():
+    roles = ["user", "ai", "user", "ai"]
+    script = _scenario_script("chat.editUserMessage(target)", roles, 2, True, _EDIT_AND_SEND, file_ids={2: "file-abc"})
+    result = _run_node(script)
+    assert result["truncateCalled"] is True
+    assert result["sentAttachments"] == [["file-abc"]]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_refused_regenerate_does_not_leak_queued_attachments():
+    roles = ["user", "ai"]
+    script = _scenario_script("chat.regenerateFrom(target)", roles, 1, True, db_ids=True,
+                              refuse_truncate=True, file_ids={0: "file-abc"})
+    result = _run_node(script)
+    assert result["truncateCalled"] is True
+    assert result["sendClicks"] == []
+    assert result["pendingAttachments"] is None
