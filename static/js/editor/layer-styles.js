@@ -6,7 +6,7 @@ const size = () => number('size', 'Size', 8, 0, 100);
 const angle = () => number('angle', 'Angle', 120, -180, 180, 'deg');
 export const LAYER_STYLES = {
   'bevel-emboss': { label: 'Bevel & Emboss', controls: [size(), angle(), number('depth', 'Depth', 100, 0, 300, '%'), color('highlight', 'Highlight', '#ffffff'), color('color', 'Shadow', '#000000'), opacity()] },
-  'inner-shadow': { label: 'Inner Shadow', controls: [color('color', 'Color', '#000000'), opacity(), size(), angle(), number('distance', 'Distance', 6, 0, 100)] },
+  'inner-shadow': { label: 'Inner Shadow', controls: [color('color', 'Color', '#000000'), opacity(), size(), angle(), number('distance', 'Distance', 6, 0, 300)] },
   'inner-glow': { label: 'Inner Glow', controls: [color('color', 'Color', '#ffffff'), opacity(), size()] },
   satin: { label: 'Satin', controls: [color('color', 'Color', '#000000'), opacity(), size(), angle(), number('distance', 'Distance', 12, 0, 100)] },
   'gradient-overlay': { label: 'Gradient Overlay', controls: [color('color', 'Start', '#e06c75'), color('endColor', 'End', '#ffffff'), opacity(), angle(), number('scale', 'Scale', 100, 10, 300, '%')] },
@@ -32,6 +32,13 @@ function surface(width, height) {
 }
 
 export function renderDropShadow(source, params) {
+  if (params.inside) {
+    return renderLayerStyle(source, 'inner-shadow', {
+      color: params.color, opacity: params.opacity * 100, size: params.blur / 2,
+      distance: Math.hypot(params.x, params.y),
+      angle: Math.atan2(-params.y, params.x) * 180 / Math.PI,
+    });
+  }
   // Tint alpha first so RGB content cannot leak into the shadow. Draw only
   // this silhouette; compositing the source again thickens translucent edges.
   const silhouette = surface(source.width, source.height);

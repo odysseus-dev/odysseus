@@ -57,8 +57,11 @@ function wireToolSliders(prefix, fields) {
     // softness rises (the CSS already sets the radial gradient — we
     // just tween the inner solid radius to communicate the falloff).
     if (softPrev) {
-      const innerStop = Math.max(0, 60 - state[fields.softness] * 0.55);
-      softPrev.style.background = `radial-gradient(circle, var(--fg) 0%, var(--fg) ${innerStop}%, transparent 90%)`;
+      const amount = state[fields.softness];
+      const innerStop = Math.max(0, 60 - amount * 0.55);
+      softPrev.style.background = amount > 300
+        ? `radial-gradient(circle, var(--fg), color-mix(in srgb, var(--fg) ${Math.round(100 * 0.5 ** (amount / 300))}%, transparent) 50%, transparent 100%)`
+        : `radial-gradient(circle, var(--fg) 0%, var(--fg) ${innerStop}%, transparent 90%)`;
     }
   });
 }

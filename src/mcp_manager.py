@@ -770,8 +770,11 @@ class McpManager:
                     qualified.add(f"mcp__{server_id}__{tool['name']}")
         return disabled_map, qualified
 
-    def is_builtin(self, server_id: str) -> bool:
+    @staticmethod
+    def is_builtin(server_id: str) -> bool:
         """Check if a server is a built-in (auto-registered) server."""
+        if not isinstance(server_id, str):
+            return False
         return server_id.startswith("builtin_") or server_id in {
             "image_gen",
             "memory",
