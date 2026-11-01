@@ -29,6 +29,11 @@ export function saveImagePreferences(patch) {
     invalidateSettings();
     if (response.status === 403) {
       const userEntries = Object.entries(patch).filter(([k]) => USER_PREFERENCE_KEYS.includes(k));
+      if (userEntries.length === 0) {
+        const err = new Error('Admin access is required to change these settings.');
+        err.status = 403;
+        throw err;
+      }
       for (const [key, value] of userEntries) {
         const prefRes = await fetch(`/api/prefs/${encodeURIComponent(key)}`, {
           method: 'PUT', credentials: 'same-origin',
@@ -45,13 +50,31 @@ export function saveImagePreferences(patch) {
         ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
         : { ok: true, status: 200, json: async () => ({ ok: true }), text: async () => '{"ok":true}' };
     } else if (response.ok) {
-      await Promise.all(USER_PREFERENCE_KEYS.map(key =>
-        fetch(`/api/prefs/${encodeURIComponent(key)}`, {
-          method: 'PUT', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: null }),
-        }).catch(() => null)
-      ));
+      const clearResults = await Promise.all(USER_PREFERENCE_KEYS.map(async key => {
+        try {
+          const res = await fetch(`/api/prefs/${encodeURIComponent(key)}`, {
+            method: 'PUT', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: null }),
+          });
+          if (!res.ok) {
+            const err = new Error(await res.text().catch(() => `HTTP ${res.status}`));
+            err.status = res.status;
+            return { ok: false, error: err };
+          }
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err };
+        }
+      }));
+      const failure = clearResults.find(r => !r.ok);
+      if (failure) {
+        invalidateSettings();
+        const err = new Error(failure.error?.message || 'Could not clear personal preferences');
+        err.status = failure.error?.status || 500;
+        err.cause = failure.error;
+        throw err;
+      }
     } else {
       throw new Error('Could not save image settings');
     }

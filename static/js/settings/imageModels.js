@@ -45,12 +45,16 @@ export async function initImageSettings() {
       }
     }
   } catch (e) { console.warn('Failed to load models for image settings', e); }
+  let currentEnabled = enabledToggle ? enabledToggle.checked : false;
   try {
     const settings = await readImagePreferences();
-    if (settings.image_model) modelSel.value = settings.image_model;
-    if (editModelSel) editModelSel.value = settings.image_edit_model || '';
-    if (settings.image_quality) qualSel.value = settings.image_quality;
-    if (enabledToggle) enabledToggle.checked = settings.image_gen_enabled === true;
+    if (modelSel && 'image_model' in settings) modelSel.value = settings.image_model || '';
+    if (editModelSel && 'image_edit_model' in settings) editModelSel.value = settings.image_edit_model || '';
+    if (qualSel && 'image_quality' in settings) qualSel.value = settings.image_quality || 'medium';
+    if (enabledToggle) {
+      enabledToggle.checked = settings.image_gen_enabled === true;
+      currentEnabled = enabledToggle.checked;
+    }
   } catch (e) { console.warn('Failed to load settings', e); }
 
   function syncImgDisabled() {
@@ -61,21 +65,89 @@ export async function initImageSettings() {
   }
   syncImgDisabled();
 
-  async function saveSettings() {
+  function checkIsAdmin() {
+    return typeof window !== 'undefined' && !!window._isAdmin;
+  }
+
+  function applyAdminToggleState() {
+    if (!enabledToggle) return;
+    const admin = checkIsAdmin();
+    if (!admin) {
+      enabledToggle.disabled = true;
+      const adminTitle = 'Admin access is required to change image generation availability.';
+      enabledToggle.title = adminTitle;
+      if (enabledToggle.parentElement) enabledToggle.parentElement.title = adminTitle;
+    } else {
+      enabledToggle.disabled = false;
+      const adminTitle = 'Enable or disable image generation globally';
+      enabledToggle.title = adminTitle;
+      if (enabledToggle.parentElement) enabledToggle.parentElement.title = adminTitle;
+    }
+  }
+  applyAdminToggleState();
+
+  async function saveModelPreferences() {
     try {
-      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_edit_model: editModelSel?.value || '', image_quality: qualSel.value });
+      const res = await _postSettings({
+        image_model: modelSel ? modelSel.value : '',
+        image_edit_model: editModelSel?.value || '',
+        image_quality: qualSel ? qualSel.value : 'medium',
+      });
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) {
+      msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
+      msg.style.color = 'var(--red)';
+    }
   }
-  modelSel.addEventListener('change', saveSettings);
-  editModelSel?.addEventListener('change', saveSettings);
+
+  async function saveToggle() {
+    if (!checkIsAdmin()) {
+      if (enabledToggle) enabledToggle.checked = currentEnabled;
+      syncImgDisabled();
+      msg.textContent = 'Admin access is required to change these settings.';
+      msg.style.color = 'var(--red)';
+      return;
+    }
+    try {
+      const res = await _postSettings({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false });
+      if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+      if (enabledToggle) currentEnabled = enabledToggle.checked;
+      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
+    } catch (e) {
+      if (enabledToggle) enabledToggle.checked = currentEnabled;
+      syncImgDisabled();
+      msg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save';
+      msg.style.color = 'var(--red)';
+    }
+  }
+
+  if (modelSel) modelSel.addEventListener('change', saveModelPreferences);
+  if (editModelSel) editModelSel.addEventListener('change', saveModelPreferences);
+  if (qualSel) qualSel.addEventListener('change', saveModelPreferences);
+  if (enabledToggle) {
+    enabledToggle.addEventListener('change', async function() {
+      if (!checkIsAdmin()) {
+        enabledToggle.checked = currentEnabled;
+        syncImgDisabled();
+        msg.textContent = 'Admin access is required to change these settings.';
+        msg.style.color = 'var(--red)';
+        return;
+      }
+      syncImgDisabled();
+      await saveToggle();
+    });
+  }
+
   if (preferencesListener) window.removeEventListener('image-preferences-changed', preferencesListener);
   preferencesListener = event => {
-    if ('image_model' in event.detail) modelSel.value = event.detail.image_model || '';
+    if ('image_model' in event.detail && modelSel) modelSel.value = event.detail.image_model || '';
     if (editModelSel && 'image_edit_model' in event.detail) editModelSel.value = event.detail.image_edit_model || '';
+    if ('image_gen_enabled' in event.detail && enabledToggle) {
+      enabledToggle.checked = event.detail.image_gen_enabled === true;
+      currentEnabled = enabledToggle.checked;
+      syncImgDisabled();
+    }
   };
   window.addEventListener('image-preferences-changed', preferencesListener);
-  qualSel.addEventListener('change', saveSettings);
-  if (enabledToggle) enabledToggle.addEventListener('change', function() { syncImgDisabled(); saveSettings(); });
 }

@@ -237,3 +237,229 @@ def test_image_preferences_js_policy_and_non_admin_fallback():
     assert data["loaded"]["image_edit_model"] == "global-edit"
     assert data["loaded"]["image_quality"] == "low"
 
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_admin_cleanup_failure_and_rejection_surfaced():
+    """Verify saveImagePreferences surfaces HTTP failures and rejected network requests during admin cleanup."""
+    js = """
+    globalThis.window = { dispatchEvent: () => {} };
+    globalThis.CustomEvent = class CustomEvent {};
+
+    const { saveImagePreferences } = await import('./static/js/settings/imagePreferences.js');
+
+    const results = {};
+
+    // 1. HTTP 500 failure during admin preference cleanup
+    globalThis.fetch = async (url) => {
+      if (url === '/api/auth/settings') {
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        return { status: 500, ok: false, text: async () => 'Database lock error' };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    try {
+      await saveImagePreferences({ image_model: 'admin-model', image_gen_enabled: true });
+      results.http500Threw = false;
+    } catch (err) {
+      results.http500Threw = true;
+      results.http500Status = err.status;
+    }
+
+    // 2. Network rejection during admin preference cleanup
+    globalThis.fetch = async (url) => {
+      if (url === '/api/auth/settings') {
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        throw new Error('Network offline');
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    try {
+      await saveImagePreferences({ image_model: 'admin-model', image_gen_enabled: true });
+      results.networkRejectThrew = false;
+    } catch (err) {
+      results.networkRejectThrew = true;
+      results.networkRejectStatus = err.status;
+    }
+
+    // 3. Successful cleanup
+    const clearedKeys = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      if (url === '/api/auth/settings') {
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        clearedKeys.push({ url, body: JSON.parse(opts.body) });
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+    const okRes = await saveImagePreferences({ image_model: 'admin-model', image_gen_enabled: true });
+    results.okResStatus = okRes.status;
+    results.clearedKeysCount = clearedKeys.length;
+
+    console.log(JSON.stringify(results));
+    """
+    proc = subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True)
+    import json
+    data = json.loads(proc.stdout)
+    assert data["http500Threw"] is True
+    assert data["http500Status"] == 500
+    assert data["networkRejectThrew"] is True
+    assert data["networkRejectStatus"] == 500
+    assert data["okResStatus"] == 200
+    assert data["clearedKeysCount"] == 3
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_non_admin_toggle_rejection_and_ui_behavior():
+    """Verify non-admin cannot change image_gen_enabled via API or UI, and receives unambiguous feedback."""
+    js = """
+    const { saveImagePreferences } = await import('./static/js/settings/imagePreferences.js');
+
+    const results = {};
+
+    // 1. Direct call to saveImagePreferences with only non-admin excluded toggle
+    globalThis.window = { dispatchEvent: () => {} };
+    globalThis.CustomEvent = class CustomEvent {};
+    globalThis.fetch = async (url) => {
+      if (url === '/api/auth/settings') return { status: 403, ok: false, text: async () => 'Forbidden' };
+      throw new Error('Unexpected URL: ' + url);
+    };
+    try {
+      await saveImagePreferences({ image_gen_enabled: true });
+      results.toggleOnlyThrew = false;
+    } catch (err) {
+      results.toggleOnlyThrew = true;
+      results.toggleOnlyStatus = err.status;
+    }
+
+    // 2. Simulated UI interaction in imageModels.js for non-admin
+    const elements = {};
+    function makeElement(id, tag = 'div') {
+      const listeners = {};
+      const el = {
+        id, tagName: tag.toUpperCase(),
+        value: '', checked: false, disabled: false, title: '',
+        style: {},
+        parentElement: { title: '', style: {} },
+        closest: () => ({ style: {} }),
+        addEventListener: (evt, cb) => { listeners[evt] = listeners[evt] || []; listeners[evt].push(cb); },
+        dispatchEvent: (evt) => Promise.all((listeners[evt] || []).map(cb => cb())),
+        length: 0, appendChild: () => {}, remove: () => {}
+      };
+      elements[id] = el;
+      return el;
+    }
+
+    const modelSel = makeElement('set-imgModelSelect', 'select');
+    const editModelSel = makeElement('set-imgEditModelSelect', 'select');
+    const qualSel = makeElement('set-imgQualitySelect', 'select');
+    const msg = makeElement('set-imgSettingsMsg', 'span');
+    const enabledToggle = makeElement('set-imgEnabledToggle', 'input');
+
+    globalThis.document = {
+      getElementById: (id) => elements[id] || null,
+      createElement: (tag) => makeElement('anon-' + Math.random(), tag),
+    };
+    globalThis.window._isAdmin = false;
+    globalThis.window.addEventListener = () => {};
+    globalThis.window.removeEventListener = () => {};
+
+    const apiCalls = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      apiCalls.push({ url, method: opts.method || 'GET' });
+      if (url === '/api/model-endpoints') return { ok: true, json: async () => [] };
+      if (url === '/api/prefs') return { ok: true, json: async () => ({}) };
+      if (url === '/api/auth/settings') {
+        if (opts.method === 'POST') return { status: 403, ok: false, text: async () => 'Forbidden' };
+        return { ok: true, json: async () => ({ image_gen_enabled: true, image_model: 'global-model' }) };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+
+    const { initImageSettings } = await import('./static/js/settings/imageModels.js');
+    await initImageSettings();
+
+    // Check non-admin initial UI state
+    results.nonAdminToggleDisabled = enabledToggle.disabled;
+    results.nonAdminToggleTitle = enabledToggle.title;
+    results.nonAdminToggleChecked = enabledToggle.checked;
+
+    // Simulate non-admin attempting to toggle image generation
+    enabledToggle.checked = false; // user clicked switch to turn off
+    enabledToggle.dispatchEvent('change');
+    results.revertedChecked = enabledToggle.checked;
+    results.revertedMsgText = msg.textContent;
+    results.revertedMsgColor = msg.style.color;
+
+    // Simulate non-admin changing model preference
+    modelSel.value = 'user-selected-model';
+    await modelSel.dispatchEvent('change');
+    results.modelChangeMsg = msg.textContent;
+
+    // 3. Admin UI interaction in imageModels.js
+    globalThis.window._isAdmin = true;
+    const adminToggle = makeElement('set-imgEnabledToggle', 'input');
+    const adminMsg = makeElement('set-imgSettingsMsg', 'span');
+    elements['set-imgEnabledToggle'] = adminToggle;
+    elements['set-imgSettingsMsg'] = adminMsg;
+
+    let adminSavedToggle = null;
+    globalThis.fetch = async (url, opts = {}) => {
+      if (url === '/api/model-endpoints') return { ok: true, json: async () => [] };
+      if (url === '/api/prefs') return { ok: true, json: async () => ({}) };
+      if (url === '/api/auth/settings') {
+        if (opts.method === 'POST') {
+          const body = JSON.parse(opts.body);
+          adminSavedToggle = body.image_gen_enabled;
+          return { status: 200, ok: true, json: async () => ({ ok: true }) };
+        }
+        return { ok: true, json: async () => ({ image_gen_enabled: true, image_model: 'global-model' }) };
+      }
+      if (url.startsWith('/api/prefs/')) {
+        return { status: 200, ok: true, json: async () => ({ ok: true }) };
+      }
+      throw new Error('Unexpected URL: ' + url);
+    };
+
+    await initImageSettings();
+    results.adminToggleDisabled = adminToggle.disabled;
+    adminToggle.checked = false;
+    await adminToggle.dispatchEvent('change');
+    results.adminSavedToggle = adminSavedToggle;
+    results.adminMsg = adminMsg.textContent;
+
+    console.log(JSON.stringify(results));
+    """
+    proc = subprocess.run(["node", "--input-type=module", "-e", js], capture_output=True, text=True, check=True)
+    import json
+    data = json.loads(proc.stdout)
+
+    # 1. Non-admin toggle-only save threw 403
+    assert data["toggleOnlyThrew"] is True
+    assert data["toggleOnlyStatus"] == 403
+
+    # 2. Non-admin UI has disabled toggle and rejects changes with warning
+    assert data["nonAdminToggleDisabled"] is True
+    assert "Admin access is required" in data["nonAdminToggleTitle"]
+    assert data["nonAdminToggleChecked"] is True
+    assert data["revertedChecked"] is True
+    assert "Admin access is required" in data["revertedMsgText"]
+    assert data["revertedMsgColor"] == "var(--red)"
+
+    # 3. Non-admin model changes succeed
+    assert data["modelChangeMsg"] == "Saved"
+
+    # 4. Admin UI allows toggle changes and persists to auth settings
+    assert data["adminToggleDisabled"] is False
+    assert data["adminSavedToggle"] is False
+    assert data["adminMsg"] == "Saved"
+
+

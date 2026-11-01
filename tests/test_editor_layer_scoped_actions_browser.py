@@ -410,6 +410,7 @@ def test_ai_settings_escape_closes_only_the_dialog(page):
 def test_image_model_settings_sync_both_directions_and_survive_reopening(page):
     saved = {'image_model':'openai/gpt-5-image', 'image_edit_model':'', 'image_quality':'medium', 'image_gen_enabled':True}
     writes = []
+    user_prefs = {}
 
     def settings_api(route):
         if route.request.method == 'POST':
@@ -418,7 +419,22 @@ def test_image_model_settings_sync_both_directions_and_survive_reopening(page):
             saved.update(patch)
         route.fulfill(json=dict(saved))
 
+    def prefs_api(route):
+        url = route.request.url
+        if route.request.method == 'PUT':
+            key = url.split('/api/prefs/')[-1]
+            data = route.request.post_data_json or {}
+            val = data.get('value')
+            if val is None:
+                user_prefs.pop(key, None)
+            else:
+                user_prefs[key] = val
+            route.fulfill(status=200, json={'key': key, 'value': val})
+            return
+        route.fulfill(status=200, json=dict(user_prefs))
+
     page.route('**/api/auth/settings', settings_api)
+    page.route('**/api/prefs**', prefs_api)
     page.route('**/api/model-endpoints', lambda route: route.fulfill(json=[{
         'is_enabled':True, 'online':True, 'model_type':'llm',
         'models':['openai/gpt-5-image','openai/gpt-image-2'],
