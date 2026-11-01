@@ -262,7 +262,8 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("failure_kind") == "resource_identity_denied"
-    assert "sealed resource root" in (result.get("error") or "")
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 
 
@@ -292,7 +293,8 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("failure_kind") == "resource_identity_denied"
-    assert "sealed resource root" in (result.get("error") or "")
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 
 
@@ -356,7 +358,8 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("failure_kind") == "resource_identity_denied"
-    assert "sealed resource root" in (result.get("error") or "")
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 @pytest.mark.parametrize("filename", ["auth.json", "app.db", "settings.json"])
 def test_application_secrets_are_sensitive_paths(filename):

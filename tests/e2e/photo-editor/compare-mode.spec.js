@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor } = require('./helpers.js');
 
 async function mainCanvasHash(page) {
@@ -26,7 +27,7 @@ test('before compare is visual-only and toggles back to the edited document', as
   await expect.poll(async () => (await editorState(page)).documentRenderReady).toBe(true);
 
   const baselineHash = await mainCanvasHash(page);
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.2, y: 0.3 }, { x: 0.8, y: 0.7 });
   const editedState = await editorState(page);
   const editedHash = await mainCanvasHash(page);

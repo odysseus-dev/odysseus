@@ -3511,6 +3511,10 @@ def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
         'web_fetch': ({'url': 'https://example.com'}, 'read this page'),
         'web_search': ({'query': 'current AI news'}, 'search the web'),
         'youtube_tool': ({'action': 'metadata', 'video_url': 'https://youtube.com/watch?v=x'}, 'read YouTube metadata'),
+        'plan_edit': ({'prompt': 'make it black and white'}, 'make it black and white'),
+        'run_editor_command': ({'op': 'document.info'}, 'inspect the document'),
+        'get_editor_screenshot': ({}, 'take a screenshot of the editor'),
+        'ai_edit_image': ({'op': 'remove-bg'}, 'remove the background'),
     }
     schemas = {
         schema['function']['name']: schema
@@ -3537,11 +3541,64 @@ def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
                     }
                 else {'image_editing'} if name == 'edit_image'
                 else {'image_generation'} if name == 'generate_image'
+                else {'photo_editor'} if name in {
+                    'plan_edit', 'run_editor_command', 'get_editor_screenshot', 'ai_edit_image',
+                }
                 else frozenset()
             ),
             contract_required_tools={name},
         )
         assert decision.allowed, f'{name}: {decision.reason}'
+
+
+def test_photo_editor_tools_require_explicit_turn_family_authorization():
+    # Positive: permitted photo editor workflow with turn authorization
+    for tool, args, prompt in (
+        ('run_editor_command', {'op': 'document.info'}, 'inspect the document'),
+        ('run_editor_command', {'op': 'adjustments.apply', 'params': {'type': 'brightness-contrast'}}, 'make it brighter'),
+        ('ai_edit_image', {'op': 'remove-bg'}, 'remove background'),
+    ):
+        allowed = evaluate_preview_call(
+            tool, args, prompt,
+            turn_authorized_families={'photo_editor'},
+        )
+        assert allowed.allowed, f"Expected {tool} to be allowed with photo_editor turn authority: {allowed.reason}"
+
+    # Negative: unauthorized preview (unauthorized family, empty families, or cross-family) fails closed
+    for unauth_families in (frozenset(), {'notes'}, {'email'}, {'calendar'}, {'search_browser'}):
+        denied_info = evaluate_preview_call(
+            'run_editor_command', {'op': 'document.info'}, 'inspect the document',
+            turn_authorized_families=unauth_families,
+        )
+        assert not denied_info.allowed
+        assert denied_info.reason == 'write_family_not_authorized'
+
+        denied_edit = evaluate_preview_call(
+            'run_editor_command', {'op': 'adjustments.apply', 'params': {'type': 'brightness-contrast'}},
+            'make it brighter',
+            turn_authorized_families=unauth_families,
+        )
+        assert not denied_edit.allowed
+        assert denied_edit.reason == 'write_family_not_authorized'
+
+        denied_ai = evaluate_preview_call(
+            'ai_edit_image', {'op': 'remove-bg'}, 'remove background',
+            turn_authorized_families=unauth_families,
+        )
+        assert not denied_ai.allowed
+        assert denied_ai.reason == 'write_family_not_authorized'
+
+    for prompt in ('inspect the document', "don't edit the image"):
+        denied = evaluate_preview_call(
+            'run_editor_command', {'op': 'adjustments.apply', 'params': {'type': 'brightness-contrast'}},
+            prompt, turn_authorized_families={'photo_editor'},
+        )
+        assert not denied.allowed
+        assert denied.reason == 'write_family_not_authorized'
+
+    denied = evaluate_preview_call('manage_notes', {'action': 'add', 'content': 'x'},
+                                   'make it brighter', turn_authorized_families={'photo_editor'})
+    assert not denied.allowed
 
 
 def test_full_compact_inventory_contains_pipeline_for_exact_session_contract():
@@ -7284,3 +7341,216 @@ async def test_tool_round_leadin_is_replaced_by_terminal_synthesis(monkeypatch):
         "I'll browse IKEA and look at their chairs.",
         'The most epic option is the DYVLINGE swivel chair.',
     ]
+
+def test_spec_router_think_decision_and_reason(monkeypatch):
+    import sys
+    import types
+    from src.clean_agent_preview import (
+        spec_router_thinking_decision,
+        spec_router_think_reason,
+    )
+
+    # --- router disabled -> no decision, no reason (default OFF) -------------
+    fake = types.ModuleType('src.spec_router')
+    fake.think_router_enabled = lambda: False
+    fake.route_thinking = lambda text: {'think': True, 'p_think': 0.9, 'ms': 1.0}
+    monkeypatch.setitem(sys.modules, 'src.spec_router', fake)
+    assert spec_router_thinking_decision('u', 'm', 'o', {}, 'hi') is None
+    assert spec_router_think_reason(1, None, '') == ''
+
+    # --- enabled but not a spec surface -> no decision ----------------------
+    fake.think_router_enabled = lambda: True
+    monkeypatch.setattr(
+        'src.agent_loop._configured_model_tool_surface_raw',
+        lambda *a, **k: 'native', raising=False,
+    )
+    assert spec_router_thinking_decision('u', 'm', 'o', {}, 'hi') is None
+
+    # --- enabled on spec + think=True -> reason only on round 1 when no other
+    monkeypatch.setattr(
+        'src.agent_loop._configured_model_tool_surface_raw',
+        lambda *a, **k: 'spec', raising=False,
+    )
+    decision = spec_router_thinking_decision('u', 'm', 'o', {}, 'plan the refactor')
+    assert decision == {'think': True, 'p_think': 0.9, 'ms': 1.0}
+    assert spec_router_think_reason(1, decision, '') == 'router_think'
+    # existing rule wins; only round 1; think=False never fires
+    assert spec_router_think_reason(1, decision, 'code') == ''
+    assert spec_router_think_reason(2, decision, '') == ''
+    assert spec_router_think_reason(1, {'think': False}, '') == ''
+
+    # --- route_thinking raises -> fail open (None), rules only --------------
+    def _boom(text):
+        raise RuntimeError('router down')
+    fake.route_thinking = _boom
+    assert spec_router_thinking_decision('u', 'm', 'o', {}, 'hi') is None
+    assert spec_router_think_reason(1, None, '') == ''
+
+    # --- wiring present in stream_preview -----------------------------------
+    source = (Path(__file__).resolve().parents[1] / 'src/clean_agent_preview.py').read_text()
+    assert 'spec_router_thinking_decision(' in source
+    assert 'spec_router_think_reason(' in source
+
+
+def test_spec_direct_no_tools_decision(monkeypatch):
+    import sys
+    import types
+    from src.clean_agent_preview import spec_direct_no_tools_p
+
+    fake = types.ModuleType('src.spec_router')
+    fake.LAST_DECISIONS = [
+        {'message': 'Yo', 'choice': 'answer_directly', 'answer_directly': 0.971},
+    ]
+    fake.latest_decision = lambda: fake.LAST_DECISIONS[-1]
+    monkeypatch.setitem(sys.modules, 'src.spec_router', fake)
+    monkeypatch.setattr(
+        'src.agent_loop._configured_model_tool_surface_raw',
+        lambda *a, **k: 'spec', raising=False,
+    )
+
+    # --- default OFF -> no override, identical behaviour --------------------
+    monkeypatch.delenv('ODYSSEUS_SPEC_DIRECT_NOTOOLS', raising=False)
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
+
+    # --- ON + answer_directly p >= 0.9 -> returns the confidence ------------
+    monkeypatch.setenv('ODYSSEUS_SPEC_DIRECT_NOTOOLS', '1')
+    monkeypatch.delenv('ODYSSEUS_SPEC_DIRECT_MIN_P', raising=False)
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) == 0.971
+
+    # --- low confidence -> no override --------------------------------------
+    fake.LAST_DECISIONS = [
+        {'message': 'Yo', 'choice': 'answer_directly', 'answer_directly': 0.5},
+    ]
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
+
+    # --- MIN_P override lowers the bar --------------------------------------
+    monkeypatch.setenv('ODYSSEUS_SPEC_DIRECT_MIN_P', '0.4')
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) == 0.5
+    monkeypatch.delenv('ODYSSEUS_SPEC_DIRECT_MIN_P', raising=False)
+
+    # --- a non answer_directly choice -> no override ------------------------
+    fake.LAST_DECISIONS = [
+        {'message': 'Yo', 'choice': 'web_search', 'answer_directly': 0.971},
+    ]
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
+
+    # --- stale decision for a different message -> no override --------------
+    fake.LAST_DECISIONS = [
+        {'message': 'something else entirely', 'choice': 'answer_directly',
+         'answer_directly': 0.99},
+    ]
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
+
+    # --- non-spec surface -> no override ------------------------------------
+    fake.LAST_DECISIONS = [
+        {'message': 'Yo', 'choice': 'answer_directly', 'answer_directly': 0.971},
+    ]
+    monkeypatch.setattr(
+        'src.agent_loop._configured_model_tool_surface_raw',
+        lambda *a, **k: 'native', raising=False,
+    )
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
+
+    # --- router error -> fail open (None) -----------------------------------
+    monkeypatch.setattr(
+        'src.agent_loop._configured_model_tool_surface_raw',
+        lambda *a, **k: 'spec', raising=False,
+    )
+
+    class _Boom:
+        def latest_decision(self):
+            raise RuntimeError('router down')
+    monkeypatch.setitem(sys.modules, 'src.spec_router', _Boom())
+    assert spec_direct_no_tools_p('Yo', 'u', 'm', 'o', {}) is None
+
+    # --- wiring present in stream_preview -----------------------------------
+    source = (Path(__file__).resolve().parents[1] / 'src/clean_agent_preview.py').read_text()
+    assert 'spec_direct_no_tools_p(' in source
+    assert '[spec-harness] direct answer' in source
+
+
+
+
+def test_action_promise_ignores_fenced_code_and_knows_browse_verbs():
+    import src.clean_agent_preview as module
+
+    gym_reply = (
+        'I will browse Google Maps to find the closest gym near Todoroki.\n\n'
+        '```python\n'
+        'import requests\n'
+        'from bs4 import BeautifulSoup\n'
+        'resp = requests.get("https://maps.google.com/search?q=gym+todoroki")\n'
+        'soup = BeautifulSoup(resp.text, "html.parser")\n'
+        'for row in soup.select(".section-result"):\n'
+        '    print(row.get_text())\n'
+        '```\n'
+    )
+    assert module.action_promise_response(gym_reply)
+
+    assert module.action_promise_response('I will fetch the page and scrape the listing.')
+    assert module.action_promise_response('Let me search for the nearest gym now.')
+    assert module.action_promise_response("I'll go check Google Maps for you.")
+
+    # A real answer that includes a code block is not an action promise.
+    assert not module.action_promise_response(
+        'The closest gym to Todoroki is Gold\u2019s Gym, about 600 m away.\n\n'
+        '```python\n'
+        'print("done")\n'
+        '```\n'
+    )
+    assert not module.action_promise_response('Here is the script you asked for:\n```\nprint(1)\n```')
+
+
+
+@pytest.mark.parametrize('prompt', [
+    'please explain how a student should break down work about customer feedback; this is general advice only, do not create or schedule anything.',
+    'Give general advice about customer feedback and task planning; do not create anything.',
+    'Explain feedback tasks without scheduling anything.',
+])
+def test_feedback_advice_does_not_claim_write_authority(prompt):
+    assert not requests_mutation(prompt)
+
+
+
+def test_feedback_subject_does_not_hide_real_write_request():
+    assert requests_mutation('Schedule a customer feedback task for tomorrow.')
+    assert requests_mutation('Do not create anything; schedule a customer feedback task tomorrow.')
+
+
+
+@pytest.mark.asyncio
+async def test_direct_feedback_advice_is_not_replaced_with_preview_denial(monkeypatch):
+    import src.clean_agent_preview as module
+
+    answer = 'Set a goal, group the customer comments by theme, and summarize what you learned.'
+
+    class Response:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            yield 'data: ' + json.dumps({'choices': [{'delta': {'content': answer}}]})
+            yield 'data: [DONE]'
+
+    class Client:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        def stream(self, *args, **kwargs):
+            assert 'tools' not in kwargs['json']
+            return Response()
+
+    monkeypatch.setattr(module.httpx, 'AsyncClient', Client)
+    contract = resolve_full_inventory_contract(schemas=[], policy=ToolPolicy())
+    prompt = ('please explain how a student should break down work about customer feedback; '
+              'this is general advice only, do not create or schedule anything.')
+    chunks = [chunk async for chunk in stream_preview(
+        endpoint_url='http://test', model='ajax-ablated500-base',
+        messages=[{'role': 'user', 'content': prompt}], headers={},
+        turn_contract=contract, session_id='test', owner='test',
+        disabled_tools=set(), tool_policy=ToolPolicy(),
+    )]
+    events = [json.loads(chunk[6:]) for chunk in chunks if '[DONE]' not in chunk]
+    assert ''.join(event.get('delta', '') for event in events) == answer
+    assert not any(event.get('type') == 'final_response' and event.get('content') == denied_response()
+                   for event in events)

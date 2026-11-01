@@ -763,7 +763,7 @@ function renderFeatherlessPanel(panel, ep, row) {
     const sortedIds = Array.from(enabledSet).sort((a, b) => a.localeCompare(b));
     enabledListEl.innerHTML = sortedIds.map(id => {
       const displayName = id.split('/').pop() || id;
-      const mode = ['none', 'compact', 'full'].includes(String(toolModes[id] || '').toLowerCase())
+      const mode = ['none', 'compact', 'full', 'spec'].includes(String(toolModes[id] || '').toLowerCase())
         ? String(toolModes[id]).toLowerCase()
         : '';
       return `<div title="${esc(id)}" data-ep-model-row data-model-id="${esc(id)}" class="adm-model-row">
@@ -777,7 +777,8 @@ function renderFeatherlessPanel(panel, ep, row) {
           <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(id)}" data-original-tool-mode="${esc(toolModes[id] || '')}">
             <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
             <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
-            <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+            <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Ajax Compact</option>
+            <option value="spec" ${mode === 'spec' ? 'selected' : ''}>Ajax Spec (router)</option>
             <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
           </select>
         </div>
@@ -1356,7 +1357,7 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
             </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m => {
-              const mode = ['none', 'compact', 'full'].includes(String(m.tool_mode || '').toLowerCase())
+              const mode = ['none', 'compact', 'full', 'spec'].includes(String(m.tool_mode || '').toLowerCase())
                 ? String(m.tool_mode).toLowerCase()
                 : '';
               return `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
@@ -1370,7 +1371,8 @@ async function loadEndpoints() {
                   <select class="adm-model-tool-mode admin-tools-select" data-ep-model-id="${esc(m.id)}" data-original-tool-mode="${esc(m.tool_mode || '')}" data-tool-mode-touched="0" title="Auto uses Odysseus compact for Odysseus/Ajax names and Regular tools for every other model">
                     <option value="" ${mode === '' ? 'selected' : ''}>Auto</option>
                     <option value="full" ${mode === 'full' ? 'selected' : ''}>Regular tools</option>
-                    <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Odysseus compact</option>
+                    <option value="compact" ${mode === 'compact' ? 'selected' : ''}>Ajax Compact</option>
+                    <option value="spec" ${mode === 'spec' ? 'selected' : ''}>Ajax Spec (router)</option>
                     <option value="none" ${mode === 'none' ? 'selected' : ''}>Tools off</option>
                   </select>
                 </div>
@@ -1440,7 +1442,7 @@ async function _saveEpModelState(epId, panel) {
     const value = String(sel.value || '').toLowerCase();
     const original = String(sel.dataset.originalToolMode || '').toLowerCase();
     if (modelId && (sel.dataset.toolModeTouched === '1' || original)) {
-      modelToolModes[modelId] = ['none', 'compact', 'full'].includes(value) ? value : '';
+      modelToolModes[modelId] = ['none', 'compact', 'full', 'spec'].includes(value) ? value : '';
     }
   });
   const total = panel.querySelectorAll('input.adm-cb-hidden[type=checkbox]').length;

@@ -76,7 +76,21 @@ _ERROR_DETAIL = {
     "auth_or_protocol_error": "authentication or protocol error",
     "no_models": "endpoint returned no models",
     "no_host": "no host configured",
+    "config_source_error": "configuration source could not be read",
     "error": "probe failed",
+}
+
+# Config/inventory source behind each network subsystem. `_gather_inputs()`
+# fails soft, so a source that could not be read hands its probe an empty
+# inventory — indistinguishable from "nothing configured", which every probe
+# answers with `disabled`. The collector therefore reports the source failure
+# instead of running a probe whose verdict would be a lie.
+CONFIG_SOURCE_ERROR = "config_source_error"
+_SUBSYSTEM_SOURCE = {
+    "searxng": "settings",
+    "ntfy": "integrations",
+    "email": "accounts",
+    "providers": "endpoints",
 }
 
 
@@ -411,26 +425,33 @@ def _gather_inputs() -> Dict[str, Any]:
     """Pull live config/account/endpoint lists from the app's data sources.
 
     Each lookup fails soft: a broken source yields an empty/neutral value so a
-    single failure can't take down the whole health report.
+    single failure can't take down the whole health report. The failure is also
+    *recorded* under `failed` (source -> controlled category), because the empty
+    value alone cannot be told apart from a source that loaded and is genuinely
+    empty — and the probes read empty as `disabled`.
     """
     settings: Dict[str, Any] = {}
     integrations: List[Dict[str, Any]] = []
     accounts: List[Dict[str, Any]] = []
     endpoints: List[Dict[str, Any]] = []
+    failed: Dict[str, str] = {}
     try:
         from src.settings import load_settings
         settings = load_settings() or {}
     except Exception as e:
+        failed["settings"] = _classify_error(e)
         logger.debug(f"service_health: settings load failed: {e}")
     try:
         from src.integrations import load_integrations
         integrations = load_integrations() or []
     except Exception as e:
+        failed["integrations"] = _classify_error(e)
         logger.debug(f"service_health: integrations load failed: {e}")
     try:
         from routes.email_helpers import _list_email_accounts
         accounts = _list_email_accounts() or []
     except Exception as e:
+        failed["accounts"] = _classify_error(e)
         logger.debug(f"service_health: email accounts load failed: {e}")
     try:
         from core.database import SessionLocal, ModelEndpoint
@@ -443,9 +464,10 @@ def _gather_inputs() -> Dict[str, Any]:
         finally:
             db.close()
     except Exception as e:
+        failed["endpoints"] = _classify_error(e)
         logger.debug(f"service_health: endpoint load failed: {e}")
     return {"settings": settings, "integrations": integrations,
-            "accounts": accounts, "endpoints": endpoints}
+            "accounts": accounts, "endpoints": endpoints, "failed": failed}
 
 
 async def _run_subsystem(name: str, fn: Callable, *args: Any) -> Dict[str, Any]:
@@ -464,6 +486,24 @@ async def _run_subsystem(name: str, fn: Callable, *args: Any) -> Dict[str, Any]:
         return _svc(name, DOWN, _detail_for(category), error=category)
 
 
+async def _source_unavailable(name: str, source: str,
+                              category: str) -> Dict[str, Any]:
+    """Controlled entry for a subsystem whose config source could not be read.
+
+    Deliberately not `disabled`: the configured state is *unknown*, not known to
+    be off. `degraded` rather than `down` because the failure is in reading the
+    inventory, not a probe that reached the subsystem and failed — but it still
+    carries non-zero severity, so a report containing one can never roll up to
+    `ok`. `meta` names the source and the controlled category of the underlying
+    exception; never its text.
+    """
+    return _svc(name, DEGRADED,
+                f"Could not read configuration "
+                f"({_detail_for(CONFIG_SOURCE_ERROR)}).",
+                error=CONFIG_SOURCE_ERROR, source=source,
+                source_error=category)
+
+
 async def collect_service_health(rag_manager: Any = None,
                                  memory_vector: Any = None) -> Dict[str, Any]:
     """Run every probe and return {overall, services, timestamp}.
@@ -472,6 +512,10 @@ async def collect_service_health(rag_manager: Any = None,
     four network subsystems run concurrently, each under `_SUBSYSTEM_DEADLINE`,
     with an overall `_AGGREGATE_DEADLINE` backstop. Per-item probes inside
     providers/email are themselves bounded by `_FANOUT_BUDGET`.
+
+    A subsystem whose config/inventory source failed to load is reported via
+    `_source_unavailable()` instead of being probed with an empty inventory,
+    which every probe would otherwise report as `disabled`.
     """
     from datetime import datetime, timezone
 
@@ -482,12 +526,23 @@ async def collect_service_health(rag_manager: Any = None,
     chroma = chromadb_health(rag_manager, memory_vector)
 
     names = ["searxng", "ntfy", "email", "providers"]
-    coros = [
-        _run_subsystem("searxng", searxng_health, settings),
-        _run_subsystem("ntfy", ntfy_health, inputs["integrations"], settings),
-        _run_subsystem("email", email_health, inputs["accounts"]),
-        _run_subsystem("providers", providers_health, inputs["endpoints"]),
-    ]
+    probes = {
+        "searxng": (searxng_health, (settings,)),
+        "ntfy": (ntfy_health, (inputs["integrations"], settings)),
+        "email": (email_health, (inputs["accounts"],)),
+        "providers": (providers_health, (inputs["endpoints"],)),
+    }
+    # A subsystem whose inventory could not be read is reported as such. The
+    # others are still probed normally — one broken source degrades one entry.
+    failed = inputs.get("failed") or {}
+    coros = []
+    for name in names:
+        source = _SUBSYSTEM_SOURCE[name]
+        if source in failed:
+            coros.append(_source_unavailable(name, source, failed[source]))
+        else:
+            fn, args = probes[name]
+            coros.append(_run_subsystem(name, fn, *args))
     try:
         results = await asyncio.wait_for(asyncio.gather(*coros),
                                          timeout=_AGGREGATE_DEADLINE)
