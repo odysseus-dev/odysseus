@@ -1917,10 +1917,17 @@ async def execute_tool_block(
             )
 
     if isinstance(security_context, ToolRunSecurityContext) and not approval_claimed:
-        decision = security_context.decision_for(
-            getattr(block, "tool_type", None),
-            getattr(block, "content", None),
-        )
+        if isinstance(authority, RequestAuthority):
+            with bind_request_authority(authority):
+                decision = security_context.decision_for(
+                    getattr(block, "tool_type", None),
+                    getattr(block, "content", None),
+                )
+        else:
+            decision = security_context.decision_for(
+                getattr(block, "tool_type", None),
+                getattr(block, "content", None),
+            )
         if not decision.allowed:
             logger.warning(
                 "External-context policy blocked tool=%r",
