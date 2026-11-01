@@ -6379,7 +6379,6 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
                           selected_tools: Iterable[str] | None = None,
                           always_available_tools: Iterable[str] = (),
                           warm_tools: Iterable[str] = (),
-                          mcp_candidates: Iterable[str] = (),
                           required_read_operation: RequiredReadOperation | None = None,
                           message: str | None = None, history: Iterable = ()) -> TurnContract:
     """Resolve selection without substituting tools for missing requirements.
@@ -6440,11 +6439,6 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     # The executable intersection below still enforces disabled tools/accounts.
     if 'search_emails' in selected:
         selected.update({'read_email', 'download_attachment', 'list_email_accounts'})
-    if operation is None and selected_tools is None and not policy.disable_mcp:
-        selected.update(
-            canonical_tool(n) for n in mcp_candidates
-            if isinstance(n, str) and n.startswith('mcp__')
-        )
     selected.update(canonical_tool(n) for n in always_available_tools)
     # Offer only dynamic MCP operations already sealed by trusted request
     # admission. Tool discovery and model routing never create these grants.

@@ -1588,48 +1588,6 @@ def _successful_session_tool_names(sess) -> frozenset[str]:
     return frozenset(names)
 
 
-async def _select_mcp_contract_candidates(
-    *, message, manager, schemas, disabled_tools, owner_blocked,
-    selected_tools, plan_mode, disable_mcp,
-):
-    """Retrieve permitted MCP candidates before sealing the turn contract."""
-    if (
-        not manager or plan_mode or disable_mcp or owner_blocked
-        or selected_tools is not None or _explicitly_denies_tool_use(message)
-    ):
-        return set()
-
-    try:
-        from src.tool_index import get_tool_index
-
-        index = await asyncio.to_thread(get_tool_index)
-        if index is None:
-            return set()
-
-        from src.agent_loop import _load_mcp_disabled_map
-        disabled_map = _load_mcp_disabled_map()
-        await asyncio.to_thread(index.index_mcp_tools, manager, disabled_map)
-        retrieved = await asyncio.to_thread(index.get_tools_for_query, message, 8)
-
-        available = {
-            schema["function"]["name"]
-            for schema in schemas
-            if isinstance(schema.get("function"), dict)
-            and schema["function"].get("name")
-        }
-        return {
-            name for name in retrieved
-            if isinstance(name, str)
-            and name.startswith("mcp__")
-            and name in available
-            and name not in disabled_tools
-            and name not in owner_blocked
-        }
-    except Exception:
-        logger.exception("MCP RAG contract selection failed")
-        return set()
-
-
 def _most_recent_successful_web_tool(sess, limit: int = 4) -> Optional[str]:
     """Return the latest successfully executed public-web tool, if any."""
     history = getattr(sess, "history", None) or getattr(sess, "_history", None) or []
@@ -3807,27 +3765,16 @@ def setup_chat_routes(
             if _corrected_browser_target:
                 _selected_tools = {'private_browser', 'web_fetch', 'web_search'}
                 _required_tools = {'private_browser'}
-            _mcp_contract_candidates = await _select_mcp_contract_candidates(
-                message=message,
-                manager=_contract_mgr,
-                schemas=_contract_schemas,
-                disabled_tools=disabled_tools,
-                owner_blocked=_owner_blocked,
-                selected_tools=_selected_tools,
-                plan_mode=plan_mode,
-                disable_mcp=tool_policy.disable_mcp,
-            )
-            _turn_contract = resolve_turn_contract(
+            _turn_contract, _request_authority = _resolve_authorized_turn_contract(
+                _request_authority, _contract_policy,
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
-                policy=_contract_policy, required_tools=_required_tools,
+                required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
                 always_available_tools=(FAMILY_TOOLS["documents"] if active_doc else ()),
                 warm_tools=_warm_tools,
-                mcp_candidates=_mcp_contract_candidates,
                 message=message, history=getattr(sess, "history", []) or [],
             )
-            _request_authority = _request_authority.restrict(_contract_policy)
             # Resolution already applies user, owner, and global policy. An
             # admitted tool must not later be rejected by the stale
             # pre-contract disabled snapshot during execution.
@@ -5372,3 +5319,13 @@ def setup_chat_routes(
         return StreamingResponse(stream_rewrite(), media_type="text/event-stream")
 
     return router
+
+
+def _resolve_authorized_turn_contract(authority, policy, **contract_kwargs):
+    """Resolve a turn contract under the request's restricted authority."""
+    from src.agent_runtime.authority import bind_request_authority
+
+    restricted = authority.restrict(policy)
+    with bind_request_authority(restricted):
+        contract = resolve_turn_contract(policy=policy, **contract_kwargs)
+    return contract, restricted
