@@ -729,6 +729,8 @@ _EXTERNAL_MESSAGE_SOURCE_PREFIXES = ("web page:",)
 _CONTROL_PLANE_CONTEXT_SOURCES = frozenset(
     {
         "skills",
+        # chat_processor's label for the same skill names/descriptions.
+        "available skills index",
         "client runtime context",
         "backend runtime context",
         "integrations",
@@ -744,8 +746,14 @@ _CONTROL_PLANE_CONTEXT_SOURCES = frozenset(
 )
 
 
-def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> bool:
-    """Detect explicitly labelled external context already present in a run."""
+# Recorded for taint whose source is unknown or could pass for control plane,
+# so it can never make a run look control-plane-only.
+_UNATTRIBUTED_EXTERNAL_SOURCE = "unattributed external context"
+
+
+def external_untrusted_context_sources(messages: Iterable[dict]) -> list[str]:
+    """Source labels of the messages that taint a run, in first-seen order."""
+    sources: list[str] = []
     for message in messages or ():
         if not isinstance(message, dict):
             continue
@@ -753,24 +761,32 @@ def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> boo
         if not isinstance(metadata, dict) or metadata.get("trusted") is not False:
             continue
         gate_marker = metadata.get("tool_gate_untrusted")
-        if gate_marker is True:
-            return True
         if gate_marker is False:
             # Explicit current-format opt-outs are authoritative.  The source
             # label heuristics below exist only for older saved wrappers that
             # predate the marker.
             continue
-        if metadata.get("provenance_origin") == "external":
-            return True
         source = metadata.get("source")
-        if not isinstance(source, str):
+        normalized_source = source.strip().casefold() if isinstance(source, str) else ""
+        if gate_marker is True:
+            label = normalized_source or _UNATTRIBUTED_EXTERNAL_SOURCE
+        elif (
+            normalized_source in _EXTERNAL_MESSAGE_SOURCES
+            or normalized_source.startswith(_EXTERNAL_MESSAGE_SOURCE_PREFIXES)
+        ):
+            label = normalized_source
+        elif metadata.get("provenance_origin") == "external":
+            label = _UNATTRIBUTED_EXTERNAL_SOURCE
+        else:
             continue
-        normalized_source = source.strip().casefold()
-        if normalized_source in _EXTERNAL_MESSAGE_SOURCES:
-            return True
-        if normalized_source.startswith(_EXTERNAL_MESSAGE_SOURCE_PREFIXES):
-            return True
-    return False
+        if label not in sources:
+            sources.append(label)
+    return sources
+
+
+def messages_contain_external_untrusted_context(messages: Iterable[dict]) -> bool:
+    """Detect explicitly labelled external context already present in a run."""
+    return bool(external_untrusted_context_sources(messages))
 
 
 def delegated_tool_is_blocked(tool_name: Any, content: Any = None) -> bool:
@@ -822,20 +838,34 @@ class ToolRunSecurityContext:
             for message in message_list
         ):
             self.approval_gate_bypassed = True
-        for message in message_list:
-            if not isinstance(message, dict):
-                continue
-            metadata = message.get("metadata")
-            if not isinstance(metadata, dict) or metadata.get("trusted") is not False:
-                continue
-            if metadata.get("tool_gate_untrusted") is not True:
-                continue
-            source = str(metadata.get("source") or "").strip().casefold()
-            if source and source not in self.external_sources:
+        self.observe_untrusted_context(message_list)
+
+    def observe_untrusted_context(self, messages: Iterable[dict]) -> None:
+        """Record taint and its sources only; never reads chat approval scope."""
+        for source in external_untrusted_context_sources(messages):
+            if source not in self.external_sources:
                 self.external_sources.append(source)
             self.external_untrusted_context_seen = True
-        if messages_contain_external_untrusted_context(message_list):
-            self.external_untrusted_context_seen = True
+
+    @classmethod
+    def for_initial_messages(
+        cls,
+        messages: Iterable[dict],
+        *,
+        prior_external_untrusted_context_seen: bool = False,
+        **kwargs: Any,
+    ) -> "ToolRunSecurityContext":
+        """Build a run context tainted by its initial messages, with sources.
+
+        Taint carried in from an earlier run has no source labels here, so it
+        is recorded as unattributed and keeps private reads gated.
+        """
+        context = cls(**kwargs)
+        if prior_external_untrusted_context_seen:
+            context.external_untrusted_context_seen = True
+            context.external_sources.append(_UNATTRIBUTED_EXTERNAL_SOURCE)
+        context.observe_untrusted_context(messages)
+        return context
 
     def decision_for(self, tool_name: Any, content: Any = None) -> ToolGateDecision:
         # Checked before the bypasses below, because neither may lift it, and
