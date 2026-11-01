@@ -16,13 +16,6 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
-  // Stops iOS focus-zoom on every field; iOS still allows pinch-zoom, other platforms would not.
-  (function(){
-    var ua = navigator.userAgent || '';
-    var isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    var vp = document.querySelector('meta[name="viewport"]');
-    if (isIOS && vp) vp.setAttribute('content', vp.getAttribute('content') + ', maximum-scale=1');
-  })();
   (function(){
     try {
       var t = JSON.parse(localStorage.getItem('odysseus-theme'));
@@ -664,6 +657,7 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
             <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
+              <option value="gohu">GohuFont</option>
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
               <option value="serif">Serif</option>
@@ -2686,7 +2680,7 @@
 <script type="module" src="/static/js/gallery.js?v=20260910promptcopy1"></script>
 <script type="module" src="/static/js/chatRenderer.js?v=20260914metricssummary1"></script>
 <script type="module" src="/static/js/codeRunner.js?v=20260831richtexttools91"></script>
-<script type="module" src="/static/js/chatStream.js?v=20260914pdfstrip1"></script>
+<script type="module" src="/static/js/chatStream.js?v=20261026devsync1"></script>
 <script type="module" src="/static/js/chat.js?v=20260917toolttft1"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>

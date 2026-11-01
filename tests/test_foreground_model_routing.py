@@ -148,6 +148,7 @@ def _chat_stream_endpoint(
     endpoint_url="https://selected.example/v1",
     session_model="selected-model",
     session_history=(),
+    attachment_meta=(),
 ):
     def add_message(message):
         captured.setdefault("added_messages", []).append(message)
@@ -172,7 +173,7 @@ def _chat_stream_endpoint(
             {"role": "assistant", "content": "old answer"},
             {"role": "user", "content": "hello"},
         ],
-        preprocessed=SimpleNamespace(attachment_meta=[]),
+        preprocessed=SimpleNamespace(attachment_meta=list(attachment_meta)),
         auto_opened_docs=[],
         rag_sources=[],
         web_sources=[],

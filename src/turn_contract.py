@@ -37,6 +37,7 @@ FAMILY_TOOLS = {
     "sessions": frozenset({"list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "pipeline"}),
     "image_generation": frozenset({"generate_image"}),
     "image_editing": frozenset({"edit_image"}),
+    "photo_editor": frozenset({"plan_edit", "run_editor_command", "get_editor_screenshot", "ai_edit_image", "generate_image"}),
     "transcription": frozenset({"transcribe_media"}),
     "media_inspection": frozenset({"inspect_media"}),
     "ocr": frozenset({"extract_text"}),
@@ -487,7 +488,8 @@ _BOUND_EDITOR_WRITE = re.compile(
     re.I,
 )
 _BOUND_EDITOR_IMPLICIT_REVISION = re.compile(
-    r"^\s*" + _REQUEST_PREFIX + r"(?:broaden|expand|deepen|lighten|go\s+deeper|"
+    r"^\s*" + _REQUEST_PREFIX + r"(?:broaden|expand|deepen|lighten|go\s+deeper|go\s+more\s+into|"
+    r"g[aå]\s+mer\s+(?:in|ut)\s+p[aå]|"
     r"clean\s+(?:this|it|the\s+(?:text|draft|document|doc))\s+up|"
     r"give\s+(?:me\s+)?(?:feedback|a\s+critique|suggestions?|comments?)|"
     r"remove\b[^.;\n]{0,100}\b(?:mistakes?|errors?|inaccurac(?:y|ies)|misinformation)|"
@@ -633,6 +635,7 @@ _REQUIRED_TOOLS = {
     "calendar": "manage_calendar", "notes": "manage_notes",
     "tasks": "manage_tasks", "skills": "manage_skills",
     "image_generation": "generate_image", "image_editing": "edit_image",
+    "photo_editor": "plan_edit",
     "transcription": "transcribe_media", "media_inspection": "inspect_media", "ocr": "extract_text",
 }
 
@@ -2994,6 +2997,18 @@ def _natural_safe_inventory_operation(message: str, maximum: int | None = None) 
     return RequiredReadOperation(tool, {"action": action} if action else {}, maximum)
 
 
+def note_read_intent(user_text: str) -> tuple[str, bool]:
+    """Return a quoted mention query and whether the note body is needed."""
+    text = str(user_text or "")
+    mention = re.search(r"\bmentions?\s+(['\"])([^'\"]{1,120})\1", text, re.I)
+    query = mention.group(2).strip() if mention else ""
+    needs_body = bool(
+        re.search(r"\b(?:summari[sz]e|summary|main\s+topics)\b", text, re.I)
+        or re.search(r"\b(?:show|open|read|view)\b.{0,80}\b(?:first|newest|most\s+recent)\s+note\b", text, re.I)
+    )
+    return query, needs_body
+
+
 def required_read_operation_for_request(message: str, history: Iterable = ()) -> RequiredReadOperation | None:
     """Resolve complete list/read requests, or repeat an exact prior read.
 
@@ -4149,7 +4164,15 @@ def _families_for_tool(tool: str) -> frozenset[str]:
     if bare in {"list_sessions", "manage_session", "create_session", "send_to_session",
                 "chat_with_model", "pipeline"}:
         return frozenset({"sessions"})
-    return frozenset(family for family, tools in FAMILY_TOOLS.items() if bare in tools)
+    # The photo_editor family is context-only: it is only ever selected by an
+    # explicit editor request at the route, never inferred from message text.
+    # Overlapping tools such as generate_image must still resolve to their real
+    # product family, so exclude photo_editor rather than short-circuiting.
+    return frozenset(
+        family
+        for family, tools in FAMILY_TOOLS.items()
+        if bare in tools and family != "photo_editor"
+    )
 
 
 def _clause_capabilities(text: str) -> set[str]:
@@ -6325,7 +6348,7 @@ def resolve_full_inventory_contract(*, schemas: Iterable[dict], policy: ToolPoli
     """Experimental trained inventory: permissions filter offers; model chooses actions."""
     families = frozenset({"calendar", "notes", "tasks", "skills", "memory", "documents",
                           "email", "search_browser", "shell_files", "cookbook_admin",
-                          "image_editing", "image_generation"})
+                          "image_editing", "image_generation", "photo_editor"})
     # ``ui_control`` is the executable bridge for explicit client-interface
     # requests (for example, opening the gallery).  It is not one of the ten
     # persisted-data families, but omitting it here makes the full-inventory

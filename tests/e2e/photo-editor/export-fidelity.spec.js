@@ -39,7 +39,7 @@ async function downloadFormat(page, format, filename) {
 }
 
 async function addAdjustment(page, type) {
-  await page.locator('#ge-add-layer').click();
+  await page.locator('#ge-add-fx').click();
   await expect(page.locator('.ge-add-layer-menu')).toBeVisible();
   await page.locator(`.ge-add-layer-menu [data-adjustment-type="${type}"]`).click();
   await expect(page.locator('.ge-adj-popup')).toBeVisible();
@@ -100,7 +100,7 @@ test('composited correction exports preserve pixels and format metadata', async 
   await openBlankEditor(page, { width: 160, height: 120 }, 'Export fidelity');
   await seedGradient(page);
 
-  await page.locator('#ge-add-layer').click();
+  await page.locator('#ge-add-fx').click();
   await page.locator('.ge-add-layer-menu [data-adjustment-type="exposure"]').click();
   await page.locator('.ge-adj-row input[data-key="exposure"]').fill('35');
   await page.locator('.ge-adj-row input[data-key="exposure"]').dispatchEvent('input');

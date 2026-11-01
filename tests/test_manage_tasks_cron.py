@@ -51,7 +51,7 @@ async def test_cron_create_edit_resume_and_invalid_edit_rollback(storage):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('expression', [None, '', 'bad', '99 99 * * *'])
+@pytest.mark.parametrize('expression', [None, '', 'bad', '99 99 * * *', '* * * * * *', '* * * * * * *'])
 async def test_invalid_cron_does_not_create_inert_task(storage, expression):
     result = await call(action='create', name='Invalid', prompt='Test', schedule='cron',
                         cron_expression=expression)
@@ -171,3 +171,21 @@ async def test_invalid_cron_retime_rolls_back_all_edits(storage):
         row = db.get(database.ScheduledTask, result['task_id'])
         assert row.name == 'Digest' and row.cron_expression == '15 9 * * 1,3,5'
         assert row.next_run == datetime(2026, 10, 5, 9, 15)
+
+
+@pytest.mark.parametrize('expression', ['* * * * *', '15 9 * * 1,3,5', '*/5 * * * *'])
+def test_is_valid_cron_accepts_five_fields(expression):
+    from src.task_scheduler import is_valid_cron
+    assert is_valid_cron(expression)
+
+
+@pytest.mark.parametrize('expression', [None, '', 'bad', '99 99 * * *', '* * * * * *', '* * * * * * *', '* * * *'])
+def test_is_valid_cron_rejects_everything_else(expression):
+    from src.task_scheduler import is_valid_cron
+    assert not is_valid_cron(expression)
+
+
+@pytest.mark.parametrize('expression', ['* * * * * *', '* * * * * * *'])
+def test_compute_next_run_refuses_a_seconds_field(expression):
+    from src.task_scheduler import compute_next_run
+    assert compute_next_run('cron', '09:00', None, None, cron_expression=expression) is None

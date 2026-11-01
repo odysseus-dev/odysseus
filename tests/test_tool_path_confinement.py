@@ -28,6 +28,11 @@ def standalone_dispatch_authority(monkeypatch):
                         server_authorized_executor(tool_execution.execute_tool_block))
 
 
+def _native(path: str) -> str:
+    """POSIX-style literal -> native separators (the policy splits on os.sep)."""
+    return path.replace("/", os.sep)
+
+
 def _make_block(tool_type, content):
     return SimpleNamespace(tool_type=tool_type, content=content)
 
@@ -36,27 +41,27 @@ def _make_block(tool_type, content):
 
 def test_sensitive_ssh_dir():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/home/user/.ssh/authorized_keys")
-    assert _is_sensitive_path(os.path.expanduser("~") + "/.ssh/config")
+    assert _is_sensitive_path(_native("/home/user/.ssh/authorized_keys"))
+    assert _is_sensitive_path(_native(os.path.expanduser("~") + "/.ssh/config"))
 
 
 def test_sensitive_gnupg_dir():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/home/user/.gnupg/pubring.kbx")
+    assert _is_sensitive_path(_native("/home/user/.gnupg/pubring.kbx"))
 
 
 def test_sensitive_shell_rc():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/home/user/.bashrc")
-    assert _is_sensitive_path("/home/user/.zshrc")
-    assert _is_sensitive_path("/home/user/.profile")
+    assert _is_sensitive_path(_native("/home/user/.bashrc"))
+    assert _is_sensitive_path(_native("/home/user/.zshrc"))
+    assert _is_sensitive_path(_native("/home/user/.profile"))
 
 
 def test_sensitive_key_filenames():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/tmp/id_rsa")
-    assert _is_sensitive_path("/tmp/id_ed25519")
-    assert _is_sensitive_path("/tmp/authorized_keys")
+    assert _is_sensitive_path(_native("/tmp/id_rsa"))
+    assert _is_sensitive_path(_native("/tmp/id_ed25519"))
+    assert _is_sensitive_path(_native("/tmp/authorized_keys"))
 
 
 def test_non_sensitive_path():
@@ -186,9 +191,11 @@ def test_allows_agent_workspace(tmp_path):
         os.unlink(target)
 
 
-def test_allows_tmp(tmp_path):
+def test_allows_tmp(tmp_path, monkeypatch):
     """Paths under /tmp (or its realpath) must resolve cleanly."""
     from src.tool_execution import _resolve_tool_path
+    # Windows has no /tmp; its temp root is only allowed via $TMPDIR.
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     f = tmp_path / "confinement-test.txt"
     f.write_text("ok")
     resolved = _resolve_tool_path(str(f))
@@ -255,7 +262,8 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("failure_kind") == "resource_identity_denied"
-    assert "sealed resource root" in (result.get("error") or "")
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 
 
@@ -285,7 +293,8 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("failure_kind") == "resource_identity_denied"
-    assert "sealed resource root" in (result.get("error") or "")
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 
 
@@ -349,10 +358,11 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("failure_kind") == "resource_identity_denied"
-    assert "sealed resource root" in (result.get("error") or "")
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 @pytest.mark.parametrize("filename", ["auth.json", "app.db", "settings.json"])
 def test_application_secrets_are_sensitive_paths(filename):
     from src.tool_execution import _is_sensitive_path
 
-    assert _is_sensitive_path(f"/tmp/odysseus-data/{filename}")
+    assert _is_sensitive_path(_native(f"/tmp/odysseus-data/{filename}"))
