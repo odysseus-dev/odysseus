@@ -19,9 +19,10 @@ def _split_family_token(token):
 def _derive_family(filename):
     """Derive a font-family name from a filename like 'JetBrainsMono-Regular.woff2' → 'JetBrains Mono'."""
     name = os.path.splitext(filename)[0]
-    # Strip common weight/style suffixes
+    # Strip weight/style suffixes, including BoldItalic and Bold-Italic.
     name = re.sub(
-        r'[-_ ]?(Thin|ExtraLight|UltraLight|Light|Regular|Medium|SemiBold|DemiBold|Bold|ExtraBold|UltraBold|Black|Heavy|Italic|Oblique|Variable|VF)$',
+        r'[-_ ]?(Thin|ExtraLight|UltraLight|Light|Regular|Medium|SemiBold|DemiBold|Bold|ExtraBold|UltraBold|Black|Heavy|Italic|Oblique|Variable|VF)'
+        r'(?:[-_ ]?(?:Italic|Oblique))?$',
         '', name, flags=re.IGNORECASE
     )
     # Replace dashes/underscores with spaces

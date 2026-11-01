@@ -339,6 +339,229 @@ async def self_check(
     return out
 
 
+def _resolve_override_candidate(override: str, owner: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Resolve an explicit agent_model override under server authority.
+
+    Guarantees:
+      - Client-provided raw URLs never determine arbitrary outbound network destinations.
+      - Registered endpoint IDs resolve only to enabled endpoints visible to the owner.
+      - Shared endpoints (owner IS NULL) remain visible to authorized users.
+      - Disabled, foreign-owned, forged, or unconfigured destinations fail closed (return None).
+      - Admin privileges do not allow arbitrary unconfigured destinations.
+    """
+    raw = str(override or "").strip()
+    if not raw:
+        return None
+
+    if "::" in raw:
+        target, requested_model = raw.split("::", 1)
+        target = target.strip()
+        requested_model = requested_model.strip()
+    else:
+        target = ""
+        requested_model = raw
+
+    # 1. Explicit local selection or matching a configured local base
+    if target == "local":
+        bases = local_bases()
+        if not bases:
+            return None
+        return {
+            "base": bases[0],
+            "model": requested_model or local_model(),
+            "headers": None,
+            "source": "override",
+        }
+    for lb in local_bases():
+        if target and target.rstrip("/") == lb.rstrip("/"):
+            return {
+                "base": lb,
+                "model": requested_model or local_model(),
+                "headers": None,
+                "source": "override",
+            }
+
+    # 2. Explicit hosted fallback selection
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+
+        for prefix in ("utility", "default"):
+            try:
+                url, model, headers = resolve_endpoint(prefix, owner=owner)
+            except Exception:
+                continue
+            if url and model:
+                if target in ("default", "hosted"):
+                    return {
+                        "base": url,
+                        "model": requested_model or model,
+                        "headers": headers,
+                        "source": "hosted",
+                    }
+                if target and target.rstrip("/") == url.rstrip("/"):
+                    if not requested_model or requested_model == model:
+                        return {
+                            "base": url,
+                            "model": requested_model or model,
+                            "headers": headers,
+                            "source": "hosted",
+                        }
+    except Exception:
+        pass
+    if target in ("default", "hosted"):
+        return None
+
+    # 3. Bare model id without endpoint prefix
+    if not target:
+        if requested_model == "local":
+            bases = local_bases()
+            return {"base": bases[0], "model": local_model(), "headers": None, "source": "local"} if bases else None
+        if requested_model in ("default", "hosted"):
+            return _resolve_override_candidate("default::", owner)
+
+        # Exact match with local model
+        if requested_model == local_model():
+            bases = local_bases()
+            if bases:
+                return {"base": bases[0], "model": local_model(), "headers": None, "source": "local"}
+
+        # Exact match with hosted default/utility
+        try:
+            from src.endpoint_resolver import resolve_endpoint
+
+            for prefix in ("utility", "default"):
+                try:
+                    url, model, headers = resolve_endpoint(prefix, owner=owner)
+                except Exception:
+                    continue
+                if url and model and model == requested_model:
+                    return {"base": url, "model": model, "headers": headers, "source": "hosted"}
+        except Exception:
+            pass
+
+        # Check registered database endpoints for this bare model
+        try:
+            from core.database import SessionLocal, ModelEndpoint
+            from src.auth_helpers import owner_filter, _auth_disabled
+            from src.endpoint_resolver import (
+                resolve_endpoint_runtime,
+                build_chat_url,
+                build_headers,
+                _endpoint_enabled_models,
+                _endpoint_hidden_models,
+            )
+
+            db = SessionLocal()
+            try:
+                if not owner and not _auth_disabled():
+                    q = db.query(ModelEndpoint).filter(
+                        ModelEndpoint.is_enabled == True,
+                        ModelEndpoint.owner == None,
+                    )
+                else:
+                    q = owner_filter(
+                        db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True),
+                        ModelEndpoint,
+                        owner,
+                    )
+                matching_eps = []
+                for ep in q.all():
+                    enabled_models = _endpoint_enabled_models(ep)
+                    hidden_models = _endpoint_hidden_models(ep)
+                    if requested_model in enabled_models and requested_model not in hidden_models:
+                        matching_eps.append(ep)
+
+                # Avoid model ID collision across providers: only accept if unique
+                if len(matching_eps) == 1:
+                    ep = matching_eps[0]
+                    base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                    return {
+                        "base": build_chat_url(base),
+                        "model": requested_model,
+                        "headers": build_headers(api_key, base),
+                        "source": "registered",
+                        "endpoint_id": ep.id,
+                    }
+            finally:
+                db.close()
+        except Exception:
+            pass
+        return None
+
+    # 4. Target is an endpoint_id or a registered legacy endpoint URL
+    try:
+        from core.database import SessionLocal, ModelEndpoint
+        from src.auth_helpers import owner_filter, _auth_disabled
+        from src.endpoint_resolver import (
+            resolve_endpoint_runtime,
+            build_chat_url,
+            build_headers,
+            _endpoint_enabled_models,
+            _endpoint_hidden_models,
+            _first_chat_model,
+        )
+
+        db = SessionLocal()
+        try:
+            if not owner and not _auth_disabled():
+                q = db.query(ModelEndpoint).filter(
+                    ModelEndpoint.is_enabled == True,
+                    ModelEndpoint.owner == None,
+                )
+            else:
+                q = owner_filter(
+                    db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True),
+                    ModelEndpoint,
+                    owner,
+                )
+            # Lookup by ID
+            ep = q.filter(ModelEndpoint.id == target).first()
+
+            # If not found by ID, match legacy registered base URL (strictly registered rows only)
+            if ep is None and ("://" in target or target.startswith("http")):
+                target_norm = target.rstrip("/")
+                for cand_ep in q.all():
+                    cand_base = (cand_ep.base_url or "").rstrip("/")
+                    if (
+                        cand_base == target_norm
+                        or cand_base + "/v1" == target_norm
+                        or cand_base == target_norm + "/v1"
+                    ):
+                        ep = cand_ep
+                        break
+
+            if ep is None:
+                # Target is disabled, foreign-owned, nonexistent, or arbitrary unconfigured URL -> fail closed!
+                return None
+
+            enabled_models = _endpoint_enabled_models(ep)
+            hidden_models = _endpoint_hidden_models(ep)
+            if requested_model:
+                if requested_model in hidden_models:
+                    return None
+                if enabled_models and requested_model not in enabled_models:
+                    # Model not served by this endpoint -> fail closed against forged model IDs
+                    return None
+                model = requested_model
+            else:
+                model = _first_chat_model(enabled_models)
+                if not model:
+                    return None
+
+            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            return {
+                "base": build_chat_url(base),
+                "model": model,
+                "headers": build_headers(api_key, base),
+                "source": "registered",
+                "endpoint_id": ep.id,
+            }
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
 def _candidates(owner: Optional[str], override: Optional[str]) -> List[Dict[str, Any]]:
     cands: List[Dict[str, Any]] = []
     for base in local_bases():
@@ -357,16 +580,13 @@ def _candidates(owner: Optional[str], override: Optional[str]) -> List[Dict[str,
     except Exception:
         pass
     if override:
-        base, model = _split_override(override)
-        # A request may choose a configured endpoint, never introduce a URL.
-        # Prefer an exact model match (including hosted credentials) over the
-        # first local endpoint when a bare model id is supplied.
-        matching = [c for c in cands if not base or str(c["base"]).rstrip("/") == base.rstrip("/")]
-        selected = next((c for c in matching if c["model"] == model), None)
-        if selected is None and model and matching and matching[0]["source"] == "local":
-            selected = {**matching[0], "model": model}
-        if selected is not None:
-            cands.insert(0, {**selected, "source": "override"})
+        cand = _resolve_override_candidate(override, owner)
+        if cand is not None:
+            cands.insert(0, cand)
+            return cands
+        # Unauthorized, invalid, foreign, disabled, or forged override:
+        # Fail closed! Never silently dispatch sensitive user images/state to an unexpected fallback.
+        return []
     return cands
 
 
@@ -438,9 +658,11 @@ async def list_editor_agent_models(owner: Optional[str] = None) -> List[Dict[str
             "source": "local",
             "vision": True,
             "base_url": base,
+            "endpoint_id": "local",
         })
     try:
         from src.endpoint_resolver import resolve_endpoint
+        from src.settings import get_user_setting, load_settings
 
         for prefix in ("utility", "default"):
             try:
@@ -451,12 +673,19 @@ async def list_editor_agent_models(owner: Optional[str] = None) -> List[Dict[str
                 key = ("hosted", model)
                 if key not in seen:
                     seen.add(key)
+                    ep_id = None
+                    try:
+                        settings = load_settings()
+                        ep_id = (get_user_setting(f"{prefix}_endpoint_id", owner or "", settings.get(f"{prefix}_endpoint_id", "")) or "").strip() or None
+                    except Exception:
+                        pass
                     models.append({
                         "id": model,
                         "label": model,
                         "source": "hosted",
                         "vision": None,
                         "base_url": url,
+                        "endpoint_id": ep_id or prefix,
                     })
                 break
     except Exception:

@@ -56,14 +56,35 @@ def test_cold_start_with_no_snapshot_and_no_index_is_not_marked_stale(monkeypatc
     # falls through to the real (blocking) path, so the response is not a
     # stale-marked snapshot.
     endpoint = _list_endpoint()
+    calls = []
+
+    class EmptyMailbox:
+        def select(self, folder, readonly=False):
+            calls.append(("select", folder, readonly))
+            return "OK", [b"0"]
+
+        def uid(self, command, *args):
+            assert command == "SEARCH"
+            calls.append(("search", args))
+            return "OK", [b""]
+
+        def logout(self):
+            pass
+
+    def connect(*args, **kwargs):
+        calls.append(("connect", args, kwargs))
+        return EmptyMailbox()
+
+    monkeypatch.setattr(er, "_start_poller", lambda: None)
     monkeypatch.setattr(er, "_email_index_list", lambda *a, **k: ([], 0, None))
-    monkeypatch.setattr(er, "_imap_connect", lambda *a, **k: (_ for _ in ()).throw(
-        RuntimeError("offline test")))
-    try:
-        result = _call(endpoint)
-    except Exception:
-        return  # the cold path legitimately attempted real IMAP
+    monkeypatch.setattr(er, "_imap_connect", connect)
+    result = _call(endpoint)
+    assert [call[0] for call in calls] == ["connect", "select", "search"]
+    assert calls[1][2] is True
     assert isinstance(result, dict)
+    assert result["emails"] == []
+    assert result["total"] == 0
+    assert not result.get("error")
     assert not (result.get("sync") or {}).get("stale")
 
 
@@ -77,6 +98,14 @@ def test_swr_contract_is_wired_into_the_list_path():
     assert "manual_refresh = bool(refresh)" in SRC
     assert "_invalidate_list_cache(account_id, folder)" in SRC
     assert "cached_rows = {} if refresh else _email_index_rows" in SRC
+
+
+def test_frontend_email_library_recognizes_skip_fast_path():
+    lib_path = pathlib.Path(__file__).resolve().parent.parent / "static" / "js" / "emailLibrary" / "index.js"
+    email_lib_src = lib_path.read_text(encoding="utf-8")
+    assert "skipFastPath: true" in email_lib_src
+    assert "skipFastPath = false" in email_lib_src
+    assert "!skipFastPath" in email_lib_src
 
 
 def test_manual_refresh_fetches_mailbox_instead_of_returning_stale_index(monkeypatch):
