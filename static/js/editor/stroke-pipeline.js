@@ -14,19 +14,26 @@ function toolSettings(tool) {
 
 let _lastColor = null;
 let _lastTransparentColor = null;
-function transparentColor(color) {
-  if (color === _lastColor && _lastTransparentColor) return _lastTransparentColor;
-  _lastColor = color;
+function transparentColor(color, alpha = 0) {
+  const key = `${color}|${alpha}`;
+  if (key === _lastColor && _lastTransparentColor) return _lastTransparentColor;
+  _lastColor = key;
+  _lastTransparentColor = colorWithAlpha(color, alpha);
+  return _lastTransparentColor;
+}
+
+function colorWithAlpha(color, alpha) {
   if (color.startsWith('#')) {
     const raw = color.slice(1);
     const expanded = raw.length === 3 ? raw.split('').map(char => char + char).join('') : raw;
     const rgb = [0, 2, 4].map(index => parseInt(expanded.slice(index, index + 2), 16));
-    _lastTransparentColor = `rgba(${rgb.join(',')},0)`;
-    return _lastTransparentColor;
+    return `rgba(${rgb.join(',')},${alpha})`;
   }
   const match = color.match(/rgba?\(([^)]+)\)/);
-  _lastTransparentColor = match ? `rgba(${match[1].split(',').slice(0, 3).join(',')},0)` : 'rgba(0,0,0,0)';
-  return _lastTransparentColor;
+  if (!match) return `rgba(0,0,0,${alpha})`;
+  const components = match[1].split(',');
+  const originalAlpha = components.length > 3 ? Number(components[3]) : 1;
+  return `rgba(${components.slice(0, 3).join(',')},${alpha * originalAlpha})`;
 }
 
 function circleStamp(ctx, x, y, radius, softness, color, alpha, operation) {
@@ -38,8 +45,19 @@ function circleStamp(ctx, x, y, radius, softness, color, alpha, operation) {
     ctx.fillStyle = color;
   } else {
     const gradient = ctx.createRadialGradient(x, y, radius * hard, x, y, radius);
-    gradient.addColorStop(0, color);
-    gradient.addColorStop(1, transparentColor(color));
+    if (softness > 1) {
+      // Above the old maximum, remove the firm core with a progressively
+      // gentler alpha profile while keeping the selected brush diameter.
+      ctx.fillStyle = color;
+      const normalized = ctx.fillStyle;
+      for (let step = 0; step <= 16; step++) {
+        const t = step / 16;
+        gradient.addColorStop(t, transparentColor(normalized, (1 - t) ** softness));
+      }
+    } else {
+      gradient.addColorStop(0, color);
+      gradient.addColorStop(1, transparentColor(color));
+    }
     ctx.fillStyle = gradient;
   }
   ctx.beginPath();
@@ -274,6 +292,10 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
     if (!PAINT_TOOLS.has(tool)) return;
     const layer = activeLayer();
     if (!layer) return;
+    // Pixel writes invalidate adjusted previews even when adjustment settings
+    // themselves have not changed (otherwise retouch strokes appear late).
+    layer._adjFinalKey = null;
+    layer._adjCacheKey = null;
     if (tool === 'clone') return cloneStamp(sample, layer);
     if (tool === 'heal') {
       // A healing stroke without a picked source uses the convenient local
@@ -294,7 +316,7 @@ export function createStrokePipeline({ activeLayer, getActiveMaskLayer, composit
     let operation = 'source-over';
     let color = state.color;
     let alpha = opacity * flow;
-    let softness = Math.max(0, Math.min(1, settings.softness / 300));
+    let softness = Math.max(0, Math.min(4, settings.softness / 300));
     if (tool === 'eraser') { operation = 'destination-out'; color = 'rgba(0,0,0,1)'; }
     else if (tool === 'inpaint') {
       operation = state.inpaintEraseStroke ? 'destination-out' : 'source-over';

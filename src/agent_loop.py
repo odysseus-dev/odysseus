@@ -24193,11 +24193,14 @@ async def stream_agent_loop(
                 budget_is_explicit,
                 hard_max=hard_max,
             )
-            if candidate_context <= 8192:
+            if 0 < candidate_context <= 8192:
                 # Small local servers often tokenize chat wrappers and tool
                 # results much more generously than our rough estimator. Keep
                 # substantial headroom for those wrappers and generation so a
                 # follow-up tool round cannot exceed the server's n_ctx.
+                # 0 means the window is unknown, which already gets the
+                # conservative default budget; clamping it as well cut every
+                # request to 1200 tokens and dropped open documents (#6678).
                 effective_budget = min(
                     effective_budget,
                     max(1200, int(candidate_context * 0.40)),
@@ -27833,16 +27836,25 @@ async def stream_agent_loop(
                                 if _streamed_tool_markup or _streamed_tool_markup_starts(_delta_text):
                                     _streamed_tool_markup += _delta_text
                                     if not _streamed_tool_markup_complete(_streamed_tool_markup):
-                                        continue
-                                    _visible_markup_tail = strip_tool_blocks(
-                                        _streamed_tool_markup,
-                                        skip_fenced=True,
-                                    ).strip()
-                                    _streamed_tool_markup = ""
-                                    if not _visible_markup_tail:
-                                        continue
-                                    _delta_text = _visible_markup_tail
-                                    data["delta"] = _delta_text
+                                        if _streamed_tool_markup_starts(_streamed_tool_markup):
+                                            continue
+                                        # False alarm: a bare "<" (e.g. ``x < 2``) looked like
+                                        # a tag prefix, but the buffer can no longer become a
+                                        # tool tag. Release it as prose instead of holding the
+                                        # rest of the answer forever.
+                                        _delta_text = _streamed_tool_markup
+                                        _streamed_tool_markup = ""
+                                        data["delta"] = _delta_text
+                                    else:
+                                        _visible_markup_tail = strip_tool_blocks(
+                                            _streamed_tool_markup,
+                                            skip_fenced=True,
+                                        ).strip()
+                                        _streamed_tool_markup = ""
+                                        if not _visible_markup_tail:
+                                            continue
+                                        _delta_text = _visible_markup_tail
+                                        data["delta"] = _delta_text
                             full_response += _delta_text
                         if not _suppress_unavailable_web_delta:
                             _qwen_buffered_route = bool(

@@ -16,6 +16,7 @@ from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, _auth_disabled
 from src.constants import MAIL_ATTACHMENTS_DIR
+from src.session_search import _escape_like
 from src.upload_handler import reserve_upload_references
 
 logger = logging.getLogger(__name__)
@@ -571,9 +572,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # match docs containing both words regardless of position/order.
             if search:
                 for tok in search.split():
-                    term = f"%{tok}%"
+                    term = f"%{_escape_like(tok)}%"
                     q = q.filter(
-                        Document.title.ilike(term) | Document.current_content.ilike(term)
+                        Document.title.ilike(term, escape="\\")
+                        | Document.current_content.ilike(term, escape="\\")
                     )
 
             # Language filter. "pdf" is a display language derived from the
@@ -812,10 +814,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     ext = _ext.get(doc.language or "text", ".txt")
                     base = (doc.title or "document").strip() or "document"
                     base = re.sub(r"[^\w\-. ]+", "", base)[:60].strip() or doc.id
-                    name = base if "." in base else base + ext
+                    has_ext = base.lower().endswith(ext)
+                    stem = base[:-len(ext)] if has_ext else base
+                    suffix = base[-len(ext):] if has_ext else ext
+                    name = stem + suffix
                     i = 1
                     while name in used:
-                        name = f"{base}-{i}" + ("" if "." in base else ext)
+                        name = f"{stem}-{i}{suffix}"
                         i += 1
                     used.add(name)
                     content = doc.current_content or ""

@@ -46,6 +46,7 @@ DEFAULT_SETTINGS = {
     "agent_email_confirm": True,
     "image_gen_enabled": False,
     "image_model": "",
+    "image_edit_model": "",
     "image_quality": "medium",
     # Optional editor planner/caption endpoints. Empty uses configured chat
     # fallback without probing a developer-specific host.
@@ -294,7 +295,7 @@ def is_setting_overridden(key: str) -> bool:
 # resolved by FastAPI deps; an empty/None owner falls through to the global.
 _PER_USER_KEYS = {
     "vision_model", "vision_enabled", "vision_model_fallbacks",
-    "image_model", "image_gen_enabled", "image_quality",
+    "image_model", "image_edit_model", "image_gen_enabled", "image_quality",
     # Default chat endpoint / model — without per-user resolution every new
     # account inherited whatever the most-recent admin picked, which then
     # got injected into the chat composer on first open.
@@ -313,6 +314,20 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
     Falls back gracefully if the prefs module can't be imported (cycle/early
     boot) — admin-global settings keep working.
     """
+    if key == "image_gen_enabled":
+        global_val = get_setting("image_gen_enabled", default if default is not None else False)
+        if not global_val:
+            return False
+        if owner:
+            try:
+                from routes.prefs_routes import _load_for_user
+                prefs = _load_for_user(owner) or {}
+                if "image_gen_enabled" in prefs and prefs["image_gen_enabled"] is not None:
+                    return bool(prefs["image_gen_enabled"])
+            except Exception:
+                pass
+        return bool(global_val)
+
     if owner and key in _PER_USER_KEYS:
         try:
             from routes.prefs_routes import _load_for_user

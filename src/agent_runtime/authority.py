@@ -371,6 +371,101 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
     return SemanticIntent(families, selected, required_read_operation_for_request(request_text, history))
 
 
+
+def _trusted_local_mcp_request_tools(request_text: str, intent: SemanticIntent) -> set[str]:
+    """Seal local MCP operations from operator declarations and trusted request intent.
+
+    Discovery validates an operator-declared tool but cannot grant it. For the
+    notes family, only an explicit request for local notes admits matching
+    read operations and explicitly requested non-destructive write verbs. Other
+    MCP domains require the user to name the qualified operation explicitly.
+    """
+    from src.tool_capabilities import (
+        LOCAL_MCP_READ_TOOLS_ENV, LOCAL_MCP_WRITE_TOOLS_ENV,
+        _local_mcp_tools, _is_declared_local_mcp_read_tool,
+        _is_declared_local_mcp_write_tool, capabilities_for_tool, ToolEffect,
+    )
+    from src.tool_utils import get_mcp_manager
+
+    manager = get_mcp_manager()
+    if manager is None:
+        return set()
+
+    request = request_text.casefold()
+    local_notes = (
+        intent.selected_tools is None
+        and intent.required_read is None
+        and "notes" in intent.capabilities
+        and re.search(r"\b(?:local|on my computer|on this machine)\b", request)
+    )
+    write_verbs = {
+        "create": r"\b(?:create|add|make)\b",
+        "add": r"\b(?:add|create)\b",
+        "write": r"\bwrite\b",
+        "save": r"\bsave\b",
+        "update": r"\b(?:update|edit|modify|change)\b",
+        "edit": r"\b(?:edit|update|modify|change)\b",
+        "append": r"\bappend\b",
+        "modify": r"\b(?:modify|edit|update|change)\b",
+    }
+    negative_write = re.search(
+        r"\b(?:do not|don't|never|without|no)\s+(?:\w+\s+){0,2}"
+        r"(?:create|add|make|write|save|update|edit|append|modify)\b",
+        request,
+    )
+    declared = _local_mcp_tools(LOCAL_MCP_READ_TOOLS_ENV) | _local_mcp_tools(LOCAL_MCP_WRITE_TOOLS_ENV)
+    admitted = set()
+    for name in sorted(declared):
+        parts = name.split("__", 2)
+        if len(parts) != 3 or parts[0] != "mcp":
+            continue
+        _, server, bare = parts
+        if manager.is_builtin(server):
+            continue
+        conn = manager.get_server_status(server)
+        if conn.get("status") != "connected" or conn.get("transport") != "stdio":
+            continue
+        resource = manager.resource_identity(name)
+        if resource is None or resource.namespace != "mcp" or resource.endpoint_id != f"stdio:{server}":
+            continue
+        rows = manager._tools.get(server, [])
+        row = next((item for item in rows if item.get("name") == bare), None)
+        if row is None:
+            continue
+        read_ok = _is_declared_local_mcp_read_tool(name)
+        write_ok = _is_declared_local_mcp_write_tool(name)
+        if not (read_ok or write_ok):
+            continue
+        caps = capabilities_for_tool(name)
+        if not caps.known or caps.effects != frozenset({
+            ToolEffect.READ_PRIVATE if read_ok else ToolEffect.WRITE_PRIVATE
+        }):
+            continue
+        ann = row.get("annotations") or {}
+        destructive = ann.get("destructiveHint") if isinstance(ann, dict) else getattr(ann, "destructiveHint", None)
+        if destructive is True:
+            continue
+        if write_ok and re.match(r"^(?:delete|remove|erase|destroy|drop|purge)(?:_|$)", bare, re.I):
+            continue
+
+        # Exact qualified names in the trusted request permit any configured
+        # and validated local operation. Model/tool content is not an input.
+        explicitly_named = bool(re.search(
+            r"(?<![A-Za-z0-9_])" + re.escape(name.casefold()) + r"(?![A-Za-z0-9_])",
+            request,
+        ))
+        if not explicitly_named:
+            if not local_notes or not re.search(r"(?:^|_)notes?(?:_|$)", bare, re.I):
+                continue
+            if write_ok:
+                action = bare.split("_", 1)[0].casefold()
+                if action not in write_verbs or not re.search(write_verbs[action], request):
+                    continue
+                if negative_write:
+                    continue
+        admitted.add(name)
+    return admitted
+
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,
                              history=(), policy=None, active_document=False,
                              image_attachment=False, capabilities=None, client_runtime_context=None):
@@ -393,6 +488,7 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         tools = {canonical_tool(operation.tool)}
     else:
         operation = None
+    tools.update(_trusted_local_mcp_request_tools(request_text, intent))
     grants = []
     for name in sorted(tools | {"ask_user", "update_plan"}):
         name = canonical_tool(name)

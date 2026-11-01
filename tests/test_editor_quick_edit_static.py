@@ -52,7 +52,7 @@ def test_quick_edit_flip_and_rotate_accept_numeric_degrees():
 
 def test_quick_edit_transforms_do_not_add_a_second_undo_snapshot():
     start = EDITOR.index("if (/\\brotate\\b.*\\b180\\b")
-    end = EDITOR.index("if (_looksBackgroundRemoval(p)) {", start)
+    end = EDITOR.index("if (!/\\b(text|title|caption|font|heading|subtitle)", start)
     transform_block = EDITOR[start:end]
     assert "_saveState('Rotate" not in transform_block
     assert "_saveState('Flip" not in transform_block
@@ -372,9 +372,10 @@ def test_quick_edit_has_a_model_picker():
     assert "function _getSelectedQuickEditModel()" in EDITOR
     assert "getModel: () => _getSelectedQuickEditModel()," in EDITOR
     # Populated from the provider list and persisted per user.
-    assert "aiCommandSelect.innerHTML = '<option value=\"\">Auto (default)</option>';" in models
-    assert "localStorage.setItem('ge-ai-command-model', aiCommandSelect.value)" in models
-    assert "localStorage.getItem('ge-ai-command-model')" in models
+    assert "aiCommandSelect.innerHTML = '<option value=\"\">Same as generation</option>';" in models
+    assert "localStorage.setItem('ge-ai-command-model'" not in models
+    assert "localStorage.getItem('ge-ai-command-model')" not in models
+    assert 'saveImagePreferences({ [key]: model })' in AI_SETTINGS
     # Styled.
     assert ".ge-ai-settings-card" in STYLE
     assert ".ge-ai-command-model" in STYLE
@@ -698,7 +699,7 @@ def test_quick_edit_shows_a_real_progress_bar():
     assert "fetch(`/api/image/edit-progress?request_id=${encodeURIComponent(requestId)}`" in EDITOR
     # The edit request carries the request_id the server keys progress on.
     assert "const requestId = 'qe-' + Date.now().toString(36)" in EDITOR
-    assert "const body = JSON.stringify({ image, request_id: requestId, ...payload });" in EDITOR
+    assert "const body = JSON.stringify({ image, width: flat.width, height: flat.height, request_id: requestId, ...payload });" in EDITOR
     assert "_startAiProgress(requestId);" in EDITOR
     assert "_stopAiProgress();" in EDITOR
     # Styling exists.
@@ -718,7 +719,7 @@ def test_generation_503_is_handled_gracefully():
     # (returns 503). Surface a clear message and do not retry immediately.
     assert "if (status === 503) return _GEN_DISABLED_MSG;" in EDITOR
     assert "_GEN_DISABLED_MSG = 'Image generation is switched off on the server at the moment.'" in EDITOR
-    assert "window.__geGenerationDisabled" in EDITOR
+    assert "formatError: _generationErrorMessage" in EDITOR
 
 
 def test_sending_a_prompt_returns_focus_to_the_document():

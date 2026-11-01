@@ -132,7 +132,7 @@ function renderEffects(source, effects, masks) {
     const contribution = maskedContribution(next, masks[index]);
     const blended = copyCanvas(current);
     const blendCtx = blended.getContext('2d');
-    if (effect.type === 'drop-shadow') blendCtx.globalCompositeOperation = 'destination-over';
+    if (effect.type === 'drop-shadow' && !effect.params.inside) blendCtx.globalCompositeOperation = 'destination-over';
     blendCtx.globalAlpha = effect.opacity;
     blendCtx.drawImage(contribution, 0, 0);
     blendCtx.globalAlpha = 1;
