@@ -38,6 +38,11 @@ document.addEventListener('odysseus:tool-approval', () => {
   }, 60000);
 }, true);
 
+// The agent may turn these off, but only the user may turn them on. The
+// backend refuses agent-initiated enable events; this guard also protects
+// against a stale/cached backend or a replayed event flipping the UI.
+var USER_ONLY_ENABLE_TOGGLES = new Set(['bash', 'shell', 'terminal']);
+
 /**
  * Handle a ui_control SSE event — AI-driven UI manipulation.
  * Extracted from the duplicated ui_control + tool_output.ui_event handlers.
@@ -48,6 +53,9 @@ export function handleUIControl(uiData) {
 
   try {
     if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
+      if (uiData.state && USER_ONLY_ENABLE_TOGGLES.has(uiData.toggle_name)) {
+        return;
+      }
       var toggleMap = {
         web: 'web-toggle', bash: 'bash-toggle', rag: 'rag-toggle',
         research: 'research-toggle', incognito: 'incognito-toggle',

@@ -31,6 +31,11 @@ AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
 MAX_DEBATE_ROUNDS = 5
 MAX_PIPELINE_STEPS = 10
 
+# Toggles the agent may turn off but never on. Enabling these grants
+# execution or access the user deliberately withheld; only a human UI action
+# may turn them on. The value is the user-facing capability name.
+USER_ONLY_ENABLE_TOGGLES = {"bash": "Shell access"}
+
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
 # _session_manager is kept as a local cache for performance (avoiding
@@ -706,7 +711,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       Line 2+: action-specific params
 
     Actions:
-      toggle <name> <on|off>  — Toggle a setting (web, bash, rag, research, incognito, document_editor)
+      toggle <name> <on|off>  — Toggle a setting (web, bash, rag, research, incognito, document_editor).
+                                  Shell access (bash) can only be turned off by the agent; the user must enable it.
       set_mode <agent|chat>   — Switch between agent and chat mode
       switch_model <model>    — Change the model for the current session
       set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, cyberpunk, retrowave, forest, ocean, ume, terminal, organs, gpt, claude, cute, eclipse, porcelain, arcade, blueprint, monolith, yoyo)
@@ -756,6 +762,17 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         valid_toggles = {"web", "bash", "rag", "research", "incognito", "document_editor"}
         if toggle_name not in valid_toggles:
             return {"error": f"Unknown toggle '{toggle_name}'. Valid: {', '.join(sorted(valid_toggles))}"}
+        if state and toggle_name in USER_ONLY_ENABLE_TOGGLES:
+            label = USER_ONLY_ENABLE_TOGGLES[toggle_name]
+            return {
+                "error": (
+                    f"{label} can only be enabled by the user. "
+                    "Ask the user to click the Shell Access button; do not retry."
+                ),
+                "exit_code": 1,
+                "blocked": True,
+                "failure_kind": "user_only_action",
+            }
         return {
             "ui_event": "toggle",
             "toggle_name": toggle_name,
@@ -1150,7 +1167,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "results": (
                 "Toggle states are managed client-side in localStorage. "
                 "Available toggles: web, bash, rag, research, incognito, document_editor. "
-                "Use 'toggle <name> <on|off>' to change them."
+                "Use 'toggle <name> off' to disable one. Shell access (bash) can only be "
+                "enabled by the user in the UI."
             )
         }
 
