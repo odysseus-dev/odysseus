@@ -25,7 +25,7 @@ def compact_browser_observation(value, budget=8000):
                 # Snapshot text already contains labels and refs in DOM order.
                 # The refs mapping repeats them and buries menus in raw JSON.
                 lines = [line for line in snapshot.splitlines()
-                         if not re.fullmatch(r'\s*-?\s*generic(?:\s+\[ref=e\d+\])?:?\s*', line)]
+                         if not re.fullmatch(r'\s*(?:-\s*)?generic(?:\s+\[ref=e\d+\])?:?\s*', line)]
                 pages.append(('URL: ' + str(url) + '\n' if url else '') + '\n'.join(lines))
             elif url:
                 notices.append('URL: ' + str(url))
@@ -37,7 +37,8 @@ def compact_browser_observation(value, budget=8000):
                 parsed = json.loads(item)
             except (ValueError, TypeError):
                 # CLI status text precedes the JSON post-interaction state.
-                parts = re.split(r'\n\n\[(?:post-[^\]]+|page state after failed [^\]]+)\]\n', item)
+                # Labels are one line; stopping at \n keeps the split linear.
+                parts = re.split(r'\n\n\[(?:post-[^\]\n]+|page state after failed [^\]\n]+)\]\n', item)
                 if len(parts) > 1:
                     for part in parts:
                         visit(part)

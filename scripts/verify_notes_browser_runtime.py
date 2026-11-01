@@ -11,6 +11,38 @@ import time
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+def _stop_owned_server(server, identity):
+    """Close only identity-bound descendants, including MCP's new sessions.
+
+    Capture before signalling the parent: an orphaned stderr holder can no
+    longer be attributed by ancestry. Never search by executable name or kill
+    the caller's process group.
+    """
+    from src import process_lifecycle as lifecycle
+
+    descendants = (lifecycle.bind_descendants([identity.pid])
+                   if identity.verdict() == lifecycle.OWNED else [])
+    if os.name == "nt":
+        if identity.verdict() == lifecycle.OWNED:
+            lifecycle.taskkill_tree(identity.pid)
+    else:
+        outcome = lifecycle.terminate_identities(
+            [*(entry.identity for entry in reversed(descendants)), identity],
+            steps=lifecycle.term_kill_steps(10),
+        )
+        if outcome.survivors or outcome.unverified:
+            raise RuntimeError(f"Disposable Notes cleanup could not verify exit: {outcome}")
+    try:
+        logs, _ = server.communicate(timeout=2)
+    except subprocess.TimeoutExpired as error:
+        # Do not turn an unidentified pipe holder into an unbounded wait.
+        server.stdout.close()
+        raise RuntimeError("Disposable Notes output pipe remained open after owned cleanup") from error
+    return logs
 
 
 def main():
@@ -36,7 +68,10 @@ def main():
         server = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)],
             cwd=target, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            start_new_session=(os.name != "nt"),
         )
+        from src.process_lifecycle import ProcessIdentity
+        server_identity = ProcessIdentity.capture(server.pid)
         result = None
         try:
             origin = f"http://127.0.0.1:{port}"
@@ -62,12 +97,7 @@ def main():
                 print(result.stderr, file=sys.stderr)
             return result.returncode
         finally:
-            server.terminate()
-            try:
-                logs, _ = server.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                server.kill()
-                logs, _ = server.communicate()
+            logs = _stop_owned_server(server, server_identity)
             if result is None or result.returncode:
                 print(logs[-8000:], file=sys.stderr)
 
