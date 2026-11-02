@@ -24,6 +24,79 @@ from src.tool_parsing import parse_tool_blocks
 RECIPE = "# Classic banana cake\n\nMash 3 bananas. Bake 180C for 1 hour.\n"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before", [None, "", "original bytes"])
+@pytest.mark.parametrize("shape,body", [("bare", ""), ("text", ""), ("text", " \t\n"),
+                                      ("json", ""), ("json", " \t\n"),
+                                      ("text", "new text"), ("json", "new text")])
+async def test_bound_dispatch_preserves_original_write_intent(tmp_path, monkeypatch, before, shape, body):
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    target = tmp_path / "extensionless"
+    if before is not None:
+        target.write_text(before)
+    content = str(target) if shape == "bare" else (
+        json.dumps({"path": str(target), "content": body}) if shape == "json" else f"{target}\n{body}"
+    )
+    _, result = await server_authorized_executor(te.execute_tool_block)(
+        ToolBlock("write_file", content), workspace=str(tmp_path), owner="admin",
+        security_context=te.NO_TOOL_SECURITY_CONTEXT,
+    )
+    denied = shape == "bare" or (shape == "text" and not body.strip() and bool(before))
+    assert result["exit_code"] == (1 if denied else 0), result
+    if denied:
+        assert "content" in result["error"] or "empty body" in result["error"]
+        assert target.exists() == (before is not None)
+        if before is not None:
+            assert target.read_text() == before
+    else:
+        expected = "" if shape == "text" and not body.strip() and before == "" else body
+        assert target.read_text() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [{}, {"content": None}, {"content": 1},
+                                    {"content": []}, {"content": {}}, "malformed"])
+async def test_invalid_json_write_rejected_before_path_access(monkeypatch, payload):
+    def forbidden(*args):
+        raise AssertionError("invalid content accessed filesystem policy")
+    monkeypatch.setattr(te, "_resolve_tool_path", forbidden)
+    content = '{"path":' if payload == "malformed" else json.dumps({"path": "/unreachable", **payload})
+    result = await WriteFileTool().execute(content, {})
+    assert result["exit_code"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_normalizing_empty_is_not_an_explicit_clear(tmp_path):
+    target = tmp_path / "source.py"
+    target.write_text("preserve source")
+    result = await WriteFileTool().execute(json.dumps({"path": str(target), "content": "```python\n\n```"}), {})
+    assert result["exit_code"] == 1
+    assert target.read_text() == "preserve source"
+
+
+@pytest.mark.asyncio
+async def test_model_declared_clear_field_cannot_authorize_implicit_empty(target):
+    _seed(target)
+    result = await WriteFileTool().execute(json.dumps({"path": target, "declared_clear": True}), {})
+    assert result["exit_code"] == 1
+    assert _read(target) == RECIPE
+
+
+def test_implicit_whitespace_noop_effect_digest_describes_actual_empty_bytes(tmp_path):
+    import hashlib
+    from src.agent_runtime.authority import ExactOperation
+    from src.agent_runtime.resource_binding import resolve_filesystem_operation
+    from src.agent_runtime.resources import FilesystemRoot
+    from src.agent_runtime.effect_adapters import _filesystem_scope
+    target = tmp_path / "empty.txt"
+    target.touch()
+    bound = resolve_filesystem_operation(ExactOperation.normalize("write_file", f"{target}\n \t"),
+                                         roots=(FilesystemRoot.seal(tmp_path),), workspace=str(tmp_path))
+    _, obligations = _filesystem_scope(bound)
+    assert obligations[0].expected == hashlib.sha256(b"").hexdigest()
+
+
 @pytest.fixture
 def target():
     """A fresh directory under the system temp root, which _tool_path_roots allows."""
@@ -340,10 +413,134 @@ async def test_execute_tool_block_refuses_a_lost_body_without_touching_the_file(
     survive execute_tool_block's wrapping and still report failure upstream."""
     _seed(target)
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
-    _desc, result = await te.execute_tool_block(
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    _desc, result = await server_authorized_executor(te.execute_tool_block)(
         ToolBlock("write_file", _text_call(target, "")),
         owner="admin",
+        workspace=os.path.dirname(target),
         security_context=te.NO_TOOL_SECURITY_CONTEXT,
     )
     assert result.get("exit_code") == 1, result
+    assert "holds" in result["error"] and "unchanged" in result["error"]
     assert _read(target) == RECIPE
+
+
+# ── Task 3.5 regression: transport repair cannot mint clear intent ────────
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra", [{}, {"content": None}], ids=["missing-content", "null-content"])
+async def test_legacy_command_whitespace_does_not_mint_explicit_clear(tmp_path, monkeypatch, extra):
+    """Normalization or alias repair must never mint clear authority from legacy command text."""
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    initial = b"ORIGINAL NONEMPTY CONTENT\n"
+    direct = tmp_path / "direct.txt"
+    direct.write_bytes(initial)
+    execute = server_authorized_executor(te.execute_tool_block)
+    _, control = await execute(
+        ToolBlock("write_file", str(direct) + "\n \t"),
+        workspace=str(tmp_path),
+        owner="admin",
+        security_context=te.NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert control["exit_code"] == 1 and direct.read_bytes() == initial
+
+    target = tmp_path / "native.txt"
+    target.write_bytes(initial)
+    block = function_call_to_tool_block("write_file", json.dumps({"command": str(target) + "\n \t", **extra}))
+    # Legacy command whitespace is refused repair, rejecting the call before dispatch.
+    assert block is None
+    if block is not None:
+        _, result = await execute(
+            block,
+            workspace=str(tmp_path),
+            owner="admin",
+            security_context=te.NO_TOOL_SECURITY_CONTEXT,
+        )
+    assert target.read_bytes() == initial, f"Native transport repair authorized destructive whitespace: {block!r}"
+
+
+@pytest.mark.asyncio
+async def test_explicit_json_whitespace_content_authorizes_replacement(tmp_path, monkeypatch):
+    """Original explicit JSON string content intentionally authorizes whitespace replacement."""
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    initial = b"ORIGINAL NONEMPTY CONTENT\n"
+    target = tmp_path / "whitespace_replace.txt"
+    target.write_bytes(initial)
+    execute = server_authorized_executor(te.execute_tool_block)
+    block = function_call_to_tool_block("write_file", json.dumps({"path": str(target), "content": " \t"}))
+    assert block is not None
+    _, result = await execute(
+        block,
+        workspace=str(tmp_path),
+        owner="admin",
+        security_context=te.NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert result["exit_code"] == 0, result
+    assert target.read_bytes() == b" \t"
+
+
+@pytest.mark.asyncio
+async def test_legacy_command_exact_empty_is_rejected(tmp_path):
+    """Legacy exact-empty command shape is rejected before dispatch."""
+    target = tmp_path / "exact_empty.txt"
+    block = function_call_to_tool_block("write_file", json.dumps({"command": str(target) + "\n"}))
+    assert block is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_command_nonempty_write_still_works(tmp_path, monkeypatch):
+    """Ordinary nonempty legacy command write shape functions correctly."""
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    target = tmp_path / "nonempty_command.txt"
+    target.write_text("before\n")
+    execute = server_authorized_executor(te.execute_tool_block)
+    block = function_call_to_tool_block("write_file", json.dumps({"command": str(target) + "\nhello world"}))
+    assert block is not None
+    _, result = await execute(
+        block,
+        workspace=str(tmp_path),
+        owner="admin",
+        security_context=te.NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert result["exit_code"] == 0, result
+    assert target.read_text() == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_legacy_command_indented_code_preserves_indentation(tmp_path, monkeypatch):
+    """Legacy command repair must preserve raw indentation and not strip code content."""
+    from tests.runtime_evidence_helpers import server_authorized_executor
+    monkeypatch.setattr(te, "_owner_is_admin", lambda owner: True)
+    target = tmp_path / "indented_code.py"
+    execute = server_authorized_executor(te.execute_tool_block)
+    code = "    def compute():\n        return 42\n"
+    block = function_call_to_tool_block("write_file", json.dumps({"command": str(target) + "\n" + code}))
+    assert block is not None
+    _, result = await execute(
+        block,
+        workspace=str(tmp_path),
+        owner="admin",
+        security_context=te.NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert result["exit_code"] == 0, result
+    assert target.read_text() == code
+
+
+@pytest.mark.asyncio
+async def test_raw_openai_call_legacy_command_whitespace_is_rejected(tmp_path):
+    """Raw OpenAI function call parser rejects ambiguous whitespace-only legacy commands."""
+    initial = b"PRESERVED VIA OPENAI CALL\n"
+    target = tmp_path / "raw_call.txt"
+    target.write_bytes(initial)
+    raw_call = json.dumps({
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "arguments": json.dumps({"command": str(target) + "\n \t"}),
+        },
+    })
+    blocks = parse_tool_blocks(raw_call)
+    assert len(blocks) == 0
+    assert target.read_bytes() == initial

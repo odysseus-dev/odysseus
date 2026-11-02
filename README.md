@@ -34,7 +34,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
+Open `http://localhost:7011` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
 The compose files pull the official multi-arch image `ghcr.io/odysseus-dev/odysseus` (published by CI on every push to `main` and `dev`) and only build locally if the pull fails — so this also works on hosts without a build toolchain, e.g. as a [Portainer](https://www.portainer.io/) stack.
 
@@ -74,15 +74,33 @@ Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled
 
 Deployment details are in the [setup guide](website/setup.md#security-notes).
 
-## Star History
+## Community & Growth
 
-<a href="https://star-history.dera.page/#odysseus-dev/odysseus&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left" />
- </picture>
-</a>
+<p align="center">
+  <a href="https://trendshift.io/repositories/43167">
+      <a href="https://trendshift.io/repositories/43167?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-43167" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/43167/monthly" alt="odysseus-dev%2Fodysseus | Trendshift" width="230"/></a>
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://star-history.dera.page/#odysseus-dev/odysseus&type=date&legend=top-left">
+    <picture>
+      <source
+        media="(prefers-color-scheme: dark)"
+        srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&theme=dark&legend=top-left"
+      />
+      <source
+        media="(prefers-color-scheme: light)"
+        srcset="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left"
+      />
+      <img
+        src="https://star-history.dera.page/svg?repos=odysseus-dev/odysseus&type=date&legend=top-left"
+        alt="Odysseus GitHub star history"
+        width="100%"
+      />
+    </picture>
+  </a>
+</p>
 
 ## License
 

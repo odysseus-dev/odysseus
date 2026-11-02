@@ -1,9 +1,15 @@
+import pytest
+
 from services.hwfit.fit import analyze_model, rank_models
 from services.hwfit.models import (
     get_models,
     infer_quantization_from_name,
     is_prequantized,
 )
+from tests.hwfit_publication_fixtures import publication_catalog  # noqa: F401
+
+# Rank authored inputs rather than publication catalog snapshots.
+pytestmark = pytest.mark.usefixtures("publication_catalog")
 
 
 def _dual_5060ti_system():
@@ -35,7 +41,7 @@ def test_infers_native_hf_quant_formats_from_repo_names():
 
 def test_nvfp4_catalog_quant_is_preserved():
     catalog = {m["name"]: m for m in get_models()}
-    model = catalog["txn545/Qwen3.5-122B-A10B-NVFP4"]
+    model = catalog["test/native-NVFP4"]
 
     assert model["quantization"] == "NVFP4"
     assert is_prequantized(model)
@@ -43,7 +49,7 @@ def test_nvfp4_catalog_quant_is_preserved():
 
 def test_nvfp4_search_result_is_not_gguf_or_cpu_offload():
     catalog = {m["name"]: m for m in get_models()}
-    model = catalog["txn545/Qwen3.5-122B-A10B-NVFP4"]
+    model = catalog["test/native-NVFP4"]
 
     fit = analyze_model(model, _dual_5060ti_system())
     assert fit["quant"] == "NVFP4"
@@ -51,10 +57,10 @@ def test_nvfp4_search_result_is_not_gguf_or_cpu_offload():
 
     results = rank_models(
         _dual_5060ti_system(),
-        search="Qwen3.5-122B-A10B-NVFP4",
+        search="native-NVFP4",
         limit=10,
     )
-    hit = next(r for r in results if r["name"] == "txn545/Qwen3.5-122B-A10B-NVFP4")
+    hit = next(r for r in results if r["name"] == "test/native-NVFP4")
     assert hit["quant"] == "NVFP4"
     assert hit["run_mode"] != "cpu_offload"
 

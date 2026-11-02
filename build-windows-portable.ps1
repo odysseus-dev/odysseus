@@ -47,7 +47,8 @@ if (-not $pyExe) {
 Write-Host ("Using Python: " + $pyExe)
 
 Write-Step "Installing build dependencies"
-& $pyExe -m pip install --upgrade pip --quiet
+& $pyExe -m pip install --quiet --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
+if ($LASTEXITCODE -ne 0) { Fail "TLS build dependency bootstrap failed." }
 & $pyExe -m pip install -r requirements.txt pyinstaller pystray Pillow
 if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed." }
 
@@ -55,6 +56,9 @@ Write-Step "Building portable exe bundle"
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 
 $dataArgs = @(
+    "--add-data", "licenses;licenses",
+    "--add-data", "THIRD_PARTY_PROVENANCE.json;.",
+    "--add-data", "ACKNOWLEDGMENTS.md;.",
     "--add-data", "static;static",
     "--add-data", "scripts;scripts",
     "--add-data", "mcp_servers;mcp_servers",

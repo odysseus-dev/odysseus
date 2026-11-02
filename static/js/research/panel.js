@@ -1,71 +1,60 @@
 /**
  * Deep Research side panel — open/close, form, job rendering, library.
  */
-import * as jobs from './jobs.js?v=20260630researchthumb';
-import themeModule from '../theme.js';
-import createResearchSynapse from '../researchSynapse.js';
+import * as jobs from './jobs.js?v=20260910researcherrorpersist1';
+import themeModule from '../theme.js?v=20260911organsrain1';
+import createResearchSynapse from '../researchSynapse.js?v=20260910roundlabels2';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
-
-// Rotating research textarea placeholders — pick one at random each
-// time the panel is rendered so the example keeps feeling fresh.
-const _RESEARCH_HINTS = [
-  "e.g. Trace Odysseus's ten-year journey home from Troy — every island, monster, and detour, and why each one cost him",
-  "e.g. Compare Rust and Go for building a high-throughput web API in 2026",
-  "e.g. Fact-check whether honey actually never spoils",
-  "e.g. How to roast a duck so the skin stays crispy",
-  "e.g. The collapse of Bronze Age civilizations — leading theories and the evidence behind each",
-  "e.g. Best M.2 NVMe SSDs under $200 for a home AI workstation",
-  "e.g. Why do cats knead with their paws? Cover the leading behavioural explanations",
-  "e.g. Side effects and benefits of long-term creatine supplementation",
-  "e.g. How does end-to-end encryption work in Signal, step by step",
-  "e.g. The history of the printing press in East Asia, 700 CE → 1600 CE",
-];
-function _pickResearchHint() {
-  const i = Math.floor(Math.random() * _RESEARCH_HINTS.length);
-  // Escape double-quotes so we can safely splice into a placeholder="…" attribute.
-  return _RESEARCH_HINTS[i].replace(/"/g, '&quot;');
-}
+import { searchProviderLogo } from '../searchProviderIcons.js';
+import { orderActionMenuItems, actionMenuRank, SELECT_MENU_ICON } from '../actionMenuOrder.js';
+import { bindMenuDismiss } from '../escMenuStack.js';
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
 const _jobSynapses = new Map();
-// Which foldable job sections ('active' / 'past') the user has collapsed — kept
-// across re-renders so the panel doesn't re-expand on every job-state change.
-const _collapsedSections = new Set();
-
-// Persisted preference to minimize (hide) the per-job synapse "tree" visual.
-// Stored globally so it survives the frequent _renderJobs() card rebuilds and
-// applies to every running job.
-const _SYNAPSE_MIN_KEY = 'research.synapseMinimized';
-let _synapseMinimized = (() => { try { return localStorage.getItem(_SYNAPSE_MIN_KEY) === '1'; } catch { return false; } })();
+// Running cards rebuild whenever research progress changes. Keep a per-job
+// collapse choice outside the DOM so a user can inspect another job without
+// the next progress event reopening it.
+const _collapsedActiveJobIds = new Set();
 const _vizCollapseIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
 const _vizExpandIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-function _toggleSynapseMinimized() {
-  _synapseMinimized = !_synapseMinimized;
-  try { localStorage.setItem(_SYNAPSE_MIN_KEY, _synapseMinimized ? '1' : '0'); } catch {}
-  // Apply live to all rendered cards without forcing a full rebuild.
-  document.querySelectorAll('.research-job-synapse-host')
-    .forEach(h => h.classList.toggle('synapse-collapsed', _synapseMinimized));
-  document.querySelectorAll('.research-synapse-toggle').forEach(b => {
-    b.classList.toggle('active', _synapseMinimized);
-    b.title = _synapseMinimized ? 'Show visualization' : 'Minimize visualization';
-    b.innerHTML = _synapseMinimized ? _vizExpandIcon : _vizCollapseIcon;
-  });
-}
 
 let _open = false;
+let _researchRailUnread = false;
 let _onDocKeydown = null;
 let _apiBase = '';
 let _endpoints = [];
-let _expandedJobId = null;
 let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
+let _researchTab = 'research';
+let _historySearch = '';
+let _historySort = 'recent';
+let _historyFilter = 'all';
+let _historySelectMode = false;
+const _historySelectedIds = new Set();
+let _visibleHistoryIds = [];
+let _historyCascadePending = false;
+const _researchPickers = new Map();
+let _researchPickerCleanup = [];
 const _SETTINGS_KEY = 'odysseus-research-settings';
 const _COLLAPSE_KEY = 'odysseus-research-settings-collapsed';
 
 try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch {}
+
+function _playHistoryCascade() {
+  const list = document.getElementById('research-past-list');
+  if (!list?.querySelector('.research-job-card')) {
+    _historyCascadePending = true;
+    return;
+  }
+  _historyCascadePending = false;
+  list.classList.remove('doclib-just-opened');
+  void list.offsetWidth;
+  list.classList.add('doclib-just-opened');
+  setTimeout(() => list.classList.remove('doclib-just-opened'), 900);
+}
 
 function _saveSettingsToStorage() {
   try {
@@ -115,7 +104,9 @@ function _syncResearchRail() {
   } catch { return; }
   const railBtn = document.getElementById('rail-research');
   const toolBtn = document.getElementById('tool-research-btn');
-  const active = running > 0 || errored > 0;
+  // Historical failures belong in Research history; they must not keep the
+  // mini-sidebar notification lit after the panel has been opened.
+  const active = running > 0 || _researchRailUnread;
   // Shared flag so sessions.js:_updateRailNotifs (which lights the same
   // rail button for INLINE research mode) ORs with us instead of
   // clobbering — otherwise a session re-render would clear our dot.
@@ -123,7 +114,7 @@ function _syncResearchRail() {
   if (railBtn) {
     railBtn.classList.remove('rail-notify', 'rail-notify-success', 'rail-notify-error', 'research-notif-active');
     if (active) {
-      railBtn.classList.add('rail-notify', errored ? 'rail-notify-error' : 'rail-notify-success', 'research-notif-active');
+      railBtn.classList.add('rail-notify', errored && running > 0 ? 'rail-notify-error' : 'rail-notify-success', 'research-notif-active');
     }
   }
   if (toolBtn) {
@@ -140,10 +131,10 @@ function _syncResearchRail() {
         toolBtn.appendChild(wrap);
       }
       const round = runningJob && runningJob.progress && runningJob.progress.round;
-      // Just the round as "R1", "R2", … (empty until the first round lands).
+      // Show the full round label (empty until the first round lands).
       // Only update when we actually have a round — don't blank it out on
       // progress ticks that lack one, or it flickers on/off between rounds.
-      if (round) wrap.querySelector('.research-sb-status').textContent = `R${round}`;
+      if (round) wrap.querySelector('.research-sb-status').textContent = `Round ${round}`;
     } else if (wrap) {
       wrap.remove();
     }
@@ -196,16 +187,21 @@ async function _updateResearchCount() {
 }
 
 const _searchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+const _magnifyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>';
+const _researchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>';
 const _closeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 const _playIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>';
+const _selectIcon = SELECT_MENU_ICON;
 const _cancelIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 const _trashIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>';
 const _externalIcon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 const _copyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
 const _retryIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
 const _chevronIcon = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+const _historyIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>';
 const _editIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 const _chatIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const _moreIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
 
 export function init(apiBase, markdownMod, sessionMod) {
   _apiBase = apiBase;
@@ -213,7 +209,13 @@ export function init(apiBase, markdownMod, sessionMod) {
   _sessionModule = sessionMod;
   jobs.init(apiBase);
   jobs.setRenderCallback(_renderJobs);
-  jobs.onComplete(() => { if (!_open) _showBadge(); });
+  jobs.onComplete(() => {
+    if (!_open) {
+      _researchRailUnread = true;
+      _showBadge();
+      _syncResearchRail();
+    }
+  });
 }
 
 export function isOpen() { return _open; }
@@ -246,6 +248,9 @@ export function openPanel(focusJobId) {
     return;
   }
   _open = true;
+  _researchRailUnread = false;
+  _syncResearchRail();
+  _researchTab = 'research';
 
   const container = document.getElementById('chat-container');
   if (!container) return;
@@ -258,16 +263,17 @@ export function openPanel(focusJobId) {
   overlay.id = 'research-overlay';
   overlay.className = 'modal research-overlay';
 
-  // Match doclib/gallery/calendar modal sizing exactly so research feels like
-  // the rest of the modal family (centered, ~640px, 85vh).
+  // Use the same stable desktop frame as Memory/Skills.
   const pane = document.createElement('div');
   pane.id = 'research-pane';
   pane.className = 'modal-content doclib-modal-content research-pane';
   // Mobile: full-screen so the content has room and the jobs list can scroll
-  // inside it. Desktop: centered ~640px / 85vh modal like the rest.
+  // inside it. Desktop gets a definite height from the first paint. Leaving
+  // this content-sized made endpoint/model hydration grow the pane after it
+  // opened, which is especially jarring beside an already-open document.
   pane.style.cssText = (window.innerWidth <= 768)
     ? 'width:100vw;max-width:100vw;height:90dvh;max-height:90dvh;border-radius:14px 14px 0 0;background:var(--bg);'
-    : 'width:min(640px, 92vw);max-height:85vh;background:var(--bg);';
+    : 'width:min(560px, 90vw);height:78vh;max-height:78vh;background:var(--bg);';
   pane.innerHTML = _buildPanelHTML();
 
   overlay.appendChild(pane);
@@ -282,6 +288,12 @@ export function openPanel(focusJobId) {
   _onDocKeydown = (e) => {
     if (e.key === 'Escape' && _open) {
       e.preventDefault();
+      const openPicker = document.querySelector('.research-picker.open');
+      if (openPicker) {
+        _closeResearchPickers();
+        openPicker.querySelector('.research-picker-btn')?.focus();
+        return;
+      }
       closePanel();
     }
   };
@@ -315,6 +327,10 @@ function _focusJob(jobId) {
   const tryFocus = () => {
     const card = document.querySelector(`[data-job-id="${jobId}"]`);
     if (card) {
+      // Deep links must reveal the containing tab before scrolling. The
+      // composer tab is the default, so an existing card can still be hidden.
+      const tab = card.closest('[data-research-panel]')?.dataset.researchPanel;
+      if (tab) _setResearchTab(tab);
       card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       card.classList.add('research-card-flash');
       setTimeout(() => card.classList.remove('research-card-flash'), 2000);
@@ -333,6 +349,10 @@ export function closePanel() {
     document.removeEventListener('keydown', _onDocKeydown);
     _onDocKeydown = null;
   }
+
+  _researchPickerCleanup.forEach(cleanup => cleanup());
+  _researchPickerCleanup = [];
+  _researchPickers.clear();
 
   document.body.classList.remove('research-panel-view');
   const btn = document.getElementById('tool-research-btn');
@@ -358,32 +378,37 @@ function _buildPanelHTML() {
 
   return `
     <div class="modal-header research-pane-header">
-      <h4><span style="position:relative;top:-1px;left:6px;display:inline-flex;vertical-align:middle;">${_searchIcon}</span><span style="margin-left:6px;">Deep Research</span></h4>
+      <h4><span class="research-pane-title-icon">${_searchIcon}</span><span>Deep Research</span></h4>
       <div class="research-pane-header-actions">
         <button id="research-panel-minimize" class="modal-minimize-btn" type="button" title="Minimize"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg></button>
         <button id="research-panel-close" class="close-btn" title="Close">&#x2716;</button>
       </div>
     </div>
     <div class="modal-body research-pane-body" data-no-swipe-dismiss>
-      <div class="research-new-job">
+      <div class="memory-tabs research-tabs" role="tablist" aria-label="Deep Research views">
+        <button type="button" class="memory-tab active" data-research-tab="research" role="tab" aria-selected="true">${_searchIcon} Research</button>
+        <button type="button" class="memory-tab" data-research-tab="history" role="tab" aria-selected="false">${_historyIcon} History <span id="research-history-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px"></span></button>
+        <button type="button" class="memory-tab research-active-tab" data-research-tab="active" role="tab" aria-selected="false" hidden>${_playIcon} Active <span id="research-active-count" class="memory-count"></span></button>
+      </div>
+      <div class="memory-tab-panel research-tab-panel" data-research-panel="research" role="tabpanel">
+      <div class="admin-card research-new-job">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
           <h2 style="margin:0;padding:0;line-height:1;display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent, var(--red))" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h4v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></svg>Research <span id="research-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
         </div>
-        <p class="memory-desc doclib-desc" style="margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <p class="memory-desc doclib-desc research-new-job-desc">
           <span>Multi-step web research with an LLM-in-the-loop agent</span>
-          <span id="research-no-past-hint" style="display:none;font:inherit;opacity:1;position:static;">All past research found in: <button type="button" class="research-library-link" style="background:none;border:none;padding:0;font:inherit;color:var(--accent, var(--red));cursor:pointer;text-decoration:underline;">Library, Research</button></span>
         </p>
-        <textarea id="research-query" class="research-query" placeholder="${_pickResearchHint()}" rows="4"></textarea>
+        <textarea id="research-query" class="research-query" placeholder="Set sail on a question — Odysseus will chart the course." rows="4"></textarea>
         <button id="research-settings-toggle" class="research-settings-toggle${chevronCls}">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.85;flex-shrink:0;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings<span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
         <div id="research-settings-body" class="research-settings-row"${settingsHidden}>
           <label class="research-setting">
-            <span class="research-setting-label">Rounds <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many search → read → reflect rounds the agent runs. More rounds = deeper coverage, longer wait, more tokens.">?</span></span>
+            <span class="research-setting-label">Rounds <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many search → read → reflect rounds the agent runs.">?</span></span>
             <select id="research-rounds">${roundOpts}</select>
           </label>
           <label class="research-setting">
-            <span class="research-setting-label">Format <span class="hwfit-help-chip hwfit-help-chip-inline" title="Auto lets the LLM pick the output shape. Override when you specifically want a Compare table, How-to, Product, or Fact-check.">?</span></span>
+            <span class="research-setting-label">Format <span class="hwfit-help-chip hwfit-help-chip-inline" title="Auto lets the LLM pick the output shape.">?</span></span>
             <select id="research-category">
               <option value="" selected>Auto</option>
               <option value="product">Product</option>
@@ -406,11 +431,46 @@ function _buildPanelHTML() {
           </label>
         </div>
         <div class="research-controls-row">
-          <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> Queue</button>
+          <button id="research-add-btn" class="memory-toolbar-btn research-add-btn"><span class="research-add-plus">+</span> Queue</button>
           <button id="research-start-btn" class="research-start-btn">${_playIcon} Start</button>
         </div>
       </div>
-      <div id="research-jobs-list" class="research-jobs-list" data-no-swipe-dismiss></div>
+      </div>
+      <div class="memory-tab-panel research-tab-panel hidden" data-research-panel="active" role="tabpanel" hidden>
+        <div class="research-tab-heading"><h2>Active</h2><span class="memory-count">Queued and running research</span></div>
+        <div id="research-active-list" class="research-jobs-list" data-no-swipe-dismiss></div>
+      </div>
+      <div class="memory-tab-panel research-tab-panel hidden" data-research-panel="history" role="tabpanel" hidden>
+        <div class="admin-card research-history-card">
+          <div class="research-history-title-row">
+            <h2>${_researchIcon}<span>Research</span><span id="research-history-head-count" class="memory-count research-history-head-count"></span></h2>
+          </div>
+          <p class="memory-desc doclib-desc research-history-desc">Completed research reports saved in your library.</p>
+          <div class="memory-toolbar research-history-toolbar">
+            <div class="memory-toolbar-row research-history-toolbar-row">
+              <select class="memory-sort-select" id="research-history-sort" aria-label="Sort research" title="Sort research">
+                <option value="recent">Recent</option>
+                <option value="oldest">Oldest</option>
+                <option value="sources">Most sources</option>
+                <option value="alpha">A-Z</option>
+              </select>
+              <button type="button" class="memory-toolbar-btn" id="research-history-select-btn" title="Select research">${_selectIcon} Select</button>
+            </div>
+            <div class="research-history-search-wrap">
+              ${_magnifyIcon}
+              <input type="text" id="research-history-search" class="memory-search-input" placeholder="Search research..." aria-label="Search research" autocomplete="off">
+            </div>
+            <div id="research-history-filters" class="skills-summary-strip" aria-label="Research categories"></div>
+          </div>
+          <div id="research-history-bulk" class="memory-bulk-bar hidden">
+            <label class="memory-bulk-check-all" title="Select all research currently shown"><input type="checkbox" id="research-history-select-all"> All in view</label>
+            <span id="research-history-selected-count">0 Selected</span>
+            <button type="button" id="research-history-bulk-delete" class="memory-toolbar-btn danger" title="Delete selected research" disabled>${_trashIcon} Delete</button>
+            <button type="button" id="research-history-bulk-cancel" class="memory-toolbar-btn active" title="Cancel selection" aria-label="Cancel selection">${_cancelIcon}</button>
+          </div>
+          <div id="research-past-list" class="doclib-grid memory-list research-jobs-list" data-no-swipe-dismiss></div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -441,7 +501,10 @@ function _dismissKeyboard(input) {
 /** Reset the category selector back to "Auto" (called after each start). */
 function _resetCategoryToAuto() {
   const sel = document.getElementById('research-category');
-  if (sel) sel.value = '';
+  if (sel) {
+    sel.value = '';
+    _refreshResearchPicker(sel.id);
+  }
 }
 
 function _wireEvents(pane) {
@@ -454,6 +517,32 @@ function _wireEvents(pane) {
   });
   pane.querySelector('#research-start-btn').addEventListener('click', _handleStart);
   pane.querySelector('#research-add-btn').addEventListener('click', _handleAdd);
+  pane.querySelectorAll('[data-research-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => _setResearchTab(tab.dataset.researchTab));
+  });
+  pane.querySelector('#research-history-search')?.addEventListener('input', (e) => {
+    _historySearch = e.currentTarget.value;
+    _renderJobs();
+  });
+  pane.querySelector('#research-history-sort')?.addEventListener('change', (e) => {
+    _historySort = e.currentTarget.value;
+    _renderJobs();
+  });
+  pane.querySelector('#research-history-select-btn')?.addEventListener('click', () => {
+    _historySelectMode ? _exitHistorySelectMode() : _enterHistorySelectMode();
+  });
+  pane.querySelector('#research-history-select-all')?.addEventListener('change', (e) => {
+    if (e.currentTarget.checked) _visibleHistoryIds.forEach(id => _historySelectedIds.add(id));
+    else _visibleHistoryIds.forEach(id => _historySelectedIds.delete(id));
+    _updateHistoryBulkBar();
+    _renderJobs();
+  });
+  pane.querySelector('#research-history-bulk-cancel')?.addEventListener('click', _exitHistorySelectMode);
+  pane.querySelector('#research-history-bulk-delete')?.addEventListener('click', _bulkDeleteHistory);
+  pane.querySelector('#research-history-clear')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _clearHistory();
+  });
 
   pane.querySelector('#research-settings-toggle').addEventListener('click', () => {
     const body = document.getElementById('research-settings-body');
@@ -475,8 +564,60 @@ function _wireEvents(pane) {
 
   const endpointSelect = pane.querySelector('#research-endpoint');
   endpointSelect.addEventListener('change', () => _populateModels(endpointSelect.value));
+  const modelSelect = pane.querySelector('#research-model');
+  modelSelect.addEventListener('change', () => {
+    // The model menu is deliberately cross-endpoint. Selecting a model must
+    // therefore carry its owning endpoint along with it instead of sending a
+    // model name to whichever endpoint happened to be selected before.
+    const selected = modelSelect.options[modelSelect.selectedIndex];
+    const endpointId = selected?.dataset.endpointId;
+    if (endpointId && endpointSelect.value !== endpointId) {
+      endpointSelect.value = endpointId;
+      _refreshResearchPicker(endpointSelect.id);
+    }
+  });
+
+  _setupResearchPickers(pane);
 
   _renderJobs();
+}
+
+function _setResearchTab(tab) {
+  const pane = document.getElementById('research-pane');
+  if (!pane) return;
+  const activeTab = pane.querySelector('[data-research-tab="active"]');
+  if (tab === 'active' && activeTab?.hidden) tab = 'history';
+  if (!['research', 'active', 'history'].includes(tab)) tab = 'research';
+  const enteringHistory = tab === 'history' && _researchTab !== 'history';
+  _researchTab = tab;
+  pane.classList.toggle('research-results-view', tab !== 'research');
+  pane.querySelectorAll('[data-research-tab]').forEach((button) => {
+    const selected = button.dataset.researchTab === tab;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+  pane.querySelectorAll('[data-research-panel]').forEach((panel) => {
+    const selected = panel.dataset.researchPanel === tab;
+    panel.classList.toggle('hidden', !selected);
+    panel.hidden = !selected;
+  });
+  if (enteringHistory) _playHistoryCascade();
+}
+
+function _syncResearchTabs(allJobs) {
+  const active = allJobs.filter(j => j.status === 'queued' || j.status === 'running');
+  const history = allJobs.length - active.length;
+  const activeTab = document.querySelector('[data-research-tab="active"]');
+  const activeCount = document.getElementById('research-active-count');
+  const historyCount = document.getElementById('research-history-count');
+  if (activeTab) {
+    activeTab.hidden = active.length === 0;
+    activeTab.setAttribute('aria-hidden', active.length ? 'false' : 'true');
+  }
+  if (activeCount) activeCount.textContent = active.length ? active.length : '';
+  if (historyCount) historyCount.textContent = history ? history : '';
+  if (!active.length && _researchTab === 'active') _researchTab = 'history';
+  _setResearchTab(_researchTab);
 }
 
 function _readSettings() {
@@ -505,6 +646,7 @@ function _handleAdd() {
   if (!query) { queryEl?.focus(); return; }
   _saveSettingsToStorage();
   jobs.addToQueue(query, _readSettings());
+  _setResearchTab('active');
   queryEl.value = '';
   queryEl.focus();
 }
@@ -528,9 +670,13 @@ function _editJob(job) {
   const spEl = document.getElementById('research-search-provider');
   if (spEl && s.search_provider) spEl.value = s.search_provider;
   const epEl = document.getElementById('research-endpoint');
-  if (epEl && s.endpoint_id) epEl.value = s.endpoint_id;
+  if (epEl && s.endpoint_id) {
+    epEl.value = s.endpoint_id;
+    _populateModels(s.endpoint_id);
+  }
   const mEl = document.getElementById('research-model');
   if (mEl && s.model) mEl.value = s.model;
+  _syncAllResearchPickers();
   // Remove the old job so clicking Start/Queue makes a fresh one
   jobs.removeJob(job.id);
   // Scroll the form into view
@@ -542,15 +688,14 @@ async function _handleStart() {
   const startBtn = document.getElementById('research-start-btn');
   const query = (queryEl?.value || '').trim();
 
-  // "Start All" mode: more than one job queued → let the user pick parallel
-  // vs sequential before launching. Queue any freshly-typed query first so
-  // it joins the batch, then open the picker anchored to this button.
+  // Start All mode is only for an empty compose field. A freshly typed query
+  // always launches immediately, even when older queued jobs exist.
   const queuedCount = jobs.getJobs().filter(j => j.status === 'queued').length;
-  if (queuedCount > 1) {
-    if (query) { _saveSettingsToStorage(); jobs.addToQueue(query, _readSettings()); queryEl.value = ''; }
+  if (!query && queuedCount > 1) {
     _resetCategoryToAuto();
     if (window.innerWidth <= 768) _dismissKeyboard(queryEl);
     const total = jobs.getJobs().filter(j => j.status === 'queued').length;
+    _setResearchTab('active');
     _promptParallelOrSequential(total, startBtn);
     return;
   }
@@ -587,6 +732,7 @@ async function _handleStart() {
   const _mobile = window.innerWidth <= 768;
   if (!query) {
     jobs.startAllQueued();
+    _setResearchTab('active');
     _resetCategoryToAuto();
     if (_mobile) _dismissKeyboard(queryEl);
     return;
@@ -594,18 +740,37 @@ async function _handleStart() {
   _saveSettingsToStorage();
   const settings = _readSettings();
   queryEl.value = '';
+  // startJob adds the job synchronously before its first await. Switch after
+  // that call so the Active tab is visible and _setResearchTab does not
+  // redirect to History because it still appears hidden.
+  const startPromise = jobs.startJob(query, settings);
+  _setResearchTab('active');
   // Mobile: drop the keyboard after sending; desktop: keep focus for fast follow-ups.
   if (_mobile) _dismissKeyboard(queryEl); else queryEl.focus();
   _resetCategoryToAuto();
-  jobs.startJob(query, settings).catch((e) => {
-    if (typeof uiModule !== 'undefined' && uiModule?.showError) uiModule.showError('Failed to start research');
-    queryEl.value = query; // restore so user can retry
+  startPromise.then((job) => {
+    // A rejected launch used to be rendered as a finished history item before
+    // the user could read why it failed. Keep immediate request failures in
+    // the compose view and preserve the query for a corrected retry.
+    if (job?.status !== 'error') return;
+    const detail = job.errorMsg || 'Unable to start research.';
+    jobs.removeJob(job.id);
+    queryEl.value = query;
+    _setResearchTab('research');
+    if (typeof uiModule !== 'undefined' && uiModule?.showError) {
+      uiModule.showError(`Research did not start: ${detail}`);
+    }
+  }).catch((e) => {
+    queryEl.value = query;
+    _setResearchTab('research');
+    if (typeof uiModule !== 'undefined' && uiModule?.showError) {
+      uiModule.showError(`Research did not start: ${e?.message || 'Unable to start research.'}`);
+    }
   });
 }
 
-function _restoreSavedSettings() {
-  const saved = _loadSettingsFromStorage();
-  if (!saved) return;
+async function _restoreSavedSettings() {
+  const saved = _loadSettingsFromStorage() || {};
   if (saved.category !== undefined) {
     const catSel = document.getElementById('research-category');
     if (catSel) catSel.value = saved.category;
@@ -614,17 +779,29 @@ function _restoreSavedSettings() {
   // Users can pick a specific cap each time if needed.
   const search = document.getElementById('research-search-provider');
   if (search && saved.search_provider !== undefined) search.value = saved.search_provider;
+
+  // The compose panel must start from the Deep Research default configured in
+  // Settings. Previously it only restored an old local panel selection, so a
+  // fresh panel stayed at "Default" and its model picker had no models.
+  let configured = {};
+  if (!saved.endpoint_id) {
+    try {
+      const response = await fetch(`${_apiBase}/api/auth/settings`, { credentials: 'same-origin' });
+      if (response.ok) configured = await response.json() || {};
+    } catch (_) { /* The endpoint list remains usable without this preference. */ }
+  }
   const ep = document.getElementById('research-endpoint');
-  if (ep && saved.endpoint_id) {
-    ep.value = saved.endpoint_id;
-    _populateModels(saved.endpoint_id);
-    if (saved.model) {
-      setTimeout(() => {
-        const model = document.getElementById('research-model');
-        if (model) model.value = saved.model;
-      }, 50);
+  const endpointId = saved.endpoint_id || configured.research_endpoint_id || '';
+  const modelId = saved.model || configured.research_model || '';
+  if (ep && endpointId && Array.from(ep.options).some(option => option.value === endpointId)) {
+    ep.value = endpointId;
+    _populateModels(endpointId);
+    const model = document.getElementById('research-model');
+    if (model && modelId && Array.from(model.options).some(option => option.value === modelId)) {
+      model.value = modelId;
     }
   }
+  _syncAllResearchPickers();
 }
 
 async function _loadEndpoints() {
@@ -634,77 +811,207 @@ async function _loadEndpoints() {
     _endpoints = await res.json();
     const sel = document.getElementById('research-endpoint');
     if (!sel) return;
-    _endpoints.filter(e => e.is_enabled && e.model_type === 'llm').forEach(ep => {
+    _endpoints.filter(e => e.is_enabled && String(e.model_type || 'llm').toLowerCase() === 'llm').forEach(ep => {
       const opt = document.createElement('option');
       opt.value = ep.id;
       opt.textContent = ep.name || ep.base_url;
       sel.appendChild(opt);
     });
+    // Populate the model menu immediately. It should remain useful even when
+    // the optional Settings default has not loaded yet.
+    _populateModels();
+    _refreshResearchPicker(sel.id);
   } catch {}
 }
 
-function _populateModels(endpointId) {
+function _populateModels(endpointId = '') {
   const sel = document.getElementById('research-model');
   if (!sel) return;
+  const selectedModel = sel.value;
   sel.innerHTML = '<option value="">Default</option>';
-  if (!endpointId) return;
-  const ep = _endpoints.find(e => e.id === endpointId);
-  if (!ep || !ep.models) return;
-  sortModelIds(ep.models).forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m;
-    sel.appendChild(opt);
+  // A model is the useful choice here, not an endpoint. Keep every enabled
+  // LLM endpoint in one menu and annotate models with their API name. The
+  // selected option stores its endpoint id, which the change handler above
+  // applies before a research job starts.
+  const endpoints = _endpoints.filter(ep => (
+    ep.is_enabled && String(ep.model_type || 'llm').toLowerCase() === 'llm'
+  ));
+  const seenModels = new Set();
+  endpoints.forEach(ep => {
+    sortModelIds(Array.isArray(ep.models) ? ep.models : []).forEach(model => {
+      // The custom picker selects by option value. Keep that value unique so
+      // duplicate model ids advertised by two APIs cannot pick the wrong API.
+      if (seenModels.has(model)) return;
+      seenModels.add(model);
+      const opt = document.createElement('option');
+      opt.value = model;
+      opt.dataset.endpointId = ep.id;
+      opt.textContent = endpoints.length > 1
+        ? `${model} · ${ep.name || ep.base_url}`
+        : model;
+      sel.appendChild(opt);
+    });
   });
+  if (selectedModel && Array.from(sel.options).some(option => option.value === selectedModel)) {
+    sel.value = selectedModel;
+  }
+  _refreshResearchPicker(sel.id);
 }
 
 // ── Job rendering ──
+
+const _HISTORY_FILTERS = [
+  ['all', 'All'],
+  ['', 'Standard'],
+  ['product', 'Product'],
+  ['comparison', 'Comparison'],
+  ['howto', 'How-to'],
+  ['factcheck', 'Fact-check'],
+  ['landscape', 'Landscape'],
+];
+
+function _historyCategory(job) {
+  return job.category || '';
+}
+
+function _renderHistoryFilters(items) {
+  const el = document.getElementById('research-history-filters');
+  if (!el) return;
+  const counts = new Map();
+  items.forEach(job => counts.set(_historyCategory(job), (counts.get(_historyCategory(job)) || 0) + 1));
+  el.innerHTML = _HISTORY_FILTERS
+    .filter(([value]) => value === 'all' || counts.has(value))
+    .map(([value, label]) => {
+      const active = _historyFilter === value ? ' active' : '';
+      const count = value === 'all' ? items.length : (counts.get(value) || 0);
+      return `<button type="button" class="skills-summary-chip${active}" data-research-filter="${_esc(value)}" title="Show ${_esc(label.toLowerCase())} research"><span>${_esc(label)}</span><strong>${count}</strong></button>`;
+    }).join('');
+  el.querySelectorAll('[data-research-filter]').forEach(button => {
+    button.addEventListener('click', () => {
+      _historyFilter = button.dataset.researchFilter;
+      _renderJobs();
+    });
+  });
+}
+
+function _getVisibleHistory(items) {
+  const search = _historySearch.trim().toLowerCase();
+  let visible = items.filter(job => {
+    if (_historyFilter !== 'all' && _historyCategory(job) !== _historyFilter) return false;
+    if (!search) return true;
+    const haystack = [job.query, job.category, _CAT_LABELS[job.category] || '', job.status]
+      .filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(search);
+  });
+  const time = job => Number(job.startedAt) || 0;
+  if (_historySort === 'oldest') visible.sort((a, b) => time(a) - time(b));
+  else if (_historySort === 'sources') visible.sort((a, b) => (b.sources?.length ?? b.sourceCount ?? 0) - (a.sources?.length ?? a.sourceCount ?? 0) || time(b) - time(a));
+  else if (_historySort === 'alpha') visible.sort((a, b) => (a.query || '').localeCompare(b.query || ''));
+  else visible.sort((a, b) => time(b) - time(a));
+  return visible;
+}
+
+function _updateHistoryBulkBar() {
+  const bar = document.getElementById('research-history-bulk');
+  const button = document.getElementById('research-history-select-btn');
+  const count = document.getElementById('research-history-selected-count');
+  const deleteButton = document.getElementById('research-history-bulk-delete');
+  const all = document.getElementById('research-history-select-all');
+  if (bar) bar.classList.toggle('hidden', !_historySelectMode);
+  if (button) {
+    button.classList.toggle('active', _historySelectMode);
+    button.innerHTML = _historySelectMode ? `${_cancelIcon} Cancel` : `${_selectIcon} Select`;
+  }
+  if (count) count.textContent = `${_historySelectedIds.size} Selected`;
+  if (deleteButton) deleteButton.disabled = _historySelectedIds.size === 0;
+  if (all) all.checked = _visibleHistoryIds.length > 0 && _visibleHistoryIds.every(id => _historySelectedIds.has(id));
+}
+
+function _enterHistorySelectMode() {
+  _historySelectMode = true;
+  _historySelectedIds.clear();
+  _updateHistoryBulkBar();
+  _renderJobs();
+}
+
+function _exitHistorySelectMode() {
+  _historySelectMode = false;
+  _historySelectedIds.clear();
+  _updateHistoryBulkBar();
+  _renderJobs();
+}
+
+async function _deleteHistoryJobs(ids) {
+  const selected = new Set(ids);
+  const selectedJobs = jobs.getJobs().filter(job => selected.has(job.id));
+  await Promise.all(selectedJobs.filter(job => job.status === 'done').map(async job => {
+    try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+  }));
+  selectedJobs.forEach(job => jobs.removeJob(job.id));
+}
+
+async function _bulkDeleteHistory() {
+  if (!_historySelectedIds.size) return;
+  const ids = [..._historySelectedIds];
+  if (window.styledConfirm) {
+    const ok = await window.styledConfirm(`Delete ${ids.length} research ${ids.length === 1 ? 'report' : 'reports'}?`, { confirmText: 'Delete', danger: true });
+    if (!ok) return;
+  }
+  await _deleteHistoryJobs(ids);
+  _exitHistorySelectMode();
+}
+
+async function _clearHistory() {
+  const history = jobs.getJobs().filter(job => job.status !== 'queued' && job.status !== 'running');
+  if (!history.length) return;
+  if (window.styledConfirm) {
+    const ok = await window.styledConfirm(`Clear ${history.length} research ${history.length === 1 ? 'report' : 'reports'} from history?`, { confirmText: 'Clear all', danger: true });
+    if (!ok) return;
+  }
+  await _deleteHistoryJobs(history.map(job => job.id));
+}
 
 function _renderJobs() {
   // Keep the rail/sidebar indicator in sync on every job-state change,
   // even when the panel is closed (no container yet).
   _syncResearchRail();
-  const container = document.getElementById('research-jobs-list');
-  if (!container) return;
-
   const allJobs = jobs.getJobs();
-  if (!allJobs.length) {
-    // No empty-state text in the body — the query box above is the call to
-    // action. But still surface the "All past research found in: Library,
-    // Research" hint under the main title, since the Past section won't
-    // render to host it (this is exactly the case the dynamic hint targets).
-    container.innerHTML = '';
-    const noPastHint = document.getElementById('research-no-past-hint');
-    if (noPastHint) {
-      noPastHint.style.display = '';
-      if (!noPastHint.dataset._wired) {
-        noPastHint.dataset._wired = '1';
-        noPastHint.querySelector('.research-library-link')?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          closePanel();
-          if (window.documentModule && window.documentModule.openLibrary) {
-            window.documentModule.openLibrary({ tab: 'research' });
-          }
-        });
-      }
-    }
-    return;
-  }
+  const activeList = document.getElementById('research-active-list');
+  const pastList = document.getElementById('research-past-list');
+  if (!activeList || !pastList) return;
 
-  container.innerHTML = '';
+  const active = allJobs.filter(j => j.status === 'queued' || j.status === 'running');
+  const past = allJobs.filter(j => j.status !== 'queued' && j.status !== 'running').reverse();
+  const visiblePast = _getVisibleHistory(past);
+  _visibleHistoryIds = visiblePast.map(job => job.id);
+  _renderHistoryFilters(past);
+  _syncResearchTabs(allJobs);
 
-  const active = allJobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'error' || j.status === 'cancelled');
-  const past = allJobs.filter(j => j.status === 'done' && j._fromLibrary);
-  const recentDone = allJobs.filter(j => j.status === 'done' && !j._fromLibrary).reverse();
+  // Active cards are rebuilt on every progress event. Preserve an open
+  // overflow menu across that rebuild so live research updates do not make
+  // the kebab appear to open and immediately close.
+  const openActiveOverflowIds = new Set(
+    [...activeList.querySelectorAll('.research-job-overflow.open')]
+      .map(overflow => overflow.closest('[data-job-id]')?.dataset.jobId)
+      .filter(Boolean),
+  );
+  activeList.querySelectorAll('.research-job-overflow.open').forEach((overflow) => {
+    overflow.querySelector('.research-job-more')?.click();
+  });
 
-  // Keep the header "(N research)" chip in sync with the Past-section count.
-  // _updateResearchCount fetches the library total only, which under-counts
-  // when there's a session-completed job not yet persisted to the library.
+  activeList.innerHTML = '';
+  pastList.innerHTML = '';
+
   const statsEl = document.getElementById('research-stats');
   if (statsEl) {
-    const n = recentDone.length + past.length;
-    statsEl.textContent = n + ' research';
+    statsEl.textContent = past.length + ' research';
   }
+  const historyHeadCount = document.getElementById('research-history-head-count');
+  if (historyHeadCount) historyHeadCount.textContent = `${visiblePast.length} of ${past.length}`;
+  _historySelectedIds.forEach(id => {
+    if (!past.some(job => job.id === id)) _historySelectedIds.delete(id);
+  });
+  _updateHistoryBulkBar();
 
   // The main Start button doubles as "Start All (N)" when more than one job
   // is queued — clicking it then opens the parallel/sequential picker. No
@@ -718,28 +1025,12 @@ function _renderJobs() {
     startBtn.dataset._origHTML = startBtn.innerHTML;
   }
 
-  // Dynamic Past hint: when the Past section won't render (no past items),
-  // surface the "All past research found in: Library, Research" line under
-  // the main Research title instead, so the link is always discoverable.
-  const noPastHint = document.getElementById('research-no-past-hint');
-  if (noPastHint) {
-    const hasPast = past.length + recentDone.length > 0;
-    noPastHint.style.display = hasPast ? 'none' : '';
-    if (!hasPast && !noPastHint.dataset._wired) {
-      noPastHint.dataset._wired = '1';
-      noPastHint.querySelector('.research-library-link')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        closePanel();
-        if (window.documentModule && window.documentModule.openLibrary) {
-          window.documentModule.openLibrary({ tab: 'research' });
-        }
-      });
-    }
-  }
-
   // Clean up synapses for jobs that finished or disappeared. complete()
   // marks the SVG green for ~800ms before destroy removes it.
   const liveIds = new Set(allJobs.filter(j => j.status === 'running').map(j => j.id));
+  for (const jobId of _collapsedActiveJobIds) {
+    if (!liveIds.has(jobId)) _collapsedActiveJobIds.delete(jobId);
+  }
   for (const [jobId, entry] of _jobSynapses) {
     if (liveIds.has(jobId)) continue;
     try { entry.synapse.complete(); } catch {}
@@ -747,81 +1038,19 @@ function _renderJobs() {
     _jobSynapses.delete(jobId);
   }
 
-  // Group into foldable sections: "Active" (in-progress) and "Past research"
-  // (everything done — this session + library). Each has a clickable title
-  // that collapses its body. Collapsed state persists across re-renders via
-  // the module-level _collapsedSections set.
-  const _addSection = (key, title, arr) => {
-    if (!arr.length) return;
-    const collapsed = _collapsedSections.has(key);
-    const sec = document.createElement('div');
-    sec.className = 'research-section' + (collapsed ? ' collapsed' : '');
-    const header = document.createElement('div');
-    header.className = 'research-section-header';
-    // Status dot on the right (visible even when folded):
-    //  • Active = pulsing accent glow (work in progress)
-    //  • any failed/cancelled job in Active = solid red
-    //  • Past (done) = solid green (success)
-    let dotColor, dotPulse = false;
-    if (key === 'active') {
-      const failed = arr.some(j => j.status === 'error' || j.status === 'cancelled');
-      if (failed) { dotColor = '#f44336'; }
-      else { dotColor = 'var(--accent, var(--red))'; dotPulse = true; }
-    } else {
-      dotColor = 'var(--color-success)';
+  const appendCards = (list, items, emptyText) => {
+    if (!items.length) {
+      list.innerHTML = `<div class="research-empty">${emptyText}</div>`;
+      return;
     }
-    // Both sections carry a "Clear all" button in the header (cookbook-running
-    // section style); it clears all research and must not toggle the fold.
-    const clearAllHtml = '<button class="research-section-clear" title="Clear all research">' + _cancelIcon + ' Clear all</button>';
-    header.innerHTML =
-      '<span class="research-section-title">' + title + '</span>'
-      + '<span class="research-section-count memory-count">' + arr.length + ' research</span>'
-      + '<span class="research-section-right">'
-      +   clearAllHtml
-      +   '<span class="research-section-dot' + (dotPulse ? ' pulsing' : '') + '" style="background:' + dotColor + ';"></span>'
-      +   '<svg class="research-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>'
-      + '</span>';
-    if (key === 'past') {
-      const hint = document.createElement('span');
-      hint.className = 'research-library-hint';
-      hint.innerHTML = '<span>All past research found in:</span> <button type="button" class="research-library-link">Library, Research</button>';
-      hint.querySelector('.research-library-link').addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Close the research panel first so the Library opens ABOVE it on mobile
-        // (otherwise it stacks under the full-screen panel).
-        closePanel();
-        if (window.documentModule && window.documentModule.openLibrary) {
-          window.documentModule.openLibrary({ tab: 'research' });
-        }
-      });
-      header.appendChild(hint);
-    }
-    header.addEventListener('click', () => {
-      const nowCollapsed = sec.classList.toggle('collapsed');
-      if (nowCollapsed) _collapsedSections.add(key); else _collapsedSections.delete(key);
-    });
-    header.querySelector('.research-section-clear')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Gracefully fade + collapse the whole section block(s) out, then clear.
-      container.querySelectorAll('.research-section').forEach(s => {
-        s.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-        s.style.opacity = '0';
-        s.style.transform = 'translateX(-10px)';
-      });
-      setTimeout(() => jobs.clearAll(), 320);
-    });
-    const body = document.createElement('div');
-    body.className = 'research-section-body';
-    arr.forEach(j => body.appendChild(_buildJobCard(j)));
-    sec.appendChild(header);
-    sec.appendChild(body);
-    container.appendChild(sec);
+    items.forEach(job => list.appendChild(_buildJobCard(job)));
   };
-
-  // ("Clear all" lives inside the Past research section header — see _addSection.)
-
-  _addSection('active', 'Active', active);
-  _addSection('past', 'Past research', recentDone.concat(past));
+  appendCards(activeList, active, 'No active research.');
+  appendCards(pastList, visiblePast, past.length ? 'No research matches your filters.' : 'No research history yet.');
+  openActiveOverflowIds.forEach((jobId) => {
+    activeList.querySelector(`[data-job-id="${CSS.escape(jobId)}"] .research-job-more`)?.click();
+  });
+  if (_historyCascadePending && _researchTab === 'history') _playHistoryCascade();
 }
 
 /** Pick parallel vs sequential as a small popover anchored to the
@@ -858,22 +1087,13 @@ function _promptParallelOrSequential(count, anchorBtn) {
   pop.style.right = `${Math.round(right)}px`;
   pop.classList.add(goUp ? 'rrm-up' : 'rrm-down');
 
+  let unregister = () => {};
   const close = () => {
     pop.remove();
-    document.removeEventListener('click', onDocClick, true);
-    document.removeEventListener('keydown', onKey, true);
+    unregister();
+    unregister = () => {};
   };
-  const onDocClick = (e) => {
-    if (pop.contains(e.target) || e.target === anchorBtn) return;
-    close();
-  };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-  };
-  setTimeout(() => {
-    document.addEventListener('click', onDocClick, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
+  unregister = bindMenuDismiss(pop, close, e => !(pop.contains(e.target) || e.target === anchorBtn));
 
   pop.querySelectorAll('.research-run-mode-row').forEach(b => {
     b.addEventListener('click', () => {
@@ -887,40 +1107,42 @@ function _promptParallelOrSequential(count, anchorBtn) {
 
 function _buildJobCard(job) {
   const card = document.createElement('div');
-  card.className = `research-job-card ${job.status}${job._fromLibrary ? ' from-library' : ''}`;
+  const standardVariant = !job.category ? _researchVisualVariant(job) : null;
+  const isHistoryCard = job.status !== 'queued' && job.status !== 'running';
+  card.className = `doclib-card memory-item research-job-card ${job.status}${job._fromLibrary ? ' from-library' : ''}${standardVariant !== null ? ` research-standard research-standard-v${standardVariant}` : ''}`;
   card.dataset.jobId = job.id;
   if (job.category) card.dataset.category = job.category;
 
   const elapsed = jobs.formatElapsed(job.elapsed || 0);
-  const isExpanded = _expandedJobId === job.id;
   const modelTag = (job.modelName || job.settings?._modelName)
     ? `<span class="research-job-model">${_esc(job.modelName || job.settings._modelName)}</span>` : '';
 
   if (job.status === 'queued') {
     const rounds = job.settings?.max_rounds;
-    const roundsLabel = !rounds ? 'Auto rounds' : `${rounds} rounds`;
+    const roundsLabel = rounds === -1 ? 'Explain only' : (!rounds ? 'Auto rounds' : `${rounds} rounds`);
     const epName = job.settings?._endpointName || '';
     const mName = job.settings?._modelName || '';
     const meta = [mName, epName, roundsLabel].filter(Boolean).join(' -- ');
     card.innerHTML = `
       <div class="research-job-header">
-        <span class="research-job-query">${_esc(job.query)}</span>${job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : ""}
+        <span class="research-job-query">${_esc(job.query)}</span>
       </div>
       <div class="research-job-queued-meta">${_esc(meta)}</div>
       <div class="research-job-actions">
         <button class="research-job-action" data-action="start" title="Start">${_playIcon} Start</button>
         <button class="research-job-action" data-action="edit" title="Edit query">${_editIcon} Edit</button>
-        <button class="research-job-action research-job-action-dim" data-action="remove" title="Remove">${_cancelIcon}</button>
+        ${_jobOverflowHTML([{ action: 'remove', icon: _cancelIcon, label: 'Remove from queue' }])}
       </div>
     `;
+    const overflow = _wireJobOverflow(card);
     card.querySelector('[data-action="start"]').addEventListener('click', (e) => {
       e.stopPropagation(); jobs.startQueued(job.id);
     });
     card.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
       e.stopPropagation(); _editJob(job);
     });
-    card.querySelector('[data-action="remove"]').addEventListener('click', (e) => {
-      e.stopPropagation(); jobs.removeJob(job.id);
+    card.querySelector('[data-menu-action="remove"]').addEventListener('click', (e) => {
+      e.stopPropagation(); overflow.close(); jobs.removeJob(job.id);
     });
 
   } else if (job.status === 'running') {
@@ -931,32 +1153,55 @@ function _buildJobCard(job) {
     const phase = jobs.formatPhase(job.progress, phaseMaxR);
     const round = job.progress?.round || 0;
     const barCap = userMaxR || 8;
-    const pct = Math.min(100, Math.round((round / barCap) * 100));
+    const explainOnly = job.mode === 'explain' || job.settings?.max_rounds === -1;
+    const pct = explainOnly ? 68 : Math.min(100, Math.round((round / barCap) * 100));
+    const hasLiveNavigationTrace = Array.isArray(job.navigation_trace) && job.navigation_trace.length;
+    const hasLiveActionTrace = Array.isArray(job.action_trace) && job.action_trace.length;
+    const liveTrace = hasLiveNavigationTrace || hasLiveActionTrace
+      ? `<div class="research-navigation-trace research-navigation-trace-live">${_renderNavigationTrace(job.navigation_trace, job.action_trace)}</div>`
+      : '';
+    const expanded = !_collapsedActiveJobIds.has(job.id);
+    card.classList.toggle('research-active-expanded', expanded);
     card.innerHTML = `
-      <div class="research-job-header">
-        <span class="research-job-query">${_esc(job.query)}</span>${job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : ""}
+      <div class="research-job-header research-active-card-header" role="button" tabindex="0" aria-expanded="${expanded}" title="${expanded ? 'Hide live research' : 'Show live research'}">
+        <span class="research-job-query">${_esc(job.query)}</span>
         ${modelTag}
         <span class="research-job-time">${elapsed}</span>
-        <button class="research-synapse-toggle${_synapseMinimized ? ' active' : ''}" title="${_synapseMinimized ? 'Show visualization' : 'Minimize visualization'}">${_synapseMinimized ? _vizExpandIcon : _vizCollapseIcon}</button>
-        <button class="research-job-cancel" title="Cancel research">${_cancelIcon}</button>
+        <span class="research-active-card-chevron" aria-hidden="true">${expanded ? _vizCollapseIcon : _vizExpandIcon}</span>
+        ${_jobOverflowHTML([{ action: 'cancel', icon: _cancelIcon, label: 'Cancel research', danger: true }])}
       </div>
-      <div class="research-job-phase">${phase}</div>
-      <div class="research-job-synapse-host${_synapseMinimized ? ' synapse-collapsed' : ''}" data-synapse-host="${job.id}"></div>
-      <div class="research-progress-bar"><div class="research-progress-fill" style="width:${pct}%"></div></div>
+      <div class="research-active-detail"${expanded ? '' : ' hidden'}>
+        <div class="research-job-phase">${phase}</div>
+        <div class="research-job-synapse-host" data-synapse-host="${job.id}"></div>
+        <div class="research-progress-bar"><div class="research-progress-fill" style="width:${pct}%"></div></div>
+        ${liveTrace}
+      </div>
     `;
-    card.querySelector('.research-job-cancel').addEventListener('click', (e) => {
-      e.stopPropagation(); jobs.cancelJob(job.id);
+    const overflow = _wireJobOverflow(card);
+    card.querySelector('[data-menu-action="cancel"]').addEventListener('click', (e) => {
+      e.stopPropagation(); overflow.close(); jobs.cancelJob(job.id);
     });
-    card.querySelector('.research-synapse-toggle')?.addEventListener('click', (e) => {
-      e.stopPropagation(); _toggleSynapseMinimized();
+    const header = card.querySelector('.research-active-card-header');
+    const toggleDetail = () => {
+      const shouldExpand = _collapsedActiveJobIds.has(job.id);
+      if (shouldExpand) _collapsedActiveJobIds.delete(job.id);
+      else _collapsedActiveJobIds.add(job.id);
+      const detail = card.querySelector('.research-active-detail');
+      card.classList.toggle('research-active-expanded', shouldExpand);
+      detail.hidden = !shouldExpand;
+      header.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+      header.setAttribute('title', shouldExpand ? 'Hide live research' : 'Show live research');
+      header.querySelector('.research-active-card-chevron').innerHTML = shouldExpand ? _vizCollapseIcon : _vizExpandIcon;
+    };
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('button, .research-job-menu')) return;
+      toggleDetail();
     });
-    // Click anywhere on the header (title/model/time) toggles the visualization
-    // too — the cancel/synapse buttons stopPropagation so they keep their own.
-    const _runHdr = card.querySelector('.research-job-header');
-    if (_runHdr) {
-      _runHdr.style.cursor = 'pointer';
-      _runHdr.addEventListener('click', () => _toggleSynapseMinimized());
-    }
+    header.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      toggleDetail();
+    });
     // Attach (or re-attach) the live synapse visualization. Created once per
     // job so animations/state persist across the _renderJobs() rebuilds that
     // fire on every progress event.
@@ -986,47 +1231,56 @@ function _buildJobCard(job) {
     // populate sources directly. Prefer the pre-set count if present.
     const srcCount = job.sources?.length ?? job.sourceCount ?? 0;
     // 0 sources = the research couldn't gather/extract anything — flag it.
-    const failed = srcCount === 0;
+    const explainOnly = job.mode === 'explain' || job.settings?.max_rounds === -1;
+    const failed = srcCount === 0 && !explainOnly;
     if (failed) card.classList.add('research-job-failed');
-    const doneBadge = failed
-      ? `<span class="research-cat-badge research-cat-failed">${_cancelIcon} no results</span>`
-      : (job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : `<span class="research-cat-badge research-cat-standard">standard</span>`);
+    // "visual" describes how this report is presented, not its research
+    // category. Keeping it beside every title made History noisy, so omit
+    // only that label while retaining meaningful category/failure badges.
+    const doneBadge = '';
     const failNote = failed
-      ? `<div class="research-job-failnote">Couldn't extract anything — try rephrasing the question, or switch the search engine in Settings.</div>`
+      ? `<div class="research-job-failnote">Couldn't extract, try again or change Settings.</div>`
       : '';
     const thumbSource = (job.sources || []).find(s => s && (s.image || s.og_image));
     const thumbUrl = job.thumbnail || thumbSource?.image || thumbSource?.og_image || '';
     const thumbnail = thumbUrl
-      ? `<img class="research-job-thumb" src="${_esc(thumbUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-      : '<span class="research-job-thumb research-job-thumb-empty" aria-hidden="true"></span>';
+      ? `<span class="research-job-thumb-frame"><img class="research-job-thumb" src="${_esc(thumbUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`
+      : '<span class="research-job-thumb-frame research-job-thumb-empty" aria-hidden="true"></span>';
     card.innerHTML = `
       <div class="research-job-header">
         <span class="research-job-query">${_esc(job.query)}</span>${doneBadge}
-        ${modelTag}
-        <span class="research-job-meta">${elapsed} -- ${srcCount} sources</span>
+        <button type="button" class="task-status-badge task-state-badge research-job-report-badge" data-action="report" title="Open visual report">${_externalIcon}<span class="task-state-label">Visual</span></button>
+        <button type="button" class="task-status-badge task-state-badge research-job-discuss-badge" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon}<span class="task-state-label">Chat</span></button>
+        ${_jobOverflowHTML([
+          { action: 'copy', icon: _copyIcon, label: 'Copy report' },
+          { action: 'dismiss', icon: _cancelIcon, label: 'Hide from list' },
+          { action: 'delete', icon: _trashIcon, label: 'Delete from disk', danger: true },
+        ])}
       </div>
-      ${failNote}
-      <div class="research-job-actions">
-        ${thumbnail}
-        <button class="research-job-action research-job-action-report" data-action="report" title="Visual report">${_externalIcon} Visual Report</button>
-        <button class="research-job-action" data-action="chat" title="Open follow-up chat with this research as context">${_chatIcon} Discuss</button>
-        <button class="research-job-action research-job-action-dim" data-action="copy" title="Copy report to clipboard">${_copyIcon}</button>
-        <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Clear from list">${_cancelIcon}</button>
-        <button class="research-job-action research-job-action-dim" data-action="delete" title="Delete from disk">${_trashIcon} Delete</button>
-      </div>
-      ${isExpanded ? `<div class="research-job-result">${_renderResult(job)}</div>` : ''}
+      <div class="research-job-summary">${thumbnail}<div class="research-job-summary-copy"><span class="research-job-meta">${elapsed} · ${explainOnly ? 'model only' : `${srcCount} sources`}</span>${failNote}</div></div>
     `;
-    // Clicking anywhere on the card (except the action buttons, which
-    // stopPropagation) opens the visual report — same as the Visual Report btn.
-    card.style.cursor = 'pointer';
-    card.addEventListener('click', () => {
-      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank');
-    });
-    card.querySelector('[data-action="copy"]').addEventListener('click', async (e) => {
+    const thumbFrame = card.querySelector('.research-job-thumb-frame');
+    if (thumbFrame && thumbUrl) {
+      thumbFrame.setAttribute('role', 'button');
+      thumbFrame.setAttribute('tabindex', '0');
+      thumbFrame.setAttribute('title', 'Open visual report');
+      const openReport = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank');
+      };
+      thumbFrame.addEventListener('click', openReport);
+      thumbFrame.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') openReport(e);
+      });
+    }
+    const overflow = _wireJobOverflow(card);
+    card.querySelector('[data-menu-action="copy"]').addEventListener('click', async (e) => {
       e.stopPropagation();
       const btn = e.currentTarget; // capture before await — currentTarget becomes null after
       if (!job.result) await _ensureResult(job);
       _copyResult(job, btn);
+      overflow.close();
     });
     card.querySelector('[data-action="report"]').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1036,43 +1290,72 @@ function _buildJobCard(job) {
       e.stopPropagation();
       _chatAboutResearch(job.id, e.currentTarget);
     });
-    card.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
+    card.querySelector('[data-menu-action="delete"]').addEventListener('click', async (e) => {
       e.stopPropagation();
       if (window.styledConfirm) {
         const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
         if (!ok) return;
       }
       try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+      overflow.close();
       _animateOutThenRemove(card, () => jobs.removeJob(job.id));
     });
-    card.querySelector('[data-action="dismiss"]').addEventListener('click', (e) => {
+    card.querySelector('[data-menu-action="dismiss"]').addEventListener('click', (e) => {
       e.stopPropagation();
+      overflow.close();
       _animateOutThenRemove(card, () => jobs.removeJob(job.id));
     });
 
   } else {
-    const errMsg = job.errorMsg ? `<div class="research-job-error">${_esc(job.errorMsg)}</div>` : '';
+    const errMsg = job.errorMsg ? `<span class="research-job-error research-job-title-error" title="${_esc(job.errorMsg)}">${_esc(job.errorMsg)}</span>` : '';
     card.innerHTML = `
       <div class="research-job-header">
-        <span class="research-job-query">${_esc(job.query)}</span>${job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : ""}
-        <span class="research-job-status">${job.status}</span>
-      </div>
-      ${errMsg}
-      <div class="research-job-actions">
-        <button class="research-job-action" data-action="retry" title="Retry">${_retryIcon} Retry</button>
-        <button class="research-job-action" data-action="edit" title="Edit and retry">${_editIcon} Edit</button>
-        <button class="research-job-action research-job-action-dim" data-action="dismiss" title="Dismiss">${_cancelIcon}</button>
+        <span class="research-job-query">${_esc(job.query)}</span>
+        ${errMsg}
+        <button type="button" class="task-status-badge task-state-badge research-job-retry-badge" data-action="retry" title="Retry">${_retryIcon}<span class="task-state-label">Retry</span></button>
+        <button type="button" class="task-status-badge task-state-badge research-job-edit-badge" data-action="edit" title="Edit and retry">${_editIcon}<span class="task-state-label">Edit</span></button>
+        ${_jobOverflowHTML([{ action: 'dismiss', icon: _cancelIcon, label: 'Hide from list' }])}
       </div>
     `;
+    const overflow = _wireJobOverflow(card);
     card.querySelector('[data-action="retry"]').addEventListener('click', (e) => {
-      e.stopPropagation(); jobs.retryJob(job.id);
+      e.stopPropagation();
+      jobs.retryJob(job.id);
+      _setResearchTab('active');
     });
     card.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
       e.stopPropagation(); _editJob(job);
     });
-    card.querySelector('[data-action="dismiss"]').addEventListener('click', (e) => {
-      e.stopPropagation(); jobs.removeJob(job.id);
+    card.querySelector('[data-menu-action="dismiss"]').addEventListener('click', (e) => {
+      e.stopPropagation(); overflow.close(); jobs.removeJob(job.id);
     });
+  }
+
+  if (_historySelectMode && isHistoryCard) {
+    const header = card.querySelector('.research-job-header');
+    if (header) {
+      const label = document.createElement('label');
+      label.className = 'research-history-card-select';
+      label.title = 'Select research';
+      label.innerHTML = `<input type="checkbox" class="memory-select-cb research-history-select-cb" ${_historySelectedIds.has(job.id) ? 'checked' : ''} aria-label="Select research">`;
+      // Card-level handlers must never consume an individual selection click.
+      const stopCardInteraction = (e) => e.stopPropagation();
+      ['pointerdown', 'mousedown', 'click'].forEach(type => label.addEventListener(type, stopCardInteraction));
+      const checkbox = label.querySelector('input');
+      checkbox.addEventListener('click', stopCardInteraction);
+      checkbox.addEventListener('change', (e) => {
+        if (e.currentTarget.checked) _historySelectedIds.add(job.id);
+        else _historySelectedIds.delete(job.id);
+        _updateHistoryBulkBar();
+      });
+      header.prepend(label);
+      card.classList.add('research-history-selectable');
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button, a, input, label, .research-job-menu')) return;
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
   }
 
   return card;
@@ -1094,18 +1377,212 @@ const _CAT_LABELS = {
   factcheck: 'Fact-check',
 };
 
+const _STANDARD_CAT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4.5 4.5"/><path d="M11 8v6M8 11h6"/></svg>';
+
+function _jobOverflowHTML(items) {
+  const orderedItems = orderActionMenuItems(items);
+  const menuItems = orderedItems.map((item, index) => `${index > 0 && actionMenuRank(item) >= 700 && actionMenuRank(orderedItems[index - 1]) < 700 ? '<div class="dropdown-divider"></div>' : ''}<button type="button" role="menuitem" data-menu-action="${item.action}" class="dropdown-item-compact${item.danger ? ' dropdown-item-danger' : ''}">${item.icon}<span>${item.label}</span></button>`).join('');
+  return `
+    <div class="research-job-overflow">
+      <button type="button" class="research-job-action research-job-more" data-action="more" title="More actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">${_moreIcon}</button>
+      <div class="dropdown session-dropdown-menu research-job-menu" role="menu" hidden>
+        ${menuItems}
+      </div>
+    </div>`;
+}
+
+function _wireJobOverflow(card) {
+  const wrap = card.querySelector('.research-job-overflow');
+  const button = wrap?.querySelector('.research-job-more');
+  const menu = wrap?.querySelector('.research-job-menu');
+  if (!wrap || !button || !menu) return { close() {} };
+  let unregister = () => {};
+  const close = () => {
+    menu.hidden = true;
+    menu.style.display = 'none';
+    wrap.classList.remove('open');
+    button.setAttribute('aria-expanded', 'false');
+    unregister();
+    unregister = () => {};
+  };
+  const open = () => {
+    document.querySelectorAll('.research-job-overflow.open').forEach(other => {
+      if (other !== wrap) other.querySelector('.research-job-more')?.click();
+    });
+    menu.hidden = false;
+    menu.style.display = 'block';
+    wrap.classList.add('open');
+    button.setAttribute('aria-expanded', 'true');
+    unregister = bindMenuDismiss(menu, () => { close(); button.focus(); }, e => !wrap.contains(e.target));
+    menu.querySelector('button')?.focus();
+  };
+  button.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    menu.hidden ? open() : close();
+  });
+  menu.addEventListener('click', e => e.stopPropagation());
+  return { close };
+}
+
+function _researchPickerIcon(selectId, value) {
+  if (selectId === 'research-category') return value ? (_CAT_ICONS[value] || '') : _STANDARD_CAT_ICON;
+  if (selectId === 'research-search-provider') return value ? searchProviderLogo(value) : _searchIcon;
+  return '';
+}
+
+function _closeResearchPickers(exceptId = '') {
+  _researchPickers.forEach((picker, id) => {
+    if (id !== exceptId) picker.close();
+  });
+}
+
+function _refreshResearchPicker(selectId) {
+  _researchPickers.get(selectId)?.refresh();
+}
+
+function _syncAllResearchPickers() {
+  _researchPickers.forEach(picker => picker.refresh());
+}
+
+function _setupResearchPickers(pane) {
+  const ids = [
+    'research-rounds',
+    'research-category',
+    'research-search-provider',
+    'research-endpoint',
+    'research-model',
+  ];
+  ids.forEach(id => {
+    const select = pane.querySelector(`#${id}`);
+    if (!select || select.dataset.researchPickerBound === '1') return;
+    select.dataset.researchPickerBound = '1';
+    select.classList.add('research-native-select');
+
+    const picker = document.createElement('div');
+    picker.className = 'research-picker';
+    const menuId = `${id}-menu`;
+    picker.innerHTML = `
+      <button type="button" class="research-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="${menuId}">
+        <span class="research-picker-current"></span>
+        ${_chevronIcon}
+      </button>
+      <div class="research-picker-menu" id="${menuId}" role="listbox" hidden></div>
+    `;
+    select.insertAdjacentElement('afterend', picker);
+
+    const button = picker.querySelector('.research-picker-btn');
+    const current = picker.querySelector('.research-picker-current');
+    const menu = picker.querySelector('.research-picker-menu');
+    let unregister = () => {};
+    const close = () => {
+      menu.hidden = true;
+      picker.classList.remove('open');
+      button.setAttribute('aria-expanded', 'false');
+      unregister();
+      unregister = () => {};
+    };
+    const focusItem = (offset) => {
+      const items = Array.from(menu.querySelectorAll('.research-picker-option'));
+      if (!items.length) return;
+      const currentIndex = Math.max(0, items.indexOf(document.activeElement));
+      items[(currentIndex + offset + items.length) % items.length].focus();
+    };
+    const open = () => {
+      _closeResearchPickers(id);
+      menu.hidden = false;
+      picker.classList.add('open');
+      button.setAttribute('aria-expanded', 'true');
+      unregister = bindMenuDismiss(menu, close, e => picker.contains(e.target));
+      menu.querySelector('.active')?.focus();
+    };
+    const selectValue = (value) => {
+      if (select.value !== value) {
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      refresh();
+      close();
+      button.focus();
+    };
+    const refresh = () => {
+      const selected = select.options[select.selectedIndex] || select.options[0];
+      if (!selected) return;
+      const icon = _researchPickerIcon(id, selected.value);
+      current.innerHTML = `${icon ? `<span class="research-picker-icon">${icon}</span>` : ''}<span class="research-picker-label">${_esc(selected.textContent)}</span>`;
+      menu.innerHTML = Array.from(select.options).map(option => {
+        const optionIcon = _researchPickerIcon(id, option.value);
+        const active = option.value === select.value ? ' active' : '';
+        const safeValue = _esc(option.value).replace(/"/g, '&quot;');
+        return `<button type="button" class="research-picker-option${active}" role="option" aria-selected="${option.value === select.value}" data-value="${safeValue}">${optionIcon ? `<span class="research-picker-icon">${optionIcon}</span>` : ''}<span>${_esc(option.textContent)}</span><span class="research-picker-check">&#10003;</span></button>`;
+      }).join('');
+      menu.querySelectorAll('.research-picker-option').forEach(optionButton => {
+        optionButton.addEventListener('click', e => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectValue(optionButton.dataset.value || '');
+        });
+        optionButton.addEventListener('keydown', e => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); focusItem(1); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); focusItem(-1); }
+          else if (e.key === 'Home') { e.preventDefault(); menu.querySelector('.research-picker-option')?.focus(); }
+          else if (e.key === 'End') { e.preventDefault(); Array.from(menu.querySelectorAll('.research-picker-option')).pop()?.focus(); }
+          else if (e.key === 'Escape') { e.preventDefault(); close(); button.focus(); }
+        });
+      });
+    };
+
+    button.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      menu.hidden ? open() : close();
+    });
+    button.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        open();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+    select.addEventListener('change', refresh);
+    const controller = { close, refresh };
+    _researchPickers.set(id, controller);
+    refresh();
+  });
+}
+
+function _researchVisualVariant(job) {
+  // Color belongs to the report format, not to an individual report.
+  return 0;
+}
+
 function _renderResult(job) {
   if (!job.result) return '<div class="research-job-loading">Loading result...</div>';
   const cat = job.category || '';
-  const catIcon = _CAT_ICONS[cat] || '';
-  const catLabel = _CAT_LABELS[cat] || '';
+  const isStandard = !cat;
+  const catIcon = _CAT_ICONS[cat] || (isStandard ? _STANDARD_CAT_ICON : '');
+  const catLabel = _CAT_LABELS[cat] || (isStandard ? 'Research' : '');
+  const heroVariant = isStandard ? ` research-hero-v${_researchVisualVariant(job)}` : '';
 
   let html = '';
 
-  // Category hero banner — only for completed, known-category results
+  // Standard reports keep one stable identity; specialized formats use
+  // their category palette.
   if (cat && catIcon) {
     html += `
       <div class="research-hero research-hero-${cat}">
+        <span class="research-hero-icon">${catIcon}</span>
+        <div class="research-hero-text">
+          <div class="research-hero-label">${catLabel}</div>
+          <div class="research-hero-query">${_esc(job.query)}</div>
+        </div>
+      </div>
+    `;
+  } else if (isStandard && catIcon) {
+    html += `
+      <div class="research-hero research-hero-standard${heroVariant}">
         <span class="research-hero-icon">${catIcon}</span>
         <div class="research-hero-text">
           <div class="research-hero-label">${catLabel}</div>
@@ -1120,12 +1597,21 @@ function _renderResult(job) {
     for (const s of job.sources.slice(0, 10)) {
       const title = _esc(s.title || s.url || '');
       const url = _safeSourceHref(s.url);
+      const badges = _researchSourceBadges(s);
       html += url
-        ? `<a href="${url}" target="_blank" rel="noopener" class="research-source-link">${title}</a>`
-        : `<span class="research-source-link">${title}</span>`;
+        ? `<a href="${url}" target="_blank" rel="noopener" class="research-source-link">${title}${badges}</a>`
+        : `<span class="research-source-link">${title}${badges}</span>`;
     }
     if (job.sources.length > 10) html += `<span class="research-source-more">+${job.sources.length - 10} more</span>`;
     html += '</div>';
+  }
+  if (job.source_state) {
+    html += `<div class="research-source-state">${_esc(job.source_state)}</div>`;
+  }
+  if (Array.isArray(job.navigation_trace) && job.navigation_trace.length) {
+    html += `<div class="research-navigation-trace">${_renderNavigationTrace(job.navigation_trace, job.action_trace)}</div>`;
+  } else if (Array.isArray(job.action_trace) && job.action_trace.length) {
+    html += `<div class="research-navigation-trace">${_renderActionTrace(job.action_trace)}</div>`;
   }
 
   const bodyCls = `research-job-report-body${cat ? ' research-body-' + cat : ''}`;
@@ -1148,7 +1634,51 @@ async function _ensureResult(job) {
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
+    job.analyzed_urls = d.analyzed_urls;
+    job.source_state = d.source_state;
+    job.source_coverage = d.source_coverage || {};
+    job.navigation_trace = d.navigation_trace;
+    job.action_trace = d.action_trace;
   } catch {}
+}
+
+function _renderActionTrace(trace) {
+  const rows = (Array.isArray(trace) ? trace : []).slice(-8).map((item) => {
+    const round = Number.isFinite(Number(item.round)) ? `Round ${Number(item.round)}` : 'Plan';
+    const tool = _esc(item.tool || 'tool');
+    const target = _esc(item.query || item.url || '');
+    const skipped = item.status === 'skipped';
+    const label = skipped ? `${tool}: ${target}` : `${tool}: ${target}`;
+    const requestedMeta = item.requested_by && item.requested_by !== item.tool
+      ? `via ${_esc(item.requested_by)}`
+      : '';
+    const meta = skipped
+      ? `<span class="research-nav-meta">skipped${item.reason ? ` · ${_esc(item.reason)}` : ''}</span>`
+      : (item.source ? `<span class="research-nav-meta">${_esc(item.source)}${requestedMeta ? ` · ${requestedMeta}` : ''}</span>` : (requestedMeta ? `<span class="research-nav-meta">${requestedMeta}</span>` : ''));
+    return `<div class="research-nav-row research-action-row${skipped ? ' research-action-skipped' : ''}"><span class="research-nav-tool">${round}</span><span class="research-nav-target">${label}</span>${meta}</div>`;
+  }).join('');
+  return rows;
+}
+
+function _renderNavigationTrace(trace, actionTrace = []) {
+  const plan = _renderActionTrace(actionTrace);
+  const navigation = Array.isArray(trace) ? trace : [];
+  const rows = navigation.slice(-8).map((item) => {
+    const tool = _esc(item.tool || 'tool');
+    const status = _esc(item.status || 'unknown');
+    const target = _esc(item.query || item.title || item.url || '');
+    const meta = [];
+    if (Number.isFinite(Number(item.results))) meta.push(`${Number(item.results)} results`);
+    if (item.source_kind) meta.push(_esc(item.source_kind));
+    if (Number.isFinite(Number(item.source_score))) meta.push(`${Number(item.source_score)}/100`);
+    if (item.retrieval && item.retrieval !== 'fetch') meta.push(_esc(item.retrieval));
+    const metaHtml = meta.length ? `<span class="research-nav-meta">${meta.join(' · ')}</span>` : '';
+    return `<div class="research-nav-row"><span class="research-nav-tool">${tool}</span><span class="research-nav-target">${target}</span><span class="research-nav-status">${status}</span>${metaHtml}</div>`;
+  }).join('');
+  const navigationHtml = rows
+    ? `<div class="research-nav-title">Navigation</div>${rows}`
+    : '';
+  return `${plan}${plan && navigationHtml ? '<div class="research-nav-spacer"></div>' : ''}${navigationHtml}`;
 }
 
 async function _copyResult(job, btn) {
@@ -1215,7 +1745,19 @@ async function _copyResult(job, btn) {
 async function _chatAboutResearch(researchId, btn) {
   if (!researchId) return;
   const origLabel = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = `${_chatIcon} Creating…`; }
+  let whirlpool = null;
+  if (btn) {
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    btn.innerHTML = '';
+    try {
+      whirlpool = spinnerModule.createWhirlpool(13);
+      whirlpool.element.style.cssText += ';margin:0;';
+      btn.appendChild(whirlpool.element);
+    } catch {
+      btn.innerHTML = origLabel;
+    }
+  }
   try {
     const res = await fetch(`${_apiBase}/api/research/spinoff/${researchId}`, {
       method: 'POST', credentials: 'same-origin',
@@ -1239,7 +1781,8 @@ async function _chatAboutResearch(researchId, btn) {
       throw new Error('Server returned no session id');
     }
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.innerHTML = origLabel; }
+    if (whirlpool) whirlpool.destroy();
+    if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.innerHTML = origLabel; }
     alert('Could not start follow-up chat: ' + e.message);
   }
 }
@@ -1256,4 +1799,15 @@ function _safeSourceHref(raw) {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return _esc(parsed.href);
   } catch {}
   return '';
+}
+
+function _researchSourceBadges(source) {
+  const badges = [];
+  const kind = String(source?.source_kind || '').trim();
+  const retrieval = String(source?.retrieval || '').trim();
+  const score = Number(source?.source_score);
+  if (kind) badges.push(`<span class="research-source-badge">${_esc(kind)}</span>`);
+  if (retrieval && retrieval !== 'fetch') badges.push(`<span class="research-source-badge">${_esc(retrieval)}</span>`);
+  if (Number.isFinite(score)) badges.push(`<span class="research-source-badge">${Math.max(0, Math.min(100, Math.round(score)))}</span>`);
+  return badges.length ? `<span class="research-source-badges">${badges.join('')}</span>` : '';
 }

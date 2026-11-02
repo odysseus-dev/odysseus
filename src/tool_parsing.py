@@ -10,9 +10,11 @@ import bisect
 import json
 import logging
 import re
-from typing import List, Optional, Tuple
+import shlex
+import warnings
+from typing import Iterable, List, Optional, Tuple
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
+from src.tool_types import ToolBlock, TOOL_TAGS
 from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,31 @@ _TOOL_BLOCK_RE = re.compile(
     r"[ \t]*([{\[][^\n]*?)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
+
+
+def _tool_block_re(additional_tool_names: Optional[Iterable[str]] = None):
+    if not additional_tool_names:
+        return _TOOL_BLOCK_RE
+    extra = {
+        name
+        for raw_name in additional_tool_names
+        if isinstance(raw_name, str)
+        and (name := raw_name.strip())
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", name)
+    }
+    if not extra:
+        return _TOOL_BLOCK_RE
+    # ``json`` is only executable here as an envelope naming one of the
+    # request-declared tools. It remains inert for ordinary agent turns.
+    tags = sorted(
+        set(TOOL_TAGS) | extra | {"json", "function_name"},
+        key=lambda value: (-len(value), value),
+    )
+    return re.compile(
+        r"```(" + "|".join(re.escape(tag) for tag in tags) + r")(?![\w-])"
+        r"[ \t]*([{\[][^\n]*?)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
+        re.IGNORECASE,
+    )
 
 # Tags whose fenced content is raw code, not JSON args. Same-line text after
 # these tags is Markdown fence metadata on a real language (```bash {title=
@@ -167,9 +194,32 @@ _TOOL_CODE_OPEN_RE = re.compile(r"<tool_code>\s*\{", re.IGNORECASE)
 _TOOL_CODE_CLOSE_RE = re.compile(r"\}\s*</tool_code>", re.IGNORECASE)
 
 # Pattern 4b: Gemma-style <|tool_call|> call:tool_name{args} <tool_call|>
-_GEMMA_TOOL_CALL_RE = re.compile(
-    r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*(\{[\s\S]*?\})\s*<\|?tool_call\|?>",
+_GEMMA_TOOL_CALL_OPEN_RE = re.compile(
+    r"<\|?tool_call\|?>\s*call:([\w\d_-]+)\s*\{",
     re.IGNORECASE,
+)
+_GEMMA_TOOL_CALL_CLOSE_RE = re.compile(
+    r"\}\s*<\|?tool_call\|?>",
+    re.IGNORECASE,
+)
+
+# Native Qwen markup shares the same non-nesting delimiter grammar as the
+# XML helpers. Literal closers keep whitespace and opener floods linear;
+# values are stripped by the caller, as in the original regex path.
+_QWEN_FUNCTION_OPEN_RE = re.compile(r"<function=([A-Za-z_][\w:.-]*)>\s*")
+_QWEN_FUNCTION_CLOSE_RE = re.compile(r"</function>")
+_QWEN_PARAMETER_OPEN_RE = re.compile(r"<parameter=([A-Za-z_]\w*)>\s*")
+_QWEN_PARAMETER_CLOSE_RE = re.compile(r"</parameter>")
+_QWEN_PYTHON_ARG_KEY_RE = re.compile(r"[A-Za-z_]\w*")
+_QWEN_PYTHON_ARG_VALUE_RE = re.compile(r"\s*=\s*(['\"].*?['\"]|[^,]+)")
+_ANGLE_TAG_OPEN_RE = re.compile(r"<")
+_NONEMPTY_ANGLE_TAG_OPEN_RE = re.compile(r"<(?=[^>])")
+_ANGLE_TAG_CLOSE_RE = re.compile(r">")
+_EMAIL_LOCAL_RE = re.compile(r"[\w.+-]+")
+_EMAIL_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_ASCII_EMAIL_LOCAL_RE = re.compile(r"[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+")
+_ASCII_EMAIL_ADDRESS_RE = re.compile(
+    r"[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 )
 
 # Pattern 4c: Open-function wrapper emitted by some local MLX/Exo models.
@@ -196,6 +246,10 @@ _QWEN_BARE_MARKER_RE = re.compile(
     r"(?:^|[\r\n])[ \t]*assistan(?:t)?[ \t]*(?=[\r\n]|$)",
     re.IGNORECASE,
 )
+_QWEN_OPEN_TOOLS_RE = re.compile(
+    r"<\|open\|>\s*tools\b[\s\S]*?(?:<\|close\|>\s*message\s*<\|sep\|>|$)",
+    re.IGNORECASE,
+)
 
 
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
@@ -212,14 +266,36 @@ _QWEN_BARE_MARKER_RE = re.compile(
 # never show the garbage to the user). The pipe run is tolerant of
 # fullwidth (U+FF5C) and ascii '|' in any count.
 _DSML_PIPES = r"[｜|]+"
+
+
+def _contains_explicit_tool_markup(text: str) -> bool:
+    """Return whether text contains a non-fenced, explicit call envelope.
+
+    If a model mixes a Markdown example with a real call envelope, the
+    envelope is authoritative. Executing the first fence and then skipping
+    the explicit call both runs the wrong command and loses the requested one.
+    The explicit parsers below still inspect the full text when fences are
+    skipped, so real leaked markup inside a response remains recoverable.
+    """
+    return bool(re.search(
+        r"(?:\[TOOL_CALL\]|<\s*(?:[\w]+:)?(?:tool_call|function_call|invoke|tool_code)\b|"
+        r"<\|?tool_call\|?>|<｜tool▁call▁begin｜>|<function_model>)",
+        str(text or ""),
+        re.IGNORECASE,
+    ))
+
+
 def _normalize_dsml(text: str) -> str:
     if not isinstance(text, str):
         return ""
     if "DSML" not in text:
         return text
     t = text
-    t = re.sub(rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*tool_calls\s*>", "<tool_call>", t, flags=re.IGNORECASE)
-    t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*tool_calls\s*>", "</tool_call>", t, flags=re.IGNORECASE)
+    # Hosted DeepSeek variants use both ``tool_calls`` and the shorter
+    # ``calls`` wrapper. Treat them identically; otherwise the inner invoke is
+    # parsed but the outer DSML tags leak into the user-visible response.
+    t = re.sub(rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*(?:tool_calls|calls)\s*>", "<tool_call>", t, flags=re.IGNORECASE)
+    t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*(?:tool_calls|calls)\s*>", "</tool_call>", t, flags=re.IGNORECASE)
     t = re.sub(rf"<\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*invoke\s+name=", "<invoke name=", t, flags=re.IGNORECASE)
     t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*invoke\s*>", "</invoke>", t, flags=re.IGNORECASE)
     # parameter open tag — drop any extra attrs (e.g. string="true").
@@ -251,6 +327,8 @@ _TOOL_NAME_MAP = {
     "read": "read_file",
     "read_file": "read_file",
     "cat": "read_file",
+    "list_files": "ls",
+    "list_directory": "ls",
     "write": "write_file",
     "write_file": "write_file",
     "save": "write_file",
@@ -339,6 +417,137 @@ _MISFENCED_WEB_TOOL_NAMES = {
     "fetch_url": "web_fetch",
 }
 
+# Media-capable local models often fall back from structured tool calls to a
+# language fence, e.g. `````python\ninspect_media('/workspace/a.mp4')````` or
+# `````bash\ninspect_media /workspace/a.mp4`````.  These are unambiguous calls,
+# but treating them as Python/bash leaves the media evidence gate permanently
+# unsatisfied.  Keep the rescue exact: one media command only, with literal
+# arguments, never an arbitrary script.
+_MISFENCED_MEDIA_TOOL_NAMES = {
+    "inspect_media": "inspect_media",
+    "extract_text": "extract_text",
+    "transcribe_media": "transcribe_media",
+    # A common local-model alias; Odysseus has no separate translate-media
+    # tool, and inspection is the only safe semantic target.
+    "translate_media": "inspect_media",
+}
+_MISFENCED_MEDIA_ALLOWED_KEYS = {
+    "inspect_media": {
+        "path", "file", "filename", "input", "start", "end", "duration",
+        "frames", "frame_count", "sampling", "max_dimension", "query", "page", "pages",
+        "timestamp", "output_path", "speed", "segments", "exports", "caption",
+        "crop", "timestamp_path",
+    },
+    "extract_text": {"path", "file", "filename", "input", "mode", "include_layout", "min_confidence", "max_results"},
+    "transcribe_media": {
+        "path", "file", "filename", "input", "language", "force_language",
+        "start", "end", "model", "output_path", "timestamp_precision",
+        # Some local models describe the requested media operation rather
+        # than using the native schema.  It is harmless metadata; the native
+        # transcriber still receives the validated path/options.
+        "transcription_type",
+    },
+}
+
+
+def _parse_misfenced_media_lookup(content: str) -> Optional[ToolBlock]:
+    """Recover one literal media-tool call from a python/bash fence.
+
+    This intentionally does not execute or interpret general code.  It only
+    accepts a single function call or a single shell-style command whose name
+    is an explicit media tool (or its narrow alias), then serializes literal
+    arguments for the normal tool validation/execution path.
+    """
+    stripped = str(content or "").strip()
+    if not stripped:
+        return None
+
+    # Bash models sometimes prepend a harmless background marker.  Remove
+    # only shebang/comment lines; any other extra statement remains rejected.
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    lines = [line for line in lines if not line.startswith("#!")]
+    if len(lines) != 1:
+        return None
+    candidate = lines[0]
+
+    try:
+        module = _parse_python_like_content(candidate)
+    except SyntaxError:
+        module = None
+    if module is not None and len(module.body) == 1 and isinstance(module.body[0], ast.Expr):
+        call = module.body[0].value
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+            raw_name = call.func.id.lower()
+            tool_type = _MISFENCED_MEDIA_TOOL_NAMES.get(raw_name)
+            if tool_type and len(call.args) <= 1:
+                args = {}
+                if call.args:
+                    try:
+                        args["path"] = ast.literal_eval(call.args[0])
+                    except (ValueError, SyntaxError, TypeError):
+                        return None
+                    if not isinstance(args["path"], str) or not args["path"].strip():
+                        return None
+                for keyword in call.keywords:
+                    if keyword.arg is None:
+                        return None
+                    key = keyword.arg
+                    if key not in _MISFENCED_MEDIA_ALLOWED_KEYS[tool_type]:
+                        return None
+                    try:
+                        value = ast.literal_eval(keyword.value)
+                    except (ValueError, SyntaxError, TypeError):
+                        return None
+                    normalized_key = {
+                        "file": "path",
+                        "filename": "path",
+                        "input": "path",
+                        # ``frame_count`` is a common textual spelling of the
+                        # native ``frames`` field.  Normalize only this
+                        # unambiguous scalar alias; conflicting duplicate
+                        # fields remain invalid below.
+                        "frame_count": "frames",
+                    }.get(key, key)
+                    if normalized_key in args:
+                        return None
+                    args[normalized_key] = value
+                if args.get("path"):
+                    return ToolBlock(tool_type, json.dumps(args, ensure_ascii=False))
+
+    # Shell-style JSON fallback: exactly ``tool {object}``.  This is common
+    # when a model knows the native JSON contract but emits it inside a bash
+    # fence.  Decode one object only, validate every key, and send it through
+    # the normal tool validator; never execute the surrounding shell.
+    name, separator, tail = candidate.partition(" ")
+    tool_type = _MISFENCED_MEDIA_TOOL_NAMES.get(name.lower()) if separator else None
+    if tool_type and tail.lstrip().startswith("{"):
+        try:
+            arguments, consumed = json.JSONDecoder().raw_decode(tail.lstrip())
+        except (TypeError, ValueError):
+            arguments, consumed = None, 0
+        remainder = tail.lstrip()[consumed:].strip() if consumed else tail
+        if isinstance(arguments, dict) and not remainder:
+            normalized = {}
+            for key, value in arguments.items():
+                if key not in _MISFENCED_MEDIA_ALLOWED_KEYS[tool_type]:
+                    return None
+                normalized["path" if key in {"file", "filename", "input"} else key] = value
+            if isinstance(normalized.get("path"), str) and normalized["path"].strip():
+                return ToolBlock(tool_type, json.dumps(normalized, ensure_ascii=False))
+
+    # Shell-style fallback: exactly ``tool path`` (optionally quoted).  Keep
+    # options out of this rescue; callers needing them can use JSON/function
+    # syntax and the normal parser will retain the strict boundary.
+    try:
+        tokens = shlex.split(candidate)
+    except ValueError:
+        return None
+    if len(tokens) == 2:
+        tool_type = _MISFENCED_MEDIA_TOOL_NAMES.get(tokens[0].lower())
+        if tool_type and tokens[1].strip() and not tokens[1].startswith("-"):
+            return ToolBlock(tool_type, json.dumps({"path": tokens[1]}, ensure_ascii=False))
+    return None
+
 _RAW_WEB_JSON_TOOL_RE = re.compile(
     r"\b(?:web_search|websearch|google_search|google_search_retrieval|google_search_grounding)\b",
     re.IGNORECASE,
@@ -351,15 +560,51 @@ _RAW_WEB_JSON_ALLOWED_KEYS = {"query", "queries", "time_filter", "freshness", "m
 # be unsafe.
 _PLAIN_UI_OPEN_PANEL_RE = re.compile(
     r"(?im)^\s*(?:`{1,3})?\s*ui_control\s+open_panel\s+"
-    r"(documents?|library|gallery|images?|email|inbox|mail|sessions?|chats?|history|"
-    r"notes?|brain|memor(?:y|ies)|skills?|settings|preferences|cookbook|models?)"
+    r"(documents?|library|gallery|images?|calendar|schedule|email|inbox|mail|sessions?|chats?|history|"
+    r"notes?|brain|memor(?:y|ies)|skills?|settings|preferences|themes?|appearance|cookbook|models?)"
+    r"((?:\s+(?:day|week|month|year|agenda)(?:\s+view)?(?:\s+\d{4}-\d{2}(?:-\d{2})?)?)?)"
     r"\s*(?:`{1,3})?\s*$"
 )
+_PLAIN_UI_CANDIDATE_RE = re.compile(r"ui_control", re.IGNORECASE)
+
+
+def _iter_plain_ui_open_panel(text: str):
+    """Yield line-anchored UI commands without retrying every blank line."""
+    pos = 0
+    while candidate := _PLAIN_UI_CANDIDATE_RE.search(text, pos):
+        line_start = text.rfind("\n", 0, candidate.start()) + 1
+        match = _PLAIN_UI_OPEN_PANEL_RE.match(text, line_start)
+        if match is not None:
+            yield match
+            pos = match.end()
+            continue
+        newline = text.find("\n", candidate.end())
+        pos = len(text) if newline < 0 else newline + 1
+
+
+def _strip_plain_ui_open_panel(text: str) -> str:
+    matches = list(_iter_plain_ui_open_panel(text))
+    if not matches:
+        return text
+    out = []
+    pos = 0
+    for match in matches:
+        out.append(text[pos:match.start()])
+        pos = match.end()
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
 # Parsing functions
 # ---------------------------------------------------------------------------
+
+def _parse_python_like_content(content: str):
+    """Parse fallback syntax without leaking invalid-escape warnings to traces."""
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return ast.parse(content, mode="exec")
 
 def _literal_string(value) -> Optional[str]:
     """Return a string from a small literal AST node, or None."""
@@ -389,7 +634,7 @@ def _parse_misfenced_web_lookup(content: str) -> Optional[ToolBlock]:
     narrow: only a single bare function call to a known web tool alias converts.
     """
     try:
-        module = ast.parse(content.strip(), mode="exec")
+        module = _parse_python_like_content(content.strip())
     except SyntaxError:
         return None
     if len(module.body) != 1 or not isinstance(module.body[0], ast.Expr):
@@ -456,7 +701,7 @@ def _parse_misfenced_read_file_lookup(content: str, *, allow_shell_style: bool =
         return None
 
     try:
-        module = ast.parse(stripped, mode="exec")
+        module = _parse_python_like_content(stripped)
     except SyntaxError:
         module = None
     if module and len(module.body) == 1 and isinstance(module.body[0], ast.Expr):
@@ -788,7 +1033,6 @@ def _strip_raw_openai_tool_call_json(text: str) -> str:
         pieces.append(text[pos:start])
         pos = end
         changed = True
-        # Common broken local-model suffix: a standalone ] before a role marker.
         while pos < len(text) and text[pos] in " \t\r\n":
             pos += 1
         if pos < len(text) and text[pos] == "]":
@@ -797,6 +1041,155 @@ def _strip_raw_openai_tool_call_json(text: str) -> str:
         return text
     pieces.append(text[pos:])
     return "".join(pieces)
+
+
+def iter_email_addresses(text: str, *, ascii_only: bool = False):
+    """Find legacy email-shaped strings without retrying every word suffix.
+
+    Match the address only at the start of each maximal local-part token.
+    When that attempt fails, every suffix has the same '@'/domain boundary
+    and must fail too. Local/domain character runs are each scanned a bounded
+    number of times, including malformed text with no '@' or domain dot.
+    """
+    local_re = _ASCII_EMAIL_LOCAL_RE if ascii_only else _EMAIL_LOCAL_RE
+    address_re = _ASCII_EMAIL_ADDRESS_RE if ascii_only else _EMAIL_ADDRESS_RE
+    pos = 0
+    while token := local_re.search(text, pos):
+        address = address_re.match(text, token.start())
+        if address is not None:
+            yield address.group(0)
+            pos = address.end()
+        else:
+            pos = token.end()
+
+
+def _iter_qwen_python_args(raw_args: str):
+    """Match each maximal key once, then its value at that fixed position.
+
+    If a word has no following equals sign, none of its suffixes can have one
+    either. Advancing past it avoids the old unanchored regex's O(n^2) retries
+    on a long malformed key, while preserving permissive quoted/bare values.
+    """
+    pos = 0
+    while key := _QWEN_PYTHON_ARG_KEY_RE.search(raw_args, pos):
+        value = _QWEN_PYTHON_ARG_VALUE_RE.match(raw_args, key.end())
+        if value is not None:
+            yield key.group(0), value.group(1)
+            pos = value.end()
+        else:
+            pos = key.end()
+
+
+def _parse_qwen3_native_text_call(
+    text: str,
+    additional_tool_names: Optional[Iterable[str]] = None,
+) -> Optional[ToolBlock]:
+    """Parse textual call shapes emitted by Qwen3.x MLX adapters.
+
+    This deployment is intentionally run without OpenAI tool schemas.  It
+    commonly emits one call several times as one response, using either
+    ``{"tool": ..., "parameters": ...}``, ``{"function": ..., ...}``,
+    ``manage_notes(action=...)``, or a bare MCP tool name.  Return only the
+    first valid call so duplicate renderings cannot execute repeatedly.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+
+    from src.tool_schemas import function_call_to_tool_block
+    declared_names = _declared_tool_name_map(additional_tool_names)
+
+    def declared_or_builtin(name: str, args: dict) -> Optional[ToolBlock]:
+        normalized_name = name.strip().lower()
+        if declared_name := declared_names.get(normalized_name):
+            return ToolBlock(declared_name, json.dumps(args, ensure_ascii=False))
+        return function_call_to_tool_block(name.strip(), json.dumps(args))
+
+    # Qwen native text rendering:
+    # <tool_call><function=manage_notes><parameter=action>list</parameter>...
+    fn_match = next(_iter_named_blocks(
+        text, _QWEN_FUNCTION_OPEN_RE, _QWEN_FUNCTION_CLOSE_RE
+    ), None)
+    if fn_match:
+        name, raw_body = fn_match
+        args = {}
+        for key, raw_value in _iter_named_blocks(
+            raw_body.rstrip(), _QWEN_PARAMETER_OPEN_RE, _QWEN_PARAMETER_CLOSE_RE,
+        ):
+            value = raw_value.strip()
+            if value and value[0] in "[{\"":
+                try:
+                    args[key] = json.loads(value)
+                    continue
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            args[key] = value
+        block = declared_or_builtin(name, args)
+        if block:
+            return block
+
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", text):
+        try:
+            value, _end = decoder.raw_decode(text[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        name = value.get("tool")
+        args = value.get("parameters")
+        if isinstance(name, str):
+            if name.strip().lower() in declared_names and set(value) != {"tool", "parameters"}:
+                continue
+            if not isinstance(args, dict):
+                args = {}
+            block = declared_or_builtin(name, args)
+            if block:
+                return block
+        name = value.get("function")
+        args = value.get("arguments")
+        if isinstance(name, str):
+            if name.strip().lower() in declared_names and set(value) != {"function", "arguments"}:
+                continue
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (TypeError, json.JSONDecodeError):
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            block = declared_or_builtin(name, args)
+            if block:
+                return block
+
+    # Python-like single-call rendering: manage_notes(action="list").
+    match = re.search(r"\b([A-Za-z_][\w:.-]*)\s*\(([^()]*)\)", text)
+    if match:
+        name, raw_args = match.groups()
+        normalized_name = name.strip().lower()
+        mapped_name = _TOOL_NAME_MAP.get(normalized_name, normalized_name)
+        if (
+            mapped_name in TOOL_TAGS
+            or mapped_name.startswith("mcp__")
+            or normalized_name in BUILTIN_EMAIL_TOOLS
+            or normalized_name in declared_names
+        ):
+            args = {}
+            for key, raw_value in _iter_qwen_python_args(raw_args):
+                try:
+                    args[key] = ast.literal_eval(raw_value.strip())
+                except (ValueError, SyntaxError):
+                    args[key] = raw_value.strip().strip("'\"")
+            block = declared_or_builtin(normalized_name, args)
+            if block:
+                return block
+
+    # Some MCP calls are emitted as the bare name, repeated once per format.
+    names = re.findall(r"(?m)^\s*(mcp__[A-Za-z0-9_.-]+)\s*$", text)
+    if names and len(set(names)) == 1:
+        block = function_call_to_tool_block(names[0], "{}")
+        if block:
+            return block
+    return None
 
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
@@ -1122,6 +1515,45 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
         return ToolBlock(tool_name, content.strip())
     return None
 
+_GEMMA_FALLBACK_KEY_RE = re.compile(r"\w++")
+_GEMMA_FALLBACK_COLON_RE = re.compile(r"\s*+:")
+_GEMMA_FALLBACK_BOUNDARY_RE = re.compile(r"(?<!\s)(\s*+)(?:,\s*+\w++\s*+:|})")
+
+
+def _iter_gemma_fallback_items(body):
+    """Preserve permissive k:v recovery with one pass over keys/boundaries."""
+    boundaries = list(_GEMMA_FALLBACK_BOUNDARY_RE.finditer(body))
+    boundary_index = 0
+    pos = 0
+    newline = body.find("\n")
+    while key := _GEMMA_FALLBACK_KEY_RE.search(body, pos):
+        colon = _GEMMA_FALLBACK_COLON_RE.match(body, key.end())
+        if colon is None:
+            pos = key.end()
+            continue
+        start = colon.end()
+        while start < len(body) and body[start].isspace():
+            start += 1
+        if start < len(body) and body[start] in "\"'":
+            start += 1
+        while boundary_index < len(boundaries) and boundaries[boundary_index].end(1) < start:
+            boundary_index += 1
+        if boundary_index == len(boundaries):
+            return
+        boundary = boundaries[boundary_index]
+        end = max(start, boundary.start())
+        if 0 <= newline < start:
+            newline = body.find("\n", start)
+        if newline >= 0 and newline < end:
+            pos = key.end()
+            continue
+        capture_end = end
+        if capture_end > start and body[capture_end - 1] in "\"'":
+            capture_end -= 1
+        yield key.group(0), body[start:capture_end].strip()
+        pos = end
+
+
 def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
     """Parse a Gemma-style call:tool_name{...} block into a ToolBlock."""
     tool_name = tool_name.strip().lower().replace("-", "_")
@@ -1146,12 +1578,7 @@ def _parse_gemma_tool_call(tool_name: str, body: str) -> Optional[ToolBlock]:
             if not isinstance(params, dict):
                 params = {}
         except Exception:
-            # Simple regex key-value extraction fallback
-            params = {}
-            for m in re.finditer(r'(\w+)\s*:\s*["\']?(.*?)["\']?(?=\s*,\s*\w+\s*:|\s*\})', body):
-                k = m.group(1)
-                v = m.group(2).strip()
-                params[k] = v
+            params = dict(_iter_gemma_fallback_items(body))
 
     from src.tool_schemas import function_call_to_tool_block
     return function_call_to_tool_block(tool_name, json.dumps(params))
@@ -1205,9 +1632,9 @@ def _iter_delimited(text, open_re, close_re):
         pos = cm.end()
 
 
-def _strip_delimited(text: str, open_re, close_re) -> str:
-    """Remove every ``open_re ... close_re`` span (forward-only; see
-    _iter_delimited). Equivalent to ``open_re([\\s\\S]*?)close_re`` ``re.sub('')``
+def _strip_delimited(text: str, open_re, close_re, replacement: str = "") -> str:
+    """Replace every ``open_re ... close_re`` span (forward-only; see
+    _iter_delimited). Equivalent to ``open_re([\\s\\S]*?)close_re`` substitution
     for these delimiters, without the O(n^2) rescan on unclosed openers."""
     spans = list(_iter_delimited(text, open_re, close_re))
     if not spans:
@@ -1216,9 +1643,21 @@ def _strip_delimited(text: str, open_re, close_re) -> str:
     last = 0
     for match_start, _inner_start, _inner_end, match_end in spans:
         out.append(text[last:match_start])
+        out.append(replacement)
         last = match_end
     out.append(text[last:])
     return "".join(out)
+
+
+def strip_angle_tags(text: str, replacement: str = "", *, allow_empty: bool = False) -> str:
+    """Linear equivalent of replacing ``<[^>]+>`` (or ``<[^>]*>``).
+
+    This preserves the existing flat text cleanup, including nested '<' and
+    malformed tails; it does not interpret HTML. Stop once no '>' is reachable
+    instead of retrying a suffix scan at every '<' in untrusted text.
+    """
+    opener = _ANGLE_TAG_OPEN_RE if allow_empty else _NONEMPTY_ANGLE_TAG_OPEN_RE
+    return _strip_delimited(text, opener, _ANGLE_TAG_CLOSE_RE, replacement)
 
 
 def _iter_named_blocks(text, open_re, close_re):
@@ -1244,7 +1683,7 @@ def _iter_xml_invoke(text):
     return _iter_named_blocks(text, _XML_INVOKE_OPEN_RE, _XML_INVOKE_CLOSE_RE)
 
 
-def _iter_backref_blocks(text, open_re, close_any_re, ci=False):
+def _iter_backref_block_spans(text, open_re, close_any_re, ci=False):
     """Forward-only equivalent of an ``<tag>([\\s\\S]*?)</tag>`` backreference
     finditer (same-name open/close): yield ``(name, body)``, pairing each opener
     with the nearest following matching closer and skipping an opener whose
@@ -1273,9 +1712,16 @@ def _iter_backref_blocks(text, open_re, close_any_re, ci=False):
         if starts:
             i = bisect.bisect_left(starts, om.end())
             if i < len(starts):
-                yield name, text[om.end():starts[i]]
+                yield name, text[om.end():starts[i]], om.start(), closer_ends[k][i]
                 resume = closer_ends[k][i]
         om = open_re.search(text, resume)
+
+
+def _iter_backref_blocks(text, open_re, close_any_re, ci=False):
+    for name, body, _start, _end in _iter_backref_block_spans(
+        text, open_re, close_any_re, ci=ci
+    ):
+        yield name, body
 
 
 def _iter_xml_direct(text):
@@ -1284,7 +1730,129 @@ def _iter_xml_direct(text):
     return _iter_backref_blocks(text, _XML_DIRECT_OPEN_RE, _XML_DIRECT_CLOSE_ANY_RE, ci=True)
 
 
-def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
+def _declared_tool_name_map(additional_tool_names: Optional[Iterable[str]]) -> dict[str, str]:
+    return {
+        name.lower(): name
+        for raw_name in (additional_tool_names or ())
+        if isinstance(raw_name, str)
+        and (name := raw_name.strip())
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,63}", name)
+    }
+
+
+def _unique_declared_schema_match(
+    arguments: object,
+    declared_names: dict[str, str],
+    additional_tool_schemas: Optional[Iterable[dict]],
+) -> Optional[str]:
+    """Return one declared function whose object schema accepts every key."""
+    if not isinstance(arguments, dict) or not arguments:
+        return None
+    argument_keys = set(arguments)
+    matches: list[str] = []
+    for raw_schema in additional_tool_schemas or ():
+        if not isinstance(raw_schema, dict):
+            continue
+        function = raw_schema.get("function", raw_schema)
+        if not isinstance(function, dict):
+            continue
+        raw_name = function.get("name")
+        if not isinstance(raw_name, str):
+            continue
+        declared_name = declared_names.get(raw_name.strip().lower())
+        parameters = function.get("parameters")
+        if not declared_name or not isinstance(parameters, dict):
+            continue
+        properties = parameters.get("properties")
+        required = parameters.get("required") or []
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            continue
+        if argument_keys <= set(properties) and set(required) <= argument_keys:
+            matches.append(declared_name)
+    return matches[0] if len(set(matches)) == 1 else None
+
+
+def _parse_declared_direct_xml_calls(
+    text: str,
+    declared_names: dict[str, str],
+) -> list[tuple[ToolBlock, int, int]]:
+    """Parse direct XML only for request-declared tools with object arguments."""
+
+    calls = []
+    if not declared_names:
+        return calls
+    for raw_name, body, start, end in _iter_backref_block_spans(
+        text, _XML_DIRECT_OPEN_RE, _XML_DIRECT_CLOSE_ANY_RE, ci=True
+    ):
+        declared_name = declared_names.get(raw_name.lower())
+        if not declared_name:
+            continue
+        try:
+            arguments = json.loads(body.strip())
+        except (TypeError, ValueError):
+            continue
+        if isinstance(arguments, dict):
+            calls.append((
+                ToolBlock(declared_name, json.dumps(arguments, ensure_ascii=False)),
+                start,
+                end,
+            ))
+    return calls
+
+
+def _parse_adjacent_declared_tool_fences(
+    text: str,
+    declared_names: dict[str, str],
+    additional_tool_names: Optional[Iterable[str]],
+) -> Optional[ToolBlock]:
+    """Recover ``tool-name`` and JSON fences emitted as one textual call."""
+
+    if not declared_names:
+        return None
+    matches = list(_tool_block_re(additional_tool_names).finditer(text))
+    for index, match in enumerate(matches):
+        call = _fenced_tool_call(match)
+        if call is None:
+            continue
+        tag, content = call
+        declared_name = declared_names.get(content.strip().lower())
+        if not declared_name or tag not in {"bash", "python", "json", "function_name"}:
+            continue
+        if index > 0:
+            previous_match = matches[index - 1]
+            between = text[previous_match.end():match.start()]
+            previous_call = _fenced_tool_call(previous_match)
+            if not between.strip() and previous_call is not None and previous_call[0] == "json":
+                try:
+                    arguments = json.loads(previous_call[1])
+                except (TypeError, ValueError):
+                    arguments = None
+                if isinstance(arguments, dict):
+                    return ToolBlock(declared_name, json.dumps(arguments, ensure_ascii=False))
+        tail = text[match.end():]
+        if index + 1 < len(matches):
+            next_match = matches[index + 1]
+            if tail[:next_match.start() - match.end()].strip():
+                continue
+            next_call = _fenced_tool_call(next_match)
+            if next_call is not None and next_call[0] == "json":
+                try:
+                    arguments = json.loads(next_call[1])
+                except (TypeError, ValueError):
+                    arguments = None
+                if isinstance(arguments, dict):
+                    return ToolBlock(declared_name, json.dumps(arguments, ensure_ascii=False))
+        if not tail.strip():
+            return ToolBlock(declared_name, "{}")
+    return None
+
+
+def parse_tool_blocks(
+    text: str,
+    skip_fenced: bool = False,
+    additional_tool_names: Optional[Iterable[str]] = None,
+    additional_tool_schemas: Optional[Iterable[dict]] = None,
+) -> List[ToolBlock]:
     """Extract executable tool blocks from LLM response text.
 
     Supports multiple formats:
@@ -1315,8 +1883,18 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     text = _normalize_dsml(text)
 
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
-    if not skip_fenced:
-        for m in _TOOL_BLOCK_RE.finditer(text):
+    # Explicit envelopes take precedence over Markdown fences. A fence in the
+    # same response is commonly an example or scratch work, while the
+    # envelope is the model's actual invocation.
+    skip_fenced_for_mixed = skip_fenced or _contains_explicit_tool_markup(text)
+    if not skip_fenced_for_mixed:
+        additional_names = _declared_tool_name_map(additional_tool_names)
+        adjacent_declared_call = _parse_adjacent_declared_tool_fences(
+            text, additional_names, additional_tool_names
+        )
+        if adjacent_declared_call is not None:
+            return [adjacent_declared_call]
+        for m in _tool_block_re(additional_tool_names).finditer(text):
             call = _fenced_tool_call(m)
             if call is None:
                 continue
@@ -1329,8 +1907,75 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 # silently dropping the call left models concluding email was
                 # broken. Other tags (bash, python, ...) keep skipping: empty
                 # content is nothing to run.
-                if tag in BUILTIN_EMAIL_TOOLS:
-                    blocks.append(ToolBlock(tag, ""))
+                if tag in BUILTIN_EMAIL_TOOLS or tag in additional_names:
+                    declared_tag = additional_names.get(tag, tag)
+                    blocks.append(ToolBlock(declared_tag, "{}" if tag in additional_names else ""))
+                continue
+            if tag in {"bash", "python"} and additional_names:
+                raw_name, separator, raw_arguments = content.partition("\n")
+                declared_name = additional_names.get(raw_name.strip().lower())
+                if declared_name and separator and raw_arguments.strip():
+                    blocks.append(ToolBlock(declared_name, raw_arguments.strip()))
+                    continue
+            if tag == "json" and additional_names:
+                try:
+                    flat_envelope = json.loads(content)
+                except (TypeError, ValueError):
+                    flat_envelope = None
+                if (
+                    isinstance(flat_envelope, dict)
+                    and set(flat_envelope) == {"function", "arguments"}
+                    and isinstance(flat_envelope.get("function"), str)
+                    and isinstance(flat_envelope.get("arguments"), dict)
+                    and (
+                        declared_name := additional_names.get(
+                            flat_envelope["function"].strip().lower()
+                        )
+                    )
+                ):
+                    blocks.append(ToolBlock(
+                        declared_name,
+                        json.dumps(flat_envelope["arguments"], ensure_ascii=False),
+                    ))
+                    continue
+                if (
+                    declared_name := _unique_declared_schema_match(
+                        flat_envelope,
+                        additional_names,
+                        additional_tool_schemas,
+                    )
+                ):
+                    blocks.append(ToolBlock(
+                        declared_name,
+                        json.dumps(flat_envelope, ensure_ascii=False),
+                    ))
+                    continue
+                raw_name, separator, raw_arguments = content.partition("\n")
+                declared_name = additional_names.get(raw_name.strip().lower())
+                if declared_name and separator:
+                    try:
+                        arguments = json.loads(raw_arguments)
+                    except (TypeError, ValueError):
+                        arguments = None
+                    if isinstance(arguments, dict):
+                        blocks.append(ToolBlock(declared_name, json.dumps(arguments, ensure_ascii=False)))
+                        continue
+                elif declared_name:
+                    # Some local models close the JSON fence after the function
+                    # name, then emit the argument object immediately after it:
+                    # ```json\nfunction\n```\n{"arg": 1}\n```. Decode the object
+                    # structurally and require that no prose follows it.
+                    tail = text[m.end():].lstrip()
+                    try:
+                        arguments, consumed = json.JSONDecoder().raw_decode(tail)
+                    except (TypeError, ValueError):
+                        arguments, consumed = None, 0
+                    remainder = tail[consumed:].strip() if consumed else tail
+                    if isinstance(arguments, dict) and remainder in {"", "```"}:
+                        blocks.append(ToolBlock(declared_name, json.dumps(arguments, ensure_ascii=False)))
+                        continue
+                # ``json`` is only an envelope for a declared function, never
+                # a dispatchable tool in its own right.
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
             # tool calls in ```python or ```xml fences), parse the invoke instead.
@@ -1345,7 +1990,8 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 # _XML_INVOKE_RE's \w+ can't match would otherwise be executed as code.
                 continue
             if tag in ("python", "bash"):
-                block = (_parse_misfenced_web_lookup(content)
+                block = (_parse_misfenced_media_lookup(content)
+                         or _parse_misfenced_web_lookup(content)
                          or _parse_misfenced_read_file_lookup(content, allow_shell_style=(tag == "bash")))
                 if block:
                     blocks.append(block)
@@ -1428,6 +2074,13 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 block = _parse_xml_invoke(inv_name, inv_body)
                 if block:
                     blocks.append(block)
+        if not blocks:
+            blocks.extend(
+                block
+                for block, _start, _end in _parse_declared_direct_xml_calls(
+                    text, _declared_tool_name_map(additional_tool_names)
+                )
+            )
 
     # Pattern 4: <tool_code> blocks (MiniMax-M2.5 style)
     if not blocks:
@@ -1440,10 +2093,10 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
 
     # Pattern 4b: Gemma-style <|tool_call|> blocks
     if not blocks:
-        for m in _GEMMA_TOOL_CALL_RE.finditer(text):
-            tool_name = m.group(1)
-            body = m.group(2)
-            block = _parse_gemma_tool_call(tool_name, body)
+        for tool_name, body in _iter_named_blocks(
+            text, _GEMMA_TOOL_CALL_OPEN_RE, _GEMMA_TOOL_CALL_CLOSE_RE
+        ):
+            block = _parse_gemma_tool_call(tool_name, "{" + body + "}")
             if block:
                 blocks.append(block)
 
@@ -1463,6 +2116,13 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         if block:
             blocks.append(block)
 
+    # Pattern 4e: Qwen3.x MLX textual call fallback.  This must run after the
+    # explicit markup parsers but before the response is treated as prose.
+    if not blocks:
+        block = _parse_qwen3_native_text_call(text, additional_tool_names)
+        if block:
+            blocks.append(block)
+
     # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
     if not blocks and not skip_fenced:
         raw_web_json = _parse_raw_web_json_lookup(text)
@@ -1473,14 +2133,18 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # from weaker native-tool models after reading the tool docs but failing to
     # emit the actual structured call.
     if not blocks:
-        m = _PLAIN_UI_OPEN_PANEL_RE.search(text)
+        m = next(_iter_plain_ui_open_panel(text), None)
         if m:
-            blocks.append(ToolBlock("ui_control", f"open_panel {m.group(1).lower()}"))
+            blocks.append(ToolBlock("ui_control", f"open_panel {m.group(1).lower()}{m.group(2).lower()}".strip()))
 
     return blocks
 
 
-def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
+def strip_tool_blocks(
+    text: str,
+    skip_fenced: bool = False,
+    additional_tool_names: Optional[Iterable[str]] = None,
+) -> str:
     """Remove executable tool blocks from text for clean display.
 
     `skip_fenced`: when True, fenced ```bash/```python/```json code blocks
@@ -1499,7 +2163,11 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # Keep the executed-vs-illustrative fence distinction (only strip fences
     # that actually dispatched; leave example fences from native models inert
     # but visible), then remove [TOOL_CALL]{...}[/TOOL_CALL] markup.
-    cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub(_strip_executed_fence, text)
+    cleaned = (
+        text
+        if (skip_fenced or _contains_explicit_tool_markup(text))
+        else _tool_block_re(additional_tool_names).sub(_strip_executed_fence, text)
+    )
     # Forward-only removal mirrors parse_tool_blocks: _strip_delimited pairs each
     # opener with a later closer and stops when none is reachable, so untrusted
     # output can't drive the O(n^2) lazy-rescan (ReDoS); see _iter_delimited.
@@ -1508,9 +2176,18 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _strip_delimited(cleaned, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE)
     cleaned = _XML_OPEN_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _strip_delimited(cleaned, _TOOL_CODE_OPEN_RE, _TOOL_CODE_CLOSE_RE)
-    cleaned = _GEMMA_TOOL_CALL_RE.sub('', cleaned)
+    cleaned = _strip_delimited(cleaned, _GEMMA_TOOL_CALL_OPEN_RE, _GEMMA_TOOL_CALL_CLOSE_RE)
     cleaned = _strip_delimited(cleaned, _FUNCTION_MODEL_OPEN_RE, _FUNCTION_MODEL_CLOSE_RE)
     cleaned = _strip_raw_openai_tool_call_json(cleaned)
+    declared_xml_calls = _parse_declared_direct_xml_calls(
+        cleaned, _declared_tool_name_map(additional_tool_names)
+    )
+    if declared_xml_calls:
+        cleaned = _strip_spans(
+            cleaned,
+            [(start, start, end, end) for _block, start, end in declared_xml_calls],
+        )
+    cleaned = _QWEN_OPEN_TOOLS_RE.sub('', cleaned)
     cleaned = _QWEN_ROLE_MARKER_RE.sub('', cleaned)
     cleaned = _QWEN_BARE_MARKER_RE.sub(' ', cleaned)
     if not skip_fenced:
@@ -1518,7 +2195,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
         if raw_web_json:
             _, (start, end) = raw_web_json
             cleaned = cleaned[:start] + cleaned[end:]
-    cleaned = _PLAIN_UI_OPEN_PANEL_RE.sub("", cleaned)
+    cleaned = _strip_plain_ui_open_panel(cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = _strip_bare_invoke_markup(cleaned)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)

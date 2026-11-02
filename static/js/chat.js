@@ -6,22 +6,23 @@
 // ES6 module — IIFE removed
 
 import Storage from './storage.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer from './chatRenderer.js?v=20260819approvalcontrol1';
-import chatStream from './chatStream.js?v=20260819approvalcontrol1';
+import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
+import chatStream from './chatStream.js?v=20261026devsync1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
-import presetsModule from './presets.js';
-import fileHandlerModule from './fileHandler.js';
+import presetsModule from './presets.js?v=20260908personaname1';
+import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
 import searchModule from './search.js';
-import documentModule from './document.js?v=20260815approvalsave1';
-import * as emailInbox from './emailInbox.js?v=20260815approvalsave1';
-import codeRunnerModule from './codeRunner.js';
-import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260815approvalsave1';
-import createResearchSynapse from './researchSynapse.js';
+import documentModule from './document.js?v=20260916docctx2';
+import * as emailInbox from './emailInbox.js?v=20260914aireply4';
+import codeRunnerModule from './codeRunner.js?v=20260831richtexttools91';
+import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js?v=20260921chatgptusage1';
+import createResearchSynapse from './researchSynapse.js?v=20260910roundlabels2';
 import { createStreamRenderer } from './streamingRenderer.js';
+import { createTurnRendering, startsContinuationRound } from './turnRendering.js?v=20260910round1stable1';
 import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArrowUpRecall.js?v=20260714promptrecall';
 import {
   createIncrementalDisplayProjector,
@@ -35,12 +36,290 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
-import { loadPanel } from './panels.js';
+import { loadPanel } from './panels.js?v=20260909movepicklayer1';
+import { invalidateSettings } from './appConfig.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RUN_ID_ABORT_GRACE_MS = 2000; // timeout waits this long for a run-id header before hard-aborting
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+
+  // Inline chat images share the editor's 8192px dimension ceiling, with a
+  // conservative 16MP budget for its multiple canvas surfaces. No blob URLs are
+  // needed here: chat previews use server-authorized upload references.
+  const _MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
+  const _MAX_INLINE_BYTES = 7 * 1024 * 1024;
+  const _MAX_IMAGE_DIMENSION = 8192;
+  const _MAX_IMAGE_PIXELS = 16 * 1024 * 1024;
+  let _inlineRasterCache = null; // One bounded source; repeated actions reuse its decode.
+
+  function _imageDimensionsAllowed(width, height) {
+    return width > 0 && height > 0 && width <= _MAX_IMAGE_DIMENSION &&
+      height <= _MAX_IMAGE_DIMENSION && width * height <= _MAX_IMAGE_PIXELS;
+  }
+
+  function _rasterDimensions(bytes, mime) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const ascii = (offset, text) => [...text].every((char, i) => bytes[offset + i] === char.charCodeAt(0));
+    if (mime === 'image/png' && bytes.length >= 33 &&
+        bytes[0] === 137 && ascii(1, 'PNG\r\n\x1a\n') && view.getUint32(8) === 13 && ascii(12, 'IHDR')) {
+      return [view.getUint32(16), view.getUint32(20)];
+    }
+    if (mime === 'image/gif' && bytes.length >= 13 && (ascii(0, 'GIF87a') || ascii(0, 'GIF89a'))) {
+      return [view.getUint16(6, true), view.getUint16(8, true)];
+    }
+    if (mime === 'image/jpeg' && bytes[0] === 255 && bytes[1] === 216) {
+      let pos = 2;
+      while (pos + 4 <= bytes.length) {
+        if (bytes[pos++] !== 255) return null;
+        while (bytes[pos] === 255) pos++;
+        const marker = bytes[pos++];
+        if (marker === 218 || marker === 217) break;
+        if (marker === 1 || (marker >= 208 && marker <= 215)) continue;
+        if (pos + 2 > bytes.length) return null;
+        const size = view.getUint16(pos);
+        if (size < 2 || pos + size > bytes.length) return null;
+        if (marker >= 192 && marker <= 207 && ![196, 200, 204].includes(marker) && size >= 8) {
+          return [view.getUint16(pos + 5), view.getUint16(pos + 3)];
+        }
+        pos += size;
+      }
+    }
+    if (mime === 'image/webp' && bytes.length >= 30 && ascii(0, 'RIFF') &&
+        view.getUint32(4, true) + 8 === bytes.length && ascii(8, 'WEBP')) {
+      if (ascii(12, 'VP8X')) return [1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16), 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16)];
+      if (ascii(12, 'VP8L') && bytes[20] === 47) return [1 + ((bytes[21] | (bytes[22] << 8)) & 16383), 1 + (((bytes[22] >> 6) | (bytes[23] << 2) | (bytes[24] << 10)) & 16383)];
+      if (ascii(12, 'VP8 ') && bytes[23] === 157 && bytes[24] === 1 && bytes[25] === 42) return [view.getUint16(26, true) & 16383, view.getUint16(28, true) & 16383];
+    }
+    return null;
+  }
+
+  function _inlineRaster(url) {
+    if (_inlineRasterCache?.url === url) return _inlineRasterCache;
+    const result = { url, valid: false };
+    _inlineRasterCache = result;
+    if (url.length > _MAX_DATA_URL_LENGTH) return result;
+    const match = /^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,/i.exec(url);
+    if (!match) return result;
+    const payload = url.slice(match[0].length);
+    if (!payload || payload.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return result;
+    const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+    const size = payload.length / 4 * 3 - padding;
+    if (size > _MAX_INLINE_BYTES) return result;
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    if (padding && (alphabet.indexOf(payload[payload.length - padding - 1]) & (padding === 2 ? 15 : 3))) return result;
+    try {
+      const bytes = typeof Uint8Array.fromBase64 === 'function' ? Uint8Array.fromBase64(payload) : (() => {
+        const binary = atob(payload); const array = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+        return array;
+      })();
+      const mime = match[1].toLowerCase().replace('image/jpg', 'image/jpeg');
+      const dimensions = _rasterDimensions(bytes, mime);
+      if (!dimensions || !_imageDimensionsAllowed(...dimensions)) return result;
+      Object.assign(result, { valid: true, bytes, mime, dimensions });
+    } catch (_) {}
+    return result;
+  }
+
+  // This synchronous guard rejects untrusted references before any fetch/decode.
+  // Inline images additionally require a successful browser decode before launch.
+  function _isAuthorizedImageUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const trimmed = url.trim();
+    if (trimmed.startsWith('data:')) return _inlineRaster(trimmed).valid;
+    if (!trimmed || trimmed.startsWith('blob:') || trimmed.startsWith('//')) return false;
+    try {
+      const base = window.location.origin;
+      const parsed = new URL(trimmed, base);
+      return parsed.origin === base && !parsed.search && !parsed.hash &&
+        /^\/api\/(?:upload|gallery)\/[A-Za-z0-9_\-]+(?:\.[a-zA-Z0-9]+)?$/.test(parsed.pathname);
+    } catch (_) { return false; }
+  }
+
+  async function _validateInlineImage(url) {
+    const raster = _inlineRaster(url.trim());
+    if (!raster.valid) return false;
+    if (!raster.decoded) raster.decoded = (async () => {
+      try {
+        const image = await createImageBitmap(new Blob([raster.bytes], { type: raster.mime }));
+        try {
+          return _imageDimensionsAllowed(image.width, image.height) &&
+            image.width * image.height === raster.dimensions[0] * raster.dimensions[1];
+        } finally { image.close(); }
+      } catch (_) { return false; }
+      finally { raster.bytes = null; }
+    })();
+    return raster.decoded;
+  }
+
+  // Find the specific user message that originated the turn containing container.
+  function _findOriginatingUserMessage(container) {
+    if (!container) return null;
+    let curr = container.previousElementSibling;
+    while (curr) {
+      if (curr.classList && curr.classList.contains('msg-user')) {
+        return curr;
+      }
+      curr = curr.previousElementSibling;
+    }
+    const box = document.getElementById('chat-history');
+    if (box && box.contains(container)) {
+      const all = Array.from(box.querySelectorAll('.msg, .agent-thread, .ai-msg-wrap, .round-holder'));
+      const idx = all.findIndex((el) => el === container || el.contains(container));
+      if (idx > 0) {
+        for (let i = idx - 1; i >= 0; i--) {
+          if (all[i].classList && all[i].classList.contains('msg-user')) {
+            return all[i];
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // Resolve the image attached to the exact turn associated with container / action.
+  // Never falls back to unrelated images from earlier conversation turns.
+  function _attachedImageForTurn(container, action) {
+    const explicitId = action && (action.imageId || action.image_id || action.fileId || action.file_id);
+    if (explicitId && typeof explicitId === 'string' && /^[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9]+)?$/.test(explicitId)) {
+      return (API_BASE || '') + '/api/upload/' + explicitId;
+    }
+    const explicitUrl = action && (action.imageUrl || action.image_url);
+    if (explicitUrl) return _isAuthorizedImageUrl(explicitUrl) ? explicitUrl : null;
+
+    const userMsg = _findOriginatingUserMessage(container);
+    if (!userMsg) return null;
+
+    const previews = userMsg.querySelectorAll(
+      '.attach-image-preview[data-file-id], .attach-card[data-file-id]'
+    );
+    for (let i = previews.length - 1; i >= 0; i--) {
+      const fid = previews[i].dataset ? previews[i].dataset.fileId : null;
+      if (fid && /^[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9]+)?$/.test(fid)) {
+        return (API_BASE || '') + '/api/upload/' + fid;
+      }
+      const img = previews[i].querySelector('img');
+      const src = img ? (img.getAttribute('src') || '') : '';
+      if (_isAuthorizedImageUrl(src)) return src;
+    }
+
+    const imgs = userMsg.querySelectorAll('.attach-image-preview img, .attach-card img');
+    for (let i = imgs.length - 1; i >= 0; i--) {
+      const src = imgs[i].getAttribute('src') || '';
+      if (_isAuthorizedImageUrl(src)) return src;
+    }
+
+    return null;
+  }
+
+  function _currentAttachedImageUrl(container, action) {
+    return _attachedImageForTurn(container, action);
+  }
+
+  function _notifyError(msg) {
+    try {
+      if (uiModule && typeof uiModule.showError === 'function') {
+        uiModule.showError(msg);
+        return;
+      }
+    } catch (_) {}
+    console.warn('[chat]', msg);
+  }
+
+  // Render the one-click "Open in editor & apply" button on a photo-edit reply
+  // that had no open editor (photo_editor_action kind 'open_and_apply').
+  function renderPhotoEditorApplyButton(container, action) {
+    if (!container || !action || action.kind !== 'open_and_apply') return;
+    if (container.querySelector('.chat-open-in-editor-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chat-open-in-editor-btn';
+    btn.textContent = 'Open in editor & apply';
+    btn.style.cssText = 'margin-top:8px;padding:6px 12px;border-radius:6px;border:1px solid rgba(120,120,120,0.4);background:transparent;color:inherit;cursor:pointer;font:inherit;';
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        let imageUrl = _attachedImageForTurn(container, action);
+        if (!imageUrl) {
+          _notifyError('No attached photo found for this conversation turn.');
+          btn.disabled = false;
+          return;
+        }
+
+        if (!_isAuthorizedImageUrl(imageUrl)) {
+          _notifyError('Unauthorized or invalid image reference.');
+          btn.disabled = false;
+          return;
+        }
+
+        if (imageUrl.trim().startsWith('data:') && !await _validateInlineImage(imageUrl)) {
+          _notifyError('Invalid or oversized image attachment.');
+          return;
+        }
+        // Gallery references name an owner-scoped metadata resource, not image bytes.
+        if (!imageUrl.trim().startsWith('data:') && new URL(imageUrl, window.location.origin).pathname.startsWith('/api/gallery/')) {
+          const response = await fetch(imageUrl, { credentials: 'same-origin' });
+          if (!response.ok) { _notifyError('The gallery image is unavailable.'); return; }
+          const image = await response.json();
+          const source = new URL(image.url || '', window.location.origin);
+          if (source.origin !== window.location.origin || source.search || source.hash ||
+              !/^\/api\/generated-image\/[A-Za-z0-9_.-]+$/.test(source.pathname)) {
+            _notifyError('Invalid gallery image reference.'); return;
+          }
+          imageUrl = source.href;
+        }
+
+        // Verify attachment is accessible and authorized on the server before launching editor
+        if (imageUrl.includes('/api/upload/')) {
+          try {
+            const probe = await fetch(imageUrl, { method: 'HEAD' });
+            if (!probe.ok) {
+              if (probe.status === 404 || probe.status === 410) {
+                _notifyError('The attached image is no longer available or upload has expired.');
+              } else if (probe.status === 401 || probe.status === 403) {
+                _notifyError('You are not authorized to edit this attached image.');
+              } else {
+                _notifyError('Could not verify image attachment authorization.');
+              }
+              btn.disabled = false;
+              return;
+            }
+          } catch (_) {
+            _notifyError('Could not verify image attachment authorization.');
+            btn.disabled = false;
+            return;
+          }
+        }
+
+        if (typeof window.gePhotoEditorApply !== 'function') {
+          await import('/static/js/galleryEditor.js?v=20260909movepicklayer1');
+        }
+        await window.gePhotoEditorApply({
+          imageId: (action && (action.imageId || action.image_id)) || null,
+          imageUrl,
+          prompt: action.prompt || '',
+          displayName: 'Chat edit',
+        });
+      } catch (err) {
+        console.error('[chat] open_and_apply failed', err);
+        _notifyError('Failed to apply edit: ' + (err.message || err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    container.appendChild(btn);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.__chatPhotoEditorTestHooks = {
+      _isAuthorizedImageUrl,
+      _findOriginatingUserMessage,
+      _attachedImageForTurn,
+      renderPhotoEditorApplyButton,
+    };
+  }
 
   let API_BASE = '';
   let currentAbort = null;
@@ -57,10 +336,162 @@ import { loadPanel } from './panels.js';
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
+  // The user bubble a regenerate keeps on screen. Its resubmitted message is
+  // a new DB row, so the saved id is attached here.
+  let _regenKeptUserBubble = null;
   let _contextHeaderSeq = 0;
   let _contextHeaderData = null;
   let _contextHeaderBound = false;
+  let _contextHeaderAnchorEl = null;
+  let _contextHeaderPopupCleanup = null;
   let _pendingToolApproval = null;
+  const _selectedNoteIdsBySession = new Map();
+  let _pendingSelectedNoteIds = [];
+  let _lastPrivateBrowserUrl = '';
+  function _isPrivateBrowserTool(tool) {
+    const name = String(tool || '').toLowerCase();
+    return name === 'private_browser'
+      || name.includes('private_browser')
+      || name.includes('builtin_browser')
+      || name.startsWith('browser_')
+      || name.includes('__browser_');
+  }
+
+  function _privateBrowserActionLabel(command) {
+    const raw = String(command || '').trim();
+    if (!raw) return 'running';
+    try {
+      const parsed = JSON.parse(raw);
+      const action = String(parsed && parsed.action || '').trim();
+      if (action) {
+        const target = parsed.url || parsed.selector || parsed.target || parsed.key || '';
+        return target ? `${action}: ${String(target).slice(0, 90)}` : action;
+      }
+    } catch (_) {}
+    return raw.slice(0, 110);
+  }
+
+  function _privateBrowserUrlFromCommand(command) {
+    const raw = String(command || '').trim();
+    if (!raw) return '';
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.url === 'string' && parsed.url) return parsed.url;
+      const commands = Array.isArray(parsed && parsed.commands) ? parsed.commands : [];
+      for (const item of commands) {
+        if (Array.isArray(item) && String(item[0] || '').toLowerCase() === 'open' && item[1]) return String(item[1]);
+        if (item && typeof item === 'object' && String(item.action || '').toLowerCase() === 'open' && item.url) return String(item.url);
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  function _mountPrivateBrowserSpinner(emptyEl) {
+    const slot = emptyEl?.querySelector?.('.private-browser-preview-spinner');
+    if (!slot || slot.dataset.whirlpoolMounted === '1') return;
+    slot.dataset.whirlpoolMounted = '1';
+    try {
+      const wp = spinnerModule.createWhirlpool(13);
+      wp.element.style.cssText = 'width:13px;height:13px;margin:0;';
+      slot.replaceChildren(wp.element);
+      slot._spinner = wp;
+    } catch (_) {}
+  }
+
+  function _mountPrivateBrowserSpinners(root) {
+    (root || document).querySelectorAll?.('.private-browser-preview-empty')?.forEach(_mountPrivateBrowserSpinner);
+  }
+
+  function _privateBrowserPreviewHtml(command, screenshot, fallbackUrl = '') {
+    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(screenshot);
+    const url = _privateBrowserUrlFromCommand(command) || String(fallbackUrl || _lastPrivateBrowserUrl || '');
+    const urlAttr = url ? ` data-browser-url="${uiModule.esc(url)}" title="Open ${uiModule.esc(url)}"` : '';
+    const imgHtml = screenshotSrc
+      ? `<img class="private-browser-preview-img" src="${uiModule.esc(screenshotSrc)}" alt="Private browser screenshot" />`
+      : '<div class="private-browser-preview-empty"><span>Browsing…</span><span class="private-browser-preview-spinner" aria-hidden="true"></span></div><img class="private-browser-preview-img" alt="Private browser screenshot" />';
+    const html = `<div class="private-browser-preview"${urlAttr}><div class="private-browser-preview-header"><span class="private-browser-preview-title">Private Browser</span><span class="private-browser-preview-status">${uiModule.esc(_privateBrowserActionLabel(command))}</span><button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button></div><div class="private-browser-preview-frame">${imgHtml}</div></div>`;
+    setTimeout(() => _mountPrivateBrowserSpinners(document), 0);
+    return html;
+  }
+
+  function _ensurePrivateBrowserPreview(contentEl) {
+    const host = contentEl || (typeof currentToolBubble !== 'undefined' && currentToolBubble
+      ? currentToolBubble.querySelector('.agent-thread-content')
+      : null);
+    if (!host) return null;
+    let root = host.querySelector('.private-browser-preview');
+    if (root) {
+      return {
+        root,
+        status: root.querySelector('.private-browser-preview-status'),
+        empty: root.querySelector('.private-browser-preview-empty'),
+        img: root.querySelector('.private-browser-preview-img'),
+      };
+    }
+    root = document.createElement('div');
+    root.className = 'private-browser-preview';
+    root.innerHTML = `
+      <div class="private-browser-preview-header">
+        <span class="private-browser-preview-title">Private Browser</span>
+        <span class="private-browser-preview-status"></span>
+        <button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button>
+      </div>
+      <div class="private-browser-preview-frame">
+        <div class="private-browser-preview-empty"><span>Browsing…</span><span class="private-browser-preview-spinner" aria-hidden="true"></span></div>
+        <img class="private-browser-preview-img" alt="Private browser screenshot" />
+      </div>
+    `;
+    host.appendChild(root);
+    _mountPrivateBrowserSpinners(root);
+    return {
+      root,
+      status: root.querySelector('.private-browser-preview-status'),
+      empty: root.querySelector('.private-browser-preview-empty'),
+      img: root.querySelector('.private-browser-preview-img'),
+    };
+  }
+
+  function _showPrivateBrowserPreview(command, contentEl) {
+    const preview = _ensurePrivateBrowserPreview(contentEl);
+    if (!preview || !preview.root) return;
+    if (preview.status) preview.status.textContent = _privateBrowserActionLabel(command);
+    const url = _privateBrowserUrlFromCommand(command);
+    if (url) {
+      _lastPrivateBrowserUrl = url;
+      preview.root.dataset.browserUrl = url;
+      preview.root.title = `Open ${url}`;
+    } else if (_lastPrivateBrowserUrl) {
+      preview.root.dataset.browserUrl = _lastPrivateBrowserUrl;
+      preview.root.title = `Open ${_lastPrivateBrowserUrl}`;
+    }
+    if (preview.empty) preview.empty.hidden = !!(preview.img && preview.img.getAttribute('src'));
+    _mountPrivateBrowserSpinner(preview.empty);
+  }
+
+  function _updatePrivateBrowserPreview(json, contentEl) {
+    if (!json || !_isPrivateBrowserTool(json.tool)) return;
+    const preview = _ensurePrivateBrowserPreview(contentEl);
+    if (!preview || !preview.root) return;
+    if (preview.status) preview.status.textContent = _privateBrowserActionLabel(json.command || '');
+    const url = _privateBrowserUrlFromCommand(json.command || '');
+    if (url) {
+      _lastPrivateBrowserUrl = url;
+      preview.root.dataset.browserUrl = url;
+      preview.root.title = `Open ${url}`;
+    } else if (_lastPrivateBrowserUrl) {
+      preview.root.dataset.browserUrl = _lastPrivateBrowserUrl;
+      preview.root.title = `Open ${_lastPrivateBrowserUrl}`;
+    }
+    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
+    if (!screenshotSrc) {
+      return;
+    }
+    if (preview.img) {
+      preview.img.src = screenshotSrc;
+      preview.img.hidden = false;
+    }
+    if (preview.empty) preview.empty.hidden = true;
+  }
 
   function _submitToolApprovalWhenIdle(approvalId) {
     if (
@@ -89,6 +520,46 @@ import { loadPanel } from './panels.js';
       document_id: String(detail.document_id || ''),
     };
     _submitToolApprovalWhenIdle(_pendingToolApproval.approval_id);
+  });
+
+  window.addEventListener('odysseus:notes-context-selected', (event) => {
+    const noteIds = event.detail?.noteIds;
+    if (!Array.isArray(noteIds) || noteIds.length === 0) return;
+
+    const sessionId = sessionModule.getCurrentSessionId?.();
+    if (!sessionId && !sessionModule.hasPendingChat?.()) {
+      console.warn('Cannot attach Notes context: no active or pending chat');
+      return;
+    }
+
+    if (sessionId) {
+      _selectedNoteIdsBySession.set(sessionId, [...noteIds]);
+    } else {
+      _pendingSelectedNoteIds = [...noteIds];
+    }
+    if (event.detail) event.detail.accepted = true;
+    _renderSelectedNotesIndicator(noteIds);
+  });
+
+  window.addEventListener('odysseus:session-changed', (event) => {
+    const sessionId = event.detail?.sessionId;
+    if (sessionId && event.detail?.materialized && _pendingSelectedNoteIds.length) {
+      _selectedNoteIdsBySession.set(sessionId, _pendingSelectedNoteIds);
+    }
+    _pendingSelectedNoteIds = [];
+    _renderSelectedNotesIndicator(
+      sessionId ? (_selectedNoteIdsBySession.get(sessionId) || []) : []
+    );
+  });
+
+  document.getElementById('selected-notes-context-btn')?.addEventListener('click', () => {
+    const sessionId = sessionModule.getCurrentSessionId?.();
+    if (sessionId) {
+      _selectedNoteIdsBySession.delete(sessionId);
+    } else {
+      _pendingSelectedNoteIds = [];
+    }
+    _renderSelectedNotesIndicator([]);
   });
 
   function _fmtContextNumber(n) {
@@ -129,34 +600,100 @@ import { loadPanel } from './panels.js';
   function _renderContextHeaderRing(pill, pct) {
     const value = Math.max(0, Math.min(100, Number(pct || 0)));
     pill.style.setProperty('--ctx-color', _contextRingColor(value));
-    pill.innerHTML = _contextRingMarkup(value, { includeLabel: true, labelId: 'chat-context-pill-label' });
+    pill.innerHTML = _contextRingMarkup(value);
+    if (false) {
+    pill.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+    }
   }
 
-  function _renderCompactMenuContextIcon(pct) {
-    const icon = document.querySelector('#export-compact-btn .dropdown-icon');
-    if (!icon) return;
-    const value = Math.max(0, Math.min(100, Number(pct || 0)));
-    const row = document.getElementById('export-compact-btn');
-    const color = _contextRingColor(value);
-    if (row) row.style.setProperty('--ctx-color', color);
-    icon.style.setProperty('--ctx-color', color);
-    icon.innerHTML = _contextRingMarkup(value, { includeLabel: false });
+  function _clampAutoCompactThreshold(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 85;
+    return Math.max(50, Math.min(95, Math.round(n)));
   }
 
+  function _renderSelectedNotesIndicator(noteIds){
+    const button = document.getElementById('selected-notes-context-btn');
+    const count = document.getElementById('selected-notes-context-count');
+
+    if (!button || !count) return;
+
+    const total = Array.isArray(noteIds) ? noteIds.length : 0;
+    if(!total){
+      button.style.display = 'none';
+      count.textContent = '';
+      return;
+    }
+    count.textContent = `${total} note${total === 1 ? '' : 's'} selected`;
+    button.style.display = '';
+    button.title = `${total} selected Note/Todo${total === 1 ? '' : 's'} — click to clear`;
+    button.setAttribute(
+      'aria-label',
+      `Clear ${total} selected Note/Todo${total === 1 ? '' : 's'} context`
+    );
+  }
   function _liveSessionModule() {
     return (window.sessionModule && window.sessionModule.getCurrentSessionId)
       ? window.sessionModule
       : sessionModule;
   }
 
+  async function _resolveCurrentSessionId({ adopt = false } = {}) {
+    const sm = _liveSessionModule();
+    const current = sm && sm.getCurrentSessionId && sm.getCurrentSessionId();
+    if (current) return current;
+    const activeRowId = document.querySelector('.list-item.active-session[data-session-id], .session-item.active[data-session-id]')?.dataset?.sessionId || '';
+    const hashId = _hashSessionCandidate();
+    const lastSelectedId = String(window.__odysseusLastSelectedSessionId || '').trim();
+    const targetId = activeRowId || hashId || lastSelectedId;
+    if (!targetId) {
+      // New chats are deliberately held in memory until the first prompt.
+      // Per-chat settings are still actionable before that prompt, so create
+      // the pending session when a setting needs a real session id.
+      if (adopt && sm?.hasPendingChat?.() && sm?.materializePendingSession) {
+        try {
+          await sm.materializePendingSession();
+        } catch (_) {}
+        return (sm.getCurrentSessionId && sm.getCurrentSessionId()) || '';
+      }
+      return '';
+    }
+    if (!adopt) return targetId;
+    try {
+      window.__odysseusComposerUserEdited = true;
+      if (sm && sm.selectSession) {
+        await sm.selectSession(targetId, { keepSidebar: true, showLoading: false });
+      } else if (sm && sm.setCurrentSessionId) {
+        sm.setCurrentSessionId(targetId);
+      } else if (sessionModule && sessionModule.selectSession) {
+        await sessionModule.selectSession(targetId, { keepSidebar: true, showLoading: false });
+      }
+    } catch (_) {}
+    return (sm && sm.getCurrentSessionId && sm.getCurrentSessionId()) || targetId;
+  }
+
   function _closeContextHeaderPopup() {
+    _contextHeaderPopupCleanup?.();
+    _contextHeaderPopupCleanup = null;
+    const effort = document.getElementById('reasoning-effort-wrap');
+    const effortHome = document.getElementById('reasoning-effort-home');
+    if (effort && effortHome) {
+      effort.querySelector('#reasoning-effort-menu')?.classList.add('hidden');
+      effort.querySelector('#reasoning-effort-btn')?.setAttribute('aria-expanded', 'false');
+      effortHome.appendChild(effort);
+    }
     document.querySelectorAll('.chat-context-popup').forEach(el => el.remove());
     const pill = document.getElementById('chat-context-pill');
     if (pill) pill.classList.remove('open');
+    const meta = document.getElementById('current-meta');
+    if (meta) meta.classList.remove('open');
+    _contextHeaderAnchorEl = null;
   }
 
-  function _positionContextHeaderPopup(popup, pill) {
-    const rect = pill.getBoundingClientRect();
+  function _positionContextHeaderPopup(popup, anchorEl) {
+    const anchor = anchorEl || document.getElementById('chat-context-pill') || document.getElementById('current-meta');
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
     popup.style.top = `${Math.round(rect.bottom + 8)}px`;
     popup.style.left = `${Math.round(rect.left + (rect.width / 2) - 119)}px`;
     document.body.appendChild(popup);
@@ -166,12 +703,14 @@ import { loadPanel } from './panels.js';
     if (pRect.bottom > window.innerHeight - 8) popup.style.top = `${Math.max(8, rect.top - pRect.height - 8)}px`;
   }
 
-  function _showContextHeaderPopup() {
+  function _showContextHeaderPopup(anchorEl = null) {
     const pill = document.getElementById('chat-context-pill');
     if (!pill || pill.hidden || !_contextHeaderData) return;
     const wasOpen = pill.classList.contains('open');
+    const sameAnchor = anchorEl && _contextHeaderAnchorEl === anchorEl;
+    if (wasOpen && (!anchorEl || sameAnchor)) return;
     _closeContextHeaderPopup();
-    if (wasOpen) return;
+    _contextHeaderAnchorEl = anchorEl || pill;
 
     const d = _contextHeaderData;
     const pct = Number(d.context_percent || 0);
@@ -198,25 +737,200 @@ import { loadPanel } from './panels.js';
       ['Usage', `${pct}%`],
       ['Window model', modelShort],
       ['Messages', `${Number(d.messages || 0).toLocaleString()}`],
-      ['Auto compact', `${Number(d.auto_compact_threshold || 85)}%`],
     ];
-    rows.forEach(([label, value]) => {
-      const row = document.createElement('div');
-      row.className = 'chat-context-popup-row';
+	    rows.forEach(([label, value]) => {
+	      const row = document.createElement('div');
+	      row.className = 'chat-context-popup-row';
       const a = document.createElement('span');
       a.textContent = label;
       const b = document.createElement('span');
       b.textContent = value;
       row.appendChild(a);
       row.appendChild(b);
-      popup.appendChild(row);
+	      popup.appendChild(row);
+	    });
+
+	    const memoryOn = d.memory_extraction_enabled !== false;
+	    const memoryRow = document.createElement('div');
+	    memoryRow.className = 'chat-context-toggle-row';
+	    const memoryCopy = document.createElement('div');
+	    memoryCopy.className = 'chat-context-toggle-copy';
+	    const memoryLabel = document.createElement('span');
+	    memoryLabel.textContent = 'Memory extraction';
+	    const memoryState = document.createElement('span');
+	    memoryState.className = 'chat-context-toggle-state';
+	    memoryState.textContent = memoryOn ? 'On' : 'Off';
+	    memoryCopy.appendChild(memoryLabel);
+	    memoryCopy.appendChild(memoryState);
+	    const memoryToggle = document.createElement('button');
+	    memoryToggle.type = 'button';
+	    memoryToggle.className = `chat-context-toggle${memoryOn ? ' active' : ''}`;
+	    memoryToggle.setAttribute('role', 'switch');
+	    memoryToggle.setAttribute('aria-label', 'Memory extraction for this chat');
+	    memoryToggle.setAttribute('aria-checked', memoryOn ? 'true' : 'false');
+	    memoryToggle.addEventListener('click', async (e) => {
+	      e.preventDefault();
+	      e.stopPropagation();
+	      await _setChatMemoryExtraction(!memoryToggle.classList.contains('active'), memoryToggle, memoryState);
+	    });
+	    memoryRow.appendChild(memoryCopy);
+    memoryRow.appendChild(memoryToggle);
+    popup.appendChild(memoryRow);
+
+    const memoryInjectionOn = d.memory_injection_enabled !== false;
+    const memoryInjectionRow = document.createElement('div');
+    memoryInjectionRow.className = 'chat-context-toggle-row';
+    const memoryInjectionCopy = document.createElement('div');
+    memoryInjectionCopy.className = 'chat-context-toggle-copy';
+    const memoryInjectionLabel = document.createElement('span');
+    memoryInjectionLabel.textContent = 'Memory injection';
+    const memoryInjectionState = document.createElement('span');
+    memoryInjectionState.className = 'chat-context-toggle-state';
+    memoryInjectionState.textContent = memoryInjectionOn ? 'On' : 'Off';
+    memoryInjectionCopy.appendChild(memoryInjectionLabel);
+    memoryInjectionCopy.appendChild(memoryInjectionState);
+    const memoryInjectionToggle = document.createElement('button');
+    memoryInjectionToggle.type = 'button';
+    memoryInjectionToggle.className = `chat-context-toggle${memoryInjectionOn ? ' active' : ''}`;
+    memoryInjectionToggle.setAttribute('role', 'switch');
+    memoryInjectionToggle.setAttribute('aria-label', 'Memory injection for this chat');
+    memoryInjectionToggle.setAttribute('aria-checked', memoryInjectionOn ? 'true' : 'false');
+    memoryInjectionToggle.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await _setChatMemoryInjection(!memoryInjectionToggle.classList.contains('active'), memoryInjectionToggle, memoryInjectionState);
     });
+    memoryInjectionRow.appendChild(memoryInjectionCopy);
+    memoryInjectionRow.appendChild(memoryInjectionToggle);
+    popup.appendChild(memoryInjectionRow);
+
+    const skillsOn = d.skill_injection_enabled !== false;
+    const skillsRow = document.createElement('div');
+    skillsRow.className = 'chat-context-toggle-row';
+    const skillsCopy = document.createElement('div');
+    skillsCopy.className = 'chat-context-toggle-copy';
+    const skillsLabel = document.createElement('span');
+    skillsLabel.textContent = 'Skill injection';
+    const skillsState = document.createElement('span');
+    skillsState.className = 'chat-context-toggle-state';
+    skillsState.textContent = skillsOn ? 'On' : 'Off';
+    skillsCopy.appendChild(skillsLabel);
+    skillsCopy.appendChild(skillsState);
+    const skillsToggle = document.createElement('button');
+    skillsToggle.type = 'button';
+    skillsToggle.className = `chat-context-toggle${skillsOn ? ' active' : ''}`;
+    skillsToggle.setAttribute('role', 'switch');
+    skillsToggle.setAttribute('aria-label', 'Skill injection for this chat');
+    skillsToggle.setAttribute('aria-checked', skillsOn ? 'true' : 'false');
+    skillsToggle.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await _setChatSkillInjection(!skillsToggle.classList.contains('active'), skillsToggle, skillsState);
+    });
+    skillsRow.appendChild(skillsCopy);
+    skillsRow.appendChild(skillsToggle);
+    popup.appendChild(skillsRow);
+
+    if (d.thinking_supported) {
+    const thinkingOn = d.thinking_mode === 'on';
+    const thinkingRow = document.createElement('div');
+    thinkingRow.className = 'chat-context-toggle-row';
+    thinkingRow.innerHTML = `<div class="chat-context-toggle-copy"><span>Thinking</span><span class="chat-context-toggle-state">${thinkingOn ? 'On' : 'Off'}</span></div>`;
+    const thinkingToggle = document.createElement('button');
+    thinkingToggle.type = 'button';
+    thinkingToggle.className = `chat-context-toggle${thinkingOn ? ' active' : ''}`;
+    thinkingToggle.setAttribute('role', 'switch');
+    thinkingToggle.setAttribute('aria-label', 'Thinking for this chat');
+    thinkingToggle.setAttribute('aria-checked', thinkingOn ? 'true' : 'false');
+    thinkingToggle.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      thinkingToggle.disabled = true;
+      const next = !thinkingToggle.classList.contains('active');
+      if (await _saveChatGenerationSettings({ thinking_mode: next ? 'on' : 'off' })) {
+        thinkingToggle.classList.toggle('active', next);
+        thinkingToggle.setAttribute('aria-checked', next ? 'true' : 'false');
+        thinkingRow.querySelector('.chat-context-toggle-state').textContent = next ? 'On' : 'Off';
+        uiModule.showToast(`Thinking ${next ? 'on' : 'off'} for this chat`);
+      }
+      thinkingToggle.disabled = false;
+    });
+    thinkingRow.appendChild(thinkingToggle);
+    popup.appendChild(thinkingRow);
+    }
+
+    const effort = document.getElementById('reasoning-effort-wrap');
+    if (effort) popup.appendChild(effort);
+
+    const addGenerationSlider = (label, value, min, max, step, formatter, key) => {
+      const row = document.createElement('div');
+      row.className = 'chat-context-threshold-row';
+      row.innerHTML = `<div class="chat-context-threshold-top"><span>${label}</span><span>${formatter(value)}</span></div>`;
+      const input = document.createElement('input');
+      Object.assign(input, { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), className: 'chat-context-threshold-slider preset-range' });
+      input.addEventListener('input', () => { row.querySelector('.chat-context-threshold-top span:last-child').textContent = formatter(Number(input.value)); });
+      input.addEventListener('change', () => _saveChatGenerationSettings({ [key]: key === 'max_tokens_override' && Number(input.value) > 8192 ? null : Number(input.value) }));
+      row.appendChild(input); popup.appendChild(row);
+    };
+    addGenerationSlider('Temperature', d.temperature_override ?? 1, 0, 2, 0.1, v => Number(v).toFixed(1), 'temperature_override');
+    addGenerationSlider('Max tokens', d.max_tokens_override ?? 8448, 256, 8448, 256, v => Number(v) > 8192 ? 'No limit' : Number(v).toLocaleString(), 'max_tokens_override');
+
+	    const threshold = _clampAutoCompactThreshold(d.auto_compact_threshold || 85);
+    const thresholdRow = document.createElement('div');
+    thresholdRow.className = 'chat-context-threshold-row';
+    const thresholdTop = document.createElement('div');
+    thresholdTop.className = 'chat-context-threshold-top';
+    const thresholdLabel = document.createElement('span');
+    thresholdLabel.textContent = 'Auto compact';
+    const thresholdValue = document.createElement('span');
+    thresholdValue.textContent = `${threshold}%`;
+    thresholdTop.appendChild(thresholdLabel);
+    thresholdTop.appendChild(thresholdValue);
+    const thresholdSlider = document.createElement('input');
+    thresholdSlider.type = 'range';
+    thresholdSlider.min = '50';
+    thresholdSlider.max = '95';
+    thresholdSlider.step = '5';
+    thresholdSlider.value = String(threshold);
+    thresholdSlider.className = 'chat-context-threshold-slider preset-range';
+    thresholdSlider.addEventListener('input', () => {
+      thresholdValue.textContent = `${_clampAutoCompactThreshold(thresholdSlider.value)}%`;
+    });
+    thresholdSlider.addEventListener('change', async () => {
+      const next = _clampAutoCompactThreshold(thresholdSlider.value);
+      thresholdSlider.disabled = true;
+      try {
+        let res;
+        try {
+          res = await fetch('/api/auth/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ auto_compact_threshold_percent: next }),
+          });
+        } finally {
+          invalidateSettings();
+        }
+        if (!res.ok) throw new Error(await res.text());
+        _contextHeaderData = { ..._contextHeaderData, auto_compact_threshold: next };
+        uiModule.showToast(`Auto compact at ${next}%`);
+        await refreshChatContextHeader('threshold');
+      } catch (err) {
+        uiModule.showError(`Could not save auto compact threshold: ${err.message || err}`);
+        thresholdSlider.value = String(threshold);
+        thresholdValue.textContent = `${threshold}%`;
+      } finally {
+        thresholdSlider.disabled = false;
+      }
+    });
+    thresholdRow.appendChild(thresholdTop);
+    thresholdRow.appendChild(thresholdSlider);
+    popup.appendChild(thresholdRow);
 
     if (d.can_compact) {
       const compactBtn = document.createElement('button');
       compactBtn.type = 'button';
       compactBtn.className = 'chat-context-compact-btn';
-      compactBtn.textContent = 'Compact';
+      compactBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true" style="position:relative;left:-2px"><circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.35"></circle><circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="20 35" stroke-linecap="round" transform="rotate(-90 7 7)"></circle></svg><span>Compact</span>';
       compactBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         compactBtn.disabled = true;
@@ -224,6 +938,7 @@ import { loadPanel } from './panels.js';
         try {
           const wp = spinnerModule.createWhirlpool(13);
           wp.element.style.margin = '0 5px 0 0';
+          wp.element.style.transform = 'translateY(-2px)';
           compactBtn.appendChild(wp.element);
         } catch (_) {}
         compactBtn.appendChild(document.createTextNode('Compacting'));
@@ -237,32 +952,171 @@ import { loadPanel } from './panels.js';
     }
 
     pill.classList.add('open');
-    _positionContextHeaderPopup(popup, pill);
+    _contextHeaderAnchorEl?.classList?.add('open');
+    _positionContextHeaderPopup(popup, _contextHeaderAnchorEl);
     setTimeout(() => {
+      if (!popup.isConnected) return;
+      const closeOnEscape = (ev) => {
+        if (ev.key !== 'Escape') return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        _closeContextHeaderPopup();
+      };
+      document.addEventListener('keydown', closeOnEscape, true);
       const close = (ev) => {
-        if (popup.contains(ev.target) || pill.contains(ev.target)) return;
-        document.removeEventListener('pointerdown', close, true);
+        if (popup.contains(ev.target) || pill.contains(ev.target) || _contextHeaderAnchorEl?.contains?.(ev.target)) return;
         _closeContextHeaderPopup();
       };
       document.addEventListener('pointerdown', close, true);
+      _contextHeaderPopupCleanup = () => {
+        document.removeEventListener('pointerdown', close, true);
+        document.removeEventListener('keydown', closeOnEscape, true);
+      };
     }, 0);
   }
 
-  function _bindContextHeaderPill() {
-    if (_contextHeaderBound) return;
-    _contextHeaderBound = true;
+	  function _bindContextHeaderPill() {
+	    if (_contextHeaderBound) return;
+	    _contextHeaderBound = true;
     const pill = document.getElementById('chat-context-pill');
     if (!pill) return;
     pill.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      _showContextHeaderPopup();
+      _showContextHeaderPopup(pill);
     });
+	  }
+
+	  async function _setChatMemoryExtraction(enabled, toggleBtn, stateText) {
+	    const sid = await _resolveCurrentSessionId({ adopt: true });
+	    if (!sid) {
+	      uiModule.showToast('Open a chat first');
+	      return false;
+	    }
+	    const next = !!enabled;
+	    if (toggleBtn) toggleBtn.disabled = true;
+	    try {
+	      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/memory-extraction`, {
+	        method: 'POST',
+	        headers: { 'Content-Type': 'application/json' },
+	        credentials: 'same-origin',
+	        body: JSON.stringify({ enabled: next }),
+	      });
+	      if (!res.ok) throw new Error(await res.text());
+	      _contextHeaderData = {
+	        ...(_contextHeaderData || {}),
+	        memory_extraction_enabled: next,
+	      };
+	      if (toggleBtn) {
+	        toggleBtn.classList.toggle('active', next);
+	        toggleBtn.setAttribute('aria-checked', next ? 'true' : 'false');
+      }
+      if (stateText) stateText.textContent = next ? 'On' : 'Off';
+      uiModule.showToast(next ? 'Memory extraction on for this chat' : 'Memory extraction off for this chat');
+      // The popup already contains the updated state. Refreshing the whole
+      // context header here removes and recreates the popup while the user is
+      // interacting with it, which makes the dropdown appear to close.
+      return true;
+	    } catch (err) {
+	      uiModule.showError(`Could not save memory extraction: ${err.message || err}`);
+	      return false;
+	    } finally {
+	      if (toggleBtn) toggleBtn.disabled = false;
+	    }
+	  }
+
+  async function _setChatSkillInjection(enabled, toggleBtn, stateText) {
+	    const sid = await _resolveCurrentSessionId({ adopt: true });
+	    if (!sid) {
+	      uiModule.showToast('Open a chat first');
+	      return false;
+	    }
+	    const next = !!enabled;
+	    if (toggleBtn) toggleBtn.disabled = true;
+	    try {
+	      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/skill-injection`, {
+	        method: 'POST',
+	        headers: { 'Content-Type': 'application/json' },
+	        credentials: 'same-origin',
+	        body: JSON.stringify({ enabled: next }),
+	      });
+	      if (!res.ok) throw new Error(await res.text());
+
+	      _contextHeaderData = {
+	        ...(_contextHeaderData || {}),
+	        skill_injection_enabled: next,
+	      };
+      if (toggleBtn) {
+	        toggleBtn.classList.toggle('active', next);
+	        toggleBtn.setAttribute('aria-checked', next ? 'true' : 'false');
+      }
+      if (stateText) stateText.textContent = next ? 'On' : 'Off';
+      uiModule.showToast(next ? 'Skill injection on for this chat' : 'Skill injection off for this chat');
+      return true;
+    } catch (err) {
+      uiModule.showError(`Could not save skill injection: ${err.message || err}`);
+      return false;
+    } finally {
+      if (toggleBtn) toggleBtn.disabled = false;
+    }
   }
 
-  export async function compactCurrentChatContext() {
+  async function _setChatMemoryInjection(enabled, toggleBtn, stateText) {
+    const sid = await _resolveCurrentSessionId({ adopt: true });
+    if (!sid) {
+      uiModule.showToast('Open a chat first');
+      return false;
+    }
+    const next = !!enabled;
+    if (toggleBtn) toggleBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/memory-injection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      _contextHeaderData = {
+        ...(_contextHeaderData || {}),
+        memory_injection_enabled: next,
+      };
+      if (toggleBtn) {
+        toggleBtn.classList.toggle('active', next);
+        toggleBtn.setAttribute('aria-checked', next ? 'true' : 'false');
+      }
+      if (stateText) stateText.textContent = next ? 'On' : 'Off';
+      uiModule.showToast(next ? 'Memory injection on for this chat' : 'Memory injection off for this chat');
+      return true;
+    } catch (err) {
+      uiModule.showError(`Could not save memory injection: ${err.message || err}`);
+      return false;
+    } finally {
+      if (toggleBtn) toggleBtn.disabled = false;
+    }
+  }
+
+  async function _saveChatGenerationSettings(change) {
+    const sid = await _resolveCurrentSessionId({ adopt: true });
+    if (!sid) return false;
+    const next = { thinking_mode: _contextHeaderData?.thinking_mode || '', temperature_override: _contextHeaderData?.temperature_override ?? null, max_tokens_override: _contextHeaderData?.max_tokens_override ?? null, ...change };
+    try {
+      const res = await fetch(`/api/session/${encodeURIComponent(sid)}/generation-settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(next) });
+      if (!res.ok) throw new Error(await res.text());
+      _contextHeaderData = { ..._contextHeaderData, ...await res.json() };
+      const session = _liveSessionModule()?.getSessions?.().find(item => item.id === sid);
+      if (session) Object.assign(session, {
+        thinking_mode: _contextHeaderData.thinking_mode,
+        temperature_override: _contextHeaderData.temperature_override,
+        max_tokens_override: _contextHeaderData.max_tokens_override,
+      });
+      return true;
+    } catch (err) { uiModule.showError(`Could not save chat settings: ${err.message || err}`); return false; }
+  }
+
+	  export async function compactCurrentChatContext() {
     const sm = _liveSessionModule();
-    const sid = sm && sm.getCurrentSessionId && sm.getCurrentSessionId();
+    const sid = await _resolveCurrentSessionId({ adopt: true });
     if (!sid) {
       uiModule.showToast('Open a chat first');
       return false;
@@ -287,7 +1141,7 @@ import { loadPanel } from './panels.js';
     const pill = document.getElementById('chat-context-pill');
     if (!pill) return;
     const sm = _liveSessionModule();
-    const sid = sm && sm.getCurrentSessionId && sm.getCurrentSessionId();
+    const sid = await _resolveCurrentSessionId({ adopt: false });
     const seq = ++_contextHeaderSeq;
     if (!sid) {
       _contextHeaderData = null;
@@ -307,15 +1161,15 @@ import { loadPanel } from './panels.js';
       _contextHeaderData = data;
       const pct = Number(data.context_percent || 0);
       _renderContextHeaderRing(pill, pct);
-      _renderCompactMenuContextIcon(pct);
-      pill.title = `${_fmtContextNumber(data.used_tokens)} / ${_fmtContextNumber(data.context_length)} tokens · ${String(data.model || '').split('/').pop()}`;
+      pill.title = 'Chat settings';
       pill.classList.remove('warn', 'danger');
       const colorClass = _contextColorClass(pct);
       if (colorClass) pill.classList.add(colorClass);
       pill.classList.remove('loading');
       if (pill.classList.contains('open')) {
+        const anchor = _contextHeaderAnchorEl;
         _closeContextHeaderPopup();
-        _showContextHeaderPopup();
+        _showContextHeaderPopup(anchor);
       }
     } catch (err) {
       if (seq !== _contextHeaderSeq) return;
@@ -635,7 +1489,7 @@ import { loadPanel } from './panels.js';
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
-    return _activeStreams.has(sessionId) || _streamSessionId === sessionId || _backgroundStreams.has(sessionId) ||
+    return _activeStreams.has(sessionId) || _streamSessionId === sessionId ||
            _resumingStreams.has(sessionId);
   }
 
@@ -653,6 +1507,13 @@ import { loadPanel } from './panels.js';
     isStreaming = !!active;
     currentAbort = active ? active.abortCtrl : null;
     currentHolder = active ? active.holder : null;
+    try {
+      const working = !!active || _activeStreams.size > 0 || _backgroundStreams.size > 0 || !!_sendInFlight;
+      document.body.classList.toggle('chat-agent-working', working);
+      const scrollBtn = document.getElementById('scroll-bottom-btn');
+      if (scrollBtn) scrollBtn.classList.toggle('agent-working', working);
+      window.dispatchEvent(new CustomEvent('odysseus-agent-working-change', { detail: { working } }));
+    } catch (_) {}
     _setForegroundChatBusy(!!active || !!_sendInFlight);
     return active;
   }
@@ -730,9 +1591,17 @@ import { loadPanel } from './panels.js';
   var getModelCost = chatRenderer.getModelCost;
   var getImageCost = chatRenderer.getImageCost;
 
-  function _appendGeneratedImageBubble(data) {
+  function _appendGeneratedImageBubble(data, sessionId = null) {
     const imageUrl = data?.image_url || data?.url || '';
     if (!imageUrl) return false;
+    const targetSessionId = sessionId || data?.session_id || data?.sessionId || '';
+    if (
+      targetSessionId
+      && sessionModule?.getCurrentSessionId
+      && sessionModule.getCurrentSessionId() !== targetSessionId
+    ) {
+      return false;
+    }
     const chatBox = document.getElementById('chat-history');
     if (!chatBox) return false;
     const imageKey = String(data.image_id || imageUrl);
@@ -907,11 +1776,59 @@ import { loadPanel } from './panels.js';
   const PLAN_STORAGE_KEY = 'odysseus-active-plan';
 
   const _queuedAgentRequests = [];
+  const QUEUED_AGENT_REQUESTS_KEY = 'odysseus-queued-agent-requests-v1';
   let _queuedDrainTimer = null;
   let _queuedPromoteTimer = null;
   let _queuedRequestSeq = 0;
   let _queuedBubbleHost = null;
   let _pendingApprovedPlan = '';
+
+  function _queuedSessionId() {
+    try { return sessionModule?.getCurrentSessionId?.() || ''; } catch (_) { return ''; }
+  }
+
+  function _readPersistedQueuedRequests() {
+    try {
+      const value = JSON.parse(localStorage.getItem(QUEUED_AGENT_REQUESTS_KEY) || '{}');
+      return value && typeof value === 'object' ? value : {};
+    } catch (_) { return {}; }
+  }
+
+  function _persistQueuedRequests() {
+    const all = _readPersistedQueuedRequests();
+    const touched = new Set(_queuedAgentRequests.map(item => String(item.sessionId || '')).filter(Boolean));
+    const currentSid = _queuedSessionId();
+    if (currentSid) touched.add(currentSid);
+    for (const sid of touched) {
+      const rows = _queuedAgentRequests
+        .filter(item => item.sessionId === sid)
+        .map(({ id, message, createdAt }) => ({ id, message, createdAt }));
+      if (rows.length) all[sid] = rows;
+      else delete all[sid];
+    }
+    try { localStorage.setItem(QUEUED_AGENT_REQUESTS_KEY, JSON.stringify(all)); } catch (_) {}
+  }
+
+  function _restoreQueuedRequestsForCurrentSession() {
+    const sid = _queuedSessionId();
+    if (!sid || _queuedAgentRequests.some(item => item.sessionId === sid)) return;
+    const saved = _readPersistedQueuedRequests()[sid];
+    if (!Array.isArray(saved) || !saved.length) return;
+    for (const raw of saved) {
+      const message = String(raw?.message || '').trim();
+      if (!message) continue;
+      const item = {
+        id: String(raw?.id || `q${++_queuedRequestSeq}`),
+        message,
+        createdAt: Number(raw?.createdAt || Date.now()),
+        sessionId: sid,
+        el: null,
+      };
+      item.el = _createQueuedBubble(item);
+      _queuedAgentRequests.push(item);
+    }
+    _persistQueuedRequests();
+  }
 
   function _extractPlanText(text) {
     const raw = String(text || '').trim();
@@ -967,6 +1884,58 @@ import { loadPanel } from './panels.js';
 	    (target.querySelector('.body') || target).appendChild(actions);
 	  }
 
+  function _openPlanReview() {
+    const plan = _getStoredPlan();
+    if (!plan) {
+      try { uiModule.showToast && uiModule.showToast('No active plan to review'); } catch (_) {}
+      return;
+    }
+    let panel = document.getElementById('plan-review-panel');
+    if (!panel) {
+      panel = document.createElement('section');
+      panel.id = 'plan-review-panel';
+      panel.className = 'plan-review-panel';
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-modal', 'false');
+      panel.setAttribute('aria-labelledby', 'plan-review-title');
+      panel.innerHTML = `
+        <div class="plan-review-panel-header">
+          <h3 id="plan-review-title">Plan review</h3>
+          <button type="button" class="plan-review-close" aria-label="Close plan review" title="Close">×</button>
+        </div>
+        <pre class="plan-review-content"></pre>
+        <div class="plan-review-actions">
+          <button type="button" class="plan-review-execute">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="7 4 20 12 7 20 7 4"></polygon></svg>
+            Execute plan
+          </button>
+          <button type="button" class="plan-review-clear">Clear</button>
+        </div>`;
+      panel.querySelector('.plan-review-close')?.addEventListener('click', () => panel.remove());
+      panel.querySelector('.plan-review-clear')?.addEventListener('click', () => {
+        _clearStoredPlan();
+        panel.remove();
+      });
+      panel.querySelector('.plan-review-execute')?.addEventListener('click', () => {
+        const approved = _getStoredPlan();
+        if (!approved.trim()) return;
+        _pendingApprovedPlan = approved;
+        panel.remove();
+        if (window.__odysseusSetPlanMode) window.__odysseusSetPlanMode(false);
+        if (window.__odysseusSetChatMode) window.__odysseusSetChatMode('agent');
+        _setComposerAndSend('Execute the approved plan.');
+      });
+      document.body.appendChild(panel);
+    }
+    const content = panel.querySelector('.plan-review-content');
+    if (content) content.innerHTML = _escapeQueueText(plan);
+    panel.hidden = false;
+    panel.classList.add('is-open');
+  }
+
+  // chatRenderer handles the #plan link without importing this module back.
+  window.__odysseusOpenPlanReview = _openPlanReview;
+
   function _escapeQueueText(s) {
     return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -1008,7 +1977,30 @@ import { loadPanel } from './panels.js';
     if (idx < 0) return null;
     const [item] = _queuedAgentRequests.splice(idx, 1);
     if (item && item.el && item.el.parentNode) item.el.remove();
+    _persistQueuedRequests();
     return item;
+  }
+
+  function _consumeQueuedRequestStack() {
+    const sid = _queuedSessionId();
+    const items = _queuedAgentRequests.filter(item => item.sessionId === sid);
+    if (!items.length) return null;
+    for (let i = _queuedAgentRequests.length - 1; i >= 0; i -= 1) {
+      if (_queuedAgentRequests[i].sessionId === sid) _queuedAgentRequests.splice(i, 1);
+    }
+    items.forEach(item => {
+      if (item && item.el && item.el.parentNode) item.el.remove();
+    });
+    if (_queuedBubbleHost && !_queuedBubbleHost.children.length) {
+      _queuedBubbleHost.remove();
+      _queuedBubbleHost = null;
+    }
+    _persistQueuedRequests();
+    return {
+      id: items.map(item => item.id).join(','),
+      message: items.map(item => String(item.message || '').trim()).filter(Boolean).join('\n\n'),
+      createdAt: items[0]?.createdAt || Date.now(),
+    };
   }
 
   function _setComposerAndSend(message) {
@@ -1041,8 +2033,9 @@ import { loadPanel } from './panels.js';
   }
 
   function _promoteQueuedRequest(id) {
-    const item = _removeQueuedRequest(id);
-    if (!item) return;
+    if (!_queuedAgentRequests.some(item => item.id === id)) return;
+    const item = _consumeQueuedRequestStack();
+    if (!item || !item.message) return;
     if (!isStreaming && !_sendInFlight) {
       _setComposerAndSend(item.message);
       return;
@@ -1061,9 +2054,10 @@ import { loadPanel } from './panels.js';
   function _queueAgentRequest(message) {
     const msg = String(message || '').trim();
     if (!msg) return false;
-    const item = { id: `q${++_queuedRequestSeq}`, message: msg, createdAt: Date.now(), el: null };
+    const item = { id: `q${++_queuedRequestSeq}`, message: msg, createdAt: Date.now(), sessionId: _queuedSessionId(), el: null };
     item.el = _createQueuedBubble(item);
     _queuedAgentRequests.push(item);
+    _persistQueuedRequests();
     try { uiModule.showToast && uiModule.showToast(_queuedAgentRequests.length === 1 ? 'Queued for after this response' : `${_queuedAgentRequests.length} requests queued`); } catch (_) {}
     return true;
   }
@@ -1087,14 +2081,15 @@ import { loadPanel } from './panels.js';
   }
 
   function _drainQueuedAgentRequests() {
-    if (isStreaming || _sendInFlight || !_queuedAgentRequests.length) return;
+    _restoreQueuedRequestsForCurrentSession();
+    const sid = _queuedSessionId();
+    if (isStreaming || _sendInFlight || !_queuedAgentRequests.some(item => item.sessionId === sid)) return;
     if (_queuedDrainTimer) return;
     _queuedDrainTimer = setTimeout(() => {
       _queuedDrainTimer = null;
-      if (isStreaming || _sendInFlight || !_queuedAgentRequests.length) return;
-      const next = _queuedAgentRequests[0];
-      if (!next) return;
-      _removeQueuedRequest(next.id);
+      if (isStreaming || _sendInFlight || !_queuedAgentRequests.some(item => item.sessionId === _queuedSessionId())) return;
+      const next = _consumeQueuedRequestStack();
+      if (!next || !next.message) return;
       _setComposerAndSend(next.message);
     }, 180);
   }
@@ -1215,18 +2210,17 @@ import { loadPanel } from './panels.js';
         stoppedLabel.textContent = '[Message interrupted]';
         stoppedIndicator.appendChild(stoppedLabel);
         const continueBtn = document.createElement('button');
-        continueBtn.className = 'continue-btn';
-        continueBtn.title = 'Continue';
-        continueBtn.textContent = '\u25B8';
+        continueBtn.className = 'continue-btn resume-btn';
+        continueBtn.title = 'Resume response';
+        continueBtn.innerHTML = '<span class="resume-btn-label">Resume</span><svg class="resume-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>';
         const _stoppedHolder = _stoppedViewHolder; // capture before globals are cleared
         continueBtn.addEventListener('click', () => {
           stoppedIndicator.remove();
           _hideUserBubble = true;
           _pendingContinue = _stoppedHolder;
-          const cutoff = stoppedContent;
           const msgInput = uiModule.el('message');
           if (msgInput) {
-            msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+            msgInput.value = 'Continue from where you left off.';
             const sb = document.querySelector('.send-btn');
             if (sb) sb.click();
           }
@@ -1264,6 +2258,7 @@ import { loadPanel } from './panels.js';
     // --- Send-path entry: block re-clicks between submit and stream start ---
     if (_sendInFlight) return;
     const _sendPerf = _createChatSendPerf();
+    const _ttftStartedAt = performance.now();
     _sendInFlight = true;
     const approvalForSend = _pendingToolApproval;
     _setForegroundChatBusy(true);
@@ -1331,7 +2326,9 @@ import { loadPanel } from './panels.js';
     const selectedRouteForSend = (() => {
       try {
         const lastPicked = window.__odysseusLastPickedRoute || null;
-        if (lastPicked && lastPicked.model && Date.now() - (lastPicked.picked_at || 0) < 10 * 60 * 1000) {
+        if (lastPicked && lastPicked.model
+          && (lastPicked.session_id || null) === (sessionModule.getCurrentSessionId?.() || null)
+          && Date.now() - (lastPicked.picked_at || 0) < 10 * 60 * 1000) {
           return {
             model: lastPicked.model || '',
             endpoint_url: lastPicked.endpoint_url || '',
@@ -1508,12 +2505,14 @@ import { loadPanel } from './panels.js';
     let holder = null;
     let finalMeta = null;
     let _canonicalTerminalSaved = false;
+    let _streamSawDone = false;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
     let processingProbeAbort = null;
     let _renderStream = () => {};
     let _finalizeRoundRender = () => {};
+    let _settleTurnRendering = () => {};
     let _finalizeInterruptedView = () => null;
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
@@ -1530,6 +2529,32 @@ import { loadPanel } from './panels.js';
     let responseTimeoutCleared = false;
     let clearResponseTimeout = () => {};
     let firstTokenWaitTimers = [];
+    let _ttftDisplayTimer = null;
+    let _clientTtftSeconds = null;
+    let _editorProgress = null;
+    const _ttftLabel = (elapsed) => {
+      if (_editorProgress) {
+        const proposed = Number(_editorProgress.proposed) || 0;
+        return `${proposed > 0 ? `${proposed} proposed` : 'Reviewing'} · ${elapsed.toFixed(1)}s`;
+      }
+      if (elapsed >= 120) return `Still waiting for first token · ${elapsed.toFixed(1)}s`;
+      if (elapsed >= 60) return `Model pre-filling context · ${elapsed.toFixed(1)}s`;
+      if (elapsed >= 20) return `Waiting for first token · ${elapsed.toFixed(1)}s`;
+      return `Processing request · ${elapsed.toFixed(1)}s`;
+    };
+    const _startTtftDisplay = () => {
+      if (_ttftDisplayTimer) clearInterval(_ttftDisplayTimer);
+      const update = () => {
+        if (!spinner || !spinner.element || (_clientTtftSeconds != null && !_editorProgress)) return;
+        spinner.updateMessage(_ttftLabel((performance.now() - _ttftStartedAt) / 1000));
+      };
+      update();
+      _ttftDisplayTimer = setInterval(update, 100);
+    };
+    const _stopTtftDisplay = () => {
+      if (_ttftDisplayTimer) clearInterval(_ttftDisplayTimer);
+      _ttftDisplayTimer = null;
+    };
     const clearFirstTokenWaitTimers = () => {
       firstTokenWaitTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} });
       firstTokenWaitTimers = [];
@@ -1611,7 +2636,15 @@ import { loadPanel } from './panels.js';
       }
       let _userMsgEl = null;
       if (!skipBubble) {
-        _userMsgEl = addMessage('user', userDisplay, null, _pendingAttachInfo ? { attachments: _pendingAttachInfo } : null);
+        const _toggleStateForBubble = Storage.loadToggleState();
+        const _bubbleMode = (_toggleStateForBubble.mode || 'chat') === 'agent' ? 'agent' : 'chat';
+        const _bubbleMeta = _pendingAttachInfo ? { attachments: _pendingAttachInfo } : {};
+        _bubbleMeta.interaction_mode = _bubbleMode;
+        if (docSel) {
+          _bubbleMeta.document_id = documentModule?.getCurrentDocId?.() || '';
+          _bubbleMeta.document_selections = Array.isArray(docSel) ? docSel : [docSel];
+        }
+        _userMsgEl = addMessage('user', userDisplay, null, _bubbleMeta);
       }
       _sendPerf.mark('user_bubble_visible');
       messageInput.value = approvalForSend ? (approvalForSend.draft || '') : '';
@@ -1751,8 +2784,8 @@ import { loadPanel } from './panels.js';
       const activeEmailComposerCtx = documentModule && typeof documentModule.getActiveEmailComposerContext === 'function'
         ? documentModule.getActiveEmailComposerContext()
         : null;
-      let activeDocIdForSend = documentModule && typeof documentModule.getCurrentDocId === 'function'
-        ? documentModule.getCurrentDocId()
+      let activeDocIdForSend = documentModule && typeof documentModule.getChatDocumentId === 'function'
+        ? documentModule.getChatDocumentId()
         : null;
       if (activeEmailComposerCtx?.docId) {
         activeDocIdForSend = activeEmailComposerCtx.docId;
@@ -1761,47 +2794,23 @@ import { loadPanel } from './panels.js';
         approvalForSend.document_id
         && approvalForSend.document_id === activeDocIdForSend
       );
+      let documentSaved = true;
       if (documentModule && activeDocIdForSend && shouldSaveActiveDoc) {
         try {
           _sendPerf.mark('doc_save_begin');
-          const documentSaved = await documentModule.saveDocument({
-            silent: !!approvalForSend,
+          documentSaved = await documentModule.saveDocument({
+            silent: false,
           });
           _sendPerf.mark('doc_save_done');
-          if (approvalForSend && documentSaved === false) {
-            if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
-            if (
-              _pendingToolApproval
-              && _pendingToolApproval.approval_id === approvalForSend.approval_id
-            ) {
-              _pendingToolApproval = null;
-            }
-            uiModule.showError && uiModule.showError(
-              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
-            );
-            updateSubmitButton('idle', submitBtn);
-            _releaseSendFlag();
-            return;
-          }
         } catch(e) {
+          documentSaved = false;
           console.warn('doc auto-save failed', e);
           _sendPerf.mark('doc_save_failed');
-          if (approvalForSend) {
-            if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
-            if (
-              _pendingToolApproval
-              && _pendingToolApproval.approval_id === approvalForSend.approval_id
-            ) {
-              _pendingToolApproval = null;
-            }
-            uiModule.showError && uiModule.showError(
-              'Document could not be saved, so the action was not approved. Reload the chat to retry.'
-            );
-            updateSubmitButton('idle', submitBtn);
-            _releaseSendFlag();
-            return;
-          }
         }
+      }
+      if (approvalForSend && documentSaved === false) {
+        _releaseSendFlag();
+        return;
       }
 
       // Inject document selection context if present
@@ -1830,13 +2839,16 @@ import { loadPanel } from './panels.js';
       const fd = new FormData();
       fd.append('message', approvalForSend ? '' : _finalMsgWithInject);
       fd.append('session', streamSessionId);
+
+      const selectedNoteIds = _selectedNoteIdsBySession.get(streamSessionId) || [];
+      if(selectedNoteIds.length){
+        fd.append('selected_note_ids', JSON.stringify(selectedNoteIds))
+      }
+
       if (approvalForSend) {
         fd.append('tool_approval_id', approvalForSend.approval_id);
         fd.append('tool_approval_decision', approvalForSend.decision);
-        if (
-          _pendingToolApproval
-          && _pendingToolApproval.approval_id === approvalForSend.approval_id
-        ) {
+        if (_pendingToolApproval && _pendingToolApproval.approval_id === approvalForSend.approval_id) {
           _pendingToolApproval = null;
         }
       }
@@ -1857,6 +2869,11 @@ import { loadPanel } from './panels.js';
         }
         fd.append('active_doc_id', activeDocIdForSend);
       }
+      // A minimized mobile sheet remains linked to chat even though it is not
+      // visually mounted. An explicit tab close returns no document id.
+      fd.append('active_doc_state', activeDocIdForSend
+        ? (documentModule?.isPanelOpen?.() ? 'visible' : 'minimized')
+        : 'none');
       // Active email context — when an email reader is open, pass its
       // uid/folder/account so "reply", "summarize", "what does this say"
       // resolve to the email the user is actually looking at instead of
@@ -1880,8 +2897,17 @@ import { loadPanel } from './panels.js';
 	      const toggleState = Storage.loadToggleState();
 	      const isPlanMode = !!toggleState.plan_mode && !(el('research-toggle') && el('research-toggle').checked);
 	      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
-      const isIncognito = isIncognitoForSend;
-	      const workspaceAgentIntent = !isIncognito && /\b(fix|debug|implement|change|update|refactor|patch|review|test|run|execute|start|launch|build|lint|typecheck|benchmark|eval|terminal[- ]bench|tbench|repo|repository|codebase|project|app|server|api|frontend|backend|bug|issue|pr|file|folder|directory|source|logs?|trace|stacktrace|traceback|docker|container|tmux|terminal|shell|git|branch|commit|diff|pytest|process|port|endpoint|computer|machine|laptop|device|system)\b/i.test(String(msg || ''));
+	      const isIncognito = isIncognitoForSend;
+	      const _messageText = String(msg || '');
+	      const _explanatoryQuestion = /^\s*(?:how\s+(?:do|can)\s+i|can\s+you\s+explain|what\s+about|tell\s+me\s+how|show\s+me\s+how)\b/i.test(_messageText);
+	      const _directCodeFileTarget = /\b[A-Za-z0-9_./-]+\.(?:py|pyi|js|jsx|ts|tsx|mjs|cjs|vue|svelte|html|css|scss|sass|less|sql|rs|go|java|kt|kts|swift|rb|php|sh|bash|zsh|fish|c|h|cc|cpp|cxx|hpp|json|jsonl|yaml|yml|toml|xml|graphql|proto)\b/i.test(_messageText);
+	      const _directCodingIntent = !_explanatoryQuestion && (/\b(?:write|create|add|edit|modify|code|program|implement|build)\b[\s\S]{0,160}\b(?:code|function|class|script|module|component|snippet|program|app|feature|file|command[- ]line|repo(?:sitory)?|codebase|project|website|web\s+app|python|javascript|typescript|html|css|sql|rust|java|go)\b/i.test(_messageText) || (/\b(?:write|create|add|edit|modify|code|program|implement|build)\b/i.test(_messageText) && _directCodeFileTarget));
+	      // Shell access is request authority. Generic words such as "source",
+	      // "system", "app", "change", or "review" occur in ordinary web and
+	      // personal-tool questions. Workspace intent can select Agent mode,
+	      // but shell authority still comes from the visible Bash toggle.
+	      const _explicitWorkspaceTarget = _directCodeFileTarget || /\b(?:bash|shell|terminal|tmux|pytest|git|docker|container|codebase|repo(?:sitory)?|stacktrace|traceback)\b/i.test(_messageText);
+	      const workspaceAgentIntent = !isIncognito && !_explanatoryQuestion && (_directCodingIntent || _explicitWorkspaceTarget);
 	      if (isPlanMode || _pendingApprovedPlan) {
 	        isAgentMode = true;
 	      }
@@ -1914,7 +2940,6 @@ import { loadPanel } from './panels.js';
 	        fd.set('plan_mode', 'false');
 	      }
       fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
-      if (workspaceAgentIntent) fd.set('allow_bash', 'true');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -1929,6 +2954,12 @@ import { loadPanel } from './panels.js';
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      try {
+        const effort = window.__odysseusGetReasoningEffort ? window.__odysseusGetReasoningEffort() : null;
+        if (effort) {
+          fd.append('reasoning_effort', effort);
+        }
+      } catch (_) {}
 
 
       // Superseded during preflight (uploads, document saves): a newer send
@@ -1993,6 +3024,9 @@ import { loadPanel } from './panels.js';
       };
       
       const box = el('chat-history');
+      // Scope answer reconciliation to this turn without replacing its timeline.
+      let _streamTurnMarker = document.createComment('live-stream-turn');
+      box.appendChild(_streamTurnMarker);
       holder = document.createElement('div');
       holder.className = 'msg msg-ai streaming';
 
@@ -2009,6 +3043,12 @@ import { loadPanel } from './panels.js';
         cancelViewWork: () => _cancelLiveThinkingWork(),
         finalizeView: () => _finalizeInterruptedView(),
       });
+      // Every run cooks in the sidebar, including the currently selected chat.
+      // Previously this was marked only after switching to another session,
+      // so the common tab-away case had no breathing provider logo.
+      if (sessionModule && sessionModule.markStreaming) {
+        sessionModule.markStreaming(streamSessionId);
+      }
       _syncForegroundStreamGlobals();
       holder._researchQuery = msg; // Store query for notification text
       
@@ -2053,8 +3093,7 @@ import { loadPanel } from './panels.js';
         spinner.updateMessage('Researching');
         setTimeout(() => spinner.updateMessage('Analyzing sources'), 1500);
       } else {
-        spinner.updateMessage('Processing request');
-        scheduleFirstTokenWaitMessages();
+        _startTtftDisplay();
       }
       
       const researchBtn = el('research-toggle-btn');
@@ -2157,7 +3196,41 @@ import { loadPanel } from './panels.js';
       let roundReplyText = null;      // Reply-only text after a thinking transition
       let currentToolBubble = null;   // Current tool execution bubble
       let lastToolThread = null;      // Visible tool timeline for tool-only turns
+      let finishEditorButton = null;
+      const clearFinishEditorButton = () => {
+        finishEditorButton?.remove();
+        finishEditorButton = null;
+      };
+      const offerFinishEditorTurn = () => {
+        if (finishEditorButton || !lastToolThread || !_streamRunIds.get(streamSessionId)) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'continue-btn resume-btn agent-finish-editor';
+        button.textContent = 'Finish with these';
+        button.title = 'Stop generating after the completed document work; keep the saved edits and suggestions';
+        button.addEventListener('click', async () => {
+          const runId = _streamRunIds.get(streamSessionId);
+          if (!runId) return;
+          button.disabled = true;
+          button.textContent = 'Finishing…';
+          try {
+            const response = await fetch(`${API_BASE}/api/chat/finish/${encodeURIComponent(streamSessionId)}`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'X-Odysseus-Run-Id': runId },
+            });
+            const result = await response.json();
+            if (!response.ok || !result.accepted) throw new Error('The run has already finished or changed');
+          } catch (error) {
+            button.disabled = false;
+            button.textContent = 'Finish with these';
+            uiModule?.showError?.(error.message || 'Could not finish this run');
+          }
+        });
+        lastToolThread.appendChild(button);
+        finishEditorButton = button;
+      };
       let roundFinalized = false;     // Whether current round's text is finalized
+      let terminalFinalResponseRendered = false; // final_response already rendered the canonical bubble
       let roundFinalization = null;   // Terminal owner/result for the current round
       let lastContentRoundHolder = null; // Last non-empty round for an empty continuation Stop
       let _sourcesHtml = '';          // Sources box HTML to prepend to body
@@ -2182,6 +3255,61 @@ import { loadPanel } from './panels.js';
         }
         return visibleRound || holder;
       }
+      let _savedAssistantMessageId = '';
+      const _turnRendering = createTurnRendering({ root: box, start: _streamTurnMarker });
+      _settleTurnRendering = () => _turnRendering.settle();
+      function _terminalAnswerHtml(text, body) {
+        const expanded = _sourcesExpanded || !!body?.querySelector('.sources-content.expanded');
+        return (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, expanded) : '')
+          + markdownModule.processWithThinking(markdownModule.squashOutsideCode(markdownModule.normalizeThinkingMarkup(_streamDisplayText(text, { final: _docFenceOpened }))))
+          + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
+      }
+      function _renderTerminalAnswer(text, messageId = '', renderOwner, replacementScope) {
+        if (renderOwner && !_turnRendering.accepts({ type: 'final_response', render_owner: renderOwner, replacement_scope: replacementScope })) return false;
+        _ensureVisibleRoundForDelta();
+        const body = roundHolder?.querySelector('.body');
+        if (!body) return false;
+        const result = _turnRendering.render({
+          body, html: _terminalAnswerHtml(text, body), raw: text, messageId, render_owner: renderOwner, replacement_scope: replacementScope,
+        });
+        if (result.changed && window.hljs) body.querySelectorAll('pre code').forEach(block => window.hljs.highlightElement(block));
+        if (result.accepted) _turnRendering.settle();
+        return result.accepted;
+      }
+      async function _replaceLiveTurnWithSavedAssistantMessage(_attempt = 0) {
+        if (!streamSessionId || !_savedAssistantMessageId) return false;
+        const isCurrent = () => (
+          sessionModule.getCurrentSessionId() === streamSessionId
+          && _streamGenerations.get(streamSessionId) === streamGeneration
+          && _streamTurnMarker?.parentNode === box
+        );
+        if (!isCurrent()) return false;
+        try {
+          const res = await fetch(`${API_BASE}/api/history/${encodeURIComponent(streamSessionId)}?limit=12`, {
+            credentials: 'same-origin',
+          });
+          if (!res.ok || !isCurrent()) return false;
+          const data = await res.json();
+          if (!isCurrent()) return false;
+          const saved = (Array.isArray(data.history) ? data.history : []).find(msg => (
+            msg?.role === 'assistant'
+            && String(msg.metadata?._db_id || '') === _savedAssistantMessageId
+          ));
+          if (!saved && _attempt < 4) {
+            await new Promise(resolve => setTimeout(resolve, 100 * (_attempt + 1)));
+            return _replaceLiveTurnWithSavedAssistantMessage(_attempt + 1);
+          }
+          if (!saved || !String(saved.content || '').trim()) return false;
+          const scrollSnapshot = uiModule.captureHistoryScroll?.();
+          const rendered = _renderTerminalAnswer(saved.content, _savedAssistantMessageId, saved.metadata?.render_owner, saved.metadata?.replacement_scope);
+          uiModule.restoreHistoryScroll?.(scrollSnapshot);
+          if (rendered) _streamTurnMarker.remove();
+          return rendered;
+        } catch (err) {
+          console.warn('Failed to reconcile saved assistant answer:', err);
+          return false;
+        }
+      }
       // Insert sources box as a stable DOM node that won't be replaced during streaming.
       // Returns the content container to use for innerHTML updates.
       function _ensureStreamLayout(body) {
@@ -2198,6 +3326,7 @@ import { loadPanel } from './panels.js';
       }
       function _ensureVisibleRoundForDelta() {
         if (!roundHolder || roundHolder.style.display !== 'none') return;
+        if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() !== streamSessionId) return;
         const box = document.getElementById('chat-history');
         if (!box) {
           roundHolder.style.display = '';
@@ -2230,6 +3359,7 @@ import { loadPanel } from './panels.js';
         roundText = '';
         roundReplyText = null;
         roundFinalized = false;
+        terminalFinalResponseRendered = false;
         roundFinalization = null;
         isThinking = false;
         _thinkingMode = null;
@@ -2241,12 +3371,14 @@ import { loadPanel } from './panels.js';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
+      let _thinkingSpinnerEl = null;
       _removeThinkingSpinner = () => {
-        const el = document.querySelector('.agent-thinking-dots');
+        const el = _thinkingSpinnerEl;
         if (el) {
           if (el._spinner) el._spinner.destroy();
           el.remove();
         }
+        _thinkingSpinnerEl = null;
       };
 
       // Tool-aware thinking spinner
@@ -2274,10 +3406,193 @@ import { loadPanel } from './panels.js';
         'deep_research': 'Researching',
         'list_models': 'Browsing',
         'ui_control': 'Adjusting',
+        'mcp__email__list_emails': 'Checking email',
+        'mcp__email__read_email': 'Reading email',
+        'mcp__email__search_emails': 'Searching email',
+        'list_emails': 'Checking email',
+        'read_email': 'Reading email',
+        'search_emails': 'Searching email',
       };
       const _toolIcons = {
         'web_search': _searchIcon,
+        'web_fetch': _searchIcon,
       };
+
+      function _safeExternalToolUrl(raw) {
+        const value = String(raw || '').trim();
+        if (!value) return '';
+        try {
+          const parsed = new URL(value.includes('://') ? value : `https://${value}`);
+          if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+        } catch (_) {}
+        return '';
+      }
+
+      function _webFetchUrlFromCommand(command) {
+        const raw = String(command || '').trim();
+        if (!raw) return '';
+        try {
+          const args = JSON.parse(raw);
+          return _safeExternalToolUrl(args && args.url);
+        } catch (_) {
+          return _safeExternalToolUrl(raw.split(/\s+/)[0]);
+        }
+      }
+
+      function _webSearchQueryFromCommand(command) {
+        const raw = String(command || '').trim();
+        if (!raw) return '';
+        try {
+          const args = JSON.parse(raw);
+          if (args && typeof args.query === 'string') return args.query.trim();
+          if (args && Array.isArray(args.queries) && args.queries.length) return String(args.queries[0] || '').trim();
+        } catch (_) {}
+        return raw;
+      }
+
+      function _searxngSearchUrl(query) {
+        const q = String(query || '').trim();
+        if (!q) return '';
+        try {
+          const url = new URL('/search/web', window.location.origin);
+          url.search = '';
+          url.hash = '';
+          url.searchParams.set('q', q);
+          return url.href;
+        } catch (_) {
+          return '';
+        }
+      }
+
+      function _toolHeaderLinkHtml(url, title = 'Open link') {
+        const href = _safeExternalToolUrl(url);
+        if (!href) return '';
+        return `<a class="agent-thread-header-link" href="${uiModule.esc(href)}" target="_blank" rel="noopener noreferrer" title="${uiModule.esc(title)}" aria-label="${uiModule.esc(title)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></a>`;
+      }
+
+      function _toolHeaderHashLinkHtml(hash, title = 'Open item', iconHtml = '', className = '') {
+        const href = String(hash || '').trim();
+        if (!/^#(?:event|note|email|document|task|research|skill)-[A-Za-z0-9_.:-]+$/.test(href)) return '';
+        const cls = `agent-thread-header-link${className ? ' ' + className : ''}`;
+        return `<a class="${uiModule.esc(cls)}" href="${uiModule.esc(href)}" title="${uiModule.esc(title)}" aria-label="${uiModule.esc(title)}">${iconHtml || '<span aria-hidden="true">↗</span>'}</a>`;
+      }
+
+      function _calendarEventUidFromToolData(command, data) {
+        const direct = String((data && data.uid) || '').trim();
+        if (direct) return direct;
+        const events = data && Array.isArray(data.events) ? data.events : [];
+        if (events.length === 1 && events[0] && events[0].uid) return String(events[0].uid).trim();
+        const text = `${command || ''}\n${(data && data.output) || ''}\n${(data && data.anchor) || ''}`;
+        const match = text.match(/#event-([A-Za-z0-9_.:-]+)/);
+        return match ? match[1] : '';
+      }
+
+      function _emailToolHash(args = {}, data = null) {
+        const uid = String((data && data.uid) || args.uid || '').trim();
+        if (!/^\d+$/.test(uid)) return '';
+        const folder = String((data && data.folder) || args.folder || 'INBOX').trim() || 'INBOX';
+        const account = String((data && (data.account_id || data.account)) || args.account_id || args.account || '').trim();
+        const clean = value => String(value || '').replace(/[^A-Za-z0-9_.@-]/g, '_');
+        return `#email-${[clean(folder), uid, clean(account)].filter(Boolean).join(':')}`;
+      }
+
+      function _toolDisplayInfo(tool, command, data = null) {
+        const rawTool = String(tool || '');
+        const lower = rawTool.toLowerCase();
+        let args = null;
+        try { args = JSON.parse(command || '{}'); } catch (_) {}
+        if (lower === 'web_search' || lower.endsWith('web_search') || lower.includes('__web_search')) {
+          const q = _webSearchQueryFromCommand(command);
+          return {
+            label: '',
+            commandHtml: q
+              ? `<span class="agent-thread-summary">${uiModule.esc(q)}</span>`
+              : '',
+          };
+        }
+        if (lower === 'web_fetch' || lower.endsWith('web_fetch') || lower.includes('__web_fetch')) {
+          const url = _webFetchUrlFromCommand(command);
+          return {
+            label: '',
+            headerActionHtml: _toolHeaderLinkHtml(url, 'Open fetched page'),
+            commandHtml: url
+              ? `<a class="agent-thread-summary agent-thread-summary-link" href="${uiModule.esc(url)}" target="_blank" rel="noopener noreferrer" title="Open ${uiModule.esc(url)}">${uiModule.esc(url)}</a>`
+              : '',
+          };
+        }
+        if (lower === 'manage_calendar' || lower.endsWith('manage_calendar')) {
+          const action = args && args.action ? String(args.action).toLowerCase() : '';
+          const summary = args && args.summary ? String(args.summary) : '';
+          const start = args && args.start ? String(args.start).slice(0, 10) : '';
+          const end = args && args.end ? String(args.end).slice(0, 10) : '';
+          const uid = _calendarEventUidFromToolData(command, data || {});
+          const actionLabel = action.includes('create') ? 'Create event'
+            : action.includes('update') ? 'Update event'
+            : action.includes('delete') ? 'Delete event'
+            : 'Check calendar';
+          const rangeSummary = start && end ? `${start} to ${end}` : '';
+          return {
+            label: actionLabel,
+            // The calendar glyph is rendered as the action link itself.
+            headerActionHtml: '',
+            commandHtml: summary
+              ? `<div class="agent-thread-summary">${uiModule.esc(summary)}</div>`
+              : rangeSummary
+                ? `<div class="agent-thread-summary">${uiModule.esc(rangeSummary)}</div>`
+                : '',
+          };
+        }
+        const emailTool = lower.includes('email');
+        if (emailTool && (lower.includes('read_email') || lower.endsWith('read_email'))) {
+          const uid = args && args.uid ? String(args.uid) : '';
+          const folder = args && args.folder ? String(args.folder) : 'INBOX';
+          const href = _emailToolHash(args || {}, data);
+          return {
+            label: uid ? `Read email UID ${uid}` : 'Read email',
+            headerActionHtml: href
+              ? _toolHeaderHashLinkHtml(href, 'Open this email')
+              : '',
+            commandHtml: uid
+              ? `<a class="agent-thread-summary agent-thread-summary-link" href="${uiModule.esc(href || `#email-${uid}`)}" title="Open this email">UID ${uiModule.esc(uid)} · ${uiModule.esc(folder)}</a>`
+              : '',
+          };
+        }
+        if (emailTool && (lower.includes('list_emails') || lower.endsWith('list_emails'))) {
+          const max = args && args.max_results ? String(args.max_results) : '';
+          const folder = args && args.folder ? String(args.folder) : 'INBOX';
+          const bits = [folder, max ? `${max} latest` : 'latest'].filter(Boolean).join(' · ');
+          return {
+            label: 'Check email',
+            commandHtml: `<div class="agent-thread-summary">${uiModule.esc(bits)}</div>`,
+          };
+        }
+        if (emailTool && (lower.includes('search_emails') || lower.endsWith('search_emails'))) {
+          const q = args && args.query ? String(args.query) : '';
+          return {
+            label: 'Search email',
+            commandHtml: q ? `<div class="agent-thread-summary">${uiModule.esc(q)}</div>` : '',
+          };
+        }
+        return { label: '', commandHtml: '' };
+      }
+
+      function _suppressRawToolOutput(tool, ok) {
+        if (!ok) return false;
+        const lower = String(tool || '').toLowerCase();
+        if (lower === 'manage_calendar' || lower.endsWith('manage_calendar')) return true;
+        return (
+          lower.includes('email')
+          && (
+            lower.includes('list_emails')
+            || lower.includes('search_emails')
+            || lower.includes('read_email')
+            || lower.includes('download_attachment')
+            || lower.includes('scan_spam')
+            || lower.includes('scan_email_unsubscribes')
+          )
+        );
+      }
+
       function _thinkingLabel() {
         if (!_lastToolName) {
           return 'Thinking';
@@ -2292,7 +3607,10 @@ import { loadPanel } from './panels.js';
       }
 
       function _showThinkingSpinner(label) {
-        if (document.querySelector('.agent-thinking-dots')) return;
+        if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() !== streamSessionId) return;
+        const chatBox = document.getElementById('chat-history');
+        if (!chatBox) return;
+        if (_thinkingSpinnerEl || chatBox.querySelector('.agent-thinking-dots')) return;
         const _thinkMsg = document.createElement('div');
         _thinkMsg.className = 'msg msg-ai agent-thinking-dots';
         const _thinkBody = document.createElement('div');
@@ -2302,7 +3620,8 @@ import { loadPanel } from './panels.js';
         _ts.start(120);
         _thinkMsg._spinner = _ts;
         _thinkMsg.appendChild(_thinkBody);
-        document.getElementById('chat-history').appendChild(_thinkMsg);
+        _thinkingSpinnerEl = _thinkMsg;
+        chatBox.appendChild(_thinkMsg);
         uiModule.scrollHistory();
       }
 
@@ -2311,18 +3630,23 @@ import { loadPanel } from './panels.js';
         _showThinkingSpinner(label);
       }
 
-      // Auto-show thinking spinner after text stops streaming
-      let _textPauseTimer = null;
-      function _scheduleThinkingSpinner() {
-        if (_textPauseTimer) clearTimeout(_textPauseTimer);
-        _textPauseTimer = setTimeout(() => {
-          if (!document.querySelector('.agent-thinking-dots') && isStreaming) {
+      // Show waiting feedback only between tool rounds, never infer thinking
+      // from a text pause (which also occurs while a finished reply is saved).
+      let _toolPauseTimer = null;
+      function _scheduleToolWaitSpinner() {
+        if (_toolPauseTimer) clearTimeout(_toolPauseTimer);
+        _toolPauseTimer = setTimeout(() => {
+          const active = _activeStreams.get(streamSessionId);
+          const isVisible = !(sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() !== streamSessionId);
+          _toolPauseTimer = null;
+          if (active?.abortCtrl === abortCtrl && !abortCtrl?.signal?.aborted
+              && !_streamSawDone && isVisible && !_thinkingSpinnerEl) {
             _showThinkingSpinner(_thinkingLabel());
           }
         }, 400);
       }
       _cancelThinkingTimer = () => {
-        if (_textPauseTimer) { clearTimeout(_textPauseTimer); _textPauseTimer = null; }
+        if (_toolPauseTimer) { clearTimeout(_toolPauseTimer); _toolPauseTimer = null; }
       };
 
       // Document streaming state (text-fence detection)
@@ -2341,6 +3665,7 @@ import { loadPanel } from './panels.js';
       let _liveThinkHeader = null;
       let _liveThinkSpinnerSlot = null;
       let _liveThinkTimerEl = null;
+      let _liveThinkSpinner = null;
       let _liveThinkTokenCount = 0;
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
@@ -2438,6 +3763,22 @@ import { loadPanel } from './panels.js';
         _startLiveThinkTimer();
       }
 
+      function _removeLiveThinkingSpinner() {
+        const liveSpinner = _liveThinkSpinner;
+        _liveThinkSpinner = null;
+        if (liveSpinner) {
+          const wrapper = liveSpinner.element;
+          try { liveSpinner.destroy(); } catch (_) {}
+          // createWhirlpool returns an outer wrapper around the Spinner's
+          // inner element; destroy() removes only the inner element.
+          wrapper?.remove?.();
+        }
+        if (_liveThinkSpinnerSlot) {
+          _liveThinkSpinnerSlot.replaceChildren();
+          _liveThinkSpinnerSlot = null;
+        }
+      }
+
       _flushLiveThinking = ({ text = null, rich = false } = {}) => {
         if (text !== null) _queueLiveThinking(text, true);
         if (_liveThinkRenderThrottle) _liveThinkRenderThrottle.flush();
@@ -2453,6 +3794,7 @@ import { loadPanel } from './panels.js';
         _liveThinkRenderThrottle = null;
         _stopLiveThinkTimer();
         _cancelThinkingGrace();
+        _removeLiveThinkingSpinner();
       };
 
       function _finalizeLiveThinking(text, rich = true) {
@@ -2498,7 +3840,7 @@ import { loadPanel } from './panels.js';
         const elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
         if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
         if (_liveThinkTimerEl) _liveThinkTimerEl.textContent = elapsed ? _formatThinkStats(elapsed, _liveThinkTokenCount) : '';
-        if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+        _removeLiveThinkingSpinner();
       }
 
       function _cancelThinkingGrace() {
@@ -2528,9 +3870,7 @@ import { loadPanel } from './panels.js';
           _liveThinkTokenCount = 0;
           _liveThinkToggle = null;
           _liveThinkDomId = null;
-          if (spinner && spinner.element) spinner.destroy();
           _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
-          _scheduleThinkingSpinner();
           return;
         }
 
@@ -2540,7 +3880,7 @@ import { loadPanel } from './panels.js';
           roundText = roundText.replace(/<think>/i, '<think time="' + elapsed + '">');
         }
         if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-        if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+        _removeLiveThinkingSpinner();
         if (_liveThinkTimerEl && elapsed) {
           _liveThinkTimerEl.textContent = _formatThinkStats(elapsed, _liveThinkTokenCount);
           _liveThinkTimerEl.style.marginLeft = 'auto';
@@ -2624,10 +3964,72 @@ import { loadPanel } from './panels.js';
         return (text || '').slice(last.index + last[0].length).trimStart();
       }
 
+      function _suppressThinkingForPersona() {
+        return !!(roundHolder?._characterName || holder?._characterName);
+      }
+
+      function _visiblePersonaReplyText(text) {
+        const normalized = markdownModule.normalizeThinkingMarkup(text || '');
+        const extracted = markdownModule.extractThinkingBlocks(normalized);
+        if (extracted && typeof extracted.content === 'string') return extracted.content.trimStart();
+        return normalized;
+      }
+
+      function _isDirectEmailListingPrompt(text) {
+        const q = String(text || '').toLowerCase();
+        if (/\b(summarize|summarise|summary|tldr|recap|rundown|brief|how many|count|number of|total|urgent|important|priority|spam|junk|phishing|unsubscribe)\b/i.test(q)) {
+          return false;
+        }
+        return /\b(show|list|display|view)\b.{0,50}\b(my\s+)?(inbox|emails?|mail|messages)\b/i.test(q)
+          || /\b(what'?s|what is|what are|check)\b.{0,30}\b(my\s+)?(inbox|emails?|mail|messages)\b/i.test(q)
+          || /\b(latest|newest|recent|last\s+\d+)\s+(emails?|messages|mail)\b/i.test(q)
+          || /\b(emails?|messages|mail)\s+(from\s+)?(today|yesterday|last\s+week|last\s+month|last\s+year)\b/i.test(q);
+      }
+
+      function _isIntermediateEmailListDump(text) {
+        const s = String(text || '').trim();
+        return /^Here (?:are your emails|is your latest email)\b/i.test(s)
+          || /^Latest emails? with attachments\b/i.test(s);
+      }
+
+      // Keep processing visible through whitespace/control-only deltas. Swap
+      // it out only after replacement content is in the DOM, in the same paint.
+      function _finishProcessingWhenVisible(content) {
+        if (content && (content.textContent.trim() || content.querySelector('img, svg, canvas'))
+            && spinner && spinner.element) spinner.destroy();
+      }
+
       // Direct render helper for streaming text
       _renderStream = ({ knownNormal = false, displayText = null, replyText = null } = {}) => {
+        if (
+          sessionModule.getCurrentSessionId
+          && sessionModule.getCurrentSessionId() !== streamSessionId
+        ) return;
+        if (!roundHolder || !roundHolder.isConnected) return;
+        let dt = displayText === null
+          ? (knownNormal
+              ? _roundDisplayProjector.current()
+              : markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText)))
+          : String(displayText);
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
+        if (_suppressThinkingForPersona()) {
+          const visiblePersonaText = _visiblePersonaReplyText(dt);
+          if (!visiblePersonaText.trim()) {
+            contentEl.textContent = '';
+            uiModule.scrollHistory();
+            return;
+          }
+          const renderer = contentEl._streamRenderer ||
+            (contentEl._streamRenderer = createStreamRenderer(contentEl, {
+              render: (t) => markdownModule.mdToHtml(markdownModule.squashOutsideCode(t)),
+              hljs: window.hljs,
+            }));
+          renderer.update(visiblePersonaText);
+          _finishProcessingWhenVisible(contentEl);
+          uiModule.scrollHistory();
+          return;
+        }
 
         // If thinking was already collapsed in-place, only render the reply portion
         let liveReply = contentEl.querySelector('.live-reply-content');
@@ -2682,6 +4084,7 @@ import { loadPanel } from './panels.js';
                 hljs: window.hljs,
               }));
             r.update(replyTrimmed);
+            _finishProcessingWhenVisible(liveReply);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
@@ -2692,12 +4095,6 @@ import { loadPanel } from './panels.js';
         // intentionally omitted from the known-normal path. The incremental
         // projector already handled the newly appended boundary, so repeating
         // the full-round regex chains per delta would restore O(N^2) work.
-        let dt = displayText === null
-          ? (knownNormal
-              ? _roundDisplayProjector.current()
-              : markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText)))
-          : String(displayText);
-
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (!knownNormal && markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
           const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
@@ -2711,6 +4108,7 @@ import { loadPanel } from './panels.js';
           contentEl.innerHTML =
             '<div class="thinking-section"><div class="thinking-header"><div class="thinking-header-left">Thinking' +
             (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
+          _finishProcessingWhenVisible(contentEl);
           // The stream renderer self-heals when it next sees this overwritten
           // container (streamingRenderer.js), so no explicit reset is needed here.
           uiModule.scrollHistory();
@@ -2724,6 +4122,7 @@ import { loadPanel } from './panels.js';
         // See streamingRenderer.js / streamingSegmenter.js.
         if (_docFenceOpened && !dt.trim()) {
           _showDocumentWritingStatus(contentEl);
+          _finishProcessingWhenVisible(contentEl);
           uiModule.scrollHistory();
           return;
         }
@@ -2733,19 +4132,22 @@ import { loadPanel } from './panels.js';
             hljs: window.hljs,
           }));
         renderer.update(dt);
+        _finishProcessingWhenVisible(contentEl);
         uiModule.scrollHistory();
       };
 
       let _nextIsError = false;
-      let _streamSawDone = false;
       let _streamTerminalError = null;
       let _firstVisibleOutputSeen = false;
       const markFirstVisibleOutput = () => {
         if (_firstVisibleOutputSeen) return;
         _firstVisibleOutputSeen = true;
+        _clientTtftSeconds = Number(((performance.now() - _ttftStartedAt) / 1000).toFixed(3));
+        _stopTtftDisplay();
         clearFirstTokenWaitTimers();
       };
 
+      streamReadLoop:
       while (true) {
         const { done, value } = await reader.read();
         _touchStreamActivity(streamSessionId);
@@ -2764,7 +4166,6 @@ import { loadPanel } from './panels.js';
           }
           if (line.startsWith('data: ')) {
             const data = line.slice(6);
-            if (data && data !== '[DONE]') markFirstVisibleOutput();
 
             // (thinking spinner removal is handled in agent_step / tool_start / content handlers)
 
@@ -2789,15 +4190,24 @@ import { loadPanel } from './panels.js';
               if (sessionModule && sessionModule.markStreaming) {
                 sessionModule.markStreaming(streamSessionId);
               }
+              _syncForegroundStreamGlobals();
             }
 
             if (data === '[DONE]') {
               _streamSawDone = true;
+              // DONE completes the protocol even if the HTTP connection stays
+              // open for server cleanup. Do not wait for another network read.
+              void reader.cancel().catch(() => {});
+              _cancelThinkingTimer();
+              _removeThinkingSpinner();
+              const _completedStreamState = _activeStreams.get(streamSessionId);
+              const _completedWhileAway = document.visibilityState !== 'visible' || !!_completedStreamState?.wasAway;
               _closeOpenThinkingMarkup(_isBg);
               // Always update background map if entry exists (even if user switched back)
               var bgDone = _backgroundStreams.get(streamSessionId);
               if (bgDone && !_isBg) {
                 _backgroundStreams.delete(streamSessionId);
+                _syncForegroundStreamGlobals();
               } else if (bgDone) {
                 bgDone.status = 'completed';
                 bgDone.accumulated = accumulated;
@@ -2819,7 +4229,15 @@ import { loadPanel } from './panels.js';
                 }
                 // Don't do foreground final render — the checkBackgroundStream poll
                 // will detect 'completed' and reload history cleanly
-                break;
+                break streamReadLoop;
+              }
+              if (_completedWhileAway && sessionModule && sessionModule.markStreamComplete) {
+                sessionModule.markStreamComplete(streamSessionId, { force: true });
+                try {
+                  _notifyStreamComplete(streamSessionId, streamQuery);
+                } catch (notifyErr) {
+                  console.warn('[stream] Away completion notification failed:', notifyErr);
+                }
               }
               // Force-close thinking if still open (model never output boundary)
               if (isThinking) {
@@ -2833,7 +4251,7 @@ import { loadPanel } from './panels.js';
                   roundText = roundText.replace(/<think>/i, '<think time="' + _elapsedDone + '">');
                 }
                 if (_liveThinkHeader) _liveThinkHeader.textContent = 'View thinking process';
-                if (_liveThinkSpinnerSlot) _liveThinkSpinnerSlot.remove();
+                _removeLiveThinkingSpinner();
                 if (_liveThinkTimerEl && _elapsedDone) {
                   _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedDone, _liveThinkTokenCount);
                   _liveThinkTimerEl.style.marginLeft = 'auto';
@@ -2856,10 +4274,21 @@ import { loadPanel } from './panels.js';
                 if (_liveThinkToggle) _liveThinkToggle.id = _thinkIdDone + '-toggle';
               }
               // Normal foreground completion — metrics will be displayed in the final render block below
-              break;
+              break streamReadLoop;
             }
             try {
               const json = JSON.parse(data);
+              if (['stable', 'complete', 'error', 'agent_terminal', 'chat_terminal'].includes(json.type)) {
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                _settleTurnRendering();
+              }
+              if (
+                (typeof json.delta === 'string' && json.delta.length > 0)
+                || (json.type === 'final_response' && String(json.content || json.delta || '').length > 0)
+              ) {
+                markFirstVisibleOutput();
+              }
               // Handle SSE error events (e.g. HTTP 404 from provider)
               if (_nextIsError || json.status >= 400) {
                 _nextIsError = false;
@@ -2868,20 +4297,28 @@ import { loadPanel } from './panels.js';
                 if (spinner && spinner.element) spinner.destroy();
                 break;
               }
-              if (json.delta || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'final_response' || json.type === 'agent_prep' || json.type === 'tool_approval_resolved' || json.type === 'generated_image' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'editor_progress' || json.type === 'agent_step' || json.type === 'loop_breaker_triggered' || json.type === 'intent_nudge_exhausted' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
                 clearFirstTokenWaitTimers();
               }
               if (json.type === 'generated_image') {
                 _rememberGeneratedImage(json);
-                if (!_isBg) _appendGeneratedImageBubble(json);
+                if (!_isBg) _appendGeneratedImageBubble(json, streamSessionId);
+                continue;
+              }
+              if (json.type === 'turn_mode') {
+                if (!_isBg && _userMsgEl && chatRenderer.setUserModePill) {
+                  chatRenderer.setUserModePill(_userMsgEl, json.mode || 'chat', !!json.auto_escalated);
+                }
                 continue;
               }
               if (json.type === 'agent_prep') {
                 if (!_isBg) {
                   _cancelThinkingTimer();
-                  _replaceThinkingSpinner('Preparing agent');
+                  // The existing processing row already owns this wait. Do
+                  // not create a second status bubble beside it.
+                  if (!spinner?.element) _replaceThinkingSpinner('Preparing agent');
                 }
                 continue;
               }
@@ -2893,7 +4330,74 @@ import { loadPanel } from './panels.js';
                 if (!_isBg && holder) holder.remove();
                 continue;
               }
+              if (json.type === 'final_response') {
+                _editorProgress = null;
+                clearFinishEditorButton();
+                try {
+                  window.dispatchEvent(new CustomEvent('odysseus:agent-final-response', { detail: json }));
+                } catch (_) {}
+                const finalText = String(json.content || json.delta || '');
+                if (!finalText.trim()) continue;
+                if (!_isDirectEmailListingPrompt(msg) && _isIntermediateEmailListDump(finalText)) {
+                  console.debug('[chat] suppressed intermediate email list final_response for non-list prompt');
+                  continue;
+                }
+                if (!_turnRendering.accepts(json)) continue;
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                _closeOpenThinkingMarkup(_isBg);
+                if (isThinking) {
+                  _endLiveThinkingSection({ rich: false });
+                } else {
+                  _cancelLiveThinkingWork();
+                }
+                accumulated = finalText;
+                if (!_isBg) currentAccumulated = accumulated;
+                if (_isBg) {
+                  var bgFinal = _backgroundStreams.get(streamSessionId);
+                  if (bgFinal) bgFinal.accumulated = accumulated;
+                  continue;
+                }
+                if (spinner && spinner.element) spinner.destroy();
+                _ensureVisibleRoundForDelta();
+                roundText = finalText;
+                roundReplyText = null;
+                roundFinalized = true;
+                terminalFinalResponseRendered = true;
+                roundFinalization = null;
+                isThinking = false;
+                _thinkingMode = null;
+                _thinkingAnalysisGate.reset();
+                _roundDisplayProjector.reset();
+                _replyDisplayProjector.reset();
+                const threadAbove = roundHolder?.previousElementSibling;
+                if (threadAbove && threadAbove.classList.contains('agent-thread')) {
+                  threadAbove.classList.add('has-bottom');
+                }
+                terminalFinalResponseRendered = _renderTerminalAnswer(finalText, '', json.render_owner, json.replacement_scope);
+                if (json.photo_editor_action) renderPhotoEditorApplyButton(roundHolder, json.photo_editor_action);
+                lastContentRoundHolder = roundHolder || lastContentRoundHolder;
+                uiModule.scrollHistory();
+                continue;
+              }
               if (json.delta) {
+                if (!_turnRendering.accepts(json)) continue;
+                if (!json.thinking && json.render_owner === 'streamed' && json.replacement_scope === 'turn') {
+                  // The backend explicitly resumed synthesis after an
+                  // intermediate structured answer. Start a fresh prose buffer.
+                  accumulated = '';
+                  roundText = '';
+                  roundReplyText = null;
+                  roundFinalized = false;
+                  terminalFinalResponseRendered = false;
+                  roundFinalization = null;
+                  _roundDisplayProjector.reset();
+                  _replyDisplayProjector.reset();
+                  if (!_isBg) {
+                    _ensureVisibleRoundForDelta();
+                    _turnRendering.render({ body: roundHolder.querySelector('.body'), html: '', raw: '', render_owner: 'streamed', replacement_scope: 'turn' });
+                  }
+                }
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Text arrived after tools — connect thread line to this bubble
@@ -2904,11 +4408,14 @@ import { loadPanel } from './panels.js';
                 // VLLM reasoning tokens: wrap in <think> tags for the thinking UI.
                 // Stateful open/close (not a whole-message substring check) so each round
                 // of a multi-round agent response gets its own <think>…</think> — otherwise
-                // only round 1 is wrapped and rounds 2+ reasoning leaks into the answer.
-                let _delta = json.delta;
-                if (json.thinking) {
-                  if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
-                } else if (_thinkOpen) {
+	                // only round 1 is wrapped and rounds 2+ reasoning leaks into the answer.
+	                let _delta = json.delta;
+	                if (json.thinking && _suppressThinkingForPersona()) {
+	                  continue;
+	                }
+	                if (json.thinking) {
+	                  if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
+	                } else if (_thinkOpen) {
                   _delta = '</think>' + _delta; _thinkOpen = false;
 	                }
 	                const wasEmpty = !accumulated;
@@ -2951,7 +4458,6 @@ import { loadPanel } from './panels.js';
                   if (isThinking) {
                     _queueLiveThinking(roundText);
                   } else {
-                    if (spinner && spinner.element) spinner.destroy();
                     if (roundReplyText !== null) {
                       roundReplyText += _delta;
                       const replyDisplayText = _replyDisplayProjector.append(_delta, roundReplyText);
@@ -2959,7 +4465,6 @@ import { loadPanel } from './panels.js';
                     } else {
                       _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
                     }
-                    _scheduleThinkingSpinner();
                     if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
                   }
                   continue;
@@ -3059,12 +4564,12 @@ import { loadPanel } from './panels.js';
                   _queueLiveThinking(roundText);
                   // Whirlpool spinner
                   if (_liveThinkSpinnerSlot) {
-                    var _wp = spinnerModule.createWhirlpool(12);
-                    _wp.element.style.margin = '0';
-                    _wp.element.style.width = '12px';
-                    _wp.element.style.height = '12px';
-                    _wp.element.style.transform = 'translateY(-1px)'; // align the whirlpool with the header text
-                    _liveThinkSpinnerSlot.appendChild(_wp.element);
+                    _liveThinkSpinner = spinnerModule.createWhirlpool(12);
+                    _liveThinkSpinner.element.style.margin = '0';
+                    _liveThinkSpinner.element.style.width = '12px';
+                    _liveThinkSpinner.element.style.height = '12px';
+                    _liveThinkSpinner.element.style.transform = 'translateY(-1px)'; // align the whirlpool with the header text
+                    _liveThinkSpinnerSlot.appendChild(_liveThinkSpinner.element);
                   }
                   if (_thinkingRecheckAt) _scheduleThinkingGrace();
                 } else if (hasUnclosedThink && isThinking) {
@@ -3073,8 +4578,7 @@ import { loadPanel } from './panels.js';
                 } else if (!hasUnclosedThink && isThinking) {
                   _finishLiveThinkingTransition();
                 } else {
-                  // Normal streaming
-                  if (spinner && spinner.element) spinner.destroy();
+                  // Normal streaming: retain processing until the renderer has visible content.
                   if (roundReplyText !== null) {
                     roundReplyText += _delta;
                     const replyDisplayText = _replyDisplayProjector.append(_delta, roundReplyText);
@@ -3082,7 +4586,6 @@ import { loadPanel } from './panels.js';
                   } else {
                     _renderStream({ knownNormal: true, displayText: _roundDisplayProjector.current() });
                   }
-                  _scheduleThinkingSpinner();
                   // Feed streaming TTS with accumulated text
                   if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
                 }
@@ -3430,6 +4933,9 @@ import { loadPanel } from './panels.js';
                   uiModule.showToast(`Context trimmed for this model${detail}`);
                 }
               } else if (json.type === 'agent_terminal' || json.type === 'chat_terminal') {
+                try {
+                  window.dispatchEvent(new CustomEvent('odysseus:agent-terminal', { detail: json }));
+                } catch (_) {}
                 // The backend persisted canonical partial output, sanitized
                 // failure metadata, and actual-route provenance before this
                 // event. The terminal catch below reloads that exact record.
@@ -3471,6 +4977,7 @@ import { loadPanel } from './panels.js';
                 }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
+                if (metrics && _clientTtftSeconds != null) metrics.client_ttft = _clientTtftSeconds;
                 if (metrics && streamRunId) {
                   metrics._costRecordId = _metricsCostRecordId(streamRunId, json);
                 }
@@ -3491,13 +4998,31 @@ import { loadPanel } from './panels.js';
                   refreshChatContextHeader('metrics');
                 }
 
+              } else if (json.type === 'user_message_saved') {
+                // The user bubble gets its DB id too, so regenerating or
+                // editing it later cuts the chat by id, not page position.
+                if (!_isBg && json.id) {
+                  if (_userMsgEl) _userMsgEl.dataset.dbId = json.id;
+                  else if (_regenKeptUserBubble) _regenKeptUserBubble.dataset.dbId = json.id;
+                  _regenKeptUserBubble = null;
+                }
+
               } else if (json.type === 'message_saved') {
                 // Wire the persisted DB id onto the just-streamed bubble so it
                 // can be edited/deleted immediately, without reloading the chat.
                 if (_isBg) continue;
+                if (json.id) _savedAssistantMessageId = String(json.id);
                 if (holder && json.id) holder.dataset.dbId = json.id;
 
               } else if (json.type === 'tool_start') {
+                _editorProgress = null;
+                // A tool call is the model's first completed output for this
+                // round, even though it is rendered as a structured card
+                // rather than prose. Stop the initial TTFT ticker here so
+                // browser/search execution time is not later mislabeled as
+                // "waiting for first token" on the continuation bubble. The
+                // running tool card owns elapsed time until tool_output.
+                markFirstVisibleOutput();
                 _closeOpenThinkingMarkup(_isBg);
                 if (_isBg) continue;
                 _cancelThinkingTimer();
@@ -3548,15 +5073,20 @@ import { loadPanel } from './panels.js';
                 }
                 threadWrap.classList.add('streaming');
                 lastToolThread = threadWrap;
-                const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
-                const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
-                const node = document.createElement('div')
-                node.className = 'agent-thread-node running';
-                const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${toolIcon}</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+		                const toolInfo = _toolDisplayInfo(json.tool, cmd, json);
+	                const toolLabel = toolInfo.label || _toolLabels[json.tool.toLowerCase()] || json.tool;
+                const toolIcon = renderToolIcon(json.tool, cmd, json) || `<span class="agent-thread-icon">\u25B6</span>`;
+	                const toolHeaderAction = toolInfo.headerActionHtml || '';
+	                const node = document.createElement('div')
+	                node.className = 'agent-thread-node running' + (_isPrivateBrowserTool(json.tool) ? ' open browser-preview-node' : '');
+		                const cmdHtml = _isPrivateBrowserTool(json.tool) ? '' : (toolInfo.commandHtml || (cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : ''));
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header">${toolIcon}<span class="agent-thread-tool">${esc(toolLabel)}</span>${toolHeaderAction}<span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
+                if (_isPrivateBrowserTool(json.tool)) {
+                  _showPrivateBrowserPreview(json.command || '', node.querySelector('.agent-thread-content'));
+                }
                 // Animate the wave
                 const waveEl = node.querySelector('.agent-thread-wave');
                 if (waveEl) {
@@ -3588,6 +5118,11 @@ import { loadPanel } from './panels.js';
                   el2.textContent = s < 60 ? `${s.toFixed(2)}s` : `${Math.floor(s / 60)}m ${(s % 60).toFixed(2).padStart(5, '0')}s`;
                 }, 50);
                 uiModule.scrollHistory();
+
+              } else if (json.type === 'editor_progress') {
+                if (_isBg) continue;
+                _editorProgress = json;
+                if (spinner?.element) _startTtftDisplay();
 
               } else if (json.type === 'tool_progress') {
                 // Long-running subprocess (bash, python) is still in
@@ -3637,6 +5172,13 @@ import { loadPanel } from './panels.js';
                 uiModule.scrollHistory();
 
               } else if (json.type === 'tool_output') {
+                // Let feature panels reconcile state from the actual tool
+                // result rather than trying to infer completion from the
+                // assistant's prose. Email unsubscribe uses this for the
+                // exact UIDs deleted by an agent follow-up.
+                try {
+                  window.dispatchEvent(new CustomEvent('odysseus:agent-tool-output', { detail: json }));
+                } catch (_) {}
                 if (_isBg) continue;
                 // --- Update the current thread node ---
                 if (currentToolBubble) {
@@ -3652,7 +5194,7 @@ import { loadPanel } from './panels.js';
                   const ok = (json.exit_code === 0 || json.exit_code == null);
                   const cmd = json.command || '';
                   let outHtml = '';
-                  if (json.output && json.output.trim()) {
+                  if (!_suppressRawToolOutput(json.tool, ok) && json.output && json.output.trim()) {
                     outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
                   }
                   // File-write diff (write_file): show a before/after unified diff.
@@ -3681,15 +5223,22 @@ import { loadPanel } from './panels.js';
                   }
                   // For file edits the "command" is the raw JSON args — redundant
                   // next to the diff, so hide it when we have a diff to show.
-                  const cmdHtml2 = (cmd && !(json.diff && json.diff.text)) ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
+	                  const toolInfo2 = _toolDisplayInfo(json.tool, cmd, json);
+		                  const browserTool = _isPrivateBrowserTool(json.tool);
+		                  const toolHeaderAction2 = toolInfo2.headerActionHtml || '';
+                  const toolIcon2 = renderToolIcon(json.tool, cmd, json);
+		                  const cmdHtml2 = browserTool ? '' : (toolInfo2.commandHtml || ((cmd && !(json.diff && json.diff.text)) ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : ''));
                   // Preserve the user's .open choice across the innerHTML
                   // rewrite \u2014 otherwise expanding a running tool collapses
                   // it as soon as the result lands, forcing the user to
                   // click again. Click handling is delegated (see init at
                   // bottom of file) so no per-node listener needed.
-                  const _wasOpen = currentToolBubble.classList.contains('open');
-                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
-                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+	                  if (browserTool) {
+                    outHtml = _privateBrowserPreviewHtml(cmd, json.screenshot) + outHtml;
+                  }
+	                  const _wasOpen = currentToolBubble.classList.contains('open') || browserTool;
+                  currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '') + (browserTool ? ' browser-preview-node' : '');
+                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span>${toolIcon2}<span class="agent-thread-tool">${esc(toolInfo2.label || json.tool)}</span>${toolHeaderAction2}<span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron" aria-hidden="true"></span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
@@ -3697,14 +5246,15 @@ import { loadPanel } from './panels.js';
                 // --- Render generated images inline ---
                 if (json.image_url) {
                   _rememberGeneratedImage(json);
-                  _appendGeneratedImageBubble(json);
+                  _appendGeneratedImageBubble(json, streamSessionId);
                 }
                 // --- Render browser screenshots in tool output ---
                 if (json.screenshot && currentToolBubble) {
                   const contentEl = currentToolBubble.querySelector('.agent-thread-content');
                   if (contentEl) {
+                    _updatePrivateBrowserPreview(json, contentEl);
                     const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
-                    if (screenshotSrc) {
+                    if (screenshotSrc && !_isPrivateBrowserTool(json.tool)) {
                       const details = document.createElement('details');
                       details.className = 'agent-tool-output';
                       const summary = document.createElement('summary');
@@ -3750,21 +5300,31 @@ import { loadPanel } from './panels.js';
                 if (
                   documentModule
                   && json.doc_id
-                  && ['create_document', 'update_document', 'edit_document'].includes(json.tool)
+                  && ['create_document', 'update_document', 'edit_document',
+                      'draft_email', 'mcp__email__draft_email',
+                      'draft_email_reply', 'mcp__email__draft_email_reply',
+                      'ai_draft_email_reply', 'mcp__email__ai_draft_email_reply'].includes(json.tool)
                 ) {
-                  documentModule.handleDocUpdate({
-                    type: 'doc_update',
-                    doc_id: json.doc_id,
-                    title: json.document_title || '',
-                    language: json.document_language || '',
-                    version: json.document_version || 1,
-                    content: json.document_content || '',
-                  });
+                  if (['draft_email', 'mcp__email__draft_email',
+                       'draft_email_reply', 'mcp__email__draft_email_reply',
+                       'ai_draft_email_reply', 'mcp__email__ai_draft_email_reply'].includes(json.tool)
+                      && documentModule.loadDocument) {
+                    documentModule.loadDocument(json.doc_id);
+                  } else {
+                    documentModule.handleDocUpdate({
+                      type: 'doc_update',
+                      doc_id: json.doc_id,
+                      title: json.document_title || '',
+                      language: json.document_language || '',
+                      version: json.document_version || 1,
+                      content: json.document_content || '',
+                    });
+                  }
                 }
 
                 // Schedule a thinking spinner between tool rounds (short delay so
                 // agent_step in the same SSE chunk can cancel it before it shows)
-                _scheduleThinkingSpinner();
+                _scheduleToolWaitSpinner();
                 uiModule.scrollHistory();
 
               } else if (json.type === 'doc_stream_open') {
@@ -3795,15 +5355,25 @@ import { loadPanel } from './panels.js';
               } else if (json.type === 'doc_update') {
                 // doc_update means the server already saved the doc to DB.
                 if (_isBg) continue;
+                _editorProgress = null;
                 if (documentModule) {
                   documentModule.handleDocUpdate(json);
                 }
+                offerFinishEditorTurn();
 
               } else if (json.type === 'doc_suggestions') {
                 if (_isBg) continue;
+                _editorProgress = null;
                 if (documentModule && documentModule.handleDocSuggestions) {
                   documentModule.handleDocSuggestions(json);
                 }
+                offerFinishEditorTurn();
+
+              } else if (json.type === 'email_open') {
+                if (_isBg) continue;
+                import('./emailLibrary.js?v=20260915trashmove2').then(mod =>
+                  mod.openEmailFromTool(json, () => sessionModule.getCurrentSessionId() === streamSessionId)
+                ).catch(err => uiModule.showToast(`Could not open email: ${err.message}`));
 
               } else if (json.type === 'ui_control') {
                 if (_isBg) continue;
@@ -3826,6 +5396,12 @@ import { loadPanel } from './panels.js';
                 if (_pu) _setStoredPlan(_pu);
 
               } else if (json.type === 'agent_step') {
+                if (!_turnRendering.accepts(json)) continue;
+                if (!startsContinuationRound(json)) {
+                  // Keep the current label stable; the TTFT ticker owns it
+                  // until visible output arrives.
+                  continue;
+                }
                 _closeOpenThinkingMarkup(_isBg);
                 if (_isBg) continue;
                 _cancelThinkingTimer();
@@ -3844,6 +5420,7 @@ import { loadPanel } from './panels.js';
                 // --- New round: create fresh AI bubble with spinner ---
                 currentToolBubble = null;
                 roundFinalized = false;
+                terminalFinalResponseRendered = false;
                 roundFinalization = null;
                 isThinking = false;
                 roundReplyText = null;
@@ -3916,6 +5493,7 @@ import { loadPanel } from './panels.js';
                 }
 
               } else if (json.type === 'teacher_takeover') {
+                if (!_turnRendering.accepts(json)) continue;
                 if (_isBg) continue;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
@@ -3934,6 +5512,7 @@ import { loadPanel } from './panels.js';
                 roundHolder = null;
                 roundText = '';
                 roundFinalized = false;
+                terminalFinalResponseRendered = false;
                 roundFinalization = null;
                 currentToolBubble = null;
                 uiModule.scrollHistory();
@@ -4004,11 +5583,19 @@ import { loadPanel } from './panels.js';
       // Stop any thread pulse animations
       document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // --- Final render (skip if stream was ever backgrounded or currently in background) ---
+      const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
+      if (!_isBgFinal) {
+        if (!terminalFinalResponseRendered && !_turnRendering.isVisible(roundHolder.querySelector('.body'), _terminalAnswerHtml(roundText, roundHolder.querySelector('.body')))) _renderStream();
+        if (spinner && spinner.element) { try { spinner.destroy(); } catch (_) {} spinner = null; }
+        _cancelThinkingTimer();
+        _removeThinkingSpinner();
+        // Stop this visible thread's pulse animations.
+        document.querySelectorAll('#chat-history .agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      }
       // Remove streaming class from all round bubbles
       holder.classList.remove('streaming');
       if (roundHolder && roundHolder !== holder) roundHolder.classList.remove('streaming');
 
-      const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
         const _finalModelHolder = applyModelMetricsState(
@@ -4050,9 +5637,9 @@ import { loadPanel } from './panels.js';
             _lbl.textContent = 'Paused mid-task';
             _stall.appendChild(_lbl);
             const _cont = document.createElement('button');
-            _cont.className = 'continue-btn agent-continue-btn';
+            _cont.className = 'continue-btn resume-btn agent-continue-btn';
             _cont.title = 'Continue — pick up where it left off';
-            _cont.textContent = '▸';
+            _cont.innerHTML = '<span class="resume-btn-label">Resume</span><svg class="resume-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>';
             _cont.addEventListener('click', () => {
               _stall.remove();
               const mi = uiModule.el('message');
@@ -4067,6 +5654,8 @@ import { loadPanel } from './panels.js';
           }
         } catch (_) {}
 
+        const _terminalScrollSnapshot = uiModule.captureHistoryScroll?.();
+
         // Clear streaming minHeight lock
         const _streamContent = roundHolder.querySelector('.stream-content');
         if (_streamContent) _streamContent.style.minHeight = '';
@@ -4076,66 +5665,79 @@ import { loadPanel } from './panels.js';
         }
 
         // Finalize the last round's bubble — flatten stream-content wrapper for clean DOM
-        const finalDisplay = _streamDisplayText(roundText, { final: _docFenceOpened });
-        if (finalDisplay.trim()) {
-          var _body4 = roundHolder.querySelector('.body');
-          // Preserve sources expanded state before final render
-          var _wasExpanded = _sourcesExpanded || !!(_body4 && _body4.querySelector('.sources-content.expanded'));
+		        const finalDisplay = terminalFinalResponseRendered ? '' : _streamDisplayText(roundText, { final: _docFenceOpened });
+	        if (terminalFinalResponseRendered) {
+              // A canonical answer must not fall through to the empty-round
+              // branch below, which hides continuation bubbles.
+              _renderTerminalAnswer(roundText);
+            } else if (finalDisplay.trim() && _turnRendering.isVisible(roundHolder.querySelector('.body'), _terminalAnswerHtml(finalDisplay, roundHolder.querySelector('.body')))) {
+              // Preserve the actual streamed nodes, including selection.
+            } else if (finalDisplay.trim()) {
+	          var _body4 = roundHolder.querySelector('.body');
+	          // Preserve sources expanded state before final render
+	          var _wasExpanded = _sourcesExpanded || !!(_body4 && _body4.querySelector('.sources-content.expanded'));
+	          if (_suppressThinkingForPersona()) {
+	            const _personaFinal = _visiblePersonaReplyText(finalDisplay);
+	            _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
+	              + (_personaFinal.trim() ? markdownModule.mdToHtml(markdownModule.squashOutsideCode(_personaFinal)) : '')
+	              + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
+	          } else {
 
-          // If thinking was collapsed in-place during streaming, preserve it
-          var _liveReplyEl = _body4 && _body4.querySelector('.live-reply-content');
-          var _extracted = _liveReplyEl ? markdownModule.extractThinkingBlocks(finalDisplay) : null;
-          var _finalReply = '';
-          if (_liveReplyEl) {
-            // Try standard extraction first (for native <think> tags)
-            if (_extracted?.thinkingBlocks?.length) {
-              _finalReply = (_extracted.content || '').trim();
-            } else {
-              // Non-tag thinking: extract reply from raw text
-              // Handle garbled thinking tag: "Thinking: reasoning\n<think>reply"
-              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
-              if (_garbledMatch && _garbledMatch[1].trim()) {
-                _finalReply = _garbledMatch[1].trim();
-              } else {
-                // Pure non-tag: find reply boundary by prefix patterns
-                const _rs2 = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                const _fr = (finalDisplay || '').trimStart();
-                if (markdownModule.startsWithReasoningPrefix(_fr)) {
-                  const _fLines = _fr.split('\n');
-                  for (let _fi = 1; _fi < _fLines.length; _fi++) {
-                    const _fl = _fLines[_fi].trim();
-                    if (!_fl) continue;
-                    if (_rs2.some(rp => _fl.startsWith(rp))) { _finalReply = _fLines.slice(_fi).join('\n'); break; }
-                  }
-                  // Within-line check
-                  if (!_finalReply) {
-                    for (const rp of _rs2) {
-                      const rx = new RegExp('[.!?]\\s*(' + rp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')');
-                      const m = rx.exec(_fr);
-                      if (m && m.index > 20) { _finalReply = _fr.slice(m.index + 1).trim(); break; }
-                    }
-                  }
-                }
-              }
-            }
-          }
-          if (_liveReplyEl && _finalReply) {
-            // Render reply into the live-reply container (thinking bar already showing)
-            var _replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply));
-            _liveReplyEl.innerHTML = _replyHtml;
-            _liveReplyEl.classList.remove('live-reply-content');
-            if (_sourcesData) {
-              var _srcEl = document.createElement('div');
-              _srcEl.innerHTML = _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded);
-              _body4.insertBefore(_srcEl.firstChild || _srcEl, _body4.firstChild);
-            }
-            if (_findingsData) _body4.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(_findingsData));
-          } else {
-            // Full re-render (reply empty or no live-reply container)
-            _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
-              + markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
-              + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
-          }
+	            // If thinking was collapsed in-place during streaming, preserve it
+	            var _liveReplyEl = _body4 && _body4.querySelector('.live-reply-content');
+	            var _extracted = _liveReplyEl ? markdownModule.extractThinkingBlocks(finalDisplay) : null;
+	            var _finalReply = '';
+	            if (_liveReplyEl) {
+	              // Try standard extraction first (for native <think> tags)
+	              if (_extracted?.thinkingBlocks?.length) {
+	                _finalReply = (_extracted.content || '').trim();
+	              } else {
+	                // Non-tag thinking: extract reply from raw text
+	                // Handle garbled thinking tag: "Thinking: reasoning\n<think>reply"
+	                const _garbledMatch = finalDisplay.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
+	                if (_garbledMatch && _garbledMatch[1].trim()) {
+	                  _finalReply = _garbledMatch[1].trim();
+	                } else {
+	                  // Pure non-tag: find reply boundary by prefix patterns
+	                  const _rs2 = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
+	                  const _fr = (finalDisplay || '').trimStart();
+	                  if (markdownModule.startsWithReasoningPrefix(_fr)) {
+	                    const _fLines = _fr.split('\n');
+	                    for (let _fi = 1; _fi < _fLines.length; _fi++) {
+	                      const _fl = _fLines[_fi].trim();
+	                      if (!_fl) continue;
+	                      if (_rs2.some(rp => _fl.startsWith(rp))) { _finalReply = _fLines.slice(_fi).join('\n'); break; }
+	                    }
+	                    // Within-line check
+	                    if (!_finalReply) {
+	                      for (const rp of _rs2) {
+	                        const rx = new RegExp('[.!?]\\s*(' + rp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')');
+	                        const m = rx.exec(_fr);
+	                        if (m && m.index > 20) { _finalReply = _fr.slice(m.index + 1).trim(); break; }
+	                      }
+	                    }
+	                  }
+	                }
+	              }
+	            }
+	            if (_liveReplyEl && _finalReply) {
+	              // Render reply into the live-reply container (thinking bar already showing)
+	              var _replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply));
+	              _liveReplyEl.innerHTML = _replyHtml;
+	              _liveReplyEl.classList.remove('live-reply-content');
+	              if (_sourcesData) {
+	                var _srcEl = document.createElement('div');
+	                _srcEl.innerHTML = _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded);
+	                _body4.insertBefore(_srcEl.firstChild || _srcEl, _body4.firstChild);
+	              }
+	              if (_findingsData) _body4.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(_findingsData));
+	            } else {
+	              // Full re-render (reply empty or no live-reply container)
+	              _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
+	                + markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
+	                + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
+	            }
+	          }
         } else if (_sourcesHtml) {
           var _body4b = roundHolder.querySelector('.body');
           var _wasExpanded2 = _sourcesExpanded || !!(_body4b && _body4b.querySelector('.sources-content.expanded'));
@@ -4165,7 +5767,6 @@ import { loadPanel } from './panels.js';
         }
         if (markdownModule.renderMermaid) markdownModule.renderMermaid(roundHolder);
 
-        uiModule.scrollHistory();
         // Render RAG sources if present
         if (holder._ragSources && holder._ragSources.length) {
           const details = document.createElement('details');
@@ -4193,10 +5794,10 @@ import { loadPanel } from './panels.js';
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         if (!footerTarget.querySelector('.msg-footer')) {
-          footerTarget.appendChild(createMsgFooter(footerTarget));
+          footerTarget.appendChild(createMsgFooter(footerTarget, { animate: true }));
         }
-        if (_generatedImagesForTurn.length && !_isBg) {
-          _generatedImagesForTurn.forEach(imgData => _appendGeneratedImageBubble(imgData));
+        if (_generatedImagesForTurn.length && !_isBgFinal) {
+          _generatedImagesForTurn.forEach(imgData => _appendGeneratedImageBubble(imgData, streamSessionId));
         }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
@@ -4285,6 +5886,24 @@ import { loadPanel } from './panels.js';
             }
           }
         }
+        // Reconcile only the final answer; the tool timeline retains its DOM.
+        uiModule.restoreHistoryScroll?.(_terminalScrollSnapshot);
+
+        // A saved answer can correct the live answer without rebuilding the turn.
+        if (!_pendingContinue) {
+          const _needsCanonicalTurnRebuild = !!(
+            lastToolThread
+            || terminalFinalResponseRendered
+            || _generatedImagesForTurn.length
+          );
+          if (_needsCanonicalTurnRebuild) {
+            await _replaceLiveTurnWithSavedAssistantMessage();
+          }
+          if (_streamTurnMarker && _streamTurnMarker.parentNode) {
+            _turnRendering.settle();
+            _streamTurnMarker.remove();
+          }
+        }
       } // end if (!_isBgFinal)
 
     } catch (err) {
@@ -4331,17 +5950,14 @@ import { loadPanel } from './panels.js';
         _endThinkingOnTerminalPath({ rich: false });
       }
       const _catchViewHolder = _catchTerminalView?.holder || holder;
-      // Clean up any active spinner (e.g. "Generating response" during tool calls)
-      if (spinner && spinner.element) spinner.destroy();
-      _cancelThinkingTimer();
-      _removeThinkingSpinner();
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
 
       if (_isBgCatch) {
-        // Error happened while backgrounded — update map, don't touch DOM
-        console.error('Background stream error:', err);
+        // Detaching intentionally closes only this browser subscriber. The
+        // server-owned run is still live and will be rejoined on session entry.
         var bgErr = _backgroundStreams.get(streamSessionId);
-        if (bgErr && (
+        if (abortCtrl && abortCtrl._reason === 'detach') {
+          if (bgErr && bgErr.status !== 'completed') bgErr.status = 'running';
+        } else if (bgErr && (
           bgErr.status === 'completed' || _terminalSavedStreams.has(streamSessionId)
         )) {
           bgErr.status = 'completed';
@@ -4351,12 +5967,20 @@ import { loadPanel } from './panels.js';
             sessionModule.clearStreaming(streamSessionId);
           }
         } else if (bgErr) {
+          console.error('Background stream error:', err);
           bgErr.status = 'error';
           if (sessionModule && sessionModule.clearStreaming) {
             sessionModule.clearStreaming(streamSessionId);
           }
         }
-      } else {
+      }
+      if (!_isBgCatch) {
+        // Clean up any active spinner (e.g. "Generating response" during tool calls)
+        if (spinner && spinner.element) spinner.destroy();
+        _cancelThinkingTimer();
+        _removeThinkingSpinner();
+        document.querySelectorAll('#chat-history .agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+
         // Stop streaming TTS on any error/abort
         if (streamingTTS && window.aiTTSManager) window.aiTTSManager.stop();
 
@@ -4447,17 +6071,16 @@ import { loadPanel } from './panels.js';
             stoppedLabel.textContent = '[Message interrupted]';
             stoppedIndicator.appendChild(stoppedLabel);
             const continueBtn = document.createElement('button');
-            continueBtn.className = 'continue-btn';
-            continueBtn.title = 'Continue';
-            continueBtn.textContent = '\u25B8';
+            continueBtn.className = 'continue-btn resume-btn';
+            continueBtn.title = 'Resume response';
+            continueBtn.innerHTML = '<span class="resume-btn-label">Resume</span><svg class="resume-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m8 5 10 7-10 7z"></path></svg>';
             continueBtn.addEventListener('click', () => {
               stoppedIndicator.remove();
               _hideUserBubble = true;
               _pendingContinue = _catchViewHolder;
-              const cutoff = accumulated;
               const msgInput = uiModule.el('message');
               if (msgInput) {
-                msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+                msgInput.value = 'Continue from where you left off.';
                 const sb = document.querySelector('.send-btn');
                 if (sb) sb.click();
               }
@@ -4498,7 +6121,7 @@ import { loadPanel } from './panels.js';
           // instead of burning the nudge budget on a guaranteed-to-fail retry.
           if (!(isRecoverableStreamError(err) && _tryAutoRecover(_catchViewHolder, accumulated, streamSessionId))) {
             if (err.terminalStreamError) {
-              if (_canonicalTerminalSaved || accumulated.trim()) {
+              if (_canonicalTerminalSaved) {
                 // Let this stream's finally block clear foreground state before
                 // reselecting; otherwise selectSession would detach the already
                 // terminal reader and leave a stale background-stream marker.
@@ -4510,6 +6133,10 @@ import { loadPanel } from './panels.js';
                   }
                 }, 0);
               } else {
+                // Streamed text is not evidence of a saved terminal record.
+                // Reloading here erases partial replies when an upstream
+                // failure left only the user message in server history.
+                // Preserve the live answer and append the escaped error.
                 const terminalBody =
                   _catchViewHolder?.querySelector('.body')
                   || roundHolder?.querySelector('.body')
@@ -4538,10 +6165,14 @@ import { loadPanel } from './panels.js';
         }
       }
     } finally {
+      _editorProgress = null;
+      document.querySelectorAll('.agent-finish-editor').forEach(button => button.remove());
+      _settleTurnRendering();
       _cancelLiveThinkingWork();
       clearResponseTimeout();
       clearProcessingProbe();
       clearFirstTokenWaitTimers();
+      _stopTtftDisplay();
       // A replacement send bumps the session's generation the moment it
       // starts, before it registers or reaches the server, so cleanup rights
       // are decided by generation: a superseded send may remove only what it
@@ -4550,6 +6181,14 @@ import { loadPanel } from './panels.js';
       // reader session id, research marker, UI — to the replacement.
       const _ownsStreamState =
         _streamGenerations.get(streamSessionId) === streamGeneration;
+      if (_ownsStreamState && sessionModule.getCurrentSessionId() === streamSessionId) {
+        documentModule?.streamDocFinalize?.();
+      }
+      if (_ownsStreamState && _streamSawDone) {
+        sessionModule.markStreamComplete?.(streamSessionId);
+      } else if (_ownsStreamState && abortCtrl?._reason === 'user-stop') {
+        sessionModule.clearStreaming?.(streamSessionId);
+      }
       const _finallyRegistered = _activeStreams.get(streamSessionId);
       if (!_finallyRegistered || _finallyRegistered.abortCtrl === abortCtrl) {
         _activeStreams.delete(streamSessionId);
@@ -4596,8 +6235,12 @@ import { loadPanel } from './panels.js';
           messageInput.disabled = false;
           if (window.innerWidth <= 768) {
             messageInput.blur();
-          } else {
-            messageInput.focus();
+          } else if (!document.getElementById('doc-editor-pane')) {
+            // Do not steal focus from an open document at stream completion.
+            // preventScroll also keeps the chat viewport stable in browsers
+            // that reveal a focused input even when it is already visible.
+            try { messageInput.focus({ preventScroll: true }); }
+            catch (_) { messageInput.focus(); }
           }
         }
 
@@ -4796,7 +6439,15 @@ import { loadPanel } from './panels.js';
         cache: 'no-store',
       });
       if (!_getForegroundStreamState() || _backgroundStreams.has(sid)) return;
-      if (res.status !== 404) return;
+      // The server now reports "no active stream" as 200 {status:"idle"} (an
+      // older server used 404); a body with status "streaming" means it is NOT
+      // stale. Accept both so the watchdog keeps working across deploys.
+      if (res.status !== 404 && !res.ok) return;
+      let _probe = null;
+      try { _probe = await res.json(); } catch (_) { _probe = null; }
+      const _noActiveStream = res.status === 404 || (res.ok && _probe &&
+        typeof _probe.status === 'string' && _probe.status !== 'streaming');
+      if (!_noActiveStream) return;
 
       console.warn('[stream-watchdog] Local stream was stale and server has no active stream. Unlocking composer.');
       if (active.abortCtrl && !active.abortCtrl.signal.aborted) {
@@ -4898,9 +6549,8 @@ import { loadPanel } from './panels.js';
       abortCurrentRequest();
       return;
     }
-    // Detachment deliberately keeps the network stream alive, but the outgoing
-    // view must stop all delayed rendering immediately. The reader loop may not
-    // receive another SSE line for an arbitrary amount of time.
+    // The backend owns the detached run. Stop this tab's subscriber and its
+    // delayed rendering; session re-entry will replay and follow the same run.
     if (active.cancelViewWork) active.cancelViewWork();
 
     const terminalSaved = _terminalSavedStreams.has(sessionId);
@@ -4922,7 +6572,11 @@ import { loadPanel } from './panels.js';
     } else if (terminalSaved && sessionModule && sessionModule.clearStreaming) {
       sessionModule.clearStreaming(sessionId);
     }
-    // Clear local state WITHOUT aborting the fetch
+    active.abortCtrl._reason = 'detach';
+    _activeStreams.delete(sessionId);
+    if (!active.abortCtrl.signal.aborted) active.abortCtrl.abort();
+
+    // Clear foreground state without cancelling the server-owned run.
     if (currentAbort === active.abortCtrl) currentAbort = null;
     if (currentHolder === active.holder) currentHolder = null;
     if (_streamSessionId === sessionId) _streamSessionId = null;
@@ -4969,6 +6623,10 @@ import { loadPanel } from './panels.js';
     // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
     // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
     _resumingStreams.add(sessionId);
+    _backgroundStreams.delete(sessionId);
+    const submitBtn = document.querySelector('.send-btn');
+    if (submitBtn) updateSubmitButton('streaming', submitBtn);
+    if (sessionModule && sessionModule.markStreaming) sessionModule.markStreaming(sessionId);
 
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
@@ -4981,8 +6639,13 @@ import { loadPanel } from './panels.js';
     holder._requestedModel = meta && meta.model;
     holder._actualModel = holder._requestedModel;
     _applyModelColor(holder.querySelector('.role'), meta && meta.model);
-    const contentDiv = holder.querySelector('.stream-content');
+    let roundHolder = holder;
+    let contentDiv = holder.querySelector('.stream-content');
+    const replayMarker = document.createComment('live-stream-turn');
+    box.appendChild(replayMarker);
+    const replayRendering = createTurnRendering({ root: box, start: replayMarker });
     box.appendChild(holder);
+    const replayNodes = [holder];
 
     const spinner = spinnerModule.create('Generating response...', 'right');
     holder.querySelector('.body').appendChild(spinner.createElement());
@@ -4993,30 +6656,119 @@ import { loadPanel } from './panels.js';
     const decoder = new TextDecoder();
     let buffer = '';
     let roundText = '';
+    let replayThinking = '';
+    let replayMessageId = '';
     let docFenceOpened = false;
     let gotDelta = false;
     let leftSession = false;
     let metricsData = null;
     let replayError = null;
     let canonicalTerminalSeen = false;
+    let currentToolBubble = null;
+    let currentToolThread = null;
     // "Rich" responses (tool calls, sources, doc streaming, multi-round) need the
     // full canonical render, which is rebuilt from the saved DB record on reload.
     // Plain text replies can be finalized in place without a reload.
     let rich = false;
 
     const cleanup = () => {
+      replayRendering.settle();
       try { spinner.destroy(); } catch (_) {}
       _resumingStreams.delete(sessionId);
+      if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() === sessionId) {
+        if (submitBtn) updateSubmitButton('idle', submitBtn);
+        if (sessionModule && sessionModule.clearStreaming) sessionModule.clearStreaming(sessionId);
+        const input = uiModule.el && uiModule.el('message');
+        if (input) input.disabled = false;
+      }
     };
 
-    const renderDelta = () => {
+    const renderDelta = (event = {}, scroll = true) => {
+      if (!roundHolder.isConnected || roundHolder.style.display === 'none'
+          || (event.type === 'final_response' && currentToolThread?.isConnected
+              && (roundHolder.compareDocumentPosition(currentToolThread) & Node.DOCUMENT_POSITION_FOLLOWING))) {
+        const text = roundText;
+        const thinking = replayThinking;
+        startReplayRound();
+        roundText = text;
+        replayThinking = thinking;
+      }
+      contentDiv = roundHolder.querySelector('.body');
       const dt = markdownModule.normalizeThinkingMarkup(_streamDisplayText(roundText, { final: docFenceOpened }));
       if (docFenceOpened && !dt.trim()) {
         _showDocumentWritingStatus(contentDiv);
       } else {
-        contentDiv.innerHTML = markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
+        const source = (replayThinking ? `<think>${replayThinking}</think>` : '') + markdownModule.squashOutsideCode(dt);
+        const html = markdownModule.processWithThinking
+          ? markdownModule.processWithThinking(source)
+          : markdownModule.mdToHtml(source);
+        replayRendering.render({ body: contentDiv, html, raw: roundText, messageId: replayMessageId,
+          render_owner: event.render_owner, replacement_scope: event.replacement_scope });
       }
+      if (scroll) uiModule.scrollHistory();
+    };
+
+    const removeReplayNodes = () => {
+      replayNodes.forEach(node => { if (node && node.parentNode) node.remove(); });
+      replayMarker.remove();
+    };
+
+    const startReplayRound = () => {
+      if (!roundText.trim() && roundHolder) roundHolder.style.display = 'none';
+      if (currentToolThread) currentToolThread.classList.add('has-bottom');
+      roundText = '';
+      replayThinking = '';
+      const next = document.createElement('div');
+      next.className = 'msg msg-ai msg-continuation streaming';
+      next.innerHTML = '<div class="body"><div class="stream-content"></div></div>';
+      box.appendChild(next);
+      replayNodes.push(next);
+      roundHolder = next;
+      contentDiv = next.querySelector('.stream-content');
+      currentToolBubble = null;
+      currentToolThread = null;
+    };
+
+    const startReplayTool = (json) => {
+      try { spinner.destroy(); } catch (_) {}
+      if (!roundText.trim() && roundHolder) roundHolder.style.display = 'none';
+      const thread = document.createElement('div');
+      thread.className = 'agent-thread streaming' + (roundText.trim() ? ' has-top' : '');
+      const node = document.createElement('div');
+      node.className = 'agent-thread-node running';
+      const command = String(json.command || json.args || '');
+      const label = String(json.label || json.tool || 'Tool');
+      const icon = renderToolIcon(json.tool || '', command, json) || '<span class="agent-thread-icon">▶</span>';
+      node.innerHTML = '<div class="agent-thread-dot"></div><div class="agent-thread-header">' +
+        icon + '<span class="agent-thread-tool">' + uiModule.esc(label) + '</span>' +
+        '<span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">' +
+        (command ? '<pre class="agent-thread-cmd">' + uiModule.esc(command) + '</pre>' : '') + '</div>';
+      thread.appendChild(node);
+      box.appendChild(thread);
+      replayNodes.push(thread);
+      currentToolThread = thread;
+      currentToolBubble = node;
       uiModule.scrollHistory();
+    };
+
+    const finishReplayTool = (json) => {
+      if (!currentToolBubble) return;
+      const ok = json.exit_code === 0 || json.exit_code == null;
+      const command = String(json.command || json.args || '');
+      const output = String(json.output || '');
+      const label = String(json.label || json.tool || 'Tool');
+      const icon = renderToolIcon(json.tool || '', command, json) || '';
+      currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error');
+      currentToolBubble.innerHTML = '<div class="agent-thread-dot"></div><div class="agent-thread-header">' +
+        '<span class="agent-thread-icon">' + (ok ? '✓' : '✗') + '</span>' + icon +
+        '<span class="agent-thread-tool">' + uiModule.esc(label) + '</span>' +
+        '<span class="agent-thread-status">' + (ok ? 'done' : 'failed') + '</span>' +
+        '<span class="agent-thread-chevron" aria-hidden="true"></span></div>' +
+        '<div class="agent-thread-content">' +
+        (command ? '<pre class="agent-thread-cmd">' + uiModule.esc(command) + '</pre>' : '') +
+        (output ? '<details class="agent-tool-output"><summary>Output</summary><pre>' + uiModule.esc(output) + '</pre></details>' : '') +
+        '</div>';
+      if (currentToolThread) currentToolThread.classList.remove('streaming');
     };
 
     try {
@@ -5046,16 +6798,33 @@ import { loadPanel } from './panels.js';
           }
           let json;
           try { json = JSON.parse(payload); } catch (_) { continue; }
+          if (eventIsError || ['stable', 'complete', 'error', 'agent_terminal', 'chat_terminal'].includes(json.type)) replayRendering.settle();
           if (eventIsError) {
             replayError = createTerminalStreamError(json);
+          } else if (json.type === 'final_response') {
+            const finalText = String(json.content || json.delta || '');
+            if (!finalText.trim()) continue;
+            if (!replayRendering.accepts(json)) continue;
+            roundText = finalText;
+            gotDelta = true;
+            try { spinner.destroy(); } catch (_) {}
+            renderDelta(json);
+            if (json.photo_editor_action) renderPhotoEditorApplyButton(roundHolder, json.photo_editor_action);
+            replayRendering.settle();
           } else if (json.delta) {
+            if (!replayRendering.accepts(json)) continue;
+            if (!json.thinking && json.render_owner === 'streamed' && json.replacement_scope === 'turn') {
+              roundText = '';
+            }
+            if (json.thinking) replayThinking += json.delta;
+            else
             roundText += json.delta;
             if (!docFenceOpened && (roundText.includes('```create_document\n') || roundText.includes('```document\n') || roundText.includes('```documen\n'))) {
               docFenceOpened = true;
               rich = true;
             }
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
-            renderDelta();
+            renderDelta(json);
           } else if (json.type === 'doc_stream_open') {
             rich = true;
             if (documentModule) documentModule.streamDocOpen(json.title || '', json.lang || '');
@@ -5070,6 +6839,8 @@ import { loadPanel } from './panels.js';
             if (metricsData) {
               chatRenderer.recordSessionMetricsCost(metricsData, sessionId);
             }
+          } else if (json.type === 'message_saved') {
+            replayMessageId = String(json.id || '');
           } else if (json.type === 'fallback') {
             // Replay can attach after the selected route has already failed.
             // Reflect the fallback immediately, then reload the canonical
@@ -5128,6 +6899,24 @@ import { loadPanel } from './panels.js';
                      json.type === 'research_progress' || json.type === 'research_sources' ||
                      json.type === 'research_findings' || json.type === 'research_done') {
             rich = true;
+            if (json.type === 'tool_start') {
+              startReplayTool(json);
+            } else if (json.type === 'tool_output') {
+              finishReplayTool(json);
+            } else if (json.type === 'tool_progress' && currentToolBubble) {
+              const target = currentToolBubble.querySelector('.agent-thread-content');
+              if (target && (json.tail || json.message)) {
+                let progress = target.querySelector('.agent-thread-tail');
+                if (!progress) {
+                  progress = document.createElement('pre');
+                  progress.className = 'agent-thread-tail';
+                  target.appendChild(progress);
+                }
+                progress.textContent = String(json.tail || json.message || '');
+              }
+            } else if (json.type === 'agent_step') {
+              if (replayRendering.accepts(json) && startsContinuationRound(json)) startReplayRound();
+            }
           }
         }
       }
@@ -5138,7 +6927,7 @@ import { loadPanel } from './panels.js';
 
     cleanup();
     if (docFenceOpened) _finishDocumentWritingStatus(holder, true);
-    if (leftSession) { if (holder.parentNode) holder.remove(); return true; }
+    if (leftSession) { removeReplayNodes(); return true; }
 
     const onThisSession = sessionModule.getCurrentSessionId &&
                           sessionModule.getCurrentSessionId() === sessionId;
@@ -5155,27 +6944,55 @@ import { loadPanel } from './panels.js';
       return true;
     }
 
-    // Plain text reply: finalize in place. Replace the live bubble with a
-    // canonical single message (markdown + footer actions + metrics) using the
-    // same renderer history does. No history refetch, no end-of-stream flicker.
-    if (onThisSession && !rich && roundText.trim()) {
-      if (holder.parentNode) holder.remove();
-      const model = meta && meta.model;
-      const meta_ = metricsData ? Object.assign({ model }, metricsData) : { model };
-      chatRenderer.addMessage('assistant', roundText, model, meta_);
-      uiModule.scrollHistory();
-      return true;
+    const isReplayCurrent = () => sessionModule.getCurrentSessionId() === sessionId
+      && replayMarker.parentNode === box
+      && (!resumeRunId || _streamRunIds.get(sessionId) === resumeRunId);
+    if (!onThisSession || !isReplayCurrent()) { removeReplayNodes(); return true; }
+    const scrollSnapshot = uiModule.captureHistoryScroll?.();
+    // Reconcile only this saved answer. Rebuilding history would discard open
+    // tool cards and resurrect drafts in clients with older history renderers.
+    if (replayMessageId) {
+      try {
+        const savedResponse = await fetch(`${API_BASE}/api/history/${encodeURIComponent(sessionId)}?limit=12`);
+        if (savedResponse.ok && isReplayCurrent()) {
+          const data = await savedResponse.json();
+          if (!isReplayCurrent()) { removeReplayNodes(); return true; }
+          const saved = (data.history || []).find(message => message.role === 'assistant'
+            && String(message.metadata?._db_id || '') === replayMessageId);
+          if (saved) {
+            metricsData = { ...metricsData, ...saved.metadata };
+            roundText = String(saved.content || '');
+            if (roundText.trim()) renderDelta(saved.metadata || {}, false);
+          }
+        }
+      } catch (error) {
+        console.warn('Could not reconcile resumed answer:', error);
+      }
     }
-
-    // Rich response (tools, sources, docs, multi-round) or user moved on:
-    // reload from the DB for the full canonical render.
-    if (holder._docWritingThread && holder._docWritingThread.parentNode) holder._docWritingThread.remove();
-    if (holder.parentNode) holder.remove();
-    if (metricsData) {
-      chatRenderer.recordSessionMetricsCost(metricsData, sessionId);
+    if (!isReplayCurrent()) { removeReplayNodes(); return true; }
+    const target = roundHolder?.isConnected && roundHolder.style.display !== 'none'
+      ? roundHolder : currentToolThread;
+    if (target) {
+      target.classList.remove('streaming');
+      if (replayMessageId) target.dataset.dbId = replayMessageId;
+      if (target.classList.contains('msg-ai')) {
+        target.dataset.raw = roundText;
+        if (!target.querySelector('.msg-footer')) target.appendChild(createMsgFooter(target));
+        const body = target.querySelector('.body');
+        if (body && !body.querySelector('.sources-section')) {
+          const sources = metricsData?.web_sources || metricsData?.research_sources;
+          if (sources?.length) body.insertAdjacentHTML('afterbegin', chatRenderer.buildSourcesBox(sources, metricsData.web_sources ? 'web' : 'research'));
+          if (metricsData?.research_findings?.length) body.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(metricsData.research_findings));
+        }
+        if (body && metricsData?.rag_sources?.length && !body.querySelector('.rag-sources')) {
+          body.insertAdjacentHTML('beforeend', chatRenderer.buildRagSourcesBox(metricsData.rag_sources));
+        }
+      }
+      if (metricsData) displayMetrics(target, metricsData);
     }
-    if (onThisSession) sessionModule.selectSession(sessionId);
-    else sessionModule.loadSessions();
+    replayRendering.settle();
+    replayMarker.remove();
+    uiModule.restoreHistoryScroll?.(scrollSnapshot);
     return true;
   }
 
@@ -5190,11 +7007,13 @@ import { loadPanel } from './panels.js';
     if (entry.status === 'completed') {
       // Response is already saved to DB and will appear in history — just clean up
       _backgroundStreams.delete(sessionId);
+      _syncForegroundStreamGlobals();
       return;
     }
 
     if (entry.status === 'error') {
       _backgroundStreams.delete(sessionId);
+      _syncForegroundStreamGlobals();
       var box = document.getElementById('chat-history');
       if (box) {
         var errHolder = document.createElement('div');
@@ -5206,62 +7025,11 @@ import { loadPanel } from './panels.js';
     }
 
     if (entry.status === 'running') {
-      // Stream is still active — show a clean spinner, poll until done,
-      // then reload history to show the final saved response.
-      var box = document.getElementById('chat-history');
-      if (!box) return;
-
-      // Replay any doc content that was streamed in the background
-      if (entry._docTitle != null && documentModule) {
-        documentModule.streamDocOpen(entry._docTitle, entry._docLang || '');
-        if (entry._docContent) {
-          documentModule.streamDocDelta(entry._docContent);
-        }
-      }
-
-      var holder = document.createElement('div');
-      holder.className = 'msg msg-ai';
-      var meta = sessionModule.getSessions().find(function(s) { return s.id === sessionId; });
-      var roleLabel = _shortModel(meta && meta.model);
-      var roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
-      _applyModelColor(holder.querySelector('.role'), meta && meta.model);
-
-      var bodyDiv = holder.querySelector('.body');
-      var spinner = spinnerModule.create('Response streaming in background', 'right');
-      bodyDiv.appendChild(spinner.createElement());
-      spinner.start();
-
-      box.appendChild(holder);
-      uiModule.scrollHistory();
-
-      // Poll map until stream finishes, then reload history
-      var pollId = setInterval(function() {
-        if (sessionModule.getCurrentSessionId() !== sessionId) {
-          clearInterval(pollId);
-          spinner.destroy();
-          if (holder.parentNode) holder.remove();
-          return;
-        }
-        // Update doc content while polling
-        var curPoll = _backgroundStreams.get(sessionId);
-        if (curPoll && curPoll._docContent && documentModule) {
-          documentModule.streamDocDelta(curPoll._docContent);
-        }
-        if (!curPoll || curPoll.status !== 'running') {
-          clearInterval(pollId);
-          spinner.destroy();
-          if (holder.parentNode) holder.remove(); // Remove entire holder, not just spinner
-          _backgroundStreams.delete(sessionId);
-          // Reload session to show the completed response — but only if the user
-          // is still on it; don't yank them back from a new chat they opened.
-          if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() === sessionId) {
-            sessionModule.selectSession(sessionId);
-          } else {
-            sessionModule.loadSessions();
-          }
-        }
-      }, 500);
+      // The local subscriber was intentionally detached. Remove the local
+      // marker so sessions.js can attach /api/chat/resume and render the
+      // buffered structured events from the server.
+      _backgroundStreams.delete(sessionId);
+      _syncForegroundStreamGlobals();
     }
   }
 
@@ -5419,52 +7187,23 @@ import { loadPanel } from './panels.js';
       pre.dataset.btnPosComputed = '1';
     }, true);
 
-    // Tab suspension recovery: when user tabs back in, check if stream froze
+    // A hidden browser tab may throttle timers and delivery for an arbitrary
+    // amount of time. The detached backend run is authoritative, so becoming
+    // visible must never abort an otherwise healthy run. Buffered SSE data will
+    // catch up naturally; genuine connection failures use resumeStream(), and
+    // the status probe only unlocks the composer when the server confirms that
+    // no run exists.
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible') return;
-      const active = _getForegroundStreamState();
-      if (!active) return;
-
-      // Stream claims to be running — check if reader is actually alive
-      const staleSince = Date.now() - (active.lastActivity || _lastReaderActivity);
-      if (staleSince < 20000) return; // Active recently, probably fine
-
-      // Reader hasn't produced data in 5+ seconds after tab resume.
-      // Give it a short grace period then recover.
-      console.warn('[tab-recovery] Stream appears frozen (no activity for ' + Math.round(staleSince/1000) + 's). Recovering...');
-
-      setTimeout(() => {
-        // Re-check — maybe the reader woke up during the grace period
-        const stillActive = _getForegroundStreamState();
-        if (!stillActive) return;
-        const stillStale = Date.now() - (stillActive.lastActivity || _lastReaderActivity);
-        if (stillStale < 5000) return; // Came back to life
-
-        console.warn('[tab-recovery] Stream confirmed dead. Aborting and reloading session.');
-
-        // Abort the frozen stream, but preserve the visible bubble.
-        if (stillActive.abortCtrl) {
-          stillActive.abortCtrl._reason = 'recovery';
-          stillActive.abortCtrl.abort();
-        }
-        try {
-          const sid = sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
-          if (sid) _activeStreams.delete(sid);
-        } catch (_) {}
-        _syncForegroundStreamGlobals();
-
-        // Release Web Lock
-        if (_webLockRelease) {
-          _webLockRelease();
-          _webLockRelease = null;
-        }
-
-        // Reset UI state
-        var _submitBtn = document.getElementById('submit');
-        updateSubmitButton('idle', _submitBtn);
-        var _msgInput = document.getElementById('message');
-        if (_msgInput) _msgInput.disabled = false;
-      }, 2000); // 2 second grace period
+      if (document.visibilityState !== 'visible') {
+        for (const active of _activeStreams.values()) active.wasAway = true;
+        return;
+      }
+      _restoreQueuedRequestsForCurrentSession();
+      _probeStaleLocalStream().then(() => {
+        _drainQueuedAgentRequests();
+      }).catch(err => {
+        console.warn('[tab-recovery] Server status probe failed:', err);
+      });
     });
 
     // On mobile, fade out welcome text when keyboard opens to prevent overlap
@@ -5489,13 +7228,6 @@ import { loadPanel } from './panels.js';
           }
         });
       }
-      // Smooth viewport resize when keyboard opens/closes
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', () => {
-          document.documentElement.style.setProperty('--vh', window.visualViewport.height + 'px');
-        });
-        document.documentElement.style.setProperty('--vh', window.visualViewport.height + 'px');
-      }
     }
 
     // If the browser discarded and restored this tab, reload the current session
@@ -5516,6 +7248,22 @@ import { loadPanel } from './panels.js';
   /**
    * Edit a user message: show an input, truncate to before it, resubmit the edited text.
    */
+  // Recover attached file IDs from rendered user bubbles, including older
+  // image previews that were rendered before data-file-id was stamped.
+  function _userMessageAttachmentIds(msgElement) {
+    if (!msgElement) return [];
+    const els = msgElement.querySelectorAll('[data-file-id]');
+    const ids = Array.from(els).map(el => el.dataset.fileId).filter(Boolean);
+    if (!ids.length) {
+      const images = msgElement.querySelectorAll('.attach-image-preview img, .attach-card img');
+      for (const image of images) {
+        const match = (image.getAttribute('src') || '').match(/\/api\/upload\/([A-Za-z0-9_\-]+)/);
+        if (match && match[1] && !ids.includes(match[1])) ids.push(match[1]);
+      }
+    }
+    return ids;
+  }
+
   export async function editUserMessage(userMsgElement) {
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
@@ -5537,10 +7285,14 @@ import { loadPanel } from './panels.js';
 
     const saveBtn = document.createElement('button');
     saveBtn.className = 'edit-save-btn';
-    saveBtn.textContent = 'Send';
+    saveBtn.type = 'button';
+    saveBtn.title = 'Send edited message';
+    saveBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg><span>Send</span>';
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'edit-cancel-btn';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.type = 'button';
+    cancelBtn.title = 'Cancel editing';
+    cancelBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg><span>Cancel</span>';
     btnRow.appendChild(saveBtn);
     btnRow.appendChild(cancelBtn);
 
@@ -5559,23 +7311,49 @@ import { loadPanel } from './panels.js';
       e.stopPropagation();
       const newText = editor.value.trim();
       if (!newText) return;
+      const editAttachmentIds = _userMessageAttachmentIds(userMsgElement);
 
       const sessionId = sessionModule.getCurrentSessionId();
       if (!sessionId) return;
 
+      // Everything after the original reply to this message would also be
+      // destroyed. Cancelling leaves the editor open with the draft intact.
+      const extraCount = allMsgs.length - msgIndex - 2;
+      const choice = await _confirmTruncateIfDestructive(extraCount, 'edit');
+      if (!choice) return;
+      if (choice === 'fork') {
+        // Branch just before this user turn and send the edit there; this
+        // chat keeps the original message and everything after it.
+        try {
+          await _forkAndSend(msgIndex, userMsgElement.dataset.dbId || '', newText, editAttachmentIds);
+          bodyEl.innerHTML = originalHTML;
+        } catch (err) {
+          console.error('Fork failed:', err);
+          if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+        }
+        return;
+      }
+
       const keepCount = msgIndex;
+      // Cut at the message's database id: msgIndex counts only the messages
+      // loaded in the page, so it is too small when older history has not
+      // been scrolled in yet.
+      const editBeforeId = userMsgElement.dataset.dbId || '';
       try {
-        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+        const editTruncate = await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keep_count: keepCount })
+          body: JSON.stringify(editBeforeId ? { before_msg_id: editBeforeId } : { keep_count: keepCount })
         });
+        if (!editTruncate.ok) throw new Error('Server error ' + editTruncate.status);
 
         // Remove DOM elements from msgIndex onward
         for (let i = allMsgs.length - 1; i >= msgIndex; i--) {
           allMsgs[i].remove();
         }
 
+        // The edited user turn still refers to its original attachments.
+        _pendingRegenAttachments = editAttachmentIds;
         // Submit the edited text
         const messageInput = uiModule.el('message');
         messageInput.value = newText;
@@ -5599,12 +7377,67 @@ import { loadPanel } from './panels.js';
     });
   }
 
+  // Regenerate, resend and edit permanently delete (server-side truncate)
+  // everything after the point clicked. Ask first unless nothing comes after
+  // it (extraCount 0), offering a fork that leaves this chat untouched.
+  // Resolves to 'proceed', 'fork', or null (cancelled).
+  const _TRUNCATE_ACTIONS = {
+    regenerate: { lead: 'Regenerating here', confirmText: 'Delete and regenerate' },
+    resend: { lead: 'Resending this message', confirmText: 'Delete and resend' },
+    edit: { lead: 'Sending this edit', confirmText: 'Delete and send' },
+  };
+  async function _confirmTruncateIfDestructive(extraCount, action = 'regenerate') {
+    if (extraCount <= 0) return 'proceed';
+    const { lead, confirmText } = _TRUNCATE_ACTIONS[action] || _TRUNCATE_ACTIONS.regenerate;
+    const result = await uiModule.styledConfirm(
+      `${lead} will also permanently delete the ${extraCount} ` +
+      `message${extraCount === 1 ? '' : 's'} after it. This can't be undone. ` +
+      `Fork from here keeps this chat as it is and continues in a new one instead.`,
+      { confirmText, alternateText: 'Fork from here', cancelText: 'Cancel', danger: true }
+    );
+    if (result === 'alternate') return 'fork';
+    return result ? 'proceed' : null;
+  }
+
+  // Copy the first `keepCount` messages of the current chat into a new chat
+  // and switch to it. Returns the new session id; throws on failure so callers
+  // that replay an action in the fork can stop before sending anything.
+  // Fork by message id when the element has one (before it, or through it);
+  // keepCount is only a fallback, since it counts loaded messages only.
+  async function _forkSessionAt(keepCount, beforeMsgId = '', throughMsgId = '') {
+    const sessionId = sessionModule.getCurrentSessionId();
+    if (!sessionId) throw new Error('No active chat');
+    const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keep_count: keepCount,
+        ...(beforeMsgId ? { before_msg_id: beforeMsgId } : throughMsgId ? { through_msg_id: throughMsgId } : {}) }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    await sessionModule.loadSessions();
+    await sessionModule.selectSession(data.id);
+    if (uiModule) uiModule.showToast(`Forked → ${data.name}`);
+    return data.id;
+  }
+
+  // Fork before a user message and send `text` there; this chat is untouched.
+  // `attachments` (if given) are re-sent only once the fork has succeeded.
+  async function _forkAndSend(keepCount, beforeMsgId, text, attachments) {
+    await _forkSessionAt(keepCount, beforeMsgId);
+    if (attachments !== undefined) _pendingRegenAttachments = attachments;
+    uiModule.el('message').value = text;
+    document.querySelector('.send-btn')?.click();
+  }
+
   /**
-   * Resend a user message. Normal resend appends a fresh copy at the end of
-   * the current thread; regenerate flows can opt into replacing from here.
+   * Resend a user message. By default this replaces from the selected user turn
+   * so failed attempts do not remain in model context or SFT traces. Callers can
+   * opt into append-only behavior with `{ append: true }`.
    */
   export async function resendUserMessage(userMsgElement, opts = {}) {
-    const replaceFromHere = Boolean(opts && opts.replaceFromHere);
+    const appendOnly = Boolean(opts && opts.append);
+    const replaceFromHere = !appendOnly || Boolean(opts && opts.replaceFromHere);
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const msgIndex = allMsgs.indexOf(userMsgElement);
@@ -5618,18 +7451,7 @@ import { loadPanel } from './panels.js';
     let text = (userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '').trim();
     text = text.replace(/\s*\[\d+ attachment\(s\)\]$/, '');
 
-    // Collect file_ids attached to this user message so the resend re-carries
-    // the photos / docs (and the chat handler picks up the user-edited OCR
-    // text cached server-side under those file ids).
-    const _attachEls = userMsgElement.querySelectorAll('[data-file-id]');
-    let _ids = Array.from(_attachEls).map(el => el.dataset.fileId).filter(Boolean);
-    if (!_ids.length) {
-      const _imgs = userMsgElement.querySelectorAll('.attach-image-preview img, .attach-card img');
-      for (const _im of _imgs) {
-        const _m = (_im.getAttribute('src') || '').match(/\/api\/upload\/([A-Za-z0-9_\-]+)/);
-        if (_m && _m[1] && !_ids.includes(_m[1])) _ids.push(_m[1]);
-      }
-    }
+    const _ids = _userMessageAttachmentIds(userMsgElement);
 
     // Rescue: legacy bubbles may have stored the filename as the message
     // content (artifact of earlier broken resends). Don't re-send that as
@@ -5652,25 +7474,38 @@ import { loadPanel } from './panels.js';
 
     try {
       if (replaceFromHere) {
-        // Regenerate flows intentionally trim history to this point before
-        // resubmitting. The plain "Resend message" action must not do this.
+        // Everything strictly after the immediate AI reply to this user
+        // message would also be destroyed — that's the part a click on
+        // Resend / "Regenerate message" doesn't expect to lose.
+        const extraCount = allMsgs.length - msgIndex - 2;
+        const choice = await _confirmTruncateIfDestructive(extraCount, 'resend');
+        if (!choice) return;
+        if (choice === 'fork') {
+          // Branch just before this user turn and send it again there; this
+          // chat keeps every message.
+          await _forkAndSend(msgIndex, userMsgElement.dataset.dbId || '', text, _ids);
+          return;
+        }
+        // Resend/regenerate trims history to this point before resubmitting so
+        // the replacement request is the only copy the backend sees.
         const keepCount = msgIndex;
-        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+        const beforeMsgId = userMsgElement.dataset.dbId || '';
+        const truncateBody = beforeMsgId ? { before_msg_id: beforeMsgId } : { keep_count: keepCount };
+        const truncateRes = await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keep_count: keepCount })
+          body: JSON.stringify(truncateBody)
         });
+        if (!truncateRes.ok) throw new Error('Server error ' + truncateRes.status);
 
-        // Drop the AI replies after the user message but KEEP the user bubble
-        // itself (so its photo stays visible). Then suppress the new user
-        // bubble that send would otherwise add — same pattern as regenerate.
-        let sibling = userMsgElement.nextSibling;
-        while (sibling) {
-          const next = sibling.nextSibling;
-          sibling.remove();
-          sibling = next;
+        // Drop the selected user turn and every rendered trace after it,
+        // including agent-thread tool history that is not a `.msg` bubble.
+        let node = userMsgElement;
+        while (node) {
+          const prev = node;
+          node = node.nextElementSibling;
+          prev.remove();
         }
-        _hideUserBubble = true;
       }
       _pendingRegenAttachments = _ids;
 
@@ -5715,25 +7550,14 @@ import { loadPanel } from './panels.js';
       return;
     }
 
-    // Collect any file_ids attached to the original user message so the
-    // regenerated send re-uses them. Without this the AI is regenerated on
-    // text alone — photos (and the user-edited OCR text cached server-side
-    // under that file_id) would be silently dropped.
-    const _attachEls = userMsgEl ? userMsgEl.querySelectorAll('[data-file-id]') : [];
-    let _regenIds = Array.from(_attachEls).map(el => el.dataset.fileId).filter(Boolean);
-    // Fallback for bubbles rendered before the data-file-id stamp landed:
-    // sniff the file id straight out of any `.attach-image-preview img`
-    // src URLs (matches /api/upload/<id>). Otherwise an older bubble would
-    // regen with zero attachments and the photo would be lost from the
-    // resulting message even though the file still exists on disk.
-    if (!_regenIds.length && userMsgEl) {
-      const _imgs = userMsgEl.querySelectorAll('.attach-image-preview img, .attach-card img');
-      for (const _im of _imgs) {
-        const _m = (_im.getAttribute('src') || '').match(/\/api\/upload\/([A-Za-z0-9_\-]+)/);
-        if (_m && _m[1] && !_regenIds.includes(_m[1])) _regenIds.push(_m[1]);
-      }
-    }
-    _pendingRegenAttachments = _regenIds;
+    // Everything strictly after the AI reply being regenerated would also
+    // be destroyed — that's the part a click on "Regenerate from here"
+    // doesn't expect to lose.
+    const extraCount = allMsgs.length - aiIndex - 1;
+    const choice = await _confirmTruncateIfDestructive(extraCount, 'regenerate');
+    if (!choice) return;
+
+    const _regenIds = _userMessageAttachmentIds(userMsgEl);
 
     // Rescue: earlier-version regens (before the dataset.raw fix) stored the
     // photo's filename as the user-message content. On a follow-up regen,
@@ -5742,7 +7566,7 @@ import { loadPanel } from './panels.js';
     // an image file". If userText is just a bare image filename and we have
     // attachments, drop it so the OCR text (or the image bytes for vision
     // models) is what the model actually sees.
-    if (userText && _pendingRegenAttachments.length &&
+    if (userText && _regenIds.length &&
         /^[^\n\r]{1,200}\.(png|jpe?g|gif|webp|svg|bmp|heic|heif)$/i.test(userText.trim())) {
       userText = '';
     }
@@ -5750,13 +7574,27 @@ import { loadPanel } from './panels.js';
     // A photo-only message has empty user text — regen must still proceed,
     // because the attachments themselves are the message. Bail only if there
     // is no text AND no attachments to send.
-    if (!userText && !_pendingRegenAttachments.length) {
+    if (!userText && !_regenIds.length) {
       if (uiModule) uiModule.showError('Nothing to regenerate — the user message has no text and no attachments');
       return;
     }
 
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
+
+    if (choice === 'fork') {
+      // Branch just before the user turn and send it again there, so the new
+      // chat gets a fresh reply to the same message; this chat keeps every
+      // message. No variants or hidden bubble: the fork starts without them.
+      try {
+        await _forkAndSend(userIndex, (userMsgEl && userMsgEl.dataset.dbId) || '', userText, _regenIds);
+      } catch (err) {
+        if (_pendingRegenAttachments === _regenIds) _pendingRegenAttachments = null;
+        console.error('Fork failed:', err);
+        if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+      }
+      return;
+    }
 
     // Save current response as a variant
     const oldRaw = aiMsgElement.dataset.raw || aiMsgElement.querySelector('.body')?.textContent || '';
@@ -5769,31 +7607,43 @@ import { loadPanel } from './panels.js';
     }
 
     const keepCount = userIndex;
+    // Same as resend: cut at the user message's database id, because
+    // userIndex counts only the messages loaded in the page.
+    const regenBeforeId = (userMsgEl && userMsgEl.dataset.dbId) || '';
 
     try {
-      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+      const regenTruncate = await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount })
+        body: JSON.stringify(regenBeforeId ? { before_msg_id: regenBeforeId } : { keep_count: keepCount })
       });
+      // A refused cut (e.g. a stale id) must not stack a second reply.
+      if (!regenTruncate.ok) throw new Error('Server error ' + regenTruncate.status);
+      _pendingRegenAttachments = _regenIds;
 
-      for (let i = allMsgs.length - 1; i > aiIndex; i--) {
-        allMsgs[i].remove();
+      // Keep the original user bubble, but remove every rendered trace after
+      // it, including agent-thread tool history between the user and AI bubble.
+      let node = userMsgEl.nextElementSibling;
+      while (node) {
+        const prev = node;
+        node = node.nextElementSibling;
+        prev.remove();
       }
 
-      // Remove the AI message from DOM — it will be replaced by the new streaming response
+      // The old AI message was removed from DOM — it will be replaced by the new streaming response
       // But first, stash the variants data so we can transfer it to the new element
       _pendingVariants = variants;
       _pendingVariantLabel = 'regen';
-      aiMsgElement.remove();
 
       _hideUserBubble = true;
+      _regenKeptUserBubble = userMsgEl;
       const messageInput = uiModule.el('message');
       messageInput.value = userText;
       const submitBtn = document.querySelector('.send-btn');
       if (submitBtn) submitBtn.click();
 
     } catch (err) {
+      if (_pendingRegenAttachments === _regenIds) _pendingRegenAttachments = null;
       console.error('Regenerate failed:', err);
       if (uiModule) uiModule.showError('Regenerate failed: ' + err.message);
     }
@@ -5805,6 +7655,8 @@ import { loadPanel } from './panels.js';
   // File-ids carried over from the original user message during a regen, so
   // photos / OCR overrides survive into the new send. Consumed once.
   let _pendingRegenAttachments = null;
+  // Read-only view for tests.
+  export function _pendingRegenAttachmentIds() { return _pendingRegenAttachments; }
 
   /**
    * Called after streaming completes to attach variant navigation if this was a regen.
@@ -5944,20 +7796,8 @@ import { loadPanel } from './panels.js';
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
-    const keepCount = aiIndex + 1;
-
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-
-      await sessionModule.loadSessions();
-      await sessionModule.selectSession(data.id);
-      if (uiModule) uiModule.showToast(`Forked → ${data.name}`);
+      await _forkSessionAt(aiIndex + 1, '', aiMsgElement.dataset.dbId || '');
     } catch (err) {
       console.error('Fork failed:', err);
       if (uiModule) uiModule.showError('Fork failed: ' + err.message);
@@ -6673,7 +8513,7 @@ import { loadPanel } from './panels.js';
       }
     } catch (e) {
       console.error('open attachment as document failed', e);
-      import('./ui.js').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
+      import('./ui.js?v=20260916largetoolscroll1').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
       window.open(url, '_blank');  // fallback so the file is still reachable
     }
   }
@@ -6707,6 +8547,27 @@ import { loadPanel } from './panels.js';
     continueFrom,
     _appendViewReportLink,
     hasActiveStream,
+    openContextSettings: async () => {
+      const pill = document.getElementById('chat-context-pill');
+      if (pill && !pill.hidden) {
+        pill.click();
+        return true;
+      }
+      const sm = _liveSessionModule();
+      if (sm?.hasPendingChat?.() && sm?.materializePendingSession) {
+        try {
+          const materialized = await sm.materializePendingSession();
+          if (materialized) {
+            await refreshChatContextHeader('open-context-settings');
+            if (pill && !pill.hidden) {
+              pill.click();
+              return true;
+            }
+          }
+        } catch (_) {}
+      }
+      return false;
+    },
   };
 
   // Single delegated handler for tool-call fold/expand. One listener on
@@ -6715,11 +8576,41 @@ import { loadPanel } from './panels.js';
   // per-node listeners on every innerHTML rewrite was the source of the
   // "needs many clicks" bug.
   if (!window.__odysseus_thread_click_bound) {
-    document.body.addEventListener('click', (e) => {
+	    document.body.addEventListener('click', (e) => {
+	      const browserFrame = e.target.closest('.private-browser-preview-frame');
+	      if (browserFrame && browserFrame.querySelector('.private-browser-preview-img[src]')) {
+	        const preview = browserFrame.closest('.private-browser-preview');
+	        const url = preview && preview.dataset ? String(preview.dataset.browserUrl || '') : '';
+	        if (url) {
+	          e.preventDefault();
+	          e.stopPropagation();
+	          window.open(url, '_blank', 'noopener,noreferrer');
+	          return;
+	        }
+	      }
+	      const browserFold = e.target.closest('.private-browser-preview-fold');
+	      const browserHeader = e.target.closest('.private-browser-preview-header');
+      if (browserFold || browserHeader) {
+        e.preventDefault();
+        e.stopPropagation();
+        const preview = (browserFold || browserHeader).closest('.private-browser-preview');
+        if (preview) {
+          preview.classList.toggle('folded');
+          const foldButton = preview.querySelector('.private-browser-preview-fold');
+          if (foldButton) {
+            foldButton.textContent = preview.classList.contains('folded') ? '+' : '×';
+            foldButton.title = preview.classList.contains('folded') ? 'Unfold browser preview' : 'Fold browser preview';
+            foldButton.setAttribute('aria-label', foldButton.title);
+          }
+        }
+        return;
+      }
       const header = e.target.closest('.agent-thread-header');
       if (!header) return;
+      if (e.target.closest('.agent-thread-header-link')) return;
       const node = header.closest('.agent-thread-node');
       if (!node) return;
+      if (node.classList.contains('browser-preview-node')) return;
       const opened = node.classList.toggle('open');
       if (opened) {
         // Expanding the final tool trace can push a pending ask_user card below

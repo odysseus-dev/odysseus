@@ -66,3 +66,30 @@ def test_plan_prompt_carries_the_current_year():
     # The base template itself stays year-agnostic; the year comes from the
     # prepended context, proving the wiring (not a hard-coded prompt edit).
     assert _this_year() not in RESEARCH_PLAN_PROMPT
+
+
+def test_generate_queries_falls_back_to_original_question_when_model_returns_empty():
+    r = DeepResearcher.__new__(DeepResearcher)
+    r.research_plan = ""
+    r.queries_used = set()
+    r._progress = None
+
+    async def _fake_llm(messages, **kwargs):
+        return ""
+
+    r._llm = _fake_llm
+
+    queries = asyncio.run(r._generate_queries("latest AI news", "", 1))
+
+    assert queries == [
+        "latest AI news",
+        "latest AI news fact check",
+        "latest AI news reliable sources",
+    ]
+
+
+def test_small_model_detection_uses_parameter_size_in_model_title():
+    assert DeepResearcher._looks_like_small_local_model("Qwen-0.5B-Instruct")
+    assert DeepResearcher._looks_like_small_local_model("model-9B")
+    assert DeepResearcher._looks_like_small_local_model("model-10B")
+    assert not DeepResearcher._looks_like_small_local_model("model-11B")

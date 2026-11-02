@@ -137,9 +137,9 @@ async def test_scheduled_local_summary_is_preempted_by_foreground_call(monkeypat
 
     monkeypatch.setenv("ODYSSEUS_LOCAL_MODEL_GATE", "true")
     monkeypatch.setenv("BACKGROUND_TASK_FOREGROUND_GATE", "false")
-    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_LOCK", asyncio.Lock())
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_LOCKS", {})
     monkeypatch.setattr(llm_core, "_LOCAL_MODEL_CURRENT", {})
-    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_WAITING_FOREGROUND", 0)
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_WAITING_FOREGROUND", {})
     monkeypatch.setattr(
         task_endpoint,
         "resolve_task_candidates",
@@ -190,6 +190,50 @@ async def test_scheduled_local_summary_is_preempted_by_foreground_call(monkeypat
         for task in (background_task, foreground_task):
             if task is not None and not task.done():
                 task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_local_model_gate_serializes_per_endpoint_not_globally(monkeypatch):
+    import src.llm_core as llm_core
+
+    monkeypatch.setenv("ODYSSEUS_LOCAL_MODEL_GATE", "true")
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_LOCKS", {})
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_CURRENT", {})
+    monkeypatch.setattr(llm_core, "_LOCAL_MODEL_WAITING_FOREGROUND", {})
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_endpoint_entered = asyncio.Event()
+    same_endpoint_entered = asyncio.Event()
+
+    async def hold_first():
+        async with llm_core._local_model_slot(
+            "http://127.0.0.1:19200/v1/chat/completions", "model-a"
+        ):
+            first_entered.set()
+            await release_first.wait()
+
+    async def enter_second_endpoint():
+        async with llm_core._local_model_slot(
+            "http://127.0.0.1:19201/v1/chat/completions", "model-b"
+        ):
+            second_endpoint_entered.set()
+
+    async def enter_same_endpoint():
+        async with llm_core._local_model_slot(
+            "http://127.0.0.1:19200/v1/completions", "model-a"
+        ):
+            same_endpoint_entered.set()
+
+    first = asyncio.create_task(hold_first())
+    await asyncio.wait_for(first_entered.wait(), timeout=1)
+    second = asyncio.create_task(enter_second_endpoint())
+    same = asyncio.create_task(enter_same_endpoint())
+    await asyncio.wait_for(second_endpoint_entered.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert not same_endpoint_entered.is_set()
+    release_first.set()
+    await asyncio.gather(first, second, same)
+    assert same_endpoint_entered.is_set()
 
 
 @pytest.mark.asyncio
