@@ -156,28 +156,10 @@ async def test_scheduled_stop_requires_session_identity(endpoint_db, endpoint_ht
 
 
 def _launch_image(repo_id, port, serve_session_id):
-    import routes.cookbook_routes as cookbook_routes
+    from routes.cookbook.endpoint_registration import _auto_register_image_endpoint
     from routes.cookbook_helpers import ServeRequest
 
-    router = cookbook_routes.setup_cookbook_routes()
-
-    serve = next(
-        route.endpoint
-        for route in router.routes
-        if route.path == "/api/model/serve"
-        and "POST" in route.methods
-    )
-
-    cells = dict(
-        zip(
-            serve.__code__.co_freevars,
-            serve.__closure__ or (),
-        )
-    )
-
-    register = cells["_auto_register_image_endpoint"].cell_contents
-
-    endpoint_id = register(
+    endpoint_id = _auto_register_image_endpoint(
         ServeRequest(
             repo_id=repo_id,
             cmd=f"python scripts/diffusion_server.py --port {port}",
