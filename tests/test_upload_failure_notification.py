@@ -18,6 +18,7 @@ The fix has two halves:
    is a DOM entry module that cannot be imported standalone.
 """
 import json
+import re
 
 import pytest
 
@@ -175,3 +176,33 @@ def test_chat_renders_the_single_message_from_the_recorded_reason():
     branch = source[branch_start:branch_start + 700]
     # `uiModule.showError && uiModule.showError(...)` is one guarded call.
     assert branch.count("showError(") == 1, branch
+
+
+def test_upload_feedback_is_precached_and_every_loader_agrees_on_the_url():
+    """Two cache-bust hazards that would quietly undo this fix.
+
+    ``fileHandler.js`` is loaded from six places, and the service worker
+    precaches its exact URL. If those URLs disagree, the browser keeps two
+    module instances (or serves the old cached one), so the single-message
+    contract silently regresses in production while every unit test stays
+    green. Likewise the new policy module must be precached, or an offline
+    load of ``fileHandler.js`` fails to resolve its import.
+    """
+    js = REPO / "static"
+    loaders = [
+        js / "js" / "chat.js",
+        js / "js" / "chatRenderer.js",
+        js / "js" / "gallery.js",
+        js / "app.js",
+        js / "sw.js",
+        js / "index.html",
+    ]
+    seen = set()
+    for path in loaders:
+        found = re.findall(r"fileHandler\.js\?v=[A-Za-z0-9_.-]+", path.read_text(encoding="utf-8"))
+        assert found, f"{path.name} no longer references fileHandler.js"
+        seen.update(found)
+    assert len(seen) == 1, f"fileHandler.js loaded under conflicting URLs: {sorted(seen)}"
+
+    sw = (js / "sw.js").read_text(encoding="utf-8")
+    assert "'/static/js/uploadFeedback.js'" in sw, "uploadFeedback.js must be precached"
