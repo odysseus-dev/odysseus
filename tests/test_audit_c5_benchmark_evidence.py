@@ -2618,5 +2618,85 @@ class TestCliDiagnosticConfidentiality(unittest.TestCase):
                 self.assertNotIn("Traceback", stderr.getvalue())
 
 
+# ---------------------------------------------------------------------------
+# Markdown report integrity: untrusted values must remain within their cells.
+# ---------------------------------------------------------------------------
+
+class TestMarkdownReportIntegrity(unittest.TestCase):
+    def test_newline_and_pipe_in_missing_path_cannot_forge_verified_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bad_name = "not-found\n| apparent-success | result_record | **VERIFIED** | yes | 20 |"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest([{
+                "path": bad_name, "type": "result_record"
+            }])))
+            result = auditor.audit(str(manifest), str(root), deterministic=True)
+            self.assertEqual(result["artifacts"][0]["status"], auditor.MISSING)
+            summary = auditor._markdown_summary(result)
+            artifact_section = summary.split("## Artifacts\n", 1)[1].split("## Reproducibility Prerequisites", 1)[0]
+            rows = [row for row in artifact_section.splitlines() if row.startswith("|")]
+            self.assertEqual(len(rows), 3)
+            self.assertNotIn("\n| apparent-success", summary)
+            self.assertIn("&#124; apparent-success", summary)
+            self.assertIn("**MISSING**", summary)
+
+    def test_code_delimiters_and_html_are_escaped(self):
+        value = "bad`</code><img src=x onerror=alert(1)>|name"
+        safe = auditor._markdown_code(value)
+        self.assertTrue(safe.startswith("<code>"))
+        self.assertTrue(safe.endswith("</code>"))
+        self.assertNotIn("<img", safe)
+        self.assertNotIn("</code><img", safe)
+        self.assertIn("&#124;", safe)
+        self.assertIn("&lt;", safe)
+
+    def test_campaign_and_notes_cannot_insert_headings_or_columns(self):
+        result = {
+            "campaign_id": "benchmark\n## Forged status",
+            "root": "/tmp/a|b",
+            "manifest_valid": True,
+            "totals": {status: 0 for status in auditor.ALL_STATUSES} | {"total": 0},
+            "reproducibility_prerequisites": {"raw_trajectories": auditor.INCOMPLETE},
+            "reproducibility_details": {"raw_trajectories": {"notes": "missing\n| VERIFIED | yes |"}},
+        }
+        summary = auditor._markdown_summary(result)
+        self.assertNotIn("\n## Forged status", summary)
+        prerequisite_section = summary.split("## Reproducibility Prerequisites", 1)[1]
+        self.assertNotIn("\n| VERIFIED", prerequisite_section)
+        self.assertIn("benchmark\\n## Forged status", summary)
+        self.assertIn("missing\\n&#124; VERIFIED", summary)
+
+    def test_cli_published_summary_does_not_forge_missing_artifact(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            missing = "missing\n| forged | result_record | **VERIFIED** | yes | 99 |"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest([{"path": missing, "type": "result_record"}])))
+            output = root / "audit.json"
+            summary = root / "audit.md"
+            code = auditor.main([str(manifest), str(root), "--output", str(output), "--summary", str(summary), "--deterministic"])
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads(output.read_text())["artifacts"][0]["status"], auditor.MISSING)
+            text = summary.read_text()
+            section = text.split("## Artifacts\n", 1)[1].split("## Reproducibility Prerequisites", 1)[0]
+            self.assertEqual(sum(line.startswith("|") for line in section.splitlines()), 3)
+            self.assertNotIn("\n| forged", text)
+            self.assertIn("**MISSING**", text)
+
+    def test_unicode_line_separators_do_not_create_new_rows(self):
+        for separator in (chr(0x85), chr(0x2028), chr(0x2029)):
+            safe = auditor._markdown_display_value("before" + separator + "after")
+            self.assertNotIn(separator, safe)
+            self.assertIn("after", safe)
+
+    def test_unicode_and_surrogates_remain_publishable(self):
+        text = auditor._markdown_code("café_測試_🚀" + chr(0xd800))
+        self.assertIn("café", text)
+        self.assertIn("測試", text)
+        self.assertIn("\\ud800", text)
+        text.encode("utf-8")
+
+
 if __name__ == "__main__":
     unittest.main()

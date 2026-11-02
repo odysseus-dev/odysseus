@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import errno
 import hashlib
+from html import escape as html_escape
 import json
 import os
 import posixpath
@@ -1413,15 +1414,47 @@ def audit(
 # Markdown summary
 # ---------------------------------------------------------------------------
 
+def _markdown_display_value(value: Any) -> str:
+    """Escape untrusted values without creating Markdown rows or HTML elements."""
+    raw = str(value).encode("utf-8", errors="backslashreplace").decode("utf-8")
+    safe = []
+    for char in raw:
+        if char == "\n":
+            safe.append(r"\n")
+        elif char == "\r":
+            safe.append(r"\r")
+        elif char == "\t":
+            safe.append(r"\t")
+        elif ord(char) < 32 or ord(char) == 127:
+            safe.append(f"\\x{ord(char):02x}")
+        elif char in ("\u0085", "\u2028", "\u2029"):
+            safe.append(f"\\u{ord(char):04x}")
+        else:
+            safe.append(char)
+    # HTML entities are decoded after Markdown table splitting, preserving columns.
+    return html_escape("".join(safe), quote=False).replace("|", "&#124;")
+
+
+def _markdown_code(value: Any) -> str:
+    return f"<code>{_markdown_display_value(value)}</code>"
+
+
+def _markdown_text(value: Any) -> str:
+    text = _markdown_display_value(value)
+    for char in ("`", "*", "_", "[", "]", "!"):
+        text = text.replace(char, f"&#{ord(char)};")
+    return text
+
+
 def _markdown_summary(result: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# Benchmark Evidence Audit Summary")
     lines.append("")
-    lines.append(f"- **Campaign**: `{result.get('campaign_id', 'unknown')}`")
+    lines.append(f"- **Campaign**: {_markdown_code(result.get('campaign_id', 'unknown'))}")
     lines.append(f"- **Audited at**: {result.get('audited_at', '')}")
     if result.get("timestamp_kind") == "deterministic_placeholder":
         lines.append("- **Timestamp note**: Fixed reproducibility placeholder (1970-01-01T00:00:00Z)")
-    lines.append(f"- **Root**: `{result.get('root', '')}`")
+    lines.append(f"- **Root**: {_markdown_code(result.get('root', ''))}")
     lines.append(f"- **Manifest valid**: {result.get('manifest_valid', False)}")
     lines.append("")
 
@@ -1440,7 +1473,7 @@ def _markdown_summary(result: dict[str, Any]) -> str:
         lines.append("## Errors")
         lines.append("")
         for e in errors:
-            lines.append(f"- {e}")
+            lines.append(f"- {_markdown_text(e)}")
         lines.append("")
 
     arts = result.get("artifacts", [])
@@ -1451,12 +1484,12 @@ def _markdown_summary(result: dict[str, Any]) -> str:
         lines.append("|---|---|---|---|---|")
         for a in arts:
             path = a.get("path", "")
-            display_path = str(path).encode("utf-8", errors="backslashreplace").decode("utf-8")
+            display_path = _markdown_code(path)
             atype = a.get("type") or ""
             status = a.get("status", "")
             present = "yes" if a.get("present") else ("no" if a.get("present") is False else "?")
             size = str(a.get("size_bytes")) if a.get("size_bytes") is not None else "-"
-            lines.append(f"| `{display_path}` | {atype} | **{status}** | {present} | {size} |")
+            lines.append(f"| {display_path} | {_markdown_text(atype)} | **{status}** | {present} | {size} |")
         lines.append("")
 
     prereqs = result.get("reproducibility_prerequisites", {})
@@ -1472,7 +1505,7 @@ def _markdown_summary(result: dict[str, Any]) -> str:
             es_status = det.get("expected_set_status", "UNKNOWN")
             comp = "yes" if det.get("prerequisite_complete") else "no"
             notes = det.get("notes") or ""
-            lines.append(f"| {k} | **{v}** | {integrity} | {es_status} | {comp} | {notes} |")
+            lines.append(f"| {k} | **{v}** | {integrity} | {es_status} | {comp} | {_markdown_text(notes)} |")
         lines.append("")
 
     return "\n".join(lines)
