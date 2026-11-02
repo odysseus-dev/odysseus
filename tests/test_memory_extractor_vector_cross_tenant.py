@@ -54,7 +54,7 @@ class FakeSession:
 
     def get_context_messages(self):
         return [
-            {"role": "user", "content": "Tell me where I live."},
+            {"role": "user", "content": "My home is in Lisbon. My role is architect."},
             {"role": "assistant", "content": "Noted."},
         ]
 
@@ -87,6 +87,9 @@ class FakeMemoryManager:
         self.rows.append(entry)
         return entry
 
+    def save(self, rows):
+        self.rows = list(rows)
+
 
 class FakeVector:
     """Healthy vector store whose find_similar always matches user A's memory."""
@@ -98,6 +101,16 @@ class FakeVector:
         return self._match_id
 
 
+class NoMatchVector:
+    healthy = True
+
+    def find_similar(self, text, threshold=0.72):
+        return None
+
+    def add(self, memory_id, text):
+        pass
+
+
 def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch):
     # User A already owns a semantically-similar memory.
     mm = FakeMemoryManager([
@@ -105,7 +118,7 @@ def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch):
     ])
     # The vector store reports user B's new fact as a near-duplicate of a1.
     vec = FakeVector(match_id="a1")
-    _install_llm_stub(monkeypatch, '["My home is in Lisbon"]')
+    _install_llm_stub(monkeypatch, '[{"text":"My home is in Lisbon","evidence":"My home is in Lisbon"}]')
 
     memory_extractor = _load_extractor()
 
@@ -119,3 +132,53 @@ def test_vector_match_from_other_tenant_does_not_drop_users_fact(monkeypatch):
         "User B's own extracted fact was dropped because the shared vector "
         "store matched user A's memory (cross-tenant dedup)."
     )
+
+
+def test_identity_auto_pin_stops_after_first_five_for_owner(monkeypatch):
+    mm = FakeMemoryManager([
+        {
+            "id": f"seed-{idx}",
+            "text": f"Seed identity {idx}",
+            "owner": "userA",
+            "category": "identity",
+            "pinned": True,
+        }
+        for idx in range(5)
+    ])
+    _install_llm_stub(
+        monkeypatch,
+        '[{"text": "User works as an architect", "category": "identity", "evidence": "My role is architect"}]',
+    )
+
+    memory_extractor = _load_extractor()
+
+    asyncio.run(memory_extractor.extract_and_store(
+        FakeSession(owner="userA"), mm, NoMatchVector(),
+        endpoint_url="http://x", model="m",
+    ))
+
+    rows = mm.load(owner="userA")
+    added = next(r for r in rows if r["text"] == "User works as an architect")
+    assert added.get("category") == "identity"
+    assert added.get("pinned") is not True
+    assert sum(1 for r in rows if r.get("category") == "identity" and r.get("pinned")) == 5
+
+
+@pytest.mark.parametrize('vector_match', [False, True])
+def test_name_refinement_never_rewrites_shared_legacy_memory(monkeypatch, vector_match):
+    class NameSession(FakeSession):
+        def get_context_messages(self):
+            return [{'role': 'user', 'content': 'My name is Alex Morgan.'},
+                    {'role': 'assistant', 'content': 'Noted.'}]
+
+    mm = FakeMemoryManager([
+        {'id': 'legacy', 'text': 'Name is Alex', 'owner': None},
+    ])
+    _install_llm_stub(monkeypatch, '[{"text":"Name is Alex Morgan","evidence":"My name is Alex Morgan"}]')
+    module = _load_extractor()
+    vector = FakeVector('legacy') if vector_match else NoMatchVector()
+    asyncio.run(module.extract_and_store(NameSession('userB'), mm, vector,
+                                         endpoint_url='http://fixture', model='fixture'))
+    assert next(row for row in mm.rows if row['id'] == 'legacy')['text'] == 'Name is Alex'
+    assert any(row.get('owner') == 'userB' and row.get('text') == 'Name is Alex Morgan'
+               for row in mm.rows)

@@ -1,5 +1,5 @@
-import socket
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +9,12 @@ from starlette.requests import Request
 import routes.cookbook_routes as cookbook_routes
 from routes.cookbook_helpers import ServeRequest, _validate_serve_cmd
 from src.host_docker_access import HOST_DOCKER_ACCESS_HINT
+from tests.helpers.unix_sockets import bound_unix_socket
+
+
+@pytest.fixture(autouse=True)
+def authenticated_admin_mode(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
 
 
 def _model_serve_endpoint():
@@ -27,6 +33,8 @@ def _admin_request() -> Request:
             "path": "/api/model/serve",
             "headers": [],
             "state": {},
+            "app": SimpleNamespace(state=SimpleNamespace(auth_manager=SimpleNamespace(
+                is_configured=True, is_admin=lambda user: user == "admin"))),
         }
     )
     request.state.current_user = "admin"
@@ -57,19 +65,18 @@ async def test_container_cli_only_is_rejected(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_container_opt_in_with_unix_socket_is_allowed(monkeypatch, tmp_path):
+async def test_container_opt_in_with_unix_socket_is_allowed(monkeypatch):
     monkeypatch.setattr(cookbook_routes.shutil, "which", lambda binary: "/usr/bin/docker")
-    socket_path = tmp_path / "docker.sock"
 
-    with socket.socket(socket.AF_UNIX) as unix_socket:
-        unix_socket.bind(str(socket_path))
+    # Not tmp_path: binding under $TMPDIR overruns sun_path on macOS.
+    with bound_unix_socket() as socket_path:
         available = await cookbook_routes._binary_available(
             "docker",
             None,
             None,
             in_container=True,
             environ={"ODYSSEUS_ENABLE_HOST_DOCKER": "true"},
-            socket_path=str(socket_path),
+            socket_path=socket_path,
         )
 
     assert available is True
@@ -140,7 +147,6 @@ async def test_local_container_serve_returns_host_docker_opt_in_hint(
         assert cookbook_routes.shutil.which(binary) == "/usr/bin/docker"
         return False
 
-    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(cookbook_routes, "_binary_available", binary_available)
     monkeypatch.setattr(cookbook_routes, "running_in_container", lambda: True)
     monkeypatch.setattr(
@@ -200,7 +206,6 @@ async def test_local_container_serve_allows_generated_docker_exec_when_enabled(
         launched_commands.append(command)
         return _Process()
 
-    monkeypatch.setattr(cookbook_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(cookbook_routes, "_binary_available", binary_available)
     monkeypatch.setattr(cookbook_routes, "running_in_container", lambda: True)
     monkeypatch.setattr(

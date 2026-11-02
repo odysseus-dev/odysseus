@@ -14,6 +14,7 @@ def test_recognizes_local_and_hosted_vision_models():
         "moondream", "moondream:latest",
         "llama3.2-vision:11b", "granite3.2-vision",
         "qwen2.5-vl:7b", "qwen2.5vl", "internvl2.5", "cogvlm",
+        "Qwen3.5-9B", "qwen3_5-9b", "qwen35-9b-base-native",
         # already worked, keep them working
         "llava", "llava:7b", "bakllava", "minicpm-v",
         "gpt-4o", "claude-sonnet-4", "gemini-2.0-flash", "pixtral-12b",

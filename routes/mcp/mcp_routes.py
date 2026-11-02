@@ -5,6 +5,7 @@ import os
 import uuid
 import urllib.parse
 import html
+import secrets
 from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -12,7 +13,7 @@ import logging
 import httpx
 
 from core.database import McpServer, SessionLocal
-from core.middleware import require_admin
+from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN, require_admin
 from src.constants import DATA_DIR, MCP_OAUTH_DIR
 from src.mcp_manager import McpManager
 
@@ -112,6 +113,18 @@ def _mcp_oauth_redirect_uri() -> str:
     """Shared callback URL for legacy Google and generic MCP OAuth flows."""
     from src.mcp_oauth import REDIRECT_URI
     return REDIRECT_URI
+
+
+def _is_legacy_google_flow(identifier: str) -> bool:
+    """Determine whether an identifier is the server_id of a configured Google OAuth MCP server."""
+    if not identifier:
+        return False
+    db = SessionLocal()
+    try:
+        srv = db.query(McpServer).filter(McpServer.id == identifier).first()
+        return bool(srv and srv.oauth_config)
+    finally:
+        db.close()
 
 
 def setup_mcp_routes(mcp_manager: McpManager):
@@ -412,6 +425,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
         Expects JSON body: {"disabled": ["tool_name_1", "tool_name_2"]}
         """
         require_admin(request)
+        internal_token = request.headers.get(INTERNAL_TOOL_HEADER)
+        if internal_token and secrets.compare_digest(internal_token, INTERNAL_TOOL_TOKEN):
+            # Same boundary as POST /api/tools: an agent turn must not be able
+            # to re-enable MCP tools an admin switched off.
+            raise HTTPException(403, "Change MCP tool policy in Settings > Integrations, not from chat")
         db = SessionLocal()
         try:
             srv = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -487,10 +505,14 @@ def setup_mcp_routes(mcp_manager: McpManager):
             db.close()
 
     @router.get("/oauth/callback")
-    async def oauth_callback(code: str, state: str, request: Request):
+    async def oauth_callback(code: str = "", state: str = "", request: Request = None):
         """Handle OAuth callback. Generic MCP OAuth flows resolve via the
         pending-state registry; Google flows fall through to the legacy path."""
-        require_admin(request)
+        if not state:
+            return HTMLResponse(_oauth_result_page("Error", "No OAuth state parameter found in the callback URL."), status_code=400)
+        if not code:
+            return HTMLResponse(_oauth_result_page("Error", "No authorization code found in the URL. Make sure you copied the full URL from your browser."), status_code=400)
+
         from src.mcp_oauth import resolve_pending
         if resolve_pending(state, code):
             return HTMLResponse(_oauth_result_page(
@@ -498,8 +520,16 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "The MCP server is connecting. You can close this window and return to Odysseus.",
                 success=True,
             ))
-        # Legacy Google path: state is the server_id
-        return await _exchange_and_connect(state, code, request)
+
+        # Check if this callback belongs to a legacy Google flow vs expired generic flow
+        if _is_legacy_google_flow(state):
+            require_admin(request)
+            return await _exchange_and_connect(state, code, request)
+
+        return HTMLResponse(_oauth_result_page(
+            "Authorization Expired",
+            "This authorization round has expired. Press Reconnect in Odysseus and try again.",
+        ), status_code=400)
 
     @router.post("/oauth/exchange/{server_id}")
     async def oauth_exchange(server_id: str, request: Request, callback_url: str = Form(...)):
@@ -514,18 +544,28 @@ def setup_mcp_routes(mcp_manager: McpManager):
         except Exception:
             return HTMLResponse(_oauth_result_page("Error", "Invalid URL format."), status_code=400)
 
+        state = params.get("state", [None])[0]
+        if not state:
+            return HTMLResponse(_oauth_result_page("Error", "No OAuth state parameter found in the callback URL."), status_code=400)
+
         # Generic MCP OAuth: if the pasted URL carries a state we are waiting on,
         # resolve it directly (the background connect finishes the handshake).
-        state = params.get("state", [None])[0]
         from src.mcp_oauth import resolve_pending
-        if state and resolve_pending(state, code):
+        if resolve_pending(state, code):
             return HTMLResponse(_oauth_result_page(
                 "Authorization Successful",
                 "The MCP server is connecting. You can close this window and return to Odysseus.",
                 success=True,
             ))
 
-        return await _exchange_and_connect(server_id, code, request)
+        # Check if this exchange belongs to a legacy Google flow vs expired generic flow
+        if _is_legacy_google_flow(server_id):
+            return await _exchange_and_connect(server_id, code, request)
+
+        return HTMLResponse(_oauth_result_page(
+            "Authorization Expired",
+            "This authorization round has expired. Press Reconnect in Odysseus and try again.",
+        ), status_code=400)
 
     async def _exchange_and_connect(server_id: str, code: str, request: Request):
         """Exchange auth code for tokens and connect the MCP server."""

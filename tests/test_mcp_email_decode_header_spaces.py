@@ -91,6 +91,19 @@ def test_empty_header():
 
 
 @pytest.mark.asyncio
+async def test_legacy_account_listing_explains_default_email_tool_fallback(monkeypatch):
+    monkeypatch.setattr(es, "_read_accounts_from_db", lambda: [])
+    monkeypatch.setattr(es, "_fixture_email_enabled", lambda: False)
+    monkeypatch.setattr(es, "_fixture_account_rows", lambda: [])
+
+    out = await es.call_tool("list_email_accounts", {})
+
+    assert "Default single-account mode is active" in out[0].text
+    assert "omit the `account` field and continue" in out[0].text
+    assert "search_emails" in out[0].text
+
+
+@pytest.mark.asyncio
 async def test_mcp_email_accounts_are_filtered_by_hidden_owner(tmp_path, monkeypatch):
     db_path = tmp_path / "app.db"
     _init_accounts_db(db_path)

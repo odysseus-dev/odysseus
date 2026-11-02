@@ -62,6 +62,8 @@ jobs:
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          driver: docker
 
       # Build without pushing so a broken Dockerfile is caught here, and the
       # exact image we ship is what gets scanned.
@@ -72,6 +74,9 @@ jobs:
           push: false
           load: true
           tags: odysseus:ci
+
+      - name: Free build cache before vulnerability database download
+        run: docker builder prune --all --force
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -103,6 +108,8 @@ jobs:
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          driver: docker
 
       - name: Build image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
@@ -111,6 +118,9 @@ jobs:
           push: false
           load: true
           tags: odysseus:ci
+
+      - name: Free build cache before vulnerability database download
+        run: docker builder prune --all --force
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0

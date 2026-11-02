@@ -36,7 +36,7 @@ def test_omitted_memory_survives_only_explicit_drop(monkeypatch):
     monkeypatch.setattr(src.memory, "MemoryManager", _FakeMM)
     monkeypatch.setattr(
         src.task_endpoint, "resolve_task_candidates",
-        lambda owner=None: [("http://x/v1", "model", {})],
+        lambda owner=None, **kwargs: [("http://x/v1", "model", {})],
     )
 
     async def fake_llm(_candidates, **kwargs):

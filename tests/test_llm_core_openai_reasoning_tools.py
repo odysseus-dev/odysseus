@@ -71,3 +71,42 @@ def test_non_gpt5_model_leaves_reasoning_effort_unchanged():
     )
 
     assert payload["reasoning_effort"] == "high"
+
+
+def test_deepseek_v4_reasoning_defaults_are_explicit_and_bounded():
+    payload = {}
+
+    llm_core._apply_deepseek_v4_reasoning_defaults(
+        payload,
+        "https://api.deepseek.com/v1/chat/completions",
+        "deepseek-v4-pro",
+    )
+
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] == "high"
+
+
+def test_deepseek_reasoning_defaults_do_not_affect_other_hosts():
+    payload = {}
+
+    llm_core._apply_deepseek_v4_reasoning_defaults(
+        payload,
+        "https://openrouter.ai/api/v1/chat/completions",
+        "deepseek-v4-pro",
+    )
+
+    assert payload == {}
+
+
+def test_deepseek_v4_thinking_off_overrides_reasoning_defaults():
+    payload = {}
+
+    llm_core._apply_deepseek_v4_reasoning_defaults(
+        payload,
+        "https://api.deepseek.com/v1/chat/completions",
+        "deepseek-v4-pro",
+        "off",
+    )
+
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["reasoning_effort"] == "none"

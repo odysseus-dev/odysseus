@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@c74f475 | 2026-10-15
 
 ## Scope
 
@@ -13,10 +13,10 @@ This spec covers current app runtime wiring in:
 - `core/constants.py`;
 - `src/constants.py`;
 - `src/interactive_gate.py`;
+- `src/process_reaper.py`, `src/process_lifecycle.py`, and `src/process_ownership.py`;
 - `src/host_docker_access.py`;
 - `core/middleware.py`;
-- all route setup functions registered from `app.py`, including canonical
-  `routes/admin_wipe/`, `routes/cleanup/`, `routes/compare/`, `routes/contacts/`, `routes/document/`, `routes/gallery/`, `routes/history/`, `routes/mcp/`, `routes/memory/`, `routes/note/`, `routes/research/`, `routes/search/`, `routes/task/`, `routes/vault/`, and `routes/webhook/` packages plus top-level compatibility shims;
+- all route setup functions registered from `app.py`, including canonical `routes/admin_wipe/`, `routes/cleanup/`, `routes/compare/`, `routes/contacts/`, `routes/document/`, `routes/gallery/`, `routes/history/`, `routes/mcp/`, `routes/memory/`, `routes/note/`, `routes/research/`, `routes/search/`, `routes/task/`, `routes/vault/`, and `routes/webhook/` packages plus top-level compatibility shims;
 - `routes/prefs_routes.py`, `routes/workspace_routes.py`, and `companion/routes.py`;
 - `src/generated_images.py` for generated-media file resolution;
 - `launcher.py`, `Odysseus.spec`, and platform launcher scripts where frozen/native startup changes runtime paths;
@@ -30,9 +30,7 @@ This spec covers current app runtime wiring in:
 
 `app.py` separately owns runtime singletons and integration hooks for auth, vector RAG, TTS/STT, webhooks, scheduled tasks, MCP, assistant log globals, event bus wiring, AI interaction globals, API-token cache invalidation, and foreground activity tracking. `src.runtime_paths` owns source-versus-frozen app/data path resolution; `src.constants` derives `DATA_DIR` from `ODYSSEUS_DATA_DIR` or that runtime default. `core/constants.py` and `src/constants.py` are both live import paths and are not fully identical today, so new constants need explicit placement/compatibility decisions.
 
-The shared upload handler is also installed on the session manager and tool
-helper, and `app.py` injects it into attachment-bearing route factories so
-durable writers and cleanup use one lifecycle owner.
+The shared upload handler is also installed on the session manager and tool helper, and `app.py` injects it into attachment-bearing route factories so durable writers and cleanup use one lifecycle owner.
 
 ## Routes And Static Serving
 
@@ -46,9 +44,9 @@ Admin wipe, cleanup, compare, contacts, documents, gallery, history, MCP, memory
 
 The SPA routes `/`, `/notes`, `/calendar`, `/cookbook`, `/email`, `/memory`, `/gallery`, `/tasks`, and `/library` all serve `static/index.html`. `static/` is served with revalidation for `.js`, `.css`, and `.html` because the frontend ships raw browser modules with no hashed build output.
 
-Direct app-owned endpoints include `/api/generated-image/{filename}`, `/backgrounds`, `/login`, `/api/version`, `/api/health`, `/api/ready`, `/api/runtime`, and `/api/activity/heartbeat`. `/backgrounds` points at `static/backgrounds.html`; if that file is absent or the route remains auth-gated, that is route/static drift rather than an intentional public contract.
+Direct app-owned endpoints include `/api/generated-image/{filename}`, `/backgrounds`, `/login`, `/api/version`, `/api/health`, `/api/ready`, `/api/runtime`, and `/api/activity/heartbeat`. The `/backgrounds` prototype route points at the absent `static/backgrounds.html` and is auth-gated when authentication is enabled despite its handler docstring describing it as public. This remains known route/static drift at the checked revision.
 
-`/static/*` is auth-exempt and public. SPA HTML routes are auth-gated except `/login`, and they are nonce-injected dynamic `HTMLResponse` values outside the static mount. Generated images and videos are served from `data/generated_images` through the generated-image resolver with immutable/nosniff caching.
+`/static/*` is auth-exempt and public. SPA HTML routes are auth-gated except `/login`, and they are nonce-injected dynamic `HTMLResponse` values outside the static mount. Generated images and videos are served from `data/generated_images` through the generated-image resolver with private, no-cache, must-revalidate/nosniff headers; access checks precede disk probing and database verification errors return 503 (see `gallery-editor-media.md`).
 
 ## Runtime Security Boundaries
 
@@ -58,7 +56,7 @@ Security headers include HSTS and a restrictive `Permissions-Policy` that disabl
 
 `_TIMEOUT_EXEMPT_PREFIXES` owns hard-timeout bypass policy. It is prefix-based and currently exempts all subroutes under `/api/chat`, `/api/shell/stream`, `/api/research`, `/api/model/download`, `/api/model/probe`, `/api/model-endpoints`, `/api/cookbook/setup`, `/api/upload`, `/api/image`, and `/api/memory/audit`. Memory audit has its own longer inactivity timeout.
 
-Generated-image path resolution fails closed for invalid names, path escape, and missing files. Ownership checks are best-effort when a current user exists: gallery rows owned by a different user return 404, rowless generated files are allowed, and DB/helper failures fail open. See `auth-security.md` for `LOCALHOST_BYPASS`, internal-tool loopback, proxy-header exclusion, and owner-impersonation policy.
+Generated-image serving validates filename syntax before identity and access checks, then resolves the confined path and verifies file existence. With auth enabled, missing identity returns 401; recent registration, gallery ownership, linked-session ownership or an owned-chat metadata reference supplies the implemented access criterion. Missing or mismatched access returns 404, and database verification failures return 503. Explicit disabled-auth mode skips ownership verification. See `gallery-editor-media.md` for branch ordering and registry lifetime, and `auth-security.md` for `LOCALHOST_BYPASS`, internal-tool loopback, proxy-header exclusion, and owner-impersonation policy.
 
 ## Runtime Behavior
 
@@ -70,12 +68,11 @@ Generated-image path resolution fails closed for invalid names, path escape, and
 
 ## Lifespan Startup
 
-Upload cleanup first snapshots durable chat, document, gallery, note, and
-calendar references and aborts on scan or upload-index integrity failure.
+Upload cleanup first snapshots durable chat, document, gallery, note, and calendar references and aborts on scan or upload-index integrity failure.
 
 Startup purges leftover incognito sessions, reconciles default scheduled tasks before the task runner starts, and backfills legacy skill owners when possible.
 
-Startup fire-and-forget work includes upload cleanup, background-job monitoring, MCP built-in registration and user-server connection, tool-index warmup, model-endpoint warmup, endpoint keepalive, Cookbook serve lifecycle monitoring, hourly null-owner sweeps, and nightly skill audit. The in-process task scheduler is gated by `ODYSSEUS_INPROCESS_TASKS`; email polling is started from email route setup and gated separately by `ODYSSEUS_INPROCESS_POLLERS`. Foreground-gate knobs are `BACKGROUND_TASK_FOREGROUND_GATE`, `BACKGROUND_TASK_QUIET_MS`, `BACKGROUND_TASK_MAX_WAIT_SECONDS`, and `BACKGROUND_TASK_BROWSER_ACTIVE_SECONDS`.
+Startup fire-and-forget work includes upload cleanup, background-job monitoring, MCP built-in registration and user-server connection, tool-index warmup, model-endpoint warmup, endpoint keepalive, Cookbook serve lifecycle monitoring, and hourly null-owner sweeps. Skills Audit is scheduled per owner by `TaskScheduler`; app lifespan deliberately does not start a second ownerless audit. The in-process task scheduler is gated by `ODYSSEUS_INPROCESS_TASKS`; email polling is started from email route setup and gated separately by `ODYSSEUS_INPROCESS_POLLERS`. Foreground-gate knobs are `BACKGROUND_TASK_FOREGROUND_GATE`, `BACKGROUND_TASK_QUIET_MS`, `BACKGROUND_TASK_MAX_WAIT_SECONDS`, and `BACKGROUND_TASK_BROWSER_ACTIVE_SECONDS`.
 
 Shutdown cancels upload cleanup, stops the task scheduler, closes the webhook manager, and disconnects MCP servers.
 
@@ -90,9 +87,19 @@ Shutdown cancels upload cleanup, stops the task scheduler, closes the webhook ma
 - `src.host_docker_access` treats host Docker access from inside the container as opt-in. Default Compose does not mount `/var/run/docker.sock`; `docker/host-docker.yml` plus `ODYSSEUS_ENABLE_HOST_DOCKER=true` are required before local container code considers the host Docker daemon available.
 - Chroma-backed consumers degrade independently: personal-doc RAG can return route-level 503s, semantic memory vectors can be dropped from chat/memory wiring, and the tool index can fall back when vector retrieval is unavailable.
 - RAG startup failure is throttled so failed clients do not poison later retries.
-- MCP startup is asynchronous and non-critical. User-server connection is bounded, failures surface through MCP status routes, and builtin MCP calls can reconnect after crashes.
-- `/api/health` is liveness only. `/api/ready` checks database reachability, writable data dir, and local-first storage metadata; it does not prove optional subsystem health for RAG, Chroma, MCP, memory vectors, tool index, or endpoint warmups.
+- MCP startup is asynchronous and non-critical. User-server connection is bounded, failures surface through MCP status routes, and unbound builtin MCP calls can reconnect after crashes; incarnation-bound calls return failure rather than silently replacing the backend.
+- `/api/health` is liveness only. `src.readiness.check_readiness()` reports database reachability, writable data dir, informational local-first storage metadata and tool-index state. Database/data-dir checks gate `/api/ready`; `ODYSSEUS_REQUIRE_TOOL_INDEX_READY` additionally makes tool-index readiness critical when enabled. Default readiness does not certify RAG, Chroma, MCP, memory vectors or endpoint warmups.
 - `/api/diagnostics/services` is an admin diagnostics endpoint for optional service health. It reports bounded, non-intrusive checks for ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with `ok`/`degraded`/`down`/`disabled` style status values and strips secret-bearing URLs/errors. `/api/diagnostics/logs` returns a bounded tail of the app log for admin troubleshooting.
+
+## Startup Process Reconciliation
+
+Lifespan calls `src.process_reaper` once to reconcile persisted containment grants and detached job identities from previous server runs. Verified orphan processes under abandoned containment grants are torn down; owned detached jobs intentionally survive restart. Unverifiable containment grants remain active and unsignalled, while `src.bg_jobs.disown_unverified()` marks foreign/unverifiable running job records failed without signalling and preserves pending follow-up. Retiring a record does not establish process death. `src.process_lifecycle` owns identity checks, TERM/KILL escalation, and observed-death receipts; caller-specific containment/browser/Cookbook policy remains outside it.
+
+## Process And Service-Home Limits
+
+Native launch readiness is a bounded functional containment probe plus exact supervisor/worker acknowledgement, not executable presence. Startup reconciliation retains unverified ownership and running detached job generations instead of fabricating death or renewed permission. Background delivery revalidates linkage after asynchronous continuation and retires exact observed-dead launch records; invalidated jobs do not prevent registry cleanup during shutdown. Missing procfs degrades discovery/command-line evidence and does not authorize signaling.
+
+`core.platform_compat.service_home()` uses Windows `Path.home()` without importing `pwd`. Successful POSIX real-UID passwd lookup ignores a child HOME override; a missing passwd entry or lookup OS error falls back to `Path.home()`, which can honor that override. Model-visible runtime/context metadata is bounded and untrusted; environment-key allowlists do not scrub explicitly supplied values. Readiness errors expose bounded error categories rather than raw exception details, and readiness still does not certify optional provider/browser/model health.
 
 ## Current Gaps
 

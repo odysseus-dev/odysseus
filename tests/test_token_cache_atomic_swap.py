@@ -186,3 +186,48 @@ class TestConcurrentReaders:
         assert results["ok"] > 0
         assert "ody_keep" in app_module._token_cache
         assert len(app_module._token_cache) == 1
+
+
+class TestRefreshLeavesTheReadersMapAlone:
+    """The deterministic form of the invariant the timing tests above only sample.
+
+    `test_no_empty_reads_during_refresh` and `test_no_empty_reads_with_token_churn`
+    both pass against the pre-fix `.clear()` + `.update()` code: hitting a window
+    that is a handful of bytecodes wide needs a GIL switch to land inside it, and
+    across 100 and 50 refreshes it does not. They document the intent; they do not
+    pin it.
+
+    What the fix actually guarantees is object-level: a reader dereferences the
+    global once, and the dict it ends up holding is never mutated afterwards. The
+    rebuild builds a new map and rebinds the name, so a reader holding the old one
+    sees a complete stale map rather than a half-built current one. Asserting that
+    fails on the pre-fix code without depending on thread scheduling.
+    """
+
+    def test_a_held_map_is_not_emptied_by_a_later_refresh(self, app_module):
+        _seed(app_module, [_row("ody_before", "t1", "h1", "admin", "chat")])
+        app_module._refresh_token_cache()
+
+        # What a reader would have dereferenced, and what it held at that moment.
+        held = app_module._token_cache
+        snapshot = dict(held)
+        assert snapshot, "fixture did not populate the cache"
+
+        _seed(app_module, [_row("ody_after", "t2", "h2", "admin", "chat")])
+        app_module._refresh_token_cache()
+
+        assert held == snapshot, (
+            "the refresh mutated the map a reader was already holding: %r" % (held,)
+        )
+        assert "ody_after" in app_module._token_cache
+        assert "ody_before" not in app_module._token_cache
+
+    def test_app_state_follows_the_rebind(self, app_module):
+        """app.state._token_cache is bound once at startup and must not go stale."""
+        _seed(app_module, [_row("ody_one")])
+        app_module._refresh_token_cache()
+        _seed(app_module, [_row("ody_two")])
+        app_module._refresh_token_cache()
+
+        assert app_module.app.state._token_cache is app_module._token_cache
+        assert "ody_two" in app_module.app.state._token_cache
