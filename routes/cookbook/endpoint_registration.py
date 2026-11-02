@@ -128,7 +128,9 @@ def _auto_register_llm_endpoint(
     # existing systemd Ollama, the registered endpoint pointed at
     # the OLD port and showed as offline.
     port_match = re.search(r'--port\s+(\d+)', req.cmd)
-    ollama_host_match = re.search(r'OLLAMA_HOST=[^\s]*?:(\d+)', req.cmd)
+    # Host length is capped at the longest DNS name; unbounded, repeated
+    # assignments make this scan quadratic and stall the event loop.
+    ollama_host_match = re.search(r'OLLAMA_HOST=[^\s]{0,253}?:(\d+)', req.cmd)
     if port_match:
         port = int(port_match.group(1))
     elif ollama_host_match:

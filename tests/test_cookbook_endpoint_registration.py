@@ -118,6 +118,34 @@ async def test_serve_registers_endpoint_for_its_model_type(monkeypatch, tmp_path
     skip.assert_not_called()
 
 
+def _register_ollama(cmd: str) -> str:
+    from routes.cookbook.endpoint_registration import _auto_register_llm_endpoint
+    from routes.cookbook_helpers import ServeRequest
+
+    endpoint_id = _auto_register_llm_endpoint(ServeRequest(repo_id="library/model", cmd=cmd), None)
+    assert endpoint_id
+    return endpoint_id
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "h" * 253])
+def test_registers_port_from_ollama_host(endpoint_db, host):
+    endpoint_id = _register_ollama(f"OLLAMA_HOST={host}:11435 ollama serve")
+
+    assert _endpoint(endpoint_db, endpoint_id).base_url == "http://localhost:11435/v1"
+
+
+def test_repeated_ollama_host_assignments_register_quickly(endpoint_db):
+    import time
+
+    start = time.perf_counter()
+    endpoint_id = _register_ollama("OLLAMA_HOST=" * 32000 + " ollama serve")
+    elapsed = time.perf_counter() - start
+
+    # The unbounded pattern took about 30s on this input and blocked the event loop.
+    assert elapsed < 4.0, f"registration took {elapsed:.2f}s"
+    assert _endpoint(endpoint_db, endpoint_id).base_url == "http://localhost:11434/v1"
+
+
 @pytest.mark.parametrize("reuse", [False, True])
 def test_launch_keeps_endpoint_of_other_model_with_same_short_name(endpoint_db, reuse):
     if reuse:
