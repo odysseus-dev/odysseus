@@ -38,6 +38,89 @@ let _historyPager = null;
 const _serverStreamChecksInFlight = new Set();
 const _serverStreamAbsentUntil = new Map();
 const SERVER_STREAM_ABSENT_TTL_MS = 30000;
+// Last title we rendered for each session, so the sidebar can fade a title
+// in when the server auto-renames a chat (e.g. the spec model titles a new
+// chat from its first prompt) instead of snapping to it.
+const _prevSessionTitles = new Map();
+
+// === copy-chat header (debug trace block) ===
+function _toolSurfaceLabel(mode) {
+  const m = String(mode == null ? '' : mode).toLowerCase();
+  if (m === 'full') return 'Regular tools';
+  if (m === 'compact') return 'Ajax Compact';
+  if (m === 'spec') return 'Ajax Spec (router)';
+  if (m === 'none') return 'Tools off';
+  if (!m) return 'Auto';
+  return 'unknown';
+}
+
+function _formatJst(now) {
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${jst.getUTCFullYear()}-${p(jst.getUTCMonth() + 1)}-${p(jst.getUTCDate())} ${p(jst.getUTCHours())}:${p(jst.getUTCMinutes())}`;
+}
+
+function _buildCopyChatHeader(info) {
+  const version = info.version || 'unknown';
+  const build = info.build || 'unknown';
+  const commit = (info.sourceCommit || 'unknown').slice(0, 8);
+  const model = info.model || 'unknown';
+  const endpointUrl = info.endpointUrl || 'unknown';
+  const toolSurface = info.toolSurface || 'unknown';
+  const copiedAt = info.copiedAt ? _formatJst(info.copiedAt) : 'unknown';
+  const sessionId = info.sessionId || 'unknown';
+  return [
+    '--- Odysseus info ---',
+    `Odysseus: ${version} | Harness build: ${build} | Commit: ${commit}`,
+    `Model: ${model} @ ${endpointUrl} | Tool surface: ${toolSurface}`,
+    `Copied: ${copiedAt} JST | Session: ${sessionId}`,
+    '----------------------',
+  ].join('\n');
+}
+// === end copy-chat header ===
+
+async function _copyChatHeaderFor(s) {
+  let version = 'unknown';
+  let build = 'unknown';
+  let sourceCommit = 'unknown';
+  try {
+    const res = await fetch(`${API_BASE}/api/version`);
+    const v = await res.json();
+    if (v && typeof v === 'object') {
+      version = v.version || 'unknown';
+      build = v.build || 'unknown';
+      sourceCommit = v.source_commit || 'unknown';
+    }
+  } catch (_) {}
+
+  let toolSurface = 'unknown';
+  try {
+    const res = await fetch(`${API_BASE}/api/model-endpoints`);
+    if (res.ok) {
+      const eps = await res.json();
+      const list = Array.isArray(eps) ? eps : [];
+      const model = (s && s.model) || '';
+      const ep = list.find((x) => x && (
+        (s && s.endpoint_id != null && x.id === s.endpoint_id) ||
+        (s && s.endpoint_url && x.base_url === s.endpoint_url)
+      ));
+      if (ep && ep.model_tool_modes && model) {
+        toolSurface = _toolSurfaceLabel(ep.model_tool_modes[model]);
+      }
+    }
+  } catch (_) {}
+
+  return _buildCopyChatHeader({
+    version,
+    build,
+    sourceCommit,
+    model: (s && s.model) || undefined,
+    endpointUrl: (s && s.endpoint_url) || undefined,
+    toolSurface,
+    sessionId: (s && s.id) || undefined,
+    copiedAt: new Date(),
+  });
+}
 
 function _shouldPreserveStartupComposer(msgInput) {
   if (!msgInput || !msgInput.value) return false;
@@ -216,7 +299,18 @@ function _renderHistoryMessage(msg, modelName) {
   } else {
     displayContent = '';
   }
-  if (msg.role === 'user') {
+  let displayRole = msg.role;
+  // Peer turns remain user-role context for the model, but are agent replies
+  // in history. Only explicit identity plus its exact prefix can opt in.
+  if (displayRole === 'user' && meta?.group_peer === true
+      && typeof meta.group_model === 'string' && meta.group_model) {
+    const prefix = `[${meta.group_model}]: `;
+    if (displayContent.startsWith(prefix)) {
+      displayRole = 'assistant';
+      displayContent = displayContent.slice(prefix.length);
+    }
+  }
+  if (displayRole === 'user') {
     displayContent = _stripUserVisionBlocks(displayContent);
     const trimmed = displayContent.trim();
     if (
@@ -233,7 +327,7 @@ function _renderHistoryMessage(msg, modelName) {
       displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
     }
   }
-  return _addHistoryMessageWithFullRenderer(msg.role, displayContent, modelName, meta);
+  return _addHistoryMessageWithFullRenderer(displayRole, displayContent, modelName, meta);
 }
 
 function _clearHistoryPager() {
@@ -351,6 +445,9 @@ let _sessionListFocused = false;
 function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
   currentSessionId = null;
+  window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+    detail: { sessionId: null },
+  }));
   uiModule.el('chat-history').innerHTML = '';
   uiModule.el('current-meta').textContent = 'Odysseus Chat';
   Storage.remove('lastSessionId');
@@ -681,6 +778,14 @@ function createSessionItem(s) {
   let chatTitle = s.name || '';
   if (_isFork) chatTitle = chatTitle.replace(/^Fork:\s*/, '').replace(/^\u2ADD\s*/, '');
   if (_isGroup) chatTitle = chatTitle.replace(/^\[GRP\]\s*/, '');
+  // Fade the row's title in only when it actually changed since the last
+  // render; everything else about the re-render stays silent.
+  const _prevTitle = _prevSessionTitles.get(s.id);
+  if (chatTitle && _prevTitle !== undefined && _prevTitle !== chatTitle) {
+    span.classList.add('session-title-updated');
+  }
+  if (chatTitle) _prevSessionTitles.set(s.id, chatTitle);
+
   let label = chatTitle;
   if (s.model) label += ' · ' + s.model.split('/').pop();
   if (s.archived) label += ' [archived]';
@@ -927,7 +1032,8 @@ function createSessionItem(s) {
           const text = typeof m.content === 'string' ? m.content.trim() : JSON.stringify(m.content);
           return `${label}: ${text}`;
         });
-      const text = lines.join('\n\n');
+      const header = await _copyChatHeaderFor(s);
+      const text = header + '\n\n' + lines.join('\n\n');
       try {
         await navigator.clipboard.writeText(text);
       } catch (_clipErr) {
@@ -2065,6 +2171,9 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       try { window.documentModule.clearSelection(); } catch {}
     }
     currentSessionId = id;
+    window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+      detail: { sessionId: id ? id : null },
+    }));
     try { window.__odysseusLastSelectedSessionId = id; } catch (_) {}
     // Identify Assistant / task-output sessions so we don't "trap" the user
     // there on return. Skipped from both `lastSessionId` persistence and the
@@ -2445,6 +2554,9 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   _skipAutoSelect = true;
   _suppressNextSessionLoading = true;
   currentSessionId = null;
+  window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+    detail: { sessionId: null },
+  }));
   try { window.__odysseusLastSelectedSessionId = ''; } catch (_) {}
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
@@ -2555,6 +2667,9 @@ export async function materializePendingSession() {
     }
     _pendingChat = null;
     currentSessionId = payload.id;
+    window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+      detail: { sessionId: payload.id, materialized: true },
+    }));
     if (!isIncognito) {
       Storage.set('lastSessionId', payload.id);
       history.replaceState(null, '', '#' + payload.id);
@@ -2626,6 +2741,9 @@ export function getCurrentEndpointUrl() {
 export function setCurrentSessionId(id) {
   _sessionNavToken++;
   currentSessionId = id;
+  window.dispatchEvent(new CustomEvent('odysseus:session-changed', {
+    detail: { sessionId: id ? id : null },
+  }));
   try { window.__odysseusLastSelectedSessionId = id || ''; } catch (_) {}
   if (!id) {
     _suppressNextSessionLoading = true;

@@ -1,19 +1,12 @@
 # Model Behavior Observations
 
-Last updated: dev@2e2bb52 | 2026-08-16
+Last updated: dev@86b886c | 2026-10-14
 
 ## Scope
 
-This file records model- or provider+model-specific behavior observed in
-Odysseus code, tests, Issues, PRs, commits, and provider documentation. It is a
-compact evidence map, not a runtime matcher. General canonical rules belong in
-[model-capability-canonical.md](model-capability-canonical.md); provider-wide
-transport belongs in [the provider map](model-providers/_readme.md).
+This file records model- or provider+model-specific behavior observed in Odysseus code, tests, Issues, PRs, commits, and provider documentation. It is a compact evidence map, not a runtime matcher. General canonical rules belong in [model-capability-canonical.md](model-capability-canonical.md); provider-wide transport belongs in [the provider map](model-providers/_readme.md).
 
-The canonical capability layer intentionally has no
-`src/model_behavior_quirks.py`.
-Adding a registry before runtime call sites carry structured provider, model,
-version, and dialect identity would create another model-name matching layer.
+The canonical capability layer intentionally has no `src/model_behavior_quirks.py`. Adding a registry before runtime call sites carry structured provider, model, version, and dialect identity would create another model-name matching layer.
 
 ## General Observation Template
 
@@ -27,9 +20,7 @@ Record only the fields supported by the evidence:
 - source, confidence, status, and reproduction date;
 - whether the behavior is already implemented in runtime code.
 
-If exact structured identity is unavailable, keep the observation here and in
-its current tested runtime location. Do not promote it through substring,
-regex, prose, or serialized-prompt parsing in the canonical layer.
+If exact structured identity is unavailable, keep the observation here and in its current tested runtime location. Do not promote it through substring, regex, prose, or serialized-prompt parsing in the canonical layer.
 
 ## Model-Specific Observation Map
 
@@ -43,9 +34,7 @@ regex, prose, or serialized-prompt parsing in the canonical layer.
 | Ollama native `gpt-oss` reasoning level | `gpt-oss` served through Ollama native | `think` accepts low/medium/high and does not represent off | provider docs; deployment scoped |
 | Ollama compatibility disable observation | Ollama 0.20.6+, observed Qwen3.5 compatibility path | `reasoning_effort: none` was reported to disable reasoning | #5503; unmerged/low confidence until reproduced |
 
-Issue and commit references are evidence identifiers, not runtime dependencies.
-Open or unmerged observations remain provisional until reproduced or supported
-by current provider documentation.
+Issue and commit references are evidence identifiers, not runtime dependencies. Open or unmerged observations remain provisional until reproduced or supported by current provider documentation.
 
 ## Other Model-Level Observations
 
@@ -73,13 +62,11 @@ by current provider documentation.
   #1704, #1478). Native engine metadata or a verified endpoint probe outranks
   a model-family name list.
 
+Current `src.model_profiles` is a separate runtime schema/thinking profile helper: bounded `odysseus`/`ajax` tokens in the model ID leaf select compact schema and progressive thinking. It is not the absent canonical behavior registry. `src.utility_effort` validates utility effort against ChatGPT metadata that includes maintained/model-name defaults; callers must not describe those defaults as verified provider capability.
+
 ## Promotion Gate
 
-Before an observation becomes canonical runtime behavior, a consumer must
-already have the necessary structured identity and tests must cover both its
-positive scope and a neighboring negative scope. Request control and response
-visibility remain separate: hiding reasoning text is not the same as disabling
-reasoning at the provider (#2905).
+Before an observation becomes canonical runtime behavior, a consumer must already have the necessary structured identity and tests must cover both its positive scope and a neighboring negative scope. Request control and response visibility remain separate: hiding reasoning text is not the same as disabling reasoning at the provider (#2905).
 
 ## Current Gaps
 

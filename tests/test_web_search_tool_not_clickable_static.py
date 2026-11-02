@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RENDERER = (ROOT / "static/js/chatRenderer.js").read_text()
-CHAT = (ROOT / "static/js/chat.js").read_text()
+RENDERER = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
+CHAT = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
 
 
 def test_saved_web_search_tool_icon_has_no_action_target():

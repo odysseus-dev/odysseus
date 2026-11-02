@@ -15,6 +15,7 @@ text.
 import re
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -167,8 +168,54 @@ def test_renders_one_table_row_per_variable(generator, fake_tree, monkeypatch):
     page = generator.render(found, generator.naive_line_scan(fake_tree))
 
     assert page.startswith("---\nlayout: default\n---\n")
-    assert "| `ODYSSEUS_VIA_HELPER` | `5 * 1024` | `src/indirect.py:16` | A synthetic limit. |" in page
+    assert "| `ODYSSEUS_VIA_HELPER` | `5 * 1024` | `src/indirect.py` | A synthetic limit. |" in page
     assert "### Search" in page
+
+
+def _render_one(generator, root, name, monkeypatch):
+    monkeypatch.setitem(
+        generator.VARIABLE_NOTES, name, ("Search", generator.USER, "A synthetic flag.")
+    )
+    return generator.render(
+        {name: generator.collect(root)[name]}, generator.naive_line_scan(root)
+    )
+
+
+def test_page_does_not_change_when_an_unrelated_edit_shifts_lines(
+    generator, fake_tree, monkeypatch
+):
+    """An edit that moves a read down a file must not make the page stale.
+
+    The page used to cite `path:line`, so any PR adding a line above a read had
+    to regenerate it and then conflicted with every other PR that had.
+    """
+    before = _render_one(generator, fake_tree, "ODYSSEUS_VIA_HELPER", monkeypatch)
+    source = fake_tree / "src" / "indirect.py"
+    source.write_text("import sys\n\n\n" + source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    after = _render_one(generator, fake_tree, "ODYSSEUS_VIA_HELPER", monkeypatch)
+
+    assert generator.collect(fake_tree)["ODYSSEUS_VIA_HELPER"].primary.lineno == 19
+    assert after == before
+
+
+def test_extra_reads_are_counted_per_file(generator, tmp_path, monkeypatch):
+    monkeypatch.setattr(generator, "SOURCE_ROOTS", ("app.py", "src"))
+    _write(tmp_path, "app.py", """
+import os
+
+FIRST = os.environ.get("ODYSSEUS_READ_OFTEN", "1")
+SECOND = os.environ.get("ODYSSEUS_READ_OFTEN", "1")
+""")
+    _write(tmp_path, "src/elsewhere.py", """
+import os
+
+AGAIN = os.getenv("ODYSSEUS_READ_OFTEN")
+""")
+
+    page = _render_one(generator, tmp_path, "ODYSSEUS_READ_OFTEN", monkeypatch)
+
+    assert "| `app.py` (+1 more) |" in page
 
 
 def test_every_variable_read_in_the_repository_is_documented(built):
@@ -195,12 +242,21 @@ def test_page_has_no_emoji_or_other_non_ascii(built):
 
 
 def test_check_mode_reports_a_stale_page(generator, tmp_path, monkeypatch):
+    # Run the CLI state transitions on an owned input tree. The separate
+    # whole-tree completeness and subprocess checks retain repository coverage.
+    _write(tmp_path, "app.py", 'import os\nvalue = os.getenv("ODYSSEUS_EXAMPLE")\n')
+    monkeypatch.setattr(generator, "SOURCE_ROOTS", ("app.py",))
+    monkeypatch.setattr(generator, "VARIABLE_NOTES", {
+        "ODYSSEUS_EXAMPLE": ("Search", generator.USER, "A synthetic flag."),
+    })
+    monkeypatch.setattr(generator, "build", partial(generator.build, tmp_path))
     stale = tmp_path / "configuration-reference.md"
     stale.write_text("out of date\n", encoding="utf-8")
     monkeypatch.setattr(generator, "OUTPUT_PATH", stale)
 
     assert generator.main(["--check"]) == 1
     assert generator.main([]) == 0
+    assert "ODYSSEUS_EXAMPLE" in stale.read_text(encoding="utf-8")
     assert generator.main(["--check"]) == 0
 
 

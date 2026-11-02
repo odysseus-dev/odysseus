@@ -9,7 +9,9 @@ tracked-handler pattern in source.
 """
 from pathlib import Path
 
-SRC = Path("static/js/notes.js").read_text(encoding="utf-8")
+from tests.helpers.notes_source import notes_source
+
+SRC = notes_source("ui/panel")
 
 
 def test_select_esc_listener_is_tracked_not_anonymous():

@@ -14,23 +14,57 @@ const { extractThemeBootstrap } = require('./helpers/theme_bootstrap.cjs');
     page.on('request', req => { if (/\.(webm|mp4)(?:$|\?)/.test(req.url())) mediaRequests.push(req.url()); });
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(origin + '/website/index.html');
-    assert.equal(await page.locator('video, .preview-panel, .sec-bg-tint').count(), 0);
-    assert.equal(await page.locator('.feature-description').count(), 8);
-    for (const description of await page.locator('.feature-description .desc').allTextContents()) assert(description.trim());
+    // Landing page contains expected preview panels, preview videos, and background video
+    assert.equal(await page.locator('.preview-panel').count(), 8);
+    assert.equal(await page.locator('section#previews video').count(), 7);
+    assert.equal(await page.locator('section#how video.sec-bg').count(), 1);
+    assert.equal(await page.locator('section#how .sec-bg-tint').count(), 1);
+
+    // Expected video source paths exist and return 200
+    const expectedVideos = [
+      'chat.webm',
+      'research.webm',
+      'compare.webm',
+      'document.webm',
+      'notes.webm',
+      'gallery.webm',
+      'theme.webm',
+      'bg.webm',
+    ];
+    const videoSources = await page.locator('video source').evaluateAll(els => els.map(s => s.getAttribute('src')));
+    assert.deepEqual(videoSources.sort(), expectedVideos.slice().sort());
+    for (const src of expectedVideos) {
+      const videoRes = await page.request.get(origin + '/website/' + src);
+      assert.equal(videoRes.status(), 200, `Video source ${src} should return 200`);
+    }
+
+    // Feature and video layout does not overflow at desktop or mobile widths
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      assert(await page.locator('.feature-description').first().isVisible());
+      assert(await page.locator('.preview-panel').first().isVisible());
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     }
-    assert.deepEqual(mediaRequests, []);
     assert.deepEqual(errors, []);
 
+    // Manifest has valid icon entries that return successfully
     const manifest = await (await page.request.get(origin + '/static/manifest.json')).json();
     assert.equal(manifest.display, 'standalone');
-    assert(!manifest.icons);
+    assert(Array.isArray(manifest.icons) && manifest.icons.length === 3);
+    for (const icon of manifest.icons) {
+      assert(icon.src, 'Manifest icon entry must have src');
+      const iconUrl = new URL(icon.src, origin + '/static/manifest.json').href;
+      const iconRes = await page.request.get(iconUrl);
+      assert.equal(iconRes.status(), 200, `Manifest icon ${icon.src} should return 200`);
+    }
+
+    // Apple touch icon references in app HTML point to real files
     for (const filename of ['index.html', 'login.html']) {
       const html = await (await page.request.get(origin + '/static/' + filename)).text();
-      assert(!/<link[^>]+rel=["']apple-touch-icon/.test(html));
+      const match = html.match(/<link[^>]+rel=["']apple-touch-icon["'][^>]+href=["']([^"']+)["']/);
+      assert(match, `missing apple-touch-icon in ${filename}`);
+      const iconUrl = new URL(match[1], origin + '/').href;
+      const res = await page.request.get(iconUrl);
+      assert.equal(res.status(), 200, `Apple touch icon in ${filename} should return 200`);
     }
 
     // A small host DOM runs the actual export function and markdown renderer.

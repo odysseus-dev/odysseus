@@ -422,7 +422,18 @@ def _stream_delta_event(text: str, *, thinking: bool = False) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-_DEGENERATE_WORD_RE = re.compile(r"[A-Za-z0-9_\u0370-\u03ff\u0400-\u04ff]+")
+_WORD_CHARS = r"A-Za-z0-9_\u0370-\u03ff\u0400-\u04ff"
+_DELIM_RE = re.compile(rf"[^{_WORD_CHARS}+\-.]")
+_NUMERIC_PATTERN = rf"(?<![{_WORD_CHARS}])[+-]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?(?![{_WORD_CHARS}])"
+_NUMERIC_FULLMATCH_RE = re.compile(rf"^[+-]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?$")
+_DEGENERATE_WORD_RE = re.compile(rf"[{_WORD_CHARS}]+")
+_TOKEN_RE = re.compile(rf"(?P<NUM>{_NUMERIC_PATTERN})|(?P<WORD>[{_WORD_CHARS}]+)")
+
+
+def _is_numeric_token(token: str) -> bool:
+    if token.isdigit():
+        return True
+    return _NUMERIC_FULLMATCH_RE.fullmatch(token) is not None
 
 
 class _DegenerateStreamGuard:
@@ -432,32 +443,50 @@ class _DegenerateStreamGuard:
     "Summer Summer ..."). This is not a useful response and can burn context,
     browser memory, and GPU time. Keep the guard conservative: only fire on long
     same-token runs or a very dominant repeated token in the recent window.
+    Repetition made only of numbers is data (a zero or identity matrix, a
+    padded buffer), so it only stops at a long all-numeric backstop.
     """
 
     def __init__(self, model: str):
         self.model = model or "model"
         self.last_token = ""
         self.same_run = 0
+        self.numeric_run = 0
         self.recent_tokens: List[str] = []
         self.periodic_tokens: List[str] = []
         self.total_chars = 0
+        self._buffer = ""
 
     def check(self, text: str) -> Optional[str]:
         if not text:
             return None
         self.total_chars += len(text)
-        # Keep one-character tokens. Structured output often varies through
-        # numeric selectors or coordinates; dropping those tokens can make
-        # valid CSS/SVG rows look like an exact repeated phrase.
-        tokens = [t.lower() for t in _DEGENERATE_WORD_RE.findall(text)]
+        self._buffer += text
+
+        m_delims = list(_DELIM_RE.finditer(self._buffer))
+        if m_delims:
+            split_idx = m_delims[-1].end()
+            head = self._buffer[:split_idx]
+            self._buffer = self._buffer[split_idx:]
+        elif len(self._buffer) >= 256:
+            head = self._buffer
+            self._buffer = ""
+        else:
+            return None
+
+        tokens = []
+        for m in _TOKEN_RE.finditer(head):
+            tokens.append((m.group(0).lower(), m.lastgroup == "NUM"))
         if not tokens:
             return None
-        for token in tokens:
+
+        for token, is_num in tokens:
             if token == self.last_token:
                 self.same_run += 1
             else:
                 self.last_token = token
                 self.same_run = 1
+            self.numeric_run = self.numeric_run + 1 if is_num else 0
             self.recent_tokens.append(token)
             self.periodic_tokens.append(token)
         if len(self.recent_tokens) > 96:
@@ -466,14 +495,20 @@ class _DegenerateStreamGuard:
             self.periodic_tokens = self.periodic_tokens[-2048:]
 
         reason = None
-        if self.same_run >= 28 and self.total_chars >= 100:
+        if self.same_run >= 28 and self.total_chars >= 100 and not _is_numeric_token(self.last_token):
             reason = f"repeated '{self.last_token}' {self.same_run} times"
         elif len(self.recent_tokens) >= 72:
             top = max(set(self.recent_tokens), key=self.recent_tokens.count)
             count = self.recent_tokens.count(top)
-            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78:
+            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78 and not _is_numeric_token(top):
                 reason = f"repeated '{top}' {count}/{len(self.recent_tokens)} recent tokens"
-        if not reason and len(self.recent_tokens) >= 48:
+        if (
+            not reason
+            and len(self.recent_tokens) >= 48
+            # A window that is mostly numbers is matrix/table data; its
+            # periodicity is real. Mixed loops still hit the exact-block check.
+            and sum(_is_numeric_token(t) for t in self.recent_tokens) * 2 < len(self.recent_tokens)
+        ):
             # Detect a periodic suffix instead of counting repeated n-grams.
             # Reused property names are normal in CSS/SVG/JSON; a collapsed
             # generation repeats nearly every token at a short fixed period.
@@ -508,11 +543,14 @@ class _DegenerateStreamGuard:
                 if history[previous:previous + anchor_size] != anchor:
                     continue
                 period = current_anchor - previous
-                if period < 24 or len(history) < period * 2:
+                if period < 24 or len(history) < period * 2 or self.numeric_run >= period:
                     continue
-                if history[-2 * period:-period] == history[-period:]:
+                if history[-2 * period:-period] == history[-period:] and not all(_is_numeric_token(t) for t in history[-period:]):
                     reason = f"repeated an exact {period}-token block twice"
                     break
+
+        if not reason and self.numeric_run >= 2048:
+            reason = f"emitted {self.numeric_run} numbers in a row"
 
         if not reason:
             return None
@@ -1556,8 +1594,9 @@ def _build_chatgpt_responses_payload(
         "stream": stream,
         "store": False,
     }
-    if not _restricts_temperature(model):
-        payload["temperature"] = temperature
+    # ChatGPT plan Responses requests reject temperature for every model.
+    # The common caller still passes its preset value, but this provider must
+    # omit the field even for model names outside the known reasoning families.
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
@@ -2268,10 +2307,25 @@ def normalize_model_id(
             return a
     return None
 
+
+def _apply_explicit_nonstream_reasoning_effort(
+    payload: Dict, reasoning_effort: Optional[str]
+) -> None:
+    """Apply explicit effort to an OpenAI-compatible non-streaming request.
+
+    No explicit effort preserves existing provider-specific defaults.
+    Native Ollama, Anthropic and ChatGPT Responses use separate builders.
+    """
+    effort = str(reasoning_effort or "").strip().lower()
+    if effort and effort != "default":
+        payload["reasoning_effort"] = effort
+
+
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
-             thinking_mode: Optional[str] = None) -> str:
+             thinking_mode: Optional[str] = None,
+             reasoning_effort: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -2303,7 +2357,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     provider = _detect_provider(url)
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
-        thinking_mode=thinking_mode,
+        thinking_mode=thinking_mode, reasoning_effort=reasoning_effort,
     )
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -2343,6 +2397,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         )
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        _apply_explicit_nonstream_reasoning_effort(payload, reasoning_effort)
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -2465,14 +2520,30 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
 
 
 async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
-    """Async variant of `llm_call_with_fallback` — same semantics."""
+    """Async variant of `llm_call_with_fallback` — same semantics.
+
+    An optional ``candidate_request_factory(index, url, model, headers)`` may
+    return ``{"messages": ..., "kwargs": {...}}`` to adjust the request per
+    candidate (same contract as `llm_call_async_with_route_fallback`).
+    """
+    candidate_request_factory = kwargs.pop("candidate_request_factory", None)
     cands = dedupe_model_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return await llm_call_async(url, model, messages, headers=headers, **kwargs)
+            candidate_messages = messages
+            candidate_kwargs = kwargs
+            if candidate_request_factory is not None:
+                request = candidate_request_factory(i, url, model, headers) or {}
+                if hasattr(request, "__await__"):
+                    request = await request
+                candidate_messages = request.get("messages", messages)
+                candidate_kwargs = {**kwargs, **(request.get("kwargs") or {})}
+            return await llm_call_async(
+                url, model, candidate_messages, headers=headers, **candidate_kwargs
+            )
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -2740,6 +2811,7 @@ async def llm_call_async(
         _apply_deepseek_v4_reasoning_defaults(
             payload, target_url, model, thinking_mode
         )
+        _apply_explicit_nonstream_reasoning_effort(payload, reasoning_effort)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")

@@ -222,3 +222,45 @@ def test_untrusted_validation_detail_cannot_masquerade_as_curated_guidance(detai
     assert "TAKEOVER_SECRET" not in public
     assert "/srv/private" not in public
     assert "PRIVATE_TOKEN" not in public
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool, arguments, hint", [
+    # Authored by normalized_native_function_argument_error.
+    ("pdf_extract", {"url": "Attention Is All You Need"},
+     "pdf_extract requires a public http(s) PDF URL"),
+    # Rebuilt from the schema, not from the caught ValidationError.
+    ("manage_notes", {"action": "explode"},
+     "Argument 'action' must be one of: list, search, view"),
+    ("python", {},
+     "Missing required argument: 'code'."),
+])
+async def test_preview_returns_validator_guidance_to_the_model(monkeypatch, tool, arguments, hint):
+    module = _preview_provider(monkeypatch, [
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1", "function": {
+            "name": tool, "arguments": json.dumps(arguments),
+        }}]}}]},
+        {"choices": [{"delta": {"content": "The requested call failed."}}]},
+    ] * 8)
+
+    async def execute(*args, **kwargs):
+        raise AssertionError("an invalid call must not execute")
+
+    monkeypatch.setattr(module, "execute_tool_block", execute)
+    schema = next(s for s in FUNCTION_TOOL_SCHEMAS if s["function"]["name"] == tool)
+    chunks = await _client_chunks(_preview_generator(module, [schema]), False)
+    tool_event = next(e for e in _events(chunks) if e.get("type") == "tool_output")
+    assert tool_event["error_category"] == "invalid_tool_arguments"
+    assert hint in tool_event["output"]
+    assert "could not be validated" not in tool_event["output"]
+
+
+def test_schema_hint_ignores_the_caught_exception_text():
+    from src.clean_agent_preview import _schema_argument_hint
+    schema = next(s for s in FUNCTION_TOOL_SCHEMAS if s["function"]["name"] == "manage_notes")
+    # A ValidationError raised for arguments that are actually valid yields no
+    # hint, so the caller falls back to the curated schema message.
+    assert _schema_argument_hint({"action": "list"}, schema["function"]["parameters"]) == ""
+    hint = _schema_argument_hint({"action": SENSITIVE}, schema["function"]["parameters"])
+    assert "must be one of" in hint
+    assert "TAKEOVER_SECRET" not in hint

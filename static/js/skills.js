@@ -1260,6 +1260,9 @@ async function _expandSkillCard(card, name) {
       card._md = md || '';
     } else {
       pre.textContent = 'Loading…';
+      const editBtn = [...card.querySelectorAll('.skill-card-preview button')]
+        .find(button => button.textContent.trim() === 'Edit');
+      if (editBtn) editBtn.disabled = true;
       try {
         const md = await _fetchSkillMarkdown(name);
         pre.textContent = md || '(empty)';
@@ -1267,6 +1270,8 @@ async function _expandSkillCard(card, name) {
         card._md = md;
       } catch (e) {
         pre.textContent = `Failed to load SKILL.md: ${e.message || 'Unknown error'}`;
+      } finally {
+        if (editBtn) editBtn.disabled = !card._mdLoaded;
       }
     }
   }
@@ -1275,6 +1280,9 @@ async function _expandSkillCard(card, name) {
 // Swap the read-only <pre> for an editable <textarea> (and back). The
 // Edit button toggles; a Save button commits via the markdown endpoint.
 function _toggleSkillEdit(card, name) {
+  // A loading/error preview is not source text. Menu entry points must obey
+  // the same readiness gate as the disabled footer control.
+  if (!card._mdLoaded) return;
   const preview = card.querySelector('.skill-card-preview');
   if (!preview) return;
   const existing = preview.querySelector('.skill-md-editor');
@@ -1288,6 +1296,9 @@ function _toggleSkillEdit(card, name) {
   ta.className = 'skill-md-editor';
   ta.spellcheck = false;
   ta.value = (card._md != null ? card._md : (pre ? pre.textContent : '')) || '';
+  // Let the source set the intrinsic height; the card's existing flex/max
+  // height keeps long files bounded and the Save footer reachable.
+  ta.rows = Math.max(ta.rows, ta.value.split(/\r\n|\r|\n/).length);
   ta.addEventListener('click', (e) => e.stopPropagation());
   if (pre) pre.style.display = 'none';
   preview.insertBefore(ta, preview.querySelector('.doclib-card-expanded-actions'));

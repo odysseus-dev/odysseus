@@ -67,6 +67,26 @@ def safe_chmod(path, mode: int) -> bool:
         return False
 
 
+# ── Account home ────────────────────────────────────────────────────────────
+def service_home() -> Path:
+    """Return the account home even when a task overrides ``HOME``.
+
+    POSIX reads the passwd entry for the real uid, so a tool that rewrites
+    ``HOME`` for a sandboxed child still resolves the service account's own
+    home. Windows has no passwd database and no ``os.getuid``; ``Path.home()``
+    resolves through the user profile there and is already correct, so it is
+    both the Windows answer and the POSIX fallback.
+    """
+    if IS_WINDOWS:
+        return Path.home()
+    import pwd  # POSIX-only; imported lazily so this module loads on Windows
+
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, OSError):
+        return Path.home()
+
+
 # ── Process detach / liveness / teardown ────────────────────────────────────
 def detached_popen_kwargs() -> dict:
     """Keyword args for :class:`subprocess.Popen` that fully detach a child so

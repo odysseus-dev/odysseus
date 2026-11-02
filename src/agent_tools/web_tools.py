@@ -14,7 +14,6 @@ import tempfile
 import time
 import html
 import hashlib
-import pwd
 import urllib.parse
 import urllib.request
 import uuid
@@ -32,10 +31,7 @@ _ACTIVE_BROWSER_SESSIONS: set[str] = set()
 def _service_home() -> Path:
     """Return the account home even when a task overrides ``HOME``."""
 
-    try:
-        return Path(pwd.getpwuid(os.getuid()).pw_dir)
-    except (KeyError, OSError):
-        return Path.home()
+    return platform_compat.service_home()
 
 
 def _host_npm_roots() -> list[Path]:
