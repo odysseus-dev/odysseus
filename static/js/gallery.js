@@ -9,7 +9,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 import { topPortalZ } from './toolWindowZOrder.js';
 import sessionModule from './sessions.js';
-import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
+import fileHandlerModule from './fileHandler.js?v=20261102uploadsingleerror1';
 
 const API_BASE = window.location.origin;
 const ACTIVE_EDITOR_SESSION_KEY = 'odysseus-gallery-active-editor-v1';

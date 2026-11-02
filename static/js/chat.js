@@ -14,7 +14,8 @@ import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js?v=20260908personaname1';
-import fileHandlerModule from './fileHandler.js?v=20260909mobileattachmentedit1';
+import fileHandlerModule from './fileHandler.js?v=20261102uploadsingleerror1';
+import * as uploadFeedback from './uploadFeedback.js';
 import searchModule from './search.js';
 import documentModule from './document.js?v=20260916docctx2';
 import * as emailInbox from './emailInbox.js?v=20260914aireply4';
@@ -2694,7 +2695,13 @@ import { invalidateSettings } from './appConfig.js';
       if (_pendingAttachInfo && !ids.length && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) {
         if (_userMsgEl && _userMsgEl.parentNode) _userMsgEl.remove();
         if (fileHandlerModule.wasLastUploadCancelled && !fileHandlerModule.wasLastUploadCancelled()) {
-          uiModule.showError && uiModule.showError('Upload failed. Attachment kept so you can retry.');
+          // One rejection -> exactly one message, carrying the server's reason
+          // (issue #6235: fileHandler.js no longer toasts its own copy, and the
+          // generic wording here was why the reason was never where users look).
+          const _reason = fileHandlerModule.getLastUploadError
+            ? fileHandlerModule.getLastUploadError() : '';
+          uiModule.showError
+            && uiModule.showError(uploadFeedback.formatUploadFailure(_reason));
         }
         updateSubmitButton('idle', submitBtn);
         _releaseSendFlag();

@@ -33,6 +33,22 @@ def get_chat_upload_max_bytes() -> int:
     return read_byte_limit_env(CHAT_UPLOAD_MAX_BYTES_ENV, DEFAULT_CHAT_UPLOAD_MAX_BYTES)
 
 
+def chat_upload_limit_message(limit: int) -> str:
+    """The chat-upload size rejection, naming the env var that overrides it.
+
+    Single-sourced (issue #6235): ``/api/upload`` (``UploadHandler``) and the
+    chat send path (``validate_file_upload``) both enforce the same limit, and
+    the client now renders whatever reason the server returns verbatim. The
+    "this is configurable" hint therefore has to live where the limit is
+    known — the server — or the two paths drift and users read the 10 MB
+    default as a hard-coded wall.
+    """
+    return (
+        f"File size exceeds {format_byte_limit(limit)} limit "
+        f"(configurable via {CHAT_UPLOAD_MAX_BYTES_ENV})"
+    )
+
+
 # Per-route upload byte-limits, single-sourced here (issue #3364). Each is
 # validated + env-overridable via read_byte_limit_env: set the matching
 # ODYSSEUS_*_MAX_BYTES env var to an integer byte count to tune it; an invalid

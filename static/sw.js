@@ -73,7 +73,7 @@ const PRECACHE = [
   '/static/js/skills.js?v=20260909kebabconsistency1',
   '/static/js/skillsMetrics.js?v=20260908autonomousskills1',
   '/static/js/tourHints.js',
-  '/static/js/fileHandler.js?v=20260909mobileattachmentedit1',
+  '/static/js/fileHandler.js?v=20261102uploadsingleerror1',
   '/static/js/voiceRecorder.js',
   '/static/js/actionMenuOrder.js',
   '/static/js/platform.js',

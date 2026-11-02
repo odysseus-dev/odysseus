@@ -18,7 +18,10 @@ from fastapi import HTTPException
 from fastapi import UploadFile
 from typing import List, Optional
 
-from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
+from src.upload_limits import (
+    chat_upload_limit_message,
+    get_chat_upload_max_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +532,7 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
                 status_code=400,
                 detail={
                     "error": "FILE_TOO_LARGE",
-                    "message": f"File size exceeds {format_byte_limit(upload_limit)} limit"
+                    "message": chat_upload_limit_message(upload_limit)
                 }
             )
     except IOError as e:
