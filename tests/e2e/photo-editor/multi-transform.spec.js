@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const fs = require('node:fs/promises');
 const { editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
@@ -14,9 +15,9 @@ test('shared transform preserves relative layout, masks, retained text, undo, ca
   await openBlankEditor(page, { width: 400, height: 300 }, 'Multi-transform E2E');
   const editRow = page.locator('.ge-layer-item[data-layer-id]').filter({ hasText: 'Edit' }).first();
   await editRow.click();
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
 
-  await page.locator('.ge-tool-btn[data-tool="text"]').click();
+  await selectTool(page, 'text');
   const canvasBox = await page.locator('.ge-main-canvas').boundingBox();
   await page.mouse.click(canvasBox.x + canvasBox.width * 0.35, canvasBox.y + canvasBox.height * 0.25);
   await page.locator('#ge-text-content').fill('Transform together');
@@ -25,7 +26,7 @@ test('shared transform preserves relative layout, masks, retained text, undo, ca
 
   const backgroundRow = page.locator('.ge-layer-item[data-layer-id]').filter({ hasText: 'Background' }).first();
   await editRow.click();
-  await page.locator('#ge-layer-tools .ge-layer-clip-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-layer-clip-btn').click();
   await editRow.click();
   await backgroundRow.click({ modifiers: ['Control'] });
   await page.locator('#ge-group-selected').click();
@@ -36,7 +37,7 @@ test('shared transform preserves relative layout, masks, retained text, undo, ca
   expect(initial.selectedLayerIds).toHaveLength(3);
   const bounds = selectionBounds(initial.layers);
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await expect(page.locator('.ge-transform-popup .ge-adj-title')).toHaveText('Transform 3 layers');
   expect(Number(await page.locator('#ge-transform-w').inputValue())).toBe(bounds.width);
   expect(Number(await page.locator('#ge-transform-h').inputValue())).toBe(bounds.height);
@@ -71,7 +72,7 @@ test('shared transform preserves relative layout, masks, retained text, undo, ca
   await page.locator('#ge-redo').click();
   expect((await editorState(page)).layers).toEqual(transformed.layers);
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   const secondWidth = await page.locator('#ge-transform-w').inputValue();
   await page.locator('#ge-transform-rot-90').click();
   await expect(page.locator('#ge-transform-rot')).toHaveValue('90');
@@ -87,7 +88,7 @@ test('shared transform preserves relative layout, masks, retained text, undo, ca
   expect(cancelled.groups).toEqual(transformed.groups);
   expect(cancelled.redo).toBe(0);
 
-  await page.locator('.ge-tool-btn[data-tool="transform"]').click();
+  await selectTool(page, 'transform');
   await page.locator('#ge-transform-rot-90').click();
   await expect(page.locator('#ge-transform-rot')).toHaveValue('90');
   await page.locator('#ge-transform-flip-h').click();

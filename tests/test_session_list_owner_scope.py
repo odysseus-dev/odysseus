@@ -19,6 +19,7 @@ from core.database import ChatMessage as DbMessage
 from core.database import Session as DbSession
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+_TMPDB.close()  # SQLite owns its connections; release the Windows file handle.
 _ENGINE = create_engine(
     f"sqlite:///{_TMPDB.name}",
     connect_args={"check_same_thread": False},
@@ -230,12 +231,14 @@ def test_patch_session_updates_persisted_cwd(monkeypatch):
 
 def test_auto_sort_skip_llm_cleans_owner_stamped_sessions_when_auth_disabled(monkeypatch):
     import routes.session_routes as sr
+    from fastapi import APIRouter
     from unittest.mock import MagicMock
 
     _stub_multipart_if_missing(monkeypatch)
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setattr(sr, "SessionLocal", _TS)
     monkeypatch.setattr(sr, "effective_user", lambda request: None)
+    monkeypatch.setattr(sr, "router", APIRouter(prefix="/api"))
 
     sid = str(uuid.uuid4())
     old_time = cdb.utcnow_naive() - timedelta(hours=2)
@@ -250,18 +253,11 @@ def test_auto_sort_skip_llm_cleans_owner_stamped_sessions_when_auth_disabled(mon
             endpoint_url="http://localhost",
             model="gpt-4",
             archived=False,
-            message_count=1,
+            message_count=0,
             created_at=old_time,
             updated_at=old_time,
             last_message_at=old_time,
             last_accessed=old_time,
-        ))
-        db.add(DbMessage(
-            id="m-" + uuid.uuid4().hex,
-            session_id=sid,
-            role="user",
-            content="hi",
-            timestamp=old_time,
         ))
         db.commit()
     finally:
@@ -270,6 +266,13 @@ def test_auto_sort_skip_llm_cleans_owner_stamped_sessions_when_auth_disabled(mon
     session = MagicMock(id=sid, name="New chat", model="gpt-4", endpoint_url="http://localhost", rag=False, archived=False)
     sm = MagicMock()
     sm.get_sessions_for_user.return_value = {sid: session}
+
+    def delete_session(session_id):
+        with _TS() as db:
+            db.query(DbSession).filter(DbSession.id == session_id).delete()
+            db.commit()
+
+    sm.delete_session.side_effect = delete_session
     router = sr.setup_session_routes(sm, {})
     endpoint = next(r.endpoint for r in router.routes
                     if getattr(r, "path", "") == "/api/sessions/auto-sort"
@@ -277,7 +280,8 @@ def test_auto_sort_skip_llm_cleans_owner_stamped_sessions_when_auth_disabled(mon
 
     result = endpoint(request=MagicMock(), skip_llm=True)
 
-    assert result["deleted_throwaway"] == 1
+    assert result["deleted_empty"] == 1
+    assert result["deleted_throwaway"] == 0
     db = _TS()
     try:
         assert db.query(DbSession).filter(DbSession.id == sid).first() is None

@@ -657,6 +657,7 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
             <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
+              <option value="gohu">GohuFont</option>
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
               <option value="serif">Serif</option>
@@ -1677,6 +1678,10 @@
                 <select id="set-imgModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
               </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label" for="set-imgEditModelSelect">Image edit model</label>
+                <select id="set-imgEditModelSelect" class="settings-select"><option value="">Same as generation</option></select>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Quality</label>
                 <select id="set-imgQualitySelect" class="settings-select">
                   <option value="low">Low (fastest, cheapest)</option>
@@ -2458,6 +2463,22 @@
                 <label class="settings-label">Max steps per message</label>
                 <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Tool approval</label>
+                <select id="set-toolApprovalMode" class="settings-select">
+                  <option value="ask">Always ask</option>
+                  <option value="off">Off (YOLO)</option>
+                </select>
+              </div>
+
+              <div class="admin-toggle-sub" style="margin-top:4px;">
+                Auto-approve turns off the tool approval gate (same control as the
+                ODYSSEUS_TOOL_APPROVAL_GATE env var). Bash, host_shell, send_email and
+                delete_email then run without a confirmation even after the agent has
+                seen untrusted external content (email, web pages, documents), so a
+                prompt-injected instruction can reach them directly.
+              </div>
+              <div id="set-toolApprovalEnvNote" class="admin-toggle-sub" style="margin-top:4px;display:none;color:var(--red);"></div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
@@ -2679,7 +2700,7 @@
 <script type="module" src="/static/js/gallery.js?v=20260910promptcopy1"></script>
 <script type="module" src="/static/js/chatRenderer.js?v=20260914metricssummary1"></script>
 <script type="module" src="/static/js/codeRunner.js?v=20260831richtexttools91"></script>
-<script type="module" src="/static/js/chatStream.js?v=20260914pdfstrip1"></script>
+<script type="module" src="/static/js/chatStream.js?v=20261026devsync1"></script>
 <script type="module" src="/static/js/chat.js?v=20260917toolttft1"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>

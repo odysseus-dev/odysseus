@@ -7,6 +7,7 @@ import json
 import hashlib
 import ipaddress
 import socket
+import secrets
 import time as _time
 import logging
 import threading
@@ -47,6 +48,7 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, effective_user, owner_filter
+from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -472,7 +474,7 @@ def _truthy(value: str | None) -> bool:
 
 _ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
 _REFRESH_MODES = {"auto", "manual", "disabled"}
-_MODEL_TOOL_MODES = {"none", "compact", "full"}
+_MODEL_TOOL_MODES = {"none", "compact", "full", "spec"}
 _MODEL_TOOL_MODE_ALIASES = {
     "regular": "full",
     "odysseus_compact": "compact",
@@ -552,10 +554,10 @@ def _endpoint_refresh_timeout(ep: Any, category: str) -> float:
         val = 0
     if val > 0:
         return float(max(1, min(60, val)))
-    # llama.cpp and other local OpenAI-compatible servers can block briefly
-    # while warming/loading. A 2s local timeout makes working endpoints flicker
-    # offline before /v1/models is ready.
-    return 10.0 if category == "local" else 2.0
+    # Keep the background refresh short so a single dead endpoint cannot stall
+    # the model picker. A timed-out refresh never clears a non-empty model
+    # cache, so a briefly-warming local server is simply retried next round.
+    return 2.0
 
 
 def _manual_refresh_timeout(ep: Any, category: str, requested: Any = None) -> float:
@@ -657,7 +659,7 @@ _NON_CHAT_CONTAINS = (
     "gliner", "riva", "-parse", "-embedqa", "-nemoretriever",
     "topic-control", "calibration",
     "ai-synthetic-video", "cosmos-reason2",
-    "bge", "llama-guard",
+    "bge", "llama-guard", "-embed", "rerank",
 )
 _NON_CHAT_EXACT_PREFIXES = (
     "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
@@ -1510,6 +1512,9 @@ def setup_model_routes(model_discovery):
     _refresh_inflight = {"v": False, "done": None}  # coarse single-flight guard
     _REFRESH_FAILURE_BASE = 300.0
     _REFRESH_FAILURE_MAX = 3600.0
+    # Even a user-triggered refresh must not re-probe an endpoint that just
+    # failed/timed out on every click; keep a short cooldown.
+    _REFRESH_FAILURE_MIN = 60.0
 
     def _refresh_key(base: str, api_key: Optional[str], provider_auth_id: Optional[str] = None) -> str:
         # Session-backed endpoints carry no static key; include their auth id
@@ -1557,14 +1562,20 @@ def setup_model_routes(model_discovery):
         if mode in ("manual", "disabled") and not force:
             return False, info
         fails = int(state.get("fail_count") or 0)
-        if fails and not force:
+        if fails:
             last_failure = float(state.get("last_failure") or 0.0)
             empty_local = (
                 not cached
                 and category == "local"
                 and str(getattr(ep, "id", "") or "").startswith("local-")
             )
-            if now - last_failure < _failure_delay(fails, empty_local=empty_local):
+            delay = _failure_delay(fails, empty_local=empty_local)
+            if force:
+                # A user-triggered refresh gets a short cooldown instead of the
+                # long background backoff, but still skips a just-failed
+                # endpoint so repeated clicks cannot stall the picker.
+                delay = min(delay, _REFRESH_FAILURE_MIN)
+            if now - last_failure < delay:
                 return False, info
         if cached and not force:
             interval = _endpoint_refresh_interval(ep, category)
@@ -2163,6 +2174,19 @@ def setup_model_routes(model_discovery):
         # keep those container-local when the frontend marks them as such.
         base_url = _rewrite_loopback_for_docker(base_url, container_local=_truthy(container_local))
 
+        # SSRF hardening: validate the user-supplied URL before any outbound
+        # request. Local-first means loopback/LAN endpoints are allowed by
+        # default; non-HTTP(S) schemes and the cloud metadata range are always
+        # rejected. Set MODELENDPOINT_BLOCK_PRIVATE_IPS=true for full lockdown.
+        # Note: the outbound fetches rely on httpx's default
+        # follow_redirects=False — a redirect target is never dereferenced.
+        ok, reason = check_outbound_url(
+            base_url,
+            block_private=os.getenv("MODELENDPOINT_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+        )
+        if not ok:
+            raise HTTPException(400, f"Rejected endpoint URL: {reason}")
+
         is_featherless = _host_match(base_url, "featherless.ai") or _safe_detect_provider(base_url) == "featherless"
         # Auto-generate name from URL if not provided
         if not name.strip():
@@ -2399,6 +2423,16 @@ def setup_model_routes(model_discovery):
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
+        # SSRF hardening: validate the user-supplied URL before any outbound
+        # request. Local-first means loopback/LAN endpoints are allowed by
+        # default; non-HTTP(S) schemes and the cloud metadata range are always
+        # rejected. Set MODELENDPOINT_BLOCK_PRIVATE_IPS=true for full lockdown.
+        ok, reason = check_outbound_url(
+            base_url,
+            block_private=os.getenv("MODELENDPOINT_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+        )
+        if not ok:
+            raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
         is_featherless = _host_match(base_url, "featherless.ai") or _safe_detect_provider(base_url) == "featherless"
         if is_featherless and requested_kind == "auto":
@@ -2812,11 +2846,12 @@ def setup_model_routes(model_discovery):
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
+            if model and not _is_chat_model(model):
+                model = ""
             if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
                 try:
                     visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
-                    if visible:
-                        model = visible[0]
+                    model = next((mid for mid in visible if _is_chat_model(mid)), "")
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
@@ -2889,6 +2924,16 @@ def setup_model_routes(model_discovery):
                             _new_base = _new_base[: -len(_suffix)].rstrip("/")
                     _new_base = _normalize_base(_new_base)
                     if _new_base:
+                        # SSRF hardening: PATCH rewrites the stored base_url, so
+                        # it needs the same guard as POST create/test — no
+                        # bypass through the update path. Follow-up fetches
+                        # rely on httpx's default follow_redirects=False.
+                        ok, reason = check_outbound_url(
+                            _new_base,
+                            block_private=os.getenv("MODELENDPOINT_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+                        )
+                        if not ok:
+                            raise HTTPException(400, f"Rejected endpoint URL: {reason}")
                         ep.base_url = _new_base
             else:
                 ep.is_enabled = not ep.is_enabled
@@ -2999,20 +3044,44 @@ def setup_model_routes(model_discovery):
         return {"dependents": _settings_using_endpoint(ep_id)}
 
     @router.delete("/model-endpoints/{ep_id}")
-    def delete_model_endpoint(ep_id: str, request: Request):
+    def delete_model_endpoint(
+        ep_id: str,
+        request: Request,
+        expected_cookbook_serve_session_id: Optional[str] = None,
+    ):
         require_admin(request)
         db = SessionLocal()
         try:
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep or not _chatgpt_endpoint_visible(ep, request):
                 raise HTTPException(404, "Endpoint not found")
+            if expected_cookbook_serve_session_id is not None:
+                # The DELETE itself checks ownership. An old serve must never
+                # mutate the settings of an endpoint reused by another serve.
+                if (
+                    not ep_id.startswith(("local-", "img-"))
+                    or not expected_cookbook_serve_session_id
+                ):
+                    raise HTTPException(409, "Cookbook endpoint ownership mismatch")
+                deleted = (
+                    db.query(ModelEndpoint)
+                    .filter(
+                        ModelEndpoint.id == ep_id,
+                        ModelEndpoint.cookbook_serve_session_id
+                        == expected_cookbook_serve_session_id,
+                    )
+                    .delete(synchronize_session=False)
+                )
+                if not deleted:
+                    raise HTTPException(409, "Cookbook endpoint ownership changed")
             # Clean up any settings that reference this endpoint
             cleared = _clear_settings_for_endpoint(ep_id)
             cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
             cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url, ep.id, ep.owner)
             cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url, ep.id, ep.owner)
             auth_id = getattr(ep, "provider_auth_id", None)
-            db.delete(ep)
+            if expected_cookbook_serve_session_id is None:
+                db.delete(ep)
             cleared_provider_auth = _delete_orphaned_provider_auth(db, auth_id, exclude_ep_id=ep_id)
             db.commit()
             _invalidate_models_cache()
@@ -3048,6 +3117,12 @@ def setup_model_routes(model_discovery):
     def update_tools(body: ToolsUpdate, request: Request):
         """Update which tools are disabled."""
         require_admin(request)
+        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+        internal_token = request.headers.get(INTERNAL_TOOL_HEADER)
+        if internal_token and secrets.compare_digest(internal_token, INTERNAL_TOOL_TOKEN):
+            # Owner impersonation can carry an admin username, so check the
+            # authenticated transport rather than request.state.current_user.
+            raise HTTPException(403, "Change tool policy in Settings > Agent Tools, not from chat")
         settings = _load_settings()
         settings["disabled_tools"] = body.disabled
         _save_settings(settings)
@@ -3055,4 +3130,10 @@ def setup_model_routes(model_discovery):
 
     router._should_refresh_endpoint = _should_refresh_endpoint
     router._search_endpoint_catalog = search_endpoint_catalog
+    # Exposed for tests: the in-memory backoff state, its key function, and the
+    # background refresh driver (probes endpoints in parallel with the short
+    # per-endpoint timeout).
+    router._refresh_state = _refresh_state
+    router._refresh_key = _refresh_key
+    router._refresh_caches_bg = _refresh_caches_bg
     return router
