@@ -6,6 +6,7 @@
   <title>Odysseus Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
+  <link rel="search" type="application/opensearchdescription+xml" title="Odysseus" href="/opensearch.xml">
   <meta name="theme-color" content="#282c34">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -250,7 +251,7 @@
   <link rel="stylesheet" href="/static/css/00-tokens.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/02-compare.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20260929csssplit">
+  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261017titlefade1">
   <link rel="stylesheet" href="/static/css/04-memory.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/05-documents.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20260929csssplit">
@@ -1678,10 +1679,6 @@
                 <select id="set-imgModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
               </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label" for="set-imgEditModelSelect">Image edit model</label>
-                <select id="set-imgEditModelSelect" class="settings-select"><option value="">Same as generation</option></select>
-              </div>
-              <div style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Quality</label>
                 <select id="set-imgQualitySelect" class="settings-select">
                   <option value="low">Low (fastest, cheapest)</option>
@@ -1811,6 +1808,15 @@
                     <option value="custom">Custom</option>
                   </select>
                   <input id="set-searchResultCountCustom" type="number" class="settings-select" placeholder="Enter custom value" style="flex:1;display:none;min-width:120px;" min="1" max="100">
+                </div>
+              </div>
+              <div id="set-searchImagesRow" class="settings-row">
+                <label class="settings-label" for="set-searchImages" title="Show image results alongside web search answers (SearXNG only)">Image results</label>
+                <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;">
+                  <label class="admin-switch" title="Show image results alongside web search answers (SearXNG only)">
+                    <input type="checkbox" id="set-searchImages" checked>
+                    <span class="admin-slider"></span>
+                  </label>
                 </div>
               </div>
               <div id="set-searchUrlRow" class="settings-row">

@@ -36,6 +36,8 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
+import { providerLabel, providerBillingUrl } from './providers.js';
+import settingsModule from './settings.js?v=20260912writingstyle3';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import { invalidateSettings } from './appConfig.js';
 
@@ -225,6 +227,37 @@ import { invalidateSettings } from './appConfig.js';
       }
     } catch (_) {}
     console.warn('[chat]', msg);
+  }
+
+  function _isProviderPaymentError(message, status) {
+    if (Number(status) === 402) return true;
+    return /payment required|billing|credits?|insufficient.?quota|quota exceeded/i.test(String(message || ''));
+  }
+
+  function _appendProviderErrorActions(body, message, status, endpointUrl) {
+    if (!body || !_isProviderPaymentError(message, status)) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'provider-error-actions';
+    const billingUrl = providerBillingUrl(endpointUrl);
+    if (billingUrl) {
+      const link = document.createElement('a');
+      link.className = 'provider-error-link';
+      link.href = billingUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const label = providerLabel(endpointUrl);
+      link.textContent = label && label !== 'Local' ? `Open ${label} billing` : 'Open provider page';
+      wrap.appendChild(link);
+    }
+    const manage = document.createElement('button');
+    manage.type = 'button';
+    manage.className = 'provider-error-link';
+    manage.textContent = 'Manage endpoints';
+    manage.addEventListener('click', () => {
+      try { settingsModule.open('services'); } catch (err) { console.error('Could not open endpoint settings:', err); }
+    });
+    wrap.appendChild(manage);
+    body.appendChild(wrap);
   }
 
   // Render the one-click "Open in editor & apply" button on a photo-edit reply
@@ -3238,6 +3271,8 @@ import { invalidateSettings } from './appConfig.js';
       let _sourcesData = null;        // Raw sources data for rebuilding
       let _sourcesType = '';          // 'web' or 'research'
       let _findingsData = null;      // Raw findings data for collapsible box
+      let _followupsData = null;     // Spec-router follow-up questions after a search
+      let _imagesData = null;        // Router-selected image results for this turn
       const _generatedImagesForTurn = [];
       function _rememberGeneratedImage(data) {
         const imageUrl = data?.image_url || data?.url || '';
@@ -3260,9 +3295,10 @@ import { invalidateSettings } from './appConfig.js';
       _settleTurnRendering = () => _turnRendering.settle();
       function _terminalAnswerHtml(text, body) {
         const expanded = _sourcesExpanded || !!body?.querySelector('.sources-content.expanded');
-        return (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, expanded) : '')
-          + markdownModule.processWithThinking(markdownModule.squashOutsideCode(markdownModule.normalizeThinkingMarkup(_streamDisplayText(text, { final: _docFenceOpened }))))
-          + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
+        return markdownModule.processWithThinking(markdownModule.squashOutsideCode(markdownModule.normalizeThinkingMarkup(_streamDisplayText(text, { final: _docFenceOpened }))))
+          + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '')
+          + (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, expanded) : '')
+          + (_imagesData && _imagesData.length ? chatRenderer.buildImageResults(_imagesData) : '');
       }
       function _renderTerminalAnswer(text, messageId = '', renderOwner, replacementScope) {
         if (renderOwner && !_turnRendering.accepts({ type: 'final_response', render_owner: renderOwner, replacement_scope: replacementScope })) return false;
@@ -3273,6 +3309,7 @@ import { invalidateSettings } from './appConfig.js';
           body, html: _terminalAnswerHtml(text, body), raw: text, messageId, render_owner: renderOwner, replacement_scope: replacementScope,
         });
         if (result.changed && window.hljs) body.querySelectorAll('pre code').forEach(block => window.hljs.highlightElement(block));
+        _syncImageGalleries(body);
         if (result.accepted) _turnRendering.settle();
         return result.accepted;
       }
@@ -3300,6 +3337,7 @@ import { invalidateSettings } from './appConfig.js';
             return _replaceLiveTurnWithSavedAssistantMessage(_attempt + 1);
           }
           if (!saved || !String(saved.content || '').trim()) return false;
+          if (saved.metadata?.images?.length && !_imagesData) _imagesData = saved.metadata.images;
           const scrollSnapshot = uiModule.captureHistoryScroll?.();
           const rendered = _renderTerminalAnswer(saved.content, _savedAssistantMessageId, saved.metadata?.render_owner, saved.metadata?.replacement_scope);
           uiModule.restoreHistoryScroll?.(scrollSnapshot);
@@ -4729,6 +4767,24 @@ import { invalidateSettings } from './appConfig.js';
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
+              } else if (json.type === 'followups') {
+                if (_isBg) {
+                  var bgF = _backgroundStreams.get(streamSessionId);
+                  if (bgF) bgF.followups = json.data;
+                  continue;
+                }
+                // Spec router picked follow-up questions after a web search;
+                // render them under the final answer once the turn settles.
+                if (json.data && json.data.length > 0) _followupsData = json.data;
+              } else if (json.type === 'images') {
+                if (_isBg) {
+                  var bgI = _backgroundStreams.get(streamSessionId);
+                  if (bgI) bgI.images = json.data;
+                  continue;
+                }
+                // Router decided the user wants pictures; show them above the
+                // follow-up chips once the final answer is rendered.
+                if (json.data && json.data.length > 0) _imagesData = json.data;
               } else if (json.type === 'workspace_rejected') {
                 // Server refused to bind the posted workspace (deleted folder,
                 // file path, sensitive dir, filesystem root). Clear the stored
@@ -5546,7 +5602,14 @@ import { invalidateSettings } from './appConfig.js';
                 const errDiv = document.createElement('div');
                 errDiv.style.cssText = 'color: var(--color-error); font-style: italic; padding: 4px 0;';
                 errDiv.textContent = `[Error: ${json.error}]`;
-                roundHolder.querySelector('.body').appendChild(errDiv);
+                const errBody = roundHolder.querySelector('.body');
+                errBody.appendChild(errDiv);
+                _appendProviderErrorActions(
+                  errBody,
+                  json.error,
+                  json.status,
+                  selectedRouteForSend?.endpoint_url,
+                );
                 uiModule.scrollHistory();
               }
             } catch (e) {
@@ -5678,9 +5741,9 @@ import { invalidateSettings } from './appConfig.js';
 	          var _wasExpanded = _sourcesExpanded || !!(_body4 && _body4.querySelector('.sources-content.expanded'));
 	          if (_suppressThinkingForPersona()) {
 	            const _personaFinal = _visiblePersonaReplyText(finalDisplay);
-	            _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
-	              + (_personaFinal.trim() ? markdownModule.mdToHtml(markdownModule.squashOutsideCode(_personaFinal)) : '')
-	              + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
+	            _body4.innerHTML = (_personaFinal.trim() ? markdownModule.mdToHtml(markdownModule.squashOutsideCode(_personaFinal)) : '')
+	              + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '')
+	              + (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '');
 	          } else {
 
 	            // If thinking was collapsed in-place during streaming, preserve it
@@ -5725,17 +5788,17 @@ import { invalidateSettings } from './appConfig.js';
 	              var _replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(_finalReply));
 	              _liveReplyEl.innerHTML = _replyHtml;
 	              _liveReplyEl.classList.remove('live-reply-content');
+	              if (_findingsData) _body4.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(_findingsData));
 	              if (_sourcesData) {
 	                var _srcEl = document.createElement('div');
 	                _srcEl.innerHTML = _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded);
-	                _body4.insertBefore(_srcEl.firstChild || _srcEl, _body4.firstChild);
+	                _body4.appendChild(_srcEl.firstChild || _srcEl);
 	              }
-	              if (_findingsData) _body4.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(_findingsData));
 	            } else {
 	              // Full re-render (reply empty or no live-reply container)
-	              _body4.innerHTML = (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '')
-	                + markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
-	                + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '');
+	              _body4.innerHTML = markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalDisplay))
+	                + (_findingsData ? chatRenderer.buildFindingsBox(_findingsData) : '')
+	                + (_sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded) : '');
 	            }
 	          }
         } else if (_sourcesHtml) {
@@ -5795,6 +5858,14 @@ import { invalidateSettings } from './appConfig.js';
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         if (!footerTarget.querySelector('.msg-footer')) {
           footerTarget.appendChild(createMsgFooter(footerTarget, { animate: true }));
+        }
+        const _imagesBody = footerTarget.querySelector('.body');
+        if (_imagesData && _imagesData.length && _imagesBody && !_imagesBody.querySelector('.chat-images')) {
+          _imagesBody.insertAdjacentHTML('beforeend', chatRenderer.buildImageResults(_imagesData));
+          _syncImageGalleries(_imagesBody);
+        }
+        if (_followupsData && _followupsData.length && !footerTarget.querySelector('.followup-suggestions')) {
+          footerTarget.insertAdjacentHTML('beforeend', chatRenderer.buildFollowups(_followupsData));
         }
         if (_generatedImagesForTurn.length && !_isBgFinal) {
           _generatedImagesForTurn.forEach(imgData => _appendGeneratedImageBubble(imgData, streamSessionId));
@@ -6146,6 +6217,12 @@ import { invalidateSettings } from './appConfig.js';
                   terminalNote.style.cssText = 'color: var(--color-error); font-style: italic; padding: 4px 0;';
                   terminalNote.textContent = `[Error: ${err.message}]`;
                   terminalBody.appendChild(terminalNote);
+                  _appendProviderErrorActions(
+                    terminalBody,
+                    err.message,
+                    err.status,
+                    selectedRouteForSend?.endpoint_url,
+                  );
                 }
               }
               return;
@@ -6981,8 +7058,8 @@ import { invalidateSettings } from './appConfig.js';
         const body = target.querySelector('.body');
         if (body && !body.querySelector('.sources-section')) {
           const sources = metricsData?.web_sources || metricsData?.research_sources;
-          if (sources?.length) body.insertAdjacentHTML('afterbegin', chatRenderer.buildSourcesBox(sources, metricsData.web_sources ? 'web' : 'research'));
           if (metricsData?.research_findings?.length) body.insertAdjacentHTML('beforeend', chatRenderer.buildFindingsBox(metricsData.research_findings));
+          if (sources?.length) body.insertAdjacentHTML('beforeend', chatRenderer.buildSourcesBox(sources, metricsData.web_sources ? 'web' : 'research'));
         }
         if (body && metricsData?.rag_sources?.length && !body.querySelector('.rag-sources')) {
           body.insertAdjacentHTML('beforeend', chatRenderer.buildRagSourcesBox(metricsData.rag_sources));
@@ -7070,10 +7147,95 @@ import { invalidateSettings } from './appConfig.js';
     obs.observe(document.body, { childList: true, subtree: true });
   })();
 
+  let _imageGalleryObserver = null;
+  let _imageGalleryResizeObserver = null;
+  const _imageGalleryObserved = new WeakSet();
+
+  function _imageGalleryColumnCount(grid) {
+    const tracks = String(window.getComputedStyle(grid).gridTemplateColumns || '').trim();
+    if (tracks && tracks !== 'none' && !/repeat|minmax/.test(tracks)) {
+      const count = tracks.split(/\s+/).filter(Boolean).length;
+      if (count > 0) return count;
+    }
+    return Math.max(1, Math.floor(((grid.clientWidth || 0) + 8) / 148));
+  }
+
+  function _collapsedImageVisibleCount(columns) {
+    if (columns <= 1) return 1;
+    if (columns === 2) return 3;
+    return Math.max(2, columns - 1);
+  }
+
+  function _syncImageGallery(gallery) {
+    if (!gallery) return;
+    const grid = gallery.querySelector('.chat-images-grid');
+    if (!grid) return;
+    const cards = grid.querySelectorAll('.chat-image-real');
+    if (!cards.length) return;
+    const skeleton = grid.querySelector('.chat-images-more');
+    const total = cards.length;
+    const expanded = gallery.classList.contains('is-expanded');
+    const visible = expanded
+      ? total
+      : Math.min(total, _collapsedImageVisibleCount(_imageGalleryColumnCount(grid)));
+    cards.forEach((card, index) => {
+      card.style.display = index < visible ? 'block' : 'none';
+    });
+    if (skeleton) {
+      const more = Math.max(0, total - visible);
+      const label = skeleton.querySelector('.chat-image-more-label');
+      const text = expanded ? 'Show less' : 'Show ' + more + ' more';
+      if (label) label.textContent = text;
+      else skeleton.textContent = text;
+      skeleton.style.display = (!expanded && more <= 0) ? 'none' : '';
+    }
+    if (_imageGalleryResizeObserver && !_imageGalleryObserved.has(grid)) {
+      _imageGalleryObserved.add(grid);
+      _imageGalleryResizeObserver.observe(grid);
+    }
+  }
+
+  function _syncImageGalleries(root) {
+    if (!root) return;
+    if (root.matches && root.matches('.chat-images')) _syncImageGallery(root);
+    if (root.querySelectorAll) root.querySelectorAll('.chat-images').forEach(_syncImageGallery);
+  }
+
+  function _initImageGallerySync() {
+    const chat = document.getElementById('chat-history');
+    if (!chat || _imageGalleryObserver) return;
+    if (typeof ResizeObserver !== 'undefined') {
+      _imageGalleryResizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const gallery = entry.target.closest && entry.target.closest('.chat-images');
+          if (gallery) _syncImageGallery(gallery);
+        }
+      });
+    }
+    _syncImageGalleries(chat);
+    _imageGalleryObserver = new MutationObserver((mutations) => {
+      let found = false;
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          if ((node.matches && node.matches('.chat-images'))
+            || (node.querySelector && node.querySelector('.chat-images'))) {
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (found) requestAnimationFrame(() => _syncImageGalleries(chat));
+    });
+    _imageGalleryObserver.observe(chat, { childList: true, subtree: true });
+  }
+
   /**
    * Initialize event listeners
    */
   export function initListeners() {
+    _initImageGallerySync();
     // Global event delegation for copy-code buttons
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('.copy-code');
@@ -7100,6 +7262,27 @@ import { invalidateSettings } from './appConfig.js';
           delete btn.dataset.state;
         }, 1500);
       }
+    });
+
+    // Follow-up question chips (post-search suggestions) send on click.
+    document.addEventListener('click', (e) => {
+      const chip = e.target.closest('.followup-chip');
+      if (!chip) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const q = String(chip.getAttribute('data-followup') || chip.textContent || '').trim();
+      if (q) _setComposerAndSend(q);
+    });
+
+    // Expand/collapse the image gallery.
+    document.addEventListener('click', (e) => {
+      const more = e.target.closest('.chat-images-more');
+      if (!more) return;
+      e.preventDefault();
+      const gallery = more.closest('.chat-images');
+      if (!gallery) return;
+      gallery.classList.toggle('is-expanded');
+      _syncImageGallery(gallery);
     });
 
     // Run code button delegation
@@ -7851,9 +8034,9 @@ import { invalidateSettings } from './appConfig.js';
               _role.appendChild(chatRenderer.roleTimestamp());
               var _body = document.createElement('div');
               _body.className = 'body';
-              _body.innerHTML = srcBox + markdownModule.processWithThinking(
+              _body.innerHTML = markdownModule.processWithThinking(
                 markdownModule.squashOutsideCode(cleanResult)
-              ) + findingsBox;
+              ) + findingsBox + srcBox;
               _wrap.dataset.raw = cleanResult;
               _wrap.appendChild(_role);
               _wrap.appendChild(_body);
@@ -8006,9 +8189,9 @@ import { invalidateSettings } from './appConfig.js';
                     srcHtml = _buildSourcesBox(rData.sources, 'research');
                   }
                   var findingsHtml = chatRenderer.buildFindingsBox(rData.raw_findings);
-                  bodyDiv.innerHTML = srcHtml + markdownModule.processWithThinking(
+                  bodyDiv.innerHTML = markdownModule.processWithThinking(
                     markdownModule.squashOutsideCode(rData.result)
-                  ) + findingsHtml;
+                  ) + findingsHtml + srcHtml;
                   holder.dataset.raw = rData.result;
                   _appendViewReportLink(holder, sessionId);
                   if (window.hljs) {

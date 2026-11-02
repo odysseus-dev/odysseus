@@ -1145,6 +1145,171 @@ body.fullwidth-chat .chat-history {
   opacity: 0.8;
 }
 
+/* ── Follow-up question chips (post-search, spec router) ── */
+@keyframes followup-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.followup-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+  animation: followup-fade-in 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .followup-suggestions,
+  .chat-images,
+  .chat-image-skeleton {
+    animation: none;
+  }
+}
+.followup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font: inherit;
+  font-size: 0.82em;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.followup-chip:hover {
+  background: color-mix(in srgb, var(--fg) 11%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.followup-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  outline-offset: 2px;
+}
+.followup-enter {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+
+/* ── Router-selected image results ── */
+.chat-images {
+  margin: 10px 0 6px;
+  animation: followup-fade-in 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.chat-images-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+.chat-image-card {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.chat-image-open {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.chat-image-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.2s ease;
+}
+.chat-image-open:hover img,
+.chat-image-open:focus-visible img {
+  transform: scale(1.04);
+}
+.chat-image-card:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  outline-offset: 2px;
+}
+.chat-image-source {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16px 8px 5px;
+  font-size: 0.72em;
+  line-height: 1.2;
+  color: #fff;
+  text-decoration: none;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.68));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s ease;
+}
+.chat-image-source:hover,
+.chat-image-source:focus-visible {
+  color: #fff;
+  text-decoration: underline;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.88));
+}
+.chat-images-grid > .chat-image-real:nth-child(n + 3) {
+  display: none;
+}
+.chat-images.is-expanded .chat-images-grid > .chat-image-real:nth-child(n + 3) {
+  display: block;
+}
+.chat-image-skeleton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: 8px;
+  text-align: center;
+  font: inherit;
+  font-size: 0.8em;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--fg) 24%, transparent);
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--fg) 4%, transparent) 20%,
+    color-mix(in srgb, var(--fg) 9%, transparent) 40%,
+    color-mix(in srgb, var(--fg) 4%, transparent) 60%
+  );
+  background-size: 220% 100%;
+  background-position: 50% 0;
+  cursor: pointer;
+}
+.chat-image-skeleton:hover,
+.chat-image-skeleton:focus-visible {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 38%, transparent);
+  animation: image-skeleton-shimmer 1.8s ease-in-out infinite;
+}
+.chat-image-skeleton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--fg) 45%, transparent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-image-skeleton:hover,
+  .chat-image-skeleton:focus-visible {
+    animation: none;
+  }
+}
+@keyframes image-skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
 /* ── Sources section — collapsible source citations ── */
 .sources-section {
   margin: 8px 0 12px;
@@ -2857,4 +3022,34 @@ details a:hover {
   background: color-mix(in srgb, var(--red) 12%, transparent);
   color: var(--red);
   opacity: 1;
+}
+
+.provider-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin: 7px 0 2px;
+}
+.provider-error-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 0.82em;
+  font-style: normal;
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 35%, transparent);
+  border-radius: 999px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.provider-error-link:hover {
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 55%, transparent);
+}
+.provider-error-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-error) 55%, transparent);
+  outline-offset: 2px;
 }

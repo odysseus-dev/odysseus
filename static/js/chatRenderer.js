@@ -1621,6 +1621,70 @@ export function buildSourcesBox(sources, type, expanded) {
 }
 
 /**
+ * Build follow-up question chips chosen by the local spec router after a
+ * web search. Clicking one sends that question (delegated in chat.js).
+ * @param {Array<string|{text: string}>} suggestions
+ */
+export function buildFollowups(suggestions) {
+  if (!suggestions || !suggestions.length) return '';
+  var esc = uiModule.esc;
+  var items = '';
+  var enterIcon = '<svg class="followup-enter" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M4 2.5v5.5a1.5 1.5 0 0 0 1.5 1.5H12.5"/>'
+    + '<path d="M9.5 6.5 12.5 9.5 9.5 12.5"/></svg>';
+  for (var i = 0; i < suggestions.length; i++) {
+    var s = suggestions[i];
+    var text = typeof s === 'string' ? s : (s && s.text) || '';
+    text = String(text || '').trim();
+    if (!text) continue;
+    // The browser chip shows a short label, but sends a full instruction so the
+    // assistant knows what to verify with the browser.
+    var prompt = (s && s.action === 'browser')
+      ? 'Can you use the browser to verify this?'
+      : text;
+    items += '<button type="button" class="followup-chip" data-followup="' + esc(prompt) + '">'
+      + enterIcon + esc(text) + '</button>';
+  }
+  if (!items) return '';
+  return '<div class="followup-suggestions" aria-label="Suggested follow-up questions">' + items + '</div>';
+}
+
+/**
+ * Build a compact image-results gallery. Two cards are visible by default plus
+ * a skeleton "Show N more" tile; the rest expand in place (handled in chat.js).
+ * @param {Array<{title,thumbnail,image,page_url,source}>} images
+ */
+export function buildImageResults(images) {
+  if (!images || !images.length) return '';
+  var esc = uiModule.esc;
+  var cards = '';
+  var shown = 0;
+  for (var i = 0; i < images.length; i++) {
+    var im = images[i] || {};
+    var thumb = im.thumbnail || im.image || '';
+    var page = im.page_url || im.image || thumb;
+    if (!thumb || !page) continue;
+    var full = im.image || thumb;
+    var title = String(im.title || 'Image result').trim() || 'Image result';
+    var source = String(im.source || '').trim();
+    cards += '<div class="chat-image-card chat-image-real">'
+      + '<a class="chat-image-open" href="' + esc(full) + '" target="_blank" rel="noopener noreferrer" aria-label="Open image: ' + esc(title) + '">'
+      + '<img src="' + esc(thumb) + '" alt="' + esc(title) + '" loading="lazy" decoding="async" referrerpolicy="no-referrer">'
+      + '</a>'
+      + (source ? '<a class="chat-image-source" href="' + esc(page) + '" target="_blank" rel="noopener noreferrer">' + esc(source) + '</a>' : '')
+      + '</div>';
+    shown++;
+  }
+  if (!shown) return '';
+  var more = shown > 2
+    ? '<button type="button" class="chat-image-card chat-image-skeleton chat-images-more" data-images-more>'
+      + '<span class="chat-image-more-label">Show ' + (shown - 2) + ' more</span></button>'
+    : '';
+  return '<div class="chat-images" data-image-count="' + shown + '">'
+    + '<div class="chat-images-grid">' + cards + more + '</div></div>';
+}
+
+/**
  * Build the RAG "Sources (N documents)" box — mirrors the live render in
  * chat.js so persisted rag_sources survive a refresh. Items carry a
  * filename, similarity %, and snippet (not URLs, unlike web sources).
@@ -2240,6 +2304,9 @@ export function hideWelcomeScreen() {
 }
 
 export function showWelcomeScreen() {
+  // Search-engine launches (/ ?q=...) go straight to the answer; suppressing
+  // the welcome state here also covers session hydration racing the launch.
+  if (window.__odysseusSuppressWelcome) return;
   const ws = document.getElementById('welcome-screen');
   const cc = document.getElementById('chat-container');
   const alreadyVisible = !!(ws && !ws.classList.contains('hidden'));
@@ -3346,17 +3413,17 @@ export function addMessage(role, content, modelName, metadata) {
           wrap.appendChild(roleEl);
           const body = document.createElement('div');
           body.className = 'body';
-          // Check if this is the last text round — sources go on top of final response
-          var agentSourcesPrefix = '';
+          // Check if this is the last text round — sources go above the images on the final response
+          var agentSourcesSuffix = '';
           var isLastTextRound = true;
           for (let rr = r + 1; rr < maxRound; rr++) {
             if ((roundTexts[rr] || '').trim()) { isLastTextRound = false; break; }
           }
           var agentFindingsSuffix = '';
           if (isLastTextRound && metadata?.web_sources?.length) {
-            agentSourcesPrefix = buildSourcesBox(metadata.web_sources, 'web');
+            agentSourcesSuffix = buildSourcesBox(metadata.web_sources, 'web');
           } else if (isLastTextRound && metadata?.research_sources?.length) {
-            agentSourcesPrefix = buildSourcesBox(metadata.research_sources, 'research');
+            agentSourcesSuffix = buildSourcesBox(metadata.research_sources, 'research');
           }
           if (isLastTextRound && metadata?.research_findings?.length) {
             agentFindingsSuffix = buildFindingsBox(metadata.research_findings);
@@ -3365,7 +3432,15 @@ export function addMessage(role, content, modelName, metadata) {
           if (isLastTextRound && metadata?.rag_sources?.length) {
             agentFindingsSuffix += buildRagSourcesBox(metadata.rag_sources);
           }
-          body.innerHTML = agentSourcesPrefix + markdownModule.processWithThinking(markdownModule.squashOutsideCode(txt)) + agentFindingsSuffix;
+          var agentImagesSuffix = '';
+          if (isLastTextRound && metadata?.images?.length) {
+            agentImagesSuffix = buildImageResults(metadata.images);
+          }
+          var agentFollowupsSuffix = '';
+          if (isLastTextRound && metadata?.followups?.length) {
+            agentFollowupsSuffix = buildFollowups(metadata.followups);
+          }
+          body.innerHTML = markdownModule.processWithThinking(markdownModule.squashOutsideCode(txt)) + agentFindingsSuffix + agentSourcesSuffix + agentImagesSuffix + agentFollowupsSuffix;
           wrap.appendChild(body);
           wrap.dataset.raw = txt;
           if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
@@ -3596,13 +3671,13 @@ export function addMessage(role, content, modelName, metadata) {
 
 	    wrap.dataset.raw = text;
 	    if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
-    // Prepend sources box if saved in metadata
-    var sourcesPrefix = '';
+    // Append sources after the answer, immediately above any search images.
+    var sourcesSuffix = '';
     var findingsSuffix = '';
     if (role === 'assistant' && metadata?.research_sources?.length) {
-      sourcesPrefix = buildSourcesBox(metadata.research_sources, 'research');
+      sourcesSuffix = buildSourcesBox(metadata.research_sources, 'research');
     } else if (role === 'assistant' && metadata?.web_sources?.length) {
-      sourcesPrefix = buildSourcesBox(metadata.web_sources, 'web');
+      sourcesSuffix = buildSourcesBox(metadata.web_sources, 'web');
     }
     if (role === 'assistant' && metadata?.research_findings?.length) {
       findingsSuffix = buildFindingsBox(metadata.research_findings);
@@ -3610,6 +3685,14 @@ export function addMessage(role, content, modelName, metadata) {
     // RAG document sources — restored from metadata so they survive refresh.
     if (role === 'assistant' && metadata?.rag_sources?.length) {
       findingsSuffix += buildRagSourcesBox(metadata.rag_sources);
+    }
+    var imagesSuffix = '';
+    if (role === 'assistant' && metadata?.images?.length) {
+      imagesSuffix = buildImageResults(metadata.images);
+    }
+    var followupsSuffix = '';
+    if (role === 'assistant' && metadata?.followups?.length) {
+      followupsSuffix = buildFollowups(metadata.followups);
     }
     // If thinking is stored in metadata (not in text), reconstruct the full display.
     // Persona/character chats suppress the thinking UI so the persona answer stays
@@ -3619,10 +3702,10 @@ export function addMessage(role, content, modelName, metadata) {
       const thinkHtml = markdownModule.processWithThinking(
         '<think' + (thinkTime ? ` time="${thinkTime}"` : '') + '>' + metadata.thinking + '</think>\n\n' + text
       );
-      b.innerHTML = sourcesPrefix + thinkHtml + findingsSuffix;
-		    } else {
-		      b.innerHTML = sourcesPrefix + _renderAssistantBody(text, role === 'assistant' ? metadata : null) + findingsSuffix;
-		    }
+      b.innerHTML = thinkHtml + findingsSuffix + sourcesSuffix + imagesSuffix + followupsSuffix;
+    } else {
+      b.innerHTML = _renderAssistantBody(text, role === 'assistant' ? metadata : null) + findingsSuffix + sourcesSuffix + imagesSuffix + followupsSuffix;
+    }
 	    b.dataset.raw = text;
 
     // The vision/OCR caption is stripped from the displayed text above (so the
@@ -3866,6 +3949,8 @@ const chatRenderer = {
   buildSourcesBox,
   buildFindingsBox,
   buildRagSourcesBox,
+  buildFollowups,
+  buildImageResults,
   appendReportButton,
   buildImageBubble,
   hideWelcomeScreen,

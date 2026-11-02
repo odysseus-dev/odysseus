@@ -56,8 +56,9 @@ from datetime import datetime, timezone
 from typing import Dict
 
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -313,6 +314,7 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        "/opensearch.xml",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
@@ -973,6 +975,22 @@ app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
+@app.get("/opensearch.xml")
+async def opensearch_description(request: Request):
+    """OpenSearch descriptor so Firefox can add Odysseus as a search engine."""
+    base = str(request.base_url).rstrip("/")
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">\n'
+        '  <ShortName>Odysseus</ShortName>\n'
+        '  <Description>Ask Odysseus</Description>\n'
+        '  <InputEncoding>UTF-8</InputEncoding>\n'
+        '  <Image width="16" height="16" type="image/x-icon">' + base + '/static/icon.ico</Image>\n'
+        '  <Url type="text/html" method="get" template="' + base + '/?q={searchTerms}"/>\n'
+        '</OpenSearchDescription>\n'
+    )
+    return Response(content=xml, media_type="application/opensearchdescription+xml")
+
 @app.get("/")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
@@ -1161,6 +1179,21 @@ async def runtime_info() -> Dict[str, object]:
         "commands": commands,
         "capabilities": capabilities,
     }
+
+# Some search-engine setups store the template as `<host>/%s` instead of
+# `<host>/?q=%s`, so Firefox submits the query as the first path segment.
+# Treat that as a chat search rather than a 404. Registered last so every
+# real route (and all /api paths, which have deeper paths) wins first.
+_SEARCH_SHORTCUT_RESERVED = {
+    "favicon.ico", "robots.txt", "sitemap.xml", "sw.js", "manifest.json",
+}
+
+@app.get("/{query}")
+async def serve_search_shortcut(query: str, request: Request):
+    dest = (request.headers.get("sec-fetch-dest") or "").lower()
+    if query.lower() in _SEARCH_SHORTCUT_RESERVED or (dest and dest != "document"):
+        raise HTTPException(status_code=404)
+    return RedirectResponse(url="/?q=" + quote(query, safe=""), status_code=307)
 
 
 def _docker_default_gateway_ip() -> str:

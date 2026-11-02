@@ -69,6 +69,10 @@ from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
     save_assistant_response,
+    followups_enabled,
+    generate_followups,
+    generate_image_results,
+    add_browser_followup,
     run_post_response_tasks,
     accumulate_token_usage,
     clean_thinking_for_save,
@@ -227,6 +231,30 @@ class _AgentRenderState:
 
     def message_saved(self, message_id):
         return self.metadata({"type": "message_saved", "id": message_id})
+
+
+def _followups_event(sess) -> str:
+    """SSE frame for post-search follow-up chips saved on the last assistant turn."""
+    try:
+        meta = getattr((getattr(sess, "history", None) or [])[-1], "metadata", None)
+    except (IndexError, AttributeError):
+        return ""
+    items = meta.get("followups") if isinstance(meta, dict) else None
+    if not items:
+        return ""
+    return f"data: {json.dumps({'type': 'followups', 'data': items})}\n\n"
+
+
+def _images_event(sess) -> str:
+    """SSE frame for image results saved on the last assistant turn."""
+    try:
+        meta = getattr((getattr(sess, "history", None) or [])[-1], "metadata", None)
+    except (IndexError, AttributeError):
+        return ""
+    items = meta.get("images") if isinstance(meta, dict) else None
+    if not items:
+        return ""
+    return f"data: {json.dumps({'type': 'images', 'data': items})}\n\n"
 
 
 def _visible_response_text_for_save(text: object) -> str:
@@ -3911,6 +3939,25 @@ def setup_chat_routes(
             research_sources = None
             web_sources = ctx.web_sources
 
+            async def _make_followups():
+                if not web_sources:
+                    return None
+                try:
+                    if not followups_enabled():
+                        return None
+                except Exception:
+                    return None
+                items = await generate_followups(sess, message, web_sources)
+                return add_browser_followup(items, last_metrics) or None
+
+            async def _make_images():
+                if not _search_enabled or not web_sources:
+                    return None
+                try:
+                    return await generate_image_results(message) or None
+                except Exception:
+                    return None
+
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
             if not tool_approval_continuation:
@@ -4481,6 +4528,7 @@ def setup_chat_routes(
                                 if thinking_response.strip():
                                     _terminal_metrics["thinking"] = thinking_response.strip()
                                 _commit_chat_compaction(_actual_candidate_index)
+                                _followups_for_save = await _make_followups()
                                 _saved_id = save_assistant_response(
                                     sess,
                                     session_manager,
@@ -4488,6 +4536,7 @@ def setup_chat_routes(
                                     _terminal_content,
                                     _terminal_metrics,
                                     character_name=ctx.preset.character_name,
+                                    followups=_followups_for_save,
                                     incognito=incognito,
                                 )
                                 accumulate_token_usage(session, _terminal_metrics)
@@ -4495,6 +4544,12 @@ def setup_chat_routes(
                                 _stream_set(session, status="error")
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                _followups_frame = _followups_event(sess)
+                                if _followups_frame:
+                                    yield _followups_frame
+                                _images_frame = _images_event(sess)
+                                if _images_frame:
+                                    yield _images_frame
                                 yield f'data: {json.dumps({"type": "chat_terminal", "data": _terminal_metrics})}\n\n'
                             yield chunk
                         elif chunk.startswith("event: "):
@@ -4567,9 +4622,14 @@ def setup_chat_routes(
                                 )
                                 if thinking_response.strip() and not _metrics_to_save.get("thinking"):
                                     _metrics_to_save["thinking"] = thinking_response.strip()
+                                _followups_for_save, _images_for_save = await asyncio.gather(
+                                    _make_followups(), _make_images()
+                                )
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, _response_to_save, _metrics_to_save,
                                     character_name=ctx.preset.character_name,
+                                    followups=_followups_for_save,
+                                    images=_images_for_save,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
                                     research_sources=research_sources,
@@ -4579,6 +4639,12 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
+                                _followups_frame = _followups_event(sess)
+                                if _followups_frame:
+                                    yield _followups_frame
+                                _images_frame = _images_event(sess)
+                                if _images_frame:
+                                    yield _images_frame
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, _response_to_save,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -4853,6 +4919,7 @@ def setup_chat_routes(
                                     else:
                                         terminal_content = failure_note
                                     if not _terminal_saved:
+                                        _followups_for_save = await _make_followups()
                                         _saved_id = save_assistant_response(
                                             sess,
                                             session_manager,
@@ -4860,6 +4927,7 @@ def setup_chat_routes(
                                             terminal_content,
                                             terminal_metadata,
                                             character_name=ctx.preset.character_name,
+                                            followups=_followups_for_save,
                                             web_sources=web_sources,
                                             rag_sources=ctx.rag_sources,
                                             used_memories=ctx.used_memories,
@@ -4870,6 +4938,12 @@ def setup_chat_routes(
                                         _stream_set(session, status="error")
                                         if _saved_id:
                                             yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                        _followups_frame = _followups_event(sess)
+                                        if _followups_frame:
+                                            yield _followups_frame
+                                        _images_frame = _images_event(sess)
+                                        if _images_frame:
+                                            yield _images_frame
                                     yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = _render_state.metadata(data.get("data"))
@@ -4916,6 +4990,9 @@ def setup_chat_routes(
                                         _metrics_to_save = dict(last_metrics)
                                         if thinking_response.strip() and not _metrics_to_save.get("thinking"):
                                             _metrics_to_save["thinking"] = thinking_response.strip()
+                                        _followups_for_save, _images_for_save = await asyncio.gather(
+                                            _make_followups(), _make_images()
+                                        )
                                         _saved_id = save_assistant_response(
                                             sess,
                                             session_manager,
@@ -4923,6 +5000,8 @@ def setup_chat_routes(
                                             _saveable_no_tool_response,
                                             _metrics_to_save,
                                             character_name=ctx.preset.character_name,
+                                            followups=_followups_for_save,
+                                            images=_images_for_save,
                                             web_sources=web_sources,
                                             rag_sources=ctx.rag_sources,
                                             used_memories=ctx.used_memories,
@@ -4931,6 +5010,12 @@ def setup_chat_routes(
                                         _terminal_saved = True
                                         if _saved_id:
                                             yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                        _followups_frame = _followups_event(sess)
+                                        if _followups_frame:
+                                            yield _followups_frame
+                                        _images_frame = _images_event(sess)
+                                        if _images_frame:
+                                            yield _images_frame
                                         run_post_response_tasks(
                                             sess, session_manager, session, message, _saveable_no_tool_response,
                                             _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
@@ -4982,9 +5067,14 @@ def setup_chat_routes(
                                             break
                                 if thinking_response.strip() and not _metrics_to_save.get("thinking"):
                                     _metrics_to_save["thinking"] = thinking_response.strip()
+                                _followups_for_save, _images_for_save = await asyncio.gather(
+                                    _make_followups(), _make_images()
+                                )
                                 _saved_id = save_assistant_response(
                                     sess, session_manager, session, _response_to_save, _metrics_to_save,
                                     character_name=ctx.preset.character_name,
+                                    followups=_followups_for_save,
+                                    images=_images_for_save,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
                                     used_memories=ctx.used_memories,
@@ -4992,6 +5082,12 @@ def setup_chat_routes(
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps(_render_state.message_saved(_saved_id))}\n\n'
+                                _followups_frame = _followups_event(sess)
+                                if _followups_frame:
+                                    yield _followups_frame
+                                _images_frame = _images_event(sess)
+                                if _images_frame:
+                                    yield _images_frame
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, _response_to_save,
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,

@@ -162,6 +162,49 @@ export function providerLabel(endpointUrl) {
   return host.replace(/^api\./i, "");
 }
 
+const _PROVIDER_BILLING = [
+  [/(^|\.)openai\.com$/i, "https://platform.openai.com/settings/organization/billing/overview"],
+  [/(^|\.)chatgpt\.com$/i, "https://chatgpt.com/#settings/Subscription"],
+  [/(^|\.)anthropic\.com$/i, "https://console.anthropic.com/settings/billing"],
+  [/(^|\.)openrouter\.ai$/i, "https://openrouter.ai/settings/credits"],
+  [/(^|\.)(generativelanguage|aiplatform)\.googleapis\.com$/i, "https://aistudio.google.com/app/apikey"],
+  [/(^|\.)bedrock[\w.-]*\.amazonaws\.com$/i, "https://console.aws.amazon.com/billing/home"],
+  [/(^|\.)deepseek\.com$/i, "https://platform.deepseek.com/top_up"],
+  [/(^|\.)mistral\.ai$/i, "https://console.mistral.ai/billing"],
+  [/(^|\.)groq\.com$/i, "https://console.groq.com/settings/billing"],
+  [/(^|\.)together\.(ai|xyz)$/i, "https://api.together.xyz/settings/billing"],
+  [/(^|\.)fireworks\.ai$/i, "https://fireworks.ai/account/billing"],
+  [/(^|\.)perplexity\.ai$/i, "https://www.perplexity.ai/settings/api"],
+  [/(^|\.)x\.ai$/i, "https://console.x.ai/"],
+  [/(^|\.)featherless\.ai$/i, "https://featherless.ai/account"],
+  [/(^|\.)nvidia\.com$/i, "https://build.nvidia.com/"],
+  [/(^|\.)githubcopilot\.com$/i, "https://github.com/settings/copilot"],
+];
+
+function _isLocalHost(host) {
+  return /^(localhost|127\.|0\.0\.0\.0|::1)/.test(host)
+    || host.endsWith(".local")
+    || /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)
+    || /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host);
+}
+
+/**
+ * Billing or API-management page for the provider behind an endpoint URL.
+ * Returns '' for local endpoints and non-HTTP URLs.
+ */
+export function providerBillingUrl(endpointUrl) {
+  if (!endpointUrl || typeof endpointUrl !== "string") return "";
+  let u;
+  try { u = new URL(endpointUrl); } catch (_) { return ""; }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return "";
+  const host = u.hostname.toLowerCase();
+  if (_isLocalHost(host)) return "";
+  for (const [re, url] of _PROVIDER_BILLING) {
+    if (re.test(host)) return url;
+  }
+  return `${u.protocol}//${host.replace(/^api\./i, "")}/`;
+}
+
 // Map endpoint URL → logo SVG using the same model-id regex catalog.
 // Tests host + port + path so loopback servers (e.g. Ollama on
 // localhost:11434) still match by port. Falls back to null when nothing
@@ -189,4 +232,4 @@ export function providerLogoFromUrl(url) {
   return null;
 }
 
-export default { providerLogo, providerLabel, providerLogoFromUrl };
+export default { providerLogo, providerLabel, providerLogoFromUrl, providerBillingUrl };
