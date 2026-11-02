@@ -75,6 +75,16 @@ def test_compose_files_forward_first_token_timeout():
         assert "ODYSSEUS_FIRST_TOKEN_TIMEOUT" in _compose_env_names(path), path.name
 
 
+def test_compose_files_forward_the_published_port_the_ports_mapping_uses():
+    # The container cannot see Docker's port map, so the entrypoint's "open this
+    # URL" hint is only right when compose forwards the same host-port
+    # expression the ports mapping publishes.
+    for path in COMPOSE_FILES:
+        service = yaml.safe_load(path.read_text(encoding="utf-8"))["services"]["odysseus"]
+        assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7011}:7000" in service["ports"], path.name
+        assert "ODYSSEUS_PUBLISHED_PORT=${APP_PORT:-7011}" in service["environment"], path.name
+
+
 def test_default_compose_files_do_not_mount_host_docker_socket():
     for path in COMPOSE_FILES:
         text = path.read_text(encoding="utf-8")
@@ -183,6 +193,49 @@ def test_docker_entrypoint_repairs_cache_parent_without_recursive_walk():
 
 
 @pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is unavailable")
+def _entrypoint_setup_block() -> str:
+    script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    start = script.index("# Run first-time setup as the app user")
+    end = script.index("# Drop root and run the actual app.")
+    return script[start:end]
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("sh") is None,
+                    reason="runs the entrypoint block in a POSIX shell")
+@pytest.mark.parametrize(
+    ("published_port", "expected"),
+    [
+        ("8123", "Open http://localhost:8123 once startup completes."),
+        (None, "Open the host port published for container port 7000 once startup completes."),
+    ],
+)
+def test_docker_entrypoint_replaces_setups_native_run_hint(tmp_path, published_port, expected):
+    # setup.py's native hint says to start uvicorn and open localhost:7000, but
+    # in Docker the entrypoint starts the server and 7000 is only the
+    # container-side port. Run the real block with a stub gosu that records
+    # whether setup.py was told to skip that hint.
+    trace = tmp_path / "skip-run-hint"
+    gosu = tmp_path / "gosu"
+    gosu.write_text('#!/bin/sh\nprintf "%s" "${ODYSSEUS_SKIP_RUN_HINT:-}" > "$TRACE"\n',
+                    encoding="utf-8")
+    gosu.chmod(0o755)
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "GOSU_BIN": str(gosu),
+        "ODY_USER": "odysseus",
+        "PYTHON_BIN": "python",
+        "TRACE": str(trace),
+    }
+    if published_port is not None:
+        env["ODYSSEUS_PUBLISHED_PORT"] = published_port
+
+    result = subprocess.run([shutil.which("sh"), "-c", _entrypoint_setup_block()],
+                            env=env, capture_output=True, text=True, check=True)
+
+    assert trace.read_text(encoding="utf-8") == "1"
+    assert result.stdout.strip() == expected
+
+
 def test_docker_entrypoint_cache_parent_with_nested_volume():
     """Run the real entrypoint against a disposable nested-volume layout."""
     image = os.environ.get("ODYSSEUS_DOCKER_TEST_IMAGE", "odysseus-odysseus:latest")
