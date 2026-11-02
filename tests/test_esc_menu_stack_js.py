@@ -114,3 +114,26 @@ def test_non_function_registration_is_ignored():
     """
     # Bad input must not enter the stack, and must still return a callable.
     assert json.loads(_run(body)) == {"left": 0, "unregType": "function"}
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_escape_layers_skip_inactive_cards_and_keep_lifo_order():
+    body = """
+    const order = [];
+    let cardOpen = true;
+    registerEscapeLayer(() => order.push('menu'));
+    registerEscapeLayer(() => { order.push('card'); cardOpen = false; }, () => cardOpen);
+    registerEscapeLayer(() => order.push('stale'), () => false);
+    const r1 = dismissTopEscapeLayer(); // stale entry is ignored
+    const r2 = dismissTopEscapeLayer(); // expanded card
+    const r3 = dismissTopEscapeLayer(); // menu
+    console.log(JSON.stringify({ order, cardOpen, r1, r2, r3, left: _openMenuCount() }));
+    """
+    assert json.loads(_run(body)) == {
+        "order": ["card", "menu"],
+        "cardOpen": False,
+        "r1": True,
+        "r2": True,
+        "r3": False,
+        "left": 0,
+    }

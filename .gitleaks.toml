@@ -1,0 +1,49 @@
+# Gitleaks configuration: the built-in default rules plus one narrow exception.
+#
+# THIRD_PARTY_PROVENANCE.json keys its transitive npm notices by
+# "<package>_<version>" ("key": "inherits_2.0.4"). Four of those identifiers
+# trip the default generic-api-key rule. They are package names, not secrets.
+# The exception below applies only to that rule, only in that file, and only
+# to those four exact values; every other rule and file is scanned as usual.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed package identifiers in THIRD_PARTY_PROVENANCE.json"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(?:^|/)THIRD_PARTY_PROVENANCE\.json$''']
+regexTarget = "secret"
+regexes = [
+  '''^inherits_2\.0\.4$''',
+  '''^bluebird_3\.4\.7$''',
+  '''^inherits_2\.0\.1$''',
+  '''^inherits_2\.0\.3$''',
+]
+
+
+[[allowlists]]
+description = "Reviewed Skills OpenAPI baseline SHA-256 digest"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)tests/fixtures/skills_api_baseline\.json$''',
+  '''(?:^|/)docs/skills-audit-architecture\.md$''',
+]
+regexTarget = "secret"
+regexes = [
+  '''^7abc5b334a6c3c52dd3eba15d8bc516da728a67f14fb7f56d0bb5992d89a16ca$''',
+]
+
+[[allowlists]]
+description = "Synthetic dummy API key in trace artifact sanitizer test fixture"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(?:^|/)tests/test_trace_artifact_sanitizer\.py$''',
+]
+regexTarget = "secret"
+regexes = [
+  '''^sk-123456789$''',
+]

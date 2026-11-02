@@ -8,6 +8,7 @@ tools.
 tool_implementations.py and are pulled back function-locally where needed.
 """
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from src.constants import DEEP_RESEARCH_DIR
@@ -88,11 +89,24 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     items.sort(reverse=True)
     if not items:
         return {"output": "No research found in the library." + (f" (search: {search})" if search else ""), "exit_code": 0}
-    rows = "\n".join(f"- [{q or '(untitled)'}](#research-{sid}) — {n} sources" for _, sid, q, n in items[:50])
+    # Keep the UI anchor and the API read identifier distinct. The anchor has
+    # the `research-` UI prefix, while action=read expects the underlying file
+    # stem. Exposing the exact id prevents agents from guessing or retrying
+    # alternate spellings after a list call.
+    def _completed_label(value):
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc).isoformat().replace('+00:00', 'Z')
+        except (TypeError, ValueError, OSError):
+            return 'completion time unavailable'
+
+    rows = "\n".join(
+        f"- [{q or '(untitled)'}](#research-{sid}) — id: {sid} — completed {_completed_label(completed)} — {n} sources"
+        for completed, sid, q, n in items[:50]
+    )
     return {"output": f"Research library ({len(items)} item{'s' if len(items) != 1 else ''}):\n{rows}", "exit_code": 0}
 
 
-async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict:
+async def do_trigger_research(content: str, owner: Optional[str] = None, *, chat_session_id: Optional[str] = None) -> Dict:
     """Start a live deep-research job that appears in the Deep Research
     sidebar. Hits /api/research/start (the same path the sidebar's
     'Research' button uses) so the session is discoverable + streamable
@@ -107,10 +121,17 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     if not topic:
         return {"error": "topic (or query) is required", "exit_code": 1}
     payload: Dict[str, Any] = {"query": topic}
+    if chat_session_id:
+        # The dispatcher supplies the origin, never model-authored arguments.
+        payload.update(origin_chat_id=chat_session_id, max_rounds=2, max_time=120)
     # Optional knobs the research panel supports.
     if args.get("max_rounds") is not None:
         try: payload["max_rounds"] = int(args["max_rounds"])
         except (ValueError, TypeError): pass
+    if chat_session_id and payload.get('max_rounds') not in (1, 2):
+        # Explicit deeper/Auto requests also regain the panel's normal time
+        # budget; do not promise more rounds while keeping the quick cap.
+        payload.pop('max_time', None)
     if args.get("max_time") is not None:
         try: payload["max_time"] = int(args["max_time"])
         except (ValueError, TypeError): pass

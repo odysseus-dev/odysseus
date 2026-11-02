@@ -2,11 +2,12 @@
  * Paste + drag-and-drop import handlers. Both add an image to the
  * editor as a new layer:
  *
- *   - Paste (Ctrl+V): checks `state.internalClipboard` first (set by
- *     lasso copy/cut), then falls back to the system clipboard's
- *     `image/*` items. Layer is named "Pasted Selection" or "Pasted"
- *     and becomes active; the tool snaps to Move so the user can
- *     reposition it immediately.
+ *   - Paste (Ctrl+V): uses the system clipboard's `image/*` items first
+ *     (so an external screenshot always wins), then falls back to
+ *     `state.internalClipboard` (set by lasso copy/cut) when the OS
+ *     clipboard has no image. Layer is named "Pasted Selection" or
+ *     "Pasted" and becomes active; the tool snaps to Move so the user
+ *     can reposition it immediately.
  *   - Drop: any `image/*` file dragged from the OS / another tab.
  *     Shows a "Drop image to add as new layer" overlay mid-drag. Each
  *     dropped image is routed through `handleImportedImage` so canvas-
@@ -22,58 +23,114 @@
  *   createLayer:          (name: string, w: number, h: number) => object,
  *   renderLayerPanel:     () => void,
  *   composite:            () => void,
- *   handleImportedImage:  (img: HTMLImageElement) => void,
+ *   handleImportedImage:  (img: HTMLImageElement, sourceName?: string) => void,
  *   uiModule:             object,
  * }} deps
  */
 import { state } from './state.js';
+import { createPlacedData, renderPlacedLayer } from './placed-layer.js';
+
+let clipboardBindings;
 
 export function wireClipboardAndDrop({
   container, saveState, createLayer, renderLayerPanel, composite,
   handleImportedImage, uiModule,
 }) {
+  clipboardBindings?.abort();
+  clipboardBindings = new AbortController();
+  const { signal } = clipboardBindings;
+
+  const pasteAsLayer = (imgSource, label, offset = { x: 0, y: 0 }) => {
+    if (!state.editorOpen) return; // user closed mid-paste
+    saveState();
+    const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
+    // Selection clipboard data is already a complete layer-sized surface.
+    // Keep it source-backed with an identity matrix so future transforms do
+    // not repeatedly resample the pasted pixels.
+    layer.kind = 'placed';
+    layer.placed = createPlacedData(imgSource, [1, 0, 0, 1, offset.x, offset.y], label || 'Pasted');
+    const rendered = renderPlacedLayer(layer);
+    state.layerOffsets.set(layer.id, rendered.offset);
+    state.layers.push(layer);
+    state.activeLayerId = layer.id;
+    state.selectedLayerIds = [layer.id];
+    state.activeGroupId = null;
+    const tb = state.container?.querySelector('.ge-toolbar');
+    tb?.querySelector('[data-tool="move"]')?.click();
+    renderLayerPanel();
+    composite();
+    uiModule.showToast('Pasted as new layer');
+  };
+
   // ── Paste ──
+  let pasteKeyPending = false;
   window.addEventListener('paste', (e) => {
-    if (!state.editorOpen) return;
+    if (!state.editorOpen || state.container !== container) return;
+    // Editable fields INSIDE the editor keep native paste (the Clipboard button
+    // focuses the canvas container before asking for a keyboard paste when
+    // read() is unavailable on an insecure origin). Fields OUTSIDE the editor —
+    // notably the chat composer sitting behind the editor modal — must NOT
+    // swallow an image paste: while the editor is open it owns clipboard images,
+    // so we intercept here (capture phase) before the global chat attach
+    // listener in app.js can stage the file into the chatbox.
+    // NOTE: do NOT add `[role="dialog"]` to this guard — the editor itself lives
+    // inside the gallery modal's role="dialog" modal-content, so that would
+    // swallow every paste (including the internal Clipboard + Ctrl+V).
+    const target = e.target;
+    // A paste dispatched at window has a non-Node target; contains() would throw.
+    const insideEditor = target instanceof Node && !!container && container.contains(target);
+    if (insideEditor && (target.isContentEditable || target.closest?.('input, textarea, select'))) return;
 
-    function pasteAsLayer(imgSource, label) {
-      if (!state.editorOpen) return; // user closed mid-paste
-      saveState();
-      const layer = createLayer(label || 'Pasted', imgSource.width, imgSource.height);
-      layer.ctx.drawImage(imgSource, 0, 0);
-      state.layers.push(layer);
-      state.activeLayerId = layer.id;
-      state.tool = 'move';
-      const tb = state.container?.querySelector('.ge-toolbar');
-      if (tb) tb.querySelectorAll('.ge-tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === 'move'));
-      renderLayerPanel();
-      composite();
-      uiModule.showToast('Pasted as new layer');
-    }
-
-    // Check internal clipboard first (from Ctrl+C lasso/wand).
-    if (state.internalClipboard) {
+    const imageItem = Array.from(e.clipboardData?.items || []).find(item => item.type.startsWith('image/'));
+    if (imageItem) {
+      pasteKeyPending = false;
       e.preventDefault();
       e.stopImmediatePropagation();
-      pasteAsLayer(state.internalClipboard, 'Pasted Selection');
-      return;
-    }
-
-    // Fall back to system clipboard.
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (!item.type.startsWith('image/')) continue;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const blob = item.getAsFile();
+      const blob = imageItem.getAsFile();
+      if (!blob) return;
       const url = URL.createObjectURL(blob);
       const img = new Image();
-      img.onload = () => { pasteAsLayer(img, 'Pasted'); URL.revokeObjectURL(url); };
+      // External clipboard images follow the same source-backed import path
+      // as files, gallery images, and drops. Internal selection clipboard
+      // content is handled above as an identity placed layer.
+      img.onload = () => { handleImportedImage(img, 'Pasted image'); URL.revokeObjectURL(url); };
+      img.onerror = () => { URL.revokeObjectURL(url); uiModule?.showToast('Failed to load clipboard image'); };
       img.src = url;
-      break;
+      return;
     }
-  }, true);  // capture phase so we beat chat input
+    if (state.internalClipboard && !e.defaultPrevented && !e.clipboardData?.types?.includes?.('text/plain')) {
+      pasteKeyPending = false;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
+    }
+  }, { capture: true, signal });
+
+  // ── Ctrl/Cmd+V ──
+  // Do NOT intercept the keystroke: preventing the default here bypasses the
+  // browser's own `paste` event and always re-pasted `state.internalClipboard`,
+  // so a screenshot taken outside the gallery could never be pasted. The paste
+  // listener above always prefers real `image/*` clipboard items; this key
+  // handler only covers the insecure-origin case where copying a selection
+  // never reached the OS clipboard, so the paste event delivers no image (and
+  // possibly stale text) and nothing usable arrives.
+  window.addEventListener('keydown', (e) => {
+    if (!(state.editorOpen && state.container === container)) return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (String(e.key || '').toLowerCase() !== 'v') return;
+    if (!state.internalClipboard) return;
+    const target = e.target;
+    if (target && (target.isContentEditable || target.closest?.('input, textarea, select'))) return;
+    pasteKeyPending = true;
+    setTimeout(() => {
+      // The paste event runs before this timer and clears the flag whenever it
+      // received a real clipboard image (or already pasted the internal copy).
+      if (!pasteKeyPending) return;
+      pasteKeyPending = false;
+      if (!state.internalClipboard) return;
+      pasteAsLayer(state.internalClipboard, 'Pasted Selection', state.internalClipboardOffset || { x: 0, y: 0 });
+    }, 0);
+  }, { capture: true, signal });
 
   // ── Drag-and-drop ──
   // Visual drop-zone overlay appears mid-drag; routes via

@@ -91,6 +91,7 @@ class ChatProcessor:
     RAG_SIMILARITY_THRESHOLD = 0.35
     MEMORY_CONTEXT_LIMIT = 5
     PINNED_MEMORY_LIMIT = MEMORY_CONTEXT_LIMIT
+    CORE_MEMORY_AUTO_INJECT_LIMIT = 5
 
     def _is_core_memory(self, memory: Dict[str, Any]) -> bool:
         """Return whether a pinned memory is safe to keep globally available."""
@@ -121,17 +122,10 @@ class ChatProcessor:
         if not pinned:
             return []
 
-        def _recent_first(memory: Dict[str, Any]) -> int:
-            try:
-                return int(memory.get("timestamp") or 0)
-            except Exception:
-                return 0
-
-        core = sorted(
-            [m for m in pinned if self._is_core_memory(m)],
-            key=_recent_first,
-            reverse=True,
-        )[:self.PINNED_MEMORY_LIMIT]
+        core = [
+            m for m in pinned
+            if self._is_core_memory(m)
+        ][:self.CORE_MEMORY_AUTO_INJECT_LIMIT]
 
         core_ids = {m.get("id") for m in core if m.get("id")}
         contextual_candidates = [
@@ -154,6 +148,18 @@ class ChatProcessor:
             seen.add(key)
             selected.append(memory)
         return selected[:self.PINNED_MEMORY_LIMIT]
+
+    @staticmethod
+    def _is_memory_management_request(message: str) -> bool:
+        """Do not preload memory for an explicit memory-management command."""
+        text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+        if not text or not re.search(r"\bmemories?\b|\bremember\b", text):
+            return False
+        return bool(re.search(
+            r"\b(list|show|find|search|look up|lookup|what do you remember|"
+            r"delete|remove|edit|update|add|save|store|forget|clear)\b",
+            text,
+        ))
 
     def _hybrid_retrieve(self, message: str, mem_entries: list, k: int = 5) -> list:
         """Retrieve memories relevant to the message.
@@ -271,6 +277,7 @@ class ChatProcessor:
         preset_system_prompt: Optional[str] = None,
         owner: Optional[str] = None,
         character_name: Optional[str] = None,
+        persona_memory: Optional[str] = None,
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
@@ -307,9 +314,20 @@ class ChatProcessor:
             "content": UNTRUSTED_CONTEXT_POLICY,
         })
 
+        if character_name and persona_memory:
+            preface.append(untrusted_context_message(
+                "persona memory: continuity notes",
+                (
+                    f"Continuity notes for the active persona, {character_name}. "
+                    "Use these only to maintain established context for this persona; "
+                    "do not mention them unless relevant.\n"
+                    f"{persona_memory}"
+                ),
+            ))
+
         # Memory: core pinned facts + relevant pinned/extended recall.
         self._last_used_memories = []  # track what was injected
-        if use_memory:
+        if use_memory and not self._is_memory_management_request(message):
             mem_entries = self.memory_manager.load(owner=owner)
 
             pinned = [m for m in mem_entries if m.get("pinned")]
@@ -477,6 +495,17 @@ class ChatProcessor:
                         f"Content from {url}:\n\n{content}",
                         provenance_origin="external",
                     ))
+                    # Automatic exact-URL reads are real network evidence even
+                    # though they happen before the agent loop.  Publish the
+                    # source through the same provenance channel as web search
+                    # so the UI and persisted message do not make a grounded
+                    # answer look like an unsupported no-tool response.
+                    if not any(source.get("url") == url for source in web_sources):
+                        web_sources.append({
+                            "url": url,
+                            "title": str(result.get("title") or url),
+                            "acquisition": "automatic_url_fetch",
+                        })
                 else:
                     # A failed automatic URL fetch is context too. Never pass
                     # exception text or response-controlled diagnostics back to
