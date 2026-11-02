@@ -2,6 +2,7 @@ from services.search import core, providers
 
 PROVIDER_ENV_KEYS = (
     "DATA_BRAVE_API_KEY",
+    "BRAVE_API_KEY",
     "GOOGLE_API_KEY",
     "TAVILY_API_KEY",
     "SERPER_API_KEY",
@@ -53,3 +54,18 @@ def test_search_config_detects_provider_env_key(monkeypatch):
 
     assert core.get_search_config()["has_api_key"] is True
     assert providers._get_provider_key("tavily") == "env-key"
+
+
+def test_brave_accepts_standard_headless_env_key(monkeypatch):
+    _config(monkeypatch, {"search_provider": "brave"})
+    monkeypatch.setenv("BRAVE_API_KEY", "brave-headless-key")
+
+    assert providers._get_provider_key("brave") == "brave-headless-key"
+    assert providers.provider_configured("brave") is True
+
+
+def test_explicit_headless_provider_overrides_persisted_default(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_SEARCH_PROVIDER", "brave")
+    monkeypatch.setattr("src.settings.load_settings", lambda: {"search_provider": "searxng"})
+
+    assert providers._get_search_settings()["search_provider"] == "brave"

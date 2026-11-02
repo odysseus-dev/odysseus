@@ -4,11 +4,11 @@
  * UI utilities for toasts, modals, scrolling, and user feedback
  */
 
-import themeModule from './theme.js';
+import themeModule from './theme.js?v=20260911organsrain1';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
-import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
-import { nextToolWindowZ, topToolWindowZ } from './toolWindowZOrder.js';
+import { registerMenuDismiss, dismissTopEscapeLayer, dismissOrRemove } from './escMenuStack.js';
+import { nextToolWindowZ, topToolWindowZ, topPortalZ } from './toolWindowZOrder.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -29,6 +29,72 @@ function _isTextEditingTarget(target) {
 
 function _targetEl(target) {
   return target && target.nodeType === 1 ? target : target?.parentElement || null;
+}
+
+function _editorPanelVisible() {
+  if (!document.body || !document.body.classList.contains('ge-editor-open')) return false;
+  const sel = '.ge-adj-popup, .ge-fx-popup, .ge-fx-menu, .ge-transform-popup, .ge-filter-overlay, .ge-history-panel';
+  return [...document.querySelectorAll(sel)].some((candidate) => {
+    if (!document.contains(candidate)) return false;
+    const style = getComputedStyle(candidate);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = candidate.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+}
+
+function _positionToastForOpenPanel(el) {
+  if (!el) return;
+  // The Free Transform hint is pinned by CSS to one fixed spot under the
+  // canvas; letting the panel rules move it made it hop between the top-right
+  // corner and the bottom banner depending on which panel happened to be open.
+  if (el.classList.contains('toast-transform-hint')) {
+    el.classList.remove('toast-editor-bottom', 'toast-panel-offset');
+    el.style.left = '';
+    el.style.right = '';
+    el.style.maxWidth = '';
+    return;
+  }
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  el.classList.remove('toast-editor-bottom');
+  // In the editor, a floating panel (Adjust/Develop, FX, Transform, filter
+  // modal, History) is anchored to the top/right; drop the toast to the
+  // bottom-centre so it can never cover a control (EVAL: "never over an
+  // active panel"). On phones the CSS already anchors it at the bottom.
+  if (_editorPanelVisible()) {
+    el.style.left = '';
+    el.style.right = '';
+    el.style.maxWidth = '';
+    el.classList.add('toast-editor-bottom');
+    return;
+  }
+  const panel = [...document.querySelectorAll('.notes-pane')]
+    .filter((candidate) => {
+      if (!document.contains(candidate)) return false;
+      const style = getComputedStyle(candidate);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      const rect = candidate.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.left < vw;
+    })
+    .sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0];
+
+  el.classList.remove('toast-panel-offset');
+  el.style.left = '';
+  el.style.right = '';
+  el.style.maxWidth = '';
+  if (!panel) return;
+
+  const rect = panel.getBoundingClientRect();
+  // There needs to be room for a toast on the panel's left. On narrow/mobile
+  // layouts the panel can occupy the whole width, so retain the normal edge
+  // position instead of forcing the toast underneath the panel.
+  const gap = 8;
+  const availableWidth = rect.left - (gap * 2);
+  if (availableWidth < 220) return;
+  el.style.left = 'auto';
+  el.style.right = `${Math.max(12, vw - rect.left + gap)}px`;
+  el.style.maxWidth = `${Math.min(420, availableWidth)}px`;
+  el.classList.add('toast-panel-offset');
 }
 
 const SPACE_CARD_SELECTOR = [
@@ -142,7 +208,9 @@ function _closeHoveredWindow() {
 function _spaceIsBlocked(e, surface) {
   const target = _targetEl(e.target);
   if (!target) return false;
-  if (_isTextEditingTarget(target)) return !surface || surface.contains(target);
+  // Space must always type in a field, even when that field lives in a fixed
+  // overlay outside the hovered surface (e.g. the editor's on-canvas text box).
+  if (_isTextEditingTarget(target)) return true;
   const blocked = target.closest?.(SPACE_BLOCKED_SELECTOR);
   return !!(blocked && (!surface || surface.contains(blocked)));
 }
@@ -189,6 +257,10 @@ function _initHoverCardSpaceToggle() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space' || e.repeat) return;
+    // The image editor owns Space (hold to pan, otherwise text fields type a
+    // space). A card/window toggle must never fire while it is open, or the
+    // hovered gallery card can click itself closed underneath the editor.
+    if (document.body?.classList.contains('ge-editor-open')) return;
     if (hoveredToggleCard && _isSpaceVisible(hoveredToggleCard)) {
       if (_spaceIsBlocked(e, hoveredToggleCard)) return;
       e.preventDefault();
@@ -281,6 +353,7 @@ function _wireToastSwipe(el) {
       setTimeout(() => {
         el.classList.remove('show');
         el.classList.add('exiting');
+        el.style.pointerEvents = '';
         el.style.transform = '';
         el.style.opacity = '';
       }, 180);
@@ -298,14 +371,20 @@ function _wireToastSwipe(el) {
  * Show success toast message
  */
 export function showToast(msg, durationOrOpts) {
+  fetch('/api/tasks/notification-logs', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: String(msg || ''), status: 'success' }),
+  }).catch(() => {});
   if (!toastEl) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
   toastEl.textContent = '';
   toastEl.classList.remove('error');
+  toastEl.classList.remove('toast-ai-reply-progress', 'toast-ai-reply-result', 'toast-sending', 'toast-message-sent', 'toast-transform-hint');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
+  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null, toastClass = null, aiReplyProgress = false, aiReplyResult = false;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
     duration = durationOrOpts.duration || 5000;
     actionLabel = durationOrOpts.action;
@@ -313,11 +392,26 @@ export function showToast(msg, durationOrOpts) {
     actionHint = durationOrOpts.actionHint || null;
     actionIcon = durationOrOpts.actionIcon || null;
     leadingIcon = durationOrOpts.leadingIcon || null;
+    toastClass = durationOrOpts.toastClass || null;
+    aiReplyProgress = !!durationOrOpts.aiReplyProgress;
+    aiReplyResult = !!durationOrOpts.aiReplyResult;
   } else if (typeof durationOrOpts === 'number') {
     duration = durationOrOpts;
   }
+  // While the editor is open, cap every toast so it auto-dismisses within
+  // ~2.5s and can never linger over the canvas or a panel (EVAL: "auto-dismiss
+  // in 2.5s"). Longer informational durations (persist warnings etc.) are
+  // still readable but do not pile up.
+  if (typeof document !== 'undefined' && document.body
+      && document.body.classList.contains('ge-editor-open')) {
+    duration = Math.min(duration, 2500);
+  }
+  if (aiReplyProgress) toastEl.classList.add('toast-ai-reply-progress');
+  if (aiReplyResult) toastEl.classList.add('toast-ai-reply-result');
+  if (toastClass) toastEl.classList.add(toastClass);
 
   const textSpan = document.createElement('span');
+  textSpan.className = 'toast-message';
   if (leadingIcon === 'check') {
     const icon = document.createElement('span');
     icon.className = 'toast-checkmark';
@@ -333,36 +427,40 @@ export function showToast(msg, durationOrOpts) {
   textSpan.textContent = msg;
   toastEl.appendChild(textSpan);
 
-  if (actionLabel && onAction) {
-    // Wrap the action in a small column so we can stack a Ctrl-Z-style hint
-    // directly under the button.
-    const stack = document.createElement('span');
-    stack.style.cssText = 'display:inline-flex;flex-direction:column;align-items:center;gap:1px;margin-left:10px;line-height:1;';
+  const actionGroup = document.createElement('span');
+  actionGroup.className = 'toast-actions';
 
+  if (actionLabel && onAction) {
     const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action-btn';
     if (actionIcon) {
-      btn.innerHTML = `<span style="display:inline-flex;align-items:center;gap:5px;">${actionIcon}<span></span></span>`;
-      btn.querySelector('span span').textContent = actionLabel;
+      const icon = document.createElement('span');
+      icon.className = 'toast-action-icon';
+      icon.innerHTML = actionIcon;
+      btn.appendChild(icon);
+      const label = document.createElement('span');
+      label.textContent = actionLabel;
+      btn.appendChild(label);
     } else {
-      btn.textContent = actionLabel;
+      const label = document.createElement('span');
+      label.textContent = actionLabel;
+      btn.appendChild(label);
     }
-    btn.style.cssText = 'padding:2px 10px;border:1px solid var(--fg);border-radius:4px;background:none;color:var(--fg);cursor:pointer;font-size:12px;pointer-events:auto;display:inline-flex;align-items:center;';
+    if (actionHint && window.innerWidth > 768) {
+      const hint = document.createElement('kbd');
+      hint.className = 'toast-action-hint';
+      hint.textContent = actionHint;
+      btn.appendChild(hint);
+    }
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       toastEl.classList.remove('show');
+      toastEl.style.pointerEvents = '';
       onAction();
     });
-    stack.appendChild(btn);
-
-    if (actionHint && window.innerWidth > 768) {
-      const hint = document.createElement('span');
-      hint.textContent = actionHint;
-      hint.style.cssText = 'font-size:9px;opacity:0.55;letter-spacing:0.4px;text-transform:uppercase;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin-top:1px;pointer-events:none;';
-      stack.appendChild(hint);
-    }
-
-    toastEl.appendChild(stack);
+    actionGroup.appendChild(btn);
     toastEl.style.pointerEvents = 'auto';
   } else {
     toastEl.style.pointerEvents = '';
@@ -383,13 +481,14 @@ export function showToast(msg, durationOrOpts) {
     toastEl.classList.remove('show');
     toastEl.style.pointerEvents = '';
   });
-  toastEl.appendChild(closeBtn);
+  actionGroup.appendChild(closeBtn);
+  toastEl.appendChild(actionGroup);
 
   // Pin to top-right via CSS — clear any legacy inline overrides so the
   // slide-in-from-right / slide-out-to-left transition can run cleanly.
-  toastEl.style.left = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
+  _positionToastForOpenPanel(toastEl);
   toastEl.classList.add('show');
   clearTimeout(toastEl._hideTimer);
   toastEl._hideTimer = setTimeout(() => {
@@ -411,21 +510,37 @@ export function showToast(msg, durationOrOpts) {
  * Show error toast message
  */
 export function showError(msg) {
+  fetch('/api/tasks/notification-logs', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: String(msg || ''), status: 'error' }),
+  }).catch(() => {});
   if (!toastEl) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
   toastEl.textContent = '';
   toastEl.classList.add('error');
-  toastEl.style.left = '';
+  toastEl.classList.remove('toast-transform-hint');
+  toastEl.style.pointerEvents = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
+  _positionToastForOpenPanel(toastEl);
   toastEl.classList.add('show');
   clearTimeout(toastEl._hideTimer);
 
+  const icon = document.createElement('span');
+  icon.className = 'toast-error-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = '!';
+  toastEl.appendChild(icon);
   const textSpan = document.createElement('span');
+  textSpan.className = 'toast-message';
   textSpan.textContent = msg;
   toastEl.appendChild(textSpan);
+
+  const actionGroup = document.createElement('span');
+  actionGroup.className = 'toast-actions';
 
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
@@ -441,11 +556,13 @@ export function showError(msg) {
     toastEl.classList.remove('show');
     toastEl.style.pointerEvents = '';
   });
-  toastEl.appendChild(closeBtn);
+  actionGroup.appendChild(closeBtn);
+  toastEl.appendChild(actionGroup);
 
   toastEl._hideTimer = setTimeout(() => {
     toastEl.classList.add('exiting');
     toastEl.classList.remove('show');
+    toastEl.style.pointerEvents = '';
   }, 6000);
 }
 
@@ -456,7 +573,7 @@ export function showError(msg) {
 let _scrollThrottleTimer = null;
 export function scrollHistory() {
   if (!autoScrollEnabled) return;
-  if (!_scrollBox) {
+  if (!_scrollBox || !_scrollBox.isConnected) {
     _scrollBox = document.getElementById('chat-history');
   }
   // Throttle: only start a new scroll animation every 500ms
@@ -465,6 +582,51 @@ export function scrollHistory() {
   if (!_scrollRafId) {
     _scrollRafId = requestAnimationFrame(_smoothScrollStep);
   }
+}
+
+/**
+ * Capture and restore chat scroll around a synchronous terminal render.
+ *
+ * The streamed and persisted versions of a response can have different
+ * heights, especially in the narrow chat column beside an open document.
+ * Cancel the old smooth-scroll target and keep the viewport anchored while
+ * that DOM is replaced so completion cannot produce a rubber-band jump.
+ */
+export function captureHistoryScroll() {
+  const box = document.getElementById('chat-history');
+  if (!box) return null;
+  const maxScrollTop = Math.max(0, box.scrollHeight - box.clientHeight);
+  return {
+    box,
+    scrollTop: box.scrollTop,
+    stickToBottom: maxScrollTop - box.scrollTop <= 120,
+  };
+}
+
+export function restoreHistoryScroll(snapshot) {
+  const box = snapshot?.box;
+  if (!box || !box.isConnected) return;
+  if (_scrollRafId) {
+    cancelAnimationFrame(_scrollRafId);
+    _scrollRafId = null;
+  }
+  if (_scrollThrottleTimer) {
+    clearTimeout(_scrollThrottleTimer);
+    _scrollThrottleTimer = null;
+  }
+  _scrollBox = box;
+  const apply = () => {
+    if (!box.isConnected) return;
+    box.scrollTop = snapshot.stickToBottom
+      ? Math.max(0, box.scrollHeight - box.clientHeight)
+      : snapshot.scrollTop;
+  };
+  apply();
+  // Footer metrics and highlighted code settle on the following frames.
+  requestAnimationFrame(() => {
+    apply();
+    requestAnimationFrame(apply);
+  });
 }
 
 function _smoothScrollStep() {
@@ -476,12 +638,6 @@ function _smoothScrollStep() {
   const target = box.scrollHeight - box.clientHeight;
   const current = box.scrollTop;
   const diff = target - current;
-
-  // If user scrolled up significantly, don't force them down
-  if (diff > 300) {
-    _scrollRafId = null;
-    return;
-  }
 
   if (diff <= 1) {
     box.scrollTop = target;
@@ -520,6 +676,11 @@ export function setAutoScroll(enabled) {
  */
 export function getAutoScroll() {
   return autoScrollEnabled;
+}
+
+/** True while scrollHistory() is actively moving the chat viewport. */
+export function isAutoScrolling() {
+  return !!_scrollRafId;
 }
 
 /**
@@ -615,8 +776,13 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
 
     if (titleEl) titleEl.textContent = title || 'Confirm';
     msgEl.textContent = message;
-    okBtn.textContent = confirmText;
-    cancelBtn.textContent = cancelText;
+    // Use the affirmative label consistently for generic confirmations.
+    okBtn.textContent = confirmText === 'OK' ? 'Yes' : confirmText;
+    cancelBtn.textContent = '';
+    const cancelLabel = document.createElement('span');
+    cancelLabel.className = 'styled-confirm-cancel-label';
+    cancelLabel.textContent = cancelText;
+    cancelBtn.appendChild(cancelLabel);
     altBtn.textContent = alternateText || '';
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';
     cancelBtn.className = 'confirm-btn confirm-btn-secondary';
@@ -627,15 +793,17 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     const _prevFocus = document.activeElement;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
+    overlay.style.zIndex = String(topPortalZ() + 1000);
 
     function cleanup(result) {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
+      overlay.style.zIndex = '';
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       altBtn.removeEventListener('click', onAlt);
       overlay.removeEventListener('click', onBackdrop);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
@@ -669,7 +837,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     altBtn.addEventListener('click', onAlt);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onBackdrop);
-    document.addEventListener('keydown', onKey);
+    // Capture Escape before global shortcuts or focused controls can swallow it.
+    document.addEventListener('keydown', onKey, true);
     okBtn.focus();
   });
 }
@@ -685,6 +854,7 @@ export function styledPrompt(message, {
   confirmText = 'Save',
   cancelText = 'Cancel',
   maxLength = 80,
+  inputType = 'text',
 } = {}) {
   return new Promise(resolve => {
     let overlay = document.getElementById('styled-prompt-overlay');
@@ -717,6 +887,8 @@ export function styledPrompt(message, {
     msgEl.textContent = message || '';
     msgEl.style.display = message ? '' : 'none';
     input.value = defaultValue || '';
+    input.type = inputType === 'password' ? 'password' : 'text';
+    input.autocomplete = inputType === 'password' ? 'new-password' : 'off';
     input.placeholder = placeholder || '';
     input.maxLength = maxLength;
     okBtn.textContent = confirmText;
@@ -728,6 +900,7 @@ export function styledPrompt(message, {
     overlay.style.display = '';
 
     function cleanup(result) {
+      input.value = '';
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
       okBtn.removeEventListener('click', onOk);
@@ -738,7 +911,7 @@ export function styledPrompt(message, {
       try { _prevFocus && _prevFocus.focus && _prevFocus.focus(); } catch {}
       resolve(result);
     }
-    function onOk() { cleanup((input.value || '').trim()); }
+    function onOk() { cleanup(inputType === 'password' ? input.value : (input.value || '').trim()); }
     function onCancel() { cleanup(null); }
     function onBackdrop(e) { if (e.target === overlay) cleanup(null); }
     function onKey(e) {
@@ -863,8 +1036,11 @@ const uiModule = {
   styledPrompt,
   scrollHistory,
   scrollHistoryInstant,
+  captureHistoryScroll,
+  restoreHistoryScroll,
   setAutoScroll,
   getAutoScroll,
+  isAutoScrolling,
   autoResize,
   debounce,
   el,
@@ -1261,22 +1437,68 @@ if (!window._odyEscExpandGuard) {
     // (the live-stream chat rebuilds thinking DOM mid-stream so the header
     // can briefly be absent). Toggling the `expanded` class directly is the
     // fallback so ESC never bypasses the thinking block to hit a modal.
-    if (_closeHoveredWindow()) {
-      e.stopImmediatePropagation(); e.preventDefault();
-      return;
-    }
     // Transient ad-hoc menus (dropdowns / context popups) live outside the
     // .modal system and register a dismiss callback in escMenuStack. Close the
     // most-recently-opened one first — so a menu opened over a modal dismisses
     // before the modal — and do it BEFORE the text-input guard below, since a
     // menu may own the focused input (e.g. a search dropdown).
-    if (dismissTopMenu()) {
+    if (dismissTopEscapeLayer()) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      return;
+    }
+    // The event editor is an inner Calendar layer. Cancel it through the
+    // form's existing button before hovered-window handling can close the
+    // entire Calendar modal.
+    const calendarModal = document.getElementById('calendar-modal');
+    const calendarEventForm = calendarModal?.querySelector('.cal-form');
+    if (calendarEventForm && _isVisible(calendarModal)) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      try {
+        (calendarEventForm.querySelector('#cal-f-cancel, #cal-form-mobile-cancel'))?.click();
+      } catch {}
+      return;
+    }
+    // Selection mode is rendered as a visible bulk bar in several modules.
+    // Keep it as an inner layer even where the module predates the shared
+    // registry, so Escape cancels selection instead of closing the library.
+    const selectionBars = [...document.querySelectorAll(
+      '.memory-bulk-bar:not(.hidden), .session-bulk-bar:not(.hidden)',
+    )]
+      .filter(bar => _isVisible(bar));
+    const selectionBar = selectionBars[selectionBars.length - 1];
+    let selectionCancel = selectionBar?.querySelector(
+      'button[id*="cancel"], button[title*="Cancel"], .memory-bulk-cancel',
+    );
+    // A few older library panes use the Select toggle itself as the cancel
+    // control and do not render a separate button in the bulk bar.
+    if (!selectionCancel && selectionBar) {
+      selectionCancel = [
+        '#doclib-select-btn', '#doclib-chats-select-btn',
+        '#doclib-arc-select-btn', '#doclib-research-select-btn',
+        '#memory-select-btn', '#notes-select-btn', '#skills-select-btn',
+        '#tasks-select-btn', '#session-select-btn', '#lib-select-btn',
+        '#archive-select-btn', '#email-lib-select-btn',
+      ].map(selector => document.querySelector(selector))
+        .find(button => button && _isVisible(button) && /^cancel$/i.test(button.textContent.trim()));
+    }
+    if (selectionCancel) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      try { selectionCancel.click(); } catch {}
+      return;
+    }
+    // Bulk selection is an inner Gallery layer, so cancel it before the
+    // generic modal handler gets a chance to close the Gallery.
+    if (document.getElementById('gallery-modal') && window.__galleryCancelSelection?.()) {
       e.stopImmediatePropagation(); e.preventDefault();
       return;
     }
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    const expanded = document.querySelector('.doclib-card-expanded');
+    // Registered card layers handle the normal path. Keep a narrow fallback
+    // for older/rebuilt rows whose module has not wired the helper yet.
+    const expanded = document.querySelector(
+      '.doclib-card-expanded, .task-card.expanded, .task-log-row.expanded',
+    );
     const think = document.querySelector('.thinking-content.expanded');
     if (expanded) {
       e.stopImmediatePropagation(); e.preventDefault();
@@ -1291,6 +1513,13 @@ if (!window._odyEscExpandGuard) {
         // No header found — collapse the content directly.
         try { think.classList.remove('expanded'); } catch {}
       }
+      return;
+    }
+    // Only close the hovered outer window after its inner layers have had a
+    // chance to handle Escape. In particular, an expanded library card must
+    // collapse on the first press rather than losing the whole library.
+    if (_closeHoveredWindow()) {
+      e.stopImmediatePropagation(); e.preventDefault();
       return;
     }
     const galleryEditor = document.getElementById('gallery-editor-container');

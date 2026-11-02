@@ -1,7 +1,7 @@
 // compare/probe.js — model probe/check system
 import state from './state.js';
-import { WAVE_FRAMES } from './icons.js';
-import uiModule from '../ui.js';
+import { WAVE_FRAMES } from './icons.js?v=20260908compareprompts1';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 import spinnerModule from '../spinner.js';
 
 function _clearProbeWaves() {

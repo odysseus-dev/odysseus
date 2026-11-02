@@ -77,6 +77,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
+        if args.get("path"):
+            return {"error": "view reads SKILL.md only; use view_ref with name and path to read a supporting file.", "exit_code": 1}
         md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
@@ -104,17 +106,11 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             proc = args.get("steps") or []
         if not proc and not args.get("body_extra") and not args.get("solution"):
             return {"error": "procedure (or solution body) is required", "exit_code": 1}
-        # Same auto-publish gate as the extractor path — when the user
-        # has auto_approve_skills on and the caller didn't pin an explicit
-        # status, publish immediately. Audit later demotes/removes on fail.
+        # Newly learned procedures are always audited before they are allowed
+        # into chat context. The automatic audit promotes passing skills.
         _status_arg = args.get("status")
         if not _status_arg:
-            try:
-                from routes.prefs_routes import _load_for_user as _load_prefs
-                _prefs = _load_prefs(owner) or {}
-                _status_arg = "published" if _prefs.get("auto_approve_skills", True) else "draft"
-            except Exception:
-                _status_arg = "draft"
+            _status_arg = "draft"
         entry = sm.add_skill(
             name=args.get("name"),
             description=(args.get("description") or args.get("title") or "").strip(),
@@ -162,7 +158,17 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "name is required for edit", "exit_code": 1}
         new_content = args.get("content")
         if not isinstance(new_content, str) or not new_content.strip():
-            return {"error": "content (full SKILL.md) is required for edit", "exit_code": 1}
+            metadata_updates = {
+                key: args[key] for key in (
+                    "description", "category", "when_to_use", "version", "confidence",
+                    "tags", "platforms", "requires_toolsets", "fallback_for_toolsets",
+                    "procedure", "pitfalls", "verification",
+                ) if key in args
+            }
+            if not metadata_updates:
+                return {"error": "content (full SKILL.md) or an editable metadata field is required for edit", "exit_code": 1}
+            ok = sm.update_skill(name, metadata_updates, owner=owner)
+            return {"results": f"Edited skill `{name}`."} if ok else {"error": "Skill not found or update failed", "exit_code": 1}
         try:
             sk_new = Skill.from_markdown(new_content)
         except Exception as e:
@@ -184,6 +190,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
             return {"error": "old_string is required and must be non-empty", "exit_code": 1}
+        if not isinstance(new_str, str):
+            return {"error": "new_string must be a string; use an empty string to remove text", "exit_code": 1}
         md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
@@ -211,8 +219,9 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         updates = {"status": "published"}
         if args.get("confidence") is not None:
             updates["confidence"] = max(0.0, min(1.0, float(args["confidence"])))
-        sm.update_skill(name, updates, owner=owner)
-        return {"results": f"✅ Published `{name}`. It now appears in the skills index for future turns."}
+        if not sm.update_skill(name, updates, owner=owner):
+            return {"error": "Skill could not be published; no update was saved.", "exit_code": 1}
+        return {"results": f"Published `{name}`. Automatic use remains subject to skill audit and approval settings."}
 
     if action == "delete":
         if not name:
@@ -271,6 +280,71 @@ def _skill_dump(sk) -> Dict:
 # Task management tool
 # ---------------------------------------------------------------------------
 
+def _task_date_utc(value):
+    """Parse the advertised one-off ISO datetime into the DB's naive UTC."""
+    from datetime import datetime, timezone
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("scheduled_date is required for a one-off task")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise ValueError("scheduled_date must be an ISO datetime") from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+def _task_structured_schedule(args, fallback_time=None):
+    """Translate unambiguous day fields into the scheduler's legacy format."""
+    if 'day_of_month' in args:
+        day = args['day_of_month']
+        if isinstance(day, bool) or not isinstance(day, int) or not 1 <= day <= 31:
+            raise ValueError('day_of_month must be an integer from 1 to 31')
+        if ('weekdays' in args or args.get('scheduled_day') is not None
+                or args.get('cron_expression') or args.get('schedule') not in (None, 'monthly')
+                or args.get('trigger_type', 'schedule') != 'schedule'):
+            raise ValueError('day_of_month is only for monthly schedules; omit other day fields')
+        return {**args, 'schedule': 'monthly', 'scheduled_day': day}
+    if 'weekdays' not in args:
+        return args
+    days = args['weekdays']
+    names = ('sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday')
+    if not isinstance(days, list) or not days or any(not isinstance(d, str) or d not in names for d in days):
+        raise ValueError('weekdays must contain weekday names from monday through sunday')
+    if args.get('cron_expression') or args.get('scheduled_day') is not None:
+        raise ValueError('Use weekdays or cron_expression/scheduled_day, not both')
+    if args.get('trigger_type', 'schedule') != 'schedule' or args.get('schedule') == 'once':
+        raise ValueError('weekdays requires a recurring schedule trigger')
+    from datetime import datetime
+    clock = args.get('scheduled_time', fallback_time)
+    try:
+        parsed = datetime.strptime(clock, '%H:%M')
+    except (TypeError, ValueError) as exc:
+        raise ValueError('scheduled_time in HH:MM UTC is required with weekdays') from exc
+    cron_days = ','.join(str(n) for n in sorted({names.index(d) for d in days}))
+    return {**args, 'schedule': 'cron', 'scheduled_time': parsed.strftime('%H:%M'),
+            'cron_expression': f'{parsed.minute} {parsed.hour} * * {cron_days}'}
+
+
+def _admin_task_action_denied(owner: Optional[str], task_type: Optional[str], action_name: Optional[str]) -> Optional[Dict]:
+    """Apply the shared admin-only task-action policy to a tool call.
+
+    ``POST /api/tasks`` and the scheduler both refuse ``run_local``,
+    ``run_script``, ``ssh_command`` and ``cookbook_serve`` action tasks for
+    owners without admin task privileges (``src.task_action_policy``).
+    Those actions reach ``subprocess.run(shell=True)`` / SSH with no sandbox,
+    so the model-facing tool must apply the same policy at create/edit/
+    resume/run time instead of storing a task the scheduler will only pause
+    later. Returns the tool error dict to hand back, or None when allowed.
+    """
+    from src.task_action_policy import (
+        is_admin_only_task_action,
+        owner_has_admin_task_privileges,
+    )
+    if is_admin_only_task_action(task_type, action_name) and not owner_has_admin_task_privileges(owner):
+        return {"error": f"Action '{action_name}' requires admin privileges", "exit_code": 1}
+    return None
+
+
 async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_tasks tool calls: CRUD on scheduled tasks."""
     import uuid as _uuid
@@ -308,28 +382,99 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             args["scheduled_day"] = days[day]
     db = SessionLocal()
     try:
+        def _task_by_id_or_exact_name(required_for: str):
+            task_id = args.get("task_id")
+            if task_id:
+                task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+                if task:
+                    return task, None
+
+                try:
+                    _uuid.UUID(str(task_id))
+                    looks_like_uuid = True
+                except (TypeError, ValueError):
+                    looks_like_uuid = False
+                if looks_like_uuid:
+                    return None, {"error": f"Task {task_id} not found", "exit_code": 1}
+
+                q = db.query(ScheduledTask).filter(ScheduledTask.name == str(task_id).strip())
+                if owner:
+                    q = q.filter(ScheduledTask.owner == owner)
+                matches = q.order_by(ScheduledTask.created_at.desc()).all()
+                if len(matches) == 1:
+                    return matches[0], None
+                if len(matches) > 1:
+                    return None, {
+                        "error": f"Task name '{task_id}' matched {len(matches)} tasks; use task_id",
+                        "exit_code": 1,
+                    }
+                return None, {"error": f"Task {task_id} not found", "exit_code": 1}
+
+            name = str(args.get("name") or "").strip()
+            if not name:
+                return None, {"error": f"task_id is required for {required_for}", "exit_code": 1}
+
+            q = db.query(ScheduledTask).filter(ScheduledTask.name == name)
+            if owner:
+                q = q.filter(ScheduledTask.owner == owner)
+            matches = q.order_by(ScheduledTask.created_at.desc()).all()
+            if not matches:
+                return None, {"error": f"Task named '{name}' not found", "exit_code": 1}
+            if len(matches) > 1:
+                return None, {
+                    "error": f"Task name '{name}' matched {len(matches)} tasks; use task_id",
+                    "exit_code": 1,
+                }
+            return matches[0], None
+
         if action == "list":
             q = db.query(ScheduledTask)
             if owner:
                 q = q.filter(ScheduledTask.owner == owner)
+            status_filter = str(args.get("status") or "").strip().lower()
+            if status_filter:
+                q = q.filter(ScheduledTask.status == status_filter)
+            name_filter = str(args.get("name") or "").strip()
+            query_filter = str(
+                args.get("query")
+                or args.get("search")
+                or args.get("pattern")
+                or args.get("prompt")
+                or args.get("match")
+                or ""
+            ).strip()
+            if name_filter:
+                q = q.filter(ScheduledTask.name == name_filter)
+            elif query_filter:
+                from sqlalchemy import or_
+                q = q.filter(or_(
+                    ScheduledTask.name.contains(query_filter),
+                    ScheduledTask.prompt.contains(query_filter),
+                ))
             tasks = q.order_by(ScheduledTask.created_at.desc()).all()
             if not tasks:
-                return {"response": "No scheduled tasks found.", "exit_code": 0}
+                suffix = f" matching '{name_filter or query_filter}'" if (name_filter or query_filter) else ""
+                return {"response": f"No scheduled tasks found{suffix}.", "exit_code": 0}
 
             lines = [f"Found {len(tasks)} tasks:"]
             for idx, t in enumerate(tasks, 1):
                 bits = [t.status or "unknown"]
                 if t.schedule:
                     bits.append(str(t.schedule))
+                if t.schedule == "cron" and t.cron_expression:
+                    bits.append(t.cron_expression)
                 if t.scheduled_time:
                     bits.append(str(t.scheduled_time))
                 if t.next_run:
                     bits.append(f"next {t.next_run.isoformat()}Z")
                 detail = ", ".join(bits)
+                if t.prompt:
+                    detail = f"{detail}; prompt: {t.prompt}"
                 lines.append(f"{idx}. {t.name} ({t.id}) — {detail}")
             return {"response": "\n".join(lines), "exit_code": 0}
 
         elif action == "create":
+            args = _task_structured_schedule(args)
             task_type = args.get("task_type", "llm")
             trigger_type = args.get("trigger_type", "schedule")
 
@@ -337,31 +482,49 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "Prompt is required for llm/research tasks", "exit_code": 1}
             if task_type == "action" and not args.get("action_name"):
                 return {"error": "action_name is required for action tasks", "exit_code": 1}
+            denied = _admin_task_action_denied(owner, task_type, args.get("action_name"))
+            if denied:
+                return denied
 
             # Compute next_run for schedule triggers
             next_run = None
+            scheduled_date = None
             if trigger_type == "schedule":
                 schedule = args.get("schedule", "daily")
+                if args.get('scheduled_date') and schedule != 'once':
+                    raise ValueError('scheduled_date is only for schedule=once; use day_of_month and scheduled_time for monthly tasks, or weekdays and scheduled_time for weekly tasks')
+                if schedule == "once":
+                    scheduled_date = _task_date_utc(args.get("scheduled_date"))
                 next_run = compute_next_run(
                     schedule, args.get("scheduled_time", "09:00"),
-                    args.get("scheduled_day"),
+                    args.get("scheduled_day"), scheduled_date,
+                    cron_expression=args.get("cron_expression"),
                 )
+                if schedule == "once" and next_run is None:
+                    return {"error": "scheduled_date must be in the future", "exit_code": 1}
+                if schedule == "cron" and next_run is None:
+                    return {"error": "A valid cron_expression is required for schedule=cron", "exit_code": 1}
 
             task_id = str(_uuid.uuid4())
             # Guard each fallback with `or`: args.get("prompt", default) returns
             # None when the key is present but null, and None[:50] raises.
             name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
+            from src.agent_runtime.authority import seal_task_authority
 
             task = ScheduledTask(
                 id=task_id,
                 owner=owner,
                 name=name,
                 prompt=args.get("prompt"),
+                request_authority_json=seal_task_authority(
+                    args.get("prompt"), task_type, args.get("action_name"), owner=owner),
                 task_type=task_type,
                 action=args.get("action_name"),
-                schedule=args.get("schedule") if trigger_type == "schedule" else None,
+                schedule=args.get("schedule", "daily") if trigger_type == "schedule" else None,
                 scheduled_time=args.get("scheduled_time", "09:00") if trigger_type == "schedule" else None,
                 scheduled_day=args.get("scheduled_day"),
+                scheduled_date=scheduled_date,
+                cron_expression=args.get("cron_expression") if trigger_type == "schedule" else None,
                 trigger_type=trigger_type,
                 trigger_event=args.get("trigger_event"),
                 trigger_count=args.get("trigger_count"),
@@ -375,12 +538,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             return {"response": f"Created task '{name}' (id: {task_id})", "task_id": task_id, "exit_code": 0}
 
         elif action == "edit":
-            task_id = args.get("task_id")
-            if not task_id:
-                return {"error": "task_id is required for edit", "exit_code": 1}
-            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
-            if not task:
-                return {"error": f"Task {task_id} not found", "exit_code": 1}
+            task, error = _task_by_id_or_exact_name("edit")
+            if error:
+                return error
             # Strict ownership: the old `task.owner and task.owner != owner`
             # skipped the check on an owner-less task (created in no-login mode
             # or before the legacy-owner sweep), letting any authenticated user
@@ -388,6 +548,38 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
+            # Check the policy against the task as it would be after the
+            # edit, so an llm task can't be flipped into a shell action.
+            next_task_type = args["task_type"] if args.get("task_type") is not None else task.task_type
+            next_action = args["action_name"] if args.get("action_name") is not None else task.action
+            denied = _admin_task_action_denied(owner, next_task_type, next_action)
+            if denied:
+                return denied
+
+            if 'weekdays' in args or 'day_of_month' in args:
+                clock = task.scheduled_time
+                if task.schedule == 'cron':
+                    fields = (task.cron_expression or '').split()
+                    clock = (f'{fields[1]}:{fields[0]}' if len(fields) == 5
+                             and fields[0].isdigit() and fields[1].isdigit() else None)
+                args = _task_structured_schedule({
+                    'trigger_type': task.trigger_type or 'schedule', **args,
+                }, fallback_time=clock)
+            if ((args.get('schedule') or task.schedule) == 'cron'
+                    and args.get('scheduled_time') is not None
+                    and args.get('cron_expression') is None):
+                from datetime import datetime
+                try:
+                    clock = datetime.strptime(args['scheduled_time'], '%H:%M')
+                except (TypeError, ValueError) as exc:
+                    raise ValueError('scheduled_time must be HH:MM UTC') from exc
+                fields = (task.cron_expression or '').split()
+                if len(fields) != 5:
+                    raise ValueError('Supply cron_expression to retime a schedule without a five-field cron expression')
+                # For cron tasks the executable clock lives in the expression,
+                # not the legacy scheduled_time column used by simple schedules.
+                args = {**args, 'scheduled_time': clock.strftime('%H:%M'),
+                        'cron_expression': ' '.join([str(clock.minute), str(clock.hour), *fields[2:]])}
             changed = []
             for field in ("name", "prompt", "output_target"):
                 if args.get(field) is not None:
@@ -399,6 +591,10 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("action_name") is not None:
                 task.action = args["action_name"]
                 changed.append("action")
+            if any(args.get(field) is not None for field in ("prompt", "task_type", "action_name")):
+                from src.agent_runtime.authority import seal_task_authority
+                task.request_authority_json = seal_task_authority(
+                    task.prompt, task.task_type, task.action, owner=owner)
             if args.get("trigger_type") is not None:
                 task.trigger_type = args["trigger_type"]
                 changed.append("trigger_type")
@@ -410,27 +606,38 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 changed.append("trigger_count")
 
             schedule_changed = False
-            for field in ("schedule", "scheduled_time", "scheduled_day"):
+            for field in ("schedule", "scheduled_time", "scheduled_day", "cron_expression"):
                 if args.get(field) is not None:
                     setattr(task, field, args[field])
                     changed.append(field)
                     schedule_changed = True
+            if "scheduled_date" in args:
+                if args.get('scheduled_date') and task.schedule != 'once':
+                    raise ValueError('scheduled_date is only for schedule=once; use day_of_month and scheduled_time for monthly tasks, or weekdays and scheduled_time for weekly tasks')
+                task.scheduled_date = _task_date_utc(args["scheduled_date"])
+                changed.append("scheduled_date")
+                schedule_changed = True
 
             if schedule_changed and (task.trigger_type or "schedule") == "schedule":
+                if task.schedule == "once" and task.scheduled_date is None:
+                    raise ValueError("scheduled_date is required for a one-off task")
                 task.next_run = compute_next_run(
                     task.schedule, task.scheduled_time, task.scheduled_day,
+                    task.scheduled_date,
+                    cron_expression=task.cron_expression,
                 )
+                if task.schedule == "once" and task.next_run is None:
+                    raise ValueError("scheduled_date must be in the future")
+                if task.schedule == "cron" and task.next_run is None:
+                    raise ValueError("A valid cron_expression is required for schedule=cron")
 
             db.commit()
             return {"response": f"Updated task '{task.name}': {', '.join(changed)}", "exit_code": 0}
 
         elif action == "delete":
-            task_id = args.get("task_id")
-            if not task_id:
-                return {"error": "task_id is required for delete", "exit_code": 1}
-            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
-            if not task:
-                return {"error": f"Task {task_id} not found", "exit_code": 1}
+            task, error = _task_by_id_or_exact_name("delete")
+            if error:
+                return error
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
             name = task.name
@@ -439,40 +646,46 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             return {"response": f"Deleted task '{name}'", "exit_code": 0}
 
         elif action in ("pause", "resume"):
-            task_id = args.get("task_id")
-            if not task_id:
-                return {"error": f"task_id is required for {action}", "exit_code": 1}
-            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
-            if not task:
-                return {"error": f"Task {task_id} not found", "exit_code": 1}
+            task, error = _task_by_id_or_exact_name(action)
+            if error:
+                return error
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
             if action == "pause":
                 task.status = "paused"
             else:
+                denied = _admin_task_action_denied(owner, task.task_type, task.action)
+                if denied:
+                    return denied
                 task.status = "active"
                 if (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time, task.scheduled_day,
+                        task.scheduled_date,
+                        cron_expression=task.cron_expression,
                     )
+                    if task.schedule == "once" and task.next_run is None:
+                        raise ValueError("A future scheduled_date is required to resume this one-off task")
+                    if task.schedule == "cron" and task.next_run is None:
+                        raise ValueError("A valid cron_expression is required to resume this task")
             db.commit()
             return {"response": f"Task '{task.name}' {action}d", "exit_code": 0}
 
         elif action == "run":
-            task_id = args.get("task_id")
-            if not task_id:
-                return {"error": "task_id is required for run", "exit_code": 1}
-            task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
-            if not task:
-                return {"error": f"Task {task_id} not found", "exit_code": 1}
+            task, error = _task_by_id_or_exact_name("run")
+            if error:
+                return error
             if owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
+            denied = _admin_task_action_denied(owner, task.task_type, task.action)
+            if denied:
+                return denied
 
             from src.event_bus import get_task_scheduler
             scheduler = get_task_scheduler()
             if scheduler:
-                started = await scheduler.run_task_now(task_id)
+                started = await scheduler.run_task_now(task.id)
                 if started:
                     return {"response": f"Task '{task.name}' triggered", "exit_code": 0}
                 else:
@@ -513,9 +726,16 @@ async def do_api_call(content: str) -> Dict:
                 pass
 
     integration_name = args.get("integration", "")
+    from src.agent_runtime.remote_resources import active_backend_operation
+    bound = active_backend_operation()
+    if bound is not None:
+        bound.validate()
+        if bound.resource.namespace != "integration":
+            return {"error": "API call has no integration resource binding", "exit_code": 1}
+        integration_name = bound.resource.server_id
     integrations = load_integrations()
     intg = next((i for i in integrations if i["id"] == integration_name
-                 or i["name"].lower() == integration_name.lower()), None)
+                 or (bound is None and i["name"].lower() == integration_name.lower())), None)
     if not intg:
         available = ", ".join(i["name"] for i in integrations if i.get("enabled", True))
         return {"error": f"No integration matching '{integration_name}'. Available: {available or 'none configured'}", "exit_code": 1}
@@ -549,6 +769,8 @@ _APP_API_BLOCKLIST_PREFIXES = (
 # {"tasks": []} to /api/cookbook/state, which overwrote the whole file.
 # Use dedicated tools or UI flows instead.
 _APP_API_BLOCKLIST_METHOD_PATH = (
+    ("POST",   "/api/tools"),  # global tool policy is changed by a human in Settings
+    ("PATCH",  "/api/mcp/servers"),  # per-server MCP tool policy and server toggles, same reason
     ("GET",    "/api/email/accounts"),  # owner-filtered in tool context; use list_email_accounts MCP tool
     ("POST",   "/api/cookbook/state"),   # whole-file overwrite — agent must use serve_preset/serve_model instead
     ("DELETE", "/api/cookbook/state"),
@@ -673,6 +895,10 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         return {"error": f"Unsupported method: {method}", "exit_code": 1}
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+        if path.startswith("/api/tools"):
+            return {"error": "Tool policy cannot be replaced from chat. Re-enable tools in Settings > Agent Tools; use manage_settings to list or disable them.", "exit_code": 1}
+        if path.startswith("/api/mcp/servers"):
+            return {"error": "MCP server and tool policy cannot be changed from chat. Ask the user to change it in Settings > Integrations.", "exit_code": 1}
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
         if "/api/cookbook/packages/install" in path:

@@ -1,0 +1,839 @@
+/* 12-gallery - part of the former static/style.css.
+ *
+ * The stylesheet is split by area, but the split is mechanical: rules were
+ * moved verbatim and NOT regrouped. The numeric prefix is the load order, and
+ * that order is what preserves the cascade. A rule sits in the file its
+ * original position fell into, so an area's rules are not all in its file and
+ * a file is not only that area's rules.
+ *
+ * Do not reorder the <link> tags in static/index.html, and do not move a rule
+ * between files: with 1,151 redeclarations and 1,886 !important in this
+ * cascade, either can change which declaration wins.
+ *
+ * static/index.html and the PRECACHE list in static/sw.js must agree on this
+ * order. tests/test_static_stylesheet_manifest.py and
+ * tests/test_css_computed_style_snapshot.py fail if that drifts.
+ */
+.research-synapse.rs-phase-reading .rs-phase-chip,
+.research-synapse.rs-phase-analyzing .rs-phase-chip { color: var(--gold, #d4a72c); }
+.research-synapse.rs-phase-writing .rs-phase-chip { color: var(--color-success, #4caf50); }
+
+@media (prefers-reduced-motion: reduce) {
+  .research-synapse .rs-live-dot,
+  .research-synapse .rs-pulse,
+  .research-synapse .rs-node-new,
+  .research-synapse .rs-node-expanded,
+  .research-synapse .rs-edge-firing { animation: none !important; }
+}
+
+/* ── Raw findings items (inside sources-style box) ── */
+.finding-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.finding-item .source-link {
+  border-radius: 6px 6px 0 0;
+}
+.finding-summary {
+  padding: 6px 8px 8px;
+  font-size: 0.82em;
+  line-height: 1.5;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.85;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.finding-item:last-child .finding-summary {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Gallery Editor
+   ═══════════════════════════════════════════════════════════ */
+
+/* Tab bar */
+.gallery-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  background: var(--panel);
+}
+.gallery-tab {
+  padding: 8px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.gallery-tab:hover { opacity: 0.85; }
+.gallery-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--red);
+}
+
+/* Narrow modal tab strips should stay on one row. Resized docked windows can
+   be much narrower than the viewport, so this cannot live only in mobile media
+   queries. */
+.cookbook-tabs,
+.memory-tabs,
+.admin-tabs,
+.lib-tabs,
+.gallery-tabs,
+.preset-tabs {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cookbook-tabs::-webkit-scrollbar,
+.memory-tabs::-webkit-scrollbar,
+.admin-tabs::-webkit-scrollbar,
+.lib-tabs::-webkit-scrollbar,
+.gallery-tabs::-webkit-scrollbar,
+.preset-tabs::-webkit-scrollbar {
+  display: none;
+}
+.cookbook-tabs > *,
+.memory-tabs > *,
+.admin-tabs > *,
+.lib-tabs > *,
+.gallery-tabs > *,
+.preset-tabs > * {
+  flex: 0 0 auto;
+}
+.cookbook-tab,
+.memory-tab,
+.admin-tab,
+.lib-tab,
+.gallery-tab,
+.preset-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+.gallery-tab {
+  gap: 6px;
+}
+
+@container (max-width: 360px) {
+  .cookbook-tab:has(svg),
+  .memory-tab:has(svg),
+  .admin-tab:has(svg),
+  .lib-tab:has(svg),
+  .gallery-tab:has(svg),
+  .preset-tab:has(svg) {
+    width: 34px;
+    min-width: 34px;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 0;
+  }
+
+  .cookbook-tab:has(svg) svg,
+  .memory-tab:has(svg) svg,
+  .admin-tab:has(svg) svg,
+  .lib-tab:has(svg) svg,
+  .gallery-tab:has(svg) svg,
+  .preset-tab:has(svg) svg {
+    width: 14px;
+    height: 14px;
+    margin-right: 0 !important;
+    vertical-align: middle !important;
+  }
+
+  .memory-tab:has(svg) .memory-count,
+  .gallery-tab:has(svg) .gallery-tab-label,
+  .gallery-tab:has(svg) .gallery-tab-close,
+  .cookbook-tab:has(svg) .cookbook-tab-count,
+  .preset-tab:has(svg) .preset-count {
+    display: none !important;
+  }
+}
+/* Icon + label layout inside each tab. */
+.gallery-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.gallery-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.85;
+}
+.gallery-tab.active .gallery-tab-icon { opacity: 1; }
+/* Close × on the Edit tab — appears on hover. */
+.gallery-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+  /* Use a slightly larger glyph at a larger line-height so the × sits
+     visually centered — the U+00D7 character has uneven em-box metrics. */
+  font-size: 16px;
+  line-height: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  padding-bottom: 2px;
+  box-sizing: border-box;
+}
+.gallery-tab:hover .gallery-tab-close,
+.gallery-tab.active .gallery-tab-close { opacity: 0.65; }
+/* Hide the close × entirely on the Edit tab when there's no edit open. */
+.gallery-tab[data-tab="editor"]:not(.has-edit) .gallery-tab-close { display: none !important; }
+.gallery-tab-close:hover { opacity: 1 !important; background: color-mix(in srgb, var(--red) 25%, transparent); color: var(--red); }
+/* Inline rename input shown when the Edit tab is double-clicked. */
+.gallery-tab-rename-input {
+  background: var(--bg);
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 1px 4px;
+  width: 140px;
+  outline: none;
+}
+
+/* Albums tab — grid of album cards with cover thumbnails. */
+.gallery-albums-container {
+  padding: 12px 4px;
+  max-height: calc(92vh - 120px);
+  overflow-y: auto;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.gallery-settings-container {
+  padding: 8px 4px;
+  max-height: calc(92vh - 120px);
+  overflow-y: auto;
+}
+.gallery-albums-container.gallery-dragover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.gallery-albums-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 48px 16px;
+  opacity: 0.7;
+  font-size: 13px;
+}
+.gallery-albums-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.gallery-album-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.gallery-album-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--red);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.gallery-album-menu-btn {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+  z-index: 2;
+  backdrop-filter: blur(4px);
+  /* Plain "…" text — the previous SVG was rendering as a flat black
+     block on some themes when its currentColor didn't contrast. */
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 600;
+  padding: 0 0 4px;
+}
+.gallery-album-card:hover .gallery-album-menu-btn,
+.gallery-album-menu-btn:focus-visible { opacity: 1; }
+.gallery-album-menu-btn:hover { background: var(--bg); }
+.gallery-album-menu-pop {
+  position: absolute;
+  top: 34px; right: 6px;
+  min-width: 140px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  display: flex; flex-direction: column;
+  padding: 4px;
+  z-index: 3;
+}
+.gallery-album-menu-pop[hidden] { display: none; }
+.gallery-album-cover {
+  aspect-ratio: 4 / 3;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.gallery-album-placeholder {
+  opacity: 0.4;
+  font-size: 40px;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+}
+.gallery-album-info {
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.gallery-album-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gallery-album-count {
+  font-size: 11px;
+  opacity: 0.55;
+}
+.gallery-album-card-add {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.gallery-album-card-add:hover { opacity: 1; }
+.gallery-album-action-tile {
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+
+/* Edit-tab empty state — shown before any image is loaded. */
+.gallery-editor-landing {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+  padding: 28px 16px;
+  flex: 1;
+  text-align: center;
+  color: var(--fg);
+}
+.gallery-editor-landing h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.gallery-editor-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.gallery-editor-heading > svg { opacity: 0.6; flex: 0 0 auto; }
+/* "vision model" link in the AI-tagging description → opens Settings. */
+.ge-vision-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ge-vision-link:hover { opacity: 0.8; }
+.ge-alpha-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  position: relative;
+  top: -1px;
+}
+.gallery-editor-landing-actions {
+  display: flex; gap: 10px;
+  margin-top: 8px;
+}
+/* Bigger primary action buttons specifically inside the editor landing —
+   the gallery-wide .gallery-select-btn is a compact toolbar style which is
+   too small for the empty-state hero. */
+.gallery-editor-landing-actions .gallery-select-btn {
+  padding: 7px 22px 17px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+/* Visible template picker: every canvas ratio is inspectable without opening
+   a native menu, and its SVG outline previews the resulting canvas shape. */
+.gallery-editor-template-picker {
+  width: min(760px, 96%);
+  margin-top: 10px;
+}
+.gallery-editor-template-picker h4 {
+  margin: 0 0 7px;
+  font-size: 11px;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.gallery-editor-template-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(105px, 1fr));
+  gap: 6px;
+}
+.gallery-editor-template-option {
+  height: 72px;
+  min-width: 0;
+  padding: 6px 7px;
+  display: grid;
+  grid-template-rows: 28px auto auto;
+  justify-items: center;
+  align-items: center;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.gallery-editor-template-option svg { color: var(--accent, var(--red)); }
+.gallery-editor-template-option:hover,
+.gallery-editor-template-option:focus-visible {
+  outline: none;
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 7%, var(--panel));
+}
+.gallery-editor-template-option span {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.gallery-editor-template-option small {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  opacity: 0.52;
+}
+@media (max-width: 620px) {
+  .gallery-editor-landing {
+    justify-content: flex-start;
+    gap: 7px;
+    padding: 18px 12px;
+    overflow-y: auto;
+  }
+  .gallery-editor-landing-actions {
+    width: 100%;
+    gap: 6px;
+    justify-content: center;
+  }
+  .gallery-editor-landing-actions .gallery-select-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 180px;
+    padding: 6px 8px 10px;
+    font-size: 11px;
+  }
+  .gallery-editor-template-picker {
+    width: 100%;
+    margin-top: 4px;
+  }
+  .gallery-editor-template-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* The common square, widescreen, portrait, and Instagram presets are
+     enough to start on a phone. Keep the print and 4K presets on desktop. */
+  .gallery-editor-template-option:nth-child(n + 5) {
+    display: none;
+  }
+}
+/* Saved-drafts grid on the editor landing. Surfaces every persisted
+   in-progress project so the user can resume without re-opening the
+   original photo. Each card: thumbnail + name + last-saved hint + ×. */
+.gallery-editor-drafts {
+  width: min(720px, 92%);
+  margin: 28px auto 0;   /* centered */
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gallery-editor-drafts {
+  position: relative;
+}
+.gallery-editor-drafts-loading {
+  position: absolute;
+  inset: 30px 0 0 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  border-radius: 6px;
+  min-height: 80px;
+}
+.gallery-editor-drafts-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;   /* center the title / search / select */
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.gallery-editor-drafts-title {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  font-weight: 600;
+  text-align: left;
+  flex-shrink: 0;
+}
+.gallery-editor-drafts-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  height: 26px;          /* same thickness as the Select button */
+  box-sizing: border-box;
+  padding: 0 8px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.gallery-editor-drafts-search:focus { outline: none; border-color: var(--red); }
+/* The shared .gallery-select-btn has a -4px top margin + tall asymmetric padding
+   meant for the main gallery toolbar; in this header it makes the button a
+   different height / offset from the search box. Normalize so it lines up. */
+.gallery-editor-drafts-header .gallery-select-btn {
+  margin-top: 0 !important;
+  height: 26px;          /* match the search bar */
+  box-sizing: border-box;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.cookbook-official-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--fg);
+  font-size: 10px;
+  opacity: 0.72;
+  white-space: nowrap;
+  position: relative;
+  top: 1px;
+}
+.cookbook-official-filter > span:first-child {
+  position: relative;
+  top: 1px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 9px;
+}
+.cookbook-official-filter .toggle {
+  width: 26px;
+  height: 14px;
+}
+.cookbook-official-filter .toggle .slider:before {
+  width: 10px;
+  height: 10px;
+  left: 2px;
+  bottom: 2px;
+}
+.cookbook-official-filter .toggle input:checked + .slider:before {
+  transform: translateX(12px);
+}
+#gallery-editor-drafts-select { margin-left: auto; flex-shrink: 0; }
+#gallery-editor-drafts-select.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+/* Graceful exit when a project card is deleted — fade + shrink before re-render. */
+.gallery-editor-draft-card.gallery-draft-removing {
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.24s ease, transform 0.24s ease;
+  pointer-events: none;
+}
+/* Draft select dot uses the standard small .gallery-select-dot look (same as the
+   photo grid) — no oversized white-ring checkbox. */
+.gallery-editor-drafts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.gallery-drafts-just-opened > .gallery-editor-draft-card {
+  animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
+}
+.gallery-drafts-just-opened > :nth-child(1)  { animation-delay: 0.02s; }
+.gallery-drafts-just-opened > :nth-child(2)  { animation-delay: 0.04s; }
+.gallery-drafts-just-opened > :nth-child(3)  { animation-delay: 0.06s; }
+.gallery-drafts-just-opened > :nth-child(4)  { animation-delay: 0.08s; }
+.gallery-drafts-just-opened > :nth-child(5)  { animation-delay: 0.10s; }
+.gallery-drafts-just-opened > :nth-child(6)  { animation-delay: 0.12s; }
+.gallery-drafts-just-opened > :nth-child(7)  { animation-delay: 0.14s; }
+.gallery-drafts-just-opened > :nth-child(8)  { animation-delay: 0.16s; }
+.gallery-drafts-just-opened > :nth-child(9)  { animation-delay: 0.18s; }
+.gallery-drafts-just-opened > :nth-child(10) { animation-delay: 0.20s; }
+.gallery-drafts-just-opened > :nth-child(11) { animation-delay: 0.22s; }
+.gallery-drafts-just-opened > :nth-child(12) { animation-delay: 0.24s; }
+.gallery-drafts-just-opened > :nth-child(13) { animation-delay: 0.26s; }
+.gallery-drafts-just-opened > :nth-child(14) { animation-delay: 0.28s; }
+.gallery-drafts-just-opened > :nth-child(15) { animation-delay: 0.30s; }
+.gallery-drafts-just-opened > :nth-child(16) { animation-delay: 0.32s; }
+.gallery-drafts-just-opened > :nth-child(17) { animation-delay: 0.34s; }
+.gallery-drafts-just-opened > :nth-child(18) { animation-delay: 0.36s; }
+.gallery-drafts-just-opened > :nth-child(19) { animation-delay: 0.38s; }
+.gallery-drafts-just-opened > :nth-child(20) { animation-delay: 0.40s; }
+.gallery-drafts-just-opened > :nth-child(n+21) { animation-delay: 0.42s; }
+.gallery-drafts-view-toggle {
+  display: inline-flex;
+  position: relative;
+  top: 0;
+  height: 24px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.gallery-drafts-view-toggle button {
+  width: 25px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer;
+  line-height: 0;
+}
+.gallery-drafts-view-toggle button:last-child { border-right: 0; }
+.gallery-drafts-view-toggle button:hover { color: var(--fg); }
+.gallery-drafts-view-toggle button.active {
+  height: 22px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-thumb {
+  width: 44px;
+  height: 44px;
+  aspect-ratio: auto;
+}
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete {
+  position: static;
+  opacity: 0.55;
+  background: transparent;
+  color: var(--fg);
+}
+.gallery-editor-draft-delete-trash { display: none; }
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete-trash {
+  display: block;
+  width: 18px;
+  height: 18px;
+  position: relative;
+  top: -2px;
+}
+.gallery-editor-drafts-grid.list-view .gallery-editor-draft-delete:hover {
+  opacity: 1;
+  color: var(--color-error, #f44);
+  background: color-mix(in srgb, var(--color-error, #f44) 10%, transparent);
+}
+.gallery-editor-draft-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  text-align: left;
+}
+.gallery-editor-draft-card:hover {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+.gallery-editor-draft-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--bg);
+  display: block;
+}
+.gallery-editor-draft-thumb-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--fg) 4%, transparent),
+    color-mix(in srgb, var(--fg) 4%, transparent) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+.gallery-editor-draft-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.gallery-editor-draft-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-editor-draft-meta {
+  font-size: 10px;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-editor-draft-delete {
+  position: absolute;
+  top: -2px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.gallery-editor-draft-delete {
+  padding-bottom: 2px;
+}
+.gallery-editor-draft-delete:hover { background: var(--red); }
+/* On very narrow phones, give project search its own row instead of
+   compressing the title and view controls into an overflowing header. */
+@media (max-width: 360px) {
+  .gallery-editor-drafts-header {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+  .gallery-editor-drafts-title {
+    flex: 1 1 auto;
+  }
+  .gallery-editor-drafts-search {
+    order: 10;
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+  }
+  #gallery-editor-drafts-select {
+    margin-left: 0;
+  }
+}
+/* Editor layout */
+.gallery-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Prevent the editor's own scroll/touch from chaining out to the
+     gallery modal or the page body — critical on mobile so touching
+     the canvas doesn't slide the whole page. */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+/* Pin the topbar to the top of the editor so its action buttons remain
+   visible if the gallery modal body itself ends up scrolling. */
+.ge-topbar { position: sticky; top: 0; z-index: 5; }
+
+/* Top bar */
+.ge-topbar {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.ge-topbar-left, .ge-topbar-right {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+.ge-topbar-right > * {
+  flex-shrink: 0;
+}
+.ge-topbar .dropdown[popover] {
+  position: fixed;
+  margin: 0;
+  bottom: auto;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+.ge-draft-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 52%, transparent);
+  font-size: 10px;
+  line-height: 1;
+  transition: color 0.15s, opacity 0.15s;
+}

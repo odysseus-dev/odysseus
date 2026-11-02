@@ -5,22 +5,7 @@ with the args on the same line as the tag; the parser must execute those. The
 relaxed tag pattern must NOT prefix-match longer fence tags: ```python3 is a
 language hint, not a "python" tool call with content "3\n...".
 """
-import sys
-from unittest.mock import MagicMock
-
-for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
-    sys.modules.pop(mod, None)
-for mod in [
-    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
-    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'core.models', 'core.database', 'core.auth'
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
-
-import src.agent_tools  # noqa: E402, F401
-from src.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
-
+from src.tool_parsing import parse_tool_blocks, strip_tool_blocks
 
 def test_inline_args_on_tag_line_parse():
     # The original bug: ```list_email_accounts {}  (args on the tag line)

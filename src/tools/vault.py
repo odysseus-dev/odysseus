@@ -68,6 +68,10 @@ async def do_vault_search(content: str, owner: Optional[str] = None) -> Dict:
     except json.JSONDecodeError:
         return {"error": "Failed to parse bw output", "exit_code": 1}
 
+    from src.agent_runtime.owned_resources import active_owned_operation, observe_vault_records
+    if active_owned_operation() is not None:
+        observe_vault_records(owner, cfg, items)
+
     if not items:
         return {"output": f"No vault items match '{query}'.", "exit_code": 0}
 
@@ -79,7 +83,7 @@ async def do_vault_search(content: str, owner: Optional[str] = None) -> Dict:
         username = login.get("username", "")
         uris = login.get("uris") or []
         url = uris[0].get("uri", "") if uris else ""
-        parts = [f"[{item_id[:8]}] {name}"]
+        parts = [f"[{item_id}] {name}"]
         if username:
             parts.append(f"user: {username}")
         if url:

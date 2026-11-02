@@ -178,6 +178,21 @@ class FastEmbedClient:
             except Exception as _e:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
+        # Isolated evaluation and worker fleets can run many Odysseus
+        # processes on one host.  FastEmbed otherwise lets ONNX Runtime size
+        # a thread pool from the whole machine for every process, which can
+        # create hundreds of threads per worker and starve inference.  Keep
+        # the existing default for normal installs, but allow operators to
+        # bound that pool explicitly.
+        raw_threads = os.getenv("FASTEMBED_THREADS", "").strip()
+        if raw_threads:
+            try:
+                threads = int(raw_threads)
+            except ValueError as exc:
+                raise ValueError("FASTEMBED_THREADS must be an integer") from exc
+            if not 1 <= threads <= 256:
+                raise ValueError("FASTEMBED_THREADS must be between 1 and 256")
+            kwargs["threads"] = threads
         self._embedding = TextEmbedding(**kwargs)
         self._dim: Optional[int] = None
         self.url = "local://fastembed"

@@ -29,7 +29,7 @@ _FRONT_MATTER_RE = re.compile(
 # Freeform annotation bullet — mirrors the JS regex in static/js/document.js.
 # Coords are page percentages (0–100); kind/lh are optional for backward compat.
 _ANNOTATION_RE = re.compile(
-    r'^[ \t]*-\s+(?P<value>.*?)\s*<!--\s*annotation\s+id=(?P<id>[\w-]+)\s+page=(?P<page>\d+)\s+x=(?P<x>[\d.]+)\s+y=(?P<y>[\d.]+)\s+w=(?P<w>[\d.]+)\s+h=(?P<h>[\d.]+)(?:\s+kind=(?P<kind>\w+))?(?:\s+lh=(?P<lh>[\d.]+))?\s*-->[ \t]*$',
+    r'^[ \t]*-\s+(?P<value>.*?)\s*<!--\s*annotation\s+id=(?P<id>[\w-]+)\s+page=(?P<page>\d+)\s+x=(?P<x>[\d.]+)\s+y=(?P<y>[\d.]+)\s+w=(?P<w>[\d.]+)\s+h=(?P<h>[\d.]+)(?:\s+kind=(?P<kind>\w+))?(?:\s+lh=(?P<lh>[\d.]+))?(?:\s+fs=(?P<fs>[\d.]+))?\s*-->[ \t]*$',
     re.MULTILINE,
 )
 
@@ -80,6 +80,7 @@ def parse_markdown_annotations(content: str) -> list[dict]:
                 "h": float(m.group("h")),
                 "kind": m.group("kind") or "text",
                 "line_height": float(m.group("lh")) if m.group("lh") else 1.3,
+                "font_size": float(m.group("fs")) if m.group("fs") else 11.0,
                 "value": value,
             })
         except (ValueError, TypeError) as e:
@@ -101,8 +102,10 @@ _PLAIN_FRONT_MATTER_RE = re.compile(
 #   - **label:** value <!-- field=NAME-ENC type=text -->
 #   - **label** [opts]: value <!-- field=NAME-ENC type=choice -->
 #   - [x] **label** <!-- field=NAME-ENC type=checkbox -->
+# Accept Unicode word characters for older saved markers, whose encoder left
+# non-ASCII letters/numbers literal. Newly rendered names are ASCII-safe.
 _FIELD_BULLET_RE = re.compile(
-    r'^\s*-\s+(?P<body>.*?)\s*<!--\s*field=(?P<name>[A-Za-z0-9_.%-]+)\s+type=(?P<type>\w+)\s*-->\s*$'
+    r'^\s*-\s+(?P<body>.*?)\s*<!--\s*field=(?P<name>[\w.%-]+)\s+type=(?P<type>\w+)\s*-->\s*$'
 )
 
 
@@ -114,7 +117,7 @@ def _encode_name(name: str) -> str:
     """
     out = []
     for ch in name or "":
-        if ch.isalnum() or ch in ("_", ".", "-"):
+        if (ch.isascii() and ch.isalnum()) or ch in ("_", ".", "-"):
             out.append(ch)
         else:
             for b in ch.encode("utf-8"):
