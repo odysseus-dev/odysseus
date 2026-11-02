@@ -10,7 +10,12 @@ class _FakeServeResponse:
     content = b"{}"
 
     def json(self):
-        return {"ok": True, "session_id": "tmux-123"}
+        return {
+            "ok": True,
+            "session_id": "tmux-123",
+            "effective_cmd": "OLLAMA_HOST=0.0.0.0:11437 ollama serve",
+            "runtime_port": 11437,
+        }
 
 
 async def _fake_post(self, *_args, **_kwargs):
@@ -31,7 +36,7 @@ async def _run_scheduled_serve(tmp_path, monkeypatch, server):
         task_name="test-serve",
         command=json.dumps({
             "repo_id": "org/model",
-            "cmd": "llama-server --port 8080",
+            "cmd": "ollama serve",
             "host": "gpu-box",
             "end_after_min": 30,
         }),
@@ -54,7 +59,15 @@ async def test_scheduled_serve_preserves_server_ssh_port_and_platform(tmp_path, 
     assert task["sshPort"] == "2222"
     assert task["platform"] == "windows"
     assert task["remoteHost"] == "gpu-box"
-    assert task["payload"]["_cmd"] == "llama-server --port 8080"
+    assert task["payload"] == {
+        "repo_id": "org/model",
+        "remote_host": "gpu-box",
+        "_cmd": "OLLAMA_HOST=0.0.0.0:11437 ollama serve",
+        "platform": "windows",
+        "ssh_port": "2222",
+        "runtime_port": "11437",
+    }
+    assert "OLLAMA_HOST=0.0.0.0:11437 ollama serve" in task["output"]
 
 
 @pytest.mark.asyncio
