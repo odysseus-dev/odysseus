@@ -537,7 +537,10 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         search_provider: Optional[str] = None
         endpoint_id: Optional[str] = None
         model: Optional[str] = None
-        max_time: int = Field(default=300, ge=60, le=1800)
+        # None inherits research_run_timeout_seconds for both the engine cap
+        # and the outer hard timeout. 0 disables the engine cap; the outer
+        # timeout still follows research_run_timeout_seconds.
+        max_time: Optional[int] = Field(default=None, ge=0, le=86400)
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[Literal["product", "comparison", "howto", "factcheck"]] = None

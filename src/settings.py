@@ -104,12 +104,18 @@ DEFAULT_SETTINGS = {
     "research_model": "",
     "research_search_provider": "",
     "research_max_tokens": 16384,
-    "research_extraction_timeout_seconds": 90,
+    # Output budget for the structured helper calls (plan, query generation,
+    # action planning, page extraction). Reasoning models spend completion
+    # tokens on hidden reasoning before emitting the answer, so a 1024-token
+    # plan budget can end before the JSON starts. 4096 leaves room for both.
+    "research_helper_max_tokens": 4096,
+    "research_extraction_timeout_seconds": 300,
     # Lightweight planning/query LLM calls happen before any search starts.
-    # Keep them separately tunable so slow local backends are not capped by
-    # the old 30s/60s per-call defaults.
-    "research_planning_timeout_seconds": 90,
-    "research_query_timeout_seconds": 90,
+    # Keep them separately tunable so slow local backends are not capped at
+    # the generic per-call defaults. 300s covers a multi-thousand-token
+    # planning prompt on a slow local model while still bounding retries.
+    "research_planning_timeout_seconds": 300,
+    "research_query_timeout_seconds": 300,
     "research_extraction_concurrency": 3,
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s
