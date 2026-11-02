@@ -53,6 +53,8 @@ services/data/
 
 # Test capture artifacts (browser session dumps may contain personal content)
 .playwright-mcp/
+test-results/
+playwright-report/
 
 # OS
 .DS_Store

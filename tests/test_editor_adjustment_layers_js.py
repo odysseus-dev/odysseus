@@ -93,6 +93,42 @@ def test_color_adjustments_produce_deterministic_pixels_and_preserve_alpha():
     assert len({tuple(pixel) for pixel in result}) == 7
 
 
+def test_shadows_highlights_preserves_black_point_and_contrast():
+    source = textwrap.dedent(
+        f"""
+        import {{applyAdjustment}} from {json.dumps(PIXEL_MODULE)};
+        class FakeContext {{
+          constructor(canvas) {{ this.canvas=canvas; this.filter='none'; }}
+          drawImage(source) {{ this.canvas.pixels=new Uint8ClampedArray(source.pixels); }}
+          getImageData() {{ return {{data:new Uint8ClampedArray(this.canvas.pixels)}}; }}
+          putImageData(image) {{ this.canvas.pixels=new Uint8ClampedArray(image.data); }}
+        }}
+        class FakeCanvas {{
+          constructor(pixels=[0,0,0,0]) {{ this.width=1; this.height=1; this.pixels=new Uint8ClampedArray(pixels); this.ctx=new FakeContext(this); }}
+          getContext() {{ return this.ctx; }}
+        }}
+        globalThis.document={{createElement:()=>new FakeCanvas()}};
+        const spec={{type:'shadows-highlights',params:{{shadows:30,highlights:-15}}}};
+        const lift=(value)=>applyAdjustment(new FakeCanvas([value,value,value,255]),spec).pixels[0];
+        console.log(JSON.stringify({{
+          black:lift(0),
+          nearBlack:lift(10),
+          dark:lift(40),
+          mid:lift(128),
+          white:lift(255),
+        }}));
+        """
+    )
+    result = run_node(source)
+    # Pure black and pure white must be untouched (no grey veil / no clipping).
+    assert result["black"] == 0
+    assert result["white"] == 255
+    # Near-black lifts gently (well below the old additive lift that pushed 10 -> ~78).
+    assert 10 < result["nearBlack"] <= 40
+    # The whole tone ramp stays monotonic: black < near-black < dark < mid < white.
+    assert result["black"] < result["nearBlack"] < result["dark"] < result["mid"] < result["white"]
+
+
 def test_adjustment_worker_reuses_shared_pixel_pass_and_returns_transferable_bitmap():
     worker = ADJUSTMENT_WORKER.read_text()
     adjustment = (ROOT / "static/js/editor/adjustment-layer.js").read_text()
