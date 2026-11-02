@@ -445,3 +445,83 @@ async def test_ordinary_admin_delete_does_not_require_serve_owner(
         response = await client.delete(f"http://testserver/api/model-endpoints/{endpoint_id}")
     assert response.status_code == 200, response.text
     assert _endpoint(endpoint_db, endpoint_id) is None
+
+
+def _launch_image(repo_id: str, port: int, monkeypatch) -> str:
+    import routes.cookbook_routes as cookbook_routes
+    import src.settings as settings
+    from routes.cookbook_helpers import ServeRequest
+
+    monkeypatch.setattr(settings, "load_settings", lambda: {"image_gen_enabled": True, "image_model": repo_id})
+    monkeypatch.setattr(settings, "save_settings", lambda _settings: None)
+    router = cookbook_routes.setup_cookbook_routes()
+    serve = next(
+        route.endpoint for route in router.routes
+        if route.path == "/api/model/serve" and "POST" in route.methods
+    )
+    cells = dict(zip(serve.__code__.co_freevars, serve.__closure__ or ()))
+    register = cells["_auto_register_image_endpoint"].cell_contents
+    endpoint_id = register(
+        ServeRequest(repo_id=repo_id, cmd=f"python diffusion_server.py --model {repo_id} --port {port}"), None
+    )
+    assert endpoint_id
+    return endpoint_id
+
+
+def _rename(factory, endpoint_id: str, name: str) -> None:
+    import core.database as database
+
+    with factory() as db:
+        db.get(database.ModelEndpoint, endpoint_id).name = name
+        db.commit()
+
+
+@pytest.mark.parametrize("relaunched", ["Qwen/Qwen3-8B", "meta-llama/Llama-3.1-8B"])
+def test_relaunch_keeps_renamed_endpoint_name(endpoint_db, relaunched):
+    endpoint = _launch_llm("Qwen/Qwen3-8B", 8001)
+    _rename(endpoint_db, endpoint, "Workstation GPU")
+
+    assert _launch_llm(relaunched, 8001) == endpoint
+
+    assert _endpoint(endpoint_db, endpoint).name == "Workstation GPU"
+
+
+def test_relaunch_names_endpoint_after_served_model_when_not_renamed(endpoint_db):
+    endpoint = _launch_llm("Qwen/Qwen3-8B", 8001)
+
+    for repo_id, name in [
+        ("meta-llama/Llama-3.1-8B", "Llama-3.1-8B"),
+        ("Qwen/Qwen3-8B", "Qwen3-8B"),
+        ("meta-llama/Llama-3.1-8B", "Llama-3.1-8B"),
+    ]:
+        _launch_llm(repo_id, 8001)
+        assert _endpoint(endpoint_db, endpoint).name == name
+
+
+def test_launch_keeps_name_of_endpoint_without_pinned_models(endpoint_db):
+    import core.database as database
+
+    with endpoint_db() as db:
+        db.add(database.ModelEndpoint(id="manual", name="My vLLM box", base_url="http://localhost:8001/v1"))
+        db.commit()
+
+    assert _launch_llm("Qwen/Qwen3-8B", 8001) == "manual"
+
+    assert _endpoint(endpoint_db, "manual").name == "My vLLM box"
+
+
+def test_image_relaunch_keeps_renamed_endpoint_name(endpoint_db, monkeypatch):
+    endpoint = _launch_image("black-forest-labs/FLUX.1-schnell", 8100, monkeypatch)
+    _rename(endpoint_db, endpoint, "Image box")
+
+    _launch_image("stabilityai/sdxl-turbo", 8100, monkeypatch)
+
+    assert _endpoint(endpoint_db, endpoint).name == "Image box"
+
+
+def test_image_relaunch_names_endpoint_after_served_model_when_not_renamed(endpoint_db, monkeypatch):
+    endpoint = _launch_image("black-forest-labs/FLUX.1-schnell", 8100, monkeypatch)
+
+    _launch_image("stabilityai/sdxl-turbo", 8100, monkeypatch)
+
+    assert _endpoint(endpoint_db, endpoint).name == "sdxl-turbo (image)"

@@ -344,3 +344,13 @@ def test_hardlinked_effect_state_is_control_plane_without_scanning_the_store(tmp
     elsewhere.write_text("y")
     os.link(elsewhere, workspace / "pnpm-style.txt")
     assert resources._control_plane_path(str(workspace / "pnpm-style.txt")) is True
+
+
+def test_consecutive_claims_write_lf_only_records(tmp_path, target):
+    # Raw os.open() is text-mode on Windows unless O_BINARY is set; the \r\n it
+    # wrote made the next append read a stray empty line as a corrupt tail.
+    log = EffectLog(RUN, directory=tmp_path / "fx")
+    claim(log, target, "e1", "act-1")
+    claim(log, target, "e2", "act-2")
+    assert b"\r" not in log.path.read_bytes()
+    assert len(records(log.path)) == 2

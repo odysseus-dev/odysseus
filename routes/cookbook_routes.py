@@ -1416,6 +1416,7 @@ def setup_cookbook_routes() -> APIRouter:
         """Register a diffusion model as an image endpoint so it appears in the model selector."""
         import re
         from core.database import SessionLocal, ModelEndpoint
+        from routes.model_routes import _normalize_model_ids
         from src.settings import load_settings, save_settings
 
         # Parse port from command (--port NNNN), default 8100 for diffusion_server
@@ -1443,7 +1444,10 @@ def setup_cookbook_routes() -> APIRouter:
             if existing:
                 existing.is_enabled = True
                 existing.model_type = "image"
-                existing.name = display_name
+                # Follow the newly served model unless the user renamed the endpoint.
+                pinned_names = {f"{m.split('/')[-1]} (image)" for m in _normalize_model_ids(existing.pinned_models)}
+                if existing.name in pinned_names:
+                    existing.name = display_name
                 existing.endpoint_kind = "local"
                 existing.model_refresh_mode = "manual"
                 existing.cookbook_serve_session_id = serve_session_id
@@ -1772,7 +1776,10 @@ def setup_cookbook_routes() -> APIRouter:
             if existing:
                 existing.is_enabled = True
                 existing.model_type = "llm"
-                existing.name = display_name
+                # Follow the newly served model unless the user renamed the endpoint.
+                pinned_names = {m.split("/")[-1] for m in _normalize_model_ids(existing.pinned_models)}
+                if existing.name in pinned_names:
+                    existing.name = display_name
                 existing.endpoint_kind = "local"
                 existing.model_refresh_mode = "auto"
                 # A reused endpoint belongs to the newest serve session.
