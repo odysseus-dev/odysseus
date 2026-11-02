@@ -299,7 +299,18 @@ function _renderHistoryMessage(msg, modelName) {
   } else {
     displayContent = '';
   }
-  if (msg.role === 'user') {
+  let displayRole = msg.role;
+  // Peer turns remain user-role context for the model, but are agent replies
+  // in history. Only explicit identity plus its exact prefix can opt in.
+  if (displayRole === 'user' && meta?.group_peer === true
+      && typeof meta.group_model === 'string' && meta.group_model) {
+    const prefix = `[${meta.group_model}]: `;
+    if (displayContent.startsWith(prefix)) {
+      displayRole = 'assistant';
+      displayContent = displayContent.slice(prefix.length);
+    }
+  }
+  if (displayRole === 'user') {
     displayContent = _stripUserVisionBlocks(displayContent);
     const trimmed = displayContent.trim();
     if (
@@ -316,7 +327,7 @@ function _renderHistoryMessage(msg, modelName) {
       displayContent = `[Doc edit: ${docEditMatch[1]}] ${docEditMatch[3]}`;
     }
   }
-  return _addHistoryMessageWithFullRenderer(msg.role, displayContent, modelName, meta);
+  return _addHistoryMessageWithFullRenderer(displayRole, displayContent, modelName, meta);
 }
 
 function _clearHistoryPager() {

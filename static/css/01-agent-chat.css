@@ -4592,7 +4592,9 @@ body.bg-pattern-ascii-fireflies {
       width:100%; background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       padding:8px; font-family:inherit; font-size:0.95rem;
-      resize:vertical; outline:none;
+      resize:both; outline:none;
+      field-sizing:content;
+      max-width:100%; box-sizing:border-box;
       min-height:80px;
     }
     .edit-textarea:focus { border-color:var(--red); }
