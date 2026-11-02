@@ -1427,6 +1427,10 @@ def _markdown_display_value(value: Any) -> str:
             safe.append(r"\t")
         elif ord(char) < 32 or ord(char) == 127:
             safe.append(f"\\x{ord(char):02x}")
+        elif (ord(char) in (0x061C, 0x200E, 0x200F)
+              or 0x202A <= ord(char) <= 0x202E
+              or 0x2066 <= ord(char) <= 0x2069):
+            safe.append(f"\\u{ord(char):04x}")
         elif char in ("\u0085", "\u2028", "\u2029"):
             safe.append(f"\\u{ord(char):04x}")
         else:
@@ -1436,7 +1440,11 @@ def _markdown_display_value(value: Any) -> str:
 
 
 def _markdown_code(value: Any) -> str:
-    return f"<code>{_markdown_display_value(value)}</code>"
+    # Raw HTML code tags do not suppress Markdown inline parsing or autolinks.
+    text = _markdown_text(value)
+    for char in (".", ":", "@", "~"):
+        text = text.replace(char, f"&#{ord(char)};")
+    return f"<code>{text}</code>"
 
 
 def _markdown_text(value: Any) -> str:

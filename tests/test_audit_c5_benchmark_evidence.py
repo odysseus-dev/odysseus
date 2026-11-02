@@ -2698,5 +2698,67 @@ class TestMarkdownReportIntegrity(unittest.TestCase):
         text.encode("utf-8")
 
 
+# ---------------------------------------------------------------------------
+# Markdown inline-safety: raw HTML code tags still parse Markdown syntax.
+# ---------------------------------------------------------------------------
+
+class TestMarkdownInlineSafety(unittest.TestCase):
+    def test_code_field_escapes_link_image_emphasis_and_backticks(self):
+        malicious = (
+            "[**VERIFIED**](https://example.invalid/track) "
+            "![beacon](https://example.invalid/beacon.png) "
+            "`fake_code`"
+        )
+        safe = auditor._markdown_code(malicious)
+        self.assertTrue(safe.startswith("<code>"))
+        self.assertTrue(safe.endswith("</code>"))
+        self.assertIn("&#91;", safe)
+        self.assertIn("&#93;", safe)
+        self.assertIn("&#33;", safe)
+        self.assertIn("&#42;", safe)
+        self.assertIn("&#96;", safe)
+        self.assertNotIn("[**VERIFIED**]", safe)
+        self.assertNotIn("![beacon]", safe)
+
+    def test_report_renders_potential_links_as_literal_syntax(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            malicious_path = "[VERIFIED](https://example.invalid/track)"
+            malicious_campaign = "![beacon](https://example.invalid/collect.png)"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest(
+                [{"path": malicious_path, "type": "result_record"}],
+                campaign_id=malicious_campaign,
+            )))
+            result = auditor.audit(str(manifest), str(root), deterministic=True)
+            self.assertEqual(result["artifacts"][0]["status"], auditor.MISSING)
+            summary = auditor._markdown_summary(result)
+            self.assertIn("<code>&#91;VERIFIED&#93;(https&#58;//example&#46;invalid/track)</code>", summary)
+            self.assertIn("<code>&#33;&#91;beacon&#93;(https&#58;//example&#46;invalid/collect&#46;png)</code>", summary)
+            self.assertNotIn("<a ", summary)
+            self.assertNotIn("<img ", summary)
+            self.assertIn("**MISSING**", summary)
+
+    def test_raw_url_email_and_strikethrough_are_not_active_markdown(self):
+        value = "https://example.invalid/track www.example.invalid mail@example.invalid ~~VERIFIED~~"
+        safe = auditor._markdown_code(value)
+        self.assertIn("https&#58;//example&#46;invalid/track", safe)
+        self.assertIn("www&#46;example&#46;invalid", safe)
+        self.assertIn("mail&#64;example&#46;invalid", safe)
+        self.assertIn("&#126;&#126;VERIFIED&#126;&#126;", safe)
+        self.assertNotIn("https://", safe)
+        self.assertNotIn("www.example", safe)
+
+    def test_bidi_formatting_controls_cannot_reorder_display(self):
+        for codepoint in (0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C,
+                          0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069):
+            value = "start" + chr(codepoint) + "finish"
+            escaped = auditor._markdown_display_value(value)
+            self.assertNotIn(chr(codepoint), escaped)
+            self.assertIn(f"\\u{codepoint:04x}", escaped)
+            self.assertIn("finish", escaped)
+
+
+
 if __name__ == "__main__":
     unittest.main()
