@@ -115,6 +115,8 @@ RUN NODE_OPTIONS="$NODE_OPTIONS --network-family-autoselection-attempt-timeout=2
 # dockerd but not the client binary on slim, so grab the static client
 # tarball from download.docker.com instead.
 # 29.9.2 includes Go 1.26.10's eMudhra intermediate-key distrust.
+# Same retry flags as docker/build-realesrgan-wheels.sh, so a DNS lookup that
+# times out (curl exit 6) or a dropped connection doesn't fail the whole build.
 ARG DOCKER_CLI_VERSION=29.9.2
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
@@ -122,7 +124,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
          arm64) DARCH=aarch64 ;; \
          *) echo "unsupported arch $ARCH"; exit 1 ;; \
        esac \
-    && curl -fsSL "https://download.docker.com/linux/static/stable/${DARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
+    && curl -fsSL --retry 8 --retry-delay 3 --retry-max-time 120 --retry-all-errors \
+       "https://download.docker.com/linux/static/stable/${DARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
        -o /tmp/docker.tgz \
     && tar -xzf /tmp/docker.tgz -C /tmp \
     && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
