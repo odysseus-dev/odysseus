@@ -4,17 +4,114 @@ import html
 import json
 import logging
 from typing import Dict, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
 import time
 
-from services.search import get_search_config, comprehensive_web_search, PROVIDER_INFO
+from services.search import get_search_config, comprehensive_web_search, image_search, PROVIDER_INFO
 from services.search.core import _call_provider
 from services.search.providers import _get_provider_key, _get_search_instance
 
 logger = logging.getLogger(__name__)
+
+_IMAGE_SEARCH_PAGE = """<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>__TITLE__ - Odysseus Images</title>
+  <style>
+    :root { color-scheme: dark; --bg:#111; --fg:#eee; --muted:#999; --border:#333; --accent:#e05252; }
+    body { margin:0; font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+    main { max-width:1100px; margin:0 auto; padding:22px 18px 40px; }
+    form { display:flex; gap:8px; margin:0 0 12px; }
+    input { flex:1; min-width:0; height:34px; padding:0 10px; border:1px solid var(--border); border-radius:7px; background:#181818; color:var(--fg); font:inherit; }
+    button { height:34px; padding:0 13px; border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border)); border-radius:7px; background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--fg); font:inherit; cursor:pointer; }
+    h1 { margin:0 0 12px; font-size:16px; font-weight:650; }
+    .tabs { display:flex; gap:6px; margin:0 0 14px; }
+    .tab { display:inline-block; padding:5px 11px; border:1px solid var(--border); border-radius:999px; color:var(--muted); text-decoration:none; font-size:12px; }
+    .tab.active { color:var(--fg); border-color:color-mix(in srgb,var(--accent) 45%,var(--border)); background:color-mix(in srgb,var(--accent) 12%,transparent); }
+    .tab:hover { color:var(--fg); border-color:color-mix(in srgb,var(--fg) 28%,var(--border)); }
+    .status { color:var(--muted); font-size:12px; margin:8px 0 14px; }
+    .image-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; }
+    .image-card { display:block; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:#181818; color:inherit; text-decoration:none; }
+    .image-card:hover { border-color:color-mix(in srgb,var(--fg) 30%,var(--border)); }
+    .image-thumb { display:block; aspect-ratio:4/3; background:#1c1c1c; overflow:hidden; }
+    .image-thumb img { display:block; width:100%; height:100%; object-fit:cover; }
+    .image-meta { display:block; padding:7px 8px 8px; }
+    .image-title { display:block; font-size:12px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .image-source { display:block; margin-top:2px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Image Search</h1>
+    <div class="tabs">
+      <a id="tab-web" class="tab" href="/search/web?q=__Q_HREF__">Web</a>
+      <a id="tab-images" class="tab active" href="/search/images?q=__Q_HREF__">Images</a>
+    </div>
+    <form id="search-form">
+      <input id="query" value="__VALUE__" autocomplete="off" placeholder="Search images">
+      <button type="submit">Search</button>
+    </form>
+    <div class="status" id="status">Loading...</div>
+    <div class="image-grid" id="results"></div>
+  </main>
+  <script>
+    const initialQuery = __Q_JSON__;
+    const input = document.getElementById('query');
+    const statusEl = document.getElementById('status');
+    const resultsEl = document.getElementById('results');
+    function esc(value) {
+      return String(value || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+    function renderCard(img) {
+      const href = img.page_url || img.image || '';
+      const src = img.thumbnail || img.image || '';
+      const title = img.title || 'Untitled image';
+      const source = img.source || '';
+      return `<a class="image-card" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}">
+        <span class="image-thumb"><img src="${esc(src)}" alt="${esc(title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span>
+        <span class="image-meta"><span class="image-title">${esc(title)}</span>${source ? `<span class="image-source">${esc(source)}</span>` : ''}</span>
+      </a>`;
+    }
+    async function runSearch(query) {
+      query = String(query || '').trim();
+      if (!query) { statusEl.textContent = 'Enter a search query.'; resultsEl.innerHTML = ''; return; }
+      statusEl.textContent = 'Searching...';
+      resultsEl.innerHTML = '';
+      try {
+        const res = await fetch('/api/search/images?q=' + encodeURIComponent(query), { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        const images = Array.isArray(data.images) ? data.images : [];
+        if (!res.ok || data.error) {
+          statusEl.textContent = data.error || `Search failed (${res.status})`;
+          return;
+        }
+        statusEl.textContent = images.length ? `${images.length} images` : 'No images';
+        resultsEl.innerHTML = images.map(renderCard).join('');
+      } catch (err) {
+        statusEl.textContent = 'Search failed';
+      }
+    }
+    document.getElementById('search-form').addEventListener('submit', ev => {
+      ev.preventDefault();
+      const q = input.value.trim();
+      const url = new URL(window.location.href);
+      url.searchParams.set('q', q);
+      history.replaceState(null, '', url);
+      const tabQ = encodeURIComponent(q);
+      document.getElementById('tab-web').href = '/search/web?q=' + tabQ;
+      document.getElementById('tab-images').href = '/search/images?q=' + tabQ;
+      runSearch(q);
+    });
+    runSearch(initialQuery);
+  </script>
+</body>
+</html>"""
 
 
 async def _request_values(request: Request) -> Dict[str, Any]:
@@ -72,7 +169,11 @@ def setup_search_routes(config) -> APIRouter:
     form {{ display:flex; gap:8px; margin:0 0 16px; }}
     input {{ flex:1; min-width:0; height:34px; padding:0 10px; border:1px solid var(--border); border-radius:7px; background:#181818; color:var(--fg); font:inherit; }}
     button {{ height:34px; padding:0 13px; border:1px solid color-mix(in srgb,var(--accent) 45%,var(--border)); border-radius:7px; background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--fg); font:inherit; cursor:pointer; }}
-    h1 {{ margin:0 0 14px; font-size:16px; font-weight:650; }}
+    h1 {{ margin:0 0 10px; font-size:16px; font-weight:650; }}
+    .tabs {{ display:flex; gap:6px; margin:0 0 14px; }}
+    .tab {{ display:inline-block; padding:5px 11px; border:1px solid var(--border); border-radius:999px; color:var(--muted); text-decoration:none; font-size:12px; }}
+    .tab.active {{ color:var(--fg); border-color:color-mix(in srgb,var(--accent) 45%,var(--border)); background:color-mix(in srgb,var(--accent) 12%,transparent); }}
+    .tab:hover {{ color:var(--fg); border-color:color-mix(in srgb,var(--fg) 28%,var(--border)); }}
     .status {{ color:var(--muted); font-size:12px; margin:8px 0 14px; }}
     .result {{ display:block; padding:11px 0; border-top:1px solid var(--border); text-decoration:none; color:inherit; }}
     .result-title {{ color:var(--fg); font-weight:650; }}
@@ -83,6 +184,10 @@ def setup_search_routes(config) -> APIRouter:
 <body>
   <main>
     <h1>Web Search</h1>
+    <div class="tabs">
+      <a id="tab-web" class="tab active" href="/search/web?q={html.escape(quote(safe_q, safe=''), quote=True)}">Web</a>
+      <a id="tab-images" class="tab" href="/search/images?q={html.escape(quote(safe_q, safe=''), quote=True)}">Images</a>
+    </div>
     <form id="search-form">
       <input id="query" value="{html.escape(safe_q, quote=True)}" autocomplete="off">
       <button type="submit">Search</button>
@@ -132,6 +237,9 @@ def setup_search_routes(config) -> APIRouter:
       const url = new URL(window.location.href);
       url.searchParams.set('q', q);
       history.replaceState(null, '', url);
+      const tabQ = encodeURIComponent(q);
+      document.getElementById('tab-web').href = '/search/web?q=' + tabQ;
+      document.getElementById('tab-images').href = '/search/images?q=' + tabQ;
       runSearch(q);
     }});
     runSearch(initialQuery);
@@ -139,6 +247,44 @@ def setup_search_routes(config) -> APIRouter:
 </body>
 </html>"""
         return HTMLResponse(page)
+
+    @router.get("/search/images", response_class=HTMLResponse)
+    async def image_search_page(q: str = Query("", min_length=0)) -> HTMLResponse:
+        """Browser-facing image gallery backed by SearXNG."""
+        safe_q = str(q or "").strip()
+        title = html.escape(safe_q or "Image search")
+        value = html.escape(safe_q, quote=True)
+        q_json = json.dumps(safe_q).replace("<", "\\u003c")
+        q_href = html.escape(quote(safe_q, safe=""), quote=True)
+        page = (
+            _IMAGE_SEARCH_PAGE
+            .replace("__TITLE__", title)
+            .replace("__VALUE__", value)
+            .replace("__Q_JSON__", q_json)
+            .replace("__Q_HREF__", q_href)
+        )
+        return HTMLResponse(page)
+
+    @router.get("/api/search/images")
+    async def do_image_search(
+        q: str = Query("", min_length=0),
+        count: int = Query(24, ge=1, le=50),
+    ) -> Dict[str, Any]:
+        """Standalone image search. Always backed by SearXNG."""
+        query = str(q or "").strip()
+        if not query:
+            return {"query": "", "images": [], "error": "query is required"}
+        try:
+            images = image_search(query, count=count)
+            return {
+                "query": query,
+                "images": images,
+                "count": len(images),
+                "provider": "searxng",
+            }
+        except Exception as e:
+            logger.error(f"Image search failed: {e}")
+            return {"query": query, "images": [], "error": str(e)}
 
     @router.get("/api/search/config")
     async def get_search_settings() -> Dict[str, Any]:

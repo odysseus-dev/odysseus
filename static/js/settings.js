@@ -799,6 +799,8 @@ async function initSearchSettings() {
   var countCustomInput = el('set-searchResultCountCustom');
   var urlInput = el('set-searchUrl');
   var urlRow = el('set-searchUrlRow');
+  var imagesToggle = el('set-searchImages');
+  var imagesRow = el('set-searchImagesRow');
   var keyInput = el('set-searchApiKey');
   var keyRow = el('set-searchKeyRow');
   var cxInput = el('set-searchCx');
@@ -817,6 +819,7 @@ async function initSearchSettings() {
   function updateVisibility() {
     var prov = provSel.value;
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
+    if (imagesRow) imagesRow.style.display = prov === 'searxng' ? 'flex' : 'none';
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
     hint.innerHTML = _searchProviderHints[prov] || '';
@@ -846,6 +849,7 @@ async function initSearchSettings() {
     _settings = await res.json();
     if (_settings.search_provider) provSel.value = _settings.search_provider;
     updateCountDisplay();
+    if (imagesToggle) imagesToggle.checked = _settings.search_images !== false;
     if (_settings.search_url) urlInput.value = _settings.search_url;
     if (_settings.google_pse_cx) cxInput.value = _settings.google_pse_cx;
   } catch (e) { console.warn('Failed to load search settings', e); }
@@ -877,7 +881,8 @@ async function initSearchSettings() {
         extra = ' (' + s.search_url + ')';
       }
       var count = s.search_result_count || 5;
-      msg.textContent = 'Active: ' + label + extra + ' \u00b7 ' + count + ' results';
+      var imagesOn = active === 'searxng' && s.search_images !== false;
+      msg.textContent = 'Active: ' + label + extra + ' \u00b7 ' + count + ' results' + (imagesOn ? ' \u00b7 images on' : '');
       msg.style.color = active === 'disabled' ? 'var(--red)' : (_searchNeedsKey[active] && !hasKey) ? 'var(--red)' : 'var(--fg)';
     } catch (e) { /* ignore */ }
   }
@@ -900,6 +905,7 @@ async function initSearchSettings() {
       var payload = {
         search_provider: prov,
         search_result_count: resultCount,
+        search_images: imagesToggle ? !!imagesToggle.checked : true,
         search_url: urlInput.value.trim(),
         google_pse_cx: cxInput.value.trim(),
       };
@@ -917,6 +923,7 @@ async function initSearchSettings() {
 
   provSel.addEventListener('change', function() { updateVisibility(); saveSearch(); _syncSearchPicker(); });
   countSel.addEventListener('change', saveSearch);
+  if (imagesToggle) imagesToggle.addEventListener('change', saveSearch);
   urlInput.addEventListener('change', saveSearch);
   keyInput.addEventListener('change', saveSearch);
   cxInput.addEventListener('change', saveSearch);

@@ -1648,6 +1648,184 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     return content, md
 
 
+def followups_enabled() -> bool:
+    """Post-search follow-up suggestions are on unless explicitly disabled."""
+    raw = os.getenv("ODYSSEUS_SPEC_FOLLOWUPS")
+    return not (raw is not None and raw.strip().lower() in ("0", "false", "off", "no"))
+
+
+def _followup_source_context(web_sources, limit: int = 6) -> str:
+    lines = []
+    for src in list(web_sources or [])[:limit]:
+        if not isinstance(src, dict):
+            continue
+        title = " ".join(str(src.get("title") or "").split())
+        snippet = " ".join(str(src.get("snippet") or src.get("summary") or "").split())
+        url = str(src.get("url") or "")
+        line = f"- {title or url}"
+        if snippet:
+            line += f": {snippet[:240]}"
+        elif url:
+            line += f" ({url})"
+        if line.strip() != "-":
+            lines.append(line)
+    return "\n".join(lines)[:3000]
+
+
+def _parse_followup_questions(raw: str, limit: int = 3) -> list[str]:
+    questions = []
+    seen = set()
+    for line in str(raw or "").splitlines():
+        q = re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s*", "", line).strip()
+        q = re.sub(r"\s+", " ", q).strip("\"'` ").strip()
+        if len(q) < 8 or len(q) > 140:
+            continue
+        q = q.rstrip(".").strip()
+        if not q.endswith("?"):
+            q += "?"
+        key = q.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        questions.append(q)
+        if len(questions) >= max(1, int(limit)):
+            break
+    return questions
+
+
+BROWSER_FOLLOWUP_TEXT = "Use Browser"
+
+
+def _tool_events_used_browser(metrics) -> bool:
+    if not isinstance(metrics, dict):
+        return False
+    for event in metrics.get("tool_events") or []:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("tool") or "").strip()
+        short = name.rsplit("__", 1)[-1]
+        if short == "private_browser" or short.startswith("browser_"):
+            return True
+    return False
+
+
+def add_browser_followup(items, metrics, *, limit: int = 3) -> list:
+    """Append a browser action when the turn answered without the browser."""
+    items = [item for item in (items or []) if item]
+    if not items or _tool_events_used_browser(metrics):
+        return items
+    if any(
+        "browser" in str(item.get("text") if isinstance(item, dict) else item).casefold()
+        for item in items
+    ):
+        return items
+    return items[:limit] + [{"text": BROWSER_FOLLOWUP_TEXT, "action": "browser"}]
+
+
+def images_enabled() -> bool:
+    return os.getenv("ODYSSEUS_SPEC_IMAGES", "1").strip().lower() not in ("", "0", "false", "off", "no")
+
+
+async def generate_image_results(user_message: str, *, count: int = None) -> list:
+    """Return SearXNG images for a web-search turn.
+
+    Controlled by Settings -> Web Search -> Image results (default on) and only
+    runs for the SearXNG provider. The SearXNG call is blocking, so it runs in a
+    worker thread. Fails open with [].
+    """
+    if not images_enabled():
+        return []
+    try:
+        from src.settings import get_setting
+
+        if not bool(get_setting("search_images", True)):
+            return []
+        if str(get_setting("search_provider", "searxng") or "").strip().lower() != "searxng":
+            return []
+    except Exception:
+        return []
+    text = str(user_message or "").strip()
+    if not text:
+        return []
+    if count is None:
+        try:
+            count = int(os.getenv("ODYSSEUS_SPEC_IMAGE_COUNT", "11"))
+        except ValueError:
+            count = 11
+    count = max(1, min(int(count), 24))
+    try:
+        from services.search.images import image_search
+
+        results = await asyncio.to_thread(image_search, text, count, None, 8)
+        return list(results or [])[:count]
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("image search failed open: %s", exc)
+        return []
+
+
+async def generate_followups(sess, user_message: str, web_sources, *, limit: int = 3):
+    """Ask the chat model for contextual follow-up questions after a web search.
+
+    Fails open with [].
+    """
+    if not followups_enabled() or not web_sources:
+        return []
+    text = str(user_message or "").strip()
+    context = _followup_source_context(web_sources)
+    if not text or not context:
+        return []
+    url = str(getattr(sess, "endpoint_url", "") or "")
+    model = os.getenv("ODYSSEUS_FOLLOWUP_MODEL") or str(getattr(sess, "model", "") or "")
+    headers = getattr(sess, "headers", None)
+    if isinstance(headers, str):
+        try:
+            headers = json.loads(headers)
+        except Exception:
+            headers = None
+    if not url or not model:
+        return []
+    try:
+        timeout = float(os.getenv("ODYSSEUS_SPEC_FOLLOWUP_TIMEOUT", "10"))
+    except ValueError:
+        timeout = 10.0
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"Return ONLY {limit} short follow-up questions the user might ask next, based on "
+                "the search results below. Start immediately with the first question. One question "
+                "per line, under 12 words, specific to these results. Do not include analysis, "
+                "numbering, quotes, or answers."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Query: {text[:1500]}\n\nSearch results:\n{context}",
+        },
+    ]
+    try:
+        from src.llm_core import llm_call_async
+
+        raw = await llm_call_async(
+            url,
+            model,
+            messages,
+            temperature=0.6,
+            max_tokens=600,
+            headers=headers,
+            timeout=timeout,
+            thinking_mode="off",
+        )
+        return [{"text": q} for q in _parse_followup_questions(raw, limit)]
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("follow-up generation failed open: %s", exc)
+        return []
+
+
 def save_assistant_response(
     sess,
     session_manager,
@@ -1663,6 +1841,8 @@ def save_assistant_response(
     do_research: bool = False,
     tool_events: list = None,
     incognito: bool = False,
+    followups: list = None,
+    images: list = None,
 ):
     """Add assistant response to session history.
 
@@ -1686,8 +1866,12 @@ def save_assistant_response(
         md["model"] = actual_model
     if character_name:
         md["character_name"] = character_name
+    if images:
+        md["images"] = images
     if web_sources:
         md["web_sources"] = web_sources
+        if followups:
+            md["followups"] = followups
     if rag_sources:
         md["rag_sources"] = rag_sources
     if research_sources:

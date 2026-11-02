@@ -2086,6 +2086,7 @@ function initializeEventListeners() {
     updatePlusDot();
   }
   window._syncRagIndicator = _syncRagIndicator;
+
   window._syncResearchIndicator = _syncResearchIndicator;
   // Must be assigned at module level (not inside the function body) so the very
   // first external caller — group.js / sessions.js fire it before it has ever
@@ -3750,6 +3751,67 @@ function initializeEventListeners() {
 // ============================================
 // INITIALIZATION ON PAGE LOAD
 // ============================================
+// Firefox/OpenSearch search intent: /?q=... starts a fresh chat with that query.
+async function _consumeSearchIntent() {
+  let q = '';
+  try {
+    q = (new URLSearchParams(window.location.search).get('q') || '').trim();
+  } catch (_) { return; }
+  if (!q || window.__odysseusSearchIntentHandled) return;
+  window.__odysseusSearchIntentHandled = true;
+  // A search-engine launch should go straight to the answer, not flash the
+  // welcome splash while the default chat is being prepared. This flag also
+  // wins the race against session hydration, which can show the welcome screen
+  // before createDirectChat() has registered the pending chat.
+  window.__odysseusSuppressWelcome = true;
+  try { chatModule?.hideWelcomeScreen?.(); } catch (_) {}
+  // Drop the parameter immediately so a reload does not resend the query.
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('q');
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
+  } catch (_) {}
+  let dc = null;
+  try { dc = await _refreshDefaultChat(); } catch (_) {}
+  if (dc && dc.endpoint_url && dc.model) {
+    try {
+      sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+    } catch (_) {}
+  }
+  // createDirectChat() deliberately shows the welcome screen for normal New
+  // Chat flows; for a search launch keep it hidden so there is no splash→chat
+  // flash before the query is submitted.
+  try { chatModule?.hideWelcomeScreen?.(); } catch (_) {}
+  let tries = 0;
+  const submit = () => {
+    const input = document.getElementById('message');
+    if (!input || input.disabled) {
+      if (tries++ < 100) {
+        setTimeout(submit, 50);
+      } else {
+        window.__odysseusSuppressWelcome = false;
+      }
+      return;
+    }
+    window.__odysseusComposerUserEdited = true;
+    input.value = q;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (uiModule.autoResize) uiModule.autoResize(input);
+    setTimeout(() => {
+      window.__odysseusSuppressWelcome = false;
+      try {
+        const pending = chatModule.handleChatSubmit({ preventDefault() {} });
+        if (pending && typeof pending.catch === 'function') {
+          pending.catch(err => console.error('Search intent send failed:', err));
+        }
+      } catch (err) {
+        console.error('Search intent send failed:', err);
+      }
+    }, 0);
+  };
+  submit();
+}
+
 function startOdysseusApp() {
   tasksModule?.startNotificationPolling?.();
   if (window.__odysseusAppStarted) return;
@@ -4408,6 +4470,9 @@ function startOdysseusApp() {
     // drives. The ones that read no session data open here rather than
     // queueing behind /api/sessions.
     runDeferredRouteOpener();
+
+    // Firefox/OpenSearch: /?q=... starts a fresh chat with that query.
+    _consumeSearchIntent();
 
     // The shell is already usable at this point; session hydration is
     // sidebar-local and settles on its own schedule.
