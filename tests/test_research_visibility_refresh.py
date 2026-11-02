@@ -35,6 +35,7 @@ const event=()=>doc.dispatchEvent(new Event('visibilitychange'));
  if(name==='hidden'){doc.hidden=true;event();for(const fn of timers.values())fn();}
  else if(name==='periodic'){for(const fn of timers.values())fn();}
  else if(name==='inflight'){hold=true;event();event();if(release)release();}
+ else if(name==='poll-inflight'){hold=true;for(const fn of timers.values())fn();event();if(release)release();}
  else if(name==='failure'){fail=true;event();await flush();event();}
  else {doc.hidden=true;event();doc.hidden=false;event();}
  await flush();await flush();
@@ -47,7 +48,7 @@ const event=()=>doc.dispatchEvent(new Event('visibilitychange'));
     return json.loads(result.stdout)
 
 
-@pytest.mark.parametrize("scenario", ["visible", "repeat", "inflight"])
+@pytest.mark.parametrize("scenario", ["visible", "repeat", "inflight", "poll-inflight"])
 def test_visible_transition_refreshes_active_and_recent_library_once(scenario):
     result = _scenario(scenario)
     assert result["calls"] == ["/api/research/active", "/api/research/library?sort=recent&limit=20"]
@@ -71,6 +72,6 @@ def test_periodic_visible_poll_keeps_existing_lightweight_behavior():
 
 def test_failed_foreground_request_does_not_block_the_next_refresh():
     result = _scenario("failure")
-    assert result["calls"] == ["/api/research/active", "/api/research/active",
-                               "/api/research/library?sort=recent&limit=20"]
+    assert result["calls"] == ["/api/research/active", "/api/research/library?sort=recent&limit=20",
+                               "/api/research/active", "/api/research/library?sort=recent&limit=20"]
     assert result["ids"] == ["fresh"]

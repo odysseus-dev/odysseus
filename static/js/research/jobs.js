@@ -66,7 +66,8 @@ const _LIBRARY_SYNC_MIN_MS = 120000;
 function _refreshVisibleResearch() {
   if (document.hidden) return;
   // A run completed elsewhere may now exist only in the persisted library.
-  _reconnectActive({ includeLibrary: true, forceLibrary: true });
+  _reconnectActive();
+  _syncLibrary({ force: true });
 }
 
 export function init(apiBase) {
