@@ -8,7 +8,9 @@
 // this clock, which draws at most BG_EFFECT_FPS times a second and passes `k`,
 // the number of 60 Hz frames that have elapsed, so every step keeps the speed
 // it was designed at on any display. With the system's "reduce motion" setting
-// on, an effect settles into a still frame instead of animating.
+// on, an effect settles into a still frame instead of animating: its state is
+// stepped forward with `draw(k, false)`, which must not touch the canvas, and
+// only the last step is painted.
 //
 // No DOM access beyond what is passed in, so it can be unit-tested under node.
 
@@ -18,8 +20,9 @@ const DESIGN_FRAME_MS = 1000 / 60;
 // After a long gap (a hidden tab, a busy main thread) catch up at most this
 // many 60 Hz frames, so nothing jumps across the screen.
 const MAX_K = 4;
-// Frames run before holding still under "reduce motion", so rain, petals and
-// embers are spread across the screen rather than just starting.
+// Frames stepped before holding still under "reduce motion", so rain, petals
+// and embers are spread across the screen rather than just starting. Only the
+// last one is painted.
 const SETTLE_FRAMES = 90;
 
 // True with the chance that an event with probability `p` per 60 Hz frame
@@ -42,7 +45,8 @@ export function bgFade(a, k) {
   return 1 - Math.pow(1 - a, k);
 }
 
-// Drive `draw(k)` until `canvas` leaves the document. The effect removes its
+// Drive `draw(k, paint)` until `canvas` leaves the document. `paint` is false
+// only for the unpainted settling steps under "reduce motion". The effect removes its
 // own canvas when its pattern is switched off, which stops the clock.
 export function runBgEffect(canvas, draw, {
   raf = (cb) => requestAnimationFrame(cb),
@@ -53,7 +57,8 @@ export function runBgEffect(canvas, draw, {
   const restart = () => runBgEffect(canvas, draw, { raf, reduceMotion });
 
   if (reduced()) {
-    for (let i = 0; i < SETTLE_FRAMES && canvas.isConnected; i++) draw(1);
+    for (let i = 1; i < SETTLE_FRAMES && canvas.isConnected; i++) draw(1, false);
+    if (canvas.isConnected) draw(1, true);
     if (reduceMotion.addEventListener) {
       reduceMotion.addEventListener('change', () => {
         if (canvas.isConnected) restart();
@@ -71,7 +76,7 @@ export function runBgEffect(canvas, draw, {
     if (last && now - last < FRAME_MS - 2) { raf(frame); return; }
     const k = last ? Math.min((now - last) / DESIGN_FRAME_MS, MAX_K) : 1;
     last = now;
-    draw(k);
+    draw(k, true);
     if (canvas.isConnected) raf(frame);
   }
   raf(frame);
