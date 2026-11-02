@@ -70,5 +70,9 @@ jobs:
       - name: Run pip-audit on requirements
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates
+          python scripts/check_ca_trust.py --system
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
           pip install pip-audit==2.10.0
           pip-audit -r requirements.txt -r requirements-optional.txt --strict

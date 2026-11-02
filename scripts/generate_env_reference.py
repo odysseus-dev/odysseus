@@ -492,6 +492,25 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "tools that execute code, mutate state or cause external side effects need "
         "a separate approval. Set to 0 to opt out.",
     ),
+    "ODYSSEUS_LOCAL_MCP_READ_TOOLS": (
+        "Agent loop and tool execution", USER,
+        "Security-relevant. Comma-separated exact MCP read-tool names "
+        "on configured stdio MCP servers. Only stdio servers qualify. "
+        "Declarations do not override built-in tool effects. Output remains "
+        "untrusted to prevent privilege escalation, but allows continuation to "
+        "declared write tools on the same stdio server without external taint. "
+        "Stdio transport does not guarantee network isolation. Automatic "
+        "same-store writes carry residual prompt-injection risk.",
+    ),
+    "ODYSSEUS_LOCAL_MCP_WRITE_TOOLS": (
+        "Agent loop and tool execution", USER,
+        "Security-relevant. Comma-separated exact MCP write-tool names "
+        "on configured stdio MCP servers. Only stdio servers qualify. "
+        "Declarations do not override built-in tool effects. Allowed to execute "
+        "after declared local reads on the same stdio server, but blocked once "
+        "external untrusted context enters the run. Authorization must still "
+        "originate from the trusted request grant.",
+    ),
     "ODYSSEUS_MCP_ALLOWED_COMMANDS": (
         "Agent loop and tool execution", USER,
         "Security-relevant. Comma-separated allowlist of MCP launcher basenames the "
@@ -913,6 +932,78 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
         "Build and release metadata", INTERNAL,
         "Overrides the source commit reported for runtime provenance, for builds "
         "that ship without a git directory.",
+    ),
+
+    # -- Photo editor and image operations -----------------------------------
+    "ODYSSEUS_EDITOR_AGENT_BASES": (
+        "Model routing and providers", USER,
+        "Comma-separated base URLs for the image-editor agent backends; a single "
+        "base URL in the model endpoint config wins over this list.",
+    ),
+    "ODYSSEUS_ALLOW_LOCAL_IMAGE_MODELS": (
+        "Model routing and providers", USER,
+        "Set to 1, true, yes or on to allow local image-generation and editing "
+        "backends to be reachable as image providers.",
+    ),
+    "ODYSSEUS_IMAGE_OPS_BASE": (
+        "Model routing and providers", USER,
+        "Base URL of the image-operations backend (inpaint, outpainting and style "
+        "transfer); a trailing slash is stripped before use.",
+    ),
+    "ODYSSEUS_IMAGE_EDIT_MAX_SIDE": (
+        "Upload and media limits", USER,
+        "Maximum pixel side (width or height) an edited image is downscaled to "
+        "before it is sent to the image backend.",
+    ),
+    "ODYSSEUS_IMAGE_EDIT_MAX_STEPS": (
+        "Upload and media limits", USER,
+        "Maximum number of iterative edit steps the image backend may perform in "
+        "a single request.",
+    ),
+    "ODYSSEUS_IMAGE_OUTPAINT_TIMEOUT": (
+        "Upload and media limits", USER,
+        "Seconds the outpainting proxy waits for the image backend before giving "
+        "up on a single request.",
+    ),
+    "ODYSSEUS_JEFF_": ("Agent loop and tool execution", INTERNAL, "Prefix for per-job decision adapter opt-ins; each job is disabled by default."),
+    "ODYSSEUS_JEFF_TIMEOUT": ("Agent loop and tool execution", INTERNAL, "Timeout in seconds for a decision adapter request."),
+    "ODYSSEUS_JEFF_URL": ("Agent loop and tool execution", INTERNAL, "Base URL of the optional decision adapter service."),
+    "ODYSSEUS_PRIVATE_BROWSER_LEGACY": ("Agent loop and tool execution", INTERNAL, "Explicit opt-in to the legacy browser compatibility transport; disabled by default."),
+    "ODYSSEUS_SPEC_BROWSER_FALLBACK": ("Agent loop and tool execution", INTERNAL, "Optional browser routing fallback: mcp, web, or 0 to disable."),
+    "ODYSSEUS_SPEC_MODE": ("Agent loop and tool execution", INTERNAL, "Spec routing mode for explicitly configured models, including strict and driver."),
+    "ODYSSEUS_SPEC_ROUTER_MIN_CONF": ("Agent loop and tool execution", INTERNAL, "Minimum tool-selection confidence accepted from the router."),
+    "ODYSSEUS_SPEC_ROUTER_MODEL": ("Agent loop and tool execution", INTERNAL, "Decision adapter model used for tool routing."),
+    "ODYSSEUS_SPEC_ROUTER_SECOND": ("Agent loop and tool execution", INTERNAL, "Minimum confidence for adding a secondary tool candidate."),
+    "ODYSSEUS_SPEC_ROUTER_TIMEOUT": ("Agent loop and tool execution", INTERNAL, "Time budget in seconds for a router decision."),
+    "ODYSSEUS_SPEC_ROUTER_URL": ("Agent loop and tool execution", INTERNAL, "Base URL of the optional Spec router; an empty URL disables requests."),
+    "ODYSSEUS_SPEC_THINK_MIN_P": ("Agent loop and tool execution", INTERNAL, "Minimum router confidence for enabling thinking."),
+    "ODYSSEUS_SPEC_THINK_MODEL": ("Agent loop and tool execution", INTERNAL, "Optional thinking decision adapter model, falling back to the tool router model."),
+    "ODYSSEUS_SPEC_THINK_QUESTION": ("Agent loop and tool execution", INTERNAL, "Thinking classifier question format: binary or kind5."),
+    "ODYSSEUS_SPEC_THINK_ROUTER": ("Agent loop and tool execution", INTERNAL, "Enable router thinking decisions for explicitly configured Spec models."),
+    "ODYSSEUS_SPEC_TOOL_FORMAT": ("Agent loop and tool execution", INTERNAL, "Use names for compact router tool signatures, otherwise include descriptions."),
+    "ODYSSEUS_SPEC_TRIM_PROMPT": ("Agent loop and tool execution", INTERNAL, "Enable prompt trimming for the selected Spec tool menu."),
+    "ODYSSEUS_VISION_MAX_SIDE": ("Upload and media limits", USER, "Maximum pixel side for image attachments sent directly to a vision model."),
+    "ODYSSEUS_VISION_MODELS": ("Model routing and providers", USER, "Comma-separated model-name fragments that explicitly support inline images."),
+    "ODYSSEUS_VISION_PROBE": ("Model routing and providers", USER, "Allow a cached vision-capability probe against local model endpoints."),
+    "ODYSSEUS_SPEC_DIRECT_MODE": (
+        "Agent loop and tool execution", INTERNAL,
+        "Controls how the spec router answers high-confidence direct-answer turns; "
+        "either tool_choice_none (default) or empty_menu.",
+    ),
+    "ODYSSEUS_SPEC_DIRECT_NOTOOLS": (
+        "Agent loop and tool execution", INTERNAL,
+        "Set to 1, true, yes or on to enable the spec router's direct-answer "
+        "no-tools path for high-confidence answer_directly decisions.",
+    ),
+    "ODYSSEUS_SPEC_DIRECT_MIN_P": (
+        "Agent loop and tool execution", INTERNAL,
+        "Minimum confidence probability a spec-router direct-answer decision must "
+        "reach before the no-tools path is taken.",
+    ),
+    "ODYSSEUS_GRACEFUL_SHUTDOWN_TIMEOUT": (
+        "Deployment and first run", INTERNAL,
+        "Seconds the server waits for in-flight requests and background loops to "
+        "finish during a graceful shutdown.",
     ),
 }
 

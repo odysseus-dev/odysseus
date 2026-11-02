@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const { dragOnCanvas, editorState, openBlankEditor, reopenDraft, waitForDraft } = require('./helpers.js');
 
 test('independent layer locks enforce operations and survive undo and reopen', async ({ page, request }) => {
@@ -23,7 +24,7 @@ test('independent layer locks enforce operations and survive undo and reopen', a
   expect((await editorState(page)).layers.find(layer => layer.name === 'Edit').locks.position).toBe(true);
   await expect(lockButton).toHaveClass(/active/);
 
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
   await dragOnCanvas(page, { x: 0.35, y: 0.35 }, { x: 0.55, y: 0.50 });
   expect((await editorState(page)).layers.find(layer => layer.name === 'Edit').offset).toEqual({ x: 0, y: 0 });
 
@@ -35,7 +36,7 @@ test('independent layer locks enforce operations and survive undo and reopen', a
 
   await toggleLock('pixels');
   const emptyHash = (await editorState(page)).layers.find(layer => layer.name === 'Edit').pixelHash;
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await dragOnCanvas(page, { x: 0.42, y: 0.42 }, { x: 0.58, y: 0.50 });
   expect((await editorState(page)).layers.find(layer => layer.name === 'Edit').pixelHash).toBe(emptyHash);
   await toggleLock('pixels');

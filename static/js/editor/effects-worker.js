@@ -65,6 +65,42 @@ function renderEffects(source, effects, masks) {
       ctx.filter = 'none';
     } else if (effect.type === 'sharpen') {
       ctx.drawImage(sharpenCanvas(current, effect.params.amount), 0, 0);
+    } else if (effect.type === 'motion-blur') {
+      const dist = effect.params.distance;
+      const rad = (effect.params.angle || 0) * Math.PI / 180;
+      const dx = Math.cos(rad);
+      const dy = Math.sin(rad);
+      const samples = Math.max(1, Math.min(64, Math.round(dist) || 1));
+      ctx.globalAlpha = 1 / samples;
+      for (let s = 0; s < samples; s += 1) {
+        const t = (samples > 1 ? (s / (samples - 1) - 0.5) : 0) * dist;
+        ctx.drawImage(current, dx * t, dy * t);
+      }
+      ctx.globalAlpha = 1;
+    } else if (effect.type === 'zoom-blur') {
+      const amt = effect.params.amount / 100;
+      const samples = Math.max(1, Math.min(48, Math.round(amt * 48) || 1));
+      const cx = next.width / 2;
+      const cy = next.height / 2;
+      ctx.globalAlpha = 1 / samples;
+      for (let s = 0; s < samples; s += 1) {
+        const scale = 1 + (s / samples) * amt * 0.5;
+        const dw = next.width * scale;
+        const dh = next.height * scale;
+        ctx.drawImage(current, cx - dw / 2, cy - dh / 2, dw, dh);
+      }
+      ctx.globalAlpha = 1;
+    } else if (effect.type === 'pixelate') {
+      const size = Math.max(1, effect.params.size);
+      const sw = Math.max(1, Math.round(next.width / size));
+      const sh = Math.max(1, Math.round(next.height / size));
+      const tiny = new OffscreenCanvas(sw, sh);
+      const tctx = tiny.getContext('2d');
+      tctx.imageSmoothingEnabled = false;
+      tctx.drawImage(current, 0, 0, sw, sh);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(tiny, 0, 0, next.width, next.height);
+      ctx.imageSmoothingEnabled = true;
     } else if (effect.type === 'color-overlay') {
       ctx.drawImage(current, 0, 0);
       ctx.globalAlpha = effect.params.opacity;
@@ -96,7 +132,7 @@ function renderEffects(source, effects, masks) {
     const contribution = maskedContribution(next, masks[index]);
     const blended = copyCanvas(current);
     const blendCtx = blended.getContext('2d');
-    if (effect.type === 'drop-shadow') blendCtx.globalCompositeOperation = 'destination-over';
+    if (effect.type === 'drop-shadow' && !effect.params.inside) blendCtx.globalCompositeOperation = 'destination-over';
     blendCtx.globalAlpha = effect.opacity;
     blendCtx.drawImage(contribution, 0, 0);
     blendCtx.globalAlpha = 1;

@@ -237,6 +237,18 @@ def _keep_count_before_message(db_messages, before_msg_id: str | None) -> int | 
     return None
 
 
+def _effort_mode(model: str, raw_effort: Any) -> str:
+    """Session ``thinking_mode`` for a picked effort: ``effort:<level>`` or ``off``.
+
+    Validated like the chat routes do, so llama-swap advertised efforts persist
+    as well as ChatGPT subscription levels.
+    """
+    from src.chatgpt_subscription import validate_reasoning_effort
+
+    effort = validate_reasoning_effort(model, raw_effort)
+    return f"effort:{effort}" if effort else "off"
+
+
 def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(
         tags=["history"],
@@ -391,26 +403,53 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
     async def truncate_session(request: Request, session_id: str):
         _verify_session_owner(request, session_id)
         try:
-            body = await request.json()
-            keep_count = int(body.get("keep_count", 0))
-            before_msg_id = str(body.get("before_msg_id") or body.get("message_id") or "").strip()
+            try:
+                body = await request.json()
+            except json.JSONDecodeError:
+                raise HTTPException(400, "Request body must be valid JSON")
+            if not isinstance(body, dict):
+                raise HTTPException(400, "Request body must be a JSON object")
+            # Resolve before_msg_id / message_id alias with explicit presence checks.
+            # None (JSON null) and empty string are both treated as "not provided here"
+            # and fall through to the alias, preserving the original OR-chain semantics.
+            # Any other non-string value (False, 0, True, 123, list, …) is rejected
+            # immediately so falsy non-strings cannot bypass type validation.
+            raw_msg_id = body.get("before_msg_id") if "before_msg_id" in body else None
+            if raw_msg_id is None or raw_msg_id == "":
+                raw_msg_id = body.get("message_id")
+            if raw_msg_id is not None and not isinstance(raw_msg_id, str):
+                raise HTTPException(400, "Message ID must be a string")
+            before_msg_id = (raw_msg_id or "").strip()
+            if "keep_count" not in body and not before_msg_id:
+                raise HTTPException(400, "keep_count or before_msg_id required")
+            raw_count = body.get("keep_count", 0)
+            # Keep integer-string clients working, but do not silently convert
+            # booleans or fractional numbers into destructive message counts.
+            if type(raw_count) not in (int, str):
+                raise HTTPException(400, "keep_count must be a non-negative integer")
+            try:
+                keep_count = int(raw_count)
+            except ValueError:
+                raise HTTPException(400, "keep_count must be a non-negative integer")
+            if keep_count < 0:
+                raise HTTPException(400, "keep_count must be a non-negative integer")
             deleted_sft_pairs: list[dict[str, str]] = []
-            if keep_count >= 0:
-                db = SessionLocal()
-                try:
-                    all_db_messages = db.query(DbChatMessage).filter(
-                        DbChatMessage.session_id == session_id
-                    ).order_by(DbChatMessage.timestamp).all()
-                    if before_msg_id:
-                        resolved_keep_count = _keep_count_before_message(all_db_messages, before_msg_id)
-                        if resolved_keep_count is None:
-                            raise HTTPException(404, "Message not found")
-                        keep_count = resolved_keep_count
-                    for pos, row in enumerate(all_db_messages):
-                        row._will_delete_for_sft = pos >= keep_count
-                    deleted_sft_pairs = _deleted_sft_pairs_from_db_rows(all_db_messages)
-                finally:
-                    db.close()
+            # keep_count is always >= 0 here; the block is unconditional.
+            db = SessionLocal()
+            try:
+                all_db_messages = db.query(DbChatMessage).filter(
+                    DbChatMessage.session_id == session_id
+                ).order_by(DbChatMessage.timestamp).all()
+                if before_msg_id:
+                    resolved_keep_count = _keep_count_before_message(all_db_messages, before_msg_id)
+                    if resolved_keep_count is None:
+                        raise HTTPException(404, "Message not found")
+                    keep_count = resolved_keep_count
+                for pos, row in enumerate(all_db_messages):
+                    row._will_delete_for_sft = pos >= keep_count
+                deleted_sft_pairs = _deleted_sft_pairs_from_db_rows(all_db_messages)
+            finally:
+                db.close()
             result = session_manager.truncate_messages(session_id, keep_count)
             _remove_deleted_sft_trace_rows(
                 owner=effective_user(request),
@@ -786,6 +825,23 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             body = await request.json()
             keep_count = body.get("keep_count", 0)
+            # A message id is exact; keep_count from the client counts only the
+            # messages loaded in the page. before_msg_id forks before that
+            # message, through_msg_id includes it.
+            before_msg_id = str(body.get("before_msg_id") or "").strip()
+            through_msg_id = str(body.get("through_msg_id") or "").strip()
+            if before_msg_id or through_msg_id:
+                db = SessionLocal()
+                try:
+                    all_db_messages = db.query(DbChatMessage).filter(
+                        DbChatMessage.session_id == session_id
+                    ).order_by(DbChatMessage.timestamp).all()
+                finally:
+                    db.close()
+                resolved = _keep_count_before_message(all_db_messages, before_msg_id or through_msg_id)
+                if resolved is None:
+                    raise HTTPException(404, "Message not found")
+                keep_count = resolved + (0 if before_msg_id else 1)
 
             # Get the source session. keep_count indexes into source.history,
             # so this must go through get_session — reading the cache directly
@@ -1031,26 +1087,11 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         mode = getattr(session, "thinking_mode", "off") or "off"
         raw_effort = body.get("reasoning_effort")
         if raw_effort is not None:
-            clean_effort = str(raw_effort).strip().lower()
-            if clean_effort in {"", "default"}:
-                mode = "off"
-            else:
-                from src.chatgpt_subscription import get_chatgpt_model_metadata
-                meta = get_chatgpt_model_metadata(session.model)
-                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
-                    mode = f"effort:{clean_effort}"
-                else:
-                    mode = "off"
+            mode = _effort_mode(session.model, raw_effort)
         elif "thinking_mode" in body:
             raw_mode = str(body.get("thinking_mode") or "").strip().lower()
             if raw_mode.startswith("effort:"):
-                clean_effort = raw_mode[7:].strip()
-                from src.chatgpt_subscription import get_chatgpt_model_metadata
-                meta = get_chatgpt_model_metadata(session.model)
-                if meta and clean_effort in [lvl.lower() for lvl in meta.get("supported_reasoning_levels", [])]:
-                    mode = f"effort:{clean_effort}"
-                else:
-                    mode = "off"
+                mode = _effort_mode(session.model, raw_mode[7:])
             elif raw_mode in {"", "on", "off"}:
                 mode = raw_mode
                 from src.model_profiles import supports_user_thinking_toggle
@@ -1129,7 +1170,14 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             )
 
             # Use utility model if available
-            util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner or None)
+            from src.utility_effort import effort_for_call
+            util_url, util_model, util_headers = resolve_endpoint(
+                "utility",
+                fallback_url=getattr(session, "endpoint_url", None),
+                fallback_model=getattr(session, "model", None),
+                fallback_headers=getattr(session, "headers", None),
+                owner=owner or None,
+            )
             compact_url = util_url or session.endpoint_url
             compact_model = util_model or session.model
             compact_headers = util_headers if util_url else session.headers
@@ -1145,6 +1193,7 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 ],
                 temperature=0.2, max_tokens=1024,
                 headers=compact_headers, timeout=30,
+                reasoning_effort=effort_for_call(compact_url, compact_model, owner, session),
             )
             summary = normalize_compaction_summary(summary)
 

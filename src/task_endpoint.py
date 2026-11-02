@@ -47,25 +47,23 @@ def resolve_task_candidates(
         candidates.append((url, model, headers or {}))
 
     if override_url and override_model:
-        headers = override_headers or {}
         try:
-            from src.database import ModelEndpoint, SessionLocal
-            from src.endpoint_resolver import normalize_base, resolve_endpoint_runtime, build_headers
+            from src.database import SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url, build_headers, resolve_endpoint_runtime,
+                resolve_owner_registered_endpoint,
+            )
             db = SessionLocal()
             try:
-                from src.auth_helpers import owner_filter
-                query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-                for ep in owner_filter(query, ModelEndpoint, owner).all():
-                    base = normalize_base(getattr(ep, "base_url", "") or "")
-                    if _same_endpoint_base(override_url, base):
-                        runtime_base, api_key = resolve_endpoint_runtime(ep, owner=owner)
-                        headers = build_headers(api_key, runtime_base or base)
-                        break
+                ep = resolve_owner_registered_endpoint(db, override_url, owner)
+                runtime_base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                _append(build_chat_url(runtime_base), override_model, build_headers(api_key, runtime_base))
             finally:
                 db.close()
         except Exception:
+            # A missing, foreign, disabled or unreadable registration is not
+            # authority to contact a caller-provided endpoint or use its key.
             pass
-        _append(override_url, override_model, headers)
     _append(*resolve_task_endpoint(fallback_url, fallback_model, fallback_headers, owner=owner))
     _append(*resolve_endpoint("utility", owner=owner))
     _append(*resolve_endpoint("default", owner=owner))
@@ -106,4 +104,11 @@ async def task_llm_call_async(
         raise RuntimeError("No LLM endpoint available for background task")
     await wait_for_interactive_quiet("background task LLM")
     kwargs.setdefault("workload", "background")
+    if kwargs.get("reasoning_effort") is None:
+        kwargs.pop("reasoning_effort", None)
+        from src.utility_effort import candidate_effort_factory
+
+        factory = candidate_effort_factory(owner)
+        if factory is not None:
+            kwargs.setdefault("candidate_request_factory", factory)
     return await llm_call_async_with_fallback(candidates, messages=messages, **kwargs)

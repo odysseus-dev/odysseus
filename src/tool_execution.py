@@ -1068,6 +1068,10 @@ def _resolve_tool_path(raw_path: str) -> str:
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
     expanded = os.path.expanduser(str(raw_path).strip())
+    # Relative paths resolve where bash/python run (agent_cwd), not against
+    # the server's cwd, which is outside the allowed roots (#6679).
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(_AGENT_WORKDIR, expanded)
     resolved = os.path.realpath(expanded)
 
     if _is_app_state_path(resolved):
@@ -1221,6 +1225,12 @@ def agent_cwd() -> str:
         if vetted is None:
             raise RuntimeError("active workspace is not a safe real directory")
         return vetted
+    return default_agent_workspace()
+
+
+def default_agent_workspace() -> str:
+    """The agent workspace under the data dir, where subprocesses run when no
+    workspace is bound."""
     resolved = os.path.realpath(_AGENT_WORKDIR)
     if resolved not in _agent_readable_data_subdirs() or vet_workspace(resolved) != resolved:
         raise RuntimeError("agent workspace is not a safe real directory")
@@ -1278,6 +1288,16 @@ _ADMIN_TOOLS = {
     "serve_preset",
     "stop_served_model",
     "cancel_download",
+    # Read-only Cookbook tools reach require_admin routes over the internal
+    # loopback without an owner check (see NON_ADMIN_BLOCKED_TOOLS in
+    # src/tool_security.py), so they are admin-only at dispatch as well.
+    "list_served_models",
+    "tail_serve_output",
+    "list_downloads",
+    "search_hf_models",
+    "list_cached_models",
+    "list_serve_presets",
+    "list_cookbook_servers",
 }
 
 
@@ -1317,7 +1337,8 @@ def _parse_qualified_mcp_args(tool: str, content: str) -> tuple[Dict, Optional[s
         if tool.startswith("mcp__email__"):
             return {}, "Email MCP tool arguments must be a JSON object."
         return {}, None
-    return parsed, None
+    sanitized = {k: v for k, v in parsed.items() if not k.startswith("_odysseus_")}
+    return sanitized, None
 
 
 def _parse_generate_image(content: str) -> Dict:
@@ -1402,9 +1423,12 @@ def _build_mcp_args(tool: str, content: str) -> Dict:
         except (json.JSONDecodeError, TypeError):
             decoded = None
         if isinstance(decoded, dict) and any(k in decoded for k in primaries):
-            return decoded
+            return {k: v for k, v in decoded.items() if not k.startswith("_odysseus_")}
     parser = _MCP_ARG_PARSERS.get(tool)
-    return parser(content) if parser else {}
+    res = parser(content) if parser else {}
+    if isinstance(res, dict):
+        return {k: v for k, v in res.items() if not k.startswith("_odysseus_")}
+    return res
 
 
 def _normalize_mcp_text_error(result: Dict) -> Dict:
@@ -1421,20 +1445,25 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    owner: Optional[str] = None,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     bound = active_backend_operation()
     if bound is not None and isinstance(bound.resource, NativeBackendResource):
-        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"Native tool '{tool}' unavailable", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner) or {"error": f"Native tool '{tool}' unavailable", "exit_code": 1}
     mcp = get_mcp_manager()
     if not mcp:
         if bound is not None:
             raise ResourceIdentityError("Pinned MCP backend is unavailable")
-        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
     args = _build_mcp_args(tool, content)
+    if tool == "generate_image":
+        args.pop("_odysseus_owner", None)
+        if owner:
+            args["_odysseus_owner"] = owner
     result = await mcp.call_tool(qualified, args)
 
     # Stdio MCP servers can only return TextContent, so an explicit
@@ -1444,7 +1473,7 @@ async def _call_mcp_tool(
 
     # If MCP server not connected, try direct fallback
     if bound is None and isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
-        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb, owner=owner)
         if fallback:
             return fallback
 
@@ -1527,6 +1556,31 @@ def _agent_subprocess_env() -> dict:
     base.setdefault("LANG", "C.UTF-8")
     base.update({"TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40", "HOME": _AGENT_WORKDIR})
     return base
+
+
+def _legacy_private_browser_enabled() -> bool:
+    return os.getenv("ODYSSEUS_PRIVATE_BROWSER_LEGACY", "0").strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+async def _legacy_private_browser(operation, transport, *, progress_cb=None, session_id=None, owner=None):
+    from src.agent_tools.web_tools_prewave3 import PrivateBrowserTool
+    ctx = {
+        "progress_cb": progress_cb,
+        "subproc_env": _agent_subprocess_env(),
+        "session_id": session_id,
+        "owner": owner,
+    }
+    try:
+        result = await PrivateBrowserTool().execute(operation.input, ctx)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        logger.warning("legacy private_browser failed: %s", error)
+        return f"{transport}: ERROR", {"error": f"private_browser: {error}", "exit_code": 1}
+    if not isinstance(result, dict):
+        result = {"output": str(result), "exit_code": 0}
+    label = "ERROR" if result.get("error") or result.get("exit_code") not in (None, 0) else "EXECUTED"
+    return f"{transport}: {label}", result
 
 
 async def _direct_fallback(
@@ -1702,6 +1756,14 @@ async def execute_tool_block(
         }
 
     transport = operation.transport_tool
+    if operation.tool == "private_browser" and _legacy_private_browser_enabled():
+        # The legacy process cannot establish the sealed browser/page identity
+        # required by the current runtime. Never execute it ahead of resource
+        # binding and the untrusted-context approval gate, even when opted in.
+        return f"{transport}: UNSUPPORTED", {
+            **page_unavailable(),
+            "error": "Legacy browser transport cannot establish the required browser authority.",
+        }
     if operation.tool == "private_browser":
         try:
             _, browser_args = parse_browser_operation(operation.input)
@@ -1855,10 +1917,17 @@ async def execute_tool_block(
             )
 
     if isinstance(security_context, ToolRunSecurityContext) and not approval_claimed:
-        decision = security_context.decision_for(
-            getattr(block, "tool_type", None),
-            getattr(block, "content", None),
-        )
+        if isinstance(authority, RequestAuthority):
+            with bind_request_authority(authority):
+                decision = security_context.decision_for(
+                    getattr(block, "tool_type", None),
+                    getattr(block, "content", None),
+                )
+        else:
+            decision = security_context.decision_for(
+                getattr(block, "tool_type", None),
+                getattr(block, "content", None),
+            )
         if not decision.allowed:
             logger.warning(
                 "External-context policy blocked tool=%r",
@@ -2164,7 +2233,8 @@ async def _execute_tool_block_impl(
     if tool == "generate_image":
         from src.ai_interaction import do_generate_image
         desc = "generate_image"
-        result = await dispatched(do_generate_image(content, session_id=session_id, owner=owner))
+        image_privacy = (client_runtime_context or {}).get('web_ui_state', {}).get('incognito') is True
+        result = await dispatched(do_generate_image(content, session_id=session_id, owner=owner, **({'incognito': True} if image_privacy else {})))
     elif (tool in NATIVE_FILESYSTEM_TOOLS
           and (active_resource_operation() is not None or tool != "apply_patch"
                or not _tui_host_bridge_patch_url(client_runtime_context))):
@@ -2193,7 +2263,7 @@ async def _execute_tool_block_impl(
     elif tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await dispatched(_call_mcp_tool(tool, content, progress_cb=progress_cb))
+        result = await dispatched(_call_mcp_tool(tool, content, progress_cb=progress_cb, owner=owner))
     elif tool in ("grep", "glob", "ls", "get_workspace", "host_shell"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
@@ -2324,7 +2394,8 @@ async def _execute_tool_block_impl(
         result = await dispatched(do_list_cookbook_servers(content, owner=owner))
     elif tool == "edit_image":
         desc = "edit_image"
-        result = await dispatched(do_edit_image(content, owner=owner))
+        image_privacy = (client_runtime_context or {}).get('web_ui_state', {}).get('incognito') is True
+        result = await dispatched(do_edit_image(content, owner=owner, **({'incognito': True} if image_privacy else {})))
     elif tool == "edit_file":
         result = await dispatched(_direct_fallback(tool, content)) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
@@ -2379,7 +2450,7 @@ async def _execute_tool_block_impl(
                     )
                 else:
                     if isinstance(parsed, dict):
-                        args = parsed
+                        args = {k: v for k, v in parsed.items() if not k.startswith("_odysseus_")}
                     else:
                         _args_error = (
                             f"'{tool}' arguments must be a JSON object, "
@@ -2388,11 +2459,12 @@ async def _execute_tool_block_impl(
             if _args_error is not None:
                 result = {"error": _args_error, "exit_code": 1}
             else:
+                args = dict(args)
+                args.pop(_EMAIL_MCP_OWNER_ARG, None)
+                args.pop(_EMAIL_MCP_SESSION_ARG, None)
                 if owner:
-                    args = dict(args)
                     args[_EMAIL_MCP_OWNER_ARG] = owner
                 if session_id:
-                    args = dict(args)
                     args[_EMAIL_MCP_SESSION_ARG] = session_id
                 result = await dispatched(mcp.call_tool(qualified, args))
         else:
@@ -2406,14 +2478,20 @@ async def _execute_tool_block_impl(
             if parse_error:
                 result = {"error": parse_error, "exit_code": 1}
             else:
+                args = dict(args)
+                args.pop("_odysseus_owner", None)
+                args.pop("_odysseus_session_id", None)
                 if tool.startswith("mcp__email__"):
                     if owner:
-                        args = dict(args)
                         args[_EMAIL_MCP_OWNER_ARG] = owner
                     if session_id:
-                        args = dict(args)
                         args[_EMAIL_MCP_SESSION_ARG] = session_id
+                elif tool == "mcp__image_gen__generate_image" or tool.startswith("mcp__image_gen__"):
+                    if owner:
+                        args["_odysseus_owner"] = owner
                 result = _normalize_mcp_text_error(await dispatched(mcp.call_tool(tool, args)))
+                if tool == "mcp__image_gen__generate_image" or tool.startswith("mcp__image_gen__"):
+                    _promote_image_fields(result)
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}

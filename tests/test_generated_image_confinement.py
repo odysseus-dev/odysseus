@@ -60,7 +60,7 @@ def test_generated_image_headers_include_nosniff():
     assert generated_images.GENERATED_IMAGE_HEADERS["X-Content-Type-Options"] == "nosniff"
     assert (
         generated_images.GENERATED_IMAGE_HEADERS["Cache-Control"]
-        == "public, max-age=31536000, immutable"
+        == "private, no-cache, must-revalidate"
     )
 
 

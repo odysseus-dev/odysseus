@@ -81,6 +81,8 @@ jobs:
           python-version: "3.11"
       # Byte-compile sources — catches syntax errors without installing deps.
       - run: python -m compileall -q app.py core routes src services scripts tests
+      - name: Check committed frontend deployment modules
+        run: python scripts/build_frontend.py --check
 
   node-syntax:
     name: JS syntax (node --check)
@@ -91,14 +93,20 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22.23.4"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check frontend architecture
+        run: node scripts/check_frontend.mjs
       # Syntax-check our own JS (skip vendored libs in static/lib).
       - name: node --check
         run: |
           shopt -s globstar nullglob
-          for f in static/app.js static/js/**/*.js; do
+          for f in static/app.js static/js/**/*.js frontend/src/**/*.js; do
             node --check "$f"
           done
+          node --check scripts/check_frontend.mjs
+      - name: Test frontend architecture gates and stateless proof
+        run: node --test tests/frontendArchitecture.test.mjs
 
   python-tests:
     name: Python tests (pytest ${{ matrix.shard }})
@@ -147,20 +155,36 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
           python-version: "3.11"
+      # Establish system trust before dependency installers or their hooks run.
+      # Keep one apt pass for FFmpeg and bubblewrap; containment is checked later.
+      - name: Install FFmpeg and bubblewrap and validate system CA trust
+        if: steps.docs-check.outputs.docs_only != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap ca-certificates
+          python scripts/check_ca_trust.py --system
+          command -v ffmpeg
+          ffmpeg -version | head -n 1
+
       # uv resolves the same versions as pip but installs ~5x faster, and its
       # cache keeps each shard from re-downloading the whole requirement set.
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
+          version: "0.13.5"
           enable-cache: true
           cache-dependency-glob: requirements.txt
           prune-cache: false
-      - run: uv pip install --system -r requirements.txt
+      - run: |
+          uv pip install --system --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
+          python scripts/check_ca_trust.py --python
+          uv pip install --system -r requirements.txt
+          uv pip install --system "playwright==1.62.0"
         if: steps.docs-check.outputs.docs_only != 'true'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         if: steps.docs-check.outputs.docs_only != 'true'
         with:
-          node-version: "20"
+          node-version: "22.23.4"
           cache: npm
       - run: npm ci
         if: steps.docs-check.outputs.docs_only != 'true'
@@ -176,15 +200,9 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true'
       - run: mkdir -p data  # sqlite DB lives at ./data/app.db
         if: steps.docs-check.outputs.docs_only != 'true'
-      # One apt pass for FFmpeg (media integration tests) and bubblewrap
-      # (containment, verified in the next step).
-      - name: Install FFmpeg and bubblewrap
+      - name: Validate Python and system CA trust
         if: steps.docs-check.outputs.docs_only != 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg bubblewrap
-          command -v ffmpeg
-          ffmpeg -version | head -n 1
+        run: python scripts/check_ca_trust.py --system --python
 
       - name: Establish functional bubblewrap containment
         if: steps.docs-check.outputs.docs_only != 'true'
@@ -239,3 +257,10 @@ jobs:
         env:
           PYTEST_SHARD: ${{ matrix.shard }}
         run: python -m pytest -q -rs --durations=25 --shard "$PYTEST_SHARD"
+
+      - name: Playwright mobile layout checks (shard 1/4 only)
+        if: steps.docs-check.outputs.docs_only != 'true' && matrix.shard == '1/4'
+        run: |
+          ODYSSEUS_TEST_PYTHON=python ODYSSEUS_LAYOUT_BROWSER=chromium npx --no-install playwright test \
+            --config tests/e2e/ios-layout.config.cjs \
+            --reporter=line

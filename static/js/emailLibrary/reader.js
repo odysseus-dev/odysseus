@@ -11,6 +11,7 @@
 
 import spinnerModule from '../spinner.js';
 import * as Modals from '../modalManager.js';
+import { clampWindowLeft } from '../modalSnap.js';
 import { showToast } from '../ui.js?v=20260916largetoolscroll1';
 import { state } from './state.js';
 import { _esc, _extractName, _renderEmailSummaryError } from './utils.js';
@@ -428,7 +429,7 @@ export async function _openEmailWindow(em, folder) {
     requestAnimationFrame(() => {
       const w = content.offsetWidth, h = content.offsetHeight;
       const off = (_emailWindowSeq % 6) * 28;
-      content.style.left = Math.max(20, (window.innerWidth  - w) / 2 + off) + 'px';
+      content.style.left = clampWindowLeft(Math.max(20, (window.innerWidth  - w) / 2 + off), w) + 'px';
       content.style.top  = Math.max(20, (window.innerHeight - h) / 3 + off) + 'px';
     });
   }
