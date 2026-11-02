@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import errno
 import hashlib
-from html import escape as html_escape
 import json
 import os
 import posixpath
@@ -1415,7 +1414,7 @@ def audit(
 # ---------------------------------------------------------------------------
 
 def _markdown_display_value(value: Any) -> str:
-    """Escape untrusted values without creating Markdown rows or HTML elements."""
+    """Make controls and invalid Unicode visible before code-span quoting."""
     raw = str(value).encode("utf-8", errors="backslashreplace").decode("utf-8")
     safe = []
     for char in raw:
@@ -1435,23 +1434,29 @@ def _markdown_display_value(value: Any) -> str:
             safe.append(f"\\u{ord(char):04x}")
         else:
             safe.append(char)
-    # HTML entities are decoded after Markdown table splitting, preserving columns.
-    return html_escape("".join(safe), quote=False).replace("|", "&#124;")
+    return "".join(safe)
 
 
-def _markdown_code(value: Any) -> str:
-    # Raw HTML code tags do not suppress Markdown inline parsing or autolinks.
-    text = _markdown_text(value)
-    for char in (".", ":", "@", "~"):
-        text = text.replace(char, f"&#{ord(char)};")
-    return f"<code>{text}</code>"
-
-
-def _markdown_text(value: Any) -> str:
+def _markdown_code(value: Any, *, table_cell: bool = False) -> str:
+    """Quote literal text using a native GFM code span, not inline HTML."""
     text = _markdown_display_value(value)
-    for char in ("`", "*", "_", "[", "]", "!"):
-        text = text.replace(char, f"&#{ord(char)};")
-    return text
+    if not text:
+        return ""
+    if table_cell:
+        # GFM splits cells before parsing code spans and removes this one escape.
+        text = text.replace("|", r"\|")
+    # cmark-gfm limits delimiter lengths. Keep spans short and emit input
+    # backticks as literal entities outside them, never as Markdown delimiters.
+    spans = []
+    for part in text.split("`"):
+        # One padding space is stripped by GFM, except for all-space spans.
+        padding = " " if part.strip(" ") else ""
+        spans.append(f"`{padding}{part}{padding}`" if part else "")
+    return "&#96;".join(spans)
+
+
+def _markdown_text(value: Any, *, table_cell: bool = False) -> str:
+    return _markdown_code(value, table_cell=table_cell)
 
 
 def _markdown_summary(result: dict[str, Any]) -> str:
@@ -1492,12 +1497,12 @@ def _markdown_summary(result: dict[str, Any]) -> str:
         lines.append("|---|---|---|---|---|")
         for a in arts:
             path = a.get("path", "")
-            display_path = _markdown_code(path)
+            display_path = _markdown_code(path, table_cell=True)
             atype = a.get("type") or ""
             status = a.get("status", "")
             present = "yes" if a.get("present") else ("no" if a.get("present") is False else "?")
             size = str(a.get("size_bytes")) if a.get("size_bytes") is not None else "-"
-            lines.append(f"| {display_path} | {_markdown_text(atype)} | **{status}** | {present} | {size} |")
+            lines.append(f"| {display_path} | {_markdown_text(atype, table_cell=True)} | **{status}** | {present} | {size} |")
         lines.append("")
 
     prereqs = result.get("reproducibility_prerequisites", {})
@@ -1513,7 +1518,7 @@ def _markdown_summary(result: dict[str, Any]) -> str:
             es_status = det.get("expected_set_status", "UNKNOWN")
             comp = "yes" if det.get("prerequisite_complete") else "no"
             notes = det.get("notes") or ""
-            lines.append(f"| {k} | **{v}** | {integrity} | {es_status} | {comp} | {_markdown_text(notes)} |")
+            lines.append(f"| {k} | **{v}** | {integrity} | {es_status} | {comp} | {_markdown_text(notes, table_cell=True)} |")
         lines.append("")
 
     return "\n".join(lines)

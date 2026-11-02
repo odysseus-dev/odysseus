@@ -2,6 +2,12 @@
 
 All tests use temporary synthetic fixtures - no network, no runtime, no model.
 Tests are self-contained and safe to run repeatedly without changing source data.
+
+GFM integration checks are separate from the dependency-free unit suite:
+    python -m venv /tmp/c5-gfm
+    /tmp/c5-gfm/bin/pip install cmarkgfm==2025.10.22
+    /tmp/c5-gfm/bin/python tests/test_audit_c5_benchmark_evidence.py --gfm
+The explicit --gfm command fails if cmarkgfm is unavailable; it never skips.
 """
 from __future__ import annotations
 
@@ -2638,18 +2644,15 @@ class TestMarkdownReportIntegrity(unittest.TestCase):
             rows = [row for row in artifact_section.splitlines() if row.startswith("|")]
             self.assertEqual(len(rows), 3)
             self.assertNotIn("\n| apparent-success", summary)
-            self.assertIn("&#124; apparent-success", summary)
+            self.assertIn(r"\| apparent-success", summary)
             self.assertIn("**MISSING**", summary)
 
     def test_code_delimiters_and_html_are_escaped(self):
         value = "bad`</code><img src=x onerror=alert(1)>|name"
         safe = auditor._markdown_code(value)
-        self.assertTrue(safe.startswith("<code>"))
-        self.assertTrue(safe.endswith("</code>"))
-        self.assertNotIn("<img", safe)
-        self.assertNotIn("</code><img", safe)
-        self.assertIn("&#124;", safe)
-        self.assertIn("&lt;", safe)
+        self.assertEqual(safe, '` bad `&#96;` </code><img src=x onerror=alert(1)>|name `')
+        self.assertEqual(auditor._markdown_code(value, table_cell=True),
+                         '` bad `&#96;` </code><img src=x onerror=alert(1)>\\|name `')
 
     def test_campaign_and_notes_cannot_insert_headings_or_columns(self):
         result = {
@@ -2665,7 +2668,7 @@ class TestMarkdownReportIntegrity(unittest.TestCase):
         prerequisite_section = summary.split("## Reproducibility Prerequisites", 1)[1]
         self.assertNotIn("\n| VERIFIED", prerequisite_section)
         self.assertIn("benchmark\\n## Forged status", summary)
-        self.assertIn("missing\\n&#124; VERIFIED", summary)
+        self.assertIn(r"missing\n\| VERIFIED", summary)
 
     def test_cli_published_summary_does_not_forge_missing_artifact(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2699,7 +2702,7 @@ class TestMarkdownReportIntegrity(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Markdown inline-safety: raw HTML code tags still parse Markdown syntax.
+# Markdown inline safety: untrusted text uses native code spans.
 # ---------------------------------------------------------------------------
 
 class TestMarkdownInlineSafety(unittest.TestCase):
@@ -2710,15 +2713,7 @@ class TestMarkdownInlineSafety(unittest.TestCase):
             "`fake_code`"
         )
         safe = auditor._markdown_code(malicious)
-        self.assertTrue(safe.startswith("<code>"))
-        self.assertTrue(safe.endswith("</code>"))
-        self.assertIn("&#91;", safe)
-        self.assertIn("&#93;", safe)
-        self.assertIn("&#33;", safe)
-        self.assertIn("&#42;", safe)
-        self.assertIn("&#96;", safe)
-        self.assertNotIn("[**VERIFIED**]", safe)
-        self.assertNotIn("![beacon]", safe)
+        self.assertEqual(safe, "` " + malicious.split("`")[0] + " `&#96;` fake_code `&#96;")
 
     def test_report_renders_potential_links_as_literal_syntax(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2733,21 +2728,14 @@ class TestMarkdownInlineSafety(unittest.TestCase):
             result = auditor.audit(str(manifest), str(root), deterministic=True)
             self.assertEqual(result["artifacts"][0]["status"], auditor.MISSING)
             summary = auditor._markdown_summary(result)
-            self.assertIn("<code>&#91;VERIFIED&#93;(https&#58;//example&#46;invalid/track)</code>", summary)
-            self.assertIn("<code>&#33;&#91;beacon&#93;(https&#58;//example&#46;invalid/collect&#46;png)</code>", summary)
-            self.assertNotIn("<a ", summary)
-            self.assertNotIn("<img ", summary)
+            self.assertIn("` " + malicious_path + " `", summary)
+            self.assertIn("` " + malicious_campaign + " `", summary)
             self.assertIn("**MISSING**", summary)
 
     def test_raw_url_email_and_strikethrough_are_not_active_markdown(self):
         value = "https://example.invalid/track www.example.invalid mail@example.invalid ~~VERIFIED~~"
         safe = auditor._markdown_code(value)
-        self.assertIn("https&#58;//example&#46;invalid/track", safe)
-        self.assertIn("www&#46;example&#46;invalid", safe)
-        self.assertIn("mail&#64;example&#46;invalid", safe)
-        self.assertIn("&#126;&#126;VERIFIED&#126;&#126;", safe)
-        self.assertNotIn("https://", safe)
-        self.assertNotIn("www.example", safe)
+        self.assertEqual(safe, "` " + value + " `")
 
     def test_bidi_formatting_controls_cannot_reorder_display(self):
         for codepoint in (0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C,
@@ -2760,5 +2748,273 @@ class TestMarkdownInlineSafety(unittest.TestCase):
 
 
 
+_MARKDOWN_CASES = (
+    ("[VERIFIED](https://example.invalid)", "[VERIFIED](https://example.invalid)"),
+    ("![image](https://example.invalid/i.png)", "![image](https://example.invalid/i.png)"),
+    ("https://example.invalid/a", "https://example.invalid/a"),
+    ("http://example.invalid/a", "http://example.invalid/a"),
+    ("www.example.invalid", "www.example.invalid"),
+    ("eval_user@example.invalid", "eval_user@example.invalid"),
+    ("<mailto:user@example.invalid>", "<mailto:user@example.invalid>"),
+    ("mailto:user@example.invalid", "mailto:user@example.invalid"),
+    ("&#64; &#46; &#124; &#96;", "&#64; &#46; &#124; &#96;"),
+    ("&#x40; &#x2e; &#x7c; &#x60;", "&#x40; &#x2e; &#x7c; &#x60;"),
+    ("user&#64;example&#46;invalid", "user&#64;example&#46;invalid"),
+    ("&lt;img&gt; &amp; &commat; &vert;", "&lt;img&gt; &amp; &commat; &vert;"),
+    ("**VERIFIED** *em* _em_ __strong__", "**VERIFIED** *em* _em_ __strong__"),
+    ("~~VERIFIED~~", "~~VERIFIED~~"),
+    ("` `` ``` **VERIFIED**", "` `` ``` **VERIFIED**"),
+    ("`", "`"),
+    ("````", "````"),
+    (r"a|b\|c\\|d|", r"a|b\|c\\|d|"),
+    ("a\n| forged |\r\n## Forged\rheading", r"a\n| forged |\r\n## Forged\rheading"),
+    ("a\u0085b\u2028c\u2029d", r"a\u0085b\u2028c\u2029d"),
+    ("a\u202eb\u2066c\u2069d", r"a\u202eb\u2066c\u2069d"),
+    ("a\ud800\udcffz", r"a\ud800\udcffz"),
+    ('</code><img src="x" onerror="alert(1)"><span>fake</span>',
+     '</code><img src="x" onerror="alert(1)"><span>fake</span>'),
+    ("a\x00b\t\x1b\x7f", r"a\x00b\t\x1b\x7f"),
+    ("  leading and trailing  ", "  leading and trailing  "),
+    ("   ", "   "),
+    ("", ""),
+    ("\\[link](https://example.invalid)\\", "\\[link](https://example.invalid)\\"),
+    ("café_測試_" + "long." * 250, "café_測試_" + "long." * 250),
+)
+
+
+def _markdown_fixture(payload: str) -> dict:
+    return {
+        "campaign_id": payload, "root": payload,
+        "audited_at": "1970-01-01T00:00:00Z", "manifest_valid": True,
+        "timestamp_kind": "deterministic_placeholder",
+        "totals": {s: 0 for s in auditor.ALL_STATUSES} | {"total": 1, auditor.MISSING: 1},
+        "errors": [payload],
+        "artifacts": [{"path": payload, "type": payload, "status": auditor.MISSING,
+                       "present": False, "size_bytes": None}],
+        "reproducibility_prerequisites": {"raw_trajectories": auditor.INCOMPLETE},
+        "reproducibility_details": {"raw_trajectories": {
+            "artifact_integrity": auditor.MISSING, "expected_set_status": "INCOMPLETE",
+            "prerequisite_complete": False, "notes": payload,
+        }},
+    }
+
+
+class TestMarkdownNativeSpans(unittest.TestCase):
+    def test_display_values_preserve_punctuation_and_expose_controls(self):
+        for value, display in _MARKDOWN_CASES:
+            with self.subTest(value=value):
+                self.assertEqual(auditor._markdown_display_value(value), display)
+
+    def test_code_and_text_use_the_same_quoting_in_each_context(self):
+        for value, _ in _MARKDOWN_CASES:
+            for table_cell in (False, True):
+                with self.subTest(value=value, table_cell=table_cell):
+                    self.assertEqual(auditor._markdown_text(value, table_cell=table_cell),
+                                     auditor._markdown_code(value, table_cell=table_cell))
+
+    def test_backticks_are_literal_entities_between_short_spans(self):
+        for length in (1, 2, 3, 8, 64, 256, 10000):
+            value = "`" * length + " text " + "`" * length
+            self.assertEqual(auditor._markdown_code(value),
+                             "&#96;" * length + "`  text  `" + "&#96;" * length)
+
+    def test_table_pipe_escape_preserves_existing_backslashes(self):
+        for length in range(16):
+            value = "a" + "\\" * length + "|b"
+            self.assertEqual(auditor._markdown_code(value), "` " + value + " `")
+            self.assertEqual(auditor._markdown_code(value, table_cell=True),
+                             "` a" + "\\" * (length + 1) + "|b `")
+
+    def test_empty_and_all_space_values_do_not_gain_padding(self):
+        self.assertEqual(auditor._markdown_code(""), "")
+        self.assertEqual(auditor._markdown_code("   "), "`   `")
+        self.assertEqual(auditor._markdown_code(" x "), "`  x  `")
+
+    def test_reports_quote_each_untrusted_field_without_mutating_json(self):
+        for value, _ in _MARKDOWN_CASES:
+            result = _markdown_fixture(value)
+            before = json.dumps(result, sort_keys=True)
+            summary = auditor._markdown_summary(result)
+            self.assertIn("- **Campaign**: " + auditor._markdown_code(value), summary)
+            self.assertIn("- **Root**: " + auditor._markdown_code(value), summary)
+            self.assertIn("- " + auditor._markdown_text(value), summary)
+            self.assertIn("| " + auditor._markdown_code(value, table_cell=True) + " | "
+                          + auditor._markdown_text(value, table_cell=True) + " | **MISSING** | no | - |", summary)
+            self.assertEqual(json.dumps(result, sort_keys=True), before)
+
+    def test_cli_json_and_markdown_are_deterministic(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(_manifest([
+                {"path": "missing|user@example.invalid", "type": "~~VERIFIED~~"},
+            ], campaign_id="user@example.invalid")))
+            outputs = []
+            for index in range(2):
+                output, summary = root / f"{index}.json", root / f"{index}.md"
+                self.assertEqual(auditor.main([str(manifest), str(root), "--output", str(output),
+                                              "--summary", str(summary), "--deterministic"]), 1)
+                outputs.append((output.read_bytes(), summary.read_bytes()))
+            self.assertEqual(outputs[0], outputs[1])
+
+
+def _run_gfm_checks() -> None:
+    # Kept explicit because cmarkgfm is a verification tool, not an app dependency.
+    # Import failure must fail this command, rather than silently skip security tests.
+    from cmarkgfm import github_flavored_markdown_to_html
+    from cmarkgfm.cmark import Options
+    from xml.etree import ElementTree as ET
+
+    def render(markdown):
+        # Allow raw HTML so a broken escape cannot be hidden by sanitization.
+        html = github_flavored_markdown_to_html(markdown, options=Options.CMARK_OPT_UNSAFE)
+        return ET.fromstring("<report>" + html + "</report>")
+
+    class TestMarkdownGFM(unittest.TestCase):
+        def test_renderer_positive_controls(self):
+            dom = render("https://example.invalid user@example.invalid ~~deleted~~ **bold** *em*\n\n"
+                         '![image](https://example.invalid/i) <span title="raw">HTML</span>\n\n'
+                         "| A | B |\n|---|---|\n| x | y |")
+            for tag in ("a", "del", "strong", "em", "img", "span", "table"):
+                self.assertIsNotNone(dom.find(".//" + tag), tag)
+            self.assertTrue(any(a.get("href", "").startswith("mailto:") for a in dom.iter("a")))
+            # Reproduce the original decoded-entity autolink, not just bare URLs.
+            original = render("<code>eval&#95;user&#64;example&#46;invalid</code>")
+            self.assertEqual(original.find(".//code/a").get("href"), "mailto:eval_user@example.invalid")
+
+        def test_helpers_render_as_literal_text(self):
+            for value, display in _MARKDOWN_CASES:
+                for helper in (auditor._markdown_code, auditor._markdown_text):
+                    for table_cell in (False, True):
+                        with self.subTest(value=value, helper=helper.__name__, table_cell=table_cell):
+                            quoted = helper(value, table_cell=table_cell)
+                            markdown = "| Value |\n|---|\n| " + quoted + " |" if table_cell else quoted
+                            dom = render(markdown)
+                            parent = dom.find(".//td") if table_cell else dom.find("p")
+                            self.assertEqual("".join(parent.itertext()) if parent is not None else "", display)
+                            self.assertTrue(all(len(code) == 0 for code in dom.iter("code")))
+                            expected_tags = (["report", "table", "thead", "tr", "th", "tbody", "tr", "td"]
+                                             if table_cell else (["report", "p"] if display else ["report"]))
+                            self.assertEqual([node.tag for node in dom.iter() if node.tag != "code"], expected_tags)
+
+        def test_backtick_lengths_and_backslashes_before_table_pipes(self):
+            for length in list(range(65)) + [80, 81, 128, 256, 1000, 10000]:
+                value = "`" * length + "a" + "\\" * length + "| **fake** |" + "`" * length
+                for table_cell in (False, True):
+                    quoted = auditor._markdown_code(value, table_cell=table_cell)
+                    markdown = "| A | B |\n|---|---|\n| " + quoted + " | end |" if table_cell else quoted
+                    dom = render(markdown)
+                    parent = dom.find(".//td") if table_cell else dom.find("p")
+                    self.assertEqual("".join(parent.itertext()), value)
+                    self.assertTrue(all(len(code) == 0 for code in dom.iter("code")))
+                    for tag in ("strong", "em", "a", "del"):
+                        self.assertIsNone(dom.find(".//" + tag), tag)
+                    if table_cell:
+                        self.assertEqual(len(dom.findall(".//tbody/tr")), 1)
+                        self.assertEqual(len(dom.findall(".//td")), 2)
+                        self.assertEqual(dom.findall(".//td")[1].text, "end")
+
+        def test_every_short_backtick_length_and_very_long_runs(self):
+            for value in (
+                " ".join("`" * n for n in range(1, 130)) + " https://example.invalid **fake**",
+                "`" * 100000 + " user@example.invalid ~~fake~~ " + "`" * 100000,
+            ):
+                for table_cell in (False, True):
+                    quoted = auditor._markdown_code(value, table_cell=table_cell)
+                    markdown = "| A |\n|---|\n| " + quoted + " |" if table_cell else quoted
+                    dom = render(markdown)
+                    parent = dom.find(".//td") if table_cell else dom.find("p")
+                    self.assertEqual("".join(parent.itertext()), value)
+                    self.assertTrue(all(n.tag in {"report", "p", "code", "table", "thead",
+                                                 "tbody", "tr", "th", "td"} for n in dom.iter()))
+
+        def assert_report(self, result):
+            summary = auditor._markdown_summary(result)
+            dom = render(summary)
+            # Compare the entire element structure with the same report using safe text.
+            baseline = render(auditor._markdown_summary(_markdown_fixture("safe")))
+            self.assertEqual([n.tag for n in dom.iter() if n.tag != "code"],
+                             [n.tag for n in baseline.iter() if n.tag != "code"])
+            self.assertTrue(all(len(code) == 0 for code in dom.iter("code")))
+            tables = dom.findall(".//table")
+            self.assertEqual([len(t.findall(".//tbody/tr")) for t in tables], [7, 1, 1])
+            self.assertEqual([[len(row) for row in t.findall(".//tr")] for t in tables],
+                             [[2] * 8, [5] * 2, [6] * 2])
+            self.assertEqual([n.text for n in dom.iter("strong")],
+                             ["Campaign", "Audited at", "Timestamp note", "Root", "Manifest valid",
+                              auditor.MISSING, auditor.INCOMPLETE])
+            return dom
+
+        def test_complete_reports_keep_classification_and_structure(self):
+            for value, display in _MARKDOWN_CASES:
+                if not value:
+                    continue  # Empty cells are checked by the helper test.
+                with self.subTest(value=value):
+                    dom = self.assert_report(_markdown_fixture(value))
+                    items = dom.findall(".//li")
+                    self.assertEqual("".join(items[0].itertext()), "Campaign: " + display)
+                    self.assertEqual("".join(items[3].itertext()), "Root: " + display)
+                    self.assertEqual("".join(items[5].itertext()), display)
+                    tables = dom.findall(".//table")
+                    cells = tables[1].findall(".//td")
+                    self.assertEqual(["".join(c.itertext()) for c in cells],
+                                     [display, display, auditor.MISSING, "no", "-"])
+                    self.assertEqual("".join(tables[2].findall(".//td")[-1].itertext()), display)
+
+        def test_actual_cli_reports_match_authoritative_json(self):
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td) / "`root`|admin@example.invalid"
+                root.mkdir()
+                manifest = root / "manifest.json"
+                path = "missing`|user@example.invalid\n## Forged"
+                manifest.write_text(json.dumps(_manifest([
+                    {"path": path, "type": "https://example.invalid ~~VERIFIED~~"},
+                ], campaign_id="admin@example.invalid")))
+                output, summary = root / "audit.json", root / "audit.md"
+                self.assertEqual(auditor.main([str(manifest), str(root), "--output", str(output),
+                                              "--summary", str(summary), "--deterministic"]), 1)
+                result = json.loads(output.read_text())
+                self.assertEqual(result["artifacts"][0]["status"], auditor.MISSING)
+                dom = render(summary.read_text())
+                for tag in ("a", "img", "del", "em", "span", "script"):
+                    self.assertIsNone(dom.find(".//" + tag), tag)
+                rows = dom.findall(".//table")[1].findall(".//tbody/tr")
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(["".join(cell.itertext()) for cell in rows[0]],
+                                 [r"missing`|user@example.invalid\n## Forged",
+                                  result["artifacts"][0]["type"], auditor.MISSING, "no", "-"])
+                self.assertEqual(len(dom.findall(".//h1")), 1)
+                self.assertEqual(len(dom.findall(".//h2")), 3)
+                items = ["".join(n.itertext()) for n in dom.iter("li")]
+                self.assertIn("Root: " + str(root), items)
+                self.assertIn("Campaign: " + result["campaign_id"], items)
+
+        def test_real_duplicate_diagnostics_and_validation_errors(self):
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = "user@example.invalid|~~VERIFIED~~"
+                entry = {"path": path, "type": "trajectory"}
+                result = _run_audit(root, _manifest([entry, entry]), deterministic=True)
+                notes = result["reproducibility_details"]["raw_trajectories"]["notes"]
+                self.assertIn("duplicate", notes)
+                self.assertIn(path, notes)
+                dom = render(auditor._markdown_summary(result))
+                self.assertIn(notes, [n.text for n in dom.iter("code")])
+                bad = _manifest([], expected_sets={"https://example.invalid ~~VERIFIED~~": {}})
+                result = _run_audit(root, bad, deterministic=True)
+                self.assertTrue(result["errors"])
+                dom = render(auditor._markdown_summary(result))
+                self.assertIn(result["errors"][0], [n.text for n in dom.iter("code")])
+                for tag in ("a", "img", "del", "em"):
+                    self.assertIsNone(dom.find(".//" + tag), tag)
+
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(TestMarkdownGFM)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    raise SystemExit(not result.wasSuccessful())
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if sys.argv[1:] == ["--gfm"]:
+        _run_gfm_checks()
+    else:
+        unittest.main()
