@@ -941,13 +941,32 @@ function _exitHistorySelectMode() {
   _renderJobs();
 }
 
+async function _deleteResearchFromDisk(id) {
+  const response = await fetch(`${_apiBase}/api/research/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+  if (!response.ok) throw new Error('Research deletion failed');
+}
+
+function _showDeleteFailure(count) {
+  if (typeof uiModule !== 'undefined' && uiModule?.showError) {
+    uiModule.showError(`Could not delete ${count} research ${count === 1 ? 'report' : 'reports'}. Please try again.`);
+  }
+}
+
 async function _deleteHistoryJobs(ids) {
   const selected = new Set(ids);
   const selectedJobs = jobs.getJobs().filter(job => selected.has(job.id));
-  await Promise.all(selectedJobs.filter(job => job.status === 'done').map(async job => {
-    try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+  let failed = 0;
+  await Promise.all(selectedJobs.map(async job => {
+    try {
+      if (job.status === 'done') await _deleteResearchFromDisk(job.id);
+      _historySelectedIds.delete(job.id);
+      jobs.removeJob(job.id);
+    } catch {
+      failed++;
+    }
   }));
-  selectedJobs.forEach(job => jobs.removeJob(job.id));
+  if (failed) _showDeleteFailure(failed);
+  return failed === 0;
 }
 
 async function _bulkDeleteHistory() {
@@ -957,8 +976,8 @@ async function _bulkDeleteHistory() {
     const ok = await window.styledConfirm(`Delete ${ids.length} research ${ids.length === 1 ? 'report' : 'reports'}?`, { confirmText: 'Delete', danger: true });
     if (!ok) return;
   }
-  await _deleteHistoryJobs(ids);
-  _exitHistorySelectMode();
+  if (await _deleteHistoryJobs(ids)) _exitHistorySelectMode();
+  else _updateHistoryBulkBar();
 }
 
 async function _clearHistory() {
@@ -1296,7 +1315,12 @@ function _buildJobCard(job) {
         const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
         if (!ok) return;
       }
-      try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+      try {
+        await _deleteResearchFromDisk(job.id);
+      } catch {
+        _showDeleteFailure(1);
+        return;
+      }
       overflow.close();
       _animateOutThenRemove(card, () => jobs.removeJob(job.id));
     });
