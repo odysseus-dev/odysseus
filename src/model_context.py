@@ -5,7 +5,6 @@ Query and cache model context window sizes from OpenAI-compatible APIs.
 Provides token estimation for context usage tracking.
 """
 
-import hashlib
 import ipaddress
 import logging
 import sys
@@ -244,14 +243,6 @@ KNOWN_CONTEXT_WINDOWS = {
 _context_cache: Dict[Tuple[str, str, str], Tuple[int, bool]] = {}
 
 
-def _headers_cache_key(headers: Optional[Dict]) -> str:
-    """Fingerprint route credentials without storing them in the cache key."""
-    if not headers:
-        return ""
-    canonical = "\n".join(sorted(f"{str(key).lower()}:{value}" for key, value in headers.items()))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 def _get_context_length_cached(
     endpoint_url: str,
     model: str,
@@ -265,9 +256,12 @@ def _get_context_length_cached(
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603). Credentials are
-    # part of the key too: an anonymous family-table fallback must not answer
-    # for a route whose authenticated probe can read the real window.
-    cache_key = (endpoint_url, model, _headers_cache_key(headers))
+    # part of the key too, through the same fingerprint the context resolver
+    # uses: an anonymous family-table fallback must not answer for a route
+    # whose authenticated probe can read the real window.
+    from src.agent_runtime.context_resolution import _auth_fingerprint
+
+    cache_key = (endpoint_url, model, _auth_fingerprint(headers))
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 
