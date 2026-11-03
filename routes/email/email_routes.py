@@ -4085,10 +4085,17 @@ def setup_email_routes():
                     _WARMING_READS.discard(ck)
                     await _asyncio.sleep(0.35)
 
+        warm = _warm()
         try:
-            _asyncio.create_task(_warm())
+            _asyncio.create_task(warm)
         except RuntimeError:
-            pass
+            # No event loop in this thread (background list refresh). Release
+            # the claims too, or these messages are never warmed later.
+            warm.close()
+            for _, ck in selected:
+                _WARMING_READS.discard(ck)
+
+    router._schedule_recent_email_warm = _schedule_recent_email_warm
 
     @router.get("/attachments/{uid}")
     async def list_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
