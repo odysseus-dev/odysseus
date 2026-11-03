@@ -1790,6 +1790,12 @@ def setup_email_routes():
     def _pooled_release(account_id, conn, ok=True, owner=""):
         # SECURITY: match the (account_id, owner) key used by _pooled_connect
         # so a pooled handle is returned to the same per-user slot.
+        # Only pool read-only handles, for every provider. A handle that changed
+        # a mailbox (read-write SELECT for delete, move, flags) can keep serving
+        # the pre-change view; seen on Outlook.com, where its later EXAMINE +
+        # SEARCH never returned new mail until the handle was replaced.
+        if ok and getattr(conn, "state", "") == "SELECTED" and not getattr(conn, "is_readonly", True):
+            ok = False
         if not ok:
             try: conn.logout()
             except Exception: pass
