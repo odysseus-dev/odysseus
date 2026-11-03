@@ -2456,20 +2456,25 @@ class TaskScheduler:
             logger.error(f"Task {task.id} MCP delivery failed: {e}")
             raise
 
-    async def run_task_now(self, task_id: str, *, force: bool = False):
-        """Manually trigger a task execution."""
+    async def run_task_now(self, task_id: str, *, force: bool = False, manual: bool = False):
+        """Trigger a task execution outside its schedule.
+
+        Pass manual=True only when a person in the UI asked for this run.
+        Their own request counts as foreground activity, so gating the run
+        on it would hold or abort the run they just started. Event triggers,
+        webhooks and the agent's own tool leave it False and stay gated.
+        """
         if force:
+            # bypass_model_slot already turns the foreground gate off, so
+            # manual changes nothing here; it is passed for clarity.
             asyncio.create_task(self._execute_task(
-                task_id, bypass_model_slot=True, release_executing=False, manual=True))
+                task_id, bypass_model_slot=True, release_executing=False, manual=manual))
             return True
         async with self._executing_guard():
             if task_id in self._executing:
                 return False
             self._executing.add(task_id)
-        # A run the person just asked for is foreground work. Gating it on
-        # foreground activity would let the very request that started it
-        # count as activity and abort the run.
-        asyncio.create_task(self._execute_task(task_id, manual=True))
+        asyncio.create_task(self._execute_task(task_id, manual=manual))
         return True
 
     async def stop_task(self, task_id: str) -> bool:
