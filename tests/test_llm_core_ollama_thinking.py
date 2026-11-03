@@ -56,7 +56,7 @@ def _capture_payload(monkeypatch, url, model):
     monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
     monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
     monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
-    monkeypatch.setattr(llm_core, "get_context_length", lambda u, m: 32768)
+    monkeypatch.setattr(llm_core, "get_context_length", lambda u, m, headers=None: 32768)
 
     async def run():
         return [c async for c in llm_core.stream_llm(

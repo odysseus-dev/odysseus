@@ -5,6 +5,7 @@ Query and cache model context window sizes from OpenAI-compatible APIs.
 Provides token estimation for context usage tracking.
 """
 
+import hashlib
 import ipaddress
 import logging
 import sys
@@ -240,10 +241,22 @@ KNOWN_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-_context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
+_context_cache: Dict[Tuple[str, str, str], Tuple[int, bool]] = {}
 
 
-def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool]:
+def _headers_cache_key(headers: Optional[Dict]) -> str:
+    """Fingerprint route credentials without storing them in the cache key."""
+    if not headers:
+        return ""
+    canonical = "\n".join(sorted(f"{str(key).lower()}:{value}" for key, value in headers.items()))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _get_context_length_cached(
+    endpoint_url: str,
+    model: str,
+    headers: Optional[Dict] = None,
+) -> Tuple[int, bool]:
     """Return (context_length, known). ``known`` is False only when the value is a
     bare DEFAULT_CONTEXT fallback (no endpoint report and not in the known table)."""
     configured_kind = _configured_endpoint_kind(endpoint_url)
@@ -251,12 +264,14 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     # Key on (endpoint_url, model): the same model id can be served by two
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
-    # serve one endpoint's window for the other (issue #2603).
-    cache_key = (endpoint_url, model)
+    # serve one endpoint's window for the other (issue #2603). Credentials are
+    # part of the key too: an anonymous family-table fallback must not answer
+    # for a route whose authenticated probe can read the real window.
+    cache_key = (endpoint_url, model, _headers_cache_key(headers))
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 
-    ctx, known = _query_context_length(endpoint_url, model)
+    ctx, known = _query_context_length(endpoint_url, model, headers=headers)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
@@ -266,26 +281,37 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     return ctx, known
 
 
-def get_context_length(endpoint_url: str, model: str) -> int:
+def get_context_length(endpoint_url: str, model: str, headers: Optional[Dict] = None) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
     or context_window fields. Caches result per (endpoint, model).
-    Falls back to DEFAULT_CONTEXT if unavailable.
+    Falls back to DEFAULT_CONTEXT if unavailable. ``headers`` are the
+    selected route's credentials for Ollama's native metadata probe.
     """
-    return _get_context_length_cached(endpoint_url, model)[0]
+    return _get_context_length_cached(endpoint_url, model, headers)[0]
 
 
-def get_context_length_known(endpoint_url: str, model: str) -> Tuple[int, bool]:
+def get_context_length_known(
+    endpoint_url: str,
+    model: str,
+    headers: Optional[Dict] = None,
+) -> Tuple[int, bool]:
     """Like ``get_context_length`` but also returns whether the window was actually
     discovered (endpoint-reported or in the known-models table) rather than the bare
     DEFAULT_CONTEXT fallback. Callers that *scale* a budget off the window must not
     trust an unknown value — a fallback 128K isn't proof the model holds 128K
     (review on #4122)."""
-    return _get_context_length_cached(endpoint_url, model)
+    return _get_context_length_cached(endpoint_url, model, headers)
 
 
-def budget_context_for_model(endpoint_url: str, model: str, *, fallback: int = 0) -> int:
+def budget_context_for_model(
+    endpoint_url: str,
+    model: str,
+    *,
+    headers: Optional[Dict] = None,
+    fallback: int = 0,
+) -> int:
     """Context window to scale the agent input budget against.
 
     Returns the *freshly discovered* window when it was actually proven
@@ -296,7 +322,7 @@ def budget_context_for_model(endpoint_url: str, model: str, *, fallback: int = 0
     unproven number (review on #4122). On probe error, returns ``fallback`` (the
     caller's best-known value) to preserve prior behaviour."""
     try:
-        ctx, known = get_context_length_known(endpoint_url, model)
+        ctx, known = get_context_length_known(endpoint_url, model, headers)
         return ctx if known else 0
     except Exception:
         return fallback
@@ -398,7 +424,11 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     return None
 
 
-def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
+def _query_context_length(
+    endpoint_url: str,
+    model: str,
+    headers: Optional[Dict] = None,
+) -> Tuple[int, bool]:
     """Query the model API for context length. Returns (context_length, known) where
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
@@ -407,10 +437,12 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
 
     # Ollama's OpenAI catalog omits serving limits. Probe its native metadata
     # before the family-name fallback (e.g. a 32K Qwen alias is not 128K).
+    # Authenticated Ollama servers answer /api/ps and /api/show only with the
+    # route's own credentials.
     if configured_kind not in ("api", "proxy"):
         from src.ollama_metadata import ollama_context_length
 
-        ollama_ctx = ollama_context_length(endpoint_url, model)
+        ollama_ctx = ollama_context_length(endpoint_url, model, headers)
         if ollama_ctx:
             logger.info(f"Ollama reports context window for {model}: {ollama_ctx}")
             return ollama_ctx, True

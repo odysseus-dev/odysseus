@@ -72,13 +72,21 @@ def _positive_int(value: object) -> int | None:
     return None
 
 
-def ollama_context_length(endpoint_url: str, model: str) -> int | None:
+def ollama_context_length(
+    endpoint_url: str,
+    model: str,
+    headers: Mapping[str, str] | None = None,
+) -> int | None:
     """Prefer the loaded runner's context, then the model's configured limits."""
     base = ollama_metadata_base(endpoint_url)
     if not base:
         return None
     try:
-        response = httpx.get(base + "/ps", timeout=OLLAMA_METADATA_TIMEOUT_SECONDS)
+        response = httpx.get(
+            base + "/ps",
+            headers=headers,
+            timeout=OLLAMA_METADATA_TIMEOUT_SECONDS,
+        )
         if response.is_success:
             payload = response.json()
             models = payload.get("models") if isinstance(payload, dict) else None
@@ -94,7 +102,7 @@ def ollama_context_length(endpoint_url: str, model: str) -> int | None:
     except (httpx.HTTPError, ValueError, TypeError):
         pass
 
-    info = ollama_model_info(endpoint_url, model)
+    info = ollama_model_info(endpoint_url, model, headers)
     if info is None:
         return None
     # The existing provider reader parses PARAMETER num_ctx before the

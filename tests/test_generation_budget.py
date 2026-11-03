@@ -203,7 +203,7 @@ def test_fallback_stream_proactively_caps_output_to_context(monkeypatch):
         yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
-    monkeypatch.setattr(llm_core, "get_context_length", lambda url, model: 4096)
+    monkeypatch.setattr(llm_core, "get_context_length", lambda url, model, headers=None: 4096)
 
     async def run():
         return [

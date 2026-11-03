@@ -2406,7 +2406,7 @@ def test_multi_round_agent_pins_answering_fallback_for_the_run(monkeypatch):
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
-        lambda url, model, owner=None, headers=None: route_modes.append((url, model, owner, headers)) or (model == "selected-model", False, False),
+        lambda url, model, owner=None, headers=None, **kwargs: route_modes.append((url, model, owner, headers)) or (model == "selected-model", False, False),
     )
 
     async def fake_stream(candidates, messages, **kwargs):
@@ -2471,7 +2471,7 @@ def test_late_agent_fallback_records_each_round_and_stays_pinned(monkeypatch):
     monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
     monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
     monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
-    monkeypatch.setattr(agent_loop, "_agent_route_tool_mode", lambda url, model, owner=None, headers=None: (True, False, False))
+    monkeypatch.setattr(agent_loop, "_agent_route_tool_mode", lambda url, model, owner=None, headers=None, **kwargs: (True, False, False))
 
     async def fake_stream(candidates, messages, **kwargs):
         nonlocal round_number
@@ -3357,7 +3357,7 @@ def test_agent_builds_backup_prompt_and_tool_transport_before_attempt(monkeypatc
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
-        lambda url, model, owner=None, headers=None: (model == "selected-model", model == "backup-model", False),
+        lambda url, model, owner=None, headers=None, **kwargs: (model == "selected-model", model == "backup-model", False),
     )
 
     def fake_build(messages, model, *args, **kwargs):
@@ -3455,7 +3455,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
     import src.context_compactor as context_compactor
     import src.model_context as model_context
 
-    def fake_context(candidate_url, candidate_model, fallback=0):
+    def fake_context(candidate_url, candidate_model, headers=None, fallback=0):
         context_lookups.append((candidate_url, candidate_model, fallback))
         return backup_context if candidate_model == "backup-model" else primary_context
 
@@ -3669,7 +3669,7 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
     monkeypatch.setattr(
         agent_loop,
         "_agent_route_tool_mode",
-        lambda url, model, owner=None, headers=None: (
+        lambda url, model, owner=None, headers=None, **kwargs: (
             model == "selected-model",
             False,
             False,
