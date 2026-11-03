@@ -55,25 +55,33 @@ def test_skips_while_reading_an_email():
     assert not _refreshes({}, reading=True)
 
 
-def test_opening_from_the_browser_cache_does_not_leave_the_mailbox_loading():
-    # Opening paints the saved list and returns early; that path used to leave
-    # _libLoading on, so every auto-refresh afterwards was skipped.
+def test_opening_from_the_browser_cache_paints_then_asks_the_server():
+    # Opening painted the saved list and returned: new mail stayed hidden until
+    # the next refresh, and _libLoading stayed set so the auto-refresh skipped.
     node = shutil.which("node")
     if not node:
         pytest.skip("node not on PATH")
     fn = js_function_source("_loadEmails", email_library_source())
     script = f"""
-      const state = {{ _libLoading: false, _libOffset: 0, _libSearch: '', _libFolder: 'INBOX', _libEmails: [] }};
+      const state = {{ _libLoading: false, _libOffset: 0, _libSearch: '', _libFolder: 'INBOX', _libEmails: [], _libFilter: 'all' }};
       let _libLoadSeq = 0, _libRenderedViewKey = '';
+      const API_BASE = '', _LIB_INITIAL_PAGE_SIZE = 100;
       const grid = {{ classList: {{ remove() {{}} }} }};
       globalThis.document = {{ getElementById: () => grid }};
+      const painted = [];
       const _libCacheKey = () => 'k';
       const _libCacheGet = () => ({{ emails: [{{ uid: '1' }}], total: 1 }});
-      const _renderGrid = () => {{}}, _setEmailSyncStatus = () => {{}}, _clearStaleEmailRefetch = () => {{}};
+      const _renderGrid = () => painted.push(state._libEmails.map(e => e.uid).join(','));
+      const _setEmailSyncStatus = () => {{}}, _clearStaleEmailRefetch = () => {{}};
       const _scheduleStaleEmailRefetch = () => {{}}, _libCachePut = () => {{}};
-      const fetch = () => {{ throw new Error('cache open must not hit the network'); }};
+      const _syncUnreadWindowGlow = () => {{}}, _refreshUnreadBadge = () => {{}};
+      const _refreshAccountUnreadHighlights = async () => {{}};
+      const urls = [];
+      const fetch = async (url) => {{ urls.push(url); return {{ json: async () => ({{ emails: [{{ uid: '2' }}, {{ uid: '1' }}], total: 2 }}) }}; }};
       {fn}
-      _loadEmails({{ useCache: true }}).then(() => console.log(JSON.stringify(state._libLoading)));
+      _loadEmails({{ useCache: true }}).then(() => console.log(JSON.stringify({{ painted, urls, loading: state._libLoading }})));
     """
-    out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
-    assert json.loads(out) is False
+    out = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout)
+    assert out["painted"] == ["1", "2,1"]  # saved list first, then the server's
+    assert len(out["urls"]) == 1 and "refresh=1" not in out["urls"][0]
+    assert out["loading"] is False

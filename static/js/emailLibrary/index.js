@@ -5125,13 +5125,10 @@ export async function _loadEmails({ force = false, useCache = true, skipFastPath
     if (grid2) grid2.classList.remove('email-lib-just-opened');
     paintData(cached, { cacheSource: true });
     paintedExisting = true;
-    if (force) _setEmailSyncStatus({ loading: true });
-    if (!force) {
-      // This return skips the finally below; without clearing the flag here
-      // the mailbox stayed "loading" and every later auto-refresh was skipped.
-      if (seq === _libLoadSeq) state._libLoading = false;
-      return;
-    }
+    // Revalidate behind the cached paint, as described above. Returning here
+    // kept showing the browser's saved list (and left _libLoading set, which
+    // blocked the auto-refresh) until something else reloaded the list.
+    _setEmailSyncStatus({ loading: true });
   } else if (state._libEmails.length && cacheable) {
     _renderGrid();
     _setEmailSyncStatus({ loading: true });
