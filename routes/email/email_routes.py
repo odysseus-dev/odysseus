@@ -3047,6 +3047,15 @@ def setup_email_routes():
                 "folder": folder,
                 "sync": {"source": "local"},
             }
+        # The unread dot polls this every minute, also while the mailbox is
+        # closed. Pull new mail into the index in the background (once per poll,
+        # skipped if the inbox view just fetched), so the dot and the next open see it.
+        sync_ck = _list_cache_key(account_id, folder, "all", 100, 0) + (0, "", "", owner)
+        if _list_cache_get(sync_ck) is None:
+            _schedule_list_refresh(
+                (folder, 100, 0, "all", account_id, None, False, owner, False, "", ""),
+                sync_ck, folder, account_id, owner,
+            )
         try:
             account_key = _account_cache_key(account_id, owner)
             conn = _sql3.connect(SCHEDULED_DB)
