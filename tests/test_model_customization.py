@@ -4,6 +4,8 @@ Each test is named after a Gherkin scenario in
 openspec/changes/add-model-customization/specs/model-customization/spec.md.
 Expected values come from the spec tables, never from the module itself.
 """
+import os
+
 import pytest
 
 from src import model_customization as mc
@@ -32,6 +34,7 @@ def customization_file(tmp_path, monkeypatch):
         ("http://localhost:11434/api/chat", "ollama-native"),
         ("http://localhost:11434/v1/chat/completions", "ollama-openai"),
         ("http://192.168.1.20:8080/v1/chat/completions", "local-openai"),
+        ("http://localhost:1234/v1/chat/completions", "local-openai"),
         ("https://api.groq.com/openai/v1/chat/completions", "hosted-openai"),
     ],
 )
@@ -44,6 +47,13 @@ def test_a_local_ollama_v1_url_is_not_treated_as_a_generic_local_server():
     fmt = mc.provider_format(url)
     assert fmt == "ollama-openai"
     assert {"top_k", "min_p", "repeat_penalty"}.isdisjoint(mc.supported_fields(fmt))
+
+
+def test_a_local_v1_server_on_another_port_keeps_the_extended_fields():
+    url = "http://localhost:1234/v1/chat/completions"
+    fmt = mc.provider_format(url)
+    assert fmt == "local-openai"
+    assert {"top_k", "min_p", "repeat_penalty"}.issubset(mc.supported_fields(fmt))
 
 
 # ── Supported settings ─────────────────────────────────────────────────────
@@ -151,6 +161,17 @@ def test_booleans_are_not_accepted_as_numbers():
 def test_unknown_setting_names_are_rejected():
     with pytest.raises(ValueError, match="mirostat"):
         mc.validate_settings({"mirostat": 2}, OLLAMA_NATIVE_ALL)
+
+
+def test_a_non_finite_value_is_rejected():
+    for name in ("temperature", "top_p"):
+        with pytest.raises(ValueError, match="finite"):
+            mc.validate_settings({name: float("nan")}, OLLAMA_NATIVE_ALL)
+
+
+def test_a_blank_unknown_setting_name_is_still_rejected():
+    with pytest.raises(ValueError, match="mirostat"):
+        mc.validate_settings({"mirostat": ""}, OLLAMA_NATIVE_ALL)
 
 
 def test_a_setting_the_endpoint_cannot_accept_is_rejected():
@@ -388,11 +409,43 @@ def test_a_deleted_endpoints_entry_is_ignored(endpoint_db):
     assert mc.lookup(LAB_URL + "/api/chat", "qwen3:8b") is None
 
 
-def test_a_model_no_longer_enabled_is_not_matched_but_kept(endpoint_db, customization_file):
+def test_a_model_hidden_from_the_picker_keeps_its_settings(endpoint_db):
+    """Matching is endpoint identity plus model name; the enabled list is a
+    picker concern, and a hidden model can still be used by an older chat."""
     endpoint_db("lab-ollama", LAB_URL, ["qwen3:8b"], hidden_models=_json.dumps(["qwen3:8b"]))
     mc.save_entry("lab-ollama", LAB_URL, "qwen3:8b", {"temperature": 0.6})
-    assert mc.lookup(LAB_URL + "/api/chat", "qwen3:8b") is None
-    assert [e["model"] for e in _entries_on_disk(customization_file)] == ["qwen3:8b"]
+    assert mc.lookup(LAB_URL + "/api/chat", "qwen3:8b") == {"temperature": 0.6}
+
+
+def test_duplicate_entries_for_one_key_keep_the_last(customization_file, endpoint_db):
+    """A hand-edited or merged file must not turn one pair into an ambiguous match."""
+    endpoint_db("lab-ollama", LAB_URL, ["qwen3:8b"])
+    customization_file.write_text(_json.dumps({"version": 1, "entries": [
+        {"model": "qwen3:8b", "endpoint_id": "lab-ollama", "base_url": LAB_URL,
+         "settings": {"temperature": 0.6}, "edited_at": "2026-01-01T00:00:00+00:00"},
+        {"model": "qwen3:8b", "endpoint_id": "lab-ollama", "base_url": LAB_URL,
+         "settings": {"temperature": 0.9}, "edited_at": "2026-01-02T00:00:00+00:00"},
+    ]}), encoding="utf-8")
+    mc._reset_cache()
+    assert mc.lookup(LAB_URL + "/api/chat", "qwen3:8b") == {"temperature": 0.9}
+
+
+def test_ambiguity_uses_the_same_identity_as_matching(endpoint_db):
+    """Two bases that match one call URL must also count as ambiguous on save."""
+    endpoint_db("team-a", "http://LOCALHOST:8080", ["qwen3:8b"], api_key="key-a")
+    endpoint_db("team-b", "http://localhost:8080", ["qwen3:8b"], api_key="key-b")
+    mc.save_entry("team-a", "http://LOCALHOST:8080", "qwen3:8b", {"temperature": 0.6})
+    mc.save_entry("team-b", "http://localhost:8080", "qwen3:8b", {"temperature": 0.9})
+    assert mc.lookup("http://localhost:8080/v1/chat/completions", "qwen3:8b") is None
+    assert mc.is_ambiguous("team-a", "qwen3:8b") is True
+
+
+def test_an_endpoint_with_no_cached_models_still_matches(endpoint_db):
+    """A failed model refresh empties ``cached_models``; the saved settings
+    must not silently stop applying."""
+    endpoint_db("lab-ollama", LAB_URL, [])
+    mc.save_entry("lab-ollama", LAB_URL, "qwen3:8b", {"temperature": 0.6})
+    assert mc.lookup(LAB_URL + "/api/chat", "qwen3:8b") == {"temperature": 0.6}
 
 
 def test_a_deleted_endpoint_stops_matching_once_the_cache_expires(endpoint_db, monkeypatch):
@@ -449,7 +502,7 @@ def test_inject_ollama_native_writes_inside_options_only():
         "options": {
             "temperature": 1.0, "num_predict": 512,
             "top_p": 0.9, "top_k": 40, "min_p": 0.05,
-            "presence_penalty": 0.5, "repeat_penalty": 1.1,
+            "presence_penalty": 0.5, "repeat_penalty": 1.1, "num_ctx": 8192,
         },
     }
 
@@ -512,13 +565,24 @@ def test_resolve_temperature_uses_the_saved_value(lab_entry):
 def test_apply_sampling_injects_the_saved_values(lab_entry):
     payload = {"model": "qwen3:8b", "options": {"temperature": 0.6}}
     assert mc.apply_sampling(payload, lab_entry, "qwen3:8b") == {
-        "model": "qwen3:8b", "options": {"temperature": 0.6, "top_k": 40},
+        "model": "qwen3:8b", "options": {"temperature": 0.6, "top_k": 40, "num_ctx": 8192},
     }
 
 
-def test_cache_key_settings_is_sorted_and_empty_when_nothing_applies(lab_entry):
-    assert list(mc.cache_key_settings(lab_entry, "qwen3:8b")) == ["num_ctx", "temperature", "thinking", "top_k"]
+def test_cache_key_settings_holds_only_the_injected_fields(lab_entry):
+    settings = mc.cache_key_settings(lab_entry, "qwen3:8b")
+    assert list(settings) == ["num_ctx", "top_k"]
+    assert settings == {"num_ctx": 8192, "top_k": 40}
     assert mc.cache_key_settings(lab_entry, "other") == {}
+
+
+def test_cache_key_settings_drops_fields_the_format_ignores(endpoint_db):
+    endpoint_db("groq", "https://api.groq.com/openai/v1", ["llama-3.3-70b-versatile"])
+    mc.save_entry("groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", {
+        "temperature": 0.2, "top_k": 40, "thinking": "on",
+    })
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    assert mc.cache_key_settings(url, "llama-3.3-70b-versatile") == {}
 
 
 def test_context_window_override_is_ollama_native_only(lab_entry):
@@ -529,3 +593,30 @@ def test_context_window_override_is_ollama_native_only(lab_entry):
 def test_seed_thinking_mode_returns_the_saved_choice(lab_entry):
     assert mc.seed_thinking_mode(lab_entry, "qwen3:8b") == "on"
     assert mc.seed_thinking_mode(lab_entry, "other") is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file locks only")
+def test_a_save_waits_for_another_process_holding_the_lock(customization_file, monkeypatch):
+    """The store lock is cross-process, not a thread-only mutex."""
+    import threading
+    import time
+
+    import fcntl
+
+    mc.save_entry("lab-ollama", LAB_URL, "qwen3:8b", {"temperature": 0.6})
+    lock_path = os.path.abspath(mc.STORE_PATH) + ".lock"
+    done = threading.Event()
+
+    def save():
+        mc.save_entry("office", DESK_URL, "qwen3:8b", {"temperature": 0.9})
+        done.set()
+
+    with open(lock_path, "a+b") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        worker = threading.Thread(target=save)
+        worker.start()
+        assert not done.wait(0.3), "save did not wait for the store lock"
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    worker.join(5)
+    assert done.is_set()
+    assert {e["endpoint_id"] for e in _entries_on_disk(customization_file)} == {"lab-ollama", "office"}

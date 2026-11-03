@@ -1,13 +1,13 @@
-"""Seam (g): the Per-Model Settings panel helpers in
+"""Seam (g): the Per-Model Settings panel in
 static/js/settings/modelCustomization.js.
 
 Spec: openspec/changes/add-model-customization/specs/model-customization/spec.md
 (requirements "Per-model settings box in Added Models" and "Panel save
-feedback"). The DOM wiring (`initModelCustomization`) is verified manually; the
-four pure helpers it relies on are driven here through
-`node --input-type=module`, the same idiom as test_app_config_shared_fetch_js.py.
-The module has no imports, so inlining its source is exact. Plain objects
-stand in for the form controls.
+feedback"). The pure helpers are driven here through `node --input-type=module`,
+the same idiom as test_app_config_shared_fetch_js.py. The last test drives
+`initModelCustomization` with a stub `document` and `fetch` to cover the save
+round-trip (message, stored values refilled). The module has no imports, so
+inlining its source is exact.
 """
 import json
 import shutil
@@ -127,3 +127,99 @@ def test_rejected_save_shows_the_server_reason():
         "Field required",
         "Could not save the model settings",
     ]
+
+
+_PANEL_DOM = r"""
+const IDS = ['adm-modelCustomCard', 'adm-mcEndpoint', 'adm-mcModel', 'adm-mcSaveBtn', 'adm-mcMsg',
+  ...['temperature', 'top_p', 'top_k', 'min_p', 'presence_penalty', 'repeat_penalty',
+      'num_ctx', 'thinking'].map((n) => 'adm-mc-' + n)];
+const nodes = {};
+function node(id) {
+  if (!nodes[id]) {
+    const el = {
+      id, value: '', disabled: false, textContent: '', style: {}, children: [], listeners: {},
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+      appendChild(child) { this.children.push(child); },
+      set length(n) { if (n === 0) this.children.length = 0; },
+      get length() { return this.children.length; },
+    };
+    nodes[id] = el;
+  }
+  return nodes[id];
+}
+for (const id of IDS) node(id);
+globalThis.document = { getElementById: (id) => (IDS.includes(id) ? node(id) : null) };
+globalThis.Option = function Option(label, value) { this.label = label; this.value = value; };
+const panelNode = (id) => nodes[id];
+
+let stored = {};
+let lastPut = null;
+const cascade = () => ({
+  endpoints: [{
+    id: 'lab-ollama', name: 'Lab Ollama',
+    models: [{
+      model: 'qwen3:8b', format: 'ollama-native',
+      supported: ['temperature', 'top_p', 'top_k', 'min_p',
+        'presence_penalty', 'repeat_penalty', 'num_ctx', 'thinking'],
+      settings: stored,
+    }],
+  }],
+});
+globalThis.fetch = async (url, opts = {}) => {
+  if (!opts.method) return { ok: true, status: 200, json: async () => cascade() };
+  lastPut = JSON.parse(opts.body);
+  stored = lastPut.settings;
+  return { ok: true, status: 200, json: async () => ({ warning: null }) };
+};
+
+await initModelCustomization();
+panelNode('adm-mcEndpoint').value = 'lab-ollama';
+await panelNode('adm-mcEndpoint').listeners.change();
+panelNode('adm-mcModel').value = 'qwen3:8b';
+panelNode('adm-mcModel').listeners.change();
+panelNode('adm-mc-temperature').value = '0.6';
+panelNode('adm-mc-top_k').value = '40';
+await panelNode('adm-mcSaveBtn').listeners.click();
+"""
+
+
+@needs_node
+def test_a_successful_save_shows_the_stored_values():
+    body = _PANEL_DOM + """
+    console.log(JSON.stringify({
+      saved: panelNode('adm-mc-temperature').value,
+      topK: panelNode('adm-mc-top_k').value,
+      message: panelNode('adm-mcMsg').textContent,
+      put: lastPut,
+    }));
+    """
+    result = _run(body)
+    assert result["put"] == {
+        "endpoint_id": "lab-ollama",
+        "model": "qwen3:8b",
+        "settings": {"temperature": 0.6, "top_k": 40},
+    }
+    assert result["saved"] == "0.6"
+    assert result["topK"] == "40"
+    assert result["message"] == "Saved"
+
+
+@needs_node
+def test_a_rejected_save_keeps_the_previous_values():
+    body = _PANEL_DOM + """
+    panelNode('adm-mc-temperature').value = '3';
+    globalThis.fetch = async (url, opts = {}) => (
+      opts.method
+        ? { ok: false, status: 400, json: async () => ({ detail: 'temperature must be from 0 to 2' }) }
+        : { ok: true, status: 200, json: async () => cascade() });
+    await panelNode('adm-mcSaveBtn').listeners.click();
+    console.log(JSON.stringify({
+      temperature: panelNode('adm-mc-temperature').value,
+      message: panelNode('adm-mcMsg').textContent,
+      error: panelNode('adm-mcMsg').style.color,
+    }));
+    """
+    result = _run(body)
+    assert result["message"] == "temperature must be from 0 to 2"
+    assert result["error"] == "var(--red)"
+    assert result["temperature"] == "3"

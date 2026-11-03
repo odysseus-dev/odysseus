@@ -363,6 +363,28 @@ def test_effective_settings_change_the_cache_key():
     assert tuned != plain
 
 
+def test_a_temperature_only_entry_does_not_change_a_call_that_chooses_its_own(customize):
+    """The entry's temperature is superseded by the caller's, so nothing is
+    injected and the key must stay the uncustomized one."""
+    plain = llm_core._get_cache_key(LAB_CHAT, "qwen3:8b", MESSAGES, 0.0, 5)
+    customize("lab-ollama", LAB, "qwen3:8b", {"temperature": 0.6})
+    tuned = llm_core._get_cache_key(
+        LAB_CHAT, "qwen3:8b", MESSAGES, 0.0, 5,
+        sampling=mc.cache_key_settings(LAB_CHAT, "qwen3:8b"),
+    )
+    assert tuned == plain
+
+
+def test_a_field_the_provider_ignores_does_not_change_the_cache_key(customize):
+    plain = llm_core._get_cache_key(GROQ_CHAT, "llama-3.3-70b", MESSAGES, 1.0, 5)
+    customize("groq", GROQ, "llama-3.3-70b", {"top_k": 40})
+    tuned = llm_core._get_cache_key(
+        GROQ_CHAT, "llama-3.3-70b", MESSAGES, 1.0, 5,
+        sampling=mc.cache_key_settings(GROQ_CHAT, "llama-3.3-70b"),
+    )
+    assert tuned == plain
+
+
 @pytest.mark.parametrize("capture", [capture_sync, capture_async])
 def test_changing_a_setting_does_not_serve_a_stale_cached_response(monkeypatch, customize, capture):
     customize("lab-ollama", LAB, "qwen3:8b", {"top_k": 40})
@@ -450,6 +472,18 @@ def test_ollama_payload_carries_the_configured_context_window(monkeypatch, custo
     body = capture(monkeypatch, LAB_CHAT, "qwen3:8b")
     body = body[0] if isinstance(body, list) else body
     assert body["options"]["num_ctx"] == 16384
+
+
+@pytest.mark.parametrize("capture", [capture_sync, capture_async, capture_stream])
+def test_the_default_context_window_value_is_still_sent(monkeypatch, customize, capture):
+    """The payload builder drops num_ctx == DEFAULT_CONTEXT; the admin's value
+    must still reach Ollama. 128000 is the builder's sentinel, not the model's."""
+    from src.model_context import DEFAULT_CONTEXT
+    assert DEFAULT_CONTEXT == 128000
+    customize("lab-ollama", LAB, "qwen3:8b", {"num_ctx": 128000})
+    body = capture(monkeypatch, LAB_CHAT, "qwen3:8b")
+    body = body[0] if isinstance(body, list) else body
+    assert body["options"]["num_ctx"] == 128000
 
 
 # ── Group 13 follow-up: background calls do not start thinking ──────────────
