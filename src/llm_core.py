@@ -422,7 +422,18 @@ def _stream_delta_event(text: str, *, thinking: bool = False) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-_DEGENERATE_WORD_RE = re.compile(r"[A-Za-z0-9_\u0370-\u03ff\u0400-\u04ff]+")
+_WORD_CHARS = r"A-Za-z0-9_\u0370-\u03ff\u0400-\u04ff"
+_DELIM_RE = re.compile(rf"[^{_WORD_CHARS}+\-.]")
+_NUMERIC_PATTERN = rf"(?<![{_WORD_CHARS}])[+-]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?(?![{_WORD_CHARS}])"
+_NUMERIC_FULLMATCH_RE = re.compile(rf"^[+-]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?$")
+_DEGENERATE_WORD_RE = re.compile(rf"[{_WORD_CHARS}]+")
+_TOKEN_RE = re.compile(rf"(?P<NUM>{_NUMERIC_PATTERN})|(?P<WORD>[{_WORD_CHARS}]+)")
+
+
+def _is_numeric_token(token: str) -> bool:
+    if token.isdigit():
+        return True
+    return _NUMERIC_FULLMATCH_RE.fullmatch(token) is not None
 
 
 class _DegenerateStreamGuard:
@@ -444,24 +455,38 @@ class _DegenerateStreamGuard:
         self.recent_tokens: List[str] = []
         self.periodic_tokens: List[str] = []
         self.total_chars = 0
+        self._buffer = ""
 
     def check(self, text: str) -> Optional[str]:
         if not text:
             return None
         self.total_chars += len(text)
-        # Keep one-character tokens. Structured output often varies through
-        # numeric selectors or coordinates; dropping those tokens can make
-        # valid CSS/SVG rows look like an exact repeated phrase.
-        tokens = [t.lower() for t in _DEGENERATE_WORD_RE.findall(text)]
+        self._buffer += text
+
+        m_delims = list(_DELIM_RE.finditer(self._buffer))
+        if m_delims:
+            split_idx = m_delims[-1].end()
+            head = self._buffer[:split_idx]
+            self._buffer = self._buffer[split_idx:]
+        elif len(self._buffer) >= 256:
+            head = self._buffer
+            self._buffer = ""
+        else:
+            return None
+
+        tokens = []
+        for m in _TOKEN_RE.finditer(head):
+            tokens.append((m.group(0).lower(), m.lastgroup == "NUM"))
         if not tokens:
             return None
-        for token in tokens:
+
+        for token, is_num in tokens:
             if token == self.last_token:
                 self.same_run += 1
             else:
                 self.last_token = token
                 self.same_run = 1
-            self.numeric_run = self.numeric_run + 1 if token.isdigit() else 0
+            self.numeric_run = self.numeric_run + 1 if is_num else 0
             self.recent_tokens.append(token)
             self.periodic_tokens.append(token)
         if len(self.recent_tokens) > 96:
@@ -470,19 +495,19 @@ class _DegenerateStreamGuard:
             self.periodic_tokens = self.periodic_tokens[-2048:]
 
         reason = None
-        if self.same_run >= 28 and self.total_chars >= 100 and not self.last_token.isdigit():
+        if self.same_run >= 28 and self.total_chars >= 100 and not _is_numeric_token(self.last_token):
             reason = f"repeated '{self.last_token}' {self.same_run} times"
         elif len(self.recent_tokens) >= 72:
             top = max(set(self.recent_tokens), key=self.recent_tokens.count)
             count = self.recent_tokens.count(top)
-            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78 and not top.isdigit():
+            if count >= 60 and count / max(len(self.recent_tokens), 1) >= 0.78 and not _is_numeric_token(top):
                 reason = f"repeated '{top}' {count}/{len(self.recent_tokens)} recent tokens"
         if (
             not reason
             and len(self.recent_tokens) >= 48
             # A window that is mostly numbers is matrix/table data; its
             # periodicity is real. Mixed loops still hit the exact-block check.
-            and sum(t.isdigit() for t in self.recent_tokens) * 2 < len(self.recent_tokens)
+            and sum(_is_numeric_token(t) for t in self.recent_tokens) * 2 < len(self.recent_tokens)
         ):
             # Detect a periodic suffix instead of counting repeated n-grams.
             # Reused property names are normal in CSS/SVG/JSON; a collapsed
@@ -518,9 +543,9 @@ class _DegenerateStreamGuard:
                 if history[previous:previous + anchor_size] != anchor:
                     continue
                 period = current_anchor - previous
-                if period < 24 or len(history) < period * 2:
+                if period < 24 or len(history) < period * 2 or self.numeric_run >= period:
                     continue
-                if history[-2 * period:-period] == history[-period:] and not all(t.isdigit() for t in history[-period:]):
+                if history[-2 * period:-period] == history[-period:] and not all(_is_numeric_token(t) for t in history[-period:]):
                     reason = f"repeated an exact {period}-token block twice"
                     break
 

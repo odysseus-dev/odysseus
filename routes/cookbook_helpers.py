@@ -728,8 +728,13 @@ def _check_serve_binary(seg: str) -> None:
     if not tokens:
         return
     env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-    first = next((t for t in tokens if not env_re.match(t)), "")
+    idx = next((i for i, t in enumerate(tokens) if not env_re.match(t)), len(tokens))
+    first = tokens[idx] if idx < len(tokens) else ""
     base = os.path.basename(first)
+    # The vLLM/SGLang Dependencies recipes install with `uv pip install …
+    # --torch-backend auto`. Allow uv for that subcommand only, not `uv run`.
+    if base == "uv" and tokens[idx + 1:idx + 3] == ["pip", "install"]:
+        return
     if base not in _SERVE_CMD_ALLOWLIST:
         raise HTTPException(
             400,
@@ -1490,6 +1495,20 @@ def _diagnose_serve_output(text: str) -> dict | None:
             r"Address already in use|bind.*address.*in use",
             "Port is already in use.",
             [{"label": "retry on port 8001", "op": "replace", "flag": "--port", "value": "8001"}],
+        ),
+        (
+            # PyPI torch/vLLM wheels now target CUDA 13, which needs driver 580+.
+            # torch: "The NVIDIA driver on your system is too old (found version 12080)";
+            # vLLM kernels: "CUDA driver version is insufficient for CUDA runtime version".
+            r"NVIDIA driver on your system is too old|CUDA driver version is insufficient",
+            "The installed PyTorch/vLLM build needs a newer NVIDIA driver than this server has.",
+            [
+                {
+                    "label": "install builds for the driver's CUDA version, e.g. vLLM's +cu129 wheel from its GitHub release with uv pip install … --torch-backend cu129",
+                    "op": "manual",
+                },
+                {"label": "or update the NVIDIA driver (CUDA 13 builds need driver 580 or newer)", "op": "manual"},
+            ],
         ),
         (
             r"No CUDA GPUs are available|no GPU.*found|CUDA_VISIBLE_DEVICES.*invalid",

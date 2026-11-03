@@ -52,6 +52,45 @@
   gap: 8px;
 }
 .admin-user-name { font-size: 13px; font-weight: 500; }
+/* Inline endpoint rename: the input keeps the name's typography so the row doesn't shift */
+.adm-ep-rename-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.45;
+}
+.adm-ep-rename-btn:hover,
+.adm-ep-rename-btn:focus-visible { opacity: 0.9; }
+@media (hover: hover) {
+  .adm-ep-rename-btn { opacity: 0; }
+  .admin-user-row:hover .adm-ep-rename-btn { opacity: 0.45; }
+  .admin-user-row .adm-ep-rename-btn:hover,
+  .adm-ep-rename-btn:focus-visible { opacity: 0.9; }
+}
+.admin-user-row input.adm-ep-rename-input {
+  width: auto;
+  field-sizing: content;
+  max-width: 100%;
+  height: auto;
+  padding: 0 0 1px;
+  line-height: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--red);
+  border-radius: 0;
+  outline: none;
+}
+.admin-user-info:has(.adm-ep-name, .adm-ep-rename-input) { min-width: 0; }
+.adm-ep-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Privilege panel */
 .admin-priv-panel {
   max-height: 600px;
