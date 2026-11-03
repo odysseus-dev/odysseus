@@ -38,6 +38,7 @@ const KATEX_FONTS = [
 // Both are fetched at install time, in the background. Entries must match the
 // exact URL the browser requests, query string included.
 const PRECACHE = [
+  '/static/js/modalVisibility.js',
   '/static/js/compare/sse.js',
   '/',
   '/static/css/00-tokens.css?v=20261008confirmwrap1',
