@@ -10,6 +10,7 @@ of the other tests in this suite.
 """
 import re
 from pathlib import Path
+from tests.helpers.stylesheets import app_css
 
 _REPO = Path(__file__).resolve().parent.parent
 _INDEX = (_REPO / "static" / "index.html").read_text(encoding="utf-8")
@@ -19,7 +20,7 @@ _UI = (_REPO / "static" / "js" / "ui.js").read_text(encoding="utf-8")
 def test_static_modals_expose_dialog_role_and_name():
     # Each static tool window must announce itself as a named dialog. These are
     # dockable/tiling windows, so they are role="dialog" WITHOUT aria-modal.
-    for name in ("Brain", "Theme", "Prompt", "Rename session", "Cookbook", "Settings"):
+    for name in ("Memory", "Theme", "Prompt", "Rename session", "Cookbook", "Settings"):
         assert f'role="dialog" aria-label="{name}"' in _INDEX, f"missing dialog role/name for {name!r}"
 
 
@@ -46,6 +47,49 @@ def test_styled_confirm_and_prompt_are_modal_dialogs():
     assert 'id="styled-prompt-msg"' in _UI
 
 
+def test_styled_confirm_cancel_or_close_label_is_shifted_without_moving_button():
+    css = app_css()
+
+    assert "cancelLabel.textContent = cancelText;" in _UI
+    assert "cancelBtn.appendChild(cancelLabel);" in _UI
+    rule_start = css.index("#styled-confirm-cancel .styled-confirm-cancel-label")
+    rule = css[rule_start:rule_start + 150]
+    assert "position:relative;" in rule
+    assert "top:2px;" in rule
+
+
+def test_styled_confirm_ok_and_alternate_labels_shift_without_moving_buttons():
+    # Moving #styled-confirm-ok itself (position:relative; top:2px) left it 2px
+    # below Cancel and the alternate button. The OK and alternate labels get the
+    # same label nudge as Cancel instead, and no rule moves a footer button.
+    css = app_css()
+
+    assert "okBtn.replaceChildren(btnLabel(" in _UI
+    assert "altBtn.replaceChildren(btnLabel(" in _UI
+    rule_start = css.index("#styled-confirm-ok .styled-confirm-btn-label")
+    rule = css[rule_start:css.index("}", rule_start)]
+    assert "#styled-confirm-alt .styled-confirm-btn-label" in rule
+    assert "position:relative;" in rule and "top:2px;" in rule
+    for selector in ("#styled-confirm-ok {", "#styled-confirm-alt {", "#styled-confirm-cancel {"):
+        if selector in css:
+            block = css[css.index(selector):].split("}", 1)[0]
+            assert "top:" not in block.replace(" ", ""), selector
+
+
+def test_styled_confirm_buttons_grow_to_fit_wrapped_labels():
+    # The global `button { height:32px }` held a two-line label (e.g.
+    # "Delete chat and images") to one line's height, so its second line
+    # rendered below the button. Confirm buttons must be allowed to grow,
+    # with 32px kept as the minimum.
+    css = app_css()
+
+    assert re.search(r"(^|\n)\s*button\s*\{\s*height:32px;", css)
+    rule_start = css.index(".styled-confirm-box .confirm-btn {")
+    rule = css[rule_start:rule_start + 120]
+    assert "height:auto;" in rule
+    assert "min-height:32px;" in rule
+
+
 def test_styled_dialogs_manage_focus():
     # A dialog is only really accessible if it restores focus to the trigger on
     # close and traps Tab while open. Both styledConfirm and styledPrompt should
@@ -63,4 +107,3 @@ def test_toast_has_dismiss_button():
     assert "aria-label" in ui
     assert "Dismiss" in ui
     assert ui.count("toast-close-btn") >= 2
-

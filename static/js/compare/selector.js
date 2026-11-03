@@ -2,12 +2,12 @@
 import state from './state.js';
 import Storage from '../storage.js';
 import { fetchModels, _persistSelections, getExcludedModels } from './models.js';
-import { showScoreboard } from './scoreboard.js';
-import { EYE_OPEN, EYE_CLOSED, ICON_DICE, ICON_PARALLEL, ICON_SEQUENTIAL, SAVE_ICON, WAVE_FRAMES, CHAT_ICON } from './icons.js';
+import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
+import { EYE_OPEN, EYE_CLOSED, ICON_DICE, ICON_PARALLEL, ICON_SEQUENTIAL, SAVE_ICON, WAVE_FRAMES, CHAT_ICON } from './icons.js?v=20260908compareprompts1';
 import { _clearProbeWaves } from './probe.js';
-import uiModule from '../ui.js';
+import uiModule from '../ui.js?v=20260916largetoolscroll1';
 import spinnerModule from '../spinner.js';
-import themeModule from '../theme.js';
+import themeModule from '../theme.js?v=20260911organsrain1';
 
 const escapeHtml = uiModule.esc;
 
@@ -153,7 +153,7 @@ async function showModelSelector() {
       uiModule.showToast('Mode: ' + (state._parallel ? 'Parallel' : 'Sequential'));
       _updateModeLabel();
       _setModeHint(state._parallel
-        ? '<span style="color:#5b8def">Parallel</span>: all models answer at once, side by side.'
+        ? '<span style="color:var(--accent, var(--red))">Parallel</span>: all models answer at once, side by side.'
         : '<span style="color:#e0a050">Sequential</span>: models answer one at a time.');
     });
     toggleRow.appendChild(parallelBtn);
@@ -295,7 +295,7 @@ async function showModelSelector() {
       const parts = [];
       if (state._blindMode) parts.push('<span style="color:var(--color-blind-orange)">Blind</span>');
       parts.push(state._parallel
-        ? '<span style="color:#5b8def">Parallel</span>'
+        ? '<span style="color:var(--accent, var(--red))">Parallel</span>'
         : '<span style="color:#e0a050">Sequential</span>');
       if (_shuffled) parts.push('<span style="color:var(--red)">Shuffle</span>');
       if (state._saveOnClose) parts.push('<span style="color:var(--color-save-green)">Save</span>');
@@ -403,6 +403,7 @@ async function showModelSelector() {
     // Validate saved selections against available models (done after models load)
     let _needsValidation = selections.length > 0;
     let addBtn = null;
+    let startBtn = null;
     let _shuffled = false;
     _updateModeLabel(); // initial readout (Blind + Parallel on by default)
 
@@ -419,6 +420,68 @@ async function showModelSelector() {
       };
     }
 
+    function _selectionKey(sel) {
+      if (!sel) return '';
+      const provider = sel.searchProvider || '';
+      return [sel.model || '', sel.endpointId || '', sel.endpoint || '', provider].join('|');
+    }
+
+    function _duplicateSelectionKeys() {
+      const counts = new Map();
+      selections.filter(Boolean).forEach(sel => {
+        const key = _selectionKey(sel);
+        if (!key) return;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+      return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key));
+    }
+
+    function _appendSelectionMeta(row, sel, duplicateKeys) {
+      if (!sel || _shuffled) return;
+      const key = _selectionKey(sel);
+      const meta = document.createElement('div');
+      meta.className = 'cmp-model-meta';
+      const bits = [];
+      if (duplicateKeys.has(key)) {
+        row.classList.add('cmp-model-row-duplicate');
+        bits.push('<span class="cmp-model-meta-warning">Duplicate selection</span>');
+      }
+      if (!bits.length) return;
+      meta.innerHTML = bits.join('');
+      row.appendChild(meta);
+    }
+
+    function _updateStartReadiness() {
+      if (!startBtn || !_modelsLoaded) return;
+      const duplicates = _duplicateSelectionKeys();
+      // Duplicate models are valid compare inputs. Keep the warning on the
+      // rows, but never block the Start flow because the user can choose to
+      // proceed through the probe fallback.
+      startBtn.disabled = false;
+      startBtn.style.opacity = '1';
+      startBtn.title = duplicates.size > 0 ? 'Duplicate selections will run as separate panes' : '';
+    }
+
+    function _expandModelSlot(slotIdx) {
+      const row = listContainer.querySelector(`.cmp-model-row[data-slot-index="${slotIdx}"]`);
+      if (!row) return;
+      row.classList.add('cmp-model-row-swap-target');
+      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+      const searchable = row.querySelector('.cmp-model-picker-input');
+      if (searchable) {
+        searchable.focus({ preventScroll: true });
+        return;
+      }
+
+      const select = row.querySelector('.cmp-model-primary-select');
+      if (!select) return;
+      select.focus({ preventScroll: true });
+      if (typeof select.showPicker === 'function') {
+        try { select.showPicker(); } catch (_) { /* focus still identifies the slot */ }
+      }
+    }
+
     /** Build a searchable model picker (used when >5 models) */
     function _buildSearchablePicker(modelList, currentSel, slotIdx, onSelect) {
       const wrap = document.createElement('div');
@@ -427,7 +490,7 @@ async function showModelSelector() {
       const input = document.createElement('input');
       input.type = 'text';
       input.placeholder = 'Search models\u2026';
-      input.className = 'cmp-form-control';
+      input.className = 'cmp-form-control cmp-model-picker-input';
       input.style.cssText = 'width:100%;box-sizing:border-box;';
       // Mobile: suppress the on-screen keyboard so tapping the picker
       // opens the dropdown but doesn't shove a keyboard up over the list.
@@ -594,6 +657,7 @@ async function showModelSelector() {
         selections.forEach((sel, idx) => {
           const row = document.createElement('div');
           row.className = 'cmp-model-row';
+          row.dataset.slotIndex = String(idx);
           if (_seqStepS) row.style.marginLeft = (idx * _seqStepS) + 'px';
 
           // Left label: number/letter or blind eye icon
@@ -618,7 +682,7 @@ async function showModelSelector() {
             row.appendChild(picker);
           } else {
             const modelSelect = document.createElement('select');
-            modelSelect.className = 'cmp-form-control';
+            modelSelect.className = 'cmp-form-control cmp-model-primary-select';
             modelSelect.style.flex = '1';
             chatModels.forEach(m => {
               const opt = document.createElement('option');
@@ -647,26 +711,29 @@ async function showModelSelector() {
           });
           provSelect.addEventListener('change', () => {
             try { selections[idx] = JSON.parse(provSelect.value); } catch (e) {}
+            renderModelRows();
           });
           try { if (!selections[idx]) selections[idx] = JSON.parse(provSelect.value); } catch (e) {}
           row.appendChild(provSelect);
+          _appendSelectionMeta(row, selections[idx], _duplicateSelectionKeys());
 
-          // X remove button when >2 slots
-          if (selections.length > 2) {
+          // X remove button when more than one slot remains
+          if (selections.length > 1) {
             const rmBtn = document.createElement('button');
             rmBtn.type = 'button';
             rmBtn.textContent = '\u00d7';
             rmBtn.className = 'cmp-rm-btn';
-            rmBtn.addEventListener('mouseenter', () => { rmBtn.style.opacity = '1'; rmBtn.style.color = 'var(--color-error)'; });
-            rmBtn.addEventListener('mouseleave', () => { rmBtn.style.opacity = '0.3'; rmBtn.style.color = 'var(--fg)'; });
+            rmBtn.addEventListener('mouseenter', () => { rmBtn.style.opacity = '1'; rmBtn.style.color = 'var(--accent, var(--red))'; });
+            rmBtn.addEventListener('mouseleave', () => { rmBtn.style.opacity = '0.3'; rmBtn.style.color = 'var(--accent, var(--red))'; });
             rmBtn.addEventListener('click', () => { selections.splice(idx, 1); state._searchSynthModels.splice(idx, 1); renderModelRows(); });
             row.appendChild(rmBtn);
           }
 
-          listContainer.appendChild(row);
-        });
-        if (addBtn) addBtn.style.display = selections.length >= 8 ? 'none' : '';
-        return;
+        listContainer.appendChild(row);
+      });
+      if (addBtn) addBtn.style.display = selections.length >= 8 ? 'none' : '';
+      _updateStartReadiness();
+      return;
       }
 
       // ── Chat / Image / Agent / Research mode: show model dropdowns ──
@@ -705,6 +772,7 @@ async function showModelSelector() {
       selections.forEach((sel, idx) => {
         const row = document.createElement('div');
         row.className = 'cmp-model-row';
+        row.dataset.slotIndex = String(idx);
         if (_seqStep) row.style.marginLeft = (idx * _seqStep) + 'px';
 
         // Left label: number/letter or blind eye icon
@@ -727,6 +795,7 @@ async function showModelSelector() {
           const picker = _buildSearchablePicker(filtered, sel, idx, (chosen) => {
             selections[idx] = chosen;
             _remindShuffle();
+            renderModelRows();
           });
           if (!selections[idx]) {
             const fallback = filtered[Math.min(idx, filtered.length - 1)];
@@ -735,7 +804,7 @@ async function showModelSelector() {
           row.appendChild(picker);
         } else {
           const select = document.createElement('select');
-          select.className = 'cmp-form-control';
+          select.className = 'cmp-form-control cmp-model-primary-select';
           select.style.flex = '1';
           filtered.forEach((m, mi) => {
             const opt = buildOption(m);
@@ -749,6 +818,7 @@ async function showModelSelector() {
           select.addEventListener('change', () => {
             try { selections[idx] = JSON.parse(select.value); } catch (e) { console.warn('Compare model select parse failed:', e); }
             _remindShuffle();
+            renderModelRows();
           });
           try { if (!selections[idx]) selections[idx] = JSON.parse(select.value); } catch (e) { console.warn('Compare model init parse failed:', e); }
           row.appendChild(select);
@@ -767,19 +837,24 @@ async function showModelSelector() {
             else if (!state._searchSynthModels[idx] && pi === 0) optEl.selected = true;
             provSelect.appendChild(optEl);
           });
-          provSelect.addEventListener('change', () => { state._searchSynthModels[idx] = provSelect.value; });
+          provSelect.addEventListener('change', () => {
+            state._searchSynthModels[idx] = provSelect.value;
+            renderModelRows();
+          });
           if (!state._searchSynthModels[idx]) state._searchSynthModels[idx] = provSelect.value;
           row.appendChild(provSelect);
         }
 
-        // X remove button when >2 slots
-        if (selections.length > 2) {
+        _appendSelectionMeta(row, selections[idx], _duplicateSelectionKeys());
+
+        // X remove button when more than one slot remains
+        if (selections.length > 1) {
           const rmBtn = document.createElement('button');
           rmBtn.type = 'button';
           rmBtn.textContent = '\u00d7';
           rmBtn.className = 'cmp-rm-btn';
-          rmBtn.addEventListener('mouseenter', () => { rmBtn.style.opacity = '1'; rmBtn.style.color = 'var(--color-error)'; });
-          rmBtn.addEventListener('mouseleave', () => { rmBtn.style.opacity = '0.3'; rmBtn.style.color = 'var(--fg)'; });
+          rmBtn.addEventListener('mouseenter', () => { rmBtn.style.opacity = '1'; rmBtn.style.color = 'var(--accent, var(--red))'; });
+          rmBtn.addEventListener('mouseleave', () => { rmBtn.style.opacity = '0.3'; rmBtn.style.color = 'var(--accent, var(--red))'; });
           rmBtn.addEventListener('click', () => { selections.splice(idx, 1); if (state._searchSynthModels.length > idx) state._searchSynthModels.splice(idx, 1); renderModelRows(); });
           row.appendChild(rmBtn);
         }
@@ -787,6 +862,7 @@ async function showModelSelector() {
         listContainer.appendChild(row);
       });
       if (addBtn) addBtn.style.display = (selections.length >= 8) ? 'none' : '';
+      _updateStartReadiness();
     }
 
     // Default to 2 empty slots if no saved selections
@@ -795,7 +871,7 @@ async function showModelSelector() {
     addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.style.cssText = 'display:none;align-items:center;gap:6px;background:none;border:1px dashed var(--border);color:var(--fg);border-radius:6px;cursor:pointer;padding:6px 12px;font-size:0.82em;opacity:0.6;transition:all 0.15s;margin-bottom:16px;width:100%;justify-content:center;';
-    addBtn.textContent = '+ Add Model';
+    addBtn.innerHTML = '<span style="color:var(--accent,var(--red));position:relative;left:-2px;">+</span><span>Add Model</span>';
     addBtn.addEventListener('mouseenter', () => { addBtn.style.opacity = '1'; });
     addBtn.addEventListener('mouseleave', () => { addBtn.style.opacity = '0.6'; });
     addBtn.addEventListener('click', () => {
@@ -840,7 +916,7 @@ async function showModelSelector() {
     // Scoreboard button
     const scoreBtn = document.createElement('button');
     scoreBtn.type = 'button';
-    scoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Scoreboard';
+    scoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:0px;position:relative;top:2px;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Scoreboard';
     scoreBtn.style.cssText = 'margin-left:auto;padding:4px 10px;background:transparent;color:var(--fg);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.82em;opacity:0.7;position:relative;top:-5px;';
     scoreBtn.addEventListener('mouseenter', () => { scoreBtn.style.opacity = '1'; });
     scoreBtn.addEventListener('mouseleave', () => { scoreBtn.style.opacity = '0.7'; });
@@ -857,7 +933,7 @@ async function showModelSelector() {
     footer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;padding:14px 16px 10px;border-top:1px solid var(--border);';
     // Cancel button removed — the overlay's X / outside-click / Esc all
     // dismiss the popup, so the footer Cancel was redundant.
-    const startBtn = document.createElement('button');
+    startBtn = document.createElement('button');
     startBtn.innerHTML = _CMP_START_LABEL;
     startBtn.className = 'research-start-btn';
     startBtn.disabled = true;
@@ -924,7 +1000,11 @@ async function showModelSelector() {
       probeOverlay.className = 'compare-probe-overlay';
       const probeCard = document.createElement('div');
       probeCard.className = 'compare-probe-card';
-      probeCard.innerHTML = '<div class="compare-probe-title">Checking models...</div>';
+      probeCard.innerHTML = '<div class="compare-probe-title"><span class="compare-probe-title-label">Preround check:</span> <span class="compare-probe-title-status">Checking models...</span></div>';
+      const _setProbeTitle = (message) => {
+        const status = probeCard.querySelector('.compare-probe-title-status');
+        if (status) status.textContent = message;
+      };
       let _probeSkipped = false;
       const probeList = document.createElement('div');
       probeList.className = 'compare-probe-list';
@@ -950,6 +1030,9 @@ async function showModelSelector() {
         probeList.appendChild(row);
       });
       probeCard.appendChild(probeList);
+      const probeFeedback = document.createElement('div');
+      probeFeedback.className = 'compare-probe-feedback';
+      probeCard.appendChild(probeFeedback);
       const skipBtn = document.createElement('button');
       skipBtn.textContent = 'Skip';
       skipBtn.className = 'cmp-btn-secondary';
@@ -1046,18 +1129,22 @@ async function showModelSelector() {
             if (nameEl) nameEl.textContent = row._realName;
           }
           // Remove old detail/actions if retrying
-          const oldDetail = row.nextElementSibling;
-          if (oldDetail && oldDetail.classList.contains('compare-probe-detail')) oldDetail.remove();
-          // Error + actions below the row
+          const oldDetail = probeFeedback.querySelector(`[data-probe-detail="${idx}"]`);
+          if (oldDetail) oldDetail.remove();
+          // Keep diagnostic feedback below the complete model list.
           const detail = document.createElement('div');
           detail.className = 'compare-probe-detail';
-          detail.style.cssText = 'grid-column:1/-1;display:flex;align-items:flex-start;gap:6px;padding:4px 10px 6px;font-size:10px;opacity:0.6;background:color-mix(in srgb, var(--color-error, #f44) 5%, transparent);border-radius:4px;margin-top:-2px;';
+          detail.dataset.probeDetail = String(idx);
+          const detailIcon = document.createElement('span');
+          detailIcon.className = 'compare-probe-detail-icon';
           const errSpan = document.createElement('span');
           // Truncate long error messages
           const errText = (result.error || 'Failed');
+          detailIcon.textContent = /insufficient balance/i.test(errText) ? '$' : '!';
+          detail.appendChild(detailIcon);
           errSpan.textContent = errText.length > 80 ? errText.slice(0, 80) + '...' : errText;
           errSpan.title = errText;
-          errSpan.style.cssText = 'flex:1;line-height:1.4;';
+          errSpan.className = 'compare-probe-detail-message';
           detail.appendChild(errSpan);
           // Track timeout for retry doubling
           if (!row._probeTimeout) row._probeTimeout = 15000;
@@ -1065,7 +1152,7 @@ async function showModelSelector() {
           const retryBtn = document.createElement('button');
           retryBtn.className = 'compare-probe-action-btn';
           const retryLabel = result.error === 'Timeout' ? `Retry ${Math.round(row._probeTimeout / 1000)}s` : 'Retry';
-          retryBtn.textContent = retryLabel;
+          retryBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><polyline points="20 4 20 11 13 11"/></svg><span>' + escapeHtml(retryLabel) + '</span>';
           retryBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             detail.remove();
@@ -1084,7 +1171,7 @@ async function showModelSelector() {
           });
           const swapBtn = document.createElement('button');
           swapBtn.className = 'compare-probe-action-btn';
-          swapBtn.textContent = 'Swap';
+          swapBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg><span>Swap</span>';
           swapBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             _clearProbeWaves();
@@ -1093,10 +1180,12 @@ async function showModelSelector() {
             startBtn.disabled = false;
             startBtn.innerHTML = _CMP_START_LABEL;
             startBtn.style.opacity = '1';
+            renderModelRows();
+            _expandModelSlot(idx);
           });
           detail.appendChild(retryBtn);
           detail.appendChild(swapBtn);
-          row.after(detail);
+          probeFeedback.appendChild(detail);
         }
       }
 
@@ -1186,8 +1275,7 @@ async function showModelSelector() {
             : (state._searchSynthModels || []).map(p => typeof p === 'string' ? { id: p, label: p } : null).filter(Boolean);
 
           if (providers.length > 0) {
-            const titleEl = probeOverlay.querySelector('.compare-probe-title');
-            titleEl.textContent = 'Checking search providers...';
+            _setProbeTitle('Checking search providers...');
 
             // Add provider rows
             const providerRows = [];
@@ -1250,7 +1338,7 @@ async function showModelSelector() {
           // Don't hide the Skip button here — collapsing its space made the
           // card shrink and the title + rows jump ("quick cut"). On success the
           // whole overlay fades out a moment later, so just leave it in place.
-          probeOverlay.querySelector('.compare-probe-title').textContent = 'All ready!';
+          _setProbeTitle('All ready!');
           setTimeout(() => {
             probeOverlay.style.transition = 'opacity 0.3s ease';
             probeOverlay.style.opacity = '0';
@@ -1264,21 +1352,18 @@ async function showModelSelector() {
           probeList.querySelectorAll('.compare-probe-row.fail').forEach(row => {
             failedNames.push(row.querySelector('.compare-probe-name').textContent);
           });
-          const titleEl = probeOverlay.querySelector('.compare-probe-title');
-          titleEl.textContent = failedNames.length <= 2
+          _setProbeTitle(failedNames.length <= 2
             ? failedNames.join(' & ') + ' failed'
-            : `${failCount} models failed`;
+            : `${failCount} models failed`);
           const btnRow = document.createElement('div');
-          btnRow.style.cssText = 'display:flex;gap:8px;justify-content:center;margin-top:12px;';
+          btnRow.className = 'compare-probe-footer';
           const goBackBtn = document.createElement('button');
-          goBackBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="15 18 9 12 15 6"/></svg>Go Back';
-          goBackBtn.className = 'cmp-btn-secondary';
-          goBackBtn.style.cssText = 'padding:5px 12px;font-size:12px;display:inline-flex;align-items:center;';
+          goBackBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg><span>Go Back</span>';
+          goBackBtn.className = 'cmp-btn-secondary compare-probe-footer-btn';
           goBackBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); startBtn.disabled = false; startBtn.innerHTML = _CMP_START_LABEL; startBtn.style.opacity = '1'; });
           const startAnywayBtn = document.createElement('button');
-          startAnywayBtn.textContent = 'Start Anyway';
-          startAnywayBtn.className = 'cmp-btn-primary';
-          startAnywayBtn.style.cssText = 'padding:5px 12px;font-size:12px;';
+          startAnywayBtn.innerHTML = _CMP_PLAY_ICON + '<span>Start Anyway</span>';
+          startAnywayBtn.className = 'cmp-btn-primary compare-probe-footer-btn compare-probe-start-anyway';
           startAnywayBtn.addEventListener('click', () => { _clearProbeWaves(); probeOverlay.remove(); cleanup(true); });
           btnRow.appendChild(goBackBtn);
           btnRow.appendChild(startAnywayBtn);

@@ -18,6 +18,19 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from tests.runtime_evidence_helpers import server_authorized_executor
+
+
+@pytest.fixture(autouse=True)
+def standalone_dispatch_authority(monkeypatch):
+    from src import tool_execution
+    monkeypatch.setattr(tool_execution, "execute_tool_block",
+                        server_authorized_executor(tool_execution.execute_tool_block))
+
+
+def _native(path: str) -> str:
+    """POSIX-style literal -> native separators (the policy splits on os.sep)."""
+    return path.replace("/", os.sep)
 
 
 def _make_block(tool_type, content):
@@ -28,27 +41,27 @@ def _make_block(tool_type, content):
 
 def test_sensitive_ssh_dir():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/home/user/.ssh/authorized_keys")
-    assert _is_sensitive_path(os.path.expanduser("~") + "/.ssh/config")
+    assert _is_sensitive_path(_native("/home/user/.ssh/authorized_keys"))
+    assert _is_sensitive_path(_native(os.path.expanduser("~") + "/.ssh/config"))
 
 
 def test_sensitive_gnupg_dir():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/home/user/.gnupg/pubring.kbx")
+    assert _is_sensitive_path(_native("/home/user/.gnupg/pubring.kbx"))
 
 
 def test_sensitive_shell_rc():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/home/user/.bashrc")
-    assert _is_sensitive_path("/home/user/.zshrc")
-    assert _is_sensitive_path("/home/user/.profile")
+    assert _is_sensitive_path(_native("/home/user/.bashrc"))
+    assert _is_sensitive_path(_native("/home/user/.zshrc"))
+    assert _is_sensitive_path(_native("/home/user/.profile"))
 
 
 def test_sensitive_key_filenames():
     from src.tool_execution import _is_sensitive_path
-    assert _is_sensitive_path("/tmp/id_rsa")
-    assert _is_sensitive_path("/tmp/id_ed25519")
-    assert _is_sensitive_path("/tmp/authorized_keys")
+    assert _is_sensitive_path(_native("/tmp/id_rsa"))
+    assert _is_sensitive_path(_native("/tmp/id_ed25519"))
+    assert _is_sensitive_path(_native("/tmp/authorized_keys"))
 
 
 def test_non_sensitive_path():
@@ -178,9 +191,11 @@ def test_allows_agent_workspace(tmp_path):
         os.unlink(target)
 
 
-def test_allows_tmp(tmp_path):
+def test_allows_tmp(tmp_path, monkeypatch):
     """Paths under /tmp (or its realpath) must resolve cleanly."""
     from src.tool_execution import _resolve_tool_path
+    # Windows has no /tmp; its temp root is only allowed via $TMPDIR.
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     f = tmp_path / "confinement-test.txt"
     f.write_text("ok")
     resolved = _resolve_tool_path(str(f))
@@ -246,7 +261,9 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "outside the allowed roots" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
 
 
@@ -275,8 +292,44 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "sensitive directory" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
+
+
+@pytest.mark.asyncio
+async def test_write_file_dispatch_rejects_empty_directory_like_workspace_path(monkeypatch, tmp_path):
+    """End-to-end: benchmark agents must not turn a directory path into an empty file."""
+    auth_mod = sys.modules.get("core.auth")
+    if auth_mod is None:
+        import core.auth as _real_auth
+        auth_mod = _real_auth
+
+    class _AdminAuth:
+        is_configured = True
+        def is_admin(self, username):
+            return True
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: _AdminAuth())
+    monkeypatch.setattr(
+        "src.tool_execution.owner_is_admin_or_single_user",
+        lambda owner: True,
+    )
+
+    from src.tool_execution import NO_TOOL_SECURITY_CONTEXT, execute_tool_block
+    desc, result = await execute_tool_block(
+        _make_block("write_file", "/workspace/papers"),
+        owner="admin-user",
+        workspace=str(tmp_path),
+        security_context=NO_TOOL_SECURITY_CONTEXT,
+    )
+    assert "BLOCKED" in desc
+    assert "content required; missing content section" in (
+        result.get("error") or ""
+    )
+    assert result.get("exit_code") == 1
+    assert not (tmp_path / "papers").exists()
 
 
 @pytest.mark.asyncio
@@ -304,5 +357,12 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
         owner="admin-user",
         security_context=NO_TOOL_SECURITY_CONTEXT,
     )
-    assert "outside the allowed roots" in (result.get("error") or "")
+    assert result.get("failure_kind") == "resource_identity_denied"
+    assert "outside the sealed roots" in (result.get("error") or "")
+    assert result.get("blocked") is True
     assert result.get("exit_code") == 1
+@pytest.mark.parametrize("filename", ["auth.json", "app.db", "settings.json"])
+def test_application_secrets_are_sensitive_paths(filename):
+    from src.tool_execution import _is_sensitive_path
+
+    assert _is_sensitive_path(_native(f"/tmp/odysseus-data/{filename}"))

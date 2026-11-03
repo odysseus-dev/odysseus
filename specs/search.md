@@ -1,6 +1,6 @@
 # Search
 
-Last updated: dev@e71f8ce | 2026-08-25
+Last updated: dev@86b886c | 2026-10-15
 
 ## Scope
 
@@ -64,13 +64,11 @@ Runtime behavior:
 - rejection of localhost, metadata, private, reserved, multicast, and link-local targets;
 - redirect revalidation on each hop;
 - one-time public DNS resolution per hop plus an `httpcore`/`httpx` pinned
-  transport that connects to the validated public IP while preserving the
-  original URL, Host header, and TLS SNI, closing DNS-rebinding time-of-check
-  drift;
+  transport that connects to the validated public IP while preserving the original URL, Host header, and TLS SNI, closing DNS-rebinding time-of-check drift;
 - metadata, Open Graph image, list, table, code block, PDF, and text extraction;
 - readable text extraction for `text/*`, Markdown, `.txt`, `.json`, `.jsonl`, and JSON content types;
 - central User-Agent behavior through `WEB_FETCH_USER_AGENT`;
-- soft and hard download byte caps through `WEB_FETCH_SOFT_MAX_BYTES` and `WEB_FETCH_HARD_MAX_BYTES`, with declared-length and streaming-budget checks; requests prefer identity transfer encoding so compressed bodies cannot bypass the effective body cap;
+- soft and hard download byte caps through `WEB_FETCH_SOFT_MAX_BYTES` and `WEB_FETCH_HARD_MAX_BYTES`, with declared-length and streaming-budget checks; decoded response bytes are capped even for compressed transfer encodings, and truncation is reported;
 - JS-heavy empty result hints;
 - cache writes;
 - empty/error result shape, including explicit HTTP-status failures instead of raising through callers.
@@ -124,11 +122,27 @@ Deep research wraps fetched webpage content through `untrusted_context_message("
 
 ## Optional And Platform Behavior
 
-`ddgs` is optional; provider code has an HTML fallback. Search cache and analytics state live under the shared data dir and mkdir failures in read-only image layers are tolerated where possible. PDF extraction uses `pdfminer.six` only when installed. Native SearXNG defaults to `http://localhost:8080`; Docker uses the compose `searxng` service URL and pins the SearXNG image with a healthcheck.
+`ddgs` is optional; provider code has an HTML fallback. Search cache and analytics state live under the shared data dir and mkdir failures in read-only image layers are tolerated where possible. PDF extraction prefers pypdf layout text with a plain-text compatibility fallback and page labels, then optional pdfminer; a truncated soft-budget PDF can retry within the hard cap when its declared size allows. Native SearXNG defaults to `http://localhost:8080`; Docker uses the compose `searxng` service URL and pins the SearXNG image with a healthcheck.
 
 Compose preserves retained SearXNG settings but runs `scripts/migrate_searxng_settings.py` before startup to add missing `use_default_settings: true` inheritance. The migration accepts only a regular single-document YAML mapping, preserves BOM/newline/style/ownership/mode, writes and directory-fsyncs atomically, and no-ops when the key exists. Compose treats migration failure as non-fatal so SearXNG health reports the retained-file problem instead of the wrapper command preventing startup.
 
 `httpx` and BeautifulSoup are required runtime dependencies for the active search/fetch path.
+
+## Query Repair And Extractive Observations
+
+`services/search/core.py` normalizes conversational provider queries, filters low-relevance results, respects explicit site scope, retries bounded broadened queries after empty results, and reapplies relevance/ranking on cache hits. Completed empty provider responses advance through the chain instead of repeating the same request as if it were a transport error. Named scholarly work lookup can use arXiv/OpenAlex metadata before generic search, and exact arXiv identifiers have a direct source path.
+
+`src/search_intent.py` distinguishes requested publication windows from current reference information: current documentation/configuration alone does not imply recently published pages. `src/search_passages.py` owns literal, query-relevant excerpts and balanced bounded search observations across fetched sources, preserving explicit omission markers and source headers rather than prefix-truncating away later sources. These are extractive observations, not generated source claims. Deep research shares provider primitives through its navigator but retains its own result and failure shapes.
+
+## Retrieval Limits And Source Selection
+
+When SearXNG is primary and `searxng_yep` is absent from the configured chain, `_build_provider_chain()` inserts that separate candidate at index one, including when SearXNG is the only configured provider. An already configured YEP position is retained; other primary providers do not get the automatic insertion. Missing keyed providers are excluded. Exact-empty query relaxation is bounded and disabled for explicit operators, quotes or exclusions. Low-relevance filtering can retain scoped results rather than invent a confident match. Temporal qualifiers can exclude a year from product-number overlap checks, while genuine numeric model names remain significant.
+
+News category and publication window are independent: current events infer a day and news a week where no explicit window exists, while current reference documentation does not imply recent publication. Software release hints can retain general category; explicit windows survive JSON-to-HTML and news-to-general fallback along with language/engines/SafeSearch. The optional DuckDuckGo HTML request has a maximum five-second request timeout, not a bound on the complete multi-provider search.
+
+HTML extraction removes chrome from a parsed copy, prefers semantic main content and a sole substantial article (at least 200 stripped characters), and avoids ancestor duplication; multiple article cards retain main context. Thin-body and access-challenge rules are heuristics. An exact challenge title with corroborating short body is an unavailable page even under HTTP200 and is not cached as article evidence. XML/Atom preserves bounded raw text; failed arXiv category/date listings can return a suggested start-zero/max100 Atom URL without fetching it or claiming completeness. Extractor caches use the current semantic-links namespace rather than old parser results.
+
+Scholarly metadata uses a versioned User-Agent, a 12-second lookup timeout and shared 20-second monotonic budget, with at most three manually checked redirects and cleared original query parameters after redirect. This helper checks destinations but uses ordinary HTTP transport rather than claiming the separate outbound-fetch DNS connection pinning contract. Title/identifier matching remains heuristic metadata lookup, not independent verification of a paper. Direct browser-source citations and search snippets remain untrusted and insufficient to certify full-report evidence.
 
 ## Current Gaps
 

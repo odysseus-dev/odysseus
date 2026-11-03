@@ -27,6 +27,19 @@ def test_normalize_base(raw, expected):
     assert er.normalize_base(raw) == expected
 
 
+def test_docker_saved_endpoint_is_loopback_on_native_runtime(monkeypatch):
+    monkeypatch.setattr(er, "_running_in_container", lambda: False)
+    assert er._rewrite_docker_host_for_native_runtime(
+        "http://host.docker.internal:18059/v1"
+    ) == "http://127.0.0.1:18059/v1"
+
+
+def test_docker_saved_endpoint_stays_host_gateway_in_container(monkeypatch):
+    monkeypatch.setattr(er, "_running_in_container", lambda: True)
+    value = "http://host.docker.internal:18059/v1"
+    assert er._rewrite_docker_host_for_native_runtime(value) == value
+
+
 # ── provider-root helpers ──
 
 @pytest.mark.parametrize("base,expected", [

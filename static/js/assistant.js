@@ -5,7 +5,7 @@
 // singleton via /api/assistant/session and hands it to selectSession() so we
 // reuse the full existing chat render path.
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { selectSession } from './sessions.js';
 import { sortModelIds } from './modelSort.js';
 
@@ -120,7 +120,7 @@ function _esc(s) {
 
 // Tool groups for the tool selector UI
 const TOOL_GROUPS = {
-  'Email': ['list_emails', 'read_email', 'send_email', 'reply_to_email', 'archive_email', 'delete_email', 'mark_email_read'],
+  'Email': ['list_emails', 'read_email', 'download_attachment', 'send_email', 'reply_to_email', 'archive_email', 'delete_email', 'mark_email_read'],
   'Calendar & Notes': ['manage_calendar', 'manage_notes', 'manage_tasks'],
   'Knowledge': ['web_search', 'read_file', 'manage_memory', 'manage_rag', 'search_chats'],
   'Code': ['bash', 'python', 'write_file'],
@@ -420,6 +420,10 @@ export async function openAssistantSettings() {
 // ── Chat-header affordances when the assistant session is active ───────────
 
 async function _ensureHeaderAffordances(sessionId) {
+  return;
+  /* Legacy header-gear implementation removed; assistant controls now live
+     in the Tasks modal. */
+  /*
   try {
     const settings = await _getSettings();
     if (settings?.crew?.session_id !== sessionId) return;
@@ -437,6 +441,7 @@ async function _ensureHeaderAffordances(sessionId) {
   gear.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   gear.addEventListener('click', openAssistantSettings);
   headerRight.appendChild(gear);
+  */
 }
 
 // Run a short polling check after session loads so we can add the gear button
@@ -458,7 +463,7 @@ function _watchForAssistantActivation() {
 // ── Boot ───────────────────────────────────────────────────────────────────
 
 function _boot() {
-  _watchForAssistantActivation();
+  document.getElementById('assistant-header-gear')?.remove();
 }
 
 if (document.readyState === 'loading') {

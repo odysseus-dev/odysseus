@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""odysseus-smoke — boot this worktree and drive every advertised feature area once.
+
+The decomposition work has two safety nets and neither one covers the
+product: the checkpoint benchmark measures the agent runtime, and the
+computed-style snapshot pins the CSS. Nothing checked that Notes,
+Calendar, Documents, Email, Memory, Cookbook or Settings still worked
+after a route package moved or a 17,000-line module was split. This is
+that check, and it is deliberately shallow: one scenario per area,
+asserting a user-visible outcome rather than an HTTP 200.
+
+It owns no instance logic. `odysseus dev` already isolates the ports,
+the data dir and ChromaDB per worktree, so this boots through it, hands
+the details to pytest in the environment, and stops what it started.
+
+    odysseus smoke                   # boot, run every area, stop again
+    odysseus smoke --keep-up         # leave the instance running afterwards
+    odysseus smoke --no-boot         # drive whatever is already up here
+    odysseus smoke --restart         # stop a running instance and boot fresh
+    odysseus smoke --areas           # print the coverage table without running
+    odysseus smoke -- -k notes       # everything after -- goes to pytest
+
+The report is a per-area table, printed by the suite itself, listing the
+areas it does not cover next to the ones it does. An area with no
+scenario shows up as NOT RUN rather than going missing.
+"""
+from __future__ import annotations
+
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
+from cli import quiet_logs, fail, common_parser, run  # noqa: E402
+
+quiet_logs()
+
+SCRIPTS_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPTS_DIR.parent
+
+# The launcher this tool delegates every instance decision to.
+DEV_SCRIPT = "odysseus-dev"
+
+# What pytest is pointed at, relative to the checkout root.
+SMOKE_SUITE = "tests/smoke"
+
+# Email is the one area with no reachable real backend, and the repo
+# already has a deterministic path for it. Turning it on is the reason
+# this tool owns the boot rather than leaving it to the caller: the flag
+# is read inside the app's process, so it has to be in the environment
+# the app is started with.
+EMAIL_FIXTURE_ENV = "ODYSSEUS_EMAIL_FIXTURE"
+
+
+def load_dev():
+    """Import `scripts/odysseus-dev` as a module.
+
+    Same loader the CLI tests use. Delegating by import rather than by
+    parsing `odysseus dev env` output means the port derivation and the
+    credential handling have exactly one implementation.
+    """
+    path = SCRIPTS_DIR / DEV_SCRIPT
+    if not path.exists():
+        fail(f"{path} is missing; this tool boots through it.", code=2)
+    loader = importlib.machinery.SourceFileLoader("odysseus_dev_cli", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def suite_environment(dev, root, ports, account):
+    """The environment the smoke suite reads its target instance from.
+
+    Deliberately the same values `odysseus dev env` prints, plus the dev
+    admin account, so a manual `pytest tests/smoke` under
+    `eval $(odysseus dev env)` behaves the way this tool does.
+    """
+    data_dir = dev.dev_dir(root) / "data"
+    env = dict(os.environ)
+    env.update({
+        "APP_PORT": str(ports["app"]),
+        "CHROMADB_PORT": str(ports["chroma"]),
+        "ODYSSEUS_TEST_STATIC_PORT": str(ports["test_static"]),
+        "ODYSSEUS_DATA_DIR": str(data_dir),
+        "DATABASE_URL": f"sqlite:///{data_dir / 'app.db'}",
+        "ODYSSEUS_ADMIN_USER": account["username"],
+        "ODYSSEUS_ADMIN_PASSWORD": account["password"],
+    })
+    return env
+
+
+def boot(dev, root, args):
+    """Start the instance, or adopt one already running in this worktree.
+
+    Returns (started_by_us, note). A reused instance is never restarted
+    without being asked: it may be someone's debugging session, and the
+    one thing it can cost us is the email fixture flag, which the suite
+    reports as a skip rather than a pass.
+    """
+    already = dev.running_app(dev.read_state(root))
+    if already and args.restart:
+        subprocess.run([sys.executable, str(SCRIPTS_DIR / DEV_SCRIPT), "down"],
+                       cwd=str(root), check=False)
+        already = None
+    if already:
+        return False, (
+            f"reusing the instance already up on port {already['port']} "
+            f"(pid {already['pid']}). If it was not booted with "
+            f"{EMAIL_FIXTURE_ENV}=1 the Email area will report a skip; "
+            f"re-run with --restart for a clean boot."
+        )
+    if args.no_boot:
+        fail(
+            "nothing is running in this worktree and --no-boot was passed.\n"
+            "       boot it with `odysseus dev up`, or drop --no-boot.",
+        )
+
+    command = [sys.executable, str(SCRIPTS_DIR / DEV_SCRIPT), "up"]
+    if args.venv:
+        command += ["--venv", args.venv]
+    env = dict(os.environ)
+    env[EMAIL_FIXTURE_ENV] = "1"
+    result = subprocess.run(command, cwd=str(root), env=env, check=False)
+    if result.returncode != 0:
+        fail(f"`odysseus dev up` exited {result.returncode}; not running the suite.")
+    return True, ""
+
+
+def venv_python(dev, root, args):
+    """The interpreter to run pytest with: the one the app runs under."""
+    recorded = (dev.read_state(root) or {}).get("venv")
+    for candidate in (Path(args.venv).expanduser() if args.venv else None,
+                      Path(recorded) if recorded else None,
+                      Path(root) / "venv"):
+        if candidate and (candidate / "bin" / "python").exists():
+            return candidate / "bin" / "python"
+    fail(
+        f"no interpreter found for the suite (looked at {Path(root) / 'venv'}).\n"
+        f"       build one with ./start-macos.sh, or pass --venv."
+    )
+
+
+def cmd_run(args):
+    dev = load_dev()
+    root = dev.find_repo_root(Path.cwd())
+    if root is None:
+        fail(f"not inside an Odysseus checkout (looked upwards from {Path.cwd()})", code=2)
+
+    if args.areas:
+        sys.path.insert(0, str(root))
+        from tests.smoke import areas
+        sys.stdout.write(areas.render_table({}, header="Odysseus release smoke - coverage") + "\n")
+        return 0
+
+    ports = dev.derive_ports(root)
+    account = dev.credentials(root)
+    started_by_us, note = boot(dev, root, args)
+    if note:
+        sys.stdout.write(f"  {note}\n")
+
+    python = venv_python(dev, root, args)
+    env = suite_environment(dev, root, ports, account)
+    command = [str(python), "-m", "pytest", SMOKE_SUITE, "-q"] + list(args.pytest_args)
+    sys.stdout.write(f"\n  running {SMOKE_SUITE} against http://127.0.0.1:{ports['app']}\n\n")
+    # Flush before handing the terminal to pytest, or our own lines land
+    # after its output and the report reads out of order.
+    sys.stdout.flush()
+    result = subprocess.run(command, cwd=str(root), env=env, check=False)
+
+    if started_by_us and not args.keep_up:
+        subprocess.run([sys.executable, str(SCRIPTS_DIR / DEV_SCRIPT), "down"],
+                       cwd=str(root), check=False)
+    elif started_by_us:
+        sys.stdout.write(
+            f"\n  left running: http://127.0.0.1:{ports['app']} "
+            f"({account['username']} / {account['password']})\n"
+            f"  stop it with `odysseus dev down`\n"
+        )
+    # `cli.run` discards a returned value but lets SystemExit through, and
+    # a smoke run's exit code is the whole point of having one command.
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+    return 0
+
+
+def build_parser():
+    parser = common_parser("odysseus-smoke",
+                           "Boot this worktree and run the release smoke suite.")
+    parser.add_argument("--keep-up", action="store_true",
+                        help="leave the instance running after the suite finishes")
+    parser.add_argument("--no-boot", action="store_true",
+                        help="require an instance already up in this worktree")
+    parser.add_argument("--restart", action="store_true",
+                        help="stop a running instance and boot a fresh one")
+    parser.add_argument("--venv", help="use this venv instead of ./venv")
+    parser.add_argument("--areas", action="store_true",
+                        help="print the coverage table and exit without booting")
+    parser.add_argument("pytest_args", nargs="*", metavar="-- PYTEST ARGS",
+                        help="arguments forwarded to pytest after a literal --")
+    parser.set_defaults(func=cmd_run)
+    return parser
+
+
+if __name__ == "__main__":
+    sys.exit(run(build_parser()))
