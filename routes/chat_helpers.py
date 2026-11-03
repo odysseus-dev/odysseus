@@ -1276,6 +1276,7 @@ async def build_chat_context(
         message=_ctx_msg,
         session=sess,
         use_web=use_web_val and not skip_web,
+        use_rag=use_rag_val,
         use_memory=mem_enabled,
         time_filter=time_filter,
         preset_system_prompt=preset.system_prompt,
@@ -1286,8 +1287,6 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None or is_research_spinoff or casual_low_signal:
-        _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
     # Capture used memories immediately

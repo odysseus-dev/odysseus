@@ -4,7 +4,7 @@ import html
 import difflib
 import logging
 import re
-from src.constants import MAX_READ_CHARS
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
 from src.tool_approvals import document_content_digest
 from src.tool_utils import _parse_tool_args, get_upload_handler
 from src.upload_handler import reserve_upload_references
@@ -1175,14 +1175,23 @@ class ManageDocumentTool:
                 except (TypeError, ValueError):
                     offset = 0
                 offset = min(offset, len(body))
+                anchor = f"[{doc.title}](#document-{doc.id})"
+                header = f"{anchor} — click to open in editor.\n\n```{doc.language or ''}\n"
+                # Reserve the closing fence and the longest possible paging
+                # notice before selecting the page. The common output cap must
+                # never hide content that next_offset claims was delivered.
+                notice = f"\n... (truncated, {len(body)} chars total; next_offset={len(body)})"
+                page_budget = MAX_OUTPUT_CHARS - len(header) - len(notice) - len("\n```")
+                if page_budget < 1:
+                    return {"error": "Document title or language is too long to display a read page", "exit_code": 1}
+                preview_limit = min(preview_limit, page_budget)
                 end = min(offset + preview_limit, len(body))
                 truncated = end < len(body)
                 preview = body[offset:end]
                 if truncated:
                     preview += f"\n... (truncated, {len(body)} chars total; next_offset={end})"
-                anchor = f"[{doc.title}](#document-{doc.id})"
                 return {
-                    "response": f"{anchor} — click to open in editor.\n\n```{doc.language or ''}\n{preview}\n```",
+                    "response": f"{header}{preview}\n```",
                     "document": {
                         "id": doc.id,
                         "title": doc.title,
