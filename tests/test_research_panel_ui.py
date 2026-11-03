@@ -65,3 +65,13 @@ def test_research_panel_has_no_model_only_visual_mode():
     assert 'explain_only = effective_max_rounds == -1' not in routes
     assert 'if max_rounds == -1:' not in handler
     assert "mode: 'research'" in jobs
+
+
+def test_research_pickers_dismiss_on_clicks_outside_the_picker():
+    panel = (ROOT / "static/js/research/panel.js").read_text(encoding="utf-8")
+
+    # bindMenuDismiss's third argument answers "is this click outside?". Passing
+    # picker.contains unnegated left the menu open on outside clicks and made
+    # the trigger button reopen it instead of toggling it closed.
+    assert "bindMenuDismiss(menu, close, e => !picker.contains(e.target))" in panel
+    assert "bindMenuDismiss(menu, close, e => picker.contains(e.target))" not in panel
