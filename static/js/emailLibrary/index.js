@@ -5126,7 +5126,12 @@ export async function _loadEmails({ force = false, useCache = true, skipFastPath
     paintData(cached, { cacheSource: true });
     paintedExisting = true;
     if (force) _setEmailSyncStatus({ loading: true });
-    if (!force) return;
+    if (!force) {
+      // This return skips the finally below; without clearing the flag here
+      // the mailbox stayed "loading" and every later auto-refresh was skipped.
+      if (seq === _libLoadSeq) state._libLoading = false;
+      return;
+    }
   } else if (state._libEmails.length && cacheable) {
     _renderGrid();
     _setEmailSyncStatus({ loading: true });
