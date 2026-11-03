@@ -396,6 +396,15 @@ class AuthManager:
             current = self.get_privileges(username)
             for k, v in privileges.items():
                 if k in DEFAULT_PRIVILEGES:
+                    default = DEFAULT_PRIVILEGES[k]
+                    if isinstance(default, bool):
+                        ok = isinstance(v, bool)
+                    elif isinstance(default, int):
+                        ok = isinstance(v, int) and not isinstance(v, bool)
+                    else:
+                        ok = isinstance(v, list)
+                    if not ok:
+                        raise ValueError(f"Invalid value for privilege '{k}'")
                     current[k] = v
             self._config["users"][username]["privileges"] = current
             self._save()
