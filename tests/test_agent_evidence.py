@@ -19,6 +19,13 @@ def test_infers_only_explicit_output_or_edit_paths():
     assert requirements.verifier_required is True
 
 
+def test_email_address_is_not_an_output_artifact():
+    requirements = infer_completion_requirements(
+        "Write a summary and email it to jane.doe@example.com."
+    )
+    assert requirements.required_artifacts == ()
+
+
 def test_known_workspace_inputs_are_not_inferred_as_output_artifacts():
     requirements = infer_completion_requirements(
         "My clues are saved in /tmp_workspace/inputs/clues.md, the required answer "

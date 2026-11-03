@@ -1,5 +1,6 @@
 """Execution outcomes must reach the model, not just the tool-event UI."""
 import json
+import os
 
 import pytest
 
@@ -7,6 +8,7 @@ from src.agent_tools.subprocess_tools import BashTool
 from src.clean_agent_preview import preview_tool_result_text
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: enforcing containment (bubblewrap/process group) needed to run native bash; Windows windows_tree gives wall-clock only")
 @pytest.mark.asyncio
 async def test_failed_shell_retains_exit_status_and_both_streams_for_followup(tmp_path):
     from tests.process_resource_helpers import launch_authority

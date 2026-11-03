@@ -401,6 +401,51 @@ def test_url_outside_inline_code_is_still_autolinked(node_available):
     assert 'href="https://example.com/page"' in html
 
 
+def test_https_markdown_image_renders_inline_as_clickable_thumbnail(node_available):
+    # Assistant `![alt](url)` images must render inline: https-only, lazy,
+    # max-width-100% (via CSS), and click-to-open the full size in a new tab.
+    html = _run_markdown_case(
+        "Here is a map:\n\n"
+        "![Map of Sweden](https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Sweden_location_map.svg/600px-Sweden_location_map.svg.png)"
+    )
+
+    assert html.count('class="chat-image"') == 1
+    assert html.count('class="chat-inline-image"') == 1
+    assert 'alt="Map of Sweden"' in html
+    assert 'loading="lazy"' in html
+    assert 'decoding="async"' in html
+    assert 'referrerpolicy="no-referrer"' in html
+    assert 'target="_blank"' in html
+    assert 'rel="noopener noreferrer"' in html
+    # The fallback caption (alt + URL) is emitted so a broken load never leaves
+    # an empty gap; it stays hidden until the capture-phase error listener
+    # toggles .image-broken.
+    assert 'class="chat-image-fallback"' in html
+    # The fallback caption carries the alt text plus the URL (the `//` is
+    # entity-encoded so the bare-URL autolink pass can't nest another <a>).
+    assert "Map of Sweden — https:&#47;&#47;upload.wikimedia.org" in html
+
+
+def test_http_markdown_image_is_downgraded_to_alt_text(node_available):
+    # Non-https image URLs must not render as an <img> (https-only policy); the
+    # alt text is kept as plain text so nothing is silently dropped.
+    html = _run_markdown_case("Look: ![a http pic](http://example.com/pic.png) done.")
+
+    assert "<img" not in html
+    assert 'class="chat-image"' not in html
+    assert "a http pic" in html
+
+
+def test_javascript_scheme_image_url_is_never_rendered(node_available):
+    # A javascript: URL inside image syntax must be rejected outright, never
+    # emitted as a src/href.
+    html = _run_markdown_case("![x](javascript:alert(1))")
+
+    assert "<img" not in html
+    assert "javascript:" not in html
+    assert 'class="chat-image"' not in html
+
+
 def test_inline_code_content_is_html_escaped(node_available):
     # Inline code is now extracted before the global escape pass, so it must be
     # escaped at extraction time (matching the fenced-code-block handling).

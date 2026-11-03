@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { selectTool } = require('./helpers.js');
 const fs = require('node:fs');
 const { editorState, openBlankEditor, waitForDraft } = require('./helpers');
 
@@ -18,7 +19,7 @@ test('mobile tool and layer sheets do not overlap mask controls', async ({ page 
 
   const layerId = (await editorState(page)).activeLayerId;
   const layerRow = page.locator(`.ge-layer-item[data-layer-id="${layerId}"]`);
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
 
   const maskRow = page.locator('.ge-mask-sub-item').filter({ hasText: 'Layer Mask' });
   const maskName = maskRow.locator('.ge-layer-name');
@@ -39,15 +40,15 @@ test('mobile tool and layer sheets do not overlap mask controls', async ({ page 
   await maskRow.locator('.ge-mask-link-btn').click();
   await expect(maskRow.locator('.ge-mask-link-btn')).toHaveAttribute('aria-pressed', 'false');
 
-  await page.locator('.ge-tool-btn[data-tool="brush"]').click();
+  await selectTool(page, 'brush');
   await expect(controls).not.toHaveClass(/dismissed/);
   await expect(layerSheet).toHaveClass(/minimized/);
   const controlsBox = await controls.boundingBox();
   const sheetBox = await layerSheet.boundingBox();
   expect(controlsBox.y).toBeLessThan(sheetBox.y + sheetBox.height);
 
-  await page.locator('.ge-tool-btn[data-tool="eraser"]').click();
-  await page.locator('.ge-tool-btn[data-tool="eraser"]').click();
+  await selectTool(page, 'eraser');
+  await selectTool(page, 'eraser');
   await expect(controls).toHaveClass(/dismissed/);
 });
 
@@ -79,17 +80,17 @@ test('mobile touch mask editing supports undo and persists through reload', asyn
   await page.locator('.ge-layers-title').click();
   await expect(page.locator('.ge-right-panel')).toHaveClass(/expanded/);
 
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
   const maskRow = page.locator('.ge-mask-sub-item').filter({ hasText: 'Layer Mask' });
   await expect(maskRow).toBeVisible();
   const before = (await editorState(page)).layers.find(layer => layer.masks.length).masks[0].pixelHash;
 
   // A new layer mask is fully white (revealed), so Brush would paint white
   // onto white. Eraser makes the first touch edit observable by hiding pixels.
-  await page.locator('.ge-tool-btn[data-tool="eraser"]').click();
+  await selectTool(page, 'eraser');
   // Collapse the bottom-sheet controls so the full canvas is available to the
   // touch gesture, matching the canvas-first mobile editing mode.
-  await page.locator('.ge-tool-btn[data-tool="eraser"]').click();
+  await selectTool(page, 'eraser');
   const canvasBox = await page.locator('.ge-main-canvas').boundingBox();
   const cdp = await page.context().newCDPSession(page);
   const visibleCanvasPoint = await page.evaluate(() => {
@@ -120,6 +121,10 @@ test('mobile touch mask editing supports undo and persists through reload', asyn
   const painted = await editorState(page);
   const paintedLayer = painted.layers.find(layer => layer.masks.length);
   expect(paintedLayer.masks[0].pixelHash).not.toBe(before);
+  // History controls live in the layers header, which is hidden while the
+  // sheet is minimized for painting. Reopen it as a phone user would.
+  await page.locator('.ge-layers-grab').click();
+  await expect(page.locator('.ge-right-panel')).not.toHaveClass(/minimized/);
   await page.locator('#ge-undo').click();
   expect((await editorState(page)).layers.find(layer => layer.masks.length).masks[0].pixelHash)
     .toBe(before);
@@ -169,12 +174,12 @@ test('mobile touch moves an unlinked layer mask without moving its layer', async
   await page.locator('.ge-layers-title').click();
   await expect(page.locator('.ge-right-panel')).toHaveClass(/expanded/);
   const layerId = (await editorState(page)).activeLayerId;
-  await page.locator('#ge-layer-tools .ge-true-mask-btn').click();
+  await page.locator('.ge-layer-controls:visible .ge-true-mask-btn').click();
   const maskRow = page.locator('.ge-mask-sub-item').filter({ hasText: 'Layer Mask' });
   await expect(maskRow).toBeVisible();
   await maskRow.locator('.ge-mask-link-btn').click();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
-  await page.locator('.ge-tool-btn[data-tool="move"]').click();
+  await selectTool(page, 'move');
+  await selectTool(page, 'move');
 
   const point = await page.evaluate(() => {
     const target = document.querySelector('.ge-main-canvas');
@@ -206,6 +211,8 @@ test('mobile touch moves an unlinked layer mask without moving its layer', async
   expect(movedLayer.offset).toEqual(beforeLayer.offset);
   expect(movedLayer.masks[0].offset.x).not.toBe(beforeLayer.masks[0].offset.x);
   expect(movedLayer.masks[0].offset.y).not.toBe(beforeLayer.masks[0].offset.y);
+  await page.locator('.ge-layers-grab').click();
+  await expect(page.locator('.ge-right-panel')).not.toHaveClass(/minimized/);
   await page.locator('#ge-undo').click();
   expect((await editorState(page)).layers.find(layer => layer.id === layerId).masks[0].offset)
     .toEqual(beforeLayer.masks[0].offset);

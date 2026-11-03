@@ -36,6 +36,7 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
+from src.email_mime import decode_text_part as _decode_text_part
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
 from src.url_safety import OutboundAddressBlocked, connect_outbound_tcp
@@ -443,9 +444,11 @@ async def _generate_email_summary(
     headers: dict | None = None,
     max_tokens: int = 8192,
     timeout: int = 180,
+    owner: str | None = None,
 ) -> str:
     """Generate an interactive email summary through the shared LLM adapter."""
     from src.llm_core import llm_call_async
+    from src.utility_effort import effort_for_call
 
     raw = await llm_call_async(
         url=url,
@@ -456,6 +459,7 @@ async def _generate_email_summary(
         headers=headers,
         timeout=timeout,
         workload="foreground",
+        reasoning_effort=effort_for_call(url, model, owner),
     )
     return _normalize_email_summary(raw)
 
@@ -1773,44 +1777,38 @@ def _extract_html(msg):
             ct = part.get_content_type()
             cd = str(part.get("Content-Disposition", ""))
             if ct == "text/html" and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
+                text = _decode_text_part(part)
+                if text:
+                    return text
     elif msg.get_content_type() == "text/html":
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+        text = _decode_text_part(msg)
+        if text:
+            return text
     return None
 
 
 def _extract_text(msg):
     if msg.is_multipart():
         text_parts = []
+        html_parts = []
         for part in msg.walk():
             ct = part.get_content_type()
             cd = str(part.get("Content-Disposition", ""))
             if ct == "text/plain" and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
-            elif ct == "text/html" and not text_parts and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+                text = _decode_text_part(part)
+                if text:
+                    text_parts.append(text)
+            elif ct == "text/html" and not html_parts and "attachment" not in cd:
+                raw_html = _decode_text_part(part)
+                if raw_html:
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts)
+                    html_parts.append(text.strip())
+        return "\n".join(text_parts or html_parts)
     else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="replace")
+        text = _decode_text_part(msg)
+        if text:
             if msg.get_content_type() == "text/html":
                 text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
                 text = re.sub(r"</(?:p|div|li|tr|h[1-6])\s*>", "\n", text, flags=re.I)

@@ -4638,13 +4638,14 @@ body.notes-view .chat-container { flex: 1; min-width: 0; }
 @media (max-width: 768px) {
   body.notes-view .notes-pane {
     position: fixed;
-    inset: 0;
+    inset: var(--sheet-top) 0 0;
     max-width: 100%;
     width: 100% !important;
     /* Desktop sets height: min(80vh, 820px) which wins over inset:0's bottom:0
        and leaves a gap at the bottom of the viewport. Force full height here. */
-    height: 100dvh !important;
-    max-height: 100dvh !important;
+    height: calc(var(--app-height) - var(--sheet-top)) !important;
+    max-height: calc(var(--app-height) - var(--sheet-top)) !important;
+    padding-bottom: var(--safe-bottom);
     z-index: 170;
     /* Bottom-sheet treatment like the document editor: stroked, rounded top,
        slides up from the bottom. */

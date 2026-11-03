@@ -33,6 +33,7 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.email_mime import decode_text_part as _decode_text_part
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
 from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
@@ -923,29 +924,25 @@ def _extract_text(msg):
     """Extract plain text body from email message."""
     if msg.is_multipart():
         text_parts = []
+        html_parts = []
         for part in msg.walk():
             ct = part.get_content_type()
             cd = str(part.get("Content-Disposition", ""))
             if ct == "text/plain" and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
-            elif ct == "text/html" and not text_parts and "attachment" not in cd:
-                payload = part.get_payload(decode=True)
-                if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+                text = _decode_text_part(part)
+                if text:
+                    text_parts.append(text)
+            elif ct == "text/html" and not html_parts and "attachment" not in cd:
+                raw_html = _decode_text_part(part)
+                if raw_html:
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts)
+                    html_parts.append(text.strip())
+        return "\n".join(text_parts or html_parts)
     else:
-        payload = msg.get_payload(decode=True)
-        if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="replace")
+        text = _decode_text_part(msg)
+        if text:
             if msg.get_content_type() == "text/html":
                 text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
                 text = re.sub(r"</(?:p|div|li|tr|h[1-6])\s*>", "\n", text, flags=re.I)
@@ -1185,6 +1182,9 @@ def _fixture_email_record(row: dict, uid_num: int, owner: str) -> dict:
         "subject": subject,
         "from": sender_name or sender_addr or sender,
         "from_address": sender_addr,
+        "to": str(row.get("to") or headers.get("To") or ""),
+        "cc": str(row.get("cc") or headers.get("Cc") or ""),
+        "references": str(row.get("references") or headers.get("References") or ""),
         "date": date_str,
         "date_epoch": date_epoch,
         "summary": body[:240],
@@ -1557,6 +1557,7 @@ def _fixture_update_email(uid=None, source_folder="INBOX", account=None, **updat
     if not isinstance(rows, list):
         return False
     owner = _current_owner()
+    matches = []
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             continue
@@ -1568,14 +1569,19 @@ def _fixture_update_email(uid=None, source_folder="INBOX", account=None, **updat
             continue
         if not _fixture_folder_matches(row.get("folder") or "INBOX", source_folder):
             continue
-        for key, value in updates.items():
-            if value is None:
-                row.pop(key, None)
-            else:
-                row[key] = value
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return True
-    return False
+        if not _fixture_row_matches_account(_fixture_email_record(row, index, owner or row_owner), account):
+            continue
+        matches.append(row)
+    if len(matches) != 1:
+        return False
+    row = matches[0]
+    for key, value in updates.items():
+        if value is None:
+            row.pop(key, None)
+        else:
+            row[key] = value
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return True
 
 
 # ── Tool implementations ──
@@ -2925,7 +2931,9 @@ def _create_email_draft_document(
 
 def _draft_reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None, title=None):
     """Create a threaded Odysseus reply draft document. Does not send."""
-    fixture = _fixture_email_action_target(uid=uid, folder=folder, account=account)
+    fixture = _fixture_read_email(uid=uid, folder=folder, account=account)
+    if _fixture_email_enabled() and (fixture is None or fixture.get("error")):
+        return fixture or {"error": "No email fixture is available for the authenticated owner"}
     if fixture is not None:
         sender = str(fixture.get("from_address") or fixture.get("from") or "")
         _, sender_addr = email.utils.parseaddr(sender)
@@ -3178,7 +3186,9 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
 
 def _set_flag(uid, folder, flag, add=True, account=None):
     """Add or remove an IMAP flag (e.g. \\Seen, \\Answered, \\Deleted)."""
-    if _fixture_email_action_target(uid=uid, folder=folder, account=account) is not None:
+    if _fixture_email_enabled():
+        if _fixture_email_action_target(uid=uid, folder=folder, account=account) is None:
+            return False
         if flag == "\\Seen":
             return _fixture_update_email(uid=uid, source_folder=folder, account=account, read=bool(add))
         if flag == "\\Answered":
