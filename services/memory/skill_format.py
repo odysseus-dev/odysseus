@@ -269,6 +269,39 @@ _KEY_TO_HEADING = {
 }
 
 
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _next_fence(line: str, fence: Optional[str]) -> Optional[str]:
+    """Code-fence state after `line`: the opening marker while inside a
+    fenced block, None outside. Lines inside a fence are example content,
+    so a `## Procedure` there is not a section heading."""
+    m = _FENCE_RE.match(line)
+    if not m:
+        return fence
+    marker = m.group(1)
+    if fence is None:
+        # A backtick fence's info string cannot contain another backtick.
+        if marker[0] == "`" and "`" in line[m.end():]:
+            return None
+        return marker
+    if marker[0] == fence[0] and len(marker) >= len(fence) and not line.strip()[len(marker):]:
+        return None
+    return fence
+
+
+def _first_heading_offset(text: str) -> Optional[int]:
+    """Offset of the first `## ` heading outside a code fence, if any."""
+    fence = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if not fence and re.match(r"^##\s", line):
+            return offset
+        fence = _next_fence(line.rstrip("\r\n"), fence)
+        offset += len(line)
+    return None
+
+
 def parse_body(body: str) -> Dict[str, Any]:
     """Split a SKILL.md body into known sections.
 
@@ -287,8 +320,10 @@ def parse_body(body: str) -> Dict[str, Any]:
         return out
 
     sections: List[tuple[Optional[str], List[str]]] = [(None, [])]
+    fence = None
     for line in body.splitlines():
-        m = re.match(r"^##\s+(.*?)\s*$", line)
+        m = None if fence else re.match(r"^##\s+(.*?)\s*$", line)
+        fence = _next_fence(line, fence)
         if m:
             heading = m.group(1).strip().lower()
             key = _HEADING_TO_KEY.get(heading)
@@ -338,8 +373,8 @@ def emit_body(sections: Dict[str, Any]) -> str:
     # Free text that sits before any heading has to be written first. Placed
     # after a known section it is read back as part of that section, and
     # _parse_list_lines folds it into the last list item.
-    m = re.search(r"^##\s", extra, re.MULTILINE)
-    lead, custom = (extra[:m.start()].strip(), extra[m.start():].strip()) if m else (extra, "")
+    cut = _first_heading_offset(extra)
+    lead, custom = (extra[:cut].strip(), extra[cut:].strip()) if cut is not None else (extra, "")
     if lead:
         parts.append(lead)
     when = (sections.get("when_to_use") or "").strip()

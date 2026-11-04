@@ -11,6 +11,7 @@ a skill is imported from a URL, which flattened most third-party skills.
 
 import textwrap
 
+import pytest
 from services.memory.skill_format import Skill, parse_body
 from services.memory.skills import SkillsManager
 
@@ -119,3 +120,89 @@ def test_free_text_is_not_folded_into_the_last_list(tmp_path):
     assert skill["pitfalls"] == ["forgetting changelog"]
     assert skill["procedure"] == ["bump version", "tag"]
     assert skill["body_extra"] == note
+
+
+FENCED_MD = textwrap.dedent("""\
+    ---
+    name: skill-writer
+    description: Write SKILL.md files
+    ---
+
+    ## When to use
+
+    User asks for a new skill.
+
+    ## Procedure
+
+    1. Draft the file
+
+    ## Examples
+
+    A minimal skill looks like this:
+
+    ```markdown
+    ## Procedure
+
+    1. Do the thing
+    ```
+
+    ~~~
+    ## Pitfalls
+    ~~~
+    """)
+
+
+def test_headings_inside_code_fences_are_not_sections():
+    sections = parse_body(FENCED_MD.split("---\n", 2)[2])
+
+    assert sections["procedure"] == ["Draft the file"]
+    assert sections["pitfalls"] == []
+    assert "```markdown\n## Procedure\n\n1. Do the thing\n```" in sections["body_extra"]
+    assert "~~~\n## Pitfalls\n~~~" in sections["body_extra"]
+
+
+def test_fenced_example_survives_a_rewrite():
+    once = Skill.from_markdown(FENCED_MD)
+    out = once.to_markdown()
+    twice = Skill.from_markdown(out)
+
+    assert "## Examples\n\nA minimal skill looks like this:\n\n```markdown\n## Procedure\n\n1. Do the thing\n```" in out
+    assert twice.procedure == ["Draft the file"]
+    assert twice.body_extra == once.body_extra
+
+
+def test_fenced_heading_in_leading_text_stays_on_top():
+    md = FENCED_MD.replace("## When to use", "```\n## Not a section\n```\n\n## When to use", 1)
+    out = Skill.from_markdown(md).to_markdown()
+    body = out.split("---\n", 2)[2]
+
+    assert body.index("## Not a section") < body.index("## When to Use")
+    assert Skill.from_markdown(out).body_extra == Skill.from_markdown(md).body_extra
+
+
+@pytest.mark.parametrize("opening,inside,closing", [
+    ("````markdown", "```\n## Procedure", "````"),
+    ("~~~markdown", "```\n## Procedure\n```", "~~~~"),
+    ("   ```markdown", "## Procedure\n```not-a-closing-fence\n## Pitfalls", "   ```  "),
+])
+def test_fence_marker_and_length_are_respected(opening, inside, closing):
+    example = f"## Examples\n\n{opening}\n{inside}\n{closing}"
+    body = f"{example}\n\n## Procedure\n\n1. Real step\n"
+    once = Skill.from_markdown(body)
+    twice = Skill.from_markdown(once.to_markdown())
+
+    assert once.procedure == twice.procedure == ["Real step"]
+    assert twice.pitfalls == []
+    assert twice.body_extra == example.rstrip()
+
+
+def test_fenced_example_survives_manager_update(tmp_path):
+    manager = SkillsManager(str(tmp_path))
+    imported = manager.import_bundle_from_files(
+        {"skill-writer/SKILL.md": FENCED_MD}, owner="alice",
+    )
+    assert manager.update_skill(imported["name"], {"status": "published"}, owner="alice")
+    with open(imported["path"], encoding="utf-8") as source:
+        saved = Skill.from_markdown(source.read())
+    assert saved.procedure == ["Draft the file"]
+    assert saved.body_extra == Skill.from_markdown(FENCED_MD).body_extra
