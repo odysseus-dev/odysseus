@@ -4,11 +4,11 @@ from tests.helpers.stylesheets import app_css
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHAT = (ROOT / "static/js/chat.js").read_text()
-RENDERER = (ROOT / "static/js/chatRenderer.js").read_text()
+CHAT = (ROOT / "static/js/chat.js").read_text(encoding="utf-8")
+RENDERER = (ROOT / "static/js/chatRenderer.js").read_text(encoding="utf-8")
 STYLE = app_css()
-APP = (ROOT / "static/app.js").read_text()
-INDEX = (ROOT / "static/index.html").read_text()
+APP = (ROOT / "static/app.js").read_text(encoding="utf-8")
+INDEX = (ROOT / "static/index.html").read_text(encoding="utf-8")
 
 
 def test_live_interruption_controls_have_visible_resume_labels():

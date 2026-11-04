@@ -14,12 +14,22 @@ from routes.auth_routes import SESSION_COOKIE
 from tests.helpers.database import disposable_database
 
 
-@pytest.fixture
-def authenticated_app(tmp_path, monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    auth = AuthManager(str(tmp_path / "auth.json"))
+@pytest.fixture(scope="module")
+def auth_configuration(tmp_path_factory):
+    """Hash real fixture passwords once; only immutable bytes are reused."""
+    path = tmp_path_factory.mktemp("admin-auth-seed") / "auth.json"
+    auth = AuthManager(str(path))
     for user, admin in (("member", False), ("admin", True)):
         assert auth.create_user(user, "disposable-test-password", is_admin=admin)
+    return path.read_bytes()
+
+
+@pytest.fixture
+def authenticated_app(tmp_path, monkeypatch, auth_configuration):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    path = tmp_path / "auth.json"
+    path.write_bytes(auth_configuration)
+    auth = AuthManager(str(path))
     app = FastAPI()
     app.state.auth_manager = auth
 
@@ -133,3 +143,17 @@ def test_diagnostics_require_real_admin_before_sensitive_work(
         for operation in (stats, rag.get_stats, research.call_research_service,
                           extract_id, transcript, collect, read_log):
             operation.assert_not_called()
+
+
+@pytest.mark.parametrize("instance", [0, 1])
+def test_authenticated_fixture_has_private_users_sessions_and_file(authenticated_app, instance):
+    app, client_for = authenticated_app
+    auth = app.state.auth_manager
+    assert set(auth.users) == {"member", "admin"}
+    assert not auth._sessions
+    with client_for("member") as client:
+        assert auth.get_username_for_token(client.cookies.get(SESSION_COOKIE)) == "member"
+    assert auth.create_user("fixture-local", "disposable-test-password")
+    # Both parameter cases mutate their own file. Any shared manager, mutable
+    # users/sessions or written-back seed makes the next case fail, in any order.
+    assert "fixture-local" in auth.users

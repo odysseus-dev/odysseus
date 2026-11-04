@@ -84,10 +84,14 @@ _FM_KEY_RE = re.compile(r"^([a-z_][a-z0-9_]*):\s*(.*)$", re.IGNORECASE)
 _FM_BLOCK_LIST_RE = re.compile(r"^\s*-\s*(.*)$")
 
 
-def _parse_scalar(raw: str) -> Any:
+def _parse_scalar(raw: str, *, string_only: bool = False) -> Any:
     raw = raw.strip()
     if raw == "":
         return ""
+    # String fields keep their spelling; quoted values still use the decoder
+    # below so existing escapes round-trip as before.
+    if string_only and not (raw[0] == raw[-1] and raw[0] in ("'", '"')):
+        return raw
     if raw.startswith("[") and raw.endswith("]"):
         inner = raw[1:-1].strip()
         if not inner:
@@ -126,10 +130,15 @@ def _parse_scalar(raw: str) -> Any:
 def _split_top_level(s: str, sep: str) -> List[str]:
     """Split `s` on `sep` ignoring separators inside [] or quotes."""
     out, buf, depth, quote = [], [], 0, None
+    escaped = False
     for ch in s:
         if quote:
             buf.append(ch)
-            if ch == quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\" and quote == '"':
+                escaped = True
+            elif ch == quote:
                 quote = None
             continue
         if ch in ("'", '"'):
@@ -171,7 +180,7 @@ def parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
                 pending_key = key
                 fm[key] = []
             else:
-                fm[key] = _parse_scalar(val)
+                fm[key] = _parse_scalar(val, string_only=(key == "version"))
                 pending_key = None
             continue
         m2 = _FM_BLOCK_LIST_RE.match(line)
