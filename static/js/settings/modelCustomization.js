@@ -25,14 +25,12 @@ export function buildSettingsPayload({ endpoint_id, model, controls }) {
   return { endpoint_id, model, settings };
 }
 
-export function applySupportedFields(controls, supported) {
-  const allowed = new Set(supported || []);
+export function applyReadOnly(controls, saveButton, readOnly) {
   for (const name of SETTING_NAMES) {
     const control = controls[name];
-    if (!control) continue;
-    control.disabled = !allowed.has(name);
-    if (control.disabled) control.value = '';
+    if (control) control.disabled = Boolean(readOnly);
   }
+  if (saveButton) saveButton.disabled = Boolean(readOnly);
 }
 
 export function fillControls(controls, stored) {
@@ -91,8 +89,7 @@ function renderModel() {
   const controls = panelControls();
   showMessage('', false);
   fillControls(controls, entry ? entry.settings : {});
-  applySupportedFields(controls, entry ? entry.supported : []);
-  byId('adm-mcSaveBtn').disabled = !entry;
+  applyReadOnly(controls, byId('adm-mcSaveBtn'), !entry || Boolean(selectedEndpoint()?.read_only));
 }
 
 function renderEndpoint() {
@@ -116,6 +113,7 @@ async function save() {
   const endpoint = selectedEndpoint();
   const entry = selectedModel();
   if (!endpoint || !entry) return;
+  if (endpoint.read_only) return;
   const payload = buildSettingsPayload({ endpoint_id: endpoint.id, model: entry.model, controls: panelControls() });
   try {
     const res = await fetch(API, {
@@ -137,12 +135,13 @@ async function save() {
 }
 
 export async function initModelCustomization() {
-  if (!byId('adm-modelCustomCard')) return;
+  if (!byId('adm-modelCustomCard') || !window._isAdmin) return;
   if (!wired) {
     wired = true;
     byId('adm-mcEndpoint').addEventListener('change', renderEndpoint);
     byId('adm-mcModel').addEventListener('change', renderModel);
     byId('adm-mcSaveBtn').addEventListener('click', save);
+    byId('adm-mcReloadBtn')?.addEventListener('click', refresh);
   }
   try {
     await refresh();

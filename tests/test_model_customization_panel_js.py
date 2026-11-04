@@ -84,18 +84,15 @@ def test_save_payload_with_every_control_blank_clears_the_entry():
 
 
 @needs_node
-def test_unsupported_controls_are_disabled_and_blank():
+def test_editable_controls_are_all_enabled():
     body = """
-    controls.top_k.value = '40';
-    controls.temperature.disabled = true;
-    applySupportedFields(controls, ['temperature', 'top_p', 'presence_penalty', 'thinking']);
+    controls.top_k.value = "40";
+    applyReadOnly(controls, null, false);
     console.log(JSON.stringify(snapshot()));
     """
     state = _run(body)
-    for name in ("temperature", "top_p", "presence_penalty", "thinking"):
+    for name in ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty", "num_ctx", "thinking"):
         assert state[name]["disabled"] is False, name
-    for name in ("top_k", "min_p", "repeat_penalty", "num_ctx"):
-        assert state[name] == {"value": "", "disabled": True}, name
 
 
 @needs_node
@@ -130,7 +127,7 @@ def test_rejected_save_shows_the_server_reason():
 
 
 _PANEL_DOM = r"""
-const IDS = ['adm-modelCustomCard', 'adm-mcEndpoint', 'adm-mcModel', 'adm-mcSaveBtn', 'adm-mcMsg',
+const IDS = ['adm-modelCustomCard', 'adm-mcEndpoint', 'adm-mcModel', 'adm-mcSaveBtn', 'adm-mcReloadBtn', 'adm-mcMsg',
   ...['temperature', 'top_p', 'top_k', 'min_p', 'presence_penalty', 'repeat_penalty',
       'num_ctx', 'thinking'].map((n) => 'adm-mc-' + n)];
 const nodes = {};
@@ -148,6 +145,7 @@ function node(id) {
   return nodes[id];
 }
 for (const id of IDS) node(id);
+globalThis.window = { _isAdmin: true };
 globalThis.document = { getElementById: (id) => (IDS.includes(id) ? node(id) : null) };
 globalThis.Option = function Option(label, value) { this.label = label; this.value = value; };
 const panelNode = (id) => nodes[id];
@@ -156,7 +154,7 @@ let stored = {};
 let lastPut = null;
 const cascade = () => ({
   endpoints: [{
-    id: 'lab-ollama', name: 'Lab Ollama',
+    id: 'lab-ollama', name: 'Lab Ollama', read_only: false,
     models: [{
       model: 'qwen3:8b', format: 'ollama-native',
       supported: ['temperature', 'top_p', 'top_k', 'min_p',
@@ -223,3 +221,45 @@ def test_a_rejected_save_keeps_the_previous_values():
     assert result["message"] == "temperature must be from 0 to 2"
     assert result["error"] == "var(--red)"
     assert result["temperature"] == "3"
+
+
+@needs_node
+def test_a_read_only_endpoint_disables_every_control_and_save():
+    body = """
+    const saveBtn = { disabled: false };
+    applyReadOnly(controls, saveBtn, true);
+    console.log(JSON.stringify({
+      disabled: snapshot(),
+      saveDisabled: saveBtn.disabled,
+      values: Object.fromEntries(Object.entries(controls).map(([n, c]) => [n, c.value])),
+    }));
+    """
+    state = _run(body)
+    assert state["saveDisabled"] is True
+    for name, value in state["disabled"].items():
+        assert value["disabled"] is True, name
+
+
+@needs_node
+def test_the_panel_is_skipped_for_a_non_admin():
+    body = _PANEL_DOM + """
+    let calls = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (...args) => { calls += 1; return realFetch(...args); };
+    globalThis.window._isAdmin = false;
+    await initModelCustomization();
+    console.log(JSON.stringify({ calls }));
+    """
+    assert _run(body) == {"calls": 0}
+
+
+@needs_node
+def test_reload_refetches_the_cascade():
+    body = _PANEL_DOM + """
+    let calls = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (...args) => { calls += 1; return realFetch(...args); };
+    await panelNode('adm-mcReloadBtn').listeners.click();
+    console.log(JSON.stringify({ calls }));
+    """
+    assert _run(body)["calls"] >= 1
