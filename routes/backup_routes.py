@@ -15,20 +15,27 @@ logger = logging.getLogger(__name__)
 
 def _merge_by_id(current, incoming: list) -> list:
     """Merge a backed-up list (user templates, group presets) into the
-    current one. Entries with the same ``id`` take the backed-up value;
-    everything else already saved is kept."""
-    merged = list(current) if isinstance(current, list) else []
-    by_id = {
-        item["id"]: i for i, item in enumerate(merged)
-        if isinstance(item, dict) and item.get("id")
-    }
+    current one. The last saved entry wins for duplicate IDs, keeping the
+    first entry's position. Incoming entries then override saved values.
+    Invalid incoming IDs are rejected before the import writes any data;
+    unrelated saved entries, including legacy malformed records, are kept."""
+    merged, by_id = [], {}
+    for item in current if isinstance(current, list) else []:
+        item_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(item_id, str) and item_id:
+            if item_id in by_id:
+                merged[by_id[item_id]] = item
+                continue
+            by_id[item_id] = len(merged)
+        merged.append(item)
     for item in incoming:
         item_id = item.get("id") if isinstance(item, dict) else None
-        if item_id and item_id in by_id:
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError("Preset entries must have a non-empty string id")
+        if item_id in by_id:
             merged[by_id[item_id]] = item
-        elif item not in merged:
-            if item_id:
-                by_id[item_id] = len(merged)
+        else:
+            by_id[item_id] = len(merged)
             merged.append(item)
     return merged
 
@@ -92,6 +99,20 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
 
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected a JSON object")
+
+        # Validate and prepare preset lists before importing any other section,
+        # so a malformed ID cannot fail after memories or skills were written.
+        restored_presets = None
+        if isinstance(body.get("presets"), dict):
+            restored_presets = dict(preset_manager.get_all())
+            for key, value in body["presets"].items():
+                if key in ("user_templates", "group_presets") and isinstance(value, list):
+                    try:
+                        restored_presets[key] = _merge_by_id(restored_presets.get(key), value)
+                    except ValueError as exc:
+                        raise HTTPException(400, f"Invalid {key}: {exc}") from exc
+                elif isinstance(value, (dict, list)):
+                    restored_presets[key] = value
 
         imported = []
 
@@ -201,16 +222,8 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
             imported.append(f"{added} skills")
 
         # ── Presets ──
-        if "presets" in body and isinstance(body["presets"], dict):
-            current = preset_manager.get_all()
-            for key, value in body["presets"].items():
-                if isinstance(value, dict):
-                    current[key] = value
-                elif isinstance(value, list):
-                    # user_templates / group_presets: replacing the list
-                    # would delete everything created after the backup.
-                    current[key] = _merge_by_id(current.get(key), value)
-            preset_manager.save(current)
+        if restored_presets is not None:
+            preset_manager.save(restored_presets)
             imported.append("presets")
 
         # ── Settings ──

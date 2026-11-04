@@ -9,6 +9,9 @@ import asyncio
 import json
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import routes.backup_routes as br
 from src.preset_manager import PresetManager
 
@@ -87,3 +90,61 @@ def test_restore_still_overwrites_the_custom_preset(monkeypatch, tmp_path):
     asyncio.run(endpoint(_Req({"presets": {"custom": custom}})))
 
     assert presets.get("custom")["system_prompt"] == "backed-up prompt"
+
+
+@pytest.mark.parametrize("key", ["user_templates", "group_presets"])
+@pytest.mark.parametrize("bad_id", [["bad"], {"bad": "id"}, 42, True, None, ""])
+def test_invalid_id_is_rejected_before_any_import(monkeypatch, tmp_path, key, bad_id):
+    presets = PresetManager(str(tmp_path))
+    presets.save_user_template(_template("keep", "Keep"))
+    before = (tmp_path / "presets.json").read_bytes()
+    monkeypatch.setattr(br, "require_admin", lambda request: None)
+    monkeypatch.setattr(br, "get_current_user", lambda request: "alice")
+    memories, skills = MagicMock(), MagicMock()
+    app = FastAPI()
+    app.include_router(br.setup_backup_routes(memories, presets, skills))
+
+    with TestClient(app) as client:
+        response = client.post("/api/import", json={
+            "memories": [{"text": "Must not be imported"}],
+            "skills": [{"name": "must-not-be-imported"}],
+            "presets": {key: [{"id": bad_id, "name": "Malformed"}]},
+        })
+
+    assert response.status_code == 400
+    assert key in response.json()["detail"]
+    memories.save.assert_not_called()
+    skills.add_skill.assert_not_called()
+    assert (tmp_path / "presets.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("key", ["user_templates", "group_presets"])
+def test_duplicate_saved_ids_are_reconciled_idempotently(monkeypatch, tmp_path, key):
+    presets = PresetManager(str(tmp_path))
+    saved = dict(presets.get_all())
+    saved[key] = [
+        _template("x", "Stale"), _template("keep", "Unrelated"),
+        _template("x", "Current"), _template("untouched", "Old"),
+        _template("untouched", "Last saved"),
+    ]
+    presets.save(saved)
+    endpoint = _endpoint(monkeypatch, presets)
+    backup = {"presets": {key: [_template("x", "Restored"), _template("new", "New")]}}
+
+    asyncio.run(endpoint(_Req(backup)))
+    first = (tmp_path / "presets.json").read_bytes()
+    asyncio.run(endpoint(_Req(backup)))
+
+    assert (tmp_path / "presets.json").read_bytes() == first
+    restored = PresetManager(str(tmp_path)).get_all()[key]
+    assert [(item["id"], item["name"]) for item in restored] == [
+        ("x", "Restored"), ("keep", "Unrelated"),
+        ("untouched", "Last saved"), ("new", "New"),
+    ]
+
+
+def test_malformed_saved_ids_do_not_break_a_valid_restore():
+    legacy = [{"id": ["legacy"]}, {"name": "Without ID"}]
+    assert br._merge_by_id(legacy, [_template("valid", "Valid")]) == [
+        *legacy, _template("valid", "Valid"),
+    ]
