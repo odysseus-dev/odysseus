@@ -220,7 +220,7 @@ def setup_codex_routes(
                 "cookbook": {
                     "read": scoped(COOKBOOK_READ_SCOPES),
                     "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
-                    "actions": ["tasks", "servers", "output", "serve", "stop"],
+                    "actions": ["tasks", "servers", "cached", "presets", "output", "serve", "preset", "adopt", "stop"],
                 },
                 "chat": {
                     "read": scoped(CHAT_READ_SCOPES),

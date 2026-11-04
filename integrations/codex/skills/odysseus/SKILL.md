@@ -19,7 +19,7 @@ If either value is missing, do not guess credentials. Tell the user to create a 
 ## When to use what
 
 - **Reminder ("remind me at 5pm to do X")** → TODO with `due_date`. The due_date IS the reminder — it fires a notification automatically via the user's configured channel (browser/email/ntfy). **Do NOT create a calendar event for a reminder.** Creating a calendar event named "Reminder" does NOT trigger a notification — it's just a time block on the calendar.
-- **Calendar event ("meeting at 3pm", "dentist Tuesday 10am")** → calendar event. Use for scheduled time blocks, meetings, appointments, recurring schedules. These show up on the calendar grid; reminders for them are configured separately in Odysseus settings.
+- **Calendar event ("meeting at 3pm", "dentist Tuesday 10am")** → calendar event. Use for scheduled time blocks, meetings, appointments, recurring schedules. These show up on the calendar grid; pass `reminder_minutes` on the event if the user also wants a notification before it starts.
 - **Note / freeform info ("note that the wifi password is ...")** → memory or todo without a due_date (depending on whether it's a fact about the user or an action item).
 - **Persistent fact / preference about the user** → memory.
 
@@ -90,7 +90,7 @@ python3 integrations/codex/scripts/odysseus_api.py POST /api/codex/memory '{"tex
 ## Calendar
 
 - `GET /api/codex/calendar/events?start=ISO&end=ISO` — list events in window.
-- `POST /api/codex/calendar/events` — body matches `EventCreate` (`summary`, `dtstart`, `dtend`, `all_day`, `description`, `location`, `calendar_href`, `rrule`, `color`). Requires `calendar:write`.
+- `POST /api/codex/calendar/events` — body matches `EventCreate` (`summary`, `dtstart`, `dtend`, `all_day`, `description`, `location`, `calendar_href`, `rrule`, `color`, `reminder_minutes`). Requires `calendar:write`.
 - `DELETE /api/codex/calendar/events/{uid}` — delete event by uid (the value returned in the POST response). Requires `calendar:write`.
 
 ## Documents
@@ -110,7 +110,7 @@ python3 integrations/codex/scripts/odysseus_api.py GET /api/codex/chat/SESSION_I
 
 ## Email draft + send
 
-- Prefer `POST /api/codex/emails/draft-document` for Codex-written email replies. It creates an editable Odysseus Document with `language: "email"` and does not touch IMAP/send.
+- Prefer `POST /api/codex/emails/draft-document` for Codex-written email replies. It creates an editable Odysseus Document with `language: "email"` and does not touch IMAP/send. Requires both `email:draft` (or `email:send`) and `documents:write`; a `403` means one of those toggles is off.
 - `POST /api/codex/emails/draft` — body matches `SendEmailRequest` (`to`, `cc`, `bcc`, `subject`, `body`, `body_html`, `attachments`, `account_id`, `in_reply_to`, `references`). Requires `email:draft` (or `email:send`).
 - `POST /api/codex/emails/send` — same body. Requires `email:send`. Never send without explicit user instruction.
 
