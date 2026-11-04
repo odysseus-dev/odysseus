@@ -56,17 +56,11 @@ def test_a_new_chat_starts_with_thinking_on(db):
     assert _stored_mode(db, "s1") == "on"
 
 
-def test_models_without_the_thinking_toggle_start_with_thinking_off(db):
-    # Written directly: the admin API refuses thinking for this model.
-    with open(mc.STORE_PATH, "w") as fh:
-        json.dump({"version": 1, "entries": [{
-            "model": PLAIN, "endpoint_id": "groq", "base_url": GROQ,
-            "settings": {"thinking": "on"}, "edited_at": "2026-11-02T00:00:00+00:00",
-        }]}, fh)
-    mc._reset_cache()
+def test_models_without_the_thinking_toggle_still_seed_the_value(db):
+    mc.save_entry("groq", GROQ, PLAIN, {"thinking": "on"})
     session = _new_chat("s2", PLAIN)
-    assert session.thinking_mode == "off"
-    assert _stored_mode(db, "s2") == "off"
+    assert session.thinking_mode == "on"
+    assert _stored_mode(db, "s2") == "on"
 
 
 def test_uncustomized_models_start_with_thinking_off(db):

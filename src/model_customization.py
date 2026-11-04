@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from src.constants import MODEL_CUSTOMIZATIONS_FILE
-from src.model_profiles import supports_user_thinking_toggle
 
 SETTING_NAMES = (
     "temperature",
@@ -85,28 +84,27 @@ def provider_format(url: str) -> str:
     return "hosted-openai"
 
 
-_OPENAI_COMMON = frozenset({"temperature", "top_p", "presence_penalty", "thinking"})
+_OPENAI_COMMON = frozenset({"temperature", "top_p", "presence_penalty"})
 
-SUPPORTED_FIELDS = {
+# Settings a format carries on the wire. ``thinking`` is never a request field
+# here; it seeds the session toggle, so it is absent from every row.
+CARRIED_FIELDS = {
     "excluded": frozenset(),
-    "ollama-native": frozenset(SETTING_NAMES),
+    "ollama-native": frozenset(SETTING_NAMES) - {"thinking"},
     "ollama-openai": _OPENAI_COMMON,
     "local-openai": _OPENAI_COMMON | {"top_k", "min_p", "repeat_penalty"},
     "hosted-openai": _OPENAI_COMMON,
 }
 
 
-def supported_fields(fmt: str) -> frozenset:
-    """Settings a Provider Format accepts (empty for unknown formats)."""
-    return SUPPORTED_FIELDS.get(fmt, frozenset())
+def carried_fields(fmt: str) -> frozenset:
+    """Settings a request for this Provider Format carries."""
+    return CARRIED_FIELDS.get(fmt, frozenset())
 
 
-def supported_fields_for(url: str, model: str) -> frozenset:
-    """Settings this model accepts on this URL; thinking needs the user toggle."""
-    fields = supported_fields(provider_format(url))
-    if not supports_user_thinking_toggle(model):
-        fields = fields - {"thinking"}
-    return fields
+def carried_fields_for(url: str) -> frozenset:
+    """Settings a request for this URL carries."""
+    return carried_fields(provider_format(url))
 
 
 # (kind, low, high, low_exclusive) per numeric setting, from the spec's table.
@@ -140,11 +138,8 @@ def _check_value(name: str, value: Any) -> Any:
     return int(value) if kind == "integer" else value
 
 
-def validate_settings(settings: Any, supported: frozenset) -> dict:
-    """Return the non-blank settings, or raise ValueError naming the bad field.
-
-    ``supported`` is the set of settings the target model accepts.
-    """
+def validate_settings(settings: Any) -> dict:
+    """Return the non-blank settings, or raise ValueError naming the bad field."""
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")
     cleaned = {}
@@ -153,8 +148,6 @@ def validate_settings(settings: Any, supported: frozenset) -> dict:
             raise ValueError(f"{name} is not a known setting")
         if value is None or value == "":
             continue
-        if name not in supported:
-            raise ValueError(f"{name} is not supported for this model")
         cleaned[name] = _check_value(name, value)
     return cleaned
 
@@ -387,7 +380,7 @@ def pick_temperature(explicit: Optional[float], settings: Optional[dict], fmt: s
 
     if explicit is not None:
         return explicit
-    if settings and "temperature" in supported_fields(fmt) and "temperature" in settings:
+    if settings and "temperature" in carried_fields(fmt) and "temperature" in settings:
         return settings["temperature"]
     return LLMConfig.DEFAULT_TEMPERATURE
 
@@ -396,16 +389,16 @@ def inject(payload: Dict[str, Any], fmt: str, settings: Optional[dict]) -> Dict[
     """Write supported sampling settings into ``payload`` (in place) and return it."""
     if not settings or fmt == "excluded":
         return payload
-    supported = supported_fields(fmt)
+    carried = carried_fields(fmt)
     keys = _OLLAMA_NATIVE_KEYS if fmt == "ollama-native" else _PAYLOAD_KEYS
     target = payload.setdefault("options", {}) if fmt == "ollama-native" else payload
     for name, payload_keys in keys.items():
-        if name in supported and name in settings:
+        if name in carried and name in settings:
             for key in payload_keys:
                 target[key] = settings[name]
     # ``_build_ollama_payload`` omits num_ctx when it equals DEFAULT_CONTEXT;
     # the admin's explicit value must still reach Ollama.
-    if fmt == "ollama-native" and "num_ctx" in supported and "num_ctx" not in target:
+    if fmt == "ollama-native" and "num_ctx" in carried and "num_ctx" not in target:
         if settings.get("num_ctx"):
             target["num_ctx"] = settings["num_ctx"]
     return payload
@@ -432,24 +425,22 @@ def cache_key_settings(url: str, model: str) -> dict:
     settings = lookup(url, model) or {}
     if not settings:
         return {}
-    supported = supported_fields_for(url, model)
+    carried = carried_fields_for(url)
     effective = {
         name: value
         for name, value in settings.items()
-        if name in supported and name not in {"temperature", "thinking"}
+        if name in carried and name != "temperature"
     }
     return dict(sorted(effective.items()))
 
 
 def context_window_override(url: str, model: str) -> Optional[int]:
-    if provider_format(url) != "ollama-native":
-        return None
+    """Stored context window for any format; sent as a request field only by Ollama."""
     return (lookup(url, model) or {}).get("num_ctx")
 
 
 def seed_thinking_mode(url: str, model: str) -> Optional[str]:
-    if "thinking" not in supported_fields_for(url, model):
-        return None
+    """Stored thinking choice for any model, or None when unset."""
     return (lookup(url, model) or {}).get("thinking")
 
 
@@ -485,18 +476,21 @@ def cascade() -> list:
                 continue
             chat_url = _endpoint_chat_url(ep.base_url or "")
             fmt = provider_format(chat_url)
-            if fmt == "excluded":
-                continue
             models = [
                 {
                     "model": model,
                     "format": fmt,
-                    "supported": _ordered(supported_fields_for(chat_url, model)),
+                    "carried": _ordered(carried_fields(fmt)),
                     "settings": dict(stored.get((ep.id, model), {})),
                 }
                 for model in _endpoint_enabled_models(ep)
             ]
-            listing.append({"id": ep.id, "name": ep.name, "models": models})
+            listing.append({
+                "id": ep.id,
+                "name": ep.name,
+                "read_only": fmt == "excluded",
+                "models": models,
+            })
     return listing
 
 
@@ -521,7 +515,7 @@ def save_for_endpoint(endpoint_id: str, model: str, settings: dict) -> dict:
     chat_url = _endpoint_chat_url(base_url)
     if provider_format(chat_url) == "excluded":
         raise ValueError("this endpoint's provider does not accept model customizations")
-    cleaned = validate_settings(settings, supported_fields_for(chat_url, model))
+    cleaned = validate_settings(settings)
     entry = save_entry(endpoint_id, base_url, model, cleaned)
     _reset_endpoint_cache()
     warning = None

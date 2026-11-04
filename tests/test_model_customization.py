@@ -46,17 +46,17 @@ def test_a_local_ollama_v1_url_is_not_treated_as_a_generic_local_server():
     url = "http://localhost:11434/v1/chat/completions"
     fmt = mc.provider_format(url)
     assert fmt == "ollama-openai"
-    assert {"top_k", "min_p", "repeat_penalty"}.isdisjoint(mc.supported_fields(fmt))
+    assert {"top_k", "min_p", "repeat_penalty"}.isdisjoint(mc.carried_fields(fmt))
 
 
 def test_a_local_v1_server_on_another_port_keeps_the_extended_fields():
     url = "http://localhost:1234/v1/chat/completions"
     fmt = mc.provider_format(url)
     assert fmt == "local-openai"
-    assert {"top_k", "min_p", "repeat_penalty"}.issubset(mc.supported_fields(fmt))
+    assert {"top_k", "min_p", "repeat_penalty"}.issubset(mc.carried_fields(fmt))
 
 
-# ── Supported settings ─────────────────────────────────────────────────────
+# ── Carried settings ─────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
@@ -66,19 +66,19 @@ def test_a_local_v1_server_on_another_port_keeps_the_extended_fields():
         (
             "ollama-native",
             {"num_ctx", "temperature", "top_p", "top_k", "min_p",
-             "presence_penalty", "repeat_penalty", "thinking"},
+             "presence_penalty", "repeat_penalty"},
         ),
-        ("ollama-openai", {"temperature", "top_p", "presence_penalty", "thinking"}),
+        ("ollama-openai", {"temperature", "top_p", "presence_penalty"}),
         (
             "local-openai",
             {"temperature", "top_p", "top_k", "min_p", "presence_penalty",
-             "repeat_penalty", "thinking"},
+             "repeat_penalty"},
         ),
-        ("hosted-openai", {"temperature", "top_p", "presence_penalty", "thinking"}),
+        ("hosted-openai", {"temperature", "top_p", "presence_penalty"}),
     ],
 )
-def test_supported_settings_per_provider_format(fmt, expected):
-    assert set(mc.supported_fields(fmt)) == expected
+def test_carried_settings_per_provider_format(fmt, expected):
+    assert set(mc.carried_fields(fmt)) == expected
 
 
 @pytest.mark.parametrize(
@@ -106,16 +106,10 @@ def test_modules_import_in_either_order_without_a_cycle(first, second):
     assert result.returncode == 0, result.stderr[-2000:]
 
 
-def test_thinking_is_not_offered_for_models_without_the_thinking_toggle():
+def test_thinking_is_never_a_carried_field():
     url = "https://api.groq.com/openai/v1/chat/completions"
-    supported = mc.supported_fields_for(url, "llama-3.3-70b")
-    assert "thinking" not in supported
-    assert "temperature" in supported
-
-
-def test_thinking_is_offered_for_models_with_the_thinking_toggle():
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    assert "thinking" in mc.supported_fields_for(url, "qwen3-32b")
+    for model in ("llama-3.3-70b", "qwen3-32b", "Ornith-1.5-35B-A3B"):
+        assert "thinking" not in mc.carried_fields_for(url)
 
 
 # ── Validation ─────────────────────────────────────────────────────────────
@@ -137,7 +131,7 @@ OLLAMA_NATIVE_ALL = frozenset(
     ],
 )
 def test_boundary_values_are_accepted(setting, value):
-    assert mc.validate_settings({setting: value}, OLLAMA_NATIVE_ALL) == {setting: value}
+    assert mc.validate_settings({setting: value}) == {setting: value}
 
 
 @pytest.mark.parametrize(
@@ -150,40 +144,38 @@ def test_boundary_values_are_accepted(setting, value):
 )
 def test_out_of_range_values_are_rejected(setting, value):
     with pytest.raises(ValueError, match=setting):
-        mc.validate_settings({setting: value}, OLLAMA_NATIVE_ALL)
+        mc.validate_settings({setting: value})
 
 
 def test_booleans_are_not_accepted_as_numbers():
     with pytest.raises(ValueError, match="top_k"):
-        mc.validate_settings({"top_k": True}, OLLAMA_NATIVE_ALL)
+        mc.validate_settings({"top_k": True})
 
 
 def test_unknown_setting_names_are_rejected():
     with pytest.raises(ValueError, match="mirostat"):
-        mc.validate_settings({"mirostat": 2}, OLLAMA_NATIVE_ALL)
+        mc.validate_settings({"mirostat": 2})
 
 
 def test_a_non_finite_value_is_rejected():
     for name in ("temperature", "top_p"):
         with pytest.raises(ValueError, match="finite"):
-            mc.validate_settings({name: float("nan")}, OLLAMA_NATIVE_ALL)
+            mc.validate_settings({name: float("nan")})
 
 
 def test_a_blank_unknown_setting_name_is_still_rejected():
     with pytest.raises(ValueError, match="mirostat"):
-        mc.validate_settings({"mirostat": ""}, OLLAMA_NATIVE_ALL)
+        mc.validate_settings({"mirostat": ""})
 
 
-def test_a_setting_the_endpoint_cannot_accept_is_rejected():
-    hosted = mc.supported_fields("hosted-openai")
-    with pytest.raises(ValueError, match="top_k"):
-        mc.validate_settings({"top_k": 40}, hosted)
+def test_a_setting_the_format_cannot_carry_is_stored():
+    assert mc.validate_settings({"top_k": 40}) == {"top_k": 40}
 
 
 def test_a_blank_control_is_not_stored():
-    assert mc.validate_settings(
-        {"temperature": 0.6, "top_p": None, "top_k": ""}, OLLAMA_NATIVE_ALL
-    ) == {"temperature": 0.6}
+    assert mc.validate_settings({"temperature": 0.6, "top_p": None, "top_k": ""}) == {
+        "temperature": 0.6,
+    }
 
 
 # ── Store ──────────────────────────────────────────────────────────────────
@@ -237,7 +229,7 @@ def test_the_same_model_on_two_endpoints_keeps_two_entries(customization_file):
 
 def test_clearing_one_setting_removes_only_that_setting(customization_file):
     mc.save_entry("lab-ollama", LAB_BASE, "qwen3:8b", {"temperature": 0.6, "top_p": 0.9})
-    cleaned = mc.validate_settings({"temperature": "", "top_p": 0.9}, OLLAMA_NATIVE_ALL)
+    cleaned = mc.validate_settings({"temperature": "", "top_p": 0.9})
     mc.save_entry("lab-ollama", LAB_BASE, "qwen3:8b", cleaned)
     assert _entries_on_disk(customization_file)[0]["settings"] == {"top_p": 0.9}
 

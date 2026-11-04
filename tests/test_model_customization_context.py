@@ -61,20 +61,20 @@ def test_budget_scaling_trusts_the_configured_context_window(customize):
     assert model_context.budget_context_for_model(LAB_CHAT, "qwen3:8b") == 16384
 
 
-def test_context_window_discovery_is_unchanged_elsewhere(isolated, tmp_path):
+def test_a_stored_window_budgets_a_hosted_endpoint_without_a_request_field(isolated, tmp_path):
     with isolated() as db:
         db.add(database.ModelEndpoint(
             id="groq", name="groq", base_url=GROQ, cached_models=json.dumps(["llama-3.3-70b"]),
         ))
         db.commit()
-    # Written directly: the admin API refuses num_ctx for hosted endpoints.
-    with open(mc.STORE_PATH, "w") as fh:
-        json.dump({"version": 1, "entries": [{
-            "model": "llama-3.3-70b", "endpoint_id": "groq", "base_url": GROQ,
-            "settings": {"num_ctx": 8192}, "edited_at": "2026-11-02T00:00:00+00:00",
-        }]}, fh)
-    mc._reset_cache()
-    assert model_context.get_context_length(GROQ_CHAT, "llama-3.3-70b") == DISCOVERED
+    mc.save_entry("groq", GROQ, "llama-3.3-70b", {"num_ctx": 8192})
+    assert model_context.get_context_length(GROQ_CHAT, "llama-3.3-70b") == 8192
+    assert model_context.get_context_length_known(GROQ_CHAT, "llama-3.3-70b") == (8192, True)
+
+
+def test_context_window_discovery_is_unchanged_elsewhere(customize):
+    customize("lab-ollama", LAB, "qwen3:8b", {"temperature": 0.6})
+    assert model_context.get_context_length(LAB_CHAT, "qwen3:8b") == DISCOVERED
 
 
 def test_uncustomized_models_keep_discovered_context(customize):

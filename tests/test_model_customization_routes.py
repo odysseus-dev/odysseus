@@ -159,11 +159,11 @@ def test_unknown_setting_names_are_rejected(client_for, endpoints, store):
     assert "mirostat" in response.json()["detail"]
 
 
-def test_a_setting_the_endpoint_cannot_accept_is_rejected(client_for, endpoints, store):
+def test_a_setting_the_format_cannot_carry_is_stored(client_for, endpoints, store):
     endpoints("groq-cloud", GROQ_URL, ["llama-3.3-70b"])
     response = _save(client_for("ada"), "groq-cloud", "llama-3.3-70b", {"top_k": 40})
-    assert response.status_code == 400
-    assert "top_k" in response.json()["detail"]
+    assert response.status_code == 200
+    assert json.loads(store.read_text())["entries"][0]["settings"] == {"top_k": 40}
 
 
 def test_saving_an_ambiguous_setting_warns_the_admin(client_for, endpoints):
@@ -179,12 +179,15 @@ def test_saving_an_ambiguous_setting_warns_the_admin(client_for, endpoints):
 
 # ── Cascade contents ────────────────────────────────────────────────────────
 
-def test_anthropic_and_chatgpt_subscription_endpoints_are_not_listed(client_for, endpoints):
+def test_anthropic_and_chatgpt_subscription_endpoints_are_listed_read_only(client_for, endpoints):
     endpoints("lab-ollama", LAB_URL, ["qwen3:8b"])
     endpoints("anthropic-direct", "https://api.anthropic.com", ["claude-sonnet-4"])
     endpoints("chatgpt-plan", "https://chatgpt.com/backend-api/codex", ["gpt-5"])
-    listed = _listed(client_for("ada").get("/api/model-customizations").json())
-    assert set(listed) == {"lab-ollama"}
+    response = client_for("ada").get("/api/model-customizations").json()
+    listed = _listed(response)
+    assert set(listed) == {"lab-ollama", "anthropic-direct", "chatgpt-plan"}
+    flags = {ep["id"]: ep["read_only"] for ep in response["endpoints"]}
+    assert flags == {"lab-ollama": False, "anthropic-direct": True, "chatgpt-plan": True}
 
 
 def test_image_endpoints_are_not_listed(client_for, endpoints):
@@ -206,8 +209,8 @@ def test_supported_settings_are_reported_per_provider_format(client_for, endpoin
     endpoints("lab-ollama", LAB_URL, ["qwen3:8b"])
     endpoints("groq-cloud", GROQ_URL, ["llama-3.3-70b"])
     listed = _listed(client_for("ada").get("/api/model-customizations").json())
-    lab = set(listed["lab-ollama"]["qwen3:8b"]["supported"])
-    groq = set(listed["groq-cloud"]["llama-3.3-70b"]["supported"])
+    lab = set(listed["lab-ollama"]["qwen3:8b"]["carried"])
+    groq = set(listed["groq-cloud"]["llama-3.3-70b"]["carried"])
     assert {"num_ctx", "temperature", "top_p", "top_k", "min_p",
             "presence_penalty", "repeat_penalty"} <= lab
     assert {"temperature", "top_p", "presence_penalty"} <= groq

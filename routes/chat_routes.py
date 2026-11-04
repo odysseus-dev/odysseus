@@ -2280,9 +2280,6 @@ def setup_chat_routes(
         session_mode = str(getattr(sess, "thinking_mode", "") or "off").lower()
         if session_mode in {"on", "off"}:
             thinking_mode = session_mode
-        from src.model_profiles import supports_user_thinking_toggle
-        if not supports_user_thinking_toggle(sess.model):
-            thinking_mode = "off"
         reasoning_effort = None
         req_effort = getattr(chat_request, "reasoning_effort", None)
         if req_effort:
@@ -2799,9 +2796,6 @@ def setup_chat_routes(
             # contracts.
             if thinking_mode is None and session_mode in {"on", "off"}:
                 thinking_mode = session_mode
-            from src.model_profiles import supports_user_thinking_toggle
-            if not supports_user_thinking_toggle(sess.model):
-                thinking_mode = "off"
             if reasoning_effort is None and session_mode.startswith("effort:"):
                 reasoning_effort = session_mode[7:].strip()
             from src.chatgpt_subscription import validate_reasoning_effort
@@ -2940,14 +2934,6 @@ def setup_chat_routes(
                 )
             if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
-            # Route reconciliation above can switch models after the request's
-            # generation settings were parsed. Do not carry a stale thinking
-            # toggle from the previously selected model into one that does not
-            # expose that control (notably OpenRouter Grok 4.5, where enabling
-            # reasoning can put the complete answer in reasoning_content).
-            from src.model_profiles import supports_user_thinking_toggle
-            if not supports_user_thinking_toggle(sess.model):
-                thinking_mode = "off"
             # Both picker entries point at the same fine-tuned model. Clean
             # harness ownership follows that model, not the endpoint alias;
             # every other model continues through the legacy RAG path.
