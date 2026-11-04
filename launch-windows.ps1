@@ -183,13 +183,20 @@ $chromaPort = $env:CHROMADB_PORT
 if (-not $chromaPort) { $chromaPort = Get-DotEnvValue "CHROMADB_PORT" }
 if (-not $chromaPort) { $chromaPort = "8100" }
 $chromaPort = [int]$chromaPort
+$chromaBindHost = "127.0.0.1"
+if ($chromaHost -in @("::1", "[::1]")) {
+    $chromaBindHost = "::1"
+    # chromadb-client constructs an HTTP URL from this host. An IPv6 literal
+    # needs brackets there, even though the server's bind address does not.
+    $env:CHROMADB_HOST = "[::1]"
+}
 
 if ($NoChroma) {
     Write-Host ""
     Write-Host "Skipping the local ChromaDB server (-NoChroma)." -ForegroundColor Yellow
-} elseif ($chromaHost -notin @("localhost", "127.0.0.1", "::1")) {
+} elseif ($chromaHost -notin @("localhost", "127.0.0.1", "::1", "[::1]")) {
     Write-Host ("CHROMADB_HOST is {0} - not starting a local ChromaDB server." -f $chromaHost)
-} elseif (Test-TcpPort "127.0.0.1" $chromaPort) {
+} elseif (Test-TcpPort $chromaBindHost $chromaPort) {
     Write-Host ("ChromaDB already listening on port {0} - using it." -f $chromaPort)
 } else {
     Write-Step "Starting the local ChromaDB server (vector memory + document RAG)"
@@ -217,14 +224,14 @@ if ($NoChroma) {
     if ($chromaReady) {
         New-Item -ItemType Directory -Force -Path "logs" | Out-Null
         $chromaProc = Start-Process -FilePath $chromaExe -PassThru -WindowStyle Hidden `
-            -ArgumentList @("run", "--host", "127.0.0.1", "--port", $chromaPort, "--path", "data\chroma") `
+            -ArgumentList @("run", "--host", $chromaBindHost, "--port", $chromaPort, "--path", "data\chroma") `
             -RedirectStandardOutput "logs\chroma.log" -RedirectStandardError "logs\chroma.err.log"
         $deadline = (Get-Date).AddSeconds(60)
-        while (-not (Test-TcpPort "127.0.0.1" $chromaPort) -and -not $chromaProc.HasExited -and (Get-Date) -lt $deadline) {
+        while (-not (Test-TcpPort $chromaBindHost $chromaPort) -and -not $chromaProc.HasExited -and (Get-Date) -lt $deadline) {
             Start-Sleep -Milliseconds 500
         }
-        if (Test-TcpPort "127.0.0.1" $chromaPort) {
-            Write-Host ("ChromaDB running on 127.0.0.1:{0} (data in data\chroma, log in logs\chroma.log)." -f $chromaPort)
+        if (Test-TcpPort $chromaBindHost $chromaPort) {
+            Write-Host ("ChromaDB running on {0}:{1} (data in data\chroma, log in logs\chroma.log)." -f $chromaBindHost, $chromaPort)
         } else {
             $chromaReady = $false
             if (-not $chromaProc.HasExited) { Stop-Process -Id $chromaProc.Id -Force -ErrorAction SilentlyContinue }
