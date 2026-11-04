@@ -9,6 +9,7 @@ from src.chat_helpers import extract_urls
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
 from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+from src.text_helpers import strip_think
 
 logger = logging.getLogger(__name__)
 
@@ -436,7 +437,10 @@ class ChatProcessor:
                         temperature=0.1,
                         max_tokens=50,
                         timeout=15,
-                    ).strip()
+                        thinking_mode="off",
+                    )
+                    # Models without a reasoning parser put thinking in the content.
+                    generated_query = strip_think(generated_query, prose=False, prompt_echo=False).strip()
 
                     if generated_query:
                         # LLM successfully generated a non-empty query -> use the generated query

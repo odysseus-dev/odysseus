@@ -88,6 +88,58 @@ def test_llm_call_content_wins_over_reasoning_content(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Thinking off: reasoning never stands in for the answer
+# ---------------------------------------------------------------------------
+
+def test_llm_call_with_thinking_off_returns_empty_instead_of_reasoning(monkeypatch):
+    monkeypatch.setattr(
+        llm_core.httpx, "post",
+        lambda *a, **kw: _sync_response(_openai_msg("", "* User message: ...")),
+    )
+    result = llm_core.llm_call(
+        "http://test/v1", "qwen3-8b",
+        [{"role": "user", "content": "extract"}],
+        thinking_mode="off",
+    )
+    assert result == ""
+
+
+def test_llm_call_async_with_thinking_off_returns_empty_instead_of_reasoning(monkeypatch):
+    class _FakeAsyncClient:
+        async def post(self, *a, **kw):
+            req = httpx.Request("POST", "http://test-async/v1/chat/completions")
+            return httpx.Response(200, request=req,
+                                  json=_openai_msg("", "* User message: ..."))
+
+    monkeypatch.setattr(llm_core, "_get_http_client",
+                        lambda: _FakeAsyncClient())
+
+    result = asyncio.run(llm_core.llm_call_async(
+        "http://test-async/v1", "qwen3-8b",
+        [{"role": "user", "content": "extract"}],
+        thinking_mode="off",
+    ))
+    assert result == ""
+
+
+def test_llm_call_with_thinking_off_drops_mistral_structured_thinking(monkeypatch):
+    content = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "reasoning"}]},
+        {"type": "text", "text": "answer"},
+    ]
+    monkeypatch.setattr(
+        llm_core.httpx, "post",
+        lambda *a, **kw: _sync_response(_openai_msg(content)),
+    )
+    result = llm_core.llm_call(
+        "http://test/v1", "some-model",
+        [{"role": "user", "content": "extract"}],
+        thinking_mode="off",
+    )
+    assert result == "answer"
+
+
+# ---------------------------------------------------------------------------
 # Streaming agent path tests (4 and 5)
 # These import and test _empty_response_fallback — the real production helper
 # extracted from stream_agent_loop.  If the fallback branch is reverted or
