@@ -33,6 +33,7 @@ from src.agent_loop import (
 )
 from src.agent_loop import _normalize_ody_qwen_text_artifacts
 from src import agent_runs
+from src.model_customization import resolve_temperature
 from src import shutdown as _shutdown
 from src.model_context import estimate_tokens
 from src.context_compactor import (
@@ -2279,9 +2280,6 @@ def setup_chat_routes(
         session_mode = str(getattr(sess, "thinking_mode", "") or "off").lower()
         if session_mode in {"on", "off"}:
             thinking_mode = session_mode
-        from src.model_profiles import supports_user_thinking_toggle
-        if not supports_user_thinking_toggle(sess.model):
-            thinking_mode = "off"
         reasoning_effort = None
         req_effort = getattr(chat_request, "reasoning_effort", None)
         if req_effort:
@@ -2406,7 +2404,7 @@ def setup_chat_routes(
             request_messages,
             fallback_statuses=foreground_policy.eligible_statuses,
             candidate_request_factory=candidate_request_factory,
-            temperature=(sess.temperature_override if getattr(sess, "temperature_override", None) is not None else 1.0),
+            temperature=getattr(sess, "temperature_override", None),
             max_tokens=(sess.max_tokens_override if getattr(sess, "max_tokens_override", None) is not None else 0),
             prompt_type=preset_id,
             session_id=session,
@@ -2798,9 +2796,6 @@ def setup_chat_routes(
             # contracts.
             if thinking_mode is None and session_mode in {"on", "off"}:
                 thinking_mode = session_mode
-            from src.model_profiles import supports_user_thinking_toggle
-            if not supports_user_thinking_toggle(sess.model):
-                thinking_mode = "off"
             if reasoning_effort is None and session_mode.startswith("effort:"):
                 reasoning_effort = session_mode[7:].strip()
             from src.chatgpt_subscription import validate_reasoning_effort
@@ -2939,14 +2934,6 @@ def setup_chat_routes(
                 )
             if not (getattr(sess, "endpoint_url", "") or "").strip():
                 raise HTTPException(400, "Selected model endpoint is not configured")
-            # Route reconciliation above can switch models after the request's
-            # generation settings were parsed. Do not carry a stale thinking
-            # toggle from the previously selected model into one that does not
-            # expose that control (notably OpenRouter Grok 4.5, where enabling
-            # reasoning can put the complete answer in reasoning_content).
-            from src.model_profiles import supports_user_thinking_toggle
-            if not supports_user_thinking_toggle(sess.model):
-                thinking_mode = "off"
             # Both picker entries point at the same fine-tuned model. Clean
             # harness ownership follows that model, not the endpoint alias;
             # every other model continues through the legacy RAG path.
@@ -4273,7 +4260,7 @@ def setup_chat_routes(
                     async for chunk in stream_llm_with_fallback(
                         _foreground_candidates,
                         messages,
-                        temperature=(temperature_override if temperature_override is not None else 1.0),
+                        temperature=temperature_override,
                         # Respect the preset; 0/unset = let the server decide (no
                         # cap), matching agent mode. The old hard 4096 fallback
                         # truncated reasoning models mid-<think> — they'd burn the
@@ -4696,7 +4683,7 @@ def setup_chat_routes(
                         sess.model,
                         messages,
                         headers=sess.headers,
-                        temperature=(temperature_override if temperature_override is not None else 1.0),
+                        temperature=(temperature_override if temperature_override is not None else resolve_temperature(sess.endpoint_url, sess.model, None)),
                         max_tokens=_max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,

@@ -2433,6 +2433,62 @@
               <div id="adm-epList-api"><div class="admin-empty">No API endpoints yet.</div></div>
             </div>
           </div>
+          <div class="admin-card adm-mc-card" id="adm-modelCustomCard" style="margin-top:12px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Per-Model Settings</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Generation defaults for one model on one endpoint. Leave a field blank to keep the provider default. The context window is the budget Odysseus plans with; on non-Ollama servers it does not change the loaded window.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mcEndpoint">Endpoint</label>
+                <select id="adm-mcEndpoint" class="settings-select"><option value="">Select an endpoint</option></select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mcModel">Model</label>
+                <select id="adm-mcModel" class="settings-select" disabled><option value="">Select a model</option></select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-temperature">Temperature</label>
+                <input id="adm-mc-temperature" type="text" inputmode="decimal" placeholder="0 – 2" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-top_p">Top P</label>
+                <input id="adm-mc-top_p" type="text" inputmode="decimal" placeholder="0 – 1" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-top_k">Top K</label>
+                <input id="adm-mc-top_k" type="text" inputmode="numeric" placeholder="0 – 1000" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-min_p">Min P</label>
+                <input id="adm-mc-min_p" type="text" inputmode="decimal" placeholder="0 – 1" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-presence_penalty">Presence penalty</label>
+                <input id="adm-mc-presence_penalty" type="text" inputmode="decimal" placeholder="-2 – 2" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-repeat_penalty">Repeat penalty</label>
+                <input id="adm-mc-repeat_penalty" type="text" inputmode="decimal" placeholder="0 – 2" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-num_ctx">Context window</label>
+                <input id="adm-mc-num_ctx" type="text" inputmode="numeric" placeholder="256 – 1048576" class="settings-select">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" for="adm-mc-thinking">Thinking</label>
+                <select id="adm-mc-thinking" class="settings-select">
+                  <option value="">Default</option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
+              <div class="admin-toggle-sub">Thinking applies to new chats; existing chats keep their own toggle.</div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <button class="admin-btn-sm" id="adm-mcReloadBtn" type="button" title="Re-read the customization list">Reload</button>
+                <button class="admin-btn-add" id="adm-mcSaveBtn" style="display:inline-flex;align-items:center;gap:5px" disabled><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save</button>
+                <div id="adm-mcMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- ═══ TOOLS TAB ═══ -->
@@ -2457,11 +2513,11 @@
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Tool call limit</label>
-                <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;">
+                <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select">
               </div>
               <div class="settings-row">
                 <label class="settings-label">Max steps per message</label>
-                <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select" style="width:120px;">
+                <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select">
               </div>
               <div class="settings-row">
                 <label class="settings-label">Tool approval</label>

@@ -13,6 +13,7 @@ import {
   renderUsageCardHtml as renderChatgptUsageCardHtml,
 } from './chatgptSubscriptionUsage.js';
 import { getSettings, getTools, invalidateSettings, invalidateTools } from './appConfig.js';
+import { initModelCustomization } from './settings/modelCustomization.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1491,6 +1492,7 @@ async function loadEndpoints() {
     const err = '<div class="admin-error">Failed to load</div>';
     [listLocal, listApi].forEach(c => { if (c) c.innerHTML = err; });
   }
+  initModelCustomization();
 }
 
 async function _saveEpModelState(epId, panel) {
