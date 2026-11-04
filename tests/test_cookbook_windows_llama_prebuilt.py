@@ -32,7 +32,7 @@ ASSETS = [
 ]
 
 
-def _run_bootstrap(tmp_path, *, nvidia=False, gpu_name="Intel(R) UHD Graphics"):
+def _run_bootstrap(tmp_path, *, nvidia=False, gpu_name="Intel(R) UHD Graphics", stable_without_binaries=False):
     fixtures = tmp_path / "fixtures"
     fixtures.mkdir()
     with zipfile.ZipFile(fixtures / "llama.zip", "w") as z:
@@ -57,6 +57,8 @@ def _run_bootstrap(tmp_path, *, nvidia=False, gpu_name="Intel(R) UHD Graphics"):
     ]
     if nvidia:
         stubs.append('nvidia-smi() { echo "GPU 0: NVIDIA GeForce RTX 4060 Ti (UUID: GPU-x)"; }')
+    if stable_without_binaries:
+        stubs.insert(3, '  case "$url" in *releases/latest*) echo \'{"assets":[{"browser_download_url":"https://github.com/ggml-org/llama.cpp/releases/download/v0.8.0/nightly-tag.txt"}]}\'; return;; esac')
     lines = []
     _append_llama_cpp_windows_prebuilt_lines(lines)
 
@@ -126,3 +128,9 @@ def test_local_windows_runner_bootstraps_native_llama_server():
     routes = (Path(__file__).resolve().parent.parent / "routes/cookbook_routes.py").read_text(encoding="utf-8")
     assert 'if local_windows_llama_cmd and "llama-server" in req.cmd:' in routes
     assert "_append_llama_cpp_windows_prebuilt_lines(runner_lines)" in routes
+
+
+def test_bootstrap_uses_prerelease_assets_when_latest_has_only_a_tag_pointer(tmp_path):
+    stdout, install_dir = _run_bootstrap(tmp_path, stable_without_binaries=True)
+    assert _downloads(stdout) == [f"{RELEASE}/llama-b9999-bin-win-cpu-x64.zip"]
+    assert (install_dir / "llama-server.exe").is_file()

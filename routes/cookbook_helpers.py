@@ -1062,6 +1062,11 @@ def _append_llama_cpp_windows_prebuilt_lines(runner_lines: list[str]) -> None:
     runner_lines.append('  case "${PROCESSOR_ARCHITEW6432:-$PROCESSOR_ARCHITECTURE}" in ARM64) _odysseus_arch="arm64"; _odysseus_variant="cpu" ;; esac')
     runner_lines.append('  echo "[odysseus] llama-server not found - fetching the prebuilt llama.cpp release for Windows ($_odysseus_variant, $_odysseus_arch)..."')
     runner_lines.append('  _odysseus_assets="$(curl -fsSL --max-time 15 https://api.github.com/repos/ggml-org/llama.cpp/releases/latest 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4)"')
+    # Stable releases can contain only a pointer to the nightly tag. Windows
+    # binaries live on the prereleases in that case, which /latest excludes.
+    runner_lines.append('  if ! printf \'%s\\n\' "$_odysseus_assets" | grep -qiE \'/llama-[^/]*-bin-win-[^/]*\\.zip$\'; then')
+    runner_lines.append('    _odysseus_assets="$(curl -fsSL --max-time 15 "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=5" 2>/dev/null | grep \'"browser_download_url"\' | cut -d\'"\' -f4)"')
+    runner_lines.append('  fi')
     runner_lines.append('  _odysseus_url=""; _odysseus_cudart_url=""')
     runner_lines.append('  if [ "$_odysseus_variant" = "cuda" ]; then')
     # CUDA 12 builds run on older drivers than the CUDA 13 ones, so try them first.
