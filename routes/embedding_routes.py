@@ -151,6 +151,19 @@ def setup_embedding_routes():
         result.sort(key=lambda x: (not x["active"], not x["downloaded"], x["size_gb"]))
         return result
 
+    @router.get("/status")
+    def embedding_status():
+        """Local ONNX embedding residency for this process: how many model weight
+        copies are held, which one is newest, and the configured ceiling.
+
+        Issue #6510: three stores each loaded their own copy (~4.4GB for a 1.3GB
+        model) and the only sign was a grep of app.log. clients should read
+        FASTEMBED_CLIENT_CACHE_SIZE (1 by default), not 3-4.
+        """
+        from src.embeddings import fastembed_resident_info
+
+        return fastembed_resident_info()
+
     @router.post("/models/{model_name:path}/download")
     async def download_model(model_name: str):
         """Download a fastembed model. Returns when complete."""

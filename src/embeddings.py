@@ -195,6 +195,7 @@ class FastEmbedClient:
                 raise ValueError("FASTEMBED_THREADS must be between 1 and 256")
             kwargs["threads"] = threads
         self._embedding = TextEmbedding(**kwargs)
+        self.threads = kwargs.get("threads")
         self._dim: Optional[int] = None
         self.url = "local://fastembed"
         logger.info(f"FastEmbed loaded model={self.model}")
@@ -244,6 +245,22 @@ def get_shared_fastembed_client():
         if _shared_fastembed is None or _shared_fastembed[0] != key:
             _shared_fastembed = (key, FastEmbedClient())
         return _shared_fastembed[1]
+
+
+def fastembed_resident_info() -> dict:
+    """What this process is carrying, for the admin Embedding panel.
+
+    The duplication in #6510 was only visible by grepping app.log for
+    "FastEmbed loaded model"; this makes it a number. One client is kept.
+    """
+    with _shared_fastembed_lock:
+        client = _shared_fastembed[1] if _shared_fastembed else None
+        return {
+            "clients": 1 if client else 0,
+            "model": getattr(client, "model", None),
+            "threads": getattr(client, "threads", None),
+            "cache_size": 1,
+        }
 
 
 def _load_persisted_endpoint() -> dict:

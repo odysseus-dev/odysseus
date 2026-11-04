@@ -81,3 +81,13 @@ def test_a_failed_load_is_retried(loads, monkeypatch):
     monkeypatch.delenv("FASTEMBED_THREADS")
     assert embeddings.get_shared_fastembed_client() is not None
     assert len(loads) == 1
+
+
+def test_resident_info_reports_the_shared_client(loads, monkeypatch):
+    assert embeddings.fastembed_resident_info()["clients"] == 0
+    monkeypatch.setenv("FASTEMBED_THREADS", "4")
+    client = embeddings.get_shared_fastembed_client()
+
+    assert embeddings.fastembed_resident_info() == {
+        "clients": 1, "model": client.model, "threads": 4, "cache_size": 1,
+    }
