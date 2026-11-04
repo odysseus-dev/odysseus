@@ -150,3 +150,69 @@ def test_inline_think_block_never_becomes_the_web_search_query(monkeypatch):
     mock_web_search = _run_web_preface(monkeypatch, "Who is Jensen Huang?")
 
     mock_web_search.assert_called_with("Who is Jensen Huang?", time_filter=None, return_sources=True)
+
+
+def _turn(role, content):
+    return SimpleNamespace(role=role, content=content)
+
+
+def _extraction_messages(monkeypatch, message, history, **kwargs):
+    mock_llm_call = MagicMock(return_value="query")
+    monkeypatch.setattr("src.llm_core.llm_call", mock_llm_call)
+    monkeypatch.setattr(
+        "src.chat_processor.comprehensive_web_search",
+        MagicMock(return_value=("Search Results", [])),
+    )
+    processor = ChatProcessor(memory_manager=MagicMock(), personal_docs_manager=MagicMock())
+    processor.build_context_preface(
+        message=message,
+        session=SimpleNamespace(endpoint_url="http://local", model="test", headers={}, history=history),
+        use_web=True,
+        use_rag=False,
+        use_memory=False,
+        use_skills=False,
+        **kwargs,
+    )
+    return mock_llm_call.call_args.args[2]
+
+
+def test_follow_up_query_extraction_sees_recent_turns(monkeypatch):
+    followup = "Does he work with Lisa Su?"
+    messages = _extraction_messages(monkeypatch, followup, [
+        _turn("user", "Who is Jensen Huang from NVIDIA?"),
+        _turn("assistant", "<think>Let me look.</think>Jensen Huang leads NVIDIA."),
+        _turn("user", followup),
+    ])
+
+    assert messages[1]["content"] == (
+        "Earlier conversation:\n"
+        "user: Who is Jensen Huang from NVIDIA?\n"
+        "assistant: Jensen Huang leads NVIDIA.\n\n"
+        f"Latest message:\n{followup}"
+    )
+
+
+def test_first_message_query_extraction_is_only_the_message(monkeypatch):
+    messages = _extraction_messages(monkeypatch, "Who is Jensen?", [_turn("user", "Who is Jensen?")])
+
+    assert messages[1] == {"role": "user", "content": "Who is Jensen?"}
+
+
+def test_query_extraction_history_is_bounded(monkeypatch):
+    history = [_turn("user", f"old-{i} " + "x" * 2000) for i in range(10)]
+    history.append(_turn("assistant", "reply"))
+    prompt = _extraction_messages(monkeypatch, "next", history)[1]["content"]
+
+    assert "old-6" not in prompt
+    assert "old-7" in prompt and "old-9" in prompt
+    assert len(prompt) < 2200
+
+
+def test_incognito_query_extraction_ignores_saved_history(monkeypatch):
+    messages = _extraction_messages(
+        monkeypatch, "Does he code?", [_turn("user", "Saved chat"), _turn("assistant", "Reply")],
+        incognito=True,
+    )
+
+    assert messages[1] == {"role": "user", "content": "Does he code?"}
+

@@ -13,6 +13,57 @@ from src.text_helpers import strip_think
 
 logger = logging.getLogger(__name__)
 
+_SEARCH_QUERY_HISTORY_TURNS = 4
+_SEARCH_QUERY_HISTORY_TURN_CHARS = 500
+
+
+def _search_query_messages(message: str, history: List[Any]) -> List[Dict[str, str]]:
+    """Build the query extraction prompt, with recent turns to resolve references.
+
+    A follow-up such as "Does he work with Jane?" has no searchable subject on
+    its own. The current turn is already the last history entry when the session
+    persists it, so a trailing user entry is dropped rather than repeated.
+    """
+    turns = [m for m in history if getattr(m, "role", "") in {"user", "assistant"}]
+    if turns and turns[-1].role == "user":
+        turns.pop()
+
+    lines = []
+    for turn in turns[-_SEARCH_QUERY_HISTORY_TURNS:]:
+        content = turn.content
+        if isinstance(content, list):
+            content = " ".join(
+                str(part.get("text") or "") for part in content if isinstance(part, dict)
+            )
+        text = " ".join(strip_think(str(content or ""), prose=False, prompt_echo=False).split())
+        if text:
+            lines.append(f"{turn.role}: {text[:_SEARCH_QUERY_HISTORY_TURN_CHARS]}")
+
+    if not lines:
+        return [
+            {
+                "role": "system",
+                "content": "Extract a concise search query from the user's message. Reply ONLY with the query.",
+            },
+            {"role": "user", "content": message},
+        ]
+    conversation = "\n".join(lines)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Extract a concise search query from the user's latest message. "
+                "Use the earlier conversation only to resolve references such as pronouns, "
+                "and leave out earlier topics the latest message does not refer to. "
+                "Reply ONLY with the query."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Earlier conversation:\n{conversation}\n\nLatest message:\n{message}",
+        },
+    ]
+
 
 def _clean_search_query(query: str, max_len: int = 200) -> str:
     """Strip fenced code blocks from a search query while preserving inline
@@ -423,16 +474,10 @@ class ChatProcessor:
                     generated_query = llm_call(
                         t_url,
                         t_model,
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Extract a concise search query from the user's message. "
-                                    "Reply ONLY with the query."
-                                ),
-                            },
-                            {"role": "user", "content": message},
-                        ],
+                        _search_query_messages(
+                            message,
+                            [] if incognito else getattr(session, "history", None) or [],
+                        ),
                         headers=t_headers,
                         temperature=0.1,
                         max_tokens=50,
