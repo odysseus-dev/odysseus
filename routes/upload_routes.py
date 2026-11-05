@@ -546,7 +546,8 @@ def setup_upload_routes(upload_handler):
         os.makedirs(cache_dir, exist_ok=True)
         return os.path.normpath(os.path.join(cache_dir, safe_id + ".txt"))
 
-    def _sync_gallery_caption_for_upload(info: dict | None, owner: str | None, text: str, source: str = "") -> None:
+    def _sync_gallery_caption_for_upload(info: dict | None, owner: str | None, text: str,
+                                         source: str | None = "", fallback: str = "") -> None:
         """Copy upload OCR/vision text onto the promoted gallery image row."""
         if not info:
             return
@@ -565,7 +566,10 @@ def setup_upload_routes(upload_handler):
             if not img:
                 return
             img.caption = (text or "").strip()
-            img.caption_source = source or ""
+            if source is not None:
+                img.caption_source = source
+            elif not img.caption_source:
+                img.caption_source = fallback
             db.commit()
         except Exception as e:
             db.rollback()
@@ -594,14 +598,15 @@ def setup_upload_routes(upload_handler):
             try:
                 with open(cache_path, encoding="utf-8") as f:
                     cached_text = f.read()
-                from src.caption_source import read_cache_source
-                _sync_gallery_caption_for_upload(info, file_owner or current_user, cached_text,
-                                                 read_cache_source(cache_path))
+                from src.caption_source import cache_fallback, read_cache_kind
+                _sync_gallery_caption_for_upload(
+                    info, file_owner or current_user, cached_text, None,
+                    cache_fallback(read_cache_kind(cache_path), file_owner or current_user))
                 return {"text": cached_text, "cached": True}
             except Exception as e:
                 logger.warning(f"Vision cache read failed for {file_id}: {e}")
         from src.document_processor import analyze_image_with_vl_result
-        from src.caption_source import vision_source, write_cache_source
+        from src.caption_source import VISION, vision_source, write_cache_kind
         try:
             result = analyze_image_with_vl_result(path, owner=current_user) or {}
             text = result.get("text") or ""
@@ -612,7 +617,7 @@ def setup_upload_routes(upload_handler):
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
                 f.write(text)
-            write_cache_source(cache_path, source)
+            write_cache_kind(cache_path, VISION if source else "")
         except Exception as e:
             logger.warning(f"Vision cache write failed for {file_id}: {e}")
         _sync_gallery_caption_for_upload(info, file_owner or current_user, text, source)
@@ -638,12 +643,11 @@ def setup_upload_routes(upload_handler):
         text = (body or {}).get("text", "")
         if not isinstance(text, str):
             raise HTTPException(400, "text must be a string")
-        from src.caption_source import user_source, write_cache_source
+        from src.caption_source import USER, user_source, write_cache_kind
         with open(_vision_cache_path(file_id), "w", encoding="utf-8") as f:
             f.write(text)
-        source = user_source(current_user)
-        write_cache_source(_vision_cache_path(file_id), source)
-        _sync_gallery_caption_for_upload(info, file_owner or current_user, text, source)
+        write_cache_kind(_vision_cache_path(file_id), USER)
+        _sync_gallery_caption_for_upload(info, file_owner or current_user, text, user_source(current_user))
         return {"ok": True}
 
     async def periodic_rate_limit_cleanup():
