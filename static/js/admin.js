@@ -1771,7 +1771,7 @@ function initEndpointForm() {
         status.textContent = '';
         // Anthropic forbids third-party Claude.ai sign-in, so send people to the Console key page instead.
         if (isAnthropic) {
-          status.innerHTML = '<a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer" class="admin-btn-sm" style="display:inline-flex;align-items:center;gap:4px;margin-top:6px;text-decoration:none;">Get an Anthropic API key ↗</a> <span style="opacity:0.6;font-size:11px;">then paste it above and click Add</span>';
+          status.innerHTML = '<a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer" class="admin-btn-sm" style="display:inline-flex;align-items:center;gap:4px;margin-top:6px;text-decoration:none;">Get an Anthropic API key ↗</a> <span style="opacity:0.6;font-size:11px;margin-left:8px;">then paste it above and click Add</span>';
         }
       }
     }
