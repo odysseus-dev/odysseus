@@ -249,6 +249,8 @@ class EditFileTool:
             return original, updated, "ok"
 
         # In-place rewrite: a failure after truncation may leave partial bytes.
+        from src.harness_checkpoint import snapshot_existing
+        snapshot_existing(str(path), ctx)
         attempted = []
         partial = lambda: {"mutation_attempted": True} if attempted else {}
         try:
@@ -469,6 +471,8 @@ class WriteFileTool:
             return {"error": "write_file: target is a directory", "exit_code": 1}
         # This writer truncates in place. Once that stage is reached, a failure
         # may leave a partial file; report it so effect evidence stays honest.
+        from src.harness_checkpoint import snapshot_existing
+        snapshot_existing(str(path), ctx)
         attempted = []
         try:
             def _write():
@@ -597,6 +601,10 @@ class ApplyPatchTool:
                     new = _apply_patch_hunks(old, op["hunks"], op["path"])
                 prepared.append((kind, path, old, new))
 
+            from src.harness_checkpoint import snapshot_existing
+            for _kind, _path, _old, _new in prepared:
+                if _kind != "add":
+                    snapshot_existing(str(_path), ctx)
             staged: list[tuple[str, str]] = []
             backups: list[tuple[str, str | None]] = []
             try:
