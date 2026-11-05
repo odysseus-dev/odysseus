@@ -243,7 +243,7 @@ class EffectLog:
         """Hold the file exclusively with every durable record merged."""
         assert self.path is not None
         _ensure_directory(self.path.parent)
-        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         descriptor = os.open(self.path, flags, 0o600)
         try:
             if fcntl is not None:
@@ -357,7 +357,7 @@ class EffectLog:
             return
         with self._lock:
             try:
-                descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(self.path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
                                      | getattr(os, "O_CLOEXEC", 0))
             except FileNotFoundError:
                 return
@@ -394,7 +394,7 @@ class EffectLog:
         log = cls(run_id, directory=directory)
         assert log.path is not None
         try:
-            descriptor = os.open(log.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+            descriptor = os.open(log.path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
         except FileNotFoundError:
             return log
         except OSError as error:

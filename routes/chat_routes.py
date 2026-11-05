@@ -3568,6 +3568,7 @@ def setup_chat_routes(
                                  for a in (ctx.preprocessed.attachment_meta or [])),
             capabilities=({'search_browser'} if (
                 _explicit_browser_intent or _external_discovery_intent
+		or "web_search" not in disabled_tools
             ) else ()),
         )
         if exact_tool_approval is not None:
