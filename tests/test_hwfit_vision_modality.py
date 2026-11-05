@@ -11,6 +11,8 @@ deliberately NOT a statement about whether this machine can serve it — that is
 derived at runtime from whether mlx-vlm is installed in the launch interpreter.
 """
 
+import pytest
+
 from services.hwfit.fit import analyze_model
 from services.hwfit.models import _normalize_model_entry, get_models
 from services.hwfit.vision import vision_modality
@@ -91,22 +93,61 @@ def test_text_model_fit_result_reports_text_modality():
     assert fit["modality"] != "vision"
 
 
-def test_every_tagged_catalog_entry_is_marked_across_both_catalogs():
-    # hf_models.json has no usable `use_case` for this (free text like
-    # "General purpose"), so pipeline_tag is the only cross-catalog signal.
-    # Guard that the derivation runs for every row, not just the MLX one.
-    tagged = [m for m in get_models() if m.get("pipeline_tag") == "image-text-to-text"]
-    assert tagged, "catalogs should carry image-text-to-text entries"
-    unmarked = [m["name"] for m in tagged if m.get("modality") != "vision"]
-    assert unmarked == []
+# Rows shaped like the two catalogs. The shipped hf_models.json and
+# mlx_community_models.json are empty lists by design — see the README beside
+# them: a fresh install has no recommendations until discovery populates the
+# runtime cache. So the properties below are asserted against rows the test
+# owns. Asserting them against whatever the repository happens to ship would
+# pass only on an installation that has already been populated.
+_CATALOG_SHAPES = [
+    # mlx_community_models.json shape: clean use_case, tag present.
+    {"name": "mlx-community/gemma-3-27b-it-qat-4bit", "pipeline_tag": "image-text-to-text",
+     "use_case": "multimodal", "format": "mlx", "quantization": "mlx-4bit"},
+    # hf_models.json shape: use_case is free prose, so the tag is the only
+    # signal the two catalogs share.
+    {"name": "google/gemma-4-26B-A4B-it", "pipeline_tag": "image-text-to-text",
+     "use_case": "General purpose, multimodal", "quantization": "BF16"},
+    {"name": "QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ", "pipeline_tag": "text-generation",
+     "use_case": "Vision, chat, coding, agentic tool use", "quantization": "AWQ-4bit"},
+    {"name": "unsloth/gemma-4-12B-it-GGUF", "pipeline_tag": "image-text-to-text",
+     "use_case": "General purpose, multimodal", "quantization": "Q4_K_M"},
+]
 
 
-def test_vision_detection_does_not_leak_into_the_bulk_of_the_catalog():
-    # Precision guard: the name marker must not sweep up text models. Vision
-    # is a minority of the catalog; if this ever flips, the marker regressed.
+def test_every_tagged_entry_is_marked_whatever_the_catalog_shape():
+    for entry in _CATALOG_SHAPES:
+        assert _normalize_model_entry(dict(entry))["modality"] == "vision", entry["name"]
+
+
+def test_the_marker_does_not_sweep_up_text_models():
+    # Precision guard. These are real catalog names of text models; several sit
+    # one edit away from a marker ("vl" inside a word, a vision-adjacent
+    # family), which is exactly where a loosened rule would start leaking.
+    for name in (
+        "mlx-community/Qwen3-8B-4bit",
+        "mlx-community/Llama-3.3-70B-Instruct-4bit",
+        "mlx-community/DeepSeek-V4-Flash-4bit",
+        "mlx-community/GLM-Z1-32B-0414-4bit",
+        "lmsys/vicuna-13b-v1.5",
+        "some/navlm-7b",
+        "some/revlon-3b",
+        "mlx-community/Molmo-7B-D-0924-8bit-skip-vision",
+    ):
+        entry = _normalize_model_entry({"name": name, "pipeline_tag": "text-generation"})
+        assert entry["modality"] != "vision", name
+
+
+def test_the_same_properties_hold_on_whatever_rows_are_present():
+    # Bonus pass over the real catalogs when an installation has them: it is
+    # the only check that sees rows nobody wrote a case for. It cannot be the
+    # primary guard, since upstream ships none.
     rows = get_models()
+    if not rows:
+        pytest.skip("shipped catalogs are empty by design — nothing to cross-check")
+    tagged = [m for m in rows if m.get("pipeline_tag") == "image-text-to-text"]
+    assert [m["name"] for m in tagged if m.get("modality") != "vision"] == []
     vision = [m for m in rows if m.get("modality") == "vision"]
-    assert 0 < len(vision) < len(rows) / 3
+    assert len(vision) < len(rows) / 3, "vision should stay a minority; the marker may have loosened"
 
 
 # ── The containing directory is not the model ──
