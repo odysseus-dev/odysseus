@@ -388,6 +388,7 @@ class GalleryImage(TimestampMixin, Base):
     filename   = Column(String, nullable=False, unique=True)
     prompt     = Column(Text, nullable=False, default="")
     caption    = Column(Text, nullable=True, default="")
+    caption_source = Column(String, nullable=True, default="")   # "vision:<model>" or "user:<name>"
     model      = Column(String, nullable=True)
     size       = Column(String, nullable=True)
     quality    = Column(String, nullable=True)
@@ -1610,6 +1611,10 @@ def _migrate_add_gallery_caption_column():
             conn.execute("ALTER TABLE gallery_images ADD COLUMN caption TEXT DEFAULT ''")
             conn.commit()
             logging.getLogger(__name__).info("Migrated: added caption column to gallery_images")
+        if columns and "caption_source" not in columns:
+            conn.execute("ALTER TABLE gallery_images ADD COLUMN caption_source TEXT DEFAULT ''")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added caption_source column to gallery_images")
     except Exception as e:
         logging.getLogger(__name__).warning(f"Migration gallery caption column failed: {e}")
     finally:
