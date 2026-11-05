@@ -1167,8 +1167,9 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "results": (
                 "Toggle states are managed client-side in localStorage. "
                 "Available toggles: web, bash, rag, research, incognito, document_editor. "
-                "Use 'toggle <name> off' to disable one. Shell access (bash) can only be "
-                "enabled by the user in the UI."
+                "Use 'toggle <name> on|off' for web, rag, research, incognito, and "
+                "document_editor. Shell access (bash) can only be turned off by the agent; "
+                "the user enables it in the UI."
             )
         }
 

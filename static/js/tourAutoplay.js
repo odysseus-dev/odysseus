@@ -8,7 +8,7 @@
 // Mobile is excluded — tours position halos by rect math that doesn't fit
 // the bottom-sheet layout cleanly.
 
-import { handleSlashCommand } from './slashCommands.js?v=20260921chatgptusage1';
+import { handleSlashCommand } from './slashCommands.js?v=20261104shelltoggle2';
 
 // Modal id → slash command to fire (without the leading "/"). Add to this
 // map when a new feature picks up a `tour-*` command.
