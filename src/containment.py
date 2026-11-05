@@ -610,11 +610,20 @@ def agent_spec(
     Widening or narrowing it is a change to this module, reviewed as one.
     """
     overrides.pop("required", None)
+    # Model-reachable bash does not inherit the host network. Deployments that
+    # still need loopback sidecars (Chroma on 8100, LAN tools) can set
+    # ODYSSEUS_AGENT_NETWORK=inherit. A caller cannot reopen the network.
+    if os.environ.get("ODYSSEUS_AGENT_NETWORK", "").strip().lower() == "inherit":
+        network = overrides.pop("network", NETWORK_INHERIT)
+    else:
+        overrides.pop("network", None)
+        network = NETWORK_NONE
     return ContainmentSpec(
         workspace=workspace,
         env=env,
         wall_clock_s=wall_clock_s,
         required=DEFAULT_REQUIRED,
+        network=network,
         **overrides,
     )
 

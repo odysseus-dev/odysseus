@@ -88,15 +88,17 @@ def test_home_interpreter_is_bound_read_only(workspace, monkeypatch):
     original = containment.shutil.which
     monkeypatch.setattr(containment.shutil, "which", lambda name:
                         "/usr/bin/bwrap" if name == "bwrap" else original(name))
+    monkeypatch.delenv("ODYSSEUS_AGENT_NETWORK", raising=False)
     monkeypatch.setattr(sys, "prefix", "/home/test/venv")
     spec = subprocess_tools._owned_spec(str(workspace), {}, 5)
+    assert spec.network == containment.NETWORK_NONE
     assert "/home/test/venv" in spec.readonly_extra
     argv = containment._bwrap_prefix(spec)
     index = argv.index("/home/test/venv")
     assert argv[index - 1] == "--ro-bind"
     assert "--unshare-pid" in argv
     assert "--dev-bind" not in argv
-    assert "--unshare-net" not in argv
+    assert "--unshare-net" in argv
 
 
 async def test_actual_namespace_hides_host_pid_tree_and_sibling(namespaces):
@@ -189,7 +191,15 @@ async def test_repeated_release_does_not_signal_reused_pid(workspace, monkeypatc
         await containment.run(grant, "echo forbidden")
 
 
-async def test_default_namespace_preserves_loopback_sidecars(namespaces):
+async def _loopback_sidecar_result(port):
+    return await subprocess_tools.PythonTool().execute(
+        f"import socket\ns=socket.create_connection(('127.0.0.1', {port}), timeout=2)\n"
+        "print(s.recv(100).decode().strip())\ns.close()", {},
+    )
+
+
+async def test_default_namespace_closes_the_network(namespaces):
+    """Model bash does not reach loopback unless the operator opts in."""
     async def reply(reader, writer):
         writer.write(b"sidecar\n")
         await writer.drain()
@@ -198,10 +208,25 @@ async def test_default_namespace_preserves_loopback_sidecars(namespaces):
     server = await asyncio.start_server(reply, "127.0.0.1", 0)
     async with server:
         port = server.sockets[0].getsockname()[1]
-        result = await subprocess_tools.PythonTool().execute(
-            f"import socket\ns=socket.create_connection(('127.0.0.1', {port}), timeout=2)\n"
-            "print(s.recv(100).decode().strip())\ns.close()", {},
-        )
+        result = await _loopback_sidecar_result(port)
+    blob = str(result.get("output") or "") + str(result.get("error") or "")
+    assert "Connection refused" in blob or "Network is unreachable" in blob, result
+    assert result["containment"]["network"] == "none"
+    assert "network" in result["containment"]["enforced"]
+
+
+async def test_inherit_opt_in_preserves_loopback_sidecars(namespaces, monkeypatch):
+    """ODYSSEUS_AGENT_NETWORK=inherit keeps the previous sidecar behavior."""
+    monkeypatch.setenv("ODYSSEUS_AGENT_NETWORK", "inherit")
+    async def reply(reader, writer):
+        writer.write(b"sidecar\n")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+    server = await asyncio.start_server(reply, "127.0.0.1", 0)
+    async with server:
+        port = server.sockets[0].getsockname()[1]
+        result = await _loopback_sidecar_result(port)
     assert result["output"] == "sidecar", result
     assert result["containment"]["network"] == "inherit"
     assert "network" not in result["containment"]["enforced"]
