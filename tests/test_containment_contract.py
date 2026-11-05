@@ -297,9 +297,11 @@ def test_the_boundary_does_not_depend_on_the_command(monkeypatch, workspace, com
     """
     enforcing(monkeypatch)
     install(monkeypatch, mechanism("fake", 10, containment.DIMENSIONS))
+    monkeypatch.delenv("ODYSSEUS_AGENT_NETWORK", raising=False)
     spec = containment.agent_spec(workspace, {}, 5)
     grant = containment.acquire(spec, owner="session-1")
     assert grant.mechanism == "fake"
+    assert spec.network == containment.NETWORK_INHERIT
     assert grant.enforced == frozenset(containment.DEFAULT_REQUIRED)
     assert "command" not in grant.to_dict()
 

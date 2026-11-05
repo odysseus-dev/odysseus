@@ -610,11 +610,22 @@ def agent_spec(
     Widening or narrowing it is a change to this module, reviewed as one.
     """
     overrides.pop("required", None)
+    # Inherited by default: --unshare-net was measured to cut loopback sidecars
+    # (ChromaDB on 8100) and some Docker agents do LAN work. Deployments that
+    # do not need either can set ODYSSEUS_AGENT_NETWORK=none; when they do, a
+    # caller cannot reopen the network.
+    mode = os.environ.get("ODYSSEUS_AGENT_NETWORK", "").strip().lower()
+    if mode in {"none", "closed", "isolated"}:
+        overrides.pop("network", None)
+        network = NETWORK_NONE
+    else:
+        network = overrides.pop("network", NETWORK_INHERIT)
     return ContainmentSpec(
         workspace=workspace,
         env=env,
         wall_clock_s=wall_clock_s,
         required=DEFAULT_REQUIRED,
+        network=network,
         **overrides,
     )
 
