@@ -273,7 +273,7 @@ function _addHistoryMessageWithFullRenderer(role, content, modelName, meta) {
   box.appendChild(marker);
   let rendered = null;
   try {
-    rendered = chatRenderer.addMessage(role, content, modelName, meta);
+    rendered = chatRenderer.addMessage(role, content, modelName, {...meta, browser_session_id: currentSessionId});
   } catch (e) {
     marker.remove();
     throw e;

@@ -66,3 +66,6 @@ httpx2
 # create_engine() and raises ModuleNotFoundError if missing. -binary avoids
 # needing libpq-dev/pg_config on the host/image to compile it.
 psycopg2-binary
+
+# Chat-owned interactive browser sessions (Docker uses system Chromium).
+playwright==1.62.0

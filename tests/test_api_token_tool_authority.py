@@ -192,8 +192,8 @@ async def test_delegated_private_browser_local_page_stays_unavailable(tmp_path, 
         ToolRunSecurityContext(delegated_credential=True),
     )
     assert result["exit_code"] == 1
-    assert result["executed"] is False
-    assert result["failure_kind"] == "browser_page_authority_unavailable"
+    assert result.get("executed", False) is False
+    assert result["blocked"] and "API-token" in result["error"]
 
 
 @pytest.mark.parametrize("content", [

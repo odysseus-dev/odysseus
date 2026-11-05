@@ -306,18 +306,18 @@ def test_listing_is_partial_and_does_not_verify_content(run):
 
 @pytest.mark.parametrize("args", [
     {"action": "click", "page": "t1", "selector": "#buy"},
-    {"action": "open", "url": "https://example.com"},
+    {"action": "batch", "commands": [["open", "https://example.com"]]},
     {"action": "snapshot", "page": "t1"},
     {"action": "evaluate", "page": "t1", "script": "1"},
 ])
-def test_browser_page_operations_stay_fail_closed_with_effects(run, args, monkeypatch):
+def test_unowned_or_unsupported_browser_operations_fail_before_dispatch(run, args, monkeypatch):
     async def unexpected_dispatch(*args, **kwargs):
         pytest.fail("Unsupported page operation reached execution")
 
     monkeypatch.setattr(tool_execution, "_execute_tool_block_impl", unexpected_dispatch)
     description, result = run("private_browser", args)
-    assert "UNSUPPORTED" in description
-    assert result["failure_kind"] == "browser_page_authority_unavailable" and result["executed"] is False
+    assert result["failure_kind"] in {"browser_page_authority_unavailable", "resource_identity_denied"}
+    assert result.get("executed", False) is False
     assert run.journal.effects.history().claims == ()
     assert run.journal.actions[0].execution_id is None
 
@@ -464,7 +464,7 @@ def test_browser_page_refusal_survives_approval_and_child_authority(run, ws, mon
                 request_authority=child, exact_approval=approval)
 
     description, result = asyncio.run(call())
-    assert "UNSUPPORTED" in description and result["executed"] is False
+    assert result["exit_code"] == 1 and result.get("executed", False) is False
     assert run.journal.effects.history().claims == () and not invoked
     assert all(action.execution_id is None for action in run.journal.actions)
     assert not run.journal.effects.path.exists()

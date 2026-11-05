@@ -213,15 +213,40 @@ class BrowserSessionObservation:
 
 
 @dataclass(frozen=True)
+class ManagedBrowserObservation:
+    """In-memory Playwright ownership, independent of CLI daemon discovery."""
+    session_incarnation: str
+    producer_namespace: str = "native:playwright"
+
+    def __post_init__(self):
+        import re
+        if self.producer_namespace != "native:playwright" or not re.fullmatch(r"[a-f0-9]{64}", self.session_incarnation):
+            raise ValueError("Malformed managed browser observation")
+
+    def to_dict(self):
+        return asdict(self)
+
+    @property
+    def session_key(self):
+        return "managed-" + self.session_incarnation
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
+            raise ValueError("Malformed managed browser snapshot")
+        return cls(**value)
+
+
+@dataclass(frozen=True)
 class BrowserSessionResource:
     owner: str
     thread_id: str
-    observation: BrowserSessionObservation
+    observation: BrowserSessionObservation | ManagedBrowserObservation
 
     def __post_init__(self):
-        _text(self.owner, "browser owner")
+        _text(self.owner, "browser owner", optional=isinstance(self.observation, ManagedBrowserObservation))
         _text(self.thread_id, "browser thread")
-        if not isinstance(self.observation, BrowserSessionObservation):
+        if not isinstance(self.observation, (BrowserSessionObservation, ManagedBrowserObservation)):
             raise ValueError("Missing browser session observation")
 
     def validate(self):
@@ -235,7 +260,9 @@ class BrowserSessionResource:
     def from_dict(cls, value):
         if not isinstance(value, dict) or set(value) != {"owner", "thread_id", "observation"}:
             raise ValueError("Malformed browser resource snapshot")
-        return cls(value["owner"], value["thread_id"], BrowserSessionObservation.from_dict(value["observation"]))
+        observation = value["observation"]
+        kind = ManagedBrowserObservation if isinstance(observation, dict) and observation.get("producer_namespace") == "native:playwright" else BrowserSessionObservation
+        return cls(value["owner"], value["thread_id"], kind.from_dict(observation))
 
 
 @dataclass(frozen=True)

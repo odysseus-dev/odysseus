@@ -470,7 +470,10 @@ export function hasUnclosedThinkTag(text) {
 }
 
 export function startsWithReasoningPrefix(text) {
-  return /^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |i need |i should |i will |i'll |i am going |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|they are |the question |i can )/i.test(text || '');
+  // First-person task narration ("I'll search", "Let me check", "I can")
+  // also prefixes ordinary answers. It is not evidence of a thinking channel:
+  // treating it as such can hide the entire final result on live/history views.
+  return /^\s*(?:thinking(?:\s+process)?\s*:|the user (?:wants|asks|requested|is asking)\b|user wants\b|let me think\b|the question (?:asks|is asking)\b)/i.test(text || '');
 }
 
 export function normalizeThinkingMarkup(text) {
@@ -541,7 +544,7 @@ function normalizePlainThinking(text) {
     }
   }
 
-  if (/^\s*(?:thinking(?:\s+process)?\s*:|the user |user wants|we need |let me (?:think|look|see|check|read|review|analyze|parse|figure|draft|write)|i need to |i should |i will |i'll |i am going )/i.test(trimmed)) {
+  if (startsWithReasoningPrefix(trimmed)) {
     const thinkBlock = withoutPrefix.trim();
     if (thinkBlock) return `<think>${thinkBlock}</think>`;
   }

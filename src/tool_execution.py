@@ -1662,11 +1662,14 @@ from src.agent_runtime.process_resources import (
 )
 from src.browser_identity import (
     native_browser, parse_operation as parse_browser_operation, SESSION_ACTIONS, PAGE_FAILURE,
-    page_unavailable, resolve_browser_operation, bind_browser_operation, revalidate_browser_operation,
+    page_unavailable, registered as registered_browser, resolve_browser_operation, bind_browser_operation, revalidate_browser_operation,
 )
 
 
+from src.browser_control import agent_action_guard
+
 @record_action
+@agent_action_guard
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
@@ -1756,6 +1759,10 @@ async def execute_tool_block(
         }
 
     transport = operation.transport_tool
+    from src.browser_control import tool_checkpoint
+    control_rejection = await tool_checkpoint(authority.owner, authority.session_id, authority)
+    if control_rejection is not None:
+        return f"{transport}: BROWSER CONTROL CHANGED", control_rejection
     if operation.tool == "private_browser" and _legacy_private_browser_enabled():
         # The legacy process cannot establish the sealed browser/page identity
         # required by the current runtime. Never execute it ahead of resource
@@ -1767,9 +1774,15 @@ async def execute_tool_block(
     if operation.tool == "private_browser":
         try:
             _, browser_args = parse_browser_operation(operation.input)
-        except (ValueError, TypeError):
-            return f"{transport}: UNSUPPORTED", {**page_unavailable(), "error": "Browser raw commands, flags and batches are unsupported."}
-        if browser_args["action"] not in SESSION_ACTIONS:
+            from src import managed_browser
+            # Legacy CLI observations remain read-only. New chat-owned sessions
+            # use held Playwright Page objects instead of retargetable aliases.
+            legacy_record = registered_browser(authority.owner, authority.session_id)
+            if legacy_record is None:
+                managed_browser.validate_args(browser_args)
+        except (ValueError, TypeError) as error:
+            return f"{transport}: UNSUPPORTED", {**page_unavailable(), "error": str(error)}
+        if legacy_record is not None and browser_args["action"] not in SESSION_ACTIONS:
             return f"{transport}: UNSUPPORTED", page_unavailable()
     # Raw global Playwright MCP has no authoritative session/page observation.
     # Its transport process and remote backend identity cannot substitute for it.
@@ -1796,10 +1809,10 @@ async def execute_tool_block(
         browser_operation = None
         if native_browser(operation, backend_operation.resource):
             _, browser_args = parse_browser_operation(operation.input)
-            if browser_args["action"] not in SESSION_ACTIONS:
-                return f"{transport}: UNSUPPORTED", page_unavailable()
             if pending is not None and pending.browser_operation is None:
                 raise ResourceIdentityError("Approved action has no sealed browser identity")
+            if registered_browser(authority.owner, authority.session_id) is None:
+                await managed_browser.ensure_session(authority, browser_args)
             browser_operation = resolve_browser_operation(authority, operation,
                 approved=pending.browser_operation if pending is not None else None, exact_admission=exact_admission)
             await revalidate_browser_operation(browser_operation)
@@ -2536,7 +2549,7 @@ _FORMATTER_HANDLED_KEYS = {
     "stdout", "stderr", "exit_code", "content", "size",
     "response", "results", "session_id", "name", "model", "session_name",
     "success", "path", "action", "title", "doc_id", "version", "applied",
-    "error", "output", "images",
+    "error", "output", "images", "browser_preview",
 }
 
 

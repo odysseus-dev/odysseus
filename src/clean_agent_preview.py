@@ -3911,6 +3911,18 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
     if bare == 'web_fetch' and ToolEffect.BROKERED_NETWORK_READ in capability.effects:
         blocked_effects.remove(ToolEffect.NETWORK_EGRESS)
         allowed_effects.add(ToolEffect.NETWORK_EGRESS)
+    if bare == 'private_browser':
+        from src.managed_browser import validate_args
+        try:
+            validate_args(args)
+        except (ValueError, TypeError, KeyError):
+            return decision(False, 'unsupported_browser_action')
+        # Browsing includes form input and clicks. This preflight is not an
+        # approval: the common dispatcher still checks request/page ownership
+        # and requires task/chat approval for effects after untrusted content.
+        browser_effects = {ToolEffect.UI_SIDE_EFFECT, ToolEffect.EXTERNAL_SIDE_EFFECT}
+        blocked_effects.difference_update(browser_effects)
+        allowed_effects.update(browser_effects)
     if bare == 'download_attachment':
         # Reading mailbox attachments materializes a backend-selected cache
         # file. It is also needed when the attachment is discovered during a
@@ -6166,10 +6178,13 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             # One extra iteration is available only when a provider emits raw
             # tool markup during the normal final no-tools round. Ordinary
             # turns still obey ``round_limit`` exactly.
+            browser_handoff_retry = False
             for round_number in range(1, round_limit + 2):
+                from src.browser_control import planning_checkpoint
+                await planning_checkpoint(owner, session_id, history, security)
                 if intent_scope_failed:
                     break
-                if round_number > round_limit and not emergency_completion_round:
+                if round_number > round_limit and not (emergency_completion_round or browser_handoff_retry):
                     break
                 if active_editor_target and successful_write and agent_runs.should_finish(session_id):
                     answer = (
@@ -6687,6 +6702,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     # established budget/error semantics.
                     round_offered = list(request.get('tools') or [])
                 finish_during_stream = False
+                browser_stream_changed = False
+                browser_handoff_retry = False
                 async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
                     response.raise_for_status()
                     finish_event = (
@@ -6694,6 +6711,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if active_editor_target and successful_write else None
                     )
                     async for line in preview_lines_until_finish(response, finish_event):
+                        from src.browser_control import generation_changed
+                        if await generation_changed(owner, session_id):
+                            browser_stream_changed = True
+                            break
                         if active_editor_target and successful_write and agent_runs.should_finish(session_id):
                             finish_during_stream = True
                             break
@@ -6776,6 +6797,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                 editor_progress_last = now
                 if active_editor_target and successful_write and agent_runs.should_finish(session_id):
                     finish_during_stream = True
+                if browser_stream_changed:
+                    browser_handoff_retry = True
+                    continue
                 if finish_during_stream:
                     answer = (
                         f'Finished with {len(editor_suggested_finds)} inline suggestions ready for review. '
@@ -7879,6 +7903,36 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                     active_document_id=getattr(active_document, 'id', None),
                                     workspace=workspace,
                                     client_runtime_context=client_runtime_context)
+                                if (block.tool_type == 'private_browser'
+                                        and result.get('blocked')
+                                        and result.get('policy') == 'external_untrusted_context'
+                                        and not delegated_credential):
+                                    from src.agent_runtime.authority import active_request_authority
+                                    from src.tool_approvals import tool_approval_store
+                                    try:
+                                        pending = await tool_approval_store.create_prepared(
+                                            owner=owner, session_id=session_id,
+                                            origin_run_id=security.run_id,
+                                            tool_name=block.tool_type, content=block.content,
+                                            workspace=workspace,
+                                            external_untrusted_context_seen=True,
+                                            capabilities=capabilities_for_action(block.tool_type, block.content),
+                                            selected_tools=set(getattr(turn_contract, 'offered', ())) - set(disabled_tools),
+                                            continuation_query=direct_user_text,
+                                            request_text=direct_user_text,
+                                            request_authority=active_request_authority(),
+                                            client_runtime_context=client_runtime_context)
+                                    except (ValueError, TypeError, OSError) as error:
+                                        result = {
+                                            'error': str(error), 'exit_code': 1, 'blocked': True,
+                                            'executed': False, 'failure_kind': 'approval_target_unavailable',
+                                        }
+                                    else:
+                                        payload = pending.public_payload(reason=result.get('error', ''))
+                                        yield event({'type': 'final_response', 'content': payload['question']})
+                                        yield event({'type': 'ask_user', 'data': payload})
+                                        yield 'data: [DONE]\n\n'
+                                        return
                                 if (
                                     canonical(block.tool_type) == 'ui_control'
                                     and str(args.get('action') or '').casefold() == 'get_toggles'
@@ -8387,6 +8441,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                   'execution_attempted': execution_attempted,
                                   'blocked': policy_denied or schema is None,
                                   'desc': desc, 'round': round_number}
+                    if result.get('browser_preview'):
+                        tool_event['browser_preview'] = result['browser_preview']
                     for error_category in ('tool_execution_error', 'invalid_tool_arguments'):
                         if result.get('error_category') == error_category:
                             tool_event['error_category'] = error_category

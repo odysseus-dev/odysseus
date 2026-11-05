@@ -180,9 +180,9 @@ def spec_route_tools(
                     picks.append(nm)
         _bmode = os.getenv("ODYSSEUS_SPEC_BROWSER_FALLBACK", "0")
         if _bmode != "0" and "private_browser" in picks:
-            # This build disables page execution in private_browser (see
-            # src/browser_identity.py). "mcp": use the connected Playwright MCP
-            # browser (no run_code/evaluate); "web": fetch/search only.
+            # Optional deployment routing override. The default uses the
+            # chat-owned native browser; overrides still obey the common
+            # authority gate and cannot enable raw global browser execution.
             picks = [n for n in picks if n != "private_browser"]
             extra = list(_MCP_BROWSER_TOOLS) if _bmode == "mcp" else []
             for n in extra + ["web_search", "web_fetch"]:

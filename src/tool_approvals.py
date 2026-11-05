@@ -372,6 +372,52 @@ class ToolApprovalStore:
         for approval_id in expired:
             self._pending.pop(approval_id, None)
 
+    async def create_prepared(self, **kwargs) -> PendingToolApproval:
+        """Prepare a browser's exact target before publishing its approval.
+
+        The regular agent loop may ask for approval before it ever enters the
+        dispatcher. A first open therefore needs a blank, chat-owned browser
+        here; navigation still happens only when the sealed action is approved.
+        Never defer target discovery to approval consumption.
+        """
+        if kwargs.get("tool_name") != "private_browser":
+            return self.create(**kwargs)
+        from src.agent_runtime.authority import ExactOperation
+        operation = ExactOperation.normalize(kwargs.get("tool_name"), kwargs.get("content"))
+
+        from src.agent_runtime.resources import ResourceIdentityError
+        from src.agent_runtime.remote_resources import bind_backend_for_operation
+        from src.browser_identity import (
+            native_browser, parse_operation, registered, resolve_browser_operation,
+            revalidate_browser_operation,
+        )
+        from src import managed_browser
+        authority = kwargs.get("request_authority")
+        if (not isinstance(authority, RequestAuthority)
+                or not authority.bound_to(owner=kwargs.get("owner"),
+                    session_id=kwargs.get("session_id"), workspace=kwargs.get("workspace"))
+                or not authority.permits(operation)):
+            raise ResourceIdentityError("Browser approval requires the originating chat's browser authority")
+        backend = bind_backend_for_operation(authority, operation,
+            context=kwargs.get("client_runtime_context"))
+        if not native_browser(operation, backend.resource):
+            raise ResourceIdentityError("Browser approval requires a chat-owned native browser")
+        _, args = parse_operation(operation.input)
+        if registered(authority.owner, authority.session_id) is None:
+            managed_browser.validate_args(args)
+            await managed_browser.ensure_session(authority, args)
+        bound = resolve_browser_operation(authority, operation)
+        await revalidate_browser_operation(bound)
+        pending = self.create(**kwargs)
+        # create() preserves unresolved proposals for other tool types. Browser
+        # cards must always carry the same target that was just prepared.
+        if (pending.browser_operation is None
+                or pending.browser_operation.to_dict() != bound.to_dict()):
+            with self._lock:
+                self._pending.pop(pending.approval_id, None)
+            raise ResourceIdentityError("Browser target changed while preparing approval; inspect the browser and retry")
+        return pending
+
     def create(
         self,
         *,

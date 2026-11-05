@@ -1,8 +1,8 @@
-"""Trusted browser observations. No page execution capability is available.
+"""Browser resource binding for managed sessions and legacy CLI observations.
 
-0.35.0 local-launch CLI drops pin flags on `session info`; live Docker probes
-proved destroyed-target retargeting. Observations are not permission to run a
-page command. The future producer must atomically enforce expected identities.
+The legacy 0.35.0 CLI drops pin flags and can retarget destroyed tabs, so
+its observations remain metadata-only. Managed Playwright sessions bind
+operations directly to owned Page objects through the same authority gate.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ CLIENT_DEADLINE_S = 20  # Below 0.35.0's source-verified 30s read/resend floor.
 CDP_DEADLINE_S = 3
 CDP_METHODS = frozenset({"Target.getTargets", "Target.getTargetInfo", "Target.attachToTarget",
                          "Page.getFrameTree", "Target.detachFromTarget"})
-PAGE_ACTIONS = frozenset({"open", "read", "snapshot", "find", "evaluate", "click", "fill",
+PAGE_ACTIONS = frozenset({"open", "read", "snapshot", "find", "evaluate", "click", "fill", "select", "hover",
     "press", "scroll", "wait", "screenshot", "navigate", "reload", "back", "forward",
     "select_page", "close_page", "network", "console", "new_page", "tabs"})
 SESSION_ACTIONS = frozenset({"session_info"})
@@ -93,7 +93,7 @@ def parse_operation(content):
     if not isinstance(action, str) or action not in PAGE_ACTIONS | SESSION_ACTIONS | {"close"}:
         raise ResourceIdentityError("Unsupported browser action; raw commands and batch are forbidden")
     allowed = {"action", "page", "url", "selector", "target", "ref", "key", "direction", "amount",
-               "timeout_ms", "timeout_s", "text", "value", "script", "path", "find"}
+               "timeout_ms", "timeout_s", "text", "value", "script", "path", "find", "offset", "limit"}
     if set(args) - allowed:
         raise ResourceIdentityError("Browser flags, labels, configuration and raw targetIds are forbidden")
     if "page" in args and (not isinstance(args["page"], str) or not re.fullmatch(r"t[1-9][0-9]*", args["page"])):
@@ -101,8 +101,8 @@ def parse_operation(content):
     if action in SESSION_ACTIONS and set(args) != {"action"}:
         raise ResourceIdentityError("Session metadata takes no page or CLI arguments")
     for key, value in args.items():
-        if isinstance(value, str) and ("\0" in value or value.lstrip().startswith("-")):
-            raise ResourceIdentityError("Model values cannot become browser flags")
+        if isinstance(value, str) and "\0" in value:
+            raise ResourceIdentityError("Browser values cannot contain NUL characters")
     return operation, args
 
 
@@ -481,6 +481,10 @@ async def _observe_registered_locked(record, alias):
 
 
 def validate_session(resource):
+    from src import managed_browser
+    if managed_browser.is_managed(resource):
+        managed_browser.validate_session(resource)
+        return
     record = registered(resource.owner, resource.thread_id)
     if record is None or record.session != resource or not resource.observation.daemon.owned():
         raise ResourceIdentityError("Browser observation is stale, replaced or unregistered")
@@ -488,6 +492,10 @@ def validate_session(resource):
 
 
 def validate_page(resource):
+    from src import managed_browser
+    if managed_browser.is_managed(resource.session):
+        managed_browser.validate_page(resource)
+        return
     resource.session.validate()
     record = registered(resource.session.owner, resource.session.thread_id)
     if not any(p.target_id == resource.target_id and (resource.scope == "page" or p.loader_id == resource.loader_id) for p in record.pages):
@@ -495,6 +503,10 @@ def validate_page(resource):
 
 
 def seal_browser_resources(authority):
+    from src import managed_browser
+    sessions, pages = managed_browser.seal(authority)
+    if sessions:
+        return sessions, pages
     record = registered(authority.owner, authority.session_id)
     if record is None or record.session is None or not any(g.tool == "private_browser" for g in authority.grants):
         return (), ()
@@ -527,6 +539,7 @@ class BoundBrowserOperation:
     session: BrowserSessionResource
     page: BrowserPageResource | None = None
     exact_approval: Any = None
+    control_revision: int | None = None
 
     def validate(self):
         if (self.session.owner, self.session.thread_id) != (self.owner, self.thread_id) or not self.request_id:
@@ -539,18 +552,29 @@ class BoundBrowserOperation:
             if self.page.session != self.session:
                 raise ResourceIdentityError("Browser page/session binding changed")
             self.page.validate()
-        if args["action"] not in SESSION_ACTIONS and self.page is None:
+        from src import managed_browser
+        if managed_browser.is_managed(self.session):
+            record = managed_browser.validate_session(self.session)
+            if self.control_revision != record.control.revision:
+                raise ResourceIdentityError('Browser control changed; this proposed action is stale')
+        session_actions = managed_browser.SESSION_ACTIONS if managed_browser.is_managed(self.session) else SESSION_ACTIONS
+        if args["action"] not in session_actions and self.page is None:
             raise ResourceIdentityError("Missing proposal-bound page observation")
 
     def to_dict(self):
         return {"operation": {"tool": self.operation.tool, "input": self.operation.input,
                 "action": self.operation.action, "transport_tool": self.operation.transport_tool},
                 "request_id": self.request_id, "owner": self.owner, "thread_id": self.thread_id,
-                "session": self.session.to_dict(), "page": self.page.to_dict() if self.page else None}
+                "session": self.session.to_dict(), "page": self.page.to_dict() if self.page else None,
+                "control_revision": self.control_revision}
 
 
 def resolve_browser_operation(authority, operation, *, approved=None, exact_admission=False):
     _, args = parse_operation(operation.input)
+    from src import managed_browser
+    if ((approved is not None and managed_browser.is_managed(approved.session))
+            or managed_browser.current(authority.owner, authority.session_id) is not None):
+        return managed_browser.resolve(authority, operation, args, approved, exact_admission)
     if approved is not None:
         bound = approved
         if (bound.operation != operation or (bound.request_id, bound.owner, bound.thread_id) !=
@@ -581,6 +605,9 @@ def resolve_browser_operation(authority, operation, *, approved=None, exact_admi
 
 async def revalidate_browser_operation(bound):
     bound.validate()
+    from src import managed_browser
+    if managed_browser.is_managed(bound.session):
+        return
     record = registered(bound.owner, bound.thread_id)
     async with record.lock:
         try:
@@ -610,11 +637,14 @@ def bind_browser_operation(bound):
 
 
 async def execute_browser(content, ctx):
+    managed = False
     try:
         operation, args = parse_operation(content)
-        # Unconditional capability denial, before producer selection, alias
-        # lookup, spawning, approval claims or any page-specific data read.
-        if args["action"] not in SESSION_ACTIONS:
+        from src import managed_browser
+        managed_bound = _ACTIVE.get()
+        managed = managed_bound is not None and managed_browser.is_managed(managed_bound.session)
+        # Legacy CLI and unbound callers never gain page authority.
+        if not managed and args["action"] not in SESSION_ACTIONS:
             return page_unavailable()
         from src.agent_runtime.authority import active_request_authority
         authority, bound = active_request_authority(), _ACTIVE.get()
@@ -630,6 +660,8 @@ async def execute_browser(content, ctx):
                     or approval.pending.browser_operation is None or approval.pending.browser_operation.to_dict() != bound.to_dict()):
                 raise ResourceIdentityError("Browser operation lacks exact admission")
         bound.validate()
+        if managed:
+            return await managed_browser.execute(bound, args)
         record = registered(bound.owner, bound.thread_id)
         await revalidate_browser_operation(bound)
         async with record.lock:
@@ -647,5 +679,9 @@ async def execute_browser(content, ctx):
         raise
     except Exception:
         # No raw producer/CDP exception text: it can contain capability URLs.
+        if managed:
+            return {"error": "Browser session or page changed. Inspect tabs or open a new session before continuing.",
+                    "exit_code": 1, "executed": False, "retryable": False,
+                    "failure_kind": "browser_resource_identity_denied"}
         return {"error": "Trusted browser session metadata is unavailable.", "exit_code": 1,
                 "executed": False, "retryable": False, "failure_kind": "browser_session_authority_unavailable"}

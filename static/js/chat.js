@@ -1,3 +1,4 @@
+import { browserPreviewHtml, observeBrowserPreview } from './browserViewer.js';
 // static/js/chat.js
 
 /**
@@ -403,15 +404,8 @@ import { invalidateSettings } from './appConfig.js';
   }
 
   function _privateBrowserPreviewHtml(command, screenshot, fallbackUrl = '') {
-    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(screenshot);
-    const url = _privateBrowserUrlFromCommand(command) || String(fallbackUrl || _lastPrivateBrowserUrl || '');
-    const urlAttr = url ? ` data-browser-url="${uiModule.esc(url)}" title="Open ${uiModule.esc(url)}"` : '';
-    const imgHtml = screenshotSrc
-      ? `<img class="private-browser-preview-img" src="${uiModule.esc(screenshotSrc)}" alt="Private browser screenshot" />`
-      : '<div class="private-browser-preview-empty"><span>Browsing…</span><span class="private-browser-preview-spinner" aria-hidden="true"></span></div><img class="private-browser-preview-img" alt="Private browser screenshot" />';
-    const html = `<div class="private-browser-preview"${urlAttr}><div class="private-browser-preview-header"><span class="private-browser-preview-title">Private Browser</span><span class="private-browser-preview-status">${uiModule.esc(_privateBrowserActionLabel(command))}</span><button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button></div><div class="private-browser-preview-frame">${imgHtml}</div></div>`;
-    setTimeout(() => _mountPrivateBrowserSpinners(document), 0);
-    return html;
+    return browserPreviewHtml(command, chatRenderer.safeToolScreenshotSrc(screenshot),
+      _privateBrowserUrlFromCommand(command) || fallbackUrl || _lastPrivateBrowserUrl || '', _streamSessionId || sessionModule.getCurrentSessionId());
   }
 
   function _ensurePrivateBrowserPreview(contentEl) {
@@ -428,19 +422,9 @@ import { invalidateSettings } from './appConfig.js';
         img: root.querySelector('.private-browser-preview-img'),
       };
     }
-    root = document.createElement('div');
-    root.className = 'private-browser-preview';
-    root.innerHTML = `
-      <div class="private-browser-preview-header">
-        <span class="private-browser-preview-title">Private Browser</span>
-        <span class="private-browser-preview-status"></span>
-        <button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button>
-      </div>
-      <div class="private-browser-preview-frame">
-        <div class="private-browser-preview-empty"><span>Browsing…</span><span class="private-browser-preview-spinner" aria-hidden="true"></span></div>
-        <img class="private-browser-preview-img" alt="Private browser screenshot" />
-      </div>
-    `;
+    const template = document.createElement('template');
+    template.innerHTML = browserPreviewHtml('', '', '', _streamSessionId || sessionModule.getCurrentSessionId());
+    root = template.content.firstElementChild;
     host.appendChild(root);
     _mountPrivateBrowserSpinners(root);
     return {
@@ -454,7 +438,7 @@ import { invalidateSettings } from './appConfig.js';
   function _showPrivateBrowserPreview(command, contentEl) {
     const preview = _ensurePrivateBrowserPreview(contentEl);
     if (!preview || !preview.root) return;
-    if (preview.status) preview.status.textContent = _privateBrowserActionLabel(command);
+    if (preview.status) preview.status.textContent = 'Loading browser…';
     const url = _privateBrowserUrlFromCommand(command);
     if (url) {
       _lastPrivateBrowserUrl = url;
@@ -482,6 +466,7 @@ import { invalidateSettings } from './appConfig.js';
       preview.root.dataset.browserUrl = _lastPrivateBrowserUrl;
       preview.root.title = `Open ${_lastPrivateBrowserUrl}`;
     }
+    if (json.browser_preview) observeBrowserPreview(json.browser_preview);
     const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
     if (!screenshotSrc) {
       return;
@@ -5172,6 +5157,7 @@ import { invalidateSettings } from './appConfig.js';
                 uiModule.scrollHistory();
 
               } else if (json.type === 'tool_output') {
+                if (json.browser_preview) observeBrowserPreview(json.browser_preview);
                 // Let feature panels reconcile state from the actual tool
                 // result rather than trying to infer completion from the
                 // assistant's prose. Email unsubscribe uses this for the

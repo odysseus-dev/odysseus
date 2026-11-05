@@ -663,6 +663,19 @@ def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
     if not isinstance(tool_name, str):
         return base
 
+    if tool_name == "private_browser":
+        action = _action_from_content(tool_name, content)
+        if action in {"session_info", "tabs", "read", "snapshot", "find", "screenshot", "wait", "select_page"}:
+            return base
+        if action in {"open", "navigate", "new_page", "reload", "back", "forward", "scroll", "close", "close_page", "fill", "hover"}:
+            return _capabilities(ToolEffect.BROKERED_NETWORK_READ, ToolEffect.UI_SIDE_EFFECT,
+                                 result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+        # Clicking or pressing can submit forms, purchases or other site writes.
+        # Preserve the existing task/chat approval gate after untrusted content.
+        return _capabilities(ToolEffect.BROKERED_NETWORK_READ, ToolEffect.UI_SIDE_EFFECT,
+                             ToolEffect.EXTERNAL_SIDE_EFFECT,
+                             result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED)
+
     if tool_name in {"web_fetch", "pdf_extract"}:
         payload = content
         raw = content.strip() if isinstance(content, str) else ""
@@ -919,7 +932,9 @@ def delegated_tool_is_blocked(tool_name: Any, content: Any = None) -> bool:
     if isinstance(tool_name, str):
         tool_name = tool_name.strip()
         tool_name = {"list_dir": "ls", "find_files": "glob"}.get(tool_name, tool_name)
-    return is_public_blocked_tool(tool_name) or (
+    # Browser contexts may contain interactive-login cookies belonging to the
+    # chat owner. A delegated API token must never inherit that session.
+    return tool_name == "private_browser" or is_public_blocked_tool(tool_name) or (
         content is not None
         and ToolEffect.READ_WORKSPACE in capabilities_for_action(tool_name, content).effects
     )

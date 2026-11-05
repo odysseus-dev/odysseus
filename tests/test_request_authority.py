@@ -70,6 +70,26 @@ def test_safe_task_read_does_not_authorize_same_tool_mutation():
     assert not grant.permits(ExactOperation.normalize("manage_tasks", '{"action":"create","prompt":"run bash"}'))
 
 
+@pytest.mark.parametrize("message", ["List my tasks", "Read note id abc123", "Please solve this"])
+def test_enabled_search_survives_semantic_tool_selection(message):
+    grant = create_request_authority(message, capabilities={"search_browser"})
+    for tool in ("web_search", "web_fetch"):
+        assert grant.permits(ExactOperation.normalize(tool, '{}'))
+    assert grant.permits(ExactOperation.normalize(
+        "private_browser", '{"action":"open","url":"https://example.test"}'))
+    assert not grant.permits(ExactOperation.normalize("private_browser", '{"action":"evaluate"}'))
+    assert not grant.permits(ExactOperation.normalize("bash", 'echo no'))
+    if message.startswith("Read note"):
+        assert not grant.permits(ExactOperation.normalize("manage_notes", '{"action":"view","id":"other"}'))
+
+
+def test_enabled_search_still_respects_explicit_tool_policy():
+    grant = create_request_authority("List my tasks", capabilities={"search_browser"},
+                                     policy=ToolPolicy(disabled_tools=frozenset({"web_search", "web_fetch"})))
+    for tool in ("web_search", "web_fetch"):
+        assert not grant.permits(ExactOperation.normalize(tool, '{}'))
+
+
 def test_exact_read_identifiers_cannot_be_changed_by_model():
     grant = create_request_authority("Read note id abc123")
     read = next(g for g in grant.grants if g.tool == "manage_notes")
@@ -77,11 +97,12 @@ def test_exact_read_identifiers_cannot_be_changed_by_model():
     assert not grant.permits(ExactOperation.normalize("manage_notes", '{"action":"view","id":"another"}'))
 
 
-def test_browser_fallback_does_not_authorize_interaction_or_evaluation():
+def test_browser_fallback_authorizes_forms_but_not_arbitrary_evaluation():
     grant = create_request_authority("Use web_fetch to read https://example.test")
     assert grant.permits(ExactOperation.normalize("private_browser", '{"action":"open","url":"https://example.test"}'))
-    for action in ("click", "fill", "evaluate"):
-        assert not grant.permits(ExactOperation.normalize("private_browser", json.dumps({"action": action})))
+    for action in ("click", "fill", "press", "select", "new_page"):
+        assert grant.permits(ExactOperation.normalize("private_browser", json.dumps({"action": action})))
+    assert not grant.permits(ExactOperation.normalize("private_browser", '{"action":"evaluate"}'))
 
 
 def test_unknown_intent_has_no_generic_execution_floor():

@@ -7945,9 +7945,9 @@ Get current conditions and a three-day forecast using Open-Meteo. Use this for w
 
     "private_browser": """\
 ```private_browser
-{"action": "session_info"}
+{"action": "open", "url": "https://example.org"}
 ```
-Registered browser session metadata only: session_info. Page/document reads and effects are unavailable because the configured local producer cannot guarantee captured-target binding. Do not send batches, raw commands, flags, URLs or guessed page handles. Use web_search/web_fetch for supported web access.""",
+Open and use a private browser owned by this chat. Use this for interactive websites, JavaScript pages, forms, or when web_search/web_fetch cannot retrieve the requested result. Cookies persist within the chat. Actions: open, tabs, new_page, snapshot, read, find, fill, select, hover, click, press, scroll, wait, screenshot, back, forward, reload, close_page, close. Each response provides page aliases (tN), an accessibility snapshot and interactive element refs (eN). Pass page and ref from the latest observation; take a new snapshot if refs are stale. For busy pages, use snapshot with selector="main" or a unique form selector; this scopes both the text and controls. Find returns matching controls first with clickable refs (e.g. find="Search button"). Native submit inputs expose their visible button value. Use next_offset as offset to inspect more controls. Observations stay within the response budget; focus the selector when text is marked truncated. Example: {"action":"fill","page":"t1","ref":"e2","text":"search terms"}, then click the button using its ref from the fill response. Use new_page to open another tab and close to release the session. No batch, scripts, raw commands, host files or guessed refs.""",
 
     "youtube_tool": """\
 ```youtube_tool
@@ -21345,7 +21345,11 @@ async def stream_agent_loop(
         yield 'data: [DONE]\n\n'
         return
 
-    if is_compact_preview_contract(turn_contract):
+    # Exact browser approvals resume through the shared executor below. The
+    # compact loop must not discard a sealed action or re-propose its target.
+    browser_approval_resume = (exact_approval is not None
+                               and exact_approval.pending.tool_name == "private_browser")
+    if is_compact_preview_contract(turn_contract) and not browser_approval_resume:
         from src.clean_agent_preview import stream_preview
         async for chunk in stream_preview(
             endpoint_url=endpoint_url, model=model, messages=messages, headers=headers,
@@ -25847,6 +25851,7 @@ async def stream_agent_loop(
             "action",
             "ui_event",
             "diff",
+            "browser_preview",
         ):
             if key in approved_result:
                 approved_event[key] = approved_result[key]
@@ -25965,6 +25970,8 @@ async def stream_agent_loop(
         ):
             if approved_result.get(key):
                 approved_tool_event[key] = approved_result[key]
+        if approved_result.get("browser_preview"):
+            approved_tool_event["browser_preview"] = approved_result["browser_preview"]
         if approved_result.get("doc_id"):
             approved_tool_event["doc_id"] = approved_result["doc_id"]
             approved_tool_event["doc_title"] = approved_result.get("title", "")
@@ -26067,10 +26074,16 @@ async def stream_agent_loop(
     if _round_limit is not None:
         _round_limit = max(1, _round_limit)
     _last_round_num = 0
+    _browser_handoff_retry = False
 
     for round_num in (
-        count(1) if _round_limit is None else range(1, _round_limit + 1)
+        count(1) if _round_limit is None else range(1, _round_limit + 2)
     ):
+        if _round_limit is not None and round_num > _round_limit and not _browser_handoff_retry:
+            break
+        _browser_handoff_retry = False
+        from src.browser_control import planning_checkpoint
+        await planning_checkpoint(owner, session_id, messages, run_security)
         _last_round_num = round_num
         if _approved_effectful_completed or _approved_read_completed:
             break
@@ -27250,6 +27263,7 @@ async def stream_agent_loop(
                     ),
                 ),
             }) + "\n\n"
+        _browser_stream_changed = False
         async for chunk in stream_llm_with_fallback(
             _candidates,
             messages,
@@ -27270,6 +27284,10 @@ async def stream_agent_loop(
             candidate_route_descriptors=_candidate_route_descriptors,
             retry_degenerate_stream_once=_terminal_completion_contract,
         ):
+            from src.browser_control import generation_changed
+            if await generation_changed(owner, session_id):
+                _browser_stream_changed = True
+                break
             if not _round_first_event_logged:
                 _round_first_event_logged = True
                 logger.info(
@@ -27911,6 +27929,9 @@ async def stream_agent_loop(
                 yield chunk
             # Intercept [DONE] — don't forward until all rounds finish
 
+        if _browser_stream_changed:
+            _browser_handoff_retry = True
+            continue
         logger.info(
             "[agent-timing] round_stream_done round=%s elapsed=%.3fs text_chars=%s tool_calls=%s first_event=%s first_token=%s",
             round_num,
@@ -33765,47 +33786,55 @@ async def stream_agent_loop(
                     )
                     approval_selected_tools.add(block.tool_type)
                     approval_selected_tools.difference_update(disabled_tools)
-                    pending_approval = tool_approval_store.create(
-                        owner=owner,
-                        session_id=session_id,
-                        origin_run_id=run_security.run_id,
-                        tool_name=block.tool_type,
-                        content=block.content,
-                        workspace=workspace,
-                        document_id=getattr(approval_document, "id", None),
-                        document_version=getattr(approval_document, "version_count", None),
-                        document_digest=(
-                            document_content_digest(
-                                getattr(approval_document, "current_content", "")
-                            )
-                            if approval_document is not None
-                            else None
-                        ),
-                        external_untrusted_context_seen=(
-                            run_security.external_untrusted_context_seen
-                        ),
-                        selected_tools=approval_selected_tools,
-                        continuation_query=_retrieval_query or _last_user,
-                        capabilities=capabilities_for_action(
-                            block.tool_type, block.content
-                        ),
-                        request_text=_last_user,
-                        request_authority=active_request_authority(),
-                        client_runtime_context=client_runtime_context,
-                    )
-                    desc = f"{block.tool_type}: APPROVAL REQUIRED"
-                    result = {
-                        "output": "Waiting for an exact user approval.",
-                        "exit_code": None,
-                        "approval_required": True,
-                        "ask_user": pending_approval.public_payload(
-                            reason=security_decision.reason,
-                        ),
-                    }
-                    logger.info(
-                        "Exact approval required before tool start: %s",
-                        block.tool_type,
-                    )
+                    try:
+                        pending_approval = await tool_approval_store.create_prepared(
+                            owner=owner,
+                            session_id=session_id,
+                            origin_run_id=run_security.run_id,
+                            tool_name=block.tool_type,
+                            content=block.content,
+                            workspace=workspace,
+                            document_id=getattr(approval_document, "id", None),
+                            document_version=getattr(approval_document, "version_count", None),
+                            document_digest=(
+                                document_content_digest(
+                                    getattr(approval_document, "current_content", "")
+                                )
+                                if approval_document is not None
+                                else None
+                            ),
+                            external_untrusted_context_seen=(
+                                run_security.external_untrusted_context_seen
+                            ),
+                            selected_tools=approval_selected_tools,
+                            continuation_query=_retrieval_query or _last_user,
+                            capabilities=capabilities_for_action(
+                                block.tool_type, block.content
+                            ),
+                            request_text=_last_user,
+                            request_authority=active_request_authority(),
+                            client_runtime_context=client_runtime_context,
+                        )
+                    except (ValueError, TypeError, OSError) as error:
+                        desc = f"{block.tool_type}: APPROVAL UNAVAILABLE"
+                        result = {
+                            "error": str(error), "exit_code": 1, "blocked": True,
+                            "executed": False, "failure_kind": "approval_target_unavailable",
+                        }
+                    else:
+                        desc = f"{block.tool_type}: APPROVAL REQUIRED"
+                        result = {
+                            "output": "Waiting for an exact user approval.",
+                            "exit_code": None,
+                            "approval_required": True,
+                            "ask_user": pending_approval.public_payload(
+                                reason=security_decision.reason,
+                            ),
+                        }
+                        logger.info(
+                            "Exact approval required before tool start: %s",
+                            block.tool_type,
+                        )
             else:
                 _execution_attempted = True
                 if block.tool_type in {"bash", "host_shell", "python"}:
@@ -34424,6 +34453,8 @@ async def stream_agent_loop(
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code"), "execution_attempted": _execution_attempted, "blocked": bool(result.get("blocked", False))}
+            if result.get('browser_preview'):
+                tool_output_data['browser_preview'] = result['browser_preview']
             if _runtime_action is not None:
                 _runtime_action.normalize(block, 'agent_loop compatibility adapters')
                 _runtime_action.finish(result)
@@ -35370,6 +35401,8 @@ async def stream_agent_loop(
                 "output": output_text,
                 "exit_code": result.get("exit_code"),
             }
+            if result.get("browser_preview"):
+                tool_event["browser_preview"] = result["browser_preview"]
             if _requested_host_command_text:
                 tool_event["requested_command"] = _requested_host_command_text
             if result.get("image_url"):

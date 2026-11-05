@@ -201,9 +201,17 @@ def classify(capture: DispatchCapture) -> dict[str, Any] | None:
     obligations: tuple[Postcondition, ...] = ()
     external = False
     if capture.browser is not None:
-        # Wave 3 admits only session metadata. A page binding is never
-        # effect-bindable; leave its scope unknown rather than infer it.
-        if capture.browser.page is None:
+        from src.managed_browser import is_managed
+        if is_managed(capture.browser.session):
+            from src.tool_capabilities import ToolEffect, capabilities_for_action
+            caps = capabilities_for_action("private_browser", capture.browser.operation.input)
+            if caps.effects <= {ToolEffect.BROKERED_NETWORK_READ}:
+                return None
+            # The bound page/session is an execution dependency, not proof of
+            # the effect a click or form submission had on a remote website.
+            dependencies = (resource_ref(capture.browser.session, "browser"),)
+            external = True
+        elif capture.browser.page is None:
             return None
     elif capture.filesystem is not None:
         if capture.filesystem.operation.tool in _FILESYSTEM_READS:
@@ -438,7 +446,8 @@ def _file_observation(capture: DispatchCapture, action: Any) -> dict[str, Any] |
 
 def _observations(capture: DispatchCapture, action: Any, result: dict) -> list[dict[str, Any]]:
     base = dict(source_action_id=action.action_id, source_execution_id=action.execution_id or "")
-    if capture.browser is not None and capture.browser.page is None:
+    if (capture.browser is not None and capture.browser.page is None
+            and capture.browser.operation.action in {"session_info", "tabs"}):
         # Session lifecycle metadata only; never page/document state.
         return [dict(observation_id=action.action_id + ":observation",
                      resource=resource_ref(capture.browser.session, "session"),

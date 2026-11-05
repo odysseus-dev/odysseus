@@ -1,3 +1,4 @@
+import { browserPreviewHtml } from './browserViewer.js';
 // static/js/chatRenderer.js
 // Extracted from chat.js — message rendering, sources, images, metrics
 
@@ -335,13 +336,8 @@ export function renderToolIcon(tool, command, data = null) {
   return `<a class="agent-thread-tool-icon agent-thread-tool-icon-link" href="${href}" title="${uiModule.esc(target.title)}" aria-label="${uiModule.esc(target.title)}"${externalAttrs}>${icon}</a>`;
 }
 
-function _browserPreviewHtml(command, screenshotSrc, fallbackUrl = '') {
-  const url = _privateBrowserUrlFromCommand(command) || String(fallbackUrl || '');
-  const urlAttr = url ? ` data-browser-url="${uiModule.esc(url)}" title="Open ${uiModule.esc(url)}"` : '';
-  const imgHtml = screenshotSrc
-    ? `<img class="private-browser-preview-img" src="${uiModule.esc(screenshotSrc)}" alt="Private browser screenshot" />`
-    : '<div class="private-browser-preview-empty"><span class="private-browser-preview-spinner" aria-hidden="true"></span><span>Browsing…</span></div><img class="private-browser-preview-img" alt="Private browser screenshot" />';
-  return `<div class="private-browser-preview"${urlAttr}><div class="private-browser-preview-header"><span class="private-browser-preview-title">Private Browser</span><span class="private-browser-preview-status">${uiModule.esc(_privateBrowserActionLabel(command))}</span><button type="button" class="private-browser-preview-fold" title="Fold browser preview" aria-label="Fold browser preview">×</button></div><div class="private-browser-preview-frame">${imgHtml}</div></div>`;
+function _browserPreviewHtml(command, screenshotSrc, fallbackUrl = '', sessionId = null) {
+  return browserPreviewHtml(command, screenshotSrc, _privateBrowserUrlFromCommand(command) || fallbackUrl, sessionId);
 }
 
 function _renderAssistantBody(text, metadata) {
@@ -3399,7 +3395,7 @@ export function addMessage(role, content, modelName, metadata) {
             if (_isPrivateBrowserTool(ev.tool)) {
               const currentBrowserUrl = _privateBrowserUrlFromCommand(ev.command) || lastPrivateBrowserUrl;
               if (currentBrowserUrl) lastPrivateBrowserUrl = currentBrowserUrl;
-              outHtml += _browserPreviewHtml(ev.command, screenshotSrc, currentBrowserUrl);
+              outHtml += _browserPreviewHtml(ev.command, screenshotSrc, currentBrowserUrl, ev.browser_preview?.session_id || metadata?.browser_session_id);
             } else if (screenshotSrc) {
               outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${uiModule.esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
             }

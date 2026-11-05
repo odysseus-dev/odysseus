@@ -2335,7 +2335,7 @@ class YouTubeTool:
 
 
 class PrivateBrowserTool:
-    """Resource-bound session metadata; page/document execution is unavailable."""
+    """Resource-bound chat browser with managed Playwright page execution."""
     _ACTIONS = {"session_info"}
     _AUTO_SCREENSHOT_ACTIONS = set()
 
@@ -2695,6 +2695,8 @@ class PrivateBrowserTool:
 
 async def shutdown_private_browser_sessions() -> None:
     """Service-owned cleanup only; never discover/download a producer binary."""
+    from src.managed_browser import shutdown
+    await shutdown()
     for session in tuple(_ACTIVE_BROWSER_SESSIONS):
         record = browser_lifecycle.registered(session)
         if record is not None and record.env is not None:

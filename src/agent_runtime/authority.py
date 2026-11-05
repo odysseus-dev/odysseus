@@ -325,8 +325,9 @@ class RequestAuthority:
                    tuple(BrowserPageResource.from_dict(r) for r in value["browser_pages"]) if value["version"] >= 5 else ())
 
 
-_BROWSER_READ_ACTIONS = frozenset({"open", "navigate", "snapshot", "text", "read", "find",
-    "screenshot", "scroll", "back", "forward", "wait", "status", "close", "tabs", "session_info"})
+_BROWSER_ACTIONS = frozenset({"open", "navigate", "snapshot", "read", "find",
+    "screenshot", "scroll", "back", "forward", "wait", "close", "tabs", "session_info",
+    "new_page", "reload", "select_page", "close_page", "click", "fill", "press", "select", "hover"})
 
 
 @dataclass(frozen=True)
@@ -488,18 +489,23 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         tools = {canonical_tool(operation.tool)}
     else:
         operation = None
+    # A server-validated search toggle is an independent user grant. Semantic
+    # selection (for example a notes request) must not erase that grant when
+    # the model needs public information to complete the requested work.
+    # Browser form interaction is part of web access. Concrete UI/external
+    # effects remain subject to the separate task/chat approval gate.
+    if "search_browser" in (capabilities or ()):
+        tools.update({"web_search", "web_fetch", "private_browser"})
     tools.update(_trusted_local_mcp_request_tools(request_text, intent))
     grants = []
     for name in sorted(tools | {"ask_user", "update_plan"}):
         name = canonical_tool(name)
         actions = inputs = None
         if name == "private_browser":
-            actions = _BROWSER_READ_ACTIONS
-            # Explicit interaction intent admits its operation class. A
-            # browser offered only as static-Web fallback gets no such grant.
-            if re.search(r"\b(?:browser|browse|private_browser)\b", request_text, re.I):
-                actions |= frozenset(action for action in ("click", "fill", "type", "press", "evaluate", "select")
-                                     if re.search(r"\b" + action + r"\b", request_text, re.I))
+            # "Find this on the website" authorizes the browser workflow;
+            # users need not spell out each click/fill tool action. Arbitrary
+            # scripts, raw transports and host files receive no grant.
+            actions = _BROWSER_ACTIONS
         if operation is not None and name == canonical_tool(operation.tool):
             inputs = frozenset({ExactOperation.normalize(name, _json(dict(operation.args))).input})
         grants.append(OperationGrant(name, actions, inputs))

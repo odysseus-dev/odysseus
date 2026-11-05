@@ -2858,3 +2858,20 @@ details a:hover {
   color: var(--red);
   opacity: 1;
 }
+
+/* Shared, same-session browser viewer. Historical previews are never spinners. */
+.browser-viewer-toolbar, .browser-viewer-input { display:flex; gap:8px; padding:8px; flex-wrap:wrap; align-items:center; }
+.browser-viewer [hidden] { display:none !important; }
+.browser-viewer button, .browser-viewer select { font:inherit; padding:5px 9px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:inherit; }
+.browser-viewer [data-browser-tabs] { max-width:45%; }
+.browser-viewer textarea { flex:1; min-width:180px; max-width:100%; font:inherit; padding:8px; color:inherit; background:var(--bg); border:1px solid var(--border); }
+.browser-viewer .private-browser-preview-img { width:100%; height:auto; display:block; cursor:default; }
+.browser-viewer.user-controlled .private-browser-preview-img { cursor:crosshair; }
+.browser-viewer .private-browser-preview-frame { max-height:520px; overflow:auto; }
+.browser-viewer-message { padding:6px 10px; font-size:12px; opacity:.8; }
+.browser-viewer-large { position:fixed !important; inset:3vh 3vw; z-index:10000; background:var(--bg); overflow:auto; max-width:none !important; }
+.browser-viewer-large .private-browser-preview-frame { max-height:65vh; }
+.browser-viewer:focus { outline:2px solid var(--accent,#4c93d0); }
+.browser-viewer .private-browser-preview-img { max-height:480px; object-fit:contain; transform:none; animation:none; }
+.browser-viewer-large .private-browser-preview-img { max-height:65vh; }
+.browser-viewer.folded .browser-viewer-toolbar, .browser-viewer.folded .browser-viewer-input, .browser-viewer.folded .browser-viewer-message { display:none !important; }

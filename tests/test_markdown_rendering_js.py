@@ -541,3 +541,36 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+@pytest.mark.parametrize('preamble', [
+    "I'll search the site for that tax key.",
+    'I will search for it.',
+    'Let me check the county site.',
+    'I can show the results now.',
+    'I need to show you one matching record.',
+])
+def test_task_narration_does_not_hide_search_results_as_thinking(node_available, preamble):
+    answer = preamble + '\n\nThe search found **1 result**.\n\n| Tax key | Type |\n|---|---|\n| BRC1115095 | REAL |'
+    result = _run_markdown_case(answer, 'mod.extractThinkingBlocks(input)')
+    parsed = result
+    assert parsed['thinkingBlocks'] == []
+    assert parsed['content'] == answer
+    html = _run_markdown_case(answer, 'mod.processWithThinking(input)')
+    assert 'thinking-section' not in html
+    assert '<table' in html and 'BRC1115095' in html
+
+
+def test_separate_thinking_metadata_keeps_narrated_result_outside_dropdown(node_available):
+    text = '<think>The user wants a tax search.</think>\n\n' + "I'll search the site. Found **1 result** for BRC1115095."
+    result = _run_markdown_case(text, 'mod.extractThinkingBlocks(input)')
+    assert result['thinkingBlocks'] == ['The user wants a tax search.']
+    assert result['content'] == "I'll search the site. Found **1 result** for BRC1115095."
+    html = _run_markdown_case(text, 'mod.processWithThinking(input)')
+    assert 'BRC1115095' in html.rsplit('</div>', 1)[-1]
+
+
+def test_explicit_plain_thinking_heading_remains_collapsible(node_available):
+    result = _run_markdown_case('Thinking Process: Inspecting the source.', 'mod.extractThinkingBlocks(input)')
+    assert result['thinkingBlocks'] == ['Inspecting the source.']
+    assert result['content'] == ''

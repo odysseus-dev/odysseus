@@ -3636,6 +3636,8 @@ def setup_chat_routes(
                                  for a in (ctx.preprocessed.attachment_meta or [])),
             capabilities=(({"photo_editor"} if _photo_editor_active else set()) | ({'search_browser'} if (
                 _explicit_browser_intent or _external_discovery_intent
+                or (_search_enabled and not is_web_search_explicitly_denied(allow_web_search)
+                    and not _explicitly_denies_web_lookup(message))
             ) else set())),
         )
         if exact_tool_approval is not None:
