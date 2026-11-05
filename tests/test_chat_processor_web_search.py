@@ -215,4 +215,3 @@ def test_incognito_query_extraction_ignores_saved_history(monkeypatch):
     )
 
     assert messages[1] == {"role": "user", "content": "Does he code?"}
-
