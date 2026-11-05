@@ -4592,7 +4592,9 @@ body.bg-pattern-ascii-fireflies {
       width:100%; background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       padding:8px; font-family:inherit; font-size:0.95rem;
-      resize:vertical; outline:none;
+      resize:both; outline:none;
+      field-sizing:content;
+      max-width:100%; box-sizing:border-box;
       min-height:80px;
     }
     .edit-textarea:focus { border-color:var(--red); }
@@ -6479,6 +6481,13 @@ body.bg-pattern-ascii-fireflies {
       display:flex; justify-content:flex-end; gap:8px; padding-top:6px;
       border-top:1px solid var(--border); margin-top:4px;
     }
+    /* The global `button { height:32px }` would hold a wrapped label (e.g.
+       "Delete chat and images") to one line's height, so its second line
+       spills out below the button. Let confirm buttons grow to fit; 32px
+       stays the minimum, so single-line buttons look the same. */
+    .styled-confirm-box .confirm-btn {
+      height:auto; min-height:32px;
+    }
     @media (max-width:768px) {
       .styled-confirm-box {
         width: 85vw;
@@ -6514,10 +6523,8 @@ body.bg-pattern-ascii-fireflies {
     }
     .confirm-btn-secondary { background:var(--bg); color:var(--fg); }
     .confirm-btn-secondary:hover { background:var(--border); }
-    #styled-confirm-ok {
-      position: relative;
-      top: 2px;
-    }
+    #styled-confirm-ok .styled-confirm-btn-label,
+    #styled-confirm-alt .styled-confirm-btn-label,
     #styled-confirm-cancel .styled-confirm-cancel-label {
       position:relative;
       top:2px;

@@ -132,6 +132,23 @@ async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -
             _shared_cache_pending.pop(key, None)
 
 
+def is_valid_cron(cron_expression: str) -> bool:
+    """True for a standard 5-field cron expression that croniter can parse.
+
+    croniter also accepts 6- and 7-field expressions with a seconds field, but
+    the scheduler works at one-minute resolution and would run such a task
+    every second.
+    """
+    if len((cron_expression or "").split()) != 5:
+        return False
+    try:
+        from croniter import croniter
+        croniter(cron_expression)
+    except Exception:
+        return False
+    return True
+
+
 def compute_next_run(schedule: str, scheduled_time: str,
                      scheduled_day: int = None,
                      scheduled_date: datetime = None,
@@ -175,6 +192,9 @@ def compute_next_run(schedule: str, scheduled_time: str,
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
     if schedule == "cron" and cron_expression:
+        if not is_valid_cron(cron_expression):
+            logger.warning(f"Invalid cron expression '{cron_expression}'")
+            return None
         try:
             from croniter import croniter
             cron = croniter(cron_expression, now)
@@ -306,7 +326,7 @@ def _digest_windows(now):
 
 
 def _checkin_calendar_events(db, owner, start, end):
-    """Calendar events in [start, end] for ONE owner, for the check-in digest.
+    """Calendar events in [start, end) for ONE owner, for the check-in digest.
 
     Ownership lives on CalendarCal.owner; events inherit it via calendar_id.
     The digest query had no owner scope, so it pulled EVERY user's events into
@@ -320,7 +340,7 @@ def _checkin_calendar_events(db, owner, start, end):
         .filter(
             _CC.owner == owner,
             _CE.dtstart >= start,
-            _CE.dtstart <= end,
+            _CE.dtstart < end,
             _CE.status != "cancelled",
         )
         .order_by(_CE.dtstart)
