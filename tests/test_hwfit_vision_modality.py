@@ -137,6 +137,49 @@ def test_the_marker_does_not_sweep_up_text_models():
         assert entry["modality"] != "vision", name
 
 
+def _text_name_corpus():
+    """A few hundred plausible text-model ids, combined from parts.
+
+    Generated rather than copied: the project deliberately ships no upstream
+    catalog rows (see the README beside the data files), and a long list of
+    real ids would be exactly that. None of the parts below contains a vision
+    marker, so the expected answer for the whole corpus is "no vision" — which
+    makes this sharper than the share check it replaces. A share threshold
+    tolerates a few wrong answers; here any single one is a defect.
+
+    It guards the direction the eight named cases cannot: a rule loosened for a
+    CLASS of names nobody enumerated. That direction used to be covered only by
+    "vision stays a minority of the catalog", which can no longer run where the
+    catalogs are empty.
+    """
+    vendors = ("acme", "northwind", "contoso", "initech", "umbrella", "hooli")
+    families = ("falcon", "corvid", "mistralish", "orca", "zephyr", "tulip",
+                "gemstone", "lumen", "cobalt", "basalt")
+    sizes = ("1b", "3b", "7b", "8b", "13b", "27b", "32b", "70b", "120b")
+    suffixes = ("", "-instruct", "-chat", "-it", "-base", "-4bit", "-8bit",
+                "-q4-k-m", "-bf16", "-awq", "-gguf")
+    return [f"{v}/{f}-{s}{x}"
+            for v in vendors for f in families for s in sizes for x in suffixes][:600]
+
+
+def test_no_text_name_in_a_generated_corpus_is_read_as_vision():
+    corpus = _text_name_corpus()
+    assert len(corpus) >= 500, "corpus too small to say anything"
+    flagged = [n for n in corpus
+               if _normalize_model_entry({"name": n})["modality"] == "vision"]
+    assert flagged == [], f"{len(flagged)} of {len(corpus)} text names read as vision, e.g. {flagged[:5]}"
+
+
+def test_the_corpus_would_notice_a_rule_that_stopped_discriminating():
+    # Counterpart to the above: the same corpus with a marker spliced into each
+    # name must come back entirely vision. Without this, a rule that answered
+    # "text" to everything would sail through the test above.
+    corpus = [n.replace("/", "/qwen2.5-vl-", 1) for n in _text_name_corpus()[:50]]
+    missed = [n for n in corpus
+              if _normalize_model_entry({"name": n})["modality"] != "vision"]
+    assert missed == [], missed[:5]
+
+
 def test_the_same_properties_hold_on_whatever_rows_are_present():
     # Bonus pass over the real catalogs when an installation has them: it is
     # the only check that sees rows nobody wrote a case for. It cannot be the
