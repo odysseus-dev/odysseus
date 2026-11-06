@@ -650,47 +650,73 @@ def _note_due_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def _calendar_reminder_for_event(db, owner: str, ev: CalendarEvent) -> dict | None:
-    """Return the closest Notes reminder that belongs to this calendar event.
+# Reminders are at most this far before their event (the calendar's largest
+# reminder preset); legacy title-only reminders are matched inside this window.
+_REMINDER_WINDOW_MINUTES = 7 * 24 * 60
 
-    Calendar alarms are currently stored as Notes rows. Older rows do not carry
-    an event UID, so match conservatively by the generated title plus due_date
-    before the event start. This keeps existing reminder notes visible on the
-    calendar without a schema migration.
+
+def _event_start_naive_utc(ev: CalendarEvent) -> datetime | None:
+    start = getattr(ev, "dtstart", None)
+    if start is not None and getattr(start, "tzinfo", None) is not None:
+        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    return start
+
+
+def _reminder_minutes_before(note: Note, start: datetime | None) -> int | None:
+    """Minutes between a reminder's due time and the event start, if in window."""
+    if start is None:
+        return None
+    due = _note_due_datetime(note.due_date)
+    if due is None:
+        return None
+    minutes = round((start - due).total_seconds() / 60)
+    if minutes < 0 or minutes > _REMINDER_WINDOW_MINUTES:
+        return None
+    return minutes
+
+
+def _reminder_notes_for_event(db, owner: str, ev: CalendarEvent) -> list:
+    """Return the Notes reminder rows that belong to this calendar event.
+
+    Calendar alarms are stored as Notes rows. New rows are linked to their
+    event through ``Note.calendar_event_uid``, so same-titled events never share
+    reminders. Rows created before that column existed only carry the generated
+    title, so they are matched conservatively: same title, no event link, and a
+    due date inside this event's reminder window.
     """
+    if not db or not owner or not ev:
+        return []
+    base = db.query(Note).filter(
+        Note.owner == owner,
+        Note.archived == False,  # noqa: E712
+        Note.label == "calendar",
+        Note.source == "calendar",
+    )
+    linked = base.filter(Note.calendar_event_uid == ev.uid).all() if ev.uid else []
+
+    summary = (ev.summary or "").strip()
+    start = _event_start_naive_utc(ev)
+    if not summary or start is None:
+        return linked
+    titles = [f"Calendar reminder: {summary}", f"Reminder: {summary}"]
+    legacy = base.filter(
+        Note.calendar_event_uid.is_(None),
+        Note.title.in_(titles),
+        Note.due_date.isnot(None),
+    ).all()
+    return linked + [note for note in legacy if _reminder_minutes_before(note, start) is not None]
+
+
+def _calendar_reminder_for_event(db, owner: str, ev: CalendarEvent) -> dict | None:
+    """Return the closest Notes reminder that belongs to this calendar event."""
     if not db or not owner or not ev or not ev.dtstart:
         return None
-    summary = (ev.summary or "").strip()
-    if not summary:
-        return None
-
-    titles = [f"Calendar reminder: {summary}", f"Reminder: {summary}"]
-    notes = (
-        db.query(Note)
-        .filter(
-            Note.owner == owner,
-            Note.archived == False,  # noqa: E712
-            Note.label == "calendar",
-            Note.source == "calendar",
-            Note.title.in_(titles),
-            Note.due_date.isnot(None),
-        )
-        .all()
-    )
-    if not notes:
-        return None
-
-    start = ev.dtstart
-    if getattr(start, "tzinfo", None) is not None:
-        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    start = _event_start_naive_utc(ev)
     best = None
     best_minutes = None
-    for note in notes:
-        due = _note_due_datetime(note.due_date)
-        if due is None:
-            continue
-        minutes = round((start - due).total_seconds() / 60)
-        if minutes < 0 or minutes > 7 * 24 * 60:
+    for note in _reminder_notes_for_event(db, owner, ev):
+        minutes = _reminder_minutes_before(note, start)
+        if minutes is None:
             continue
         if best is None or minutes < best_minutes:
             best = note
@@ -704,27 +730,22 @@ def _calendar_reminder_for_event(db, owner: str, ev: CalendarEvent) -> dict | No
     }
 
 
-def _delete_calendar_reminders_for_event(db, owner: str, ev: CalendarEvent) -> int:
+def _delete_calendar_reminders_for_event(db, owner: str, ev: CalendarEvent, notes: list | None = None) -> int:
+    """Delete this event's reminders.
+
+    Pass ``notes`` (from ``_reminder_notes_for_event``) when the event's
+    summary or start is about to change, so the lookup uses the old values.
+    """
     if not db or not owner or not ev:
         return 0
-    summary = (ev.summary or "").strip()
-    if not summary:
-        return 0
-    titles = [f"Calendar reminder: {summary}", f"Reminder: {summary}"]
-    notes = (
-        db.query(Note)
-        .filter(
-            Note.owner == owner,
-            Note.archived == False,  # noqa: E712
-            Note.label == "calendar",
-            Note.source == "calendar",
-            Note.title.in_(titles),
-            Note.due_date.isnot(None),
-        )
-        .all()
-    )
+    if notes is None:
+        notes = _reminder_notes_for_event(db, owner, ev)
     for note in notes:
         db.delete(note)
+    if notes:
+        # Sessions don't autoflush, and a replacement reminder's duplicate
+        # check must not find the row being deleted here.
+        db.flush()
     return len(notes)
 
 
@@ -756,6 +777,7 @@ def _create_calendar_reminder_for_event(db, owner: str, ev: CalendarEvent, minut
         label="calendar",
         due_date=due_date,
         source="calendar",
+        calendar_event_uid=ev.uid,
     )
     db.add(note)
     return {"note_id": note.id, "due_date": due_date, "minutes": minutes_before, "skipped_reason": None}
@@ -1432,6 +1454,13 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
+            reminder_fields = getattr(data, "model_fields_set", getattr(data, "__fields_set__", set()))
+            # Look up the existing reminder before summary/start change, so a
+            # rename + reminder change in one request still finds the old note.
+            stale_reminders = (
+                _reminder_notes_for_event(db, owner, ev)
+                if "reminder_minutes" in reminder_fields else []
+            )
             if data.summary is not None:
                 ev.summary = data.summary
             if data.description is not None:
@@ -1458,9 +1487,8 @@ def setup_calendar_routes(upload_handler=None) -> APIRouter:
             if data.color is not None:
                 ev.color = data.color if data.color else None
             reminder = None
-            reminder_fields = getattr(data, "model_fields_set", getattr(data, "__fields_set__", set()))
             if "reminder_minutes" in reminder_fields:
-                _delete_calendar_reminders_for_event(db, owner, ev)
+                _delete_calendar_reminders_for_event(db, owner, ev, notes=stale_reminders)
                 if data.reminder_minutes is not None:
                     reminder = _create_calendar_reminder_for_event(db, owner, ev, data.reminder_minutes)
             is_caldav = ev.calendar and ev.calendar.source == "caldav"
