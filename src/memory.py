@@ -364,32 +364,32 @@ class MemoryManager:
             return []
             
         # Define keyword categories for semantic matching
-        identity_words = ["name", "who", "i", "am", "called", "identity", "myself", "me", "my"]
+        identity_words = ["name", "called", "identity", "myself"]
         contact_words = ["phone", "email", "address", "contact", "number", "where", "located", "reach"]
         preference_words = ["like", "prefer", "favorite", "want", "love", "hate", "dislike", "enjoy", "interested"]
         task_words = ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline"]
         fact_words = ["what", "when", "where", "how", "why", "explain", "describe", "information", "know"]
         
         query_lower = query.lower()
+        query_words = set(re.findall(r'\w+', query_lower))
+        query_tokens = set(tokenize(query_lower))
         
         # Determine query type based on keywords
         query_type = None
-        if any(word in query_lower for word in identity_words):
+        if query_words.intersection(identity_words) or re.search(r'\bwho\s+am\s+i\b', query_lower):
             query_type = "identity"
-        elif any(word in query_lower for word in contact_words):
+        elif query_words.intersection(contact_words):
             query_type = "contact"
-        elif any(word in query_lower for word in preference_words):
+        elif query_words.intersection(preference_words):
             query_type = "preference"
-        elif any(word in query_lower for word in task_words):
+        elif query_words.intersection(task_words):
             query_type = "task"
-        elif any(word in query_lower for word in fact_words):
+        elif query_words.intersection(fact_words):
             query_type = "fact"
         
         relevant = []
-        identity_memories = []
-        other_memories = []
-        
-        # Separate identity memories from others
+        # Every memory participates in the same ranking and threshold check.
+        # Query type is a scoring hint, not an unconditional insertion path.
         for memory in memories:
             memory_text = memory["text"].lower()
             # Check if this is an identity memory (contains name patterns or identity indicators)
@@ -397,22 +397,7 @@ class MemoryManager:
                 re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
                 any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
             ])
-            if is_identity:
-                identity_memories.append(memory)
-            else:
-                other_memories.append(memory)
-        
-        # For identity queries, include all identity memories regardless of similarity
-        if query_type == "identity" and identity_memories:
-            # Give them high scores to ensure they're included first
-            for memory in identity_memories:
-                relevant.append((0.9, memory))  # High score for identity memories in identity queries
-        
-        # Process other memories with similarity scoring
-        for memory in other_memories:
-            memory_text = memory["text"].lower()
             memory_tokens = set(tokenize(memory_text))
-            query_tokens = set(tokenize(query_lower))
             
             # Calculate base Jaccard similarity
             if not query_tokens or not memory_tokens:
@@ -422,7 +407,11 @@ class MemoryManager:
             final_score = base_similarity
             
             # Apply boosts based on semantic matching
-            if query_type == "contact":
+            if query_type == "identity" and is_identity:
+                # Keep explicit name/identity recall useful without outranking
+                # a closer textual match or bypassing the caller's threshold.
+                final_score = max(final_score * 1.3, 0.6)
+            elif query_type == "contact":
                 # Boost memories with contact information
                 has_contact_info = any(word in memory_text for word in ["@gmail.com", "@", ".com", 
                                                                      "phone", "number", "address", 

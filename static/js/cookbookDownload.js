@@ -4,7 +4,7 @@
 // panel rendering, command building
 // ============================================
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 
 // Shared state/functions injected by init()
@@ -32,6 +32,13 @@ let _saveTasks;
 
 // Storage keys
 const SERVE_STATE_KEY = 'cookbook-serve-state';
+const _downloadStartsInFlight = new Set();
+
+function _fetchDownloadControlWithTimeout(input, init = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
 
 // ── Panel field helpers ──
 
@@ -279,7 +286,7 @@ export function _wirePanelEvents(panel, model, backend) {
       const outputText = panel.querySelector('.cookbook-output-pre')?.textContent || '';
       const tmuxMatch = outputText.match(/Started tmux session: (cookbook-[a-f0-9]+)/);
       if (tmuxMatch) {
-        fetch('/api/shell/exec', {
+        _fetchDownloadControlWithTimeout('/api/shell/exec', {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
@@ -585,7 +592,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       const _sshSf = _zh ? `'` : '';
       const _probePrefix = _zh ? 'PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; ' : '';
       const _probeCmd = `${_sshPf}${_probePrefix}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
-      const _r = await fetch('/api/shell/exec', {
+      const _r = await _fetchDownloadControlWithTimeout('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: _probeCmd, timeout: 5 }),
@@ -618,8 +625,17 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     return;
   }
 
+  // The task list is persisted only after the POST returns. Guard the gap so
+  // rapid clicks (or two touch events) cannot start duplicate downloads before
+  // either request has registered its task.
+  const startKey = `${targetHost}\n${payload.repo_id}`;
+  if (_downloadStartsInFlight.has(startKey)) {
+    uiModule.showToast(`${shortName} download is already starting`);
+    return;
+  }
+  _downloadStartsInFlight.add(startKey);
   try {
-    const res = await fetch('/api/model/download', {
+    const res = await _fetchDownloadControlWithTimeout('/api/model/download', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -640,6 +656,8 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     uiModule.showToast(`Downloading ${taskName}...`);
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message, 9000);
+  } finally {
+    _downloadStartsInFlight.delete(startKey);
   }
 }
 

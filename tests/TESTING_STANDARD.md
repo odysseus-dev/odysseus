@@ -99,8 +99,10 @@ cleanup. Specifically:
   `os.environ[...] = ...` that outlives the test.
 - **Current working directory** - never `chdir` without restoring; never assert
   against cwd-relative paths like `./data`. Use a temp workspace helper instead.
-- **Database** - the root `conftest.py` defaults `DATABASE_URL` to an in-memory
-  SQLite for collection safety. A test that needs a real file-backed DB must opt
+- **Database** - the root `conftest.py` defaults `DATABASE_URL` to a private,
+  worker-owned SQLite file for collection safety and consistent schema across
+  TestClient threads. This fallback is not a per-test data fixture. A test that
+  writes or depends on particular rows must opt
   in explicitly via `tests.helpers.sqlite_db.make_temp_sqlite` and bind its
   `SessionLocal` onto the module under test. Do not rely on a persistent
   on-disk DB existing.

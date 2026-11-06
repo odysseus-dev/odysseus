@@ -70,3 +70,63 @@ def test_no_gguf_found_pattern():
     result = _diagnose_serve_output(out)
     assert result is not None
     assert "GGUF" in result["message"]
+
+
+def test_cookbook_routes_uses_shared_diagnosis_helper():
+    # /api/cookbook/tasks/status must use the maintained helper. A nested copy in
+    # cookbook_routes.py shadowed the import and silently drifted (missing the
+    # ModelOpt, mflux and MLX bridge diagnoses).
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    local_defs = [
+        node.lineno
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_diagnose_serve_output"
+    ]
+    assert local_defs == []
+
+
+def test_modelopt_lm_head_checkpoint_returns_diagnosis():
+    out = "ValueError: There is no module or parameter named 'lm_head.input_scale' in Qwen3ForCausalLM"
+    result = _diagnose_serve_output(out)
+    assert result is not None
+    assert "ModelOpt" in result["message"]
+
+
+def test_nvidia_driver_too_old_for_torch_returns_diagnosis():
+    # vLLM 0.31 from PyPI ships torch cu130; on driver 570 (CUDA 12.8) the engine dies here.
+    out = (
+        "(EngineCore pid=1) ERROR [core.py:1433]     self.driver_worker.init_device()\n"
+        "(EngineCore pid=1) ERROR [core.py:1433] RuntimeError: The NVIDIA driver on your system is too old "
+        "(found version 12080). Please update your GPU driver by downloading and installing a new version\n"
+        "Traceback (most recent call last):\n"
+        "RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}\n"
+    )
+    result = _diagnose_serve_output(out)
+    assert result is not None
+    assert "driver" in result["message"].lower()
+    assert any("cu129" in s["label"] for s in result["suggestions"])
+
+
+def test_cuda_runtime_newer_than_driver_returns_diagnosis():
+    # torch switched to cu128 but the vLLM wheel's own kernels still need CUDA 13.
+    out = (
+        "RuntimeError: get_cuda_view_from_cpu_tensor, /workspace/csrc/libtorch_stable/cuda_view.cu:38, "
+        "cudaHostGetDevicePointer failed: CUDA driver version is insufficient for CUDA runtime version\n"
+        "Traceback (most recent call last):\n"
+    )
+    result = _diagnose_serve_output(out)
+    assert result is not None
+    assert "driver" in result["message"].lower()
+
+
+def test_tasks_status_capture_joins_wrapped_tmux_lines():
+    # tmux wraps at the pane width (often mid-word), which hid errors like
+    # "insufficie|nt for CUDA runtime version" from the diagnosis patterns.
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    assert '_remote_tmux_command("capture-pane", "-t", session_id, "-p", "-J", "-S", "-500")' in source
+    assert '["tmux", "capture-pane", "-t", session_id, "-p", "-J", "-S", "-500"]' in source

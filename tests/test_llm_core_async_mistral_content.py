@@ -69,3 +69,24 @@ def test_llm_call_async_thinking_only_still_returns_str(monkeypatch):
 def test_llm_call_async_plain_string_passthrough(monkeypatch):
     out = _call(monkeypatch, "plain answer")
     assert out == "plain answer"
+
+
+def test_llm_call_async_clamps_default_output_to_endpoint_context(monkeypatch):
+    seen = {}
+
+    async def fake_post(client, url, headers, **kwargs):
+        seen.update(kwargs["json"])
+        return _FakeResponse(_payload("ok"))
+
+    monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
+    monkeypatch.setattr(llm_core, "get_context_length", lambda _url, _model: 16384)
+    llm_core._response_cache.clear()
+
+    result = asyncio.run(llm_core.llm_call_async(
+        "http://local.test/v1/chat/completions",
+        "local-model",
+        [{"role": "user", "content": "brief request"}],
+    ))
+
+    assert result == "ok"
+    assert 0 < seen["max_tokens"] < 16384

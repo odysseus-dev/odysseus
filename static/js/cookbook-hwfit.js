@@ -32,7 +32,7 @@ import {
   // importer uses. A query mismatch loads cookbook.js twice as two separate modules
   // (two _envState objects), which silently sent downloads to the wrong server.
 } from './cookbook.js';
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
 import { _loadTasks, _tmuxGracefulKill, _nextAvailablePort, _taskPort } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
@@ -41,11 +41,26 @@ import { openCookbookDependencies } from './cookbook-diagnosis.js';
 // the Dependencies API reports. Used to look up "is this backend installed
 // on the target server" before firing a launch.
 const _BACKEND_PKG = { vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp', mlx: 'mlx_lm', mlx_image: 'mflux', diffusers: 'diffusers' };
-function _dependencyPkgForModel(runBackend, modelName = '') {
-  const nm = String(modelName || '').toLowerCase();
-  if (runBackend === 'mlx_image' && nm.includes('boogu')) return 'boogu_image_mlx';
-  if (runBackend === 'diffusers' && nm.includes('krea')) return 'krea_diffusers';
-  return _BACKEND_PKG[runBackend];
+
+function _fetchHwfitWithTimeout(input, init = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const parentSignal = init.signal;
+  const abortFromParent = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) controller.abort();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+  return fetch(input, { ...init, signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+  });
+}
+function _dependencyPkgForModel(runBackend, modelData = {}) {
+  // A catalog may explicitly declare a runtime package. Do not infer it from
+  // model names: users can run new models without a frontend code change.
+  const declared = typeof modelData === 'string' ? '' : String(modelData?.dependency_package || '').trim();
+  return declared || _BACKEND_PKG[runBackend];
 }
 
 function _normalizeCookbookModelDir(dir) {
@@ -82,8 +97,9 @@ function _wireServerColorPicker(entry) {
       const color = item.dataset.color || '';
       select.value = color;
       const label = item.querySelector('span:last-child')?.textContent || 'Auto';
-      const labelEl = btn.querySelector('.cookbook-srv-color-label');
-      if (labelEl) labelEl.textContent = label;
+      btn.title = `Change server color (currently ${label})`;
+      btn.setAttribute('aria-label', `Change server color (currently ${label})`);
+      wrap.title = `Change server color (currently ${label})`;
       const swatch = item.style.getPropertyValue('--swatch-color') || color;
       if (/^#[0-9a-fA-F]{6}$/.test(swatch.trim())) {
         entry.style.setProperty('--cookbook-server-color', swatch.trim());
@@ -94,23 +110,33 @@ function _wireServerColorPicker(entry) {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
-  document.addEventListener('click', close);
+  const onDocumentClick = () => close();
+  document.addEventListener('click', onDocumentClick);
+  // Settings rows are rebuilt when Cookbook state is refreshed. Keep the
+  // document listener tied to its row so a detached picker can be collected.
+  entry._cleanupColorPicker = () => {
+    document.removeEventListener('click', onDocumentClick);
+  };
 }
 
 // Pre-launch: ask the deps API whether the chosen backend is present on
 // the target server. Returns true if it's good to go, false if we should
 // block and route the user into Dependencies.
-async function _ensureBackendInstalled(runBackend, host, port, envPath, modelName) {
-  const pkgName = _dependencyPkgForModel(runBackend, modelName);
+async function _ensureBackendInstalled(runBackend, host, port, envPath, modelData) {
+  const modelName = typeof modelData === 'string' ? modelData : modelData?.name;
+  const pkgName = _dependencyPkgForModel(runBackend, modelData);
   if (!pkgName) return true; // unknown backend — don't block
   try {
     const params = new URLSearchParams();
+    if (runBackend) params.set('backend', runBackend);
+    if (modelName) params.set('model_hint', modelName);
     if (host) {
       params.set('host', host);
       if (port) params.set('ssh_port', String(port));
       if (envPath) params.set('venv', envPath);
     }
-    const r = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params : ''));
+    const r = await _fetchHwfitWithTimeout('/api/cookbook/packages' + (params.toString() ? '?' + params : ''));
+    if (!r.ok) return true; // An unavailable probe must not falsely block launch.
     const d = await r.json();
     const pkg = (d.packages || []).find(p => p.name === pkgName);
     if (pkg && pkg.installed) return true;
@@ -137,6 +163,7 @@ export let _cachedModelIds = null; // repo IDs already downloaded
 // checks this before rendering so a stale response can't clobber a newer one
 // after the user has switched servers.
 let _hwfitFetchToken = 0;
+let _hwfitRequestController = null;
 let _dismissedHwChips = new Set();
 // Permanently removed (X-clicked) chips. Separate from _dismissedHwChips
 // so the ranker treats "off" and "removed" the same (both ignore the
@@ -582,14 +609,25 @@ function _applyEngineFilter(models) {
 // into per-tag hwfit rows so they slot into the main list grid alongside HF
 // scan results.
 let _ollamaLibCache = null;
+let _ollamaLibInFlight = null;
 async function _ensureOllamaLib() {
   if (_ollamaLibCache) return _ollamaLibCache;
-  try {
-    const res = await fetch('/api/cookbook/ollama/library');
-    const data = await res.json();
-    _ollamaLibCache = Array.isArray(data?.models) ? data.models : [];
-  } catch { _ollamaLibCache = []; }
-  return _ollamaLibCache;
+  if (_ollamaLibInFlight) return _ollamaLibInFlight;
+  const pending = (async () => {
+    try {
+      const res = await _fetchHwfitWithTimeout('/api/cookbook/ollama/library');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      _ollamaLibCache = Array.isArray(data?.models) ? data.models : [];
+    } catch { _ollamaLibCache = []; }
+    return _ollamaLibCache;
+  })();
+  _ollamaLibInFlight = pending;
+  const clearPending = () => {
+    if (_ollamaLibInFlight === pending) _ollamaLibInFlight = null;
+  };
+  pending.then(clearPending, clearPending);
+  return pending;
 }
 
 // Convert an Ollama library entry's sizes into per-tag hwfit rows. Shape
@@ -666,6 +704,9 @@ function _ollamaToHwfitRows(libModels, vramAvail, ramAvail) {
 
 export async function _hwfitFetch(fresh = false, opts = {}) {
   const _tk = ++_hwfitFetchToken;
+  _hwfitRequestController?.abort();
+  const _requestController = new AbortController();
+  _hwfitRequestController = _requestController;
   const allowNetwork = fresh || opts.allowNetwork !== false;
   const keepPrevious = !!opts.keepPrevious;
   const forceRevalidate = !!opts.forceRevalidate;
@@ -754,6 +795,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
   // Only fetch cached model IDs when server changes, not on every search/sort
   const remoteKey = _currentServerValue();
   if (!_cachedModelIds || _lastCacheHost() !== remoteKey) {
+    const _cacheFetchToken = _tk;
     const _cacheSrv = _serverByVal(_envState.remoteServerKey || remoteHost);
     const _cachePort = _cacheSrv?.port || '';
     const _cacheParams = new URLSearchParams();
@@ -762,9 +804,13 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
       if (_cachePort) _cacheParams.set('ssh_port', _cachePort);
       if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
     }
-    fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
-      .then(r => r.json())
+    _fetchHwfitWithTimeout(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' }, 20000)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then(d => {
+        if (_cacheFetchToken !== _hwfitFetchToken) return;
         if (d && d.error) throw new Error(d.error);
         // Exclude stalled (download-shell) entries — a 12 KB README-only
         // folder shouldn't count as "downloaded" in the Scan/Download list.
@@ -781,6 +827,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
           }
         });
       }).catch((err) => {
+        if (_cacheFetchToken !== _hwfitFetchToken) return;
         console.warn('Cached model marker scan failed:', err);
         _setLastCacheHost('');
       });
@@ -824,6 +871,8 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     if (hasManualOrDismissed) params.set('_hw_override_ts', String(Date.now()));
     // Image models use a separate registry/endpoint.
     const isImageMode = useCase === 'image_gen';
+    const officialOnly = document.getElementById('cookbook-hf-official-only')?.checked;
+    if (officialOnly) params.set('official_only', 'true');
     if ((fresh || (_paintedFromCache && !search)) && !isImageMode) {
       params.set('refresh_catalog', '1'); // update HF-backed dynamic catalogs in the background
     }
@@ -836,7 +885,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
       if (_fitOnly) params.set('fit_only', '1');
     }
     const endpoint = isImageMode ? `/api/hwfit/image-models?${params}` : `/api/hwfit/models?${params}`;
-    const res = await fetch(endpoint);
+    const res = await _fetchHwfitWithTimeout(endpoint, { signal: _requestController.signal }, 30000);
     // A newer scan started while this one was in flight (user switched servers
     // mid-probe) — drop this stale response so it can't clobber the new one.
     if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
@@ -857,7 +906,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     if (!isImageMode && quantPref && !data.error && Array.isArray(data.models) && data.models.length === 0) {
       const fallbackParams = new URLSearchParams(params);
       fallbackParams.delete('quant');
-      const fallbackRes = await fetch(`/api/hwfit/models?${fallbackParams}`);
+      const fallbackRes = await _fetchHwfitWithTimeout(`/api/hwfit/models?${fallbackParams}`, { signal: _requestController.signal }, 30000);
       if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
       if (fallbackRes.ok) {
         const fallbackData = await fallbackRes.json();
@@ -882,6 +931,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
         is_image_gen: true,
         quant: m.quant || m.default_quant || 'BF16',
         quant_repo: m.quant_repo || null,
+        runtime_adapter: m.runtime_adapter || m.runtime_adapter_type || '',
       }));
     }
     wp.destroy();
@@ -970,6 +1020,7 @@ export async function _hwfitFetch(fresh = false, opts = {}) {
     }
   } catch (e) {
     wp.destroy();
+    if (_tk !== _hwfitFetchToken) return;
     // Same stale-while-revalidate rule: only surface the error if we have nothing
     // already on screen from the cache.
     if (!_cached) _hwfitShowError(list, remoteHost, e.message);
@@ -1014,7 +1065,7 @@ function _renderHwVisibilityWarning(sys) {
     const panel = document.getElementById('hwfit-manual-panel');
     if (panel) panel.classList.remove('hidden');
     const manualBtn = document.getElementById('hwfit-hw-manual-btn');
-    if (manualBtn) manualBtn.textContent = 'CANCEL';
+    if (manualBtn) manualBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>CANCEL</span>';
     document.getElementById('hwfit-hw-manual-btn')?.scrollIntoView?.({
       behavior: 'smooth',
       block: 'center',
@@ -1050,6 +1101,16 @@ function _renderHwVisibilityWarning(sys) {
 
     _copyText(text);
   });
+}
+
+// Stop scans that are no longer useful after Cookbook is closed. The fetch
+// token also invalidates any completion that races the abort signal.
+export function _cancelHwfitRequests() {
+  _hwfitFetchToken++;
+  _hwfitRequestController?.abort();
+  _hwfitRequestController = null;
+  clearTimeout(_hwfitDebounce);
+  _hwfitDebounce = null;
 }
 
 export function _hwfitRenderHw(el, sys) {
@@ -1180,7 +1241,7 @@ export function _hwfitRenderHw(el, sys) {
         btn.closest('.hwfit-hw-chip-row')?.remove();
         document.getElementById('hwfit-manual-panel')?.classList.add('hidden');
         const manualBtn = document.getElementById('hwfit-hw-manual-btn');
-        if (manualBtn) manualBtn.textContent = 'EDIT';
+        if (manualBtn) manualBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 0 3 3L7 19l-4 1 1-4Z"/></svg><span>EDIT</span>';
         _resetGpuToggleState();
         _hwfitCache = null;
         _hwfitFetch(true);
@@ -1202,7 +1263,9 @@ function _wireManualHardwareControls(el) {
   const panel = document.getElementById('hwfit-manual-panel');
   if (!btn || !panel) return;
   const syncManualButton = () => {
-    btn.textContent = panel.classList.contains('hidden') ? 'EDIT' : 'CANCEL';
+    btn.innerHTML = panel.classList.contains('hidden')
+      ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 0 3 3L7 19l-4 1 1-4Z"/></svg><span>EDIT</span>'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>CANCEL</span>';
   };
   const clearManual = () => {
     _saveManualHwState(null);
@@ -1288,7 +1351,7 @@ export const _hwfitColumns = [
   { key: 'context',label: 'Ctx',   cls: 'hwfit-c-ctx' },
   { key: 'speed', label: 'Speed',  cls: 'hwfit-c-speed' },
   { key: 'score', label: 'Score',  cls: 'hwfit-c-score' },
-  { key: null,    label: 'Mode',   cls: 'hwfit-c-mode' },
+  { key: null,    label: 'Engine', cls: 'hwfit-c-mode' },
 ];
 
 function _sortHwfitRows(models) {
@@ -1331,6 +1394,10 @@ function _sortHwfitRows(models) {
 export function _hwfitRenderList(el, models) {
   if (!el) return;
   models = _sortHwfitRows(models);
+  const shouldPlayDomino = !el.querySelector('.hwfit-row[data-model]');
+  el.classList.remove('cookbook-hwfit-models-just-loaded');
+  clearTimeout(el._hwfitDominoTimer);
+  el._hwfitDominoTimer = null;
   if (!models.length) {
     // Disambiguate WHY the list is empty so capable servers don't read as "too weak":
     // active filters vs. a likely under-reported probe vs. genuinely low hardware.
@@ -1436,6 +1503,20 @@ export function _hwfitRenderList(el, models) {
     html += `</div>`;
   }
   el.innerHTML = html;
+  // Paint the complete table first, then let it settle in on the next frame.
+  // This avoids the large unstyled-looking text flash when a remote scan
+  // finishes, while keeping sorting/rerendering synchronous.
+  el.classList.remove('cookbook-model-list-fade');
+  void el.offsetWidth;
+  el.classList.add('cookbook-model-list-fade');
+  if (shouldPlayDomino) {
+    void el.offsetWidth;
+    el.classList.add('cookbook-hwfit-models-just-loaded');
+    el._hwfitDominoTimer = setTimeout(() => {
+      el.classList.remove('cookbook-hwfit-models-just-loaded');
+      el._hwfitDominoTimer = null;
+    }, 950);
+  }
   // Click row → expand inline action panel. Exception: Ollama rows skip the
   // expand panel (no HF metadata to power it) and just fill the Download
   // input with the `<name>:<size>` tag — one click → ready to pull.
@@ -1737,7 +1818,7 @@ export function _expandModelRow(row, modelData) {
                 if (_stopBtn) {
                   _stopBtn.click();
                 } else {
-                  await fetch('/api/shell/exec', {
+                  await _fetchHwfitWithTimeout('/api/shell/exec', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
@@ -1791,7 +1872,7 @@ export function _expandModelRow(row, modelData) {
           const _wrappedCheck = _qrHostStr
             ? `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${_qrHostStr} "bash -lc ${JSON.stringify(_coreCheck)}"`
             : `bash -lc ${JSON.stringify(_coreCheck)}`;
-          const _chkRes = await fetch('/api/shell/exec', {
+          const _chkRes = await _fetchHwfitWithTimeout('/api/shell/exec', {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
@@ -1922,7 +2003,7 @@ export function _expandModelRow(row, modelData) {
         host,
         (_srv && _srv.port) || undefined,
         _envState.envPath || '',
-        modelData.name,
+        modelData,
       );
       if (!_ok) {
         quickRunBtn.disabled = false;
@@ -1939,10 +2020,11 @@ export function _expandModelRow(row, modelData) {
         hf_token: _envState.hfToken || undefined,
         gpus: _envState.gpus || cudaDevices || undefined,
         platform: _envState.platform || undefined,
+        runtime_adapter: modelData.runtime_adapter || undefined,
       };
 
       try {
-        const res = await fetch('/api/model/serve', {
+        const res = await _fetchHwfitWithTimeout('/api/model/serve', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -1950,7 +2032,7 @@ export function _expandModelRow(row, modelData) {
         const data = await res.json();
         if (data.ok) {
           const shortName = modelData.name.split('/').pop();
-          _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
+          _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, runtime_adapter: modelData.runtime_adapter || '', remote_host: host });
           _renderRunningTab();
           uiModule.showToast(`Launching ${shortName}...`);
           // Switch to Running tab
@@ -2001,21 +2083,22 @@ export function _expandModelRow(row, modelData) {
 const _HWFIT_ENGINE_GLYPHS = {
   '': '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="8" cy="6" r="2" fill="currentColor" stroke="none"></circle><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none"></circle><circle cx="10" cy="18" r="2" fill="currentColor" stroke="none"></circle></svg>',
   vllm: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"></path><path d="M14 4l4 9 3-9"></path></svg>',
-  sglang: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;mask:url(/static/icons/sglang-mark.png) center/contain no-repeat;"></span>',
+  sglang: '',
   mlx: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18V6l4 7 4-7v12"></path><path d="M16 6v12"></path><path d="M20 6v12"></path></svg>',
   llamacpp: '<svg width="14" height="14" viewBox="0 0 600 600" fill="none" aria-hidden="true"><path d="M600 392L504.249 558L504.137 557.929C487.252 584.069 458.193 600 426.864 600H120L240 392H600Z" fill="currentColor"></path><path d="M240 392H0L199.602 46.0254C216.032 17.5463 246.411 0 279.29 0H466.154L240 392Z" fill="currentColor"></path></svg>',
-  ollama: '<span aria-hidden="true" style="display:block;width:14px;height:14px;background:currentColor;-webkit-mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;mask:url(/static/icons/ollama-mark-crop.png) center/contain no-repeat;"></span>',
+  ollama: '',
   diffusers: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"></path></svg>',
 };
 
 function _hwfitEngineGlyph(value) {
-  return _HWFIT_ENGINE_GLYPHS[value] || _HWFIT_ENGINE_GLYPHS[''];
+  return _HWFIT_ENGINE_GLYPHS[value] ?? _HWFIT_ENGINE_GLYPHS[''];
 }
 
 const _HWFIT_USECASE_GLYPHS = {
   general: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
   multimodal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
   image_gen: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg>',
+  trending: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>',
 };
 
 function _hwfitUsecaseGlyph(value) {
@@ -2086,12 +2169,18 @@ function _bindHwfitUsecasePicker(usecase) {
     setOpen(menu.hidden);
   });
   usecase.addEventListener('change', syncButton);
-  document.addEventListener('click', (ev) => {
+  const onDocumentClick = (ev) => {
     if (!wrap.contains(ev.target)) setOpen(false);
-  });
-  document.addEventListener('keydown', (ev) => {
+  };
+  const onDocumentKeydown = (ev) => {
     if (ev.key === 'Escape') setOpen(false);
-  });
+  };
+  document.addEventListener('click', onDocumentClick);
+  document.addEventListener('keydown', onDocumentKeydown);
+  wrap._cleanupUsecasePicker = () => {
+    document.removeEventListener('click', onDocumentClick);
+    document.removeEventListener('keydown', onDocumentKeydown);
+  };
   renderMenu();
 }
 
@@ -2150,12 +2239,18 @@ function _bindHwfitEnginePicker(engine) {
     setOpen(menu.hidden);
   });
   engine.addEventListener('change', syncButton);
-  document.addEventListener('click', (ev) => {
+  const onDocumentClick = (ev) => {
     if (!wrap.contains(ev.target)) setOpen(false);
-  });
-  document.addEventListener('keydown', (ev) => {
+  };
+  const onDocumentKeydown = (ev) => {
     if (ev.key === 'Escape') setOpen(false);
-  });
+  };
+  document.addEventListener('click', onDocumentClick);
+  document.addEventListener('keydown', onDocumentKeydown);
+  wrap._cleanupEnginePicker = () => {
+    document.removeEventListener('click', onDocumentClick);
+    document.removeEventListener('keydown', onDocumentKeydown);
+  };
   renderMenu();
 }
 
@@ -2169,21 +2264,33 @@ export function _hwfitInit() {
   const remote = document.getElementById('hwfit-host');
   _syncCtxControl();
   if (uc) _bindHwfitUsecasePicker(uc);
-  if (uc) uc.addEventListener('change', () => _hwfitFetch());
-  if (sort) sort.addEventListener('change', () => _hwfitFetch());
-  if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
+  if (uc && !uc.dataset.hwfitScanBound) {
+    uc.dataset.hwfitScanBound = '1';
+    uc.addEventListener('change', () => _hwfitFetch());
+  }
+  if (sort && !sort.dataset.hwfitScanBound) {
+    sort.dataset.hwfitScanBound = '1';
+    sort.addEventListener('change', () => _hwfitFetch());
+  }
+  if (qpref && !qpref.dataset.hwfitScanBound) {
+    qpref.dataset.hwfitScanBound = '1';
+    qpref.addEventListener('change', () => _hwfitFetch());
+  }
   // Engine filter is a pure client-side view filter over the already-fetched
   // list (HF + Ollama merged), so just re-render from cache.
   const engine = document.getElementById('hwfit-engine');
   if (engine) _bindHwfitEnginePicker(engine);
-  if (engine) engine.addEventListener('change', () => {
-    const list = document.getElementById('hwfit-list');
-    if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
-      _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
-    } else {
-      _hwfitFetch();
-    }
-  });
+  if (engine && !engine.dataset.hwfitScanBound) {
+    engine.dataset.hwfitScanBound = '1';
+    engine.addEventListener('change', () => {
+      const list = document.getElementById('hwfit-list');
+      if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
+        _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
+      } else {
+        _hwfitFetch();
+      }
+    });
+  }
   if (ctx && !ctx.dataset.bound) {
     ctx.dataset.bound = '1';
     ctx.addEventListener('input', () => {
@@ -2242,10 +2349,13 @@ export function _hwfitInit() {
       }
     });
   }
-  if (search) search.addEventListener('input', () => {
-    clearTimeout(_hwfitDebounce);
-    _hwfitDebounce = setTimeout(() => _hwfitFetch(), 400);
-  });
+  if (search && !search.dataset.hwfitScanBound) {
+    search.dataset.hwfitScanBound = '1';
+    search.addEventListener('input', () => {
+      clearTimeout(_hwfitDebounce);
+      _hwfitDebounce = setTimeout(() => _hwfitFetch(), 400);
+    });
+  }
   // HF token save is owned by cookbook.js (_wireTabEvents) — do not wire a
   // second change/input handler here. The old duplicate ran after cookbook.js
   // cleared the input on save and overwrote _envState.hfToken with "", so the
@@ -2347,7 +2457,7 @@ export function _hwfitInit() {
     setMsg('Testing SSH...');
     const t0 = Date.now();
     try {
-      const res = await fetch('/api/cookbook/test-ssh', {
+      const res = await _fetchHwfitWithTimeout('/api/cookbook/test-ssh', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ host, ssh_port: port || undefined }),
@@ -2393,7 +2503,7 @@ export function _hwfitInit() {
   }
 
   async function _fetchCookbookSshKey(generate = false) {
-    const res = await fetch('/api/cookbook/ssh-key', {
+    const res = await _fetchHwfitWithTimeout('/api/cookbook/ssh-key', {
       method: generate ? 'POST' : 'GET',
       credentials: 'same-origin',
     });
@@ -2481,8 +2591,10 @@ export function _hwfitInit() {
       _defBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const key = _defBtn.dataset.srvKey || '';
-        // Toggle off if it's already the default; otherwise make it the default.
-        _envState.defaultServer = (_envState.defaultServer === key) ? '' : key;
+        // Match the model-directory selector: this is an exclusive choice,
+        // so clicking the active option keeps it selected rather than clearing
+        // the default and leaving Cookbook without a landing server.
+        _envState.defaultServer = key;
         _persistEnvState();
         document.querySelectorAll('.cookbook-srv-default').forEach(b => {
           const on = !!_envState.defaultServer && b.dataset.srvKey === _envState.defaultServer;
@@ -2648,7 +2760,7 @@ export function _hwfitInit() {
         const origText = setupBtn.textContent;
         setupBtn.textContent = 'Installing...';
         try {
-          const res = await fetch('/api/cookbook/setup', {
+          const res = await _fetchHwfitWithTimeout('/api/cookbook/setup', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ host, ssh_port: port || undefined }),

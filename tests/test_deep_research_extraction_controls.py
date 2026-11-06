@@ -1,12 +1,11 @@
 import asyncio
 import json
-import sys
 import time
-import types
 
 import pytest
 
 from src.deep_research import DeepResearcher
+from src.research_navigator import ResearchPage
 
 
 class _ControlledResearcher(DeepResearcher):
@@ -53,38 +52,36 @@ async def test_search_and_extract_tracks_all_urls_selected_for_analysis():
     findings = await researcher._search_and_extract(["a"], "question")
 
     assert len(findings) == 2
-    assert researcher.analyzed_urls == [
+    assert [
+        {"url": item["url"], "title": item["title"]}
+        for item in researcher.analyzed_urls
+    ] == [
         {"url": "https://example.test/a/0", "title": "a-0"},
         {"url": "https://example.test/a/1", "title": "a-1"},
     ]
+    assert all(item["requested_by"] == "web_search" for item in researcher.analyzed_urls)
 
 
 @pytest.mark.asyncio
 async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
     captured = {}
-    search_mod = types.ModuleType("src.search")
-
-    def fake_fetch_webpage_content(url, timeout):
-        return {
-            "success": True,
-            "content": "useful page content",
-            "title": "Page",
-            "og_image": "",
-        }
-
-    search_mod.fetch_webpage_content = fake_fetch_webpage_content
-    monkeypatch.setitem(sys.modules, "src.search", search_mod)
-
-    async def immediate_to_thread(fn, *args, **kwargs):
-        return fn(*args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "to_thread", immediate_to_thread)
 
     researcher = DeepResearcher(
         llm_endpoint="http://local.test/v1/chat/completions",
         llm_model="local-model",
         extraction_timeout=123,
     )
+
+    async def fake_fetch(url, timeout=10):
+        return ResearchPage(
+            url=url,
+            title="Page",
+            content="useful page content",
+            success=True,
+            retrieval="fetch",
+        )
+
+    researcher.navigator.fetch = fake_fetch
 
     async def fake_llm(messages, temperature=0.3, max_tokens=4096, timeout=60):
         captured["timeout"] = timeout

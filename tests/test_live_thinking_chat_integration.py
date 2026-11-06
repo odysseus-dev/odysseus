@@ -134,6 +134,31 @@ def test_terminal_paths_use_one_authoritative_rich_round_render():
     assert "processWithThinking" not in recovery_path
 
 
+def test_final_response_skips_duplicate_end_of_stream_render():
+    final_response_path = _between(
+        "if (json.type === 'final_response') {",
+        "if (json.delta) {",
+    )
+    assert "terminalFinalResponseRendered = true;" in final_response_path
+
+    post_loop = _between(
+        "// --- Final render (skip if stream was ever backgrounded or currently in background) ---",
+        "} // end if (!_isBgFinal)",
+    )
+    assert "if (!terminalFinalResponseRendered && !_turnRendering.isVisible(roundHolder.querySelector('.body'), _terminalAnswerHtml(roundText, roundHolder.querySelector('.body')))) _renderStream();" in post_loop
+    assert "const finalDisplay = terminalFinalResponseRendered ? '' : _streamDisplayText" in post_loop
+
+
+def test_only_rich_completed_turns_reload_saved_canonical_assistant_row():
+    assert "if (_canonicalTerminalSaved && _savedAssistantMessageId && !_pendingContinue)" not in _CHAT
+    assert "if (!_pendingContinue)" in _CHAT
+    assert "if (!streamSessionId || !_savedAssistantMessageId) return false;" in _CHAT
+    assert "String(msg.metadata?._db_id || '') === _savedAssistantMessageId" in _CHAT
+    assert "const _needsCanonicalTurnRebuild" in _CHAT
+    assert "lastToolThread" in _CHAT
+    assert "_streamTurnMarker.remove();" in _CHAT
+
+
 def test_detach_synchronously_cancels_delayed_view_work():
     registration = _between("_activeStreams.set(streamSessionId", "_syncForegroundStreamGlobals();")
     assert "cancelViewWork: () => _cancelLiveThinkingWork()" in registration
