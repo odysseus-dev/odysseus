@@ -88,6 +88,7 @@ def test_orphaned_tree_is_claimed_only_through_its_browser_profile(fake_procfs, 
     assert browser_lifecycle.browser_tree(500) == [501, 502]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: signal.SIGKILL")
 def test_forced_cleanup_kills_tree_and_removes_owned_resources(fake_procfs, tmp_path) -> None:
     proc, killed = fake_procfs
     root = tmp_path / "rt"
@@ -110,6 +111,7 @@ def test_forced_cleanup_kills_tree_and_removes_owned_resources(fake_procfs, tmp_
     assert (proc / "900").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: signal.SIGKILL")
 def test_member_recycled_between_membership_and_identity_is_never_signalled(
     fake_procfs, tmp_path, monkeypatch,
 ) -> None:
@@ -154,6 +156,7 @@ def test_member_recycled_between_membership_and_identity_is_never_signalled(
     assert killed_pids == [501, 500] and survivors == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: signal.SIGKILL")
 def test_member_without_identity_is_a_survivor_and_keeps_its_profile(fake_procfs, tmp_path) -> None:
     proc, killed = fake_procfs
     root = tmp_path / "rt"
