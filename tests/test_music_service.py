@@ -98,6 +98,40 @@ def mock_mpv_environment(monkeypatch):
     yield mock
 
 
+@pytest.fixture(autouse=True)
+def isolated_music_library(tmp_path, monkeypatch):
+    """Give the suite a tiny, valid library instead of the operator's real one."""
+    import wave
+
+    from services.music import music_service as ms
+
+    root = tmp_path / "Music"
+    files = [
+        "Artist/Album/01 - Sample Track.wav",
+        "Artist/Album/02 - Second Track.wav",
+        "Unsorted/loose track.wav",
+    ]
+    for rel in files:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as fh:
+            fh.setnchannels(1)
+            fh.setsampwidth(2)
+            fh.setframerate(8000)
+            fh.writeframes(b"\x00\x00" * 800)  # 0.1 s of silence
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setattr(ms, "MUSIC_ROOT", root)
+    monkeypatch.setattr(ms, "_DATA_DIR", data_dir)
+    ms._invalidate_library_cache()
+    ms._queue_tracks = []
+    ms._queue_index = -1
+    ms._logical_queue = []
+    ms._logical_queue_index = -1
+    ms._active_logical = None
+    yield root
+
+
 def _browse_entries():
     data = browse()
     return [e for e in data.get("entries", []) if e.get("kind") in ("dir", "file")]
@@ -816,7 +850,7 @@ def test_favorites_lifecycle_and_virtual_browse(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "_favorites", set())
 
     music_dir = tmp_path / "Music"
-    music_dir.mkdir()
+    music_dir.mkdir(exist_ok=True)
     track1 = music_dir / "track1.flac"
     track1.write_bytes(b"dummy flac content")
     monkeypatch.setattr(ms, "MUSIC_ROOT", music_dir)

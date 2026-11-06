@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#282c34">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Odysseus · Música</title>
+<link rel="stylesheet" href="/static/music-remote.css?v=20261019remote3">
+<link rel="stylesheet" href="/static/music-remote-feedback.css?v=20261019fb1">
+</head>
+<body>
+<main>
+  <header class="top">
+    <span class="brand">Odysseus</span>
+    <span class="section">Música</span>
+  </header>
+
+  <p class="banner" id="banner" hidden></p>
+
+  <section class="card" aria-labelledby="channels-h" id="channels" hidden>
+    <h2 id="channels-h">Canales</h2>
+    <div class="chips" id="chips"></div>
+    <p class="meta" id="channel-note"></p>
+  </section>
+
+  <section class="card" aria-labelledby="search-h">
+    <h2 id="search-h">Buscar</h2>
+    <form class="search-form" id="search-form">
+      <input id="search-input" type="search" placeholder="jazz tranquilo para trabajar, la de God of War…" aria-label="Buscar música" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search">
+      <button type="submit" class="go">Buscar</button>
+    </form>
+    <p class="meta" id="search-counts"></p>
+    <button type="button" class="act" id="discover">Descubrimiento</button>
+    <p class="empty" id="search-state"></p>
+    <ul class="list" id="results"></ul>
+  </section>
+
+  <section class="card" id="prefs" aria-labelledby="prefs-h" hidden>
+    <h2 id="prefs-h">Opciones</h2>
+    <label class="pref">Calidad
+      <select id="pref-quality">
+        <option value="auto">Auto</option>
+        <option value="64">Opus 64k</option>
+        <option value="96">Opus 96k</option>
+        <option value="128">Opus 128k</option>
+        <option value="192">Opus 192k</option>
+        <option value="320">Opus 320k</option>
+        <option value="flac">Original (FLAC)</option>
+      </select>
+    </label>
+    <label class="pref">Precarga
+      <select id="pref-preload">
+        <option value="auto">Inmediata</option>
+        <option value="metadata">Bajo demanda</option>
+      </select>
+    </label>
+    <label class="pref"><input type="checkbox" id="pref-remember"> Recordar posición de la última pista</label>
+    <button type="button" class="act" id="prefs-close">Cerrar</button>
+  </section>
+
+  <section class="card" aria-labelledby="fav-h" id="favorites-card">
+    <h2 id="fav-h">Favoritos</h2>
+    <p class="empty" id="fav-empty">Aún no hay favoritos. Pulsa ♡ en una pista.</p>
+    <ol class="list" id="favorites"></ol>
+  </section>
+
+  <section class="card" aria-labelledby="queue-h">
+    <h2 id="queue-h">Cola</h2>
+    <p class="empty" id="queue-empty">La cola está vacía.</p>
+    <ol class="list" id="queue"></ol>
+  </section>
+
+  <section class="card now" aria-label="Reproduciendo">
+    <div class="now-head">
+      <p class="now-title" id="now-title">Nada reproduciéndose</p>
+      <button type="button" class="act icon" id="fav" aria-label="Añadir a favoritos" aria-pressed="false">♡</button>
+      <button type="button" class="act icon" id="min" aria-label="Minimizar reproductor" aria-pressed="false">▾</button>
+      <button type="button" class="act icon" id="gear" aria-label="Opciones de reproducción">⚙</button>
+    </div>
+    <p class="quality"><span id="quality-label">Auto</span> <span id="quality-note" class="quality-note" hidden>· calidad fija</span></p>
+    <p class="now-meta" id="now-meta">Busca una canción para empezar.</p>
+    <input class="seek" id="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Posición" disabled>
+    <div class="times"><span id="t-now">0:00</span><span id="t-total">0:00</span></div>
+    <div class="transport">
+      <button type="button" class="ctl" id="prev" aria-label="Anterior">⏮</button>
+      <button type="button" class="ctl main" id="playpause" aria-label="Reproducir">▶</button>
+      <button type="button" class="ctl" id="next" aria-label="Siguiente">⏭</button>
+      <button type="button" class="act" id="radio" aria-label="Radio a partir de esta pista">Radio</button>
+    </div>
+    <label class="volume">Volumen
+      <input id="volume" type="range" min="0" max="1" step="0.05" value="1">
+    </label>
+    <audio id="player" preload="none"></audio>
+  </section>
+</main>
+<script src="/static/music-remote.js?v=20261019remote3" defer></script>
+<script src="/static/music-remote-feedback.js?v=20261019fb1" defer></script>
+</body>
+</html>

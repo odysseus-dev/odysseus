@@ -1276,6 +1276,7 @@ function initializeEventListeners() {
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
     '/skills':   () => document.getElementById('tool-skills-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
+    '/music':    () => document.getElementById('tool-music-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
@@ -3858,6 +3859,7 @@ function startOdysseusApp() {
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-research':  'tool-research-btn',
     'rail-gallery':   'tool-gallery-btn',
+    'rail-music':     'tool-music-btn',
     'rail-archive':   'tool-library-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-notes':     'tool-notes-btn',

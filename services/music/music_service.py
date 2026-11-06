@@ -757,6 +757,19 @@ def _resolve_under_root(raw: str = "") -> Path:
     return resolved
 
 
+def _relative_track_path(path: Path) -> Optional[str]:
+    """Path relative to the library root, or None when it lives outside it.
+
+    mpv can still hold a track from a previous ODYSSEUS_MUSIC_ROOT (for example
+    after the default moved). Status and scope changes must not raise just
+    because that file is no longer under the configured root.
+    """
+    try:
+        return str(path.resolve().relative_to(MUSIC_ROOT.resolve()))
+    except (OSError, ValueError):
+        return None
+
+
 def _is_audio(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in AUDIO_EXTS
 
@@ -1619,7 +1632,8 @@ def _playback_window(path: Optional[Path] = None) -> Tuple[float, float, int, st
         if not chapter_idx >= 0:
             chapter_idx = int(_active_logical["chapter_index"])
 
-    chapters = get_chapters_for_path(str(path.relative_to(MUSIC_ROOT.resolve())))
+    rel = _relative_track_path(path)
+    chapters = get_chapters_for_path(rel) if rel else []
     if chapter_idx >= 0 and chapters:
         if chapter_idx < len(chapters):
             ch = chapters[chapter_idx]
@@ -1642,7 +1656,7 @@ def _playback_window(path: Optional[Path] = None) -> Tuple[float, float, int, st
 
 
 def _logical_track_dict(path: Path, chapter_index: Optional[int] = None) -> Dict[str, Any]:
-    rel = str(path.relative_to(MUSIC_ROOT.resolve())) if path.is_file() else str(path)
+    rel = _relative_track_path(path) or str(path)
     return {"path": rel, "chapter_index": chapter_index}
 
 

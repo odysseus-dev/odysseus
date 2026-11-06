@@ -30,8 +30,17 @@ def _ttl_sec() -> int:
         return DEFAULT_TTL_SEC
 
 
+def _key_dir() -> Path:
+    override = os.getenv("ODYSSEUS_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    from src.constants import DATA_DIR
+
+    return Path(DATA_DIR)
+
+
 def _key() -> bytes:
-    path = Path(os.getenv("ODYSSEUS_DATA_DIR", "data")).expanduser() / _KEY_NAME
+    path = _key_dir() / _KEY_NAME
     if path.is_file():
         raw = path.read_text(encoding="utf-8").strip()
         if raw:

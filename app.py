@@ -327,6 +327,12 @@ if AUTH_ENABLED:
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
     ]
+    from src.music_ticket import SCOPE_EVENTS, SCOPE_STREAM
+    _MUSIC_TICKET_SCOPES = {
+        "/api/music/stream": SCOPE_STREAM,
+        "/api/music/events": SCOPE_EVENTS,
+    }
+
     def _is_auth_exempt(path: str) -> bool:
         if path in AUTH_EXEMPT_EXACT:
             return True
@@ -505,6 +511,25 @@ if AUTH_ENABLED:
                     logger.warning("API token auth error", exc_info=False)
                 # Invalid bearer token — reject immediately
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
+
+            # Audio and EventSource cannot send an Authorization header.
+            # A short-lived ticket opens only stream and events.
+            if request.method == "GET" and path in _MUSIC_TICKET_SCOPES:
+                from src.music_ticket import verify_ticket_claims
+                _claims = verify_ticket_claims(
+                    request.query_params.get("ticket"), _MUSIC_TICKET_SCOPES[path]
+                )
+                if _claims:
+                    from src.music_access import can_read_library
+                    _ticket_user = _claims["u"]
+                    if not can_read_library(_ticket_user, bool(_claims.get("g"))):
+                        return JSONResponse(status_code=403, content={"error": "Music library not shared with this user"})
+                    request.state.current_user = _ticket_user
+                    request.state.music_guest = bool(_claims.get("g"))
+                    request.state.api_token = False
+                    return await call_next(request)
+                if request.query_params.get("ticket"):
+                    return JSONResponse(status_code=401, content={"error": "Invalid music ticket"})
 
             # --- Cookie-based session auth ---
             token = request.cookies.get(SESSION_COOKIE)

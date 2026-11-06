@@ -1,9 +1,25 @@
 """Music routes request body binding and scope regression tests."""
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from routes.music_routes import setup_music_routes
+
+
+@pytest.fixture(autouse=True)
+def isolated_music_state(tmp_path, monkeypatch):
+    """Do not read the operator's data/music_state.json or library in tests."""
+    from services.music import music_service as ms
+
+    root = tmp_path / "Music"
+    root.mkdir()
+    monkeypatch.setattr(ms, "MUSIC_ROOT", root)
+    monkeypatch.setattr(ms, "_MUSIC_STATE_FILE", tmp_path / "music_state.json")
+    monkeypatch.setattr(ms, "_MUSIC_FAVORITES_FILE", tmp_path / "music_favorites.json")
+    monkeypatch.setattr(ms, "_DOWNLOAD_TASKS_FILE", tmp_path / "music_download_tasks.json")
+    monkeypatch.setattr(ms, "_MUSIC_QUALITY_CACHE_FILE", tmp_path / "music_quality_cache.json")
+    yield root
 
 
 def test_music_scope_accepts_json_body():
