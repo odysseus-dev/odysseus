@@ -91,7 +91,7 @@ def playwright_available(node="node", cwd=ROOT):
         return False
     result = subprocess.run(
         [node, "-e", "require.resolve('playwright')"],
-        cwd=str(cwd), capture_output=True, text=True, check=False,
+        cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     return result.returncode == 0
 
@@ -131,7 +131,7 @@ def capture(origin, inventory=None, *, swap_rule=None, variants=None,
     result = subprocess.run(
         [node, str(CAPTURE_SCRIPT)],
         input=json.dumps(job), cwd=str(cwd),
-        capture_output=True, text=True, check=False, timeout=timeout,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout,
     )
     if result.returncode != 0:
         raise RuntimeError(f"css snapshot capture failed:\n{result.stderr.strip()}")

@@ -57,7 +57,7 @@ def test_precached_helper_imports_offline_in_a_fresh_page_and_panels_stay_lazy()
         console.log(JSON.stringify({ ...result, ...installed }));
       } finally { await browser.close(); }
     '''
-    result = subprocess.run(["node", "--input-type=module", "--eval", script], cwd=ROOT, capture_output=True, text=True, timeout=90)
+    result = subprocess.run(["node", "--input-type=module", "--eval", script], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
     assert result.returncode == 0, result.stdout + result.stderr
     data = json.loads(result.stdout)
     assert data["exports"] == ["SELECT_MENU_ICON", "actionMenuRank", "orderActionMenuItems"]

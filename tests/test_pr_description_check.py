@@ -132,6 +132,8 @@ checkPrDescription({ github, context, core })
         ["node", "-e", harness, str(_CHECKER), payload],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=str(_REPO),
         timeout=30,
     )
