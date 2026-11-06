@@ -1,0 +1,16 @@
+{
+  "productName": "Odysseus",
+  "version": "0.1.0",
+  "identifier": "com.odysseus.dev",
+  "build": {
+    "frontendDist": "../static",
+    "devUrl": "http://localhost:7000"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  }
+}
