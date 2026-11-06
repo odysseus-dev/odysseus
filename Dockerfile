@@ -85,7 +85,15 @@ COPY docker/chromium-emudhra.json /etc/chromium/policies/managed/odysseus-emudhr
 # Private browser automation wrapper used by the native `private_browser` tool.
 # Chromium is installed above, so agent-browser can drive the existing browser
 # binary without paying `npx` startup/install overhead on each tool call.
-RUN npm install -g agent-browser@0.35.0 --omit=dev --loglevel=error
+#
+# Node 20 abandons each TCP connect attempt after 250 ms and moves to the next
+# registry address. On a congested or high-latency build network every attempt
+# can miss that window, and npm fails with a bare `ETIMEDOUT ... reason:` even
+# though the registry is reachable. A 2 s window covers one lost SYN (resent
+# after 1 s); the extra npm retries cover a briefly flaky link.
+RUN NODE_OPTIONS="$NODE_OPTIONS --network-family-autoselection-attempt-timeout=2000" \
+    npm install -g agent-browser@0.35.0 --omit=dev --loglevel=error \
+        --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=60000
 
 # libgl1/libglib2.0-0t64/libxcb1 are runtime shared libs (libGL.so.1,
 # libglib-2.0/libgthread, libxcb.so.1) that opencv-python (cv2) loads. The
@@ -107,6 +115,8 @@ RUN npm install -g agent-browser@0.35.0 --omit=dev --loglevel=error
 # dockerd but not the client binary on slim, so grab the static client
 # tarball from download.docker.com instead.
 # 29.9.2 includes Go 1.26.10's eMudhra intermediate-key distrust.
+# Same retry flags as docker/build-realesrgan-wheels.sh, so a DNS lookup that
+# times out (curl exit 6) or a dropped connection doesn't fail the whole build.
 ARG DOCKER_CLI_VERSION=29.9.2
 RUN ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
@@ -114,7 +124,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
          arm64) DARCH=aarch64 ;; \
          *) echo "unsupported arch $ARCH"; exit 1 ;; \
        esac \
-    && curl -fsSL "https://download.docker.com/linux/static/stable/${DARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
+    && curl -fsSL --retry 8 --retry-delay 3 --retry-max-time 120 --retry-all-errors \
+       "https://download.docker.com/linux/static/stable/${DARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
        -o /tmp/docker.tgz \
     && tar -xzf /tmp/docker.tgz -C /tmp \
     && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
