@@ -37,6 +37,7 @@ import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=2
 import tasksModule from './js/tasks.js?v=20260914taskmodel1';
 import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
+import musicModule from './js/music.js?v=20261105music1';
 import adminModule from './js/admin.js?v=20260929csssplit';
 import settingsModule from './js/settings.js?v=20260912writingstyle3';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -1083,6 +1084,18 @@ function initializeEventListeners() {
       if (!Modals.toggle('gallery-modal')) {
         if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
         else galleryModule.openGallery();
+      }
+    });
+  }
+
+  const toolMusicBtn = el('tool-music-btn');
+  if (toolMusicBtn) {
+    toolMusicBtn.addEventListener('click', async () => {
+      if (!musicModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('music-modal')) {
+        if (musicModule.isMusicOpen()) musicModule.closeMusic();
+        else musicModule.openMusic('library');
       }
     });
   }
