@@ -615,6 +615,10 @@ class BashTool:
                 "error": "bash: command is required; no command was executed",
                 "exit_code": 1,
             }
+        from src.state_gate import check_bash as _sg_bash
+        _sg_err = _sg_bash(content, ctx=ctx)
+        if _sg_err:
+            return {"error": _sg_err, "exit_code": 1, "blocked": True}
         if re.search(r"(?:^|[;&|]\s*)sudo\b|^\s*sudo\b", content, re.IGNORECASE):
             return {
                 "error": "bash: sudo/privilege escalation is unavailable in agent execution",

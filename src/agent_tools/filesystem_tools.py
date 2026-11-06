@@ -232,6 +232,10 @@ class EditFileTool:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"edit_file: {e}", "exit_code": 1}
+        from src.state_gate import check_path as _sg_check
+        _sg_err = _sg_check(str(path), action="edit", ctx=ctx)
+        if _sg_err:
+            return {"error": _sg_err, "exit_code": 1, "blocked": True}
         if old == new:
             return {"error": "edit_file: old_string and new_string are identical", "exit_code": 1}
 
@@ -426,6 +430,10 @@ class WriteFileTool:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"write_file: {e}", "exit_code": 1}
+        from src.state_gate import check_path as _sg_check
+        _sg_err = _sg_check(str(path), action="write", ctx=ctx)
+        if _sg_err:
+            return {"error": _sg_err, "exit_code": 1, "blocked": True}
         body = _unwrap_fenced_source_body(body, path)
         # A frequent multimodal artifact failure is writing SVG markup to a
         # path whose extension promises a raster image. The file exists, so
@@ -574,9 +582,13 @@ class ApplyPatchTool:
             ops = _parse_agent_patch(patch_text)
             if not ops:
                 return {"error": "apply_patch: no file operations found", "exit_code": 1}
+            from src.state_gate import check_path as _sg_check
             prepared = []
             for op in ops:
                 path = _resolve_tool_path(op["path"])
+                _sg_err = _sg_check(str(path), action="apply_patch", ctx=ctx)
+                if _sg_err:
+                    return {"error": _sg_err, "exit_code": 1, "blocked": True}
                 kind = op["kind"]
                 if kind == "add":
                     if os.path.exists(path):
