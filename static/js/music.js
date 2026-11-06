@@ -1381,7 +1381,7 @@ async function _renderPlaylistsPanel() {
       _renderPlaylistsPanel();
     });
     panel.querySelectorAll('[data-playlist-play]').forEach((btn) => btn.addEventListener('click', async () => {
-      try { await _api(`/api/music/playlists/${encodeURIComponent(btn.dataset.playlistPlay)}/play`, {method:'POST'}); _pollStatus?.(); }
+      try { await _api(`/api/music/playlists/${encodeURIComponent(btn.dataset.playlistPlay)}/play`, {method:'POST'}); refreshStatus().catch(() => {}); }
       catch (e) { uiModule?.showError?.(`Playlist: ${e.message || e}`); }
     }));
     panel.querySelectorAll('[data-playlist-del]').forEach((btn) => btn.addEventListener('click', async () => {
