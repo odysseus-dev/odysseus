@@ -37,6 +37,26 @@ import { UI_VIS_DEFAULT_OFF, resolveVisibility } from './js/ui_visibility.js?v=2
 import tasksModule from './js/tasks.js?v=20260914taskmodel1';
 import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
+let musicModule = null;
+async function loadMusicModule() {
+  if (musicModule) return musicModule;
+  try {
+    const res = await fetch('/api/music/status', { credentials: 'same-origin' });
+    if (!res.ok) return null;
+    const mod = await import('./js/music.js?v=20261105music1');
+    musicModule = mod.default || mod;
+    return musicModule;
+  } catch {
+    return null;
+  }
+}
+fetch('/api/music/status', { credentials: 'same-origin' })
+  .then((res) => {
+    if (res.status !== 404) return;
+    document.getElementById('rail-music')?.remove();
+    document.getElementById('tool-music-btn')?.remove();
+  })
+  .catch(() => {});
 import adminModule from './js/admin.js?v=20260929csssplit';
 import settingsModule from './js/settings.js?v=20260912writingstyle3';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -1087,6 +1107,19 @@ function initializeEventListeners() {
     });
   }
 
+  const toolMusicBtn = el('tool-music-btn');
+  if (toolMusicBtn) {
+    toolMusicBtn.addEventListener('click', async () => {
+      const mod = await loadMusicModule();
+      if (!mod) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('music-modal')) {
+        if (mod.isMusicOpen()) mod.closeMusic();
+        else mod.openMusic('library');
+      }
+    });
+  }
+
   // Tasks tool button
   const toolTasksBtn = el('tool-tasks-btn');
   if (toolTasksBtn) {
@@ -1263,6 +1296,7 @@ function initializeEventListeners() {
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
     '/skills':   () => document.getElementById('tool-skills-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
+    '/music':    () => document.getElementById('tool-music-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
   };
@@ -3845,6 +3879,7 @@ function startOdysseusApp() {
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-research':  'tool-research-btn',
     'rail-gallery':   'tool-gallery-btn',
+    'rail-music':     'tool-music-btn',
     'rail-archive':   'tool-library-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-notes':     'tool-notes-btn',

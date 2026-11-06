@@ -212,6 +212,11 @@ export function handleUIControl(uiData) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
           if (fn) fn();
         }).catch(function(){});
+      } else if (panel === 'music') {
+        import('./music.js?v=20261105music1').then(function(mod) {
+          var fn = mod.openMusic || mod.openPanel || (mod.default && (mod.default.openMusic || mod.default.openPanel));
+          if (fn) fn();
+        }).catch(function(){});
       } else if (panel === 'tasks') {
         document.getElementById('tool-tasks-btn')?.click();
       } else if (panel === 'theme' || panel === 'themes') {
