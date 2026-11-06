@@ -3,6 +3,8 @@
 // Pure helpers for building reply-all recipient lists. No DOM, no fetch,
 // no shared state — safe to import anywhere and to unit-test under node.
 
+import { _splitRecipientList } from './utils.js';
+
 // Extract the bare email from "Name <email@x>" or a plain "email@x".
 export function extractEmail(addr) {
   const m = (addr || '').match(/<([^>]+)>/);
@@ -20,8 +22,7 @@ export function extractEmail(addr) {
 export function buildReplyAllCc(data, mine) {
   const list = Array.isArray(mine) ? mine : [mine];
   const me = new Set(list.map((a) => (a || '').toLowerCase()).filter(Boolean));
-  const split = (s) => (typeof s === 'string' ? s : '').split(',').map((x) => x.trim()).filter(Boolean);
-  return [...split(data && data.to), ...split(data && data.cc)]
+  return [..._splitRecipientList(data && data.to), ..._splitRecipientList(data && data.cc)]
     .filter((addr) => !me.has(extractEmail(addr)))
     .join(', ');
 }
