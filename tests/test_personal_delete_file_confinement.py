@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from routes import personal_routes
+from tests.helpers.symlinks import requires_symlinks
 
 
 class _FakePersonalDocs:
@@ -30,6 +31,7 @@ def _delete_endpoint(personal_docs):
     raise AssertionError("DELETE /api/personal/file endpoint not found")
 
 
+@requires_symlinks
 def test_delete_file_refuses_symlink_directory_escape(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     uploads.mkdir()

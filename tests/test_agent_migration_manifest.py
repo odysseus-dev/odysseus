@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from tests.helpers.symlinks import requires_symlinks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +78,7 @@ Use for focused git checks.
     assert "## When to Use" in items[0]["content"]
 
 
+@requires_symlinks
 def test_collect_skill_dir_skips_symlinked_skill_markdown(tmp_path):
     migration = load_module()
     outside = tmp_path / "outside.md"
@@ -91,6 +93,7 @@ def test_collect_skill_dir_skips_symlinked_skill_markdown(tmp_path):
     assert warnings[0].message == "skipped symlinked skill file"
 
 
+@requires_symlinks
 def test_collect_skill_dir_skips_symlinked_root(tmp_path):
     migration = load_module()
     real_skills = tmp_path / "real-skills"
@@ -117,6 +120,7 @@ def test_archive_content_is_optional(tmp_path):
     assert with_content[0]["content"].startswith("# Notes")
 
 
+@requires_symlinks
 def test_archive_skips_symlinked_file(tmp_path):
     migration = load_module()
     outside = tmp_path / "outside.md"
@@ -132,6 +136,7 @@ def test_archive_skips_symlinked_file(tmp_path):
     assert warnings[0].message == "skipped symlinked archive path"
 
 
+@requires_symlinks
 def test_archive_skips_symlinked_root(tmp_path):
     migration = load_module()
     archive = tmp_path / "notes.md"

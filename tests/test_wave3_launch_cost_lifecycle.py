@@ -16,8 +16,10 @@ from src.process_lifecycle import ProcessIdentity
 from tests.test_runtime_resource_integration import workspace, authority, dispatch
 from tests.test_background_resource_identity import seed
 from src.agent_runtime import process_resources as resources
+from tests.helpers.symlinks import requires_symlinks
 
 
+@requires_symlinks
 @pytest.mark.parametrize('tool,content', [('bash', 'printf guarded'), ('python', 'print("guarded")')])
 async def test_real_dispatch_scans_workspace_once_per_binding(workspace, monkeypatch, tool, content):
     (workspace / 'child').mkdir()
@@ -37,6 +39,7 @@ async def test_real_dispatch_scans_workspace_once_per_binding(workspace, monkeyp
         assert not list(resources._LAUNCH_DIR.glob('*.json'))
 
 
+@requires_symlinks
 async def test_alias_created_after_resolution_is_denied_at_binding(workspace):
     admitted = authority(workspace)
     op = ExactOperation.normalize('bash', 'printf safe')
@@ -177,6 +180,7 @@ def test_restart_never_prunes_background_linkage(workspace, monkeypatch):
     assert resources.launch_path(resource.generation).is_file()
 
 
+@requires_symlinks
 def test_snapshot_is_rebuilt_for_each_guard(workspace):
     resources._LAUNCH_DIR.mkdir(parents=True)
     target = workspace / 'data'; target.write_text('ordinary')

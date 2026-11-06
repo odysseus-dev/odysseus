@@ -6,6 +6,7 @@ import pytest
 
 from services.memory.skills import SkillsManager
 from src.tools.system import do_manage_skills
+from tests.helpers.symlinks import requires_symlinks
 
 
 def call(action, owner="sft_skill_fixture", **args):
@@ -62,6 +63,7 @@ def test_patch_followup_preserves_other_sections_and_rejects_ambiguous_edits(tmp
     assert call("view", name="owned-fixture") == before
 
 
+@requires_symlinks
 def test_reference_followup_reads_only_owner_visible_confined_files(tmp_path, monkeypatch):
     monkeypatch.setattr("src.constants.DATA_DIR", str(tmp_path))
     SkillsManager(str(tmp_path)).add_skill(name="owned-fixture", description="Reference fixture",
