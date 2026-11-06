@@ -35,7 +35,7 @@ test('brush presets and shared stroke controls remain reusable', async ({ page }
   await expect(page.locator('#ge-brush-preset option', { hasText: 'My Detail Brush' })).toHaveCount(0);
 });
 
-test('long sampled strokes stay responsive and undo atomically', async ({ page }) => {
+test('long sampled strokes stay responsive and undo atomically', async ({ page, browserName }, testInfo) => {
   await openBlankEditor(page);
   await selectTool(page, 'brush');
   await page.locator('.ge-size-slider').fill('700');
@@ -49,13 +49,40 @@ test('long sampled strokes stay responsive and undo atomically', async ({ page }
   const before = await flattenedPixelDigest(page);
   const start = await canvasPoint(page, 0.08, 0.5);
   const end = await canvasPoint(page, 0.92, 0.5);
+  // Playwright delivers stepped moves at frame cadence: 240 events already
+  // cost ~4s on an inert page. Measure that transport cost with the same input,
+  // and separately bound real Chromium main-thread work at the original5s.
+  const control = await page.context().newPage();
+  let controlDuration;
+  try {
+    await control.setContent('<canvas style="position:fixed;inset:0;width:100vw;height:100vh"></canvas>');
+    const started = Date.now();
+    await control.mouse.move(start.x, start.y);
+    await control.mouse.down();
+    await control.mouse.move(end.x, end.y, { steps: 240 });
+    await control.mouse.up();
+    controlDuration = Date.now() - started;
+  } finally {
+    await control.close();
+    await page.bringToFront();
+  }
+  const metrics = browserName === 'chromium' ? await page.context().newCDPSession(page) : null;
+  if (metrics) await metrics.send('Performance.enable');
+  const taskTime = async () => (await metrics.send('Performance.getMetrics')).metrics.find(item => item.name === 'TaskDuration').value *1000;
+  const beforeTask = metrics ? await taskTime() : null;
   const startedAt = Date.now();
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 240 });
   await page.mouse.up();
   const strokeDuration = Date.now() - startedAt;
-  expect(strokeDuration).toBeLessThan(5000);
+  const mainThreadDuration = metrics ? (await taskTime()) - beforeTask : null;
+  if (metrics) await metrics.detach();
+  await testInfo.attach('stroke-timing', { body: Buffer.from(JSON.stringify({
+    samples: 240, strokeDuration, controlDuration, mainThreadDuration,
+  })), contentType: 'application/json' });
+  expect(strokeDuration - controlDuration).toBeLessThan(5000);
+  if (mainThreadDuration !== null) expect(mainThreadDuration).toBeLessThan(5000);
   const after = await flattenedPixelDigest(page);
   expect(after).not.toEqual(before);
   await expect(thumb).toHaveAttribute('width', '68');
