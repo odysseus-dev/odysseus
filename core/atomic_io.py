@@ -58,7 +58,13 @@ def store_transaction(path_factory):
     return decorate
 
 
-def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
+def atomic_write_json(
+    path: str,
+    data: Any,
+    *,
+    indent: Optional[int] = None,
+    file_mode: Optional[int] = None,
+) -> None:
     """Atomically persist `data` as JSON at `path`.
 
     The temp file uses a random suffix so two concurrent writers saving the
@@ -66,12 +72,20 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
     this: the PID is constant for the life of a process, so two writers on
     the same path within one process (or one single-process container, where
     the PID never changes at all) still race for the same temp file.
+
+    When `file_mode` is given (e.g. 0o600 for secret stores), the temp file
+    is created with exactly those permission bits *before* any content is
+    written, so a secret never lands in a temp file that the process umask
+    would have opened up to other local accounts. `os.replace` preserves the
+    temp file's mode, so the published file inherits it. When omitted, the
+    temp file keeps the default ``0o666 & ~umask`` behavior all existing
+    callers rely on.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.tmp.{uuid.uuid4().hex}"
 
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with _open_tmp(tmp, file_mode) as f:
             json.dump(data, f, indent=indent)
             f.flush()
             os.fsync(f.fileno())
@@ -83,6 +97,29 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
             os.unlink(tmp)
         except OSError:
             pass
+
+
+def _open_tmp(tmp: str, file_mode: Optional[int]):
+    """Open the temp file, applying `file_mode` before any bytes are written.
+
+    The mode is passed to `os.open` so the descriptor is born restricted
+    (creation modes are masked by the umask, which can only remove bits), and
+    an explicit `os.fchmod` on POSIX then forces the exact bits regardless of
+    the umask. `O_EXCL` guarantees we never write through a pre-existing
+    entry at the temp name. On Windows neither step changes anything
+    meaningful — there are no POSIX permission bits — and the caller's
+    `safe_chmod` remains the documented no-op.
+    """
+    if file_mode is None:
+        return open(tmp, "w", encoding="utf-8")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, file_mode)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, file_mode)
+        return os.fdopen(fd, "w", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def atomic_write_text(path: str, text: str) -> None:
