@@ -54,7 +54,15 @@ class EmbeddingClient:
         # running on :11434) fast-fails to the local FastEmbed fallback instead
         # of stalling startup ~30s per probe. Read stays generous for a real
         # endpoint (embedding a short string returns in well under a second).
-        self._client = httpx.Client(timeout=httpx.Timeout(connect=3.0, read=10.0, write=5.0, pool=3.0))
+        # The read budget holds for a warm endpoint, but the FIRST call after a
+        # cold start also pays for loading the embedding model into memory — on
+        # a modest or busy machine that is well past 10s. The timeout then fires
+        # silently: the lane produces no vectors, its collection stays empty,
+        # and retrieval quietly degrades to whatever other lane is present, with
+        # nothing marking the endpoint as the cause. Overridable, default
+        # unchanged.
+        _read_timeout = max(1.0, float(os.getenv("EMBEDDING_TIMEOUT", "10")))
+        self._client = httpx.Client(timeout=httpx.Timeout(connect=3.0, read=_read_timeout, write=5.0, pool=3.0))
         self._batch_size = max(1, int(os.getenv("EMBEDDING_BATCH_SIZE", "8")))
         self._max_chars = max(200, int(os.getenv("EMBEDDING_MAX_CHARS", "900")))
 
