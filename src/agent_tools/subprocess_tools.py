@@ -307,11 +307,10 @@ def _execution_boundary(
     through :mod:`src.containment` means one mechanism table, one answer, and a
     ``containment`` block in the tool result either way.
 
-    ``network`` is left inherited on purpose: ``--unshare-net`` was measured to
-    cut the loopback sidecars this product depends on (ChromaDB on 8100), and
-    the Dockerfile installs ``nmap``/``iproute2``/``dnsutils`` because
-    Docker-hosted agents are expected to do LAN work. It is a reported
-    dimension here, not an enforced one.
+    Network is left inherited by :func:`containment.agent_spec`, because
+    ``--unshare-net`` was measured to cut loopback sidecars (ChromaDB on 8100)
+    and some Docker agents are expected to do LAN work. Operators that need
+    neither can set ``ODYSSEUS_AGENT_NETWORK=none`` to close it.
     """
     try:
         return containment.probe(
