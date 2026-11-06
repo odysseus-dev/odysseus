@@ -42,6 +42,9 @@ FROM brotli-base
 # basic network inspection toolkit expected by local LAN/debugging tasks.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
+# bubblewrap provides the filesystem and process-tree containment that native
+# agent execution requires; under enforcing containment its absence refuses
+# every agent bash/python action (see src/containment.py).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -61,6 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dnsutils \
     nmap \
     gosu \
+    bubblewrap \
     libgl1 \
     libglib2.0-0t64 \
     libxcb1 \
