@@ -2,6 +2,7 @@
 import os
 import shutil
 import asyncio
+import json
 import tempfile
 import pytest
 
@@ -11,6 +12,11 @@ from src.tool_execution import _direct_fallback
 
 
 def _run(tool, content):
+    # json.dumps escapes the backslashes in a Windows path. Pasting the path
+    # into an f-string left them as invalid JSON escapes, so the tool fell
+    # back to the wrong directory.
+    if not isinstance(content, str):
+        content = json.dumps(content)
     return asyncio.run(_direct_fallback(tool, content))
 
 
@@ -45,24 +51,24 @@ def repo():
 # ── grep ──────────────────────────────────────────────────────────────────
 
 def test_grep_finds_match(repo):
-    r = _run("grep", f'{{"pattern": "needle", "path": "{repo}"}}')
+    r = _run("grep", {"pattern": "needle", "path": repo})
     assert r["exit_code"] == 0
     assert "a.py:2:" in r["output"]
 
 
 def test_grep_skips_junk_dirs(repo):
-    r = _run("grep", f'{{"pattern": "needle", "path": "{repo}"}}')
+    r = _run("grep", {"pattern": "needle", "path": repo})
     assert "node_modules" not in r["output"]
     assert ".git/config" not in r["output"]
 
 
 def test_grep_ignore_case(repo):
-    r = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "path": "{repo}"}}')
+    r = _run("grep", {"pattern": "needle", "ignore_case": True, "path": repo})
     assert "b.txt:2:" in r["output"]
 
 
 def test_grep_glob_filter(repo, monkeypatch):
-    r = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "glob": "*.py", "path": "{repo}"}}')
+    r = _run("grep", {"pattern": "needle", "ignore_case": True, "glob": "*.py", "path": repo})
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
     assert "b.txt" not in r["output"]
@@ -70,14 +76,14 @@ def test_grep_glob_filter(repo, monkeypatch):
     # Positive control: verify that fallback path honors the exact same glob contract
     real_which = shutil.which
     monkeypatch.setattr(shutil, "which", lambda name, *a, **kw: None if name == "rg" else real_which(name, *a, **kw))
-    r_fallback = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "glob": "*.py", "path": "{repo}"}}')
+    r_fallback = _run("grep", {"pattern": "needle", "ignore_case": True, "glob": "*.py", "path": repo})
     assert r_fallback["exit_code"] == 0
     assert "a.py" in r_fallback["output"]
     assert "b.txt" not in r_fallback["output"]
 
 
 def test_grep_no_match(repo):
-    r = _run("grep", f'{{"pattern": "zzzznotfound", "path": "{repo}"}}')
+    r = _run("grep", {"pattern": "zzzznotfound", "path": repo})
     assert r["exit_code"] == 0
     assert "No matches" in r["output"]
 
@@ -96,7 +102,7 @@ def test_grep_path_outside_roots_rejected(repo):
 
 def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
-    r = _run("grep", f'{{"pattern": "needle", "path": "{repo}"}}')
+    r = _run("grep", {"pattern": "needle", "path": repo})
     assert r["exit_code"] == 0
     assert "a.py:2:" in r["output"]
     assert "node_modules" not in r["output"]
@@ -107,11 +113,11 @@ def test_grep_python_fallback_uses_relative_glob_paths(repo, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
     r = _run(
         "grep",
-        f'{{"pattern": "needle|python", "glob": "**/*.py", "path": "{repo}"}}',
+        {"pattern": "needle|python", "glob": "**/*.py", "path": repo},
     )
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
-    assert "sub/deep/c.py" in r["output"]
+    assert os.path.join("sub", "deep", "c.py") in r["output"]
 
 
 @pytest.mark.skipif(shutil.which("rg") is None, reason="targets the ripgrep fast-path")
@@ -131,7 +137,7 @@ def test_grep_skips_case_variant_sensitive_files_rg(repo):
         f.write(f"PRIVATE {token}\n")
     with open(os.path.join(repo, "Known_Hosts"), "w") as f:
         f.write(f"host {token}\n")
-    r = _run("grep", f'{{"pattern": "{token}", "path": "{repo}"}}')
+    r = _run("grep", {"pattern": token, "path": repo})
     assert r["exit_code"] == 0
     assert "notes.txt" in r["output"]        # ordinary matches still returned
     assert "ID_RSA" not in r["output"]        # case-variant key excluded
@@ -141,13 +147,13 @@ def test_grep_skips_case_variant_sensitive_files_rg(repo):
 # ── glob ──────────────────────────────────────────────────────────────────
 
 def test_glob_py(repo):
-    r = _run("glob", f'{{"pattern": "*.py", "path": "{repo}"}}')
+    r = _run("glob", {"pattern": "*.py", "path": repo})
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
 
 
 def test_glob_recursive_skips_junk(repo):
-    r = _run("glob", f'{{"pattern": "**/*.py", "path": "{repo}"}}')
+    r = _run("glob", {"pattern": "**/*.py", "path": repo})
     assert "a.py" in r["output"]
     assert "node_modules" not in r["output"]
 
@@ -159,14 +165,14 @@ def test_glob_requires_pattern(repo):
 
 def test_glob_literal_in_subdir(repo):
     """Bare literal should match at any depth (like rglob), not only at root."""
-    r = _run("glob", f'{{"pattern": "b.txt", "path": "{repo}"}}')
+    r = _run("glob", {"pattern": "b.txt", "path": repo})
     assert r["exit_code"] == 0
     assert "b.txt" in r["output"]
 
 
 def test_glob_multi_segment_single_star(repo):
     """sub/*.txt matches sub/b.txt but NOT sub/deep/c.py (single * stays in one segment)."""
-    r = _run("glob", f'{{"pattern": "sub/*.txt", "path": "{repo}"}}')
+    r = _run("glob", {"pattern": "sub/*.txt", "path": repo})
     assert r["exit_code"] == 0
     assert "b.txt" in r["output"]
     assert "c.py" not in r["output"]
@@ -174,7 +180,7 @@ def test_glob_multi_segment_single_star(repo):
 
 def test_glob_star_does_not_cross_slash(repo):
     """src/*.py must NOT match src/a/b/x.py — * is single-segment only."""
-    r = _run("glob", f'{{"pattern": "sub/*.py", "path": "{repo}"}}')
+    r = _run("glob", {"pattern": "sub/*.py", "path": repo})
     assert r["exit_code"] == 0
     # sub/ has no .py directly, only sub/deep/c.py — should NOT match
     assert "No files matching" in r["output"]
@@ -182,7 +188,7 @@ def test_glob_star_does_not_cross_slash(repo):
 
 def test_glob_double_star_matches_deep(repo):
     """**/*.py should match files at any depth."""
-    r = _run("glob", f'{{"pattern": "**/*.py", "path": "{repo}"}}')
+    r = _run("glob", {"pattern": "**/*.py", "path": repo})
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
     assert "c.py" in r["output"]
@@ -191,7 +197,7 @@ def test_glob_double_star_matches_deep(repo):
 # ── ls ────────────────────────────────────────────────────────────────────
 
 def test_ls_lists_entries(repo):
-    r = _run("ls", f'{{"path": "{repo}"}}')
+    r = _run("ls", {"path": repo})
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
     assert "sub/" in r["output"]
@@ -210,7 +216,7 @@ def test_read_file_offset_limit(repo):
     p = os.path.join(repo, "lines.txt")
     with open(p, "w") as f:
         f.write("\n".join(f"line{i}" for i in range(1, 11)) + "\n")
-    r = _run("read_file", f'{{"path": "{p}", "offset": 3, "limit": 2}}')
+    r = _run("read_file", {"path": p, "offset": 3, "limit": 2})
     assert r["exit_code"] == 0
     assert r["output"] == "line3\nline4\n"
 
@@ -237,7 +243,7 @@ def test_read_file_extracts_structured_documents(repo, monkeypatch):
         _fake_extract,
     )
 
-    r = _run("read_file", f'{{"path": "{p}", "offset": 2, "limit": 2}}')
+    r = _run("read_file", {"path": p, "offset": 2, "limit": 2})
 
     assert r == {"output": "First fact\nSecond fact\n", "exit_code": 0}
     assert calls == [(p, {
