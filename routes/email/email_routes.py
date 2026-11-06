@@ -42,7 +42,7 @@ from email.mime.multipart import MIMEMultipart
 from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from src.constants import DATA_DIR
+from src.constants import DATA_DIR, IMAPS_PORT, default_imap_starttls
 from src import shutdown as _shutdown
 from src.path_confinement import confine
 
@@ -105,7 +105,9 @@ def _normalized_mail_host(value) -> str:
 
 
 def _google_oauth_imap_transport_allowed(port: int, starttls: bool) -> bool:
-    return (port == 993 and not starttls) or (port == 143 and starttls)
+    # 993 always dials implicit TLS (_open_imap_connection ignores the flag
+    # there), so the stored STARTTLS value is irrelevant on that port.
+    return port == IMAPS_PORT or (port == 143 and starttls)
 
 
 def _google_oauth_smtp_transport_allowed(port: int, security: str) -> bool:
@@ -7456,7 +7458,8 @@ def setup_email_routes():
                 imap_port=imap_port,
                 imap_user=(data.get("imap_user") or "").strip(),
                 imap_password=_enc(data.get("imap_password") or ""),
-                imap_starttls=bool(data.get("imap_starttls", True)),
+                imap_starttls=bool(data.get(
+                    "imap_starttls", default_imap_starttls(imap_port))),
                 smtp_host=(data.get("smtp_host") or "").strip(),
                 smtp_port=smtp_port,
                 smtp_security=_smtp_security_mode({"smtp_security": data.get("smtp_security"), "smtp_port": smtp_port}),
@@ -7580,7 +7583,8 @@ def setup_email_routes():
         imap_port, imap_port_err = _coerce_port(body.get("imap_port"), 993)
         imap_user = (body.get("imap_user") or "").strip()
         imap_pass = body.get("imap_password") or ""
-        imap_starttls = bool(body.get("imap_starttls"))
+        imap_starttls = bool(body.get(
+            "imap_starttls", default_imap_starttls(imap_port)))
         oauth_provider = body.get("oauth_provider") or ""
 
         google_token = None
