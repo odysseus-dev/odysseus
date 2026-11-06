@@ -329,3 +329,103 @@ class TestGetContextLength:
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
         assert model_context.get_context_length(endpoint, "unknown-proxy-model") == model_context.DEFAULT_CONTEXT
+
+    @staticmethod
+    def _keyed_endpoint(kind):
+        return types.SimpleNamespace(
+            base_url="http://192.168.1.50:8092/v1",
+            endpoint_kind=kind,
+            api_key="local-key",
+            provider_auth_id=None,
+            is_enabled=True,
+        )
+
+    @staticmethod
+    def _keyed_server(seen):
+        # A self-hosted server started with --api-key: 401 without the key,
+        # no /slots or /props, real serving window on /v1/models.
+        def fake_get(url, *args, headers=None, **kwargs):
+            seen.append((url, dict(headers or {})))
+            if (headers or {}).get("Authorization") != "Bearer local-key":
+                return _FakeResp({"error": "missing or invalid API key"}, ok=False)
+            if url.endswith(("/slots", "/props")):
+                return _FakeResp({"error": "not found"}, ok=False)
+            return _FakeResp({"data": [{"id": "Qwen3.8-27B", "max_model_len": 204800}]})
+        return fake_get
+
+    @pytest.mark.parametrize("kind", ["local", "auto"])
+    def test_key_protected_self_hosted_endpoint_reads_served_window(self, monkeypatch, kind):
+        # #6668: probes must send the endpoint's key, and an Auto endpoint that
+        # is only *inferred* to be a proxy (key + :port/v1) must still read the
+        # served window instead of the 'qwen3' known-table match (131072).
+        _install_endpoint_db(monkeypatch, [self._keyed_endpoint(kind)])
+        seen = []
+        monkeypatch.setattr(model_context.httpx, "get", self._keyed_server(seen))
+
+        endpoint = "http://192.168.1.50:8092/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "Qwen3.8-27B") == 204800
+        assert seen and all(h.get("Authorization") == "Bearer local-key" for _, h in seen)
+
+    def test_explicit_proxy_known_model_still_skips_catalog(self, monkeypatch):
+        # An explicit Proxy choice keeps the cheap known-table path.
+        _install_endpoint_db(monkeypatch, [self._keyed_endpoint("proxy")])
+
+        def fake_get(*args, **kwargs):
+            raise AssertionError("/models must not be queried for an explicit proxy known model")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://192.168.1.50:8092/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "Qwen3.8-27B") == 131072
+
+    def test_inferred_cloud_proxy_known_model_skips_catalog(self, monkeypatch):
+        # Auto + key on a public /v1 base (e.g. an aggregator) keeps the cheap
+        # known-table path; only private/tailnet hosts read the catalog first.
+        _install_endpoint_db(monkeypatch, [types.SimpleNamespace(
+            base_url="https://proxy.example.com/v1",
+            endpoint_kind="auto",
+            api_key="cloud-key",
+            provider_auth_id=None,
+            is_enabled=True,
+        )])
+
+        def fake_get(*args, **kwargs):
+            raise AssertionError("/models must not be queried for a public inferred proxy known model")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        assert model_context.get_context_length("https://proxy.example.com/v1/chat/completions", "gpt-4o") == 128000
+
+    def test_inferred_proxy_falls_back_to_known_when_catalog_unreadable(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [self._keyed_endpoint("auto")])
+        monkeypatch.setattr(
+            model_context.httpx, "get",
+            lambda *a, **k: _FakeResp({"error": "unavailable"}, ok=False),
+        )
+        endpoint = "http://192.168.1.50:8092/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "Qwen3.8-27B") == 131072
+
+    def test_unconfigured_endpoint_probe_sends_no_auth(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [])
+        seen = []
+
+        def fake_get(url, *args, headers=None, **kwargs):
+            seen.append(dict(headers or {}))
+            return _FakeResp({"data": [{"id": "m", "max_model_len": 4096}]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        assert model_context.get_context_length("http://127.0.0.1:9999/v1/chat/completions", "m") == 4096
+        assert all("Authorization" not in h for h in seen)
+
+    def test_provider_auth_endpoint_probe_sends_no_static_key(self, monkeypatch):
+        ep = self._keyed_endpoint("local")
+        ep.provider_auth_id = 7
+        _install_endpoint_db(monkeypatch, [ep])
+        seen = []
+
+        def fake_get(url, *args, headers=None, **kwargs):
+            seen.append(dict(headers or {}))
+            return _FakeResp({"data": [{"id": "Qwen3.8-27B", "max_model_len": 32768}]})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://192.168.1.50:8092/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "Qwen3.8-27B") == 32768
+        assert seen and all("Authorization" not in h for h in seen)

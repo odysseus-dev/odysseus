@@ -55,11 +55,23 @@ def _normalize_base_for_compare(url: str) -> str:
 
 def _configured_endpoint_kind(url: str) -> Optional[str]:
     """Return configured endpoint kind for a chat/base URL when available."""
+    return _configured_endpoint_kind_detail(url)[0]
+
+
+def _configured_endpoint_kind_detail(url: str) -> Tuple[Optional[str], bool]:
+    """Return ``(kind, explicit)`` for a chat/base URL.
+
+    ``explicit`` is True only when the user picked the kind in settings. An
+    ``auto`` endpoint with a key on a ``/v1`` base is *inferred* to be a proxy,
+    which also matches a key-protected self-hosted server (vLLM, llama.cpp,
+    ninfer started with ``--api-key``), so callers may treat that guess more
+    cautiously than an explicit choice.
+    """
     target = _normalize_base_for_compare(url)
     if not target:
-        return None
+        return None, False
     if "core.database" not in sys.modules:
-        return None
+        return None, False
     try:
         from core.database import SessionLocal, ModelEndpoint
         db = SessionLocal()
@@ -73,18 +85,67 @@ def _configured_endpoint_kind(url: str) -> Optional[str]:
                     continue
                 kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
                 if kind in ("local", "api", "proxy"):
-                    return kind
+                    return kind, True
                 if getattr(ep, "api_key", None):
                     parsed = urlparse(base)
                     host = (parsed.hostname or "").lower()
                     path = (parsed.path or "").rstrip("/")
                     if parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
-                        return "proxy"
-                return "auto"
+                        return "proxy", False
+                return "auto", False
         finally:
             db.close()
     except Exception:
-        return None
+        return None, False
+    return None, False
+
+
+def _endpoint_probe_headers(url: str) -> Dict[str, str]:
+    """Auth headers for context-window probes against a configured endpoint.
+
+    Servers started with an API key (vLLM, llama.cpp, ninfer ``--api-key``)
+    answer unauthenticated ``/slots``, ``/props`` and ``/models`` with 401,
+    which dropped the real serving window and fell back to the known-model
+    table (#6668). Only the endpoint's stored static key is used; endpoints
+    backed by session provider auth are left to the chat path.
+    """
+    target = _normalize_base_for_compare(url)
+    if not target or "core.database" not in sys.modules:
+        return {}
+    try:
+        from core.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import build_headers
+        db = SessionLocal()
+        try:
+            rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            for ep in rows:
+                base = _normalize_base_for_compare(getattr(ep, "base_url", "") or "")
+                if not base or (target != base and not target.startswith(base + "/")):
+                    continue
+                if getattr(ep, "provider_auth_id", None):
+                    return {}
+                api_key = getattr(ep, "api_key", None)
+                return build_headers(api_key, base) if api_key else {}
+        finally:
+            db.close()
+    except Exception:
+        return {}
+    return {}
+
+
+def _probe_kwargs(url: str) -> Dict[str, Dict[str, str]]:
+    """httpx kwargs for a probe; omits ``headers`` entirely when there is no key."""
+    headers = _endpoint_probe_headers(url)
+    return {"headers": headers} if headers else {}
+
+
+def _is_private_host(url: str) -> bool:
+    """True when the URL's host is loopback, a private IP literal or tailnet."""
+    try:
+        host = urlparse(url).hostname or ""
+        return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
+    except Exception:
+        return False
 
 
 def is_local_endpoint(url: str) -> bool:
@@ -94,11 +155,7 @@ def is_local_endpoint(url: str) -> bool:
         return False
     if kind == "local":
         return True
-    try:
-        host = urlparse(url).hostname or ""
-        return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
-    except Exception:
-        return False
+    return _is_private_host(url)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -369,7 +426,7 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     if cat is None:
         from src.endpoint_resolver import build_models_url
         try:
-            r = httpx.get(build_models_url(endpoint_url), timeout=REQUEST_TIMEOUT)
+            r = httpx.get(build_models_url(endpoint_url), timeout=REQUEST_TIMEOUT, **_probe_kwargs(endpoint_url))
         except Exception as e:
             logger.debug(f"Failed to fetch proxy catalog for context length: {e}")
             return None
@@ -403,12 +460,25 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
     api_ctx = None
-    configured_kind = _configured_endpoint_kind(endpoint_url)
+    configured_kind, explicit_kind = _configured_endpoint_kind_detail(endpoint_url)
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
     # metadata (or the default) over downloading the full catalog.
     if configured_kind in ("api", "proxy"):
+        inferred_self_hosted = (
+            configured_kind == "proxy" and not explicit_kind and _is_private_host(endpoint_url)
+        )
+        if inferred_self_hosted:
+            # "proxy" was only inferred from an Auto endpoint with a key on a
+            # /v1 base, which a key-protected server on the LAN/tailnet also
+            # matches. The known table is a name match and can't see that
+            # server's --max-model-len, so read the catalog (fetched once per
+            # endpoint) before trusting it (#6668).
+            api_ctx = _proxy_catalog_context(endpoint_url, model)
+            if api_ctx:
+                logger.info(f"Endpoint catalog reports context window for {model}: {api_ctx}")
+                return api_ctx, True
         if known:
             logger.info(f"Using known context window for {model}: {known}")
             return known, True
@@ -416,7 +486,8 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         # once per endpoint) instead of capping every unknown model at the
         # default — that under-reported large windows on aggregators like
         # OpenRouter (issue #4886).
-        api_ctx = _proxy_catalog_context(endpoint_url, model)
+        if not inferred_self_hosted:
+            api_ctx = _proxy_catalog_context(endpoint_url, model)
         if api_ctx:
             logger.info(f"Proxy catalog reports context window for {model}: {api_ctx}")
             return api_ctx, True
@@ -426,7 +497,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     if is_local_endpoint(endpoint_url):
         base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
         try:
-            r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
+            r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT, **_probe_kwargs(endpoint_url))
             if r.is_success:
                 slots = r.json()
                 if isinstance(slots, list) and slots:
@@ -440,7 +511,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
         # /props endpoint still reports the active serving context, and is the
         # authoritative value for single-slot servers.
         try:
-            r = httpx.get(f"{base}/props", timeout=REQUEST_TIMEOUT)
+            r = httpx.get(f"{base}/props", timeout=REQUEST_TIMEOUT, **_probe_kwargs(endpoint_url))
             if r.is_success:
                 props = r.json()
                 generation = props.get("default_generation_settings") if isinstance(props, dict) else None
@@ -466,7 +537,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
 
     models_url = build_models_url(endpoint_url)
     try:
-        r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
+        r = httpx.get(models_url, timeout=REQUEST_TIMEOUT, **_probe_kwargs(endpoint_url))
         if r.is_success:
             data = r.json()
             models_list = data.get("data") or []
