@@ -6,7 +6,7 @@ import pytest
 
 
 def test_explicit_fixture_selection_respects_all_denials():
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "routes/chat_routes.py").read_text())
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "routes/chat_routes.py").read_text(encoding="utf-8"))
     assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
                       and any(isinstance(t, ast.Name) and t.id == "_explicit_fixture_personal_tools" for t in node.targets))
     expression = compile(ast.Expression(assignment.value), "fixture-selection", "eval")

@@ -806,7 +806,7 @@ def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     mgr = AuthManager(str(auth_path))
 
     assert mgr.is_admin("admin") is True
-    data = json.loads(auth_path.read_text())
+    data = json.loads(auth_path.read_text(encoding="utf-8"))
     assert data["users"]["admin"]["is_admin"] is True
 
 
@@ -864,7 +864,7 @@ def test_web_content_fetcher_blocks_dns_to_private(monkeypatch):
 def test_mcp_config_listing_is_admin_gated():
     from routes import mcp_routes
 
-    src = Path(mcp_routes.__file__).read_text()
+    src = Path(mcp_routes.__file__).read_text(encoding="utf-8")
     assert "def list_servers(request: Request):" in src
     assert "def list_tools(request: Request):" in src
     assert "def list_server_tools(server_id: str, request: Request):" in src
@@ -1003,7 +1003,7 @@ def test_diagnostics_routes_are_admin_gated():
     """db/rag stats + test endpoints must require admin (they relied only on
     the global session check before)."""
     src = Path(__file__).resolve().parents[1] / "routes" / "diagnostics_routes.py"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     for handler in ("get_database_stats", "get_rag_stats", "test_youtube", "test_research"):
         assert f"def {handler}(request: Request" in text, handler
     assert text.count("require_admin(request)") >= 4
@@ -1020,7 +1020,7 @@ def test_email_thread_rendering_sanitizes_body_html():
 
 def test_session_html_export_escapes_name():
     src = Path(__file__).resolve().parents[1] / "routes" / "session_routes.py"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     assert "safe_title = html.escape(session.name" in text
     assert "<title>{session.name}" not in text
     assert "<h1>{session.name}</h1>" not in text
@@ -1028,7 +1028,7 @@ def test_session_html_export_escapes_name():
 
 def test_mcp_oauth_page_escapes_reflected_values():
     src = Path(__file__).resolve().parents[1] / "routes" / "mcp" / "mcp_routes.py"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     page = text.split("def _oauth_authorize_page(", 1)[1].split("def _oauth_result_page", 1)[0]
     body = page.split("return f", 1)[0]
     for var in ("auth_url", "server_id", "redirect_uri"):
@@ -1114,7 +1114,7 @@ def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
 
 def test_gmail_mcp_preset_uses_contained_oauth_paths():
     src = Path(__file__).resolve().parents[1] / "static" / "js" / "admin.js"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     preset = text.split('{ name: "Gmail"', 1)[1].split('{ name: "Email (IMAP/SMTP)"', 1)[0]
 
     assert "~/.gmail-mcp" not in preset
@@ -1198,7 +1198,7 @@ def test_chat_active_document_lookup_is_owner_scoped():
     import re
 
     src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     # The frontend-supplied id is resolved through the shared owner filter.
     assert "_owner_session_filter(_doc_q, ctx.user)" in text
     assert "_owner_session_filter(_session_doc_q, ctx.user)" in text
