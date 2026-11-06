@@ -21,12 +21,12 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 @media (max-width: 600px) {
   .cal-modal-container { max-width:100vw; width:100vw; border-radius:0; max-height:100vh; height:100vh; }
   .cal-day { min-height:58px; padding:3px; }
-  .cal-day-num { font-size:10px; }
+  .cal-day-num { font-size:11px; }
   .cal-event-preview { display:none; }
-  .cal-multiday { font-size:8.5px; padding:0 4px; }
+  .cal-multiday { font-size:11px; padding:0 4px; }
   .cal-event-row { min-height:16px; padding:2px 3px; gap:3px; }
   .cal-event-row-name,
-  .cal-event-row-time { font-size:9.5px; }
+  .cal-event-row-time { font-size:11px; }
   /* Two-row toolbar on mobile:
         Row 1 — Title (full width)
         Row 2 — [← Today →] [view toggle] [settings/sync/filters/+New]
@@ -66,17 +66,17 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   #cal-side-next {
     display: none !important;
   }
-  .cal-nav { padding: 2px 5px; font-size: 10px; }
-  .cal-view-btn { padding: 2px 5px; font-size: 9px; }
+  .cal-nav { padding: 2px 5px; font-size: 11px; }
+  .cal-view-btn { padding: 2px 5px; font-size: 11px; }
   .cal-filters {
     gap: 3px;
     margin: 0 0 6px;
     padding: 0;
   }
   .cal-filter-toggle { top: -5px; }
-  .cal-filter-item { font-size: 9px; padding: 1px 5px; }
+  .cal-filter-item { font-size: 11px; padding: 1px 5px; }
   .cal-year { grid-template-columns:repeat(3, 1fr); gap:6px; }
-  .cal-year-cell { font-size:7px; }
+  .cal-year-cell { font-size:11px; }
 }
 
 /* ═══ Research Panel ═══ */
@@ -228,7 +228,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   top: 1px;
 }
 .research-setting-label {
-  font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
+  font-size:11px; text-transform:uppercase; letter-spacing:0.5px;
   color:var(--accent, var(--red)); opacity:1; margin-bottom:2px;
 }
 .research-native-select {
@@ -337,7 +337,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 .research-cat {
   padding: 2px 10px;
   border-radius: 12px;
-  font-size: 10px;
+  font-size: 11px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg-muted);
@@ -520,12 +520,12 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 }
 .research-hero-text { flex: 1; min-width: 0; }
 .research-hero-label {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
   font-weight: 700; opacity: 0.7; margin-bottom: 3px;
   color: var(--cat-color, var(--accent));
 }
 .research-hero-query {
-  font-size: 15px; font-weight: 600;
+  font-size: 16px; font-weight: 600;
   line-height: 1.3; color: var(--fg);
 }
 
@@ -546,10 +546,10 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 }
 .research-job-time,
 .research-job-meta {
-  font-size:10px; opacity:0.5; white-space:nowrap; font-family:monospace;
+  font-size:11px; opacity:0.5; white-space:nowrap; font-family:monospace;
 }
 .research-job-status {
-  font-size:10px; text-transform:uppercase; opacity:0.6;
+  font-size:11px; text-transform:uppercase; opacity:0.6;
 }
 .research-job-cancel,
 .research-job-remove,
@@ -565,7 +565,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   transition:opacity 0.15s;
 }
 .research-job-model {
-  font-size:9px; opacity:0.4; white-space:nowrap;
+  font-size:11px; opacity:0.4; white-space:nowrap;
   max-width:120px; overflow:hidden; text-overflow:ellipsis;
 }
 .research-job-actions {
@@ -654,11 +654,11 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   border-radius:4px;
 }
 .research-job-queued-meta {
-  font-size:10px; opacity:0.4; margin-top:2px;
+  font-size:11px; opacity:0.4; margin-top:2px;
 }
 .research-section-divider {
   display:flex; align-items:center; gap:10px;
-  padding:6px 14px; font-size:10px; opacity:0.4;
+  padding:6px 14px; font-size:11px; opacity:0.4;
   text-transform:uppercase; letter-spacing:0.5px;
 }
 /* Foldable job sections (Active / Past research) */
@@ -693,7 +693,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 .research-main-header:hover { background: none; }
 .research-section-count {
   /* Match the panel header's "N research" chip — small, muted, no weight. */
-  font-size: 10px; opacity: 0.6; font-weight: normal;
+  font-size: 11px; opacity: 0.6; font-weight: normal;
   font-variant-numeric: tabular-nums;
 }
 .research-job-error {
@@ -807,7 +807,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px;
 }
 .research-source-link {
-  font-size:10px; padding:2px 6px;
+  font-size:11px; padding:2px 6px;
   background:color-mix(in srgb, var(--accent-primary, var(--red)) 10%, transparent);
   border-radius:3px; color:var(--accent-primary, var(--red));
   text-decoration:none; white-space:nowrap;
@@ -872,7 +872,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
 .research-action-skipped .research-nav-tool {
   color:var(--text-muted);
 }
-.research-source-more { font-size:10px; opacity:0.5; padding:2px 4px; }
+.research-source-more { font-size:11px; opacity:0.5; padding:2px 4px; }
 .research-job-report-body {
   font-size:12px; line-height:1.55; max-height:400px; overflow-y:auto;
 }
@@ -898,7 +898,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   display:flex; gap:4px; margin-left:auto;
 }
 .research-lib-meta {
-  font-size:9px; opacity:0.4; white-space:nowrap; font-family:monospace;
+  font-size:11px; opacity:0.4; white-space:nowrap; font-family:monospace;
 }
 .research-lib-open,
 .research-lib-delete {
@@ -926,7 +926,7 @@ button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var
   min-width: 0;
 }
 .research-sb-status {
-  font-size: 8px;
+  font-size: 11px;
   opacity: 0.5;
   white-space: nowrap;
   overflow: hidden;
@@ -1073,7 +1073,7 @@ input.cp-swatch-input::selection { background: transparent; }
 }
 .cp-eyedropper:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
 .cp-section-label {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
   opacity: 0.5; margin-top: 10px; margin-bottom: 4px;
 }
 .cp-swatches {
@@ -1100,7 +1100,7 @@ input.cp-swatch-input::selection { background: transparent; }
   margin-bottom: 14px;
 }
 .pdf-export-overlay .pdf-export-section-title {
-  font-size: 0.72rem;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--red);
@@ -1115,7 +1115,7 @@ input.cp-swatch-input::selection { background: transparent; }
   padding: 3px 0;
 }
 .pdf-export-overlay .pdf-export-row label {
-  font-size: 0.78rem;
+  font-size: 13px;
   color: var(--fg);
   opacity: 0.85;
 }
@@ -1127,7 +1127,7 @@ input.cp-swatch-input::selection { background: transparent; }
   background: var(--bg);
   color: var(--fg);
   border-radius: 4px;
-  font-size: 0.78rem;
+  font-size: 13px;
   font-family: inherit;
 }
 .pdf-export-input:focus {
@@ -1162,7 +1162,7 @@ input.cp-swatch-input::selection { background: transparent; }
   background: var(--bg);
   color: var(--fg);
   border-radius: 4px;
-  font-size: 0.85rem;
+  font-size: 14px;
 }
 .sig-modal-overlay .sig-tile {
   position: relative;
@@ -1194,7 +1194,7 @@ input.cp-swatch-input::selection { background: transparent; }
   justify-content: center;
   padding: 0 0 0 1px;
   box-sizing: border-box;
-  font-size: 0.85rem;
+  font-size: 14px;
   line-height: 1;
   border: 1px solid var(--accent, var(--red));
   background: #fff;
@@ -1464,7 +1464,7 @@ body.theme-frosted .modal {
 .research-section-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 /* "Clear all" in the Past header — styled like the cookbook-running clear btn. */
 .research-section-clear {
-  font-size: 10px; padding: 0 8px; height: 22px;
+  font-size: 11px; padding: 0 8px; height: 22px;
   border-radius: 6px; border: 1px solid var(--border);
   color: color-mix(in srgb, var(--fg) 45%, transparent);
   background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
@@ -1594,7 +1594,7 @@ body.theme-frosted .modal {
   display: none;
 }
 .slash-ac-cat {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--fg-muted, #888);
@@ -1731,7 +1731,7 @@ body.theme-frosted .modal {
   gap: 8px;
 }
 .adm-copilot-code-label {
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
@@ -1930,7 +1930,7 @@ body.theme-frosted .modal {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   padding: 0;
   cursor: pointer;
@@ -2099,7 +2099,7 @@ body.theme-frosted .modal {
   flex-basis: 100%;
   width: 100%;
   opacity: 0.65;
-  font-size: 10px !important;
+  font-size: 11px !important;
   line-height: 1.35;
 }
 /* Free-text "Other" row: input + send, on one line. */
@@ -2195,7 +2195,7 @@ body.theme-frosted .modal {
     font-size: 11px !important;
   }
   .ask-user-option-desc {
-    font-size: 10px !important;
+    font-size: 11px !important;
   }
   .ask-user-other {
     flex-wrap: wrap;

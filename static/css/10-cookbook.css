@@ -88,7 +88,7 @@
   white-space: nowrap;
 }
 .cookbook-serve-preset-meta {
-  font-size: 9px;
+  font-size: 11px;
   font-family: 'Fira Code', monospace;
   color: var(--fg-muted);
   opacity: 0.5;
@@ -98,7 +98,7 @@
   border: none;
   color: #50fa7b;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   padding: 0 2px;
   position: relative;
@@ -110,7 +110,7 @@
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.3;
   padding: 0 2px;
   position: relative;
@@ -339,7 +339,7 @@
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 .hwfit-cached-header {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.4;
   font-weight: 600;
   text-transform: uppercase;
@@ -364,7 +364,7 @@
 }
 .hwfit-cached-size,
 .hwfit-cached-files {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   white-space: nowrap;
 }
@@ -374,7 +374,7 @@
 }
 .hwfit-cached-delete {
   opacity: 0.4;
-  font-size: 10px;
+  font-size: 11px;
 }
 .hwfit-cached-delete:hover {
   opacity: 1;
@@ -481,7 +481,7 @@
   }
 }
 .cookbook-clear-btn {
-  font-size: 10px !important;
+  font-size: 11px !important;
   padding: 0 8px !important;
   height: 22px !important;
   border-radius: 6px !important;
@@ -544,7 +544,7 @@
   align-items: center;
 }
 .cookbook-serve-dir-pill {
-  font-size: 10px;
+  font-size: 11px;
   font-family: 'Fira Code', monospace;
   padding: 2px 8px;
   border-radius: 4px;
@@ -563,7 +563,7 @@
   margin-left: 6px;
   padding: 1px 7px;
   border-radius: 10px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: lowercase;
   letter-spacing: 0.3px;
@@ -600,7 +600,7 @@
 }
 
 .cookbook-serve-dir-edit {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   opacity: 0.4;
   cursor: pointer;
@@ -700,7 +700,7 @@
   flex: 1;
   font-weight: 400;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .cookbook-gpu-popup-close {
   background: none;
@@ -764,7 +764,7 @@
   padding: 2px 8px;
   cursor: pointer;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
 }
 .cookbook-gpu-kill[data-sig="KILL"] {
   background: color-mix(in srgb, var(--red) 12%, transparent);
@@ -786,7 +786,7 @@
   white-space: nowrap;
 }
 .cookbook-hf-link {
-  font-size: 9px;
+  font-size: 11px;
   text-decoration: none;
   color: var(--fg-muted);
   opacity: 0.5;
@@ -888,7 +888,7 @@
   top: -3px;
 }
 .cookbook-stop-all-btn {
-  font-size: 10px !important;
+  font-size: 11px !important;
   padding: 0 8px !important;
   height: 22px !important;
   border-radius: 6px !important;
@@ -911,7 +911,7 @@
   padding: 0;
 }
 .cookbook-saved-toggle-header {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -939,7 +939,7 @@
   margin: 4px 0 4px 6px;
 }
 .cookbook-saved-host {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
 }
@@ -950,7 +950,7 @@
   white-space: nowrap;
 }
 .cookbook-saved-launch {
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
 }
 .cookbook-saved-del {
@@ -995,7 +995,7 @@
 .cookbook-slot-btn {
   min-width: 22px; height: 28px;
   padding: 0 6px;
-  font-size: 10px; font-weight: 600;
+  font-size: 11px; font-weight: 600;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: none;
@@ -1164,7 +1164,7 @@
   letter-spacing: 0.03em;
 }
 .cookbook-dep-section-note {
-  font-size: 10px;
+  font-size: 11px;
   color: color-mix(in srgb, var(--fg) 50%, transparent);
 }
 .cookbook-dep-subgroup {
@@ -1182,18 +1182,18 @@
   align-items: baseline;
   gap: 7px;
   margin: 0 1px 1px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   color: color-mix(in srgb, var(--fg) 78%, transparent);
 }
 .cookbook-dep-subgroup-title em {
-  font-size: 9.5px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 500;
   color: color-mix(in srgb, var(--fg) 48%, transparent);
 }
 .cookbook-dep-tag {
-  font-size: 9px;
+  font-size: 11px;
   padding: 0 8px;
   border-radius: 4px;
   white-space: nowrap;
@@ -1386,7 +1386,7 @@
   top: -6px;
 }
 .hwfit-serve-row label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   white-space: nowrap;
   letter-spacing: 0.3px;
@@ -1430,7 +1430,7 @@
   height: 28px;
   min-width: 34px;
   padding: 0;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -1497,7 +1497,7 @@
 .hwfit-auto-ctx-note {
   display: block;
   margin-top: 3px;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.6;
   white-space: nowrap;
   overflow: hidden;
@@ -1693,7 +1693,7 @@
   border: none;
   color: var(--accent, var(--red));
   font-family: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
@@ -1747,7 +1747,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   letter-spacing: 0.3px;
 }
@@ -1766,7 +1766,7 @@
   border-radius: 5px;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.3px;
 }
 .hwfit-serve-cmd {
@@ -1779,7 +1779,7 @@
   border-top-left-radius: 0;
   border-top-right-radius: 0;
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 10px;
+  font-size: 11px;
   white-space: pre;
   word-break: normal;
   width: 100%;
@@ -1898,7 +1898,7 @@
 }
 .hwfit-serve-cmd-title {
   margin: 2px 0 3px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
   letter-spacing: 0.3px;
 }
@@ -2053,7 +2053,7 @@
 }
 .cookbook-task-type {
   text-transform: uppercase;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.5px;
   padding: 1px 5px;
@@ -2132,7 +2132,7 @@
 /* Terminal task clear pill. */
 .cookbook-task-done-label,
 .cookbook-task-clear-label {
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   text-transform: lowercase;
 }
@@ -2170,7 +2170,7 @@
   background: transparent;
   color: var(--fg);
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   text-transform: lowercase;
   white-space: nowrap;
@@ -2197,7 +2197,7 @@
   flex-shrink: 0;
   cursor: pointer;
   font-family: inherit;
-  font-size: 9px;
+  font-size: 11px;
   text-transform: lowercase;
   background: transparent;
   color: var(--green, #50fa7b);
@@ -2219,26 +2219,26 @@
   gap: 10px;
 }
 .cookbook-task-session {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
   opacity: 0.35;
   letter-spacing: 0.3px;
 }
 .cookbook-task-server {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
   opacity: 0.4;
 }
 .cookbook-task-uptime {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
   font-family: 'Fira Code', monospace;
   opacity: 0.4;
 }
 .cookbook-task-status {
-  font-size: 9px;
+  font-size: 11px;
   padding: 1px 6px;
   border-radius: 3px;
   font-weight: 600;
@@ -2491,7 +2491,7 @@
   .cookbook-task-name { font-size: 13px; }
   .cookbook-task-sub { font-size: 11px; }
   .cookbook-task-status {
-    font-size: 10px;
+    font-size: 11px;
     /* Vertical alignment of the phase/loading badge against the task title. */
     position: relative;
     top: 2px;
@@ -2992,7 +2992,7 @@
 
 /* HF link in search panel */
 .hwfit-panel-hf-link {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--red);
   text-decoration: none;
   margin-left: auto;
@@ -3038,7 +3038,7 @@
   margin-bottom: 8px;
 }
 .cookbook-settings-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--fg-muted);
 }
 .cookbook-settings-hint {
@@ -3051,7 +3051,7 @@
   padding: 4px 6px;
 }
 .cookbook-settings-subtitle {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -3296,7 +3296,7 @@
 .cookbook-server-rm {
   width: 22px;
   height: 22px;
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.55;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -3318,7 +3318,7 @@
   width: auto;
   height: auto;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   background: none;
   color: var(--red);
@@ -3335,7 +3335,7 @@
 .cookbook-server-save-btn {
   width: auto;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   background: none;
@@ -3360,7 +3360,7 @@
 .cookbook-server-cancel-btn {
   width: auto;
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: 11px;
   font-family: inherit;
   cursor: pointer;
   background: none;
@@ -3422,7 +3422,7 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg-muted);
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 5px;
   cursor: pointer;
   min-width: 20px;
@@ -3449,7 +3449,7 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--fg);
-  font-size: 10px;
+  font-size: 11px;
   height: 28px;
   padding: 0 4px;
   cursor: pointer;
@@ -3500,11 +3500,11 @@
   min-width: 0;
   width: 108px;
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 11px;
   top: -3px;
 }
-.hwfit-toolbar .hwfit-quant { min-width: 0; width: 78px; flex-shrink: 0; font-size: 10px; }
-.hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 116px; flex-shrink: 0; font-size: 10px; }
+.hwfit-toolbar .hwfit-quant { min-width: 0; width: 78px; flex-shrink: 0; font-size: 11px; }
+.hwfit-toolbar .hwfit-engine-btn { min-width: 0; width: 116px; flex-shrink: 0; font-size: 11px; }
 .hwfit-advanced-panel {
   display: flex;
   align-items: center;
@@ -3587,7 +3587,7 @@
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
   color: color-mix(in srgb, var(--fg) 55%, transparent);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   cursor: help;
@@ -3751,13 +3751,13 @@
   color: var(--fg);
   font-weight: 600;
 }
-.hwfit-server-toggle { flex-shrink: 0; font-size: 10px !important; padding: 3px 8px !important; white-space: nowrap; }
+.hwfit-server-toggle { flex-shrink: 0; font-size: 11px !important; padding: 3px 8px !important; white-space: nowrap; }
 .hwfit-env-row { gap: 6px; flex-wrap: wrap; }
 .hwfit-hw {
   display: flex; flex-wrap: wrap; column-gap: 4px; row-gap: 7px; padding: 4px 0;
 }
 .hwfit-hw-chip {
-  font-size: 10px; padding: 0 8px; border-radius: 6px;
+  font-size: 11px; padding: 0 8px; border-radius: 6px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg); opacity: 0.7; white-space: nowrap;
   border: 0;
@@ -3813,7 +3813,7 @@
      was winning over the plain rule and leaving the manual chip's
      button at the browser-default ~13px. Forcing it locally so the
      manual chip's text matches every other chip's text. */
-  font-size: 10px !important;
+  font-size: 11px !important;
   line-height: 1 !important;
   transform: translateY(-3px);
 }
@@ -3873,7 +3873,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--fg-muted);
 }
 .hwfit-manual-panel select,
@@ -3885,7 +3885,7 @@
   color: var(--fg);
   border-radius: 4px;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   padding: 0 6px;
   box-sizing: border-box;
 }
@@ -3984,12 +3984,12 @@
   padding: 4px 8px; font-weight: 600;
 }
 .hwfit-header:hover { background: var(--panel); }
-.hwfit-header .hwfit-col { font-size: 9px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.hwfit-header .hwfit-col { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .hwfit-sortable:hover { color: var(--fg) !important; }
 .hwfit-sort-active { color: var(--red) !important; }
 .hwfit-col {
   flex-shrink: 0; white-space: nowrap; text-align: left;
-  font-size: 9px; color: var(--fg-muted);
+  font-size: 11px; color: var(--fg-muted);
 }
 .hwfit-fit { width: 52px; font-weight: 700; text-transform: uppercase; }
 .hwfit-name {
@@ -4000,7 +4000,7 @@
 .hwfit-moe {
   display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
   background: color-mix(in srgb, var(--red) 15%, transparent);
-  color: var(--red); font-weight: 600; font-size: 8px;
+  color: var(--red); font-weight: 600; font-size: 11px;
 }
 .hwfit-sort, .hwfit-quant { width: auto; min-width: 70px; flex-shrink: 0; }
 .hwfit-row-active { background: color-mix(in srgb, var(--red) 8%, transparent); }
@@ -4029,7 +4029,7 @@
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
 }
 .hwfit-panel-fields label, .hwfit-adv-grid label {
-  display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--fg-muted); white-space: nowrap;
+  display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fg-muted); white-space: nowrap;
 }
 .hwfit-panel-fields input, .hwfit-panel-fields select,
 .hwfit-adv-grid input, .hwfit-adv-grid select {
@@ -4048,16 +4048,16 @@
 }
 .hwfit-cb input[type="checkbox"] { margin: 0 2px 0 0; }
 .hwfit-panel-advanced, .hwfit-panel-settings {
-  font-size: 10px;
+  font-size: 11px;
 }
 .hwfit-panel-advanced summary, .hwfit-panel-settings summary {
-  cursor: pointer; color: var(--fg-muted); font-size: 10px;
+  cursor: pointer; color: var(--fg-muted); font-size: 11px;
   user-select: none; padding: 2px 0;
 }
 .hwfit-panel-advanced summary:hover, .hwfit-panel-settings summary:hover { color: var(--fg); }
 .hwfit-panel-cmd {
   font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
-  font-size: 10px; padding: 6px 8px; border-radius: 4px;
+  font-size: 11px; padding: 6px 8px; border-radius: 4px;
   background: var(--bg); border: 1px solid var(--border);
   white-space: pre-wrap; word-break: break-all; max-height: 60px; overflow-y: auto;
   color: var(--fg-muted);
@@ -4066,7 +4066,7 @@
   display: flex; gap: 4px; flex-wrap: wrap;
 }
 .hwfit-panel-note {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.35;
   color: var(--fg-muted);
   background: color-mix(in srgb, var(--yellow, #f1fa8c) 8%, transparent);
@@ -4083,8 +4083,8 @@
 }
 .hwfit-preset:hover { border-color: var(--red); }
 .hwfit-preset-name { font-weight: 600; color: var(--fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hwfit-preset-model { font-size: 9px; color: var(--fg-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hwfit-preset-backend { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-muted); }
+.hwfit-preset-model { font-size: 11px; color: var(--fg-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hwfit-preset-backend { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg-muted); }
 
 @media (max-width: 600px) {
   .hwfit-c-ctx, .hwfit-c-speed, .hwfit-c-mode { display: none; }
@@ -4164,7 +4164,7 @@
 
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
 .settings-sidebar-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -4212,7 +4212,7 @@
 
 /* Keyboard shortcuts */
 .shortcut-category {
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
   opacity: 0.4; padding: 8px 0 4px; margin-top: 4px;
 }
 .shortcut-category:first-child { margin-top: 0; padding-top: 0; }
@@ -4227,13 +4227,13 @@
 .shortcut-warn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%; background: var(--warn); color: #fff;
-  font-size: 9px; font-weight: 700; margin-left: 4px;
+  font-size: 11px; font-weight: 700; margin-left: 4px;
 }
 .shortcut-controls { display: flex; align-items: center; gap: 4px; }
 /* Inline hint shown while rebinding a shortcut ("press a key" → "↵ Enter
    to save"). Subtle so it doesn't compete with the key caps. */
 .shortcut-hint {
-  font-size: 10px;
+  font-size: 11px;
   opacity: 0.6;
   color: var(--accent, var(--red));
   white-space: nowrap;
@@ -4248,9 +4248,9 @@
 }
 .shortcut-key:hover { background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, transparent); }
 /* Unbound shortcut — show a dashed "Set" placeholder instead of keycaps. */
-.shortcut-key-unset { font-size: 10px; }
+.shortcut-key-unset { font-size: 11px; }
 .shortcut-unset {
-  font-size: 10px;
+  font-size: 11px;
   padding: 2px 8px;
   border: 1px dashed var(--border);
   border-radius: 4px;

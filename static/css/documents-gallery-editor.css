@@ -257,7 +257,7 @@ mark.doc-find-mark {
 }
 #doclib-selected-count {
   color: color-mix(in srgb, var(--fg) 50%, transparent);
-  font-size: 10px;
+  font-size: 11px;
 }
 .gallery-modal-content:has(#gallery-editor-container[style*="flex"]) .gallery-editor-landing {
   width: 100%;
