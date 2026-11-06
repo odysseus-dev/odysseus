@@ -171,6 +171,12 @@ def _process_command_line(pid: int) -> str | None:
         return None
 
 
+# ``signal.SIGKILL`` and ``os.getuid`` are POSIX-only; native Windows falls back
+# to SIGTERM (os.kill terminates the process there) and uid 0.
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+_getuid = getattr(os, "getuid", lambda: 0)
+
+
 def _process_is_alive(pid: int) -> bool:
     """Whether a pid currently exists.
 
@@ -2416,7 +2422,7 @@ class PrivateBrowserTool:
             verdict = process_lifecycle.group_ownership_verdict(
                 identity.pid, identity.pid, identity.start_token)
             if verdict == process_lifecycle.OWNED:
-                process_lifecycle.signal_group(identity.pid, identity.pid, signal.SIGKILL)
+                process_lifecycle.signal_group(identity.pid, identity.pid, _SIGKILL)
         with contextlib.suppress(Exception):
             proc.kill()
 
@@ -2460,7 +2466,7 @@ class PrivateBrowserTool:
         if owned:
             process_lifecycle.terminate_identities(
                 sorted(owned, key=lambda identity: identity.pid, reverse=True),
-                steps=((signal.SIGKILL, 1.0),), poll_s=0.02,
+                steps=((_SIGKILL, 1.0),), poll_s=0.02,
             )
 
     @staticmethod
@@ -2484,7 +2490,7 @@ class PrivateBrowserTool:
                 root, key, pid_alive=lambda pid: _process_is_alive(pid)
             ).as_dict()
             pid_files.append(root / f"{key}.pid")
-        runtime_dir = Path(os.getenv("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        runtime_dir = Path(os.getenv("XDG_RUNTIME_DIR") or f"/run/user/{_getuid()}")
         pid_files = [
             path
             for path in _browser_pid_file_candidates(runtime_dir, namespace, session_id)
@@ -2511,7 +2517,7 @@ class PrivateBrowserTool:
                 continue
             if "agent-browser" in command_line:
                 sweep = process_lifecycle.terminate_identities(
-                    [seen.identity], steps=((signal.SIGKILL, 1.0),), poll_s=0.02,
+                    [seen.identity], steps=((_SIGKILL, 1.0),), poll_s=0.02,
                 )
                 if not sweep.survivors and not sweep.unverified:
                     with contextlib.suppress(FileNotFoundError, PermissionError, OSError):
@@ -2536,7 +2542,7 @@ class PrivateBrowserTool:
             root, key, pid_alive=lambda pid: _process_is_alive(pid)
         ):
             return True
-        runtime_dir = Path(os.getenv("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        runtime_dir = Path(os.getenv("XDG_RUNTIME_DIR") or f"/run/user/{_getuid()}")
         for pid_file in _browser_pid_file_candidates(runtime_dir, namespace, session_id):
             if pid_file == root / f"{key}.pid":
                 continue
