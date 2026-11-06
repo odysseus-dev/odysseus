@@ -101,6 +101,7 @@ def create_default_admin():
         # Priority: env vars > interactive prompt > random password
         username = os.getenv("ODYSSEUS_ADMIN_USER", "").strip().lower()
         password = os.getenv("ODYSSEUS_ADMIN_PASSWORD", "").strip()
+        prompted = False
 
         if username and password:
             # Both provided via env — validate before using
@@ -111,8 +112,17 @@ def create_default_admin():
                 print(f"  [error] ODYSSEUS_ADMIN_PASSWORD must be at least {PASSWORD_MIN_LENGTH} characters")
                 return "failed"
         elif sys.stdin.isatty() and not os.getenv("ODYSSEUS_SKIP_ADMIN_PROMPT"):
-            # Interactive terminal — ask the user
-            username, password = _prompt_admin_credentials()
+            # Interactive terminal — ask the user. stdin can report a TTY yet
+            # be closed (some IDE/agent shells on Windows), so fall back to a
+            # generated password on EOF instead of failing the whole step.
+            try:
+                username, password = _prompt_admin_credentials()
+                prompted = True
+            except EOFError:
+                print()
+                print("  [warn] No input available — generating a password instead")
+                username = username or "admin"
+                password = password or __import__("secrets").token_urlsafe(18)
         else:
             # Non-interactive (Docker, CI) — fall back to generated password
             username = username or "admin"
@@ -131,7 +141,9 @@ def create_default_admin():
         with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
 
-        if sys.stdin.isatty() and not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+        # Echo the password whenever we generated it — keying this on isatty()
+        # hid it when ODYSSEUS_SKIP_ADMIN_PROMPT was set in a terminal.
+        if prompted:
             print(f"  [ok] Admin account created ({username})")
         else:
             print(f"  [ok] Initial admin user created ({username})")
