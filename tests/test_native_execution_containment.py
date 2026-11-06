@@ -91,6 +91,7 @@ async def test_output_exactly_at_cap_is_complete(native_boundary):
     assert result.output_truncated is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only: os.killpg")
 def test_permission_denied_is_not_verified_death(monkeypatch):
     from core import platform_compat
     def denied(*args):
