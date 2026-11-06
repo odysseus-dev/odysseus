@@ -605,6 +605,9 @@ async def maybe_compact(
             )
         return compacted, context_length, changed
 
+    # The summary below is a user turn, not a system message, so it does not
+    # rewrite the cached system prefix.
+
     # Split into system preface and conversation
     system_msgs = []
     convo_msgs = []
@@ -676,7 +679,9 @@ async def maybe_compact(
     summary = normalize_compaction_summary(summary)
 
     summary_msg = {
-        "role": "system",
+        "role": "user",
+        "_harness_control": True,
+        "_protected": True,
         "content": f"[Conversation summary — earlier messages were compacted]\n{summary}",
     }
 
@@ -777,9 +782,13 @@ def _update_session_history(session, split_point: int, summary: str,
     recent_history = session.history[effective_split:]
     summary = normalize_compaction_summary(summary)
     summary_msg = ChatMessage(
-        role="system",
+        role="user",
         content=f"[Conversation summary]\n{summary}",
-        metadata={"compacted": True, "summarized_count": split_point},
+        metadata={
+            "compacted": True,
+            "summarized_count": split_point,
+            "harness_control": True,
+        },
     )
     new_history = system_prefix + [summary_msg] + recent_history
     try:

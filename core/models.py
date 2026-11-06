@@ -87,6 +87,9 @@ class ChatMessage:
         result = {"role": self.role, "content": self.content}
         if self.metadata:
             result["metadata"] = self.metadata
+            if self.metadata.get("harness_control"):
+                result["_harness_control"] = True
+                result["_protected"] = True
         return result
 
     def get(self, key: str, default=None):

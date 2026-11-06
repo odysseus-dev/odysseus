@@ -904,7 +904,7 @@ def _build_ollama_payload(
     if options:
         payload["options"] = options
     if tools:
-        payload["tools"] = _alias_harmony_tools(tools, model)
+        payload["tools"] = _alias_harmony_tools(_stable_sort_tools(tools), model)
     return payload
 
 
@@ -1169,22 +1169,44 @@ def _is_self_hosted_openai_compatible(url: str) -> bool:
     return is_local_endpoint(url)
 
 
+def _stable_sort_tools(tools):
+    """Keep tools[] in one order so a prefix cache can match the next turn."""
+    if not tools:
+        return tools
+    return sorted(
+        tools,
+        key=lambda item: str(
+            ((item or {}).get("function") or {}).get("name")
+            or (item or {}).get("name")
+            or ""
+        ),
+    )
+
+
+def _sticky_cache_id(session_id: Optional[str]) -> str:
+    digest = hashlib.sha256(str(session_id or "anon").encode("utf-8")).hexdigest()[:24]
+    return f"ody_{digest}"
+
+
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
-    """Add llama.cpp-server slot-affinity hints to an outgoing payload, in place.
+    """Add slot-affinity hints, and a sticky id where a cloud cache can use it.
 
-    As diagnosed in issue #2927, llama.cpp assigns requests to processing
-    slots via LRU when no stable identifier is present ("session_id=<empty>
-    server-selected (LCP/LRU)"), which means consecutive turns of the same
-    chat can land on different slots and lose their cached prefix entirely.
-    Sending a stable ``session_id`` (derived from the Odysseus session) lets
-    the server keep routing the same conversation to the same slot, and
-    ``cache_prompt: true`` asks it to retain/reuse the prefix it already has.
+    llama.cpp still gets ``session_id`` and ``cache_prompt`` on self-hosted
+    OpenAI-compatible servers (issue #2927).
 
-    Both fields are llama.cpp / LM Studio extensions to the OpenAI schema; we
-    only set them for self-hosted OpenAI-compatible endpoints (never
-    api.openai.com or other cloud providers, which reject unrecognized
-    top-level request fields).
+    The native DeepSeek API gets the same ``user`` and ``prompt_cache_key``
+    pair on every turn of a session. That is the path that was measured.
+
+    OpenRouter gets the same sticky id. The runs behind that were free
+    models. DeepSeek through OpenRouter is a paid model, so it was not in
+    those runs. DeepSeek itself is called on its own API.
     """
+    host = (urlparse(str(url or "")).hostname or "").lower()
+    if session_id and ("deepseek.com" in host or "openrouter.ai" in host):
+        sticky = _sticky_cache_id(session_id)
+        payload.setdefault("user", sticky)
+        payload.setdefault("prompt_cache_key", sticky)
+        return
     if not session_id:
         return
     if not _is_self_hosted_openai_compatible(url):
@@ -1942,7 +1964,7 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # Cache the tool schemas too — they're stable for the whole agent run.
             # The breakpoint caches all tool defs preceding it in the request.
             anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
-            payload["tools"] = anthropic_tools
+            payload["tools"] = _stable_sort_tools(anthropic_tools)
     return payload
 
 def _build_anthropic_headers(headers):
@@ -3063,7 +3085,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
-            payload["tools"] = _alias_harmony_tools(tools, model)
+            payload["tools"] = _alias_harmony_tools(_stable_sort_tools(tools), model)
         elif tool_choice_none:
             payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral

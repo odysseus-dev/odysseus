@@ -24401,9 +24401,15 @@ async def stream_agent_loop(
             is_api = True
         if tool_surface in {"compact", "full"}:
             is_api = True
-        prompt_compact = (
+        _native_tools = is_api or is_native_ollama or is_ollama_compat
+        _deepseek_native = (
+            "deepseek" in str(candidate_model or "").lower()
+            and _native_tools
+            and tool_surface != "none"
+        )
+        prompt_compact = _deepseek_native or (
             tool_surface != "full"
-            and (is_api or is_native_ollama or is_ollama_compat)
+            and _native_tools
         )
         if tool_surface == "compact":
             # Retrieval text is intentionally shortened for indexing and can
