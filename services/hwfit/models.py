@@ -129,13 +129,29 @@ def infer_quantization_from_name(name):
 def _normalize_model_entry(model):
     if not isinstance(model, dict):
         return model
+    if gguf_quantizations(model):
+        return model
     inferred = infer_quantization_from_name(model.get("name", ""))
     if inferred and (model.get("quantization") in (None, "", "Q4_K_M") or model.get("_discovered")):
         model["quantization"] = inferred
     return model
 
 
+def gguf_quantizations(model):
+    """Verified file quants on runtime GGUF rows; legacy source rows stay unchanged."""
+    if model.get("_source") != "hf_models":
+        return []
+    sources = model.get("gguf_sources")
+    if not isinstance(sources, list):
+        return []
+    return [source["quant"] for source in sources
+            if isinstance(source, dict) and isinstance(source.get("quant"), str)
+            and source["quant"] in QUANT_BPP]
+
+
 def is_prequantized(model):
+    if gguf_quantizations(model):
+        return False
     q = model.get("quantization", "")
     name = (model.get("name") or "").lower()
     fmt = (model.get("format") or "").lower()
