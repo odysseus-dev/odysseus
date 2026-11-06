@@ -5,10 +5,18 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from core.middleware import require_admin
 from src import auth_helpers
 
 
-def _request(*, current_user="api", api_token=True, api_token_owner="alice"):
+def _request(
+    *,
+    current_user="api",
+    api_token=True,
+    api_token_owner="alice",
+    admin_users=(),
+):
+    admin_users = frozenset(admin_users)
     return SimpleNamespace(
         state=SimpleNamespace(
             current_user=current_user,
@@ -17,10 +25,14 @@ def _request(*, current_user="api", api_token=True, api_token_owner="alice"):
         ),
         app=SimpleNamespace(
             state=SimpleNamespace(
-                auth_manager=SimpleNamespace(is_configured=True),
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: user in admin_users,
+                ),
             ),
         ),
         client=SimpleNamespace(host="203.0.113.10"),
+        headers={},
     )
 
 
@@ -39,6 +51,16 @@ def test_require_authenticated_request_allows_api_token_owner(monkeypatch):
     req = _request()
 
     assert auth_helpers.require_authenticated_request(req) == "alice"
+
+
+def test_require_admin_rejects_api_token_pseudo_user(monkeypatch):
+    """A bearer token never inherits its owner's administrator access."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+
+    with pytest.raises(HTTPException) as exc:
+        require_admin(_request(api_token_owner="alice", admin_users={"alice"}))
+
+    assert exc.value.status_code == 403
 
 
 def test_codex_as_owner_can_call_nested_user_routes(monkeypatch):
