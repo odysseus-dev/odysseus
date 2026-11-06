@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 _hosts_cache: List[str] = []
 _hosts_cache_time: float = 0
 _HOSTS_CACHE_TTL = 60  # seconds
+# This machine's own Tailscale IPv4, from the last successful status query.
+_self_tailscale_ip: Optional[str] = None
+
+# Names that always reach the machine Odysseus runs on (or, in Docker, its host).
+_LOCAL_HOST_NAMES = frozenset({"localhost", "::1", "host.docker.internal"})
 
 
 def _parse_tailscale_status(raw: str) -> Dict[str, Any]:
@@ -33,9 +38,17 @@ def _first_tailscale_ipv4(value: Any) -> Optional[str]:
     return None
 
 
+def _dedupe_host_key(host: str) -> str:
+    """Collapse this machine's own addresses into one key for scan dedupe."""
+    host = (host or "").strip().lower()
+    if host in _LOCAL_HOST_NAMES or host.startswith("127.") or host == _self_tailscale_ip:
+        return "local"
+    return host
+
+
 def discover_tailscale_hosts() -> List[str]:
     """Discover online Tailscale peers, returning their IPv4 addresses."""
-    global _hosts_cache, _hosts_cache_time
+    global _hosts_cache, _hosts_cache_time, _self_tailscale_ip
 
     now = time.time()
     # Gate on the timestamp, not the list: a successful query that found no
@@ -59,6 +72,7 @@ def discover_tailscale_hosts() -> List[str]:
         # Add self
         self_data = data.get("Self") if isinstance(data.get("Self"), dict) else {}
         self_ip = _first_tailscale_ipv4(self_data.get("TailscaleIPs"))
+        _self_tailscale_ip = self_ip
         if self_ip:
             hosts.append(self_ip)
 
@@ -225,16 +239,21 @@ class ModelDiscovery:
         ports += [p for p in sorted(self._extra_ports) if p not in ports]
         targets = [(h, p) for h in hosts for p in ports]
 
-        seen_models = (
-            set()
-        )  # dedupe by (port, model_ids) to avoid same machine via different IPs
+        # Dedupe by (host, port, model_ids). This machine's own aliases share
+        # one host key, so it isn't listed once per alias; distinct machines
+        # serving the same models stay separate endpoints (#6221).
+        seen_models = set()
 
         with ThreadPoolExecutor(max_workers=50) as pool:
             futures = {pool.submit(self._check_port, h, p): (h, p) for h, p in targets}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
-                    key = (result["port"], tuple(sorted(result["models"])))
+                    key = (
+                        _dedupe_host_key(result["host"]),
+                        result["port"],
+                        tuple(sorted(result["models"])),
+                    )
                     if key not in seen_models:
                         seen_models.add(key)
                         items.append(result)
