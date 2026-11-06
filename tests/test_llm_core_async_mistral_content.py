@@ -79,7 +79,7 @@ def test_llm_call_async_clamps_default_output_to_endpoint_context(monkeypatch):
         return _FakeResponse(_payload("ok"))
 
     monkeypatch.setattr(llm_core, "httpx_post_kimi_aware_async", fake_post)
-    monkeypatch.setattr(llm_core, "get_context_length", lambda _url, _model: 16384)
+    monkeypatch.setattr(llm_core, "get_context_length", lambda _url, _model, headers=None: 16384)
     llm_core._response_cache.clear()
 
     result = asyncio.run(llm_core.llm_call_async(
