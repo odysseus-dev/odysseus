@@ -808,7 +808,8 @@ VARIABLE_NOTES: dict[str, tuple[str, str, str]] = {
     "ODYSSEUS_SKIP_RUN_HINT": (
         "Testing, capture and development tooling", INTERNAL,
         "Any non-empty value suppresses the `start the server with` hint at the end "
-        "of setup. `start-macos.sh` sets it because it starts the server itself.",
+        "of setup. `start-macos.sh` and the Docker entrypoint set it because they start "
+        "the server themselves.",
     ),
     "ODYSSEUS_TEST_STATIC_ORIGIN": (
         "Testing, capture and development tooling", INTERNAL,
