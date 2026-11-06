@@ -1487,7 +1487,7 @@ def _store_email_flag(conn, uid: str, flag: str, add: bool = True) -> bool:
     if not _uid_exists(conn, uid):
         return False
     op = "+FLAGS" if add else "-FLAGS"
-    status, _ = conn.uid("STORE", _uid_bytes(uid), op, flag)
+    status, _ = conn.uid("STORE", _uid_bytes(uid), op, f"({flag})")
     return status == "OK"
 
 
@@ -1505,7 +1505,7 @@ def _move_email_message(conn, uid: str, dest: str, role: str = "") -> bool:
     status, _ = conn.uid("COPY", _uid_bytes(uid), _q(dest))
     if status != "OK":
         return False
-    status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
+    status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Deleted)")
     if status == "OK":
         conn.expunge()
         return True
@@ -1520,7 +1520,7 @@ def _copy_and_delete_email_message(conn, uid: str, dest: str, role: str = "") ->
     status, _ = conn.uid("COPY", _uid_bytes(uid), _q(dest))
     if status != "OK":
         return False
-    status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
+    status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Deleted)")
     if status == "OK":
         conn.expunge()
         return True
@@ -5391,7 +5391,7 @@ def setup_email_routes():
                                 continue
                             if _uid_has_deleted_flag(conn, uid):
                                 preexisting_deleted.add(uid)
-                            store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Deleted")
+                            store_status, _ = conn.uid("STORE", _uid_bytes(uid), "+FLAGS", "(\\Deleted)")
                             if store_status != "OK":
                                 failed_uids.append(uid)
                                 continue
@@ -5430,7 +5430,7 @@ def setup_email_routes():
                         for uid in pending_expunge:
                             if uid not in preexisting_deleted:
                                 try:
-                                    conn.uid("STORE", _uid_bytes(uid), "-FLAGS", "\\Deleted")
+                                    conn.uid("STORE", _uid_bytes(uid), "-FLAGS", "(\\Deleted)")
                                 except Exception:
                                     pass
                         failed_uids.extend(pending_expunge)
@@ -5513,13 +5513,13 @@ def setup_email_routes():
                             continue
                         for uid in sorted(uids, key=lambda b: int(b)):
                             if permanent:
-                                conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
+                                conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
                             else:
                                 copy_st, _ = conn.uid("COPY", uid, _q("Trash"))
                                 if copy_st == "OK":
-                                    conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
+                                    conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
                                 else:
-                                    conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
+                                    conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
                             deleted += 1
                         conn.expunge()
                     except Exception as e:
