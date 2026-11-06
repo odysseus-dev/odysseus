@@ -1467,6 +1467,12 @@ export function _hwfitRenderList(el, models) {
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    // Vision models take an image as input, so they need a server that accepts
+    // one. Neutral marker, not a verdict: the model is fine, it is this
+    // machine's MLX serving that can't hand it a picture yet.
+    const vlmBadge = (!m.is_image_gen && _detectBackend(m).backend === 'mlx_vlm')
+      ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--cyan, #8be9fd) 20%, transparent);color:var(--cyan, #8be9fd);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;" title="Vision model (image input). Serving needs mlx-vlm, not mlx_lm.">VLM</span>'
+      : '';
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
@@ -1488,7 +1494,7 @@ export function _hwfitRenderList(el, models) {
         _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
       }
     }
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${vlmBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram" title="Estimated loaded footprint for this quant/backend/context, including model weights and KV/runtime allowance.">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-params" title="Original total model parameters, not quantized storage size.">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
@@ -1725,6 +1731,12 @@ export function _expandModelRow(row, modelData) {
   html += `</div>`;
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
+  } else if (backend === 'mlx_vlm') {
+    const _vlmBase = `Vision model: served with <code>mlx_vlm.server</code>, which takes images \u2014 <code>mlx_lm.server</code> does not. It needs <code>mlx-vlm</code> in the launch Python; because mlx-vlm requires a newer <code>mlx</code> than the main venv pins, point the Venv field at a venv that has it.`;
+    const _vlmStatus = modelData.vlm_verified
+      ? ` This checkpoint has answered a question about an image on this host.`
+      : ` Declaring image input is not proof this checkpoint works: once it is serving, confirm it with <code>scripts/smoke_mlx_vlm.py</code>.`;
+    html += `<div class="hwfit-panel-note">${_vlmBase}${_vlmStatus}</div>`;
   } else if (_requiresAcceleratorBackend(modelData)) {
     // Only show the "needs CUDA/ROCm" note when the host doesn't already have
     // one. With a visible CUDA/ROCm accelerator the note is noise — the user
