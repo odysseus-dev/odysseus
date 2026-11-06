@@ -549,6 +549,56 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     return result
 
 
+
+def microcompact_tool_results(
+    messages: List[Dict],
+    *,
+    keep_recent_tools: int = 5,
+    stub_max_chars: int = 160,
+) -> List[Dict]:
+    """Replace old tool outputs with a short stub before any LLM summary.
+
+    The message list keeps its shape. Only tool messages older than the last
+    ``keep_recent_tools`` are shortened, and only when they are longer than
+    ``stub_max_chars``. A message already stubbed by an earlier pass is left
+    alone, so running this on every turn stays idempotent and does not nest
+    stubs inside stubs.
+    """
+    if not isinstance(messages, list) or keep_recent_tools < 0:
+        return messages
+    tool_idxs = [
+        i for i, msg in enumerate(messages)
+        if isinstance(msg, dict) and msg.get("role") == "tool"
+    ]
+    if len(tool_idxs) <= keep_recent_tools:
+        return messages
+    clear_idxs = set(
+        tool_idxs[:-keep_recent_tools] if keep_recent_tools else tool_idxs
+    )
+    out: List[Dict] = []
+    changed = False
+    for i, msg in enumerate(messages):
+        if i not in clear_idxs or not isinstance(msg, dict):
+            out.append(msg)
+            continue
+        if msg.get("_microcompacted"):
+            out.append(msg)
+            continue
+        text = _content_as_text(msg.get("content"))
+        if len(text) <= stub_max_chars:
+            out.append(msg)
+            continue
+        cloned = dict(msg)
+        cloned["content"] = (
+            f"[tool result cleared for context — was {len(text)} chars]\n"
+            f"{text[:stub_max_chars]}…"
+        )
+        cloned["_microcompacted"] = True
+        out.append(cloned)
+        changed = True
+    return out if changed else messages
+
+
 async def maybe_compact(
     session,
     endpoint_url: str,
@@ -604,6 +654,21 @@ async def maybe_compact(
                 len(compacted),
             )
         return compacted, context_length, changed
+
+    micro = microcompact_tool_results(messages)
+    if micro is not messages:
+        used_micro = estimate_tokens(micro)
+        pct_micro = (used_micro / context_length) * 100 if context_length else 0
+        logger.info(
+            "Microcompacted tool results: %s -> %s tokens (%.1f%%)",
+            used,
+            used_micro,
+            pct_micro,
+        )
+        if pct_micro < threshold:
+            return micro, context_length, True
+        messages = micro
+        used = used_micro
 
     # Split into system preface and conversation
     system_msgs = []
