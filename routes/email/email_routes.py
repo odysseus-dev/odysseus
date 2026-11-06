@@ -1790,6 +1790,12 @@ def setup_email_routes():
     def _pooled_release(account_id, conn, ok=True, owner=""):
         # SECURITY: match the (account_id, owner) key used by _pooled_connect
         # so a pooled handle is returned to the same per-user slot.
+        # Only pool read-only handles, for every provider. A handle that changed
+        # a mailbox (read-write SELECT for delete, move, flags) can keep serving
+        # the pre-change view; seen on Outlook.com, where its later EXAMINE +
+        # SEARCH never returned new mail until the handle was replaced.
+        if ok and getattr(conn, "state", "") == "SELECTED" and not getattr(conn, "is_readonly", True):
+            ok = False
         if not ok:
             try: conn.logout()
             except Exception: pass
@@ -3047,6 +3053,15 @@ def setup_email_routes():
                 "folder": folder,
                 "sync": {"source": "local"},
             }
+        # The unread dot polls this every minute, also while the mailbox is
+        # closed. Pull new mail into the index in the background (once per poll,
+        # skipped if the inbox view just fetched), so the dot and the next open see it.
+        sync_ck = _list_cache_key(account_id, folder, "all", 100, 0) + (0, "", "", owner)
+        if _list_cache_get(sync_ck) is None:
+            _schedule_list_refresh(
+                (folder, 100, 0, "all", account_id, None, False, owner, False, "", ""),
+                sync_ck, folder, account_id, owner,
+            )
         try:
             account_key = _account_cache_key(account_id, owner)
             conn = _sql3.connect(SCHEDULED_DB)
@@ -4085,10 +4100,17 @@ def setup_email_routes():
                     _WARMING_READS.discard(ck)
                     await _asyncio.sleep(0.35)
 
+        warm = _warm()
         try:
-            _asyncio.create_task(_warm())
+            _asyncio.create_task(warm)
         except RuntimeError:
-            pass
+            # No event loop in this thread (background list refresh). Release
+            # the claims too, or these messages are never warmed later.
+            warm.close()
+            for _, ck in selected:
+                _WARMING_READS.discard(ck)
+
+    router._schedule_recent_email_warm = _schedule_recent_email_warm
 
     @router.get("/attachments/{uid}")
     async def list_attachments(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):

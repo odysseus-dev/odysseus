@@ -1588,6 +1588,19 @@ function _scheduleStaleEmailRefetch() {
   }, 2500);
 }
 
+// Pick up new mail while the mailbox is open. Uses the same non-forced list
+// request as the stale refetch, so the server answers from its snapshot and
+// syncs IMAP in the background. Skipped whenever a repaint would get in the
+// user's way or show the wrong rows.
+function _autoRefreshEmailList() {
+  if (!state._libOpen || document.hidden || state._libLoading) return;
+  if (state._libOffset || state._libSearch || state._selectMode) return;
+  if ((state._libSearchPills || []).length || state._libSearchDraft) return;
+  if (state._libFolder === '__scheduled__') return;
+  if (document.getElementById('email-lib-modal')?.classList.contains('email-reading')) return;
+  _loadEmails({ force: false, useCache: false, skipFastPath: true });
+}
+
 function _libCacheKeyFor(accountId, folder, filter, hasAttachments) {
   return [
     accountId || '',
@@ -2555,7 +2568,11 @@ export function openEmailLibrary(opts = {}) {
   modal.querySelector('.email-settings-body')?.scrollTo(0, 0);
   _renderEmailSyncStatus();
   if (_libSyncTicker) clearInterval(_libSyncTicker);
-  _libSyncTicker = setInterval(_renderEmailSyncStatus, 30000);
+  let _syncTicks = 0;
+  _libSyncTicker = setInterval(() => {
+    _renderEmailSyncStatus();
+    if (++_syncTicks % 2 === 0) _autoRefreshEmailList();
+  }, 30000);
   // Make modal background non-blocking so user can interact with rest of the app
   modal.style.cssText += 'pointer-events:none;background:transparent;';
 
@@ -5108,8 +5125,10 @@ export async function _loadEmails({ force = false, useCache = true, skipFastPath
     if (grid2) grid2.classList.remove('email-lib-just-opened');
     paintData(cached, { cacheSource: true });
     paintedExisting = true;
-    if (force) _setEmailSyncStatus({ loading: true });
-    if (!force) return;
+    // Revalidate behind the cached paint, as described above. Returning here
+    // kept showing the browser's saved list (and left _libLoading set, which
+    // blocked the auto-refresh) until something else reloaded the list.
+    _setEmailSyncStatus({ loading: true });
   } else if (state._libEmails.length && cacheable) {
     _renderGrid();
     _setEmailSyncStatus({ loading: true });
