@@ -257,6 +257,14 @@ const _EMAIL_ACCOUNT_ACTIONS = new Set([
   'check_email_urgency',
 ]);
 
+// Actions that run the task's prompt as a shell script or command
+// (src/task_scheduler.py passes it as `script` / `command`).
+const _SCRIPT_ACTIONS = {
+  run_local:   { label: 'Script',  placeholder: 'Shell script to run on the Odysseus host, e.g. ./backup.sh' },
+  run_script:  { label: 'Script',  placeholder: 'Shell script to run locally, or over SSH on ODYSSEUS_SCRIPT_HOST when set' },
+  ssh_command: { label: 'Command', placeholder: 'Shell command to run, e.g. df -h' },
+};
+
 let _emailAccounts = null;
 async function _fetchEmailAccountsForTasks() {
   if (_emailAccounts) return _emailAccounts;
@@ -1237,8 +1245,8 @@ const _TASK_PRESETS = [
   { label: 'Prompt on event',       desc: 'Trigger every N sessions or messages',         taskType: 'llm',      triggerType: 'event' },
   { label: 'Research on schedule',  desc: 'Run deep research on a topic',                 taskType: 'research', triggerType: 'schedule' },
   { label: 'Research on event',     desc: 'Run deep research after app events',           taskType: 'research', triggerType: 'event' },
-  { label: 'Action on schedule',    desc: 'Run tidy/cleanup on a timer',                  taskType: 'action',   triggerType: 'schedule' },
-  { label: 'Action on event',       desc: 'Run tidy/cleanup every N sessions or messages', taskType: 'action', triggerType: 'event' },
+  { label: 'Action on schedule',    desc: 'Run a script or tidy/cleanup on a timer',                  taskType: 'action',   triggerType: 'schedule' },
+  { label: 'Action on event',       desc: 'Run a script or tidy/cleanup every N sessions or messages', taskType: 'action', triggerType: 'event' },
   { label: 'Webhook triggered',     desc: 'Trigger via external HTTP call',               taskType: 'llm',      triggerType: 'webhook' },
 ];
 
@@ -1411,6 +1419,18 @@ function _showForm(existing, initTaskType, initTriggerType) {
         const extra = document.getElementById('task-form-action-extra');
         if (!sel || !extra) return;
         const action = sel.value;
+        const scriptAction = _SCRIPT_ACTIONS[action];
+        if (scriptAction) {
+          const current = document.getElementById('task-form-script')?.value;
+          const value = current ?? (existing?.action === action ? existing.prompt || '' : '');
+          extra.innerHTML = `
+            <label class="task-form-label">${scriptAction.label}</label>
+            <textarea id="task-form-script" class="task-form-input task-form-textarea" rows="4" placeholder="${scriptAction.placeholder}"></textarea>
+            <div class="memory-desc" style="font-size:11px;margin-top:4px;">Runs with the server's permissions, 5 minute timeout. Admin only.</div>
+          `;
+          document.getElementById('task-form-script').value = value;
+          return;
+        }
         if (!_EMAIL_ACCOUNT_ACTIONS.has(action)) {
           extra.innerHTML = '';
           return;
@@ -1818,6 +1838,14 @@ function _showForm(existing, initTaskType, initTriggerType) {
         return;
       }
       payload.action = action;
+      if (_SCRIPT_ACTIONS[action]) {
+        const script = document.getElementById('task-form-script')?.value?.trim();
+        if (!script) {
+          if (uiModule) uiModule.showError(`${_SCRIPT_ACTIONS[action].label} is required`);
+          return;
+        }
+        payload.prompt = script;
+      }
       if (_EMAIL_ACCOUNT_ACTIONS.has(action)) {
         const accountId = document.getElementById('task-form-email-account')?.value || '';
         payload.prompt = accountId ? JSON.stringify({ account_id: accountId }) : '';
