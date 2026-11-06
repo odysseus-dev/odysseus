@@ -64,6 +64,21 @@ _SHELL_COMMAND = (
     r"nvcc|docker|systemctl|journalctl|tmux|git)"
 )
 _BENCHMARK_COMMAND = r"(?:[a-z][a-z0-9_-]*bench(?:mark)?s?|bench(?:mark)?s?)"
+# "on <word>" and "from <word>" alone describe people, companies, and topics
+# ("Jensen Huang from NVIDIA", "a book on Rome") as often as hosts, so a target
+# only counts as a computer next to wording that describes work on a machine.
+_NAMED_COMPUTER = (
+    r"(?!this\b|my\b|the\b|a\b|an\b|that\b|it\b|same\b|current\b)"
+    r"[a-z][a-z0-9_.-]{1,31}\b"
+)
+NAMED_COMPUTER_TASK = (
+    r"\b(?:disks?|uptime|processes|logs?|files?|folders?|director(?:y|ies)|running|installed|"
+    r"(?:storage|memory|ram|vram|cpu|gpu)\s+(?:usage|space|utili[sz]ation|load|temp(?:erature)?))\b"
+    rf"[^.?!\n]{{0,80}}\bon\s+{_NAMED_COMPUTER}"
+    r"|\b(?:copy|fetch|get|grab|pull|download|scp|rsync|sync|read|show|list|tail|check)\b"
+    r"[^.?!\n]{0,60}\b(?:files?|logs?|folders?|director(?:y|ies)|configs?|checkpoints?|backups?)\b"
+    rf"[^.?!\n]{{0,40}}\bfrom\s+{_NAMED_COMPUTER}"
+)
 _CODE_ACTION = r"(?:write|create|add|edit|modify|code|program|implement|build)"
 _CODE_ARTIFACT = (
     r"(?:code|function|class|script|module|component|snippet|program|app|feature|file|"
@@ -164,7 +179,7 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("workspace", "file/code inspection request", rf"{_PLEASE}(?:find|inspect|look\s+at|open|read|check)\b.{{0,120}}\b(?:file|folder|directory|repo|repository|code|source|logs?|trace|stack|diff)\b"),
         ("workspace", "server/process debugging request", rf"{_PLEASE}(?:check|debug|fix|restart|start|stop|kill|tail|inspect)\b.{{0,120}}\b(?:server|service|process|port|docker|container|tmux|endpoint|logs?)\b"),
         ("workspace", "local computer task request", r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"),
-        ("workspace", "named computer task request", r"\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b|that\b|it\b|same\b|current\b)(?:[a-z][a-z0-9_.-]{1,31})\b"),
+        ("workspace", "named computer task request", NAMED_COMPUTER_TASK),
         ("workspace", "terminal workspace request", rf"\b(?:terminal|shell|workspace|tmux|docker|container|git|branch|commit|diff|pytest|stacktrace|traceback|{_BENCHMARK_COMMAND}|eval(?:uation)?s?)\b"),
 
         # Shell / remote-host intent.
