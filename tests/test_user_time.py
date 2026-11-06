@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from src.chat_processor import ChatProcessor
 from src.user_time import (
     clear_user_time_context,
+    current_datetime_context_message_for_tz,
     current_datetime_prompt,
     get_user_tz_name,
     get_user_tz_offset,
@@ -288,3 +289,36 @@ class _Memory:
 
 class _Docs:
     rag_manager = None
+
+
+def test_prompt_states_the_week_so_the_model_copies_dates():
+    """The model gets the week's dates instead of deriving them."""
+    set_user_tz_name("UTC")
+    prompt = current_datetime_prompt(datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc))  # a Friday
+    assert "Weeks run Monday through Sunday (ISO 8601)." in prompt
+    assert "This week is ISO week 43: Monday=2026-10-19, Tuesday=2026-10-20," in prompt
+    assert "Sunday=2026-10-25." in prompt
+    assert "Last week is 2026-10-12 to 2026-10-18; next week is 2026-10-26 to 2026-11-01." in prompt
+    assert "Copy these dates as given" in prompt
+
+
+def test_sunday_belongs_to_the_week_that_started_on_monday():
+    set_user_tz_name("UTC")
+    prompt = current_datetime_prompt(datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc))  # a Sunday
+    assert "This week is ISO week 43: Monday=2026-10-19," in prompt
+    assert "next week is 2026-10-26 to 2026-11-01." in prompt
+
+
+def test_week_number_at_the_year_boundary():
+    set_user_tz_name("UTC")
+    prompt = current_datetime_prompt(datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc))  # Thursday
+    assert "This week is ISO week 53: Monday=2026-12-28," in prompt
+    assert "next week is 2027-01-04 to 2027-01-10." in prompt
+
+
+def test_background_context_states_the_week_in_its_own_timezone():
+    # Sunday 23:30 UTC is already Monday in Tokyo: a new ISO week there.
+    message = current_datetime_context_message_for_tz(
+        "Asia/Tokyo", datetime(2026, 10, 25, 23, 30, tzinfo=timezone.utc))
+    assert "This week is ISO week 44: Monday=2026-10-26," in message["content"]
+    assert "Last week is 2026-10-19 to 2026-10-25;" in message["content"]

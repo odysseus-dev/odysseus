@@ -127,6 +127,30 @@ def timezone_label(dt: Optional[datetime] = None) -> str:
     return offset_label
 
 
+def _week_context(local_now: datetime) -> str:
+    """Week facts the model copies instead of deriving.
+
+    Small models spend their thinking budget on weekday arithmetic and still
+    start weeks on Sunday or mislabel days, and the wrong bounds flow into
+    calendar tool arguments.
+    """
+    today = local_now.date()
+    monday = today - timedelta(days=today.weekday())
+    days = ", ".join(
+        f"{(monday + timedelta(days=i)).strftime('%A')}={monday + timedelta(days=i)}"
+        for i in range(7)
+    )
+    last_monday = monday - timedelta(days=7)
+    next_monday = monday + timedelta(days=7)
+    return (
+        "Weeks run Monday through Sunday (ISO 8601). "
+        f"This week is ISO week {today.isocalendar().week}: {days}.\n"
+        f"Last week is {last_monday} to {last_monday + timedelta(days=6)}; "
+        f"next week is {next_monday} to {next_monday + timedelta(days=6)}.\n"
+        "Copy these dates as given; do not work out week dates yourself.\n"
+    )
+
+
 def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:
     """Build reusable system prompt text for date/time reasoning."""
     if now_utc is None:
@@ -145,6 +169,7 @@ def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:
         f"current UTC time is {utc_now.strftime('%H:%M')}.\n"
         f"Tomorrow is {_date_label(tomorrow)} ({tomorrow.strftime('%Y-%m-%d')}) "
         "in the user's local timezone.\n"
+        f"{_week_context(local_now)}"
         "Use this for any 'today', 'tomorrow', 'tonight', 'this week', or other "
         "relative-date reasoning. Do not ask for an exact date just because the "
         "user used a relative date.\n"
@@ -205,6 +230,7 @@ def current_datetime_context_message_for_tz(
         f"current UTC time is {utc_now.strftime('%H:%M')}.\n"
         f"Tomorrow is {_date_label(tomorrow)} ({tomorrow.strftime('%Y-%m-%d')}) "
         "in this timezone.\n"
+        f"{_week_context(local_now)}"
         "Use this for any 'today', 'tomorrow', 'tonight', 'this week', or other "
         "relative-date reasoning. Do not ask for an exact date just because the "
         "user used a relative date.\n\n"
