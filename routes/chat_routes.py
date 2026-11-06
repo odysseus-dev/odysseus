@@ -3765,16 +3765,16 @@ def setup_chat_routes(
             if _corrected_browser_target:
                 _selected_tools = {'private_browser', 'web_fetch', 'web_search'}
                 _required_tools = {'private_browser'}
-            _turn_contract = resolve_turn_contract(
+            _turn_contract, _request_authority = _resolve_authorized_turn_contract(
+                _request_authority, _contract_policy,
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
-                policy=_contract_policy, required_tools=_required_tools,
+                required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
                 always_available_tools=(FAMILY_TOOLS["documents"] if active_doc else ()),
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
-            _request_authority = _request_authority.restrict(_contract_policy)
             # Resolution already applies user, owner, and global policy. An
             # admitted tool must not later be rejected by the stale
             # pre-contract disabled snapshot during execution.
@@ -5319,3 +5319,13 @@ def setup_chat_routes(
         return StreamingResponse(stream_rewrite(), media_type="text/event-stream")
 
     return router
+
+
+def _resolve_authorized_turn_contract(authority, policy, **contract_kwargs):
+    """Resolve a turn contract under the request's restricted authority."""
+    from src.agent_runtime.authority import bind_request_authority
+
+    restricted = authority.restrict(policy)
+    with bind_request_authority(restricted):
+        contract = resolve_turn_contract(policy=policy, **contract_kwargs)
+    return contract, restricted
