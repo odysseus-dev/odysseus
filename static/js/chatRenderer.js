@@ -2340,8 +2340,15 @@ export function createMsgFooter(msgElement, { animate = false } = {}) {
     }},
   ];
 
+  // Jev replies are structured results, not prose: text rewrites and editing
+  // make no sense for them.
+  const _isTypesafe = msgElement?.dataset?.typesafe === '1';
+  const _TYPESAFE_HIDDEN = ['shorten', 'explain', 'edit'];
+
   // Filter out unavailable actions (e.g. TTS when not enabled)
-  const availableActions = allActions.filter(a => !a.available || a.available());
+  const availableActions = allActions
+    .filter(a => !_isTypesafe || !_TYPESAFE_HIDDEN.includes(a.id))
+    .filter(a => !a.available || a.available());
 
   // Determine which 3 to show: use recent order, fallback to defaults
   const recent = _getRecentActions();
@@ -2535,7 +2542,8 @@ export function createUserMsgFooter(msgElement) {
     { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
-      uiModule.copyToClipboard(msgElement.querySelector('.body')?.textContent || '');
+      const _jevRaw = msgElement.dataset.typesafe === '1' ? msgElement.dataset.raw : '';
+      uiModule.copyToClipboard(_jevRaw || msgElement.querySelector('.body')?.textContent || '');
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
@@ -3207,6 +3215,243 @@ export function renderAskUserCard(payload, options) {
   return card;
 }
 
+function renderTypesafeChoice(name, answer) {
+    const esc = uiModule.esc;
+    const probabilities = answer.probabilities || {};
+
+    const probabilityHtml = Object.entries(probabilities)
+        .sort((a, b) => b[1] - a[1])
+        .map(([key, value]) => {
+            const percentage = Math.max(0, Math.min(100, Number(value) * 100 || 0));
+
+            return `
+                <div class="typesafe-probability">
+                    <div class="typesafe-probability-label">
+                        <span>${esc(key)}</span>
+                        <span>${percentage.toFixed(1)}%</span>
+                    </div>
+                    <div class="typesafe-bar">
+                        <div class="typesafe-bar-fill"
+                             style="width: ${percentage}%"></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    const confidence = Math.max(
+        0,
+        Math.min(100, Number(answer.confidence) * 100 || 0)
+    );
+
+    return `
+        <section class="typesafe-question">
+            <h3>${esc(name)}</h3>
+
+            <div class="typesafe-choice">
+                <strong>${esc(answer.choice ?? 'N/A')}</strong>
+                <span class="typesafe-selected">Selected</span>
+            </div>
+
+            <div class="typesafe-probabilities">
+                <strong>Probabilities</strong>
+                ${probabilityHtml}
+            </div>
+
+            <div class="typesafe-confidence">
+                <strong>Confidence</strong>
+                <strong>${confidence.toFixed(1)}%</strong>
+            </div>
+
+            <div class="typesafe-bar">
+                <div class="typesafe-bar-fill"
+                     style="width: ${confidence}%"></div>
+            </div>
+        </section>
+    `;
+}
+
+function renderTypesafeScore(name, answer) {
+    const esc = uiModule.esc;
+
+    const score = Math.max(
+        0,
+        Math.min(1, Number(answer.score) || 0)
+    );
+
+    const percentage = score * 100;
+
+    const probabilities = answer.probabilities || {};
+    const legend = answer.legend || {};
+
+    const probabilityHtml = Object.entries(probabilities)
+        .sort((a, b) => Number(a[0]) - Number(b[0]))
+        .map(([key, value]) => {
+            const probability = Math.max(
+                0,
+                Math.min(100, Number(value) * 100 || 0)
+            );
+
+            return `
+                <div class="typesafe-probability">
+                    <div class="typesafe-probability-label">
+                        <span>${esc(legend[key] ?? key)}</span>
+                        <span>${probability.toFixed(1)}%</span>
+                    </div>
+
+                    <div class="typesafe-bar">
+                        <div class="typesafe-bar-fill"
+                             style="width: ${probability}%"></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    const confidence = Math.max(
+        0,
+        Math.min(100, Number(answer.confidence) * 100 || 0)
+    );
+
+    return `
+        <section class="typesafe-question typesafe-score">
+            <h3>${esc(name)}</h3>
+
+            <div class="typesafe-score-value">
+                <strong>${percentage.toFixed(1)}%</strong>
+            </div>
+
+            <div class="typesafe-bar typesafe-score-bar">
+                <div class="typesafe-bar-fill"
+                     style="width: ${percentage}%"></div>
+            </div>
+
+            <div class="typesafe-probabilities">
+                <strong>Score distribution</strong>
+                ${probabilityHtml}
+            </div>
+
+            <div class="typesafe-confidence">
+                <strong>Confidence</strong>
+                <strong>${confidence.toFixed(1)}%</strong>
+            </div>
+
+            <div class="typesafe-bar">
+                <div class="typesafe-bar-fill"
+                     style="width: ${confidence}%"></div>
+            </div>
+        </section>
+    `;
+}
+
+function renderTypesafeNoul(name, answer) {
+    const esc = uiModule.esc;
+
+    const noul = Math.max(
+        0,
+        Math.min(1, Number(answer.noul) || 0)
+    );
+
+    const percentage = noul * 100;
+
+    return `
+        <section class="typesafe-question typesafe-noul">
+            <h3>${esc(name)}</h3>
+
+            <div class="typesafe-noul-value">
+                <strong>${percentage.toFixed(1)}%</strong>
+            </div>
+
+            <div class="typesafe-bar typesafe-noul-bar">
+                <div class="typesafe-bar-fill"
+                     style="width: ${percentage}%"></div>
+            </div>
+        </section>
+    `;
+}
+
+function renderTypesafeQuestion(name, answer) {
+  switch (answer.type) {
+    case 'choice':
+      return renderTypesafeChoice(name, answer);
+
+    case 'score':
+      return renderTypesafeScore(name, answer);
+
+    case 'noul':
+      return renderTypesafeNoul(name, answer);
+
+    default:
+      return `
+        <section class="typesafe-question">
+          <h3>${uiModule.esc(name)}</h3>
+          <pre>${uiModule.esc(JSON.stringify(answer, null, 2))}</pre>
+        </section>
+      `;
+  }
+}
+
+/**
+ * Returns the formatted JSON when `text` is a Jev input message: an object with
+ * `state` and `questions`, bare or inside a ```json fence. Otherwise null.
+ */
+function _parseTypesafeInput(text) {
+    if (typeof text !== 'string') return null;
+    let body = text.trim();
+    const fence = body.match(/^```(?:json)?\s*\n([\s\S]*?)\n\s*```$/);
+    if (fence) body = fence[1].trim();
+    if (!body.startsWith('{')) return null;
+    let data;
+    try { data = JSON.parse(body); } catch (_) { return null; }
+    if (!data || typeof data !== 'object' || !('state' in data) || !('questions' in data)) return null;
+    return JSON.stringify(data, null, 2);
+}
+
+/**
+ * Returns the parsed Jev result when `content` is a persisted Jev reply
+ * (JSON object with a non-empty `answers` map of typed answers), else null.
+ */
+function _parseTypesafeContent(content) {
+    if (typeof content !== 'string') return null;
+    const text = content.trim();
+    if (!text.startsWith('{')) return null;
+    let data;
+    try { data = JSON.parse(text); } catch (_) { return null; }
+    const answers = data && data.answers;
+    if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
+    const entries = Object.values(answers);
+    if (!entries.length) return null;
+    const isAnswer = (a) => a && typeof a === 'object' && typeof a.type === 'string';
+    return entries.every(isAnswer) ? data : null;
+}
+
+function renderTypesafeResults(result) {
+    const esc = uiModule.esc;
+
+    const questionsHtml = Object.entries(result.answers || {})
+        .map(([name, answer]) => renderTypesafeQuestion(name, answer))
+        .join('');
+
+    const usage = result.usage || {};
+
+    return `
+        <div class="typesafe-results">
+            <div class="typesafe-header">
+                <strong>Results</strong>
+                <span class="typesafe-status">Completed</span>
+            </div>
+
+            ${questionsHtml}
+
+            <div class="typesafe-footer">
+                <span>${esc(result.model || 'Jev')}</span>
+                <span>
+                    ${Number(usage.input_tokens) || 0} input ·
+                    ${Number(usage.output_tokens) || 0} output tokens
+                </span>
+            </div>
+        </div>
+    `;
+}
+
 /**
  * Add a message to the chat history.
  */
@@ -3224,6 +3469,18 @@ export function addMessage(role, content, modelName, metadata) {
 
     var esc = uiModule.esc;
     const textRaw = Array.isArray(content) ? markdownModule.renderContent(content) : content;
+
+    // Jev input sent by the structured form (or pasted by hand): shown and
+    // copied as formatted JSON instead of going through the markdown renderer.
+    const _jevInputRaw = role === 'user' ? _parseTypesafeInput(textRaw) : null;
+
+    // Older Jev replies were persisted as their raw JSON text, without
+    // typesafe_result metadata. Recognise them by shape and render them with
+    // the Jev UI, the same as live replies.
+    if (role === 'assistant' && !metadata?.typesafe_result) {
+      const _jev = _parseTypesafeContent(content);
+      if (_jev) metadata = { ...(metadata || {}), typesafe_result: _jev };
+    }
 
     // --- Agent multi-bubble reconstruction from saved metadata ---
     if (
@@ -3517,6 +3774,42 @@ export function addMessage(role, content, modelName, metadata) {
       return wrap;
     }
 
+    // --- TypeSafe / Jev result ---
+    if (role === 'assistant' && metadata?.typesafe_result) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg msg-ai';
+      // Copy and the message-text helpers read dataset.raw: keep the JSON reply there.
+      wrap.dataset.raw = JSON.stringify(metadata.typesafe_result, null, 2);
+      wrap.dataset.typesafe = '1';
+
+      const r = document.createElement('div');
+      r.className = 'role';
+
+      r.textContent = modelName || 'Jev';
+      applyModelColor(r, modelName);
+
+      r.appendChild(roleTimestamp(metadata?.timestamp));
+
+      const b = document.createElement('div');
+      b.className = 'body';
+
+      b.insertAdjacentHTML(
+        'beforeend',
+        renderTypesafeResults(metadata.typesafe_result)
+      );
+
+      wrap.appendChild(r);
+      wrap.appendChild(b);
+
+      box.appendChild(wrap);
+
+      wrap.appendChild(createMsgFooter(wrap));
+
+      if (metadata) displayMetrics(wrap, metadata);
+
+      return wrap;
+    }
+
     // --- Standard single-bubble message ---
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
@@ -3624,6 +3917,17 @@ export function addMessage(role, content, modelName, metadata) {
 		      b.innerHTML = sourcesPrefix + _renderAssistantBody(text, role === 'assistant' ? metadata : null) + findingsSuffix;
 		    }
 	    b.dataset.raw = text;
+
+    if (_jevInputRaw) {
+      wrap.dataset.typesafe = '1';
+      wrap.dataset.raw = _jevInputRaw;
+      b.dataset.raw = _jevInputRaw;
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = _jevInputRaw;
+      pre.appendChild(code);
+      b.replaceChildren(pre);
+    }
 
     // The vision/OCR caption is stripped from the displayed text above (so the
     // bubble doesn't show the raw model output) but no longer rendered as an

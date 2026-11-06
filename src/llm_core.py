@@ -1143,6 +1143,8 @@ def _detect_provider(url: str) -> str:
         return "cerebras"
     if _host_match(url, "mistral.ai"):
         return "mistral"
+    if _host_match(url, "typesafe.ai"):
+        return "typesafe"
     return "openai"
 
 
@@ -1506,6 +1508,115 @@ def _normalize_chatgpt_subscription_url(url: str) -> str:
     if base.endswith("/responses"):
         return base
     return base + "/responses"
+
+
+def _normalize_typesafe_url(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/systemone"):
+        return base
+    return base + "/systemone"
+
+
+
+def _build_typesafe_headers(headers):
+    """Build HTTP headers for TypeSafe Jev."""
+    result = dict(headers or {})
+
+    # Normalize header names without exposing credentials.
+    authorization = next(
+        (
+            value
+            for key, value in result.items()
+            if key.lower() == "authorization"
+        ),
+        None,
+    )
+
+    if not authorization:
+        raise ValueError(
+            "TypeSafe Jev requires an Authorization Bearer token"
+        )
+
+    result = {
+        key: value
+        for key, value in result.items()
+        if key.lower() not in ("content-type", "accept")
+    }
+
+    result["Content-Type"] = "application/json"
+    result["Accept"] = "application/json"
+
+    return result
+
+
+def _extract_typesafe_input(messages):
+    """Return the Jev {state, questions} input carried by the latest user message.
+
+    Only the most recent user message is considered: an older question payload
+    must never be replayed when the user sends a new, free-text message.
+    """
+    decoder = json.JSONDecoder()
+
+    last_user = next(
+        (m for m in reversed(messages) if m.get("role") == "user"),
+        None,
+    )
+    content = last_user.get("content", "") if last_user else ""
+    if not isinstance(content, str):
+        raise ValueError("No valid Jev input found")
+
+    for match in re.finditer(r'\{', content):
+        try:
+            data, _ = decoder.raw_decode(content[match.start():])
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(data, dict) and all(
+            key in data for key in ("state", "questions")
+        ):
+            return data
+
+    raise ValueError("No valid Jev input found")
+
+
+def _build_typesafe_payload(model, state, questions):
+    """Build a TypeSafe Jev System One request."""
+    if not isinstance(state, (str, dict, list)):
+        raise ValueError(
+            "TypeSafe state must be a string, object or array"
+        )
+
+    if not isinstance(questions, dict) or not questions:
+        raise ValueError(
+            "TypeSafe questions must be a non-empty dictionary"
+        )
+
+    return {
+        "model": model or "jev-latest",
+        "state": state,
+        "questions": questions,
+    }
+
+
+def _parse_typesafe_response(data):
+    """Parse a TypeSafe Jev System One response."""
+    if not isinstance(data, dict):
+        raise ValueError(
+            "Invalid TypeSafe response: expected a JSON object"
+        )
+
+    answers = data.get("answers")
+
+    if not isinstance(answers, dict):
+        raise ValueError(
+            "Invalid TypeSafe response: missing 'answers' object"
+        )
+
+    return {
+        "model": data.get("model"),
+        "answers": answers,
+        "usage": data.get("usage", {}),
+    }
 
 
 def _message_content_as_text(content) -> str:
@@ -2411,6 +2522,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
+        elif provider == "typesafe":
+            response = _parse_typesafe_response(data)
         else:
             msg = data["choices"][0]["message"]
             content = msg.get("content")
@@ -3047,6 +3160,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             model, messages_copy, temperature, max_tokens, stream=True,
             reasoning_effort=reasoning_effort,
         )
+    elif provider == "typesafe":
+        target_url = _normalize_typesafe_url(url)
+        h = _build_typesafe_headers(headers)
+        jev_input = _extract_typesafe_input(messages)
+        payload = _build_typesafe_payload(
+            model=jev_input.get("model", model),
+            state=jev_input["state"],
+            questions=jev_input["questions"],
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -3475,6 +3597,151 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         except Exception as e:
             logger.error(f"Anthropic stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": _stream_failure_message(e), "status": 502, "fallback_eligible": False})}\n\n'
+        return
+
+    # ── TypeSafe response ──
+    if provider == "typesafe":
+        try:
+            client = _get_http_client()
+
+            # Jev uses a synchronous JSON response, not SSE.
+            response = await client.post(
+                target_url,
+                json=payload,
+                headers=h,
+                timeout=stream_timeout,
+            )
+
+            _clear_host_dead(target_url)
+
+            if response.status_code != 200:
+                raw = response.text
+                friendly = _format_upstream_error(
+                    response.status_code,
+                    raw,
+                    target_url,
+                )
+                yield (
+                    f'event: error\ndata: {json.dumps({"status": response.status_code, "text": friendly})}\n\n'
+                )
+                return
+
+            # Parse response JSON
+            try:
+                raw_data = response.json()
+            except ValueError:
+                logger.error("TypeSafe returned invalid JSON")
+                yield (
+                    f'event: error\ndata: {json.dumps({"error": "TypeSafe returned invalid JSON", "status": 502})}\n\n'
+                )
+                return
+
+            # Normalize Jev response
+            result = _parse_typesafe_response(raw_data)
+
+            actual_model = _reported_model_name(
+                result.get("model")
+            )
+
+            # Announce actual model
+            if actual_model:
+                model_event = _model_actual_event(
+                    model,
+                    actual_model,
+                )
+                if model_event:
+                    yield model_event
+
+            # Emit structured answers as a text delta.
+            # This allows the existing Odysseus chat frontend
+            # to display the result without requiring a new SSE event type.
+            answers = result["answers"]
+
+            answer_text = json.dumps(
+                answers,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+            # yield (
+            #     f'data: {json.dumps({"type": "typesafe_result", "data": result})}\n\n'
+            # )
+            yield (
+                f'data: {json.dumps({"delta": json.dumps(result), "provider": provider, "data": result}, ensure_ascii=False)}\n\n'
+            )
+            # yield (
+            #     f'data: {json.dumps({"delta": answer_text}, ensure_ascii=False)}\n\n'
+            # )
+
+            # Emit token usage
+            usage = result.get("usage") or {}
+
+            if isinstance(usage, dict):
+                normalized_usage = _normalize_usage_counts(
+                    usage.get("input_tokens", 0),
+                    usage.get("output_tokens", 0),
+                )
+
+                if normalized_usage:
+                    _annotate_usage_model(
+                        normalized_usage,
+                        model,
+                        actual_model,
+                    )
+
+                    yield (
+                        f'data: {json.dumps({"type": "usage", "data": normalized_usage})}\n\n'
+                    )
+
+            yield "data: [DONE]\n\n"
+
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = (
+                f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s"
+                if _cooled
+                else " — transient, will retry"
+            )
+            logger.warning(
+                f"TypeSafe connection to {target_url} failed: {e}{_tail}"
+            )
+
+            yield (
+                f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+            )
+
+        except httpx.ReadTimeout:
+            yield (
+                f'event: error\ndata: {json.dumps({"error": "TypeSafe read timeout", "status": 504})}\n\n'
+            )
+
+        except httpx.PoolTimeout:
+            yield (
+                f'event: error\ndata: {json.dumps({"error": "Connection pool timeout", "status": 504})}\n\n'
+            )
+
+        except httpx.WriteTimeout:
+            yield (
+                f'event: error\ndata: {json.dumps({"error": "TypeSafe upstream timeout", "status": 504, "fallback_eligible": False})}\n\n'
+            )
+
+        except httpx.ProtocolError:
+            yield (
+                f'event: error\ndata: {json.dumps({"error": "TypeSafe upstream protocol error", "status": 502, "fallback_eligible": False})}\n\n'
+            )
+
+        except httpx.NetworkError:
+            yield (
+                f'event: error\ndata: {json.dumps({"error": "TypeSafe network error", "status": 502, "fallback_eligible": False})}\n\n'
+            )
+
+        except Exception as e:
+            logger.exception(f"TypeSafe stream error: {e}")
+
+            yield (
+                f'event: error\ndata: {json.dumps({"error": _stream_failure_message(e), "status": 502, "fallback_eligible": False})}\n\n'
+            )
+
         return
 
     # ── OpenAI-compatible streaming ──

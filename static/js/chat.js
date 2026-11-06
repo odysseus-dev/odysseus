@@ -36,7 +36,7 @@ import {
   inheritModelRouteState,
 } from './chatModelProvenance.js';
 import { createTerminalStreamError, isRecoverableStreamError } from './chatStreamErrors.js';
-import { loadPanel } from './panels.js?v=20260909movepicklayer1';
+import './typesafeComposer.js'; // mounts the Jev form for typesafe routesimport { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import { invalidateSettings } from './appConfig.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
@@ -4282,6 +4282,14 @@ import { invalidateSettings } from './appConfig.js';
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 _settleTurnRendering();
+              }
+              if (json.provider === 'typesafe') {
+                if (!_isBg) {
+                  holder?.remove();
+                  if (roundHolder && roundHolder !== holder) roundHolder.remove();
+                  addMessage('assistant', '', json.data?.model || 'Jev', { typesafe_result: json.data });
+                }
+                continue;
               }
               if (
                 (typeof json.delta === 'string' && json.delta.length > 0)

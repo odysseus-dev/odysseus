@@ -2858,3 +2858,192 @@ details a:hover {
   color: var(--red);
   opacity: 1;
 }
+
+.typesafe-results {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 8px 0;
+}
+
+.typesafe-header,
+.typesafe-confidence,
+.typesafe-probability-label,
+.typesafe-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.typesafe-status,
+.typesafe-selected {
+  color: var(--success-color, #16a34a);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.typesafe-question {
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+  margin-top: 12px;
+}
+.typesafe-question:first-child {
+  border-top: none;
+  margin-top: 0;
+}
+
+.typesafe-question h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.typesafe-choice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.typesafe-bar {
+  margin-bottom: 16px;
+}
+
+.typesafe-probabilities {
+  margin-bottom: 12px;
+}
+
+.typesafe-probabilities > strong {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--brand-color)
+}
+
+.typesafe-probability {
+  margin: 10px 0;
+}
+
+.typesafe-probability-label {
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.typesafe-bar {
+  height: 7px;
+  background: var(--surface-tertiary);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.typesafe-bar-fill {
+  height: 100%;
+  background: var(--success-color, #16a34a);
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+
+.typesafe-confidence {
+  margin: 18px 0 8px;
+}
+
+.typesafe-confidence > strong {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--brand-color)
+}
+
+.typesafe-footer {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+/* ── Jev structured input: state hooks only (styling comes from settings-* / admin-* classes) ── */
+.typesafe-composer[hidden] {
+  display: none;
+}
+
+/* Vertical rhythm for the form: the shared row/column classes have no gap of their own */
+.typesafe-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.typesafe-composer .ts-body,
+.typesafe-composer .settings-col {
+  gap: 10px;
+}
+
+/* Collapsed accordion: hide the body, keep the header row */
+.typesafe-composer.is-collapsed .ts-body {
+  display: none;
+}
+
+/* Accordion header: centre the chevron on the label */
+.typesafe-composer [data-role="accordion"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.typesafe-composer .ts-chevron {
+  display: inline-flex;
+  align-items: center;
+  transition: transform 0.16s ease;
+}
+
+.typesafe-composer .ts-chevron svg {
+  display: block;
+}
+
+.typesafe-composer.is-collapsed .ts-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Full-width single column for the form; the model picker moves to its own row above */
+.chat-input-top.ts-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.chat-input-top.ts-layout > .model-picker-wrap {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.chat-input-top.ts-layout > .typesafe-composer {
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+}
+
+/* Free-text mode: only the switch back to the form, under the picker, flush right */
+.chat-input-top > .typesafe-composer.ts-text-mode {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  width: auto;
+}
+
+.chat-input-top > .typesafe-composer.ts-text-mode .ts-body,
+.chat-input-top > .typesafe-composer.ts-text-mode [data-role="accordion"] {
+  display: none;
+}
+
+.chat-input-top > .typesafe-composer.ts-text-mode .settings-row {
+  justify-content: flex-end;
+}
+
+/* Jev form open on the welcome screen: keep the logo above the form instead of under it.
+   Scoped to an open, visible Jev composer, so other providers keep the default layout. */
+.chat-container.welcome-active:has(.typesafe-composer:not([hidden]):not(.is-collapsed):not(.ts-text-mode)) .chat-input-bar {
+  margin-bottom: 0;
+}
+
+.chat-container.welcome-active:has(.typesafe-composer:not([hidden]):not(.is-collapsed):not(.ts-text-mode)) #welcome-screen {
+  top: 12%;
+}
