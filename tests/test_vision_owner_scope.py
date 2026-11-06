@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from src import ai_interaction
 from src import document_processor as dp
 
@@ -99,3 +101,26 @@ def test_request_vision_call_sites_pass_owner():
     assert "_resolve_vl_model(vl_model, owner=user)" in document_source
     assert "_resolve_vl_model(configured, owner=user)" in gallery_source
     assert "_process_pdf(tmp_path, owner=_owner(request))" in memory_source
+
+
+@pytest.mark.parametrize("vision_model", [
+    "qwen2.5vl:7b",
+    "Qwen2.5-VL-7B-Instruct",
+    "qwen3-vl:8b",
+])
+def test_auto_detect_finds_qwen_vision_model(monkeypatch, vision_model):
+    # issue #6487: an Ollama host serving only "qwen2.5vl:7b" next to a text
+    # model had no vision model detected, so images got the "No vision model
+    # configured" placeholder instead of a caption.
+    served = ["qwen3:14b", vision_model]
+
+    def fake_resolve_model(spec, owner=None):
+        # same exact-then-substring matching as ai_interaction._resolve_model
+        for mid in served:
+            if spec.lower() in mid.lower() or mid.lower() in spec.lower():
+                return ("http://ollama.test/v1/chat/completions", mid, {})
+        raise ValueError("not available")
+
+    monkeypatch.setattr(ai_interaction, "_resolve_model", fake_resolve_model)
+
+    assert dp._resolve_vl_model("")[1] == vision_model
