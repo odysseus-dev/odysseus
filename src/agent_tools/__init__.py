@@ -19,6 +19,7 @@ from src.tool_types import TOOL_TAGS, ToolBlock
 logger = logging.getLogger(__name__)
 
 from .subprocess_tools import BashTool, HostShellTool, PythonTool
+from .subagent_tools import DelegateSubagentTool
 from .web_tools import WebSearchTool, WebFetchTool, PdfExtractTool, PrivateBrowserTool, YouTubeTool
 from .weather_tools import WeatherTool
 from .media_tools import ExtractTextTool, InspectMediaTool, TranscribeMediaTool
@@ -38,6 +39,7 @@ from .admin_tools import (
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
+    "delegate_subagent": DelegateSubagentTool().execute,
     "host_shell": HostShellTool().execute,
     "python": PythonTool().execute,
     "web_search": WebSearchTool().execute,

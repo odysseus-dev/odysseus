@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from core.models import ChatMessage
+from src.subagent_runtime import with_delegation as _with_delegation
 from src.request_models import ChatRequest
 from src.llm_core import (
     _normalize_http_status,
@@ -4690,7 +4691,7 @@ def setup_chat_routes(
                     if _turn_contract is not None:
                         _forced_tools = set(_turn_contract.offered)
 
-                    async for chunk in _stream_agent_with_execution_bridge(
+                    async for chunk in _with_delegation(_stream_agent_with_execution_bridge(
                         _external_execution_bridge(client_runtime_context),
                         sess.endpoint_url,
                         sess.model,
@@ -4738,7 +4739,7 @@ def setup_chat_routes(
                         context_resolution=(
                             _compact_context_resolution if _clean_v3_preview else None
                         ),
-                    ):
+                    ), sess.endpoint_url, sess.model, headers=sess.headers):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
                                 data = _render_state.consume(json.loads(chunk[6:]))

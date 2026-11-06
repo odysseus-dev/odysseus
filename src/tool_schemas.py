@@ -1999,6 +1999,33 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_subagent",
+            "description": "Run 1-4 subagents one level deep. Each has a fresh context, cannot see this chat, cannot ask the user, and cannot delegate again. Returns each report.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "instruction": {"type": "string"},
+                            },
+                            "required": ["instruction"],
+                        },
+                    },
+                    "parallel": {"type": "boolean"},
+                    "timeout_seconds": {"type": "integer"},
+                },
+                "required": ["tasks"],
+            },
+        },
+    },
 ]
 
 if os.getenv("ODYSSEUS_PRIVATE_BROWSER_LEGACY", "0").strip().lower() not in {"", "0", "false", "no", "off"}:
