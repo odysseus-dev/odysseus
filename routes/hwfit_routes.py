@@ -174,10 +174,17 @@ def _inspect_model_path(model_path: str, host: str = "", ssh_port: str = "") -> 
             cfg = json.loads(raw_config)
         except Exception:
             cfg = {}
-        for key in ("context_length", "max_position_embeddings", "n_ctx_train", "model_max_length", "max_seq_len"):
-            value = cfg.get(key)
-            if isinstance(value, (int, float)) and value > 0:
-                out["model_ctx_max"] = int(value)
+        # Multimodal models (Qwen3.5+, Gemma 3/4, GLM-V, ...) nest the LLM's
+        # limits under text_config, so check it after the top level.
+        text_cfg = cfg.get("text_config") if isinstance(cfg, dict) else None
+        sections = [s for s in (cfg, text_cfg) if isinstance(s, dict)]
+        for section in sections:
+            for key in ("context_length", "max_position_embeddings", "n_ctx_train", "model_max_length", "max_seq_len"):
+                value = section.get(key)
+                if isinstance(value, (int, float)) and value > 0:
+                    out["model_ctx_max"] = int(value)
+                    break
+            if "model_ctx_max" in out:
                 break
     else:
         out["model_probe_error"] = f"config.json not found in model path: {path}"
