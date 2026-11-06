@@ -883,6 +883,9 @@ app.include_router(calendar_router)
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
+from orchestrator.routes import setup_orchestrator_routes
+app.include_router(setup_orchestrator_routes())
+
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
@@ -1020,6 +1023,10 @@ async def serve_tasks(request: Request):
 @app.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)
+
+@app.get("/orchestrator")
+async def serve_orchestrator(request: Request):
+    return serve_html_with_nonce(request, abs_join(BASE_DIR, "static/orchestrator.html"))
 
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
