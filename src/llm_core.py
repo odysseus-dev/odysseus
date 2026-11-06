@@ -904,7 +904,7 @@ def _build_ollama_payload(
     if options:
         payload["options"] = options
     if tools:
-        payload["tools"] = _alias_harmony_tools(tools, model)
+        payload["tools"] = _alias_harmony_tools(_stable_sort_tools(tools), model)
     return payload
 
 
@@ -1167,6 +1167,27 @@ def _is_self_hosted_openai_compatible(url: str) -> bool:
         return False
     from src.model_context import is_local_endpoint
     return is_local_endpoint(url)
+
+
+def _stable_sort_tools(tools):
+    """Sort ``tools[]`` by name so consecutive turns share the same prefix.
+
+    Tool order is not meaningful to the model, but it is part of the request
+    bytes that provider prefix caches key on. A caller that rebuilds the list
+    in a different order would otherwise turn every turn into a cache miss.
+    OpenAI-compatible entries carry ``function.name``; Anthropic-shaped ones
+    carry a top-level ``name``.
+    """
+    if not tools:
+        return tools
+    return sorted(
+        tools,
+        key=lambda item: str(
+            ((item or {}).get("function") or {}).get("name")
+            or (item or {}).get("name")
+            or ""
+        ),
+    )
 
 
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
@@ -1942,7 +1963,7 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # Cache the tool schemas too — they're stable for the whole agent run.
             # The breakpoint caches all tool defs preceding it in the request.
             anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
-            payload["tools"] = anthropic_tools
+            payload["tools"] = _stable_sort_tools(anthropic_tools)
     return payload
 
 def _build_anthropic_headers(headers):
@@ -3065,7 +3086,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
         if tools:
-            payload["tools"] = _alias_harmony_tools(tools, model)
+            payload["tools"] = _alias_harmony_tools(_stable_sort_tools(tools), model)
         elif tool_choice_none:
             payload["tool_choice"] = "none"
         # Mistral thinking-capable models — send reasoning_effort so Mistral
