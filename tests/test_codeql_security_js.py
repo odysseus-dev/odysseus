@@ -8,7 +8,7 @@ def test_codeql_security_browser_contracts():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         ["node", "tests/codeql_security_browser.cjs"], cwd=root,
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {
@@ -21,7 +21,7 @@ def test_pr6503_ledger_email_and_gallery_security_contracts():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
         ["node", "tests/pr6503_security_browser.cjs"], cwd=root,
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {

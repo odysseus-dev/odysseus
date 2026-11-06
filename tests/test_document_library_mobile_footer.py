@@ -114,7 +114,7 @@ def test_mobile_open_in_new_chat_copies_to_materialized_session():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

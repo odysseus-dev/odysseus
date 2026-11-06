@@ -88,7 +88,7 @@ def test_save_status_is_dirty_race_safe_and_reports_failures():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

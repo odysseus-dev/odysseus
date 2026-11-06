@@ -87,7 +87,7 @@ def test_rich_toolbar_rendered_order_is_stable_on_desktop_and_mobile():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

@@ -131,7 +131,7 @@ checkPrDescription({ github, context, core })
     proc = subprocess.run(
         ["node", "-e", harness, str(_CHECKER), payload],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         cwd=str(_REPO),
         timeout=30,
     )

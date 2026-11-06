@@ -154,7 +154,7 @@ def test_mobile_headings_page_break_history_and_persistence():
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)

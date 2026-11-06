@@ -34,7 +34,7 @@ def run_node(body: str):
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=ROOT,
-        text=True,
+        text=True, encoding="utf-8",
         capture_output=True,
         check=True,
     )
