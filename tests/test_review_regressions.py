@@ -736,6 +736,35 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_app_api_blocks_nested_chat_routes_before_loopback(monkeypatch):
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block nested chat routes before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    for path in ("/api/chat_stream", "api/chat_stream", "/api/chat"):
+        result = await do_app_api(
+            json.dumps(
+                {
+                    "action": "call",
+                    "method": "POST",
+                    "path": path,
+                    "body": {"message": "run id", "allow_bash": True},
+                }
+            ),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1
+        assert "Path blocked for safety" in result["error"]
+        assert "Sensitive endpoints" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
     import httpx
     from src.tool_implementations import do_app_api
