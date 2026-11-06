@@ -1849,11 +1849,20 @@ async def execute_tool_block(
 
     approval_claimed = False
     if exact_approval is not None:
-        if (
-            not isinstance(security_context, ToolRunSecurityContext)
-            or not security_context.external_untrusted_context_seen
-            or not exact_approval.pending.external_untrusted_context_seen
-        ):
+        _armed_approval = bool(
+            isinstance(security_context, ToolRunSecurityContext)
+            and security_context.external_untrusted_context_seen
+            and exact_approval.pending.external_untrusted_context_seen
+        )
+        # A request-authority gap is approvable without untrusted context, but
+        # the card must have been shown under the run's current taint state.
+        _authority_gap_approval = bool(
+            isinstance(security_context, ToolRunSecurityContext)
+            and exact_approval.pending.authority_gap
+            and (exact_approval.pending.external_untrusted_context_seen
+                 or not security_context.external_untrusted_context_seen)
+        )
+        if not (_armed_approval or _authority_gap_approval):
             return (
                 f"{getattr(block, 'tool_type', None)}: BLOCKED",
                 {

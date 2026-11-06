@@ -131,8 +131,10 @@ def _binding_payload(
     owned_operation=None,
     process_operation=None,
     browser_operation=None,
+    authority_gap: bool = False,
 ) -> dict[str, Any]:
     return {
+        "authority_gap": bool(authority_gap),
         "owner": _normalized_owner(owner),
         "session_id": str(session_id or ""),
         "origin_run_id": str(origin_run_id or ""),
@@ -192,8 +194,38 @@ class PendingToolApproval:
     owned_operation: BoundOwnedOperation | None = None
     process_operation: BoundProcessOperation | None = None
     browser_operation: BoundBrowserOperation | None = None
+    # Digest-bound. True when the run-security gate allowed the call and only
+    # a missing request-authority grant blocked it. Approving admits exactly
+    # this one sealed action; it never bypasses a gate for later calls.
+    authority_gap: bool = False
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
+        if self.authority_gap:
+            return {
+                "kind": "tool_approval",
+                "approval_id": self.approval_id,
+                "session_id": self.session_id,
+                "question": "Allow this action?",
+                "description": reason or (
+                    "Your request did not cover this action, so it needs your approval."
+                ),
+                "options": [
+                    {
+                        "label": "Allow this action",
+                        "value": TASK_APPROVAL_DECISION,
+                        "description": (
+                            "Run exactly this action, then continue. Later actions "
+                            "your request did not cover will ask again."
+                        ),
+                    },
+                    {
+                        "label": "Deny",
+                        "value": DENY_APPROVAL_DECISION,
+                        "description": "Do not run the proposed action.",
+                    },
+                ],
+                "action": self._public_action(),
+            }
         return {
             "kind": "tool_approval",
             "approval_id": self.approval_id,
@@ -231,17 +263,20 @@ class PendingToolApproval:
                     "description": "Do not execute the proposed action.",
                 },
             ],
-            "action": {
-                "tool": self.tool_name,
-                # Show the complete sealed input so approval never hides
-                # trailing lines.  This is not read back as authority.
-                "content": self.content,
-                "digest": self.digest[:16],
-                "effects": list(self.effects),
-                "workspace": self.workspace or None,
-                "document_id": self.document_id or None,
-                "document_version": self.document_version,
-            },
+            "action": self._public_action(),
+        }
+
+    def _public_action(self) -> dict[str, Any]:
+        return {
+            "tool": self.tool_name,
+            # Show the complete sealed input so approval never hides
+            # trailing lines.  This is not read back as authority.
+            "content": self.content,
+            "digest": self.digest[:16],
+            "effects": list(self.effects),
+            "workspace": self.workspace or None,
+            "document_id": self.document_id or None,
+            "document_version": self.document_version,
         }
 
 
@@ -306,6 +341,7 @@ class ExactToolApproval:
             owned_operation=self.pending.owned_operation,
             process_operation=self.pending.process_operation,
             browser_operation=self.pending.browser_operation,
+            authority_gap=self.pending.authority_gap,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -391,6 +427,7 @@ class ToolApprovalStore:
         request_text: Any = "",
         request_authority: RequestAuthority | None = None,
         client_runtime_context: dict | None = None,
+        authority_gap: bool = False,
     ) -> PendingToolApproval:
         if request_authority is not None and not isinstance(request_authority, RequestAuthority):
             raise TypeError("Approval authority must be server-owned RequestAuthority")
@@ -493,6 +530,7 @@ class ToolApprovalStore:
             owned_operation=owned_operation,
             process_operation=process_operation,
             browser_operation=browser_operation,
+            authority_gap=authority_gap,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -522,6 +560,7 @@ class ToolApprovalStore:
             owned_operation=owned_operation,
             process_operation=process_operation,
             browser_operation=browser_operation,
+            authority_gap=payload["authority_gap"],
         )
         with self._lock:
             self._purge_expired_locked(now)
@@ -590,7 +629,9 @@ class ToolApprovalStore:
         scope = scope_for_decision(normalized_decision)
         if scope is None:
             return None
-        if not allow_continuation:
+        if not allow_continuation or pending.authority_gap:
+            # An authority-gap card allows only "this action": it admits the sealed
+            # action and leaves every gate armed for later calls.
             return ExactToolApproval(
                 pending,
                 scope=ToolApprovalScope.SINGLE_ACTION,
