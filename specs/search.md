@@ -37,7 +37,7 @@ Research provider naming is not fully normalized in the UI: some frontend select
 
 `services/search/service.py` owns `SearchService`, the async facade exported by `services.search` and `services`. It wraps the synchronous comprehensive search path off the event loop and maps route-style output into service result rows.
 
-`services/search/providers.py` owns provider-specific calls for SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, and Serper. `PROVIDER_INFO`, provider availability, missing-key behavior, and provider dispatch live there.
+`services/search/providers.py` owns provider-specific calls for SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, and Sofya. `PROVIDER_INFO`, provider availability, missing-key behavior, and provider dispatch live there.
 
 `services/search/query.py` owns query enhancement and sanitization, including stripping markdown/code-fence noise from model- or user-supplied queries before provider calls and extracting Unicode/non-ASCII capitalized entity names. `services/search/ranking.py` owns result ranking, including word-boundary title/snippet/subject matching so short query terms do not match unrelated substrings.
 

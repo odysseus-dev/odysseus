@@ -1,4 +1,4 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, Sofya."""
 
 import json
 import logging
@@ -24,6 +24,7 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    "sofya":    ("Sofya",             True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -63,6 +64,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "sofya": "sofya_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -80,6 +82,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": ("GOOGLE_API_KEY",),
         "tavily": ("TAVILY_API_KEY",),
         "serper": ("SERPER_API_KEY",),
+        "sofya": ("SOFYA_API_KEY",),
     }
     for env_name in env_map.get(provider, ()):
         value = (os.environ.get(env_name) or "").strip()
@@ -101,7 +104,7 @@ def provider_configured(provider: str) -> bool:
     """Configuration readiness only; a configured engine can still fail upstream."""
     if provider in {"searxng", "searxng_yep", "duckduckgo"}:
         return True
-    if provider not in {"brave", "google_pse", "tavily", "serper"}:
+    if provider not in {"brave", "google_pse", "tavily", "serper", "sofya"}:
         return False
     if not _get_provider_key(provider):
         return False
@@ -711,4 +714,63 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── Sofya ──
+
+def sofya_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using Sofya API. Requires search_api_key or SOFYA_API_KEY env var."""
+    count = count if count is not None else _get_result_count()
+    api_key = _get_provider_key("sofya") or os.environ.get("SOFYA_API_KEY", "")
+    if not api_key:
+        logger.warning("Sofya: no API key configured")
+        return []
+
+    # "snippets" returns the SERP only. Odysseus fetches the pages it wants
+    # itself, so the full-text "basic" depth would only add latency and cost.
+    payload = {
+        "query": query,
+        "max_results": count,
+        "search_depth": "snippets",
+    }
+    if time_filter in ("day", "week", "month", "year"):
+        payload["freshness"] = time_filter
+
+    try:
+        response = httpx.post(
+            "https://sofya.co/v1/search",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Sofya rate limit hit")
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"Sofya search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Sofya returned invalid JSON: {e}")
+        return []
+
+    results = []
+    for item in data.get("results", [])[:count]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        results.append({
+            "title": item.get("title") or "",
+            "url": url,
+            "snippet": item.get("description") or item.get("content") or "",
+            "age": item.get("published_date") or "",
+        })
+
+    logger.info(f"Sofya returned {len(results)} results")
     return results
