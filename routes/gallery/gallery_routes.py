@@ -2029,6 +2029,11 @@ def setup_gallery_routes() -> APIRouter:
                         "size": f"{_model_w}x{_model_h}",
                         "n": "1",
                     }
+                    # Editor inpaint knobs (strength slider, remove's 0.99,
+                    # feather). Servers that don't know them ignore them.
+                    for key in ("strength", "feather"):
+                        if body.get(key) is not None:
+                            data[key] = str(body[key])
                     if progress_request_id:
                         data["request_id"] = progress_request_id
                     # Let the caller's step budget through up to a cap (quality
