@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import spinnerModule from './spinner.js';
+import { extractUploadErrorReason } from './uploadFeedback.js';
 
 let pendingFiles = [];
 let uploaded = [];
@@ -18,6 +19,11 @@ let _uploadSpinners = [];
 let _uploadAbortCtrl = null;
 let _uploading = false;
 let _lastUploadCancelled = false;
+// Why the most recent uploadPending() failed, or '' when it didn't. The reason
+// is recorded, not announced: chat.js owns the single user-facing message
+// (see static/js/uploadFeedback.js and issue #6235), so a rejection can never
+// produce two overlapping errors again.
+let _lastUploadError = '';
 const _previewUrls = new WeakMap();
 
 const MAX_FILES = 10;
@@ -312,6 +318,7 @@ export function removePending(idx) {
 export async function uploadPending(opts = {}) {
   if (pendingFiles.length === 0) return [];
   _lastUploadCancelled = false;
+  _lastUploadError = '';
 
   // The message bubble is shown immediately, but the upload can take a moment —
   // dim the chips and overlay a whirlpool so it's clear the files are still
@@ -352,14 +359,17 @@ export async function uploadPending(opts = {}) {
       signal: _uploadAbortCtrl.signal,
     });
     if (!res.ok) {
-      // Surface the failure instead of swallowing it. Previously a non-OK
-      // response (e.g. 429 rate limit, 413 too large) was ignored: the files
-      // silently vanished and the chat sent with no attachments, so the model
-      // "didn't even see them" (issue #1346). Show the server's reason and keep
-      // pendingFiles so the strip re-renders for a retry (see finally below).
-      let detail = '';
-      try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
-      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      // Record the failure instead of swallowing it *or* announcing it.
+      // Previously a non-OK response (e.g. 429 rate limit, 413 too large) was
+      // ignored: the files silently vanished and the chat sent with no
+      // attachments, so the model "didn't even see them" (issue #1346). The
+      // fix then toasted the server's reason here, which — together with
+      // chat.js's own generic message — produced two errors from one rejection
+      // (issue #6235). Now the reason is stashed for chat.js, the single place
+      // that notifies the user; pendingFiles stays intact for a retry.
+      let payload = null;
+      try { payload = await res.json(); } catch (_) { /* non-JSON body */ }
+      _lastUploadError = extractUploadErrorReason(payload, res.status);
       return [];
     }
     const data = await res.json();
@@ -380,7 +390,7 @@ export async function uploadPending(opts = {}) {
       _showToast('Upload cancelled');
       return [];
     }
-    _showToast('Upload failed: ' + (e?.message || 'network error'));
+    _lastUploadError = (e && e.message) ? String(e.message) : 'network error';
     return [];
   } finally {
     clearTimeout(timeoutId);
@@ -495,6 +505,15 @@ export function wasLastUploadCancelled() {
   return _lastUploadCancelled;
 }
 
+/**
+ * Why the most recent uploadPending() failed, or '' when it succeeded, was
+ * cancelled, or never ran. chat.js is the only consumer: it renders the single
+ * user-facing message for a rejected upload (issue #6235).
+ */
+export function getLastUploadError() {
+  return _lastUploadError;
+}
+
 export function cancelUpload() {
   _lastUploadCancelled = true;
   if (_uploadAbortCtrl && !_uploadAbortCtrl.signal.aborted) {
@@ -519,6 +538,7 @@ const fileHandlerModule = {
   getLastUploadedMeta,
   isUploading,
   wasLastUploadCancelled,
+  getLastUploadError,
   cancelUpload,
 };
 

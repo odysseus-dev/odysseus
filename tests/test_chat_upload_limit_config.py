@@ -7,6 +7,7 @@ from src.chat_helpers import validate_file_upload
 from src.upload_handler import UploadHandler
 from src.upload_limits import (
     DEFAULT_CHAT_UPLOAD_MAX_BYTES,
+    chat_upload_limit_message,
     get_chat_upload_max_bytes,
     read_byte_limit_env,
 )
@@ -50,7 +51,7 @@ def test_validate_file_upload_uses_configured_chat_limit(monkeypatch):
 
     assert exc.value.status_code == 400
     assert exc.value.detail["error"] == "FILE_TOO_LARGE"
-    assert exc.value.detail["message"] == "File size exceeds 4 bytes limit"
+    assert exc.value.detail["message"] == chat_upload_limit_message(4)
 
 
 def test_upload_handler_uses_configured_chat_limit(monkeypatch, tmp_path):
@@ -61,4 +62,28 @@ def test_upload_handler_uses_configured_chat_limit(monkeypatch, tmp_path):
         handler.save_upload(_upload("too-large.txt", b"abcde"), client_ip="127.0.0.1")
 
     assert exc.value.status_code == 400
-    assert exc.value.detail == "File size exceeds 4 bytes limit"
+    assert exc.value.detail == chat_upload_limit_message(4)
+
+
+def test_size_rejection_names_the_override_env_var(monkeypatch):
+    """#6235: the size message must say the default limit is configurable.
+
+    Both enforcement points (the /api/upload handler and the chat send
+    validator) share one message, so the client — which now renders the
+    server's reason verbatim — can never show a size error that reads like a
+    hard-coded wall.
+
+    This is the env-var hint the reporter asked for, asserted on the real
+    response rather than on the helper's source.
+    """
+    monkeypatch.setenv("ODYSSEUS_CHAT_UPLOAD_MAX_BYTES", "4")
+    handler = UploadHandler(base_dir="/tmp", upload_dir="/tmp/uploads")
+
+    with pytest.raises(HTTPException) as exc:
+        handler.save_upload(_upload("too-large.txt", b"abcde"), client_ip="127.0.0.1")
+
+    reason = exc.value.detail
+    assert isinstance(reason, str)
+    assert "ODYSSEUS_CHAT_UPLOAD_MAX_BYTES" in reason
+    assert "File size exceeds 4 bytes limit" in reason
+    assert reason == chat_upload_limit_message(4)

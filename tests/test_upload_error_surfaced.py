@@ -3,29 +3,38 @@
 `uploadPending()` in static/js/fileHandler.js used to read `data.files` from the
 `/api/upload` response without checking `res.ok`, so a non-OK response (429 rate
 limit, 413 too large, …) was swallowed: the files silently vanished and the chat
-sent with no attachments, with no feedback to the user. It now checks `res.ok`
-and shows a toast on failure, keeping the pending files for a retry.
+sent with no attachments, with no feedback to the user.
 
-fileHandler.js pulls in browser globals so it can't run under node; guard the
-fix at the source level.
+This used to be a source-text assertion ("the body contains 'Upload failed'")
+because fileHandler.js pulls in browser globals. #6235 moved the *reporting* out
+of fileHandler.js into chat.js, which is exactly what a text match cannot tell
+apart from a regression: this test now drives the real module under node and
+checks the surviving contract — a non-OK response is never swallowed (no ids
+returned, the reason is recorded, the pending files are kept for a retry).
 """
-import re
-from pathlib import Path
+import pytest
 
-SRC = Path(__file__).resolve().parent.parent / "static/js/fileHandler.js"
+from tests.helpers.upload_failure_harness import (
+    ATTACH_ONE_VIDEO,
+    HAS_NODE,
+    run_script,
+)
 
-
-def _upload_pending_body() -> str:
-    text = SRC.read_text(encoding="utf-8")
-    start = text.index("export async function uploadPending(")
-    rest = text[start:]
-    m = re.search(r"\n(export |function )", rest[1:])
-    return rest[: m.start() + 1] if m else rest
+pytestmark = pytest.mark.skipif(not HAS_NODE, reason="node binary not on PATH")
 
 
-def test_upload_pending_checks_response_and_surfaces_error():
-    body = _upload_pending_body()
-    # Must guard on the HTTP status before trusting the body...
-    assert re.search(r"if\s*\(\s*!res\.ok\s*\)", body), "uploadPending must check res.ok"
-    # ...and tell the user the upload failed (not swallow it).
-    assert "Upload failed" in body
+def test_upload_pending_never_swallows_a_failed_upload():
+    result = run_script(
+        ATTACH_ONE_VIDEO
+        + "__queue(__failResponse(429, {"
+        + " detail: 'Maximum concurrent uploads (5) exceeded' }));\n"
+        + "const ids = await fh.uploadPending({ sessionId: 's' });\n"
+        + "console.log(JSON.stringify({ ids, reason: fh.getLastUploadError(),"
+        + " pending: fh.getPendingCount(), cancelled: fh.wasLastUploadCancelled() }));\n"
+    )
+    assert result == {
+        "ids": [],  # never pretend the send carried attachments
+        "reason": "Maximum concurrent uploads (5) exceeded",  # not swallowed
+        "pending": 1,  # still there for a retry
+        "cancelled": False,  # a failure is not a user cancel
+    }

@@ -14,7 +14,10 @@ from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
 
 from src.path_confinement import is_inside
-from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
+from src.upload_limits import (
+    chat_upload_limit_message,
+    get_chat_upload_max_bytes,
+)
 
 
 def secure_filename(filename: str) -> str:
@@ -1293,7 +1296,7 @@ class UploadHandler:
         if file_size > self.max_upload_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"File size exceeds {format_byte_limit(self.max_upload_size)} limit"
+                detail=chat_upload_limit_message(self.max_upload_size)
             )
         
         # Get original filename and sanitize it
