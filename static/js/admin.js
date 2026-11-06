@@ -1747,8 +1747,9 @@ function initEndpointForm() {
       urlInput.readOnly = false;
       urlInput.removeAttribute('maxlength');
       urlInput.setAttribute('aria-label', 'Model endpoint URL');
+      const isAnthropic = provider.value === 'https://api.anthropic.com';
       if (apiKey) {
-        apiKey.placeholder = 'API key';
+        apiKey.placeholder = isAnthropic ? 'Anthropic API key, e.g. sk-ant-…' : 'API key';
         apiKey.disabled = false;
       }
       if (testBtn) {
@@ -1766,7 +1767,13 @@ function initEndpointForm() {
         msg.textContent = '';
         msg.className = '';
       }
-      if (!deviceAuthPolling && status) status.textContent = '';
+      if (!deviceAuthPolling && status) {
+        status.textContent = '';
+        // Anthropic forbids third-party Claude.ai sign-in, so send people to the Console key page instead.
+        if (isAnthropic) {
+          status.innerHTML = '<a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer" class="admin-btn-sm" style="display:inline-flex;align-items:center;gap:4px;margin-top:6px;text-decoration:none;">Get an Anthropic API key ↗</a> <span style="opacity:0.6;font-size:11px;margin-left:8px;">then paste it above and click Add</span>';
+        }
+      }
     }
   }
   function _renderPickerMenu() {
@@ -2020,6 +2027,7 @@ function initEndpointForm() {
         const count = d.models ? d.models.length : 0;
         urlInput.value = ''; urlInput.style.display = '';
         el('adm-epApiKey').value = ''; provider.value = '';
+        _setApiFormForProvider();
         if (kindSel) kindSel.value = 'proxy';
         if (epType) epType.value = 'llm';
         if (d.id) _recentlyAddedEpId = String(d.id);
