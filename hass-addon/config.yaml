@@ -1,5 +1,5 @@
 name: Odysseus
-version: "1.0.0"
+version: "1.1.0"
 slug: odysseus
 description: >-
   Self-hosted AI workspace for chat, agents, deep research, documents, email,
@@ -48,6 +48,11 @@ options:
   # --- Networking --------------------------------------------------------
   llm_host: localhost
   allowed_origins: []
+  # --- Agent safety ------------------------------------------------------
+  # Ask before side-effecting tools run after external content entered a run.
+  tool_approval_gate: true
+  # Gzip response bodies above 1 KiB.
+  response_compression: true
   # --- Escape hatch ------------------------------------------------------
   extra_env: []
 
@@ -74,5 +79,7 @@ schema:
   allowed_origins:
     - str
   bind_address: str?
+  tool_approval_gate: bool
+  response_compression: bool
   extra_env:
     - str

@@ -39,6 +39,15 @@ export APP_PORT=7000
 export LOCALHOST_BYPASS=false
 export ODYSSEUS_SKIP_ADMIN_PROMPT=1
 
+# --- Agent safety defaults (2026-10 dev line) --------------------------------
+# The add-on runs unattended, so keep the post-external-context tool approval
+# gate on unless the operator explicitly disables it through extra_env.
+export ODYSSEUS_TOOL_APPROVAL_GATE="${ODYSSEUS_TOOL_APPROVAL_GATE:-1}"
+
+# Editor drafts and image ops write large payloads; keep the upstream default
+# cap explicit so a stored draft cannot silently grow to fill /data.
+export ODYSSEUS_EDITOR_DRAFT_MAX_BYTES="${ODYSSEUS_EDITOR_DRAFT_MAX_BYTES:-268435456}"
+
 # --- Odysseus native authentication -----------------------------------------
 export AUTH_ENABLED="$(_flag auth_enabled true)"
 
@@ -116,6 +125,19 @@ export ODYSSEUS_SEED_SEARCH_URL="$SEARCH_URL"
 
 ALLOWED_ORIGINS="$(jq -r '(.allowed_origins // []) | join(",")' "$OPTIONS" 2>/dev/null || true)"
 [ -n "$ALLOWED_ORIGINS" ] && export ALLOWED_ORIGINS="$ALLOWED_ORIGINS"
+
+# --- Agent safety / transport ------------------------------------------------
+if [ "$(_flag tool_approval_gate true)" = "true" ]; then
+    export ODYSSEUS_TOOL_APPROVAL_GATE=1
+else
+    export ODYSSEUS_TOOL_APPROVAL_GATE=0
+fi
+
+if [ "$(_flag response_compression true)" = "true" ]; then
+    export RESPONSE_COMPRESSION_ENABLED=true
+else
+    export RESPONSE_COMPRESSION_ENABLED=false
+fi
 
 # --- Bind address -----------------------------------------------------------
 # Prefer a dual-stack bind. When the host advertises AAAA records, browsers try

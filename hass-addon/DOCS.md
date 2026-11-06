@@ -58,6 +58,8 @@ llm_host: localhost         # Default LLM server host
 ollama_base_url: ""         # e.g. http://host.docker.internal:11434
 allowed_origins: []         # Extra CORS origins
 bind_address: ""            # Empty = dual-stack "::" when IPv6 is available
+tool_approval_gate: true    # Ask before side-effecting tools after external content
+response_compression: true  # Gzip response bodies above 1 KiB
 extra_env: []               # Free-form KEY=VALUE entries
 ```
 
@@ -131,6 +133,23 @@ extra_env:
   - TAVILY_API_KEY=...
   - ODYSSEUS_INPROCESS_TASKS=1
 ```
+
+### Agent safety
+
+`tool_approval_gate` (default on) makes the agent pause for approval before it
+runs tools that execute code, mutate stored state or cause external side
+effects, once external content (a web page, email or document) has entered the
+run. This defends against prompt injection and should stay enabled unless this
+add-on is a trusted single-user install. Set `extra_env:
+[ODYSSEUS_TOOL_APPROVAL_GATE=0]` to disable it for unattended automation.
+
+`response_compression` (default on) gzips responses above 1 KiB. Disable it when
+a reverse proxy already compresses, or when debugging streaming responses.
+
+Other knobs from the current Odysseus release can be set through `extra_env`,
+for example `ODYSSEUS_EDITOR_DRAFT_MAX_BYTES`, `ODYSSEUS_MEMORY_IMPORT_MAX_BYTES`,
+`ODYSSEUS_TTS_CACHE_MAX_BYTES`, `ODYSSEUS_FIRST_TOKEN_TIMEOUT` and the
+`ODYSSEUS_LOCAL_MCP_READ_TOOLS` / `ODYSSEUS_LOCAL_MCP_WRITE_TOOLS` declarations.
 
 ## Data and backups
 
