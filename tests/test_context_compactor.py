@@ -516,3 +516,209 @@ messages = [
 assert '[Image]' in keep_recent_image_turns(messages, keep=1)[0]['content'][0]['text']
 '''
     subprocess.run([sys.executable, '-c', script], check=True, timeout=8)
+
+
+class TestSanitizeToolMessagesPredecessor:
+    """``_sanitize_tool_messages`` must return a transcript that satisfies the
+    provider ordering contract and is stable under repeated sanitation.
+
+    Contract under test:
+      - an assistant ``tool_calls`` turn follows a user or tool turn;
+      - every tool message belongs to a preceding ``tool_calls`` batch;
+      - an assistant ``tool_calls`` turn has at least one tool response.
+    """
+
+    @staticmethod
+    def _violations(msgs):
+        problems = []
+        in_batch = False
+        for i, m in enumerate(msgs):
+            role = m.get("role")
+            if role == "tool":
+                if not in_batch:
+                    problems.append(f"[{i}] orphan tool message")
+                continue
+            prev = msgs[i - 1] if i else None
+            prev_role = prev.get("role") if prev else None
+            if role == "assistant" and m.get("tool_calls"):
+                if prev_role not in ("user", "tool"):
+                    problems.append(f"[{i}] tool_calls after {prev_role!r}")
+                nxt = msgs[i + 1] if i + 1 < len(msgs) else None
+                if not (nxt and nxt.get("role") == "tool"):
+                    problems.append(f"[{i}] dangling tool_calls")
+                in_batch = True
+            else:
+                in_batch = False
+        return problems
+
+    def _sanitize(self, msgs):
+        result = cc._sanitize_tool_messages(msgs)
+        assert self._violations(result) == [], (
+            "sanitized transcript still violates the ordering contract: "
+            f"{self._violations(result)}"
+        )
+        assert cc._sanitize_tool_messages(result) == result, (
+            "sanitizing the sanitized transcript changed it"
+        )
+        return result
+
+    def test_user_then_calls_is_unchanged(self):
+        msgs = [
+            {"role": "user", "content": "search for X"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        assert len(result) == 3
+        assert result[1].get("tool_calls") is not None
+
+    def test_second_batch_after_tool_response_is_unchanged(self):
+        """A call batch whose predecessor is a tool response is valid."""
+        msgs = [
+            {"role": "user", "content": "search for X"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c2", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c2", "content": "more results"},
+        ]
+        result = self._sanitize(msgs)
+        assert len(result) == 5
+        assert result[3].get("tool_calls") is not None
+
+    def test_two_batch_mid_history_reaches_stable_result(self):
+        """A transcript that starts mid-history has no user/tool predecessor
+        for its first call batch. Dropping that batch leaves the second one
+        with no predecessor either, so the contract-valid, stable result is
+        empty; the sanitizer must not return the half-repaired transcript
+        where the second batch sits at the start without a predecessor.
+        """
+        msgs = [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c2", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c2", "content": "more results"},
+        ]
+        result = self._sanitize(msgs)
+        assert result == []
+
+    def test_assistant_text_then_completed_call_is_preserved(self):
+        """An assistant text turn directly before a completed call batch must
+        not cost the batch its tool_calls: the text is merged into the call
+        message so the executed call/result pair stays in the transcript.
+        """
+        msgs = [
+            {"role": "user", "content": "plan my day"},
+            {"role": "assistant", "content": "I'll check the calendar.",
+             "tool_calls": [{"id": "c1", "function": {"name": "manage_calendar"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "[]"},
+            {"role": "assistant", "content": "Found it."},
+            {"role": "assistant", "content": "Let me look at day two.",
+             "tool_calls": [{"id": "c2", "function": {"name": "manage_calendar"}}]},
+            {"role": "tool", "tool_call_id": "c2", "content": "[]"},
+        ]
+        result = self._sanitize(msgs)
+        assert len(result) == 5
+        assert result[1].get("tool_calls") is not None
+        merged = result[3]
+        assert merged.get("content") == "Found it.\n\nLet me look at day two."
+        assert merged.get("tool_calls") is not None
+        assert merged["tool_calls"][0]["id"] == "c2"
+
+    def test_assistant_text_directly_before_calls_merges(self):
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "Thinking out loud"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        assert len(result) == 3
+        assert result[1]["content"] == "Thinking out loud"
+        assert result[1]["tool_calls"][0]["id"] == "c1"
+
+    def test_chain_of_text_turns_before_calls_merges_into_one(self):
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "one"},
+            {"role": "assistant", "content": "two"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        assert len(result) == 3
+        assert result[1]["content"] == "one\n\ntwo"
+        assert result[1]["tool_calls"][0]["id"] == "c1"
+
+    def test_system_predecessor_calls_dropped(self):
+        msgs = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        assert [m["role"] for m in result] == ["system"]
+
+    def test_first_message_calls_dropped(self):
+        msgs = [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        assert self._sanitize(msgs) == []
+
+    def test_calls_with_content_after_system_keep_text(self):
+        msgs = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "assistant", "content": "I'll search for you",
+             "tool_calls": [{"id": "c1", "function": {"name": "web_search"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "results"},
+        ]
+        result = self._sanitize(msgs)
+        assert [m["role"] for m in result] == ["system", "assistant"]
+        assert result[1].get("tool_calls") is None
+        assert "I'll search for you" in result[1]["content"]
+
+    def test_repeated_sanitation_is_stable_across_shapes(self):
+        shapes = [
+            [],
+            [{"role": "user", "content": "hi"}],
+            [{"role": "assistant", "content": None,
+              "tool_calls": [{"id": "c1", "function": {"name": "f"}}]}],
+            [{"role": "tool", "tool_call_id": "c1", "content": "x"}],
+            [{"role": "user", "content": "hi"},
+             {"role": "tool", "tool_call_id": "c1", "content": "x"}],
+            [{"role": "assistant", "content": "a"},
+             {"role": "assistant", "content": None,
+              "tool_calls": [{"id": "c1", "function": {"name": "f"}}]},
+             {"role": "tool", "tool_call_id": "c1", "content": "x"},
+             {"role": "assistant", "content": "b"},
+             {"role": "assistant", "content": "c",
+              "tool_calls": [{"id": "c2", "function": {"name": "f"}}]},
+             {"role": "tool", "tool_call_id": "c2", "content": "y"}],
+        ]
+        for msgs in shapes:
+            once = cc._sanitize_tool_messages(msgs)
+            assert self._violations(once) == []
+            assert cc._sanitize_tool_messages(once) == once
+
+    def test_input_messages_are_not_mutated(self):
+        import copy
+
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "text"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "function": {"name": "f"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "x"},
+        ]
+        before = copy.deepcopy(msgs)
+        cc._sanitize_tool_messages(msgs)
+        assert msgs == before

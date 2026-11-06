@@ -222,22 +222,81 @@ def normalize_compaction_summary(summary: str) -> str:
 
 
 def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
-    """Drop orphaned `tool` messages and dangling assistant `tool_calls`.
+    """Normalize tool-call message ordering so strict providers accept the transcript.
 
     OpenAI's API requires every `role:"tool"` message to immediately
     follow an assistant message that carries `tool_calls` (or another
-    tool message in the same batch). Front-trimming the history can cut
-    the assistant `tool_calls` parent while keeping its tool responses,
-    which triggers: "messages with role 'tool' must be a response to a
-    preceding message with 'tool_calls'". This pass repairs that:
-      - drops `tool` messages with no valid preceding tool_calls
-      - drops assistant `tool_calls` messages whose tool responses were
-        all trimmed away (some providers reject unanswered tool_calls)
+    tool message in the same batch). Gemini and some other providers
+    additionally require a function call turn to come immediately after
+    a user turn or a function response turn. Trimming the history can
+    break either rule, which triggers errors such as "messages with role
+    'tool' must be a response to a preceding message with 'tool_calls'"
+    and "Please ensure that function call turn comes immediately after
+    a user turn or after a function response turn."
+
+    The transcript is normalized against its own effective output: each
+    pass repairs the violations it can see and the passes repeat until
+    the result is stable, so the returned transcript itself satisfies
+    the ordering contract and sanitizing it again is a no-op. A
+    completed call/result batch whose predecessor is an adjacent
+    assistant text turn keeps its calls by merging that text into the
+    call message instead of dropping executed-tool evidence; a batch
+    that cannot get a user/tool predecessor (e.g. a transcript that
+    starts mid-history) is the only one dropped.
     """
-    # Pass 1: drop orphan tool messages.
+    work = list(msgs)
+    for _ in range(2 * len(work) + 2):
+        normalized = _normalize_tool_messages_once(work)
+        if normalized == work:
+            break
+        work = normalized
+    return work
+
+
+def _normalize_tool_messages_once(msgs: List[Dict]) -> List[Dict]:
+    """One normalization pass over an already-trimmed message list."""
+    # Merge the run of assistant text turns directly before an assistant
+    # tool_calls turn into a single assistant message carrying both, so the
+    # batch inherits the text run's predecessor (a user or tool message)
+    # instead of losing its tool_calls. Only plain-text content is merged;
+    # multimodal content stays untouched and falls through to the strip logic.
+    merged: List[Dict] = []
+    for m in msgs:
+        cur_text = m.get("content")
+        if (
+            m.get("role") == "assistant"
+            and m.get("tool_calls")
+            and (cur_text is None or isinstance(cur_text, str))
+        ):
+            text_run: List[Dict] = []
+            while (
+                merged
+                and merged[-1].get("role") == "assistant"
+                and not merged[-1].get("tool_calls")
+                and isinstance(merged[-1].get("content"), str)
+            ):
+                text_run.append(merged.pop())
+            if text_run:
+                text_parts = [
+                    msg["content"].strip()
+                    for msg in reversed(text_run)
+                    if msg["content"].strip()
+                ]
+                if isinstance(cur_text, str) and cur_text.strip():
+                    text_parts.append(cur_text.strip())
+                merged_msg = dict(m)
+                if text_parts:
+                    merged_msg["content"] = "\n\n".join(text_parts)
+                merged.append(merged_msg)
+                continue
+        merged.append(m)
+
+    # Strip tool_calls from assistant messages whose predecessor is not a
+    # user or tool message, then drop orphan tool messages and dangling
+    # tool_calls whose responses are gone.
     cleaned: List[Dict] = []
     in_batch = False  # are we right after an assistant tool_calls (or mid-batch)?
-    for m in msgs:
+    for m in merged:
         role = m.get("role")
         if role == "tool":
             if in_batch:
@@ -245,13 +304,21 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
             # else: orphan — drop
             continue
         if role == "assistant" and m.get("tool_calls"):
+            prev_role = cleaned[-1].get("role") if cleaned else None
+            if prev_role not in ("user", "tool"):
+                # Invalid predecessor — strip tool_calls to avoid provider
+                # errors; keep the message only if it still carries content.
+                m = {k: v for k, v in m.items() if k != "tool_calls"}
+                in_batch = False
+                if not (m.get("content") or "").strip():
+                    continue  # nothing left worth keeping
+                cleaned.append(m)
+                continue
             in_batch = True
         else:
             in_batch = False
         cleaned.append(m)
 
-    # Pass 2: drop assistant tool_calls messages that have NO following
-    # tool response (dangling) — walk backwards so we know what follows.
     out: List[Dict] = []
     for i, m in enumerate(cleaned):
         if m.get("role") == "assistant" and m.get("tool_calls"):
