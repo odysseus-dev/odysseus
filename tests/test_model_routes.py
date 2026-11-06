@@ -1214,12 +1214,12 @@ def test_reprobe_chatgpt_subscription_does_not_hide_models(monkeypatch):
     done = next(e for e in events if e.get("type") == "probe_done")
     results = [e for e in events if e.get("type") == "probe_result"]
 
-    # Every model was skipped as ok; none failed → nothing hidden.
-    assert done["hidden"] == 0
+    # Every model was skipped as ok; no new hide choices are introduced.
+    # Re-probe must preserve the admin's saved list, even for subscriptions.
+    assert done["hidden"] == 1
     assert done["ok"] == len(results) == 2
     assert all(r["status"] == "ok" and r.get("skipped") is True for r in results)
-    # The stale hidden_models is cleared, not repopulated with every model.
-    assert ep.hidden_models is None
+    assert json.loads(ep.hidden_models) == ["stale-hidden"]
 
 
 def test_visible_models_handles_malformed_strings():
