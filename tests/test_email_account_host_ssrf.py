@@ -124,10 +124,24 @@ class _Req:
         return self._body
 
 
+def _run_connection_test_inline(monkeypatch, email_routes):
+    # The tests below swap out socket.socket while awaiting the route. If the
+    # route hops to a worker thread, the loop has to be woken through its
+    # self-pipe, and on Windows the proactor checks that pipe with
+    # isinstance(conn, socket.socket) -- which the mock breaks, so the loop
+    # never wakes. Running the blocking helper inline keeps the loop idle
+    # while the patch is active.
+    async def _inline(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(email_routes, "run_in_threadpool", _inline)
+
+
 @pytest.mark.asyncio
 async def test_test_connection_rejects_loopback_for_non_admin_before_any_socket(monkeypatch):
     import routes.email_routes as email_routes
     _set_admin(monkeypatch, False)
+    _run_connection_test_inline(monkeypatch, email_routes)
     router = email_routes.setup_email_routes()
     test_conn = _route(router, "/api/email/accounts/test", "POST")
 
@@ -149,6 +163,7 @@ async def test_test_connection_rejects_loopback_for_non_admin_before_any_socket(
 async def test_test_connection_metadata_ip_rejected_even_for_admin(monkeypatch):
     import routes.email_routes as email_routes
     _set_admin(monkeypatch, True)
+    _run_connection_test_inline(monkeypatch, email_routes)
     router = email_routes.setup_email_routes()
     test_conn = _route(router, "/api/email/accounts/test", "POST")
 
@@ -296,6 +311,7 @@ async def test_test_connection_endpoint_dns_rebinding_blocked(monkeypatch):
     """If DNS changes between save-check and connection, connect-time validation stops it."""
     import routes.email_routes as email_routes
     _set_admin(monkeypatch, False)
+    _run_connection_test_inline(monkeypatch, email_routes)
     router = email_routes.setup_email_routes()
     test_conn = _route(router, "/api/email/accounts/test", "POST")
 
