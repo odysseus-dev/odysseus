@@ -118,6 +118,7 @@ class Session:
     owner: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
+    project_id: Optional[str] = None
     memory_extraction_enabled: bool = True
     memory_injection_enabled: bool = True
     skill_injection_enabled: bool = True

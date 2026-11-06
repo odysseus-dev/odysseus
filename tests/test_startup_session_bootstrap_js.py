@@ -234,7 +234,10 @@ const responses = [
   },
 ];
 let fetchCount = 0;
-globalThis.fetch = async () => {
+globalThis.fetch = async (url) => {
+  if (String(url).endsWith('/api/projects')) {
+    return { ok: true, status: 200, json: async () => [] };
+  }
   fetchCount += 1;
   const response = responses.shift();
   if (!response) throw new Error('unexpected fetch');
