@@ -1,4 +1,4 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, You.com."""
 
 import json
 import logging
@@ -24,6 +24,9 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    # Keyless by default (free agent search); optional YDC_API_KEY upgrades
+    # to the keyed Search API. needs_key stays False so fresh installs work.
+    "you_com":  ("You.com",           False, False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -63,15 +66,18 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "you_com": "ydc_api_key",
     }
     field = key_map.get(provider, "")
     if field:
         val = (settings.get(field) or "").strip()
         if val:
             return val
-    # Legacy fallback: old shared search_api_key field
+    # Legacy fallback: old shared search_api_key field. Skipped for You.com:
+    # its key is optional, and a stale key from another provider would turn
+    # a working keyless setup into 401s on the keyed endpoint.
     legacy = (settings.get("search_api_key") or "").strip()
-    if legacy:
+    if legacy and provider != "you_com":
         return legacy
     env_map = {
         # DATA_BRAVE_API_KEY is the historical Odysseus name; BRAVE_API_KEY is
@@ -80,6 +86,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": ("GOOGLE_API_KEY",),
         "tavily": ("TAVILY_API_KEY",),
         "serper": ("SERPER_API_KEY",),
+        "you_com": ("YDC_API_KEY",),
     }
     for env_name in env_map.get(provider, ()):
         value = (os.environ.get(env_name) or "").strip()
@@ -99,7 +106,7 @@ def _get_result_count() -> int:
 
 def provider_configured(provider: str) -> bool:
     """Configuration readiness only; a configured engine can still fail upstream."""
-    if provider in {"searxng", "searxng_yep", "duckduckgo"}:
+    if provider in {"searxng", "searxng_yep", "duckduckgo", "you_com"}:
         return True
     if provider not in {"brave", "google_pse", "tavily", "serper"}:
         return False
@@ -144,6 +151,9 @@ def _safesearch_for(provider: str) -> Optional[str]:
         return None if level == "off" else "active"
     if provider == "serper":
         return None if level == "off" else "active"
+    if provider == "you_com":
+        # You.com Search API: safesearch=off|moderate|strict
+        return level
     return None
 
 
@@ -711,4 +721,127 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── You.com ──
+#
+# Keyless by default: the free agent search endpoint needs no account
+# (100 searches/day). With YDC_API_KEY (or the ydc_api_key setting) it uses
+# the keyed Web Search API instead. Both return the same {results: {web,
+# news}} shape. Spec: https://you.com/specs/openapi_search_v1.yaml
+
+_YOU_COM_UA = "youdotcom-integration/odysseus-dev-odysseus"
+_YOU_COM_FREE_URL = "https://api.you.com/v1/agents/search"
+_YOU_COM_KEYED_URL = "https://ydc-index.io/v1/search"
+
+
+def _you_com_headers(api_key: str = "") -> dict:
+    """Headers for You.com hosts only: attribution UA, optional X-API-Key."""
+    headers = {
+        "User-Agent": _YOU_COM_UA,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return headers
+
+
+def _you_com_parse_results(data: dict, count: int) -> List[dict]:
+    """Normalize You.com {results: {web, news}} into Odysseus result dicts."""
+    results_block = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results_block, dict):
+        return []
+    items = list(results_block.get("web") or [])
+    if not items:
+        items = list(results_block.get("news") or [])
+    parsed = []
+    for item in items[:count]:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url", "")
+        if not url:
+            continue
+        snippets = item.get("snippets") or []
+        if isinstance(snippets, list):
+            snippet = " ".join(
+                s.strip() for s in snippets[:2] if isinstance(s, str) and s.strip()
+            )
+        else:
+            snippet = ""
+        if not snippet:
+            snippet = item.get("description", "") or ""
+        parsed.append({
+            "title": item.get("title", "") or "",
+            "url": url,
+            "snippet": snippet,
+            "age": item.get("page_age", "") or "",
+        })
+    return parsed
+
+
+def you_com_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using You.com. Works without a key; YDC_API_KEY is optional.
+
+    No key: free agent search at api.you.com/v1/agents/search (100/day).
+    With a key: keyed Web Search API at ydc-index.io/v1/search (X-API-Key).
+    """
+    count = count if count is not None else _get_result_count()
+    count = max(1, min(int(count), 100))
+    api_key = _get_provider_key("you_com") or os.environ.get("YDC_API_KEY", "")
+    payload = {
+        "query": query,
+        "count": count,
+    }
+    safe = _safesearch_for("you_com")
+    if safe:
+        payload["safesearch"] = safe
+    if time_filter:
+        time_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
+        if time_filter in time_map:
+            payload["freshness"] = time_map[time_filter]
+
+    url = _YOU_COM_KEYED_URL if api_key else _YOU_COM_FREE_URL
+    headers = _you_com_headers(api_key)
+    mode = "keyed" if api_key else "keyless"
+    logger.info("Executing You.com %s search with query: %s", mode, query)
+    try:
+        response = httpx.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError(
+                "You.com rate limit hit" if api_key
+                else "You.com free tier limit hit; set YDC_API_KEY for higher limits"
+            )
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"You.com search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        if api_key and status in (401, 403):
+            hint = "check YDC_API_KEY"
+        elif status == 402:
+            hint = "out of credits" if api_key else "free tier limit hit; set YDC_API_KEY for higher limits"
+        else:
+            hint = "upstream error"
+        error_logger.error(f"You.com search failed ({status}, {hint})")
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"You.com returned invalid JSON: {e}")
+        return []
+
+    results = _you_com_parse_results(data, count)
+    logger.info(f"You.com returned {len(results)} results")
     return results
