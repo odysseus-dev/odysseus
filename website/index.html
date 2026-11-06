@@ -303,7 +303,26 @@
     color: var(--heading);
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
   }
-  .preview-panel .label .t { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 700; font-size: 14px; }
+  .preview-panel:not(:hover):not(:focus-visible):not(.is-active) .label {
+    align-items: center;
+  }
+  .preview-panel .label .t {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    font-weight: 700;
+    font-size: 0;
+  }
+
+  .preview-panel:hover .label .t,
+  .preview-panel:focus-visible .label .t,
+  .preview-panel.is-active .label .t {
+    font-size: 14px;
+  }
+  .preview-panel .ph span {
+    display: none;
+  }
   .preview-panel .label .ico { color: var(--accent); flex-shrink: 0; }
   .preview-panel .label .desc {
     font-weight: 400; font-size: 12.5px; line-height: 1.35; color: rgba(255,255,255,0.82);
