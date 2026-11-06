@@ -327,7 +327,6 @@ if AUTH_ENABLED:
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
     ]
-
     def _is_auth_exempt(path: str) -> bool:
         if path in AUTH_EXEMPT_EXACT:
             return True
@@ -885,8 +884,6 @@ app.include_router(setup_shell_routes())
 
 from routes.music_routes import setup_music_routes
 app.include_router(setup_music_routes())
-from routes.music_sso_routes import setup_music_sso_routes
-app.include_router(setup_music_sso_routes())
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes

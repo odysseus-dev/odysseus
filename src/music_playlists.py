@@ -1,4 +1,4 @@
-"""Playlists locales, ratings e instant mix (lo que se copia de Navidrome/Jellyfin)."""
+"""Playlists locales, ratings e instant mix del reproductor."""
 from __future__ import annotations
 
 import json
