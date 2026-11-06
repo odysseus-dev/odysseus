@@ -11,6 +11,9 @@ export function createNotesSubmission({
   const state = app.state;
   const { _loadFiredReminders, _saveFiredReminders, _loadGlowedReminders, _saveGlowedReminders, _loadDraft, _clearDraft } = persistence;
   function submitNote(payload, note, isEdit) {
+      if (isEdit && payload.due_date === note.due_date && Object.hasOwn(note, 'reminder_timezone')) {
+        payload.reminder_timezone = note.reminder_timezone;
+      }
       // Reset fired reminder if due_date changed (so re-arm works), and also
       // clear the entry-glow seen flag so the new firing glows again on the
       // next time the user opens the panel.
@@ -49,6 +52,10 @@ export function createNotesSubmission({
       effects.render();
       // Background save
       api.saveNote(payload).then(saved => {
+        if (isEdit && saved && Object.hasOwn(saved, 'reminder_timezone')) {
+          const current = state.notes.find(n => n.id === note.id);
+          if (current?.due_date === payload.due_date) app.mergeNote(current, { reminder_timezone: saved.reminder_timezone, reminder_schedule: saved.reminder_schedule });
+        }
         if (JSON.stringify(_loadDraft(draftId)) === submittedDraft) _clearDraft(draftId);
         if (!isEdit && saved && saved.id) {
           // Replace temp ID with real one from server. AND re-render : the

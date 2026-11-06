@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import { createNotesApi } from '../frontend/src/features/notes/infrastructure/http.js';
 import { createNotesPersistence, REMINDER_FIRED_KEY } from '../frontend/src/features/notes/infrastructure/storage.js';
 
+test('new reminder dates carry the browser zone and explicit saved zones are preserved', async () => {
+  const calls = [];
+  const api = createNotesApi({ origin: 'https://notes.invalid', timeZone: () => 'America/New_York',
+    request: async (url, options) => { calls.push(JSON.parse(options.body)); return { ok: true, json: async () => ({}) }; } });
+  await api.saveNote({ title: 'New', due_date: '2026-03-07T09:00', repeat: 'daily' });
+  await api.patchNote('a', { due_date: '2026-03-08T09:00', reminder_timezone: 'Europe/Berlin' });
+  await api.patchNote('a', { title: 'Rename' });
+  await api.patchNote('a', { due_date: '2026-03-09T09:00', expected_reminder: { due_date: '2026-03-08T09:00', repeat: 'daily', reminder_timezone: 'Europe/Berlin' } });
+  assert.equal(calls[0].reminder_timezone, 'America/New_York');
+  assert.equal(calls[1].reminder_timezone, 'Europe/Berlin');
+  assert.equal(Object.hasOwn(calls[2], 'reminder_timezone'), false);
+  assert.equal(Object.hasOwn(calls[3], 'reminder_timezone'), false);
+});
+
 test('list, reorder, upload, reminder and agent transports retain exact requests', async () => {
   const calls = [], result = { ok: false, status: 403 };
   const api = createNotesApi({ origin: 'https://notes.invalid', request: async (...args) => { calls.push(args); return result; } });

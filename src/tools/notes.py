@@ -386,6 +386,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     "error": f"Referenced upload is no longer available: {missing_id}",
                     "exit_code": 1,
                 }
+            from src.user_time import user_timezone
             note = Note(
                 id=str(_uuid.uuid4()),
                 owner=owner,
@@ -397,6 +398,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 label=args.get("label"),
                 pinned=args.get("pinned", False),
                 due_date=due_iso,
+                reminder_timezone=getattr(user_timezone(), "key", None) if due_iso else None,
                 source="agent",
                 session_id=args.get("session_id"),
             )
@@ -475,6 +477,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     note.due_date = _pdt_user(due_raw)
                 except Exception:
                     note.due_date = due_raw  # fall through; trust the model
+                from src.user_time import user_timezone
+                zone = getattr(user_timezone(), "key", None)
+                if zone or not note.due_date:
+                    note.reminder_timezone = zone if note.due_date else None
             new_items = args.get("checklist_items")
             if new_items is None:
                 new_items = args.get("items")
