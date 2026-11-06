@@ -63,4 +63,3 @@ def test_provider_label_neutral_for_loopback(url, expected):
 ])
 def test_provider_label_conifer(url, expected):
     assert _provider_label(url) == expected
-
