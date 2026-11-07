@@ -51,6 +51,16 @@ def test_login_page_oidc_urls_are_mount_aware():
     assert "appUrl('/api/auth/oidc/login')" in html
 
 
+def test_login_page_keeps_oidc_sso_button_markup():
+    """S1 review guard (X11): dev's rewritten login page must keep the
+    SSO button element and its container, so OIDC stays reachable."""
+    html = (ROOT / "static/login.html").read_text(encoding="utf-8")
+    assert 'id="oidcSection"' in html
+    assert 'id="oidcBtn"' in html
+    assert "getElementById('oidcSection')" in html
+    assert "getElementById('oidcBtn')" in html
+
+
 def test_login_page_static_assets_resolve_under_mount_path():
     html = (ROOT / "static/login.html").read_text(encoding="utf-8")
     for forbidden in (

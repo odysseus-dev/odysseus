@@ -801,3 +801,202 @@ def test_check_oidc_totp_returns_false_for_non_oidc_user_with_totp(tmp_path):
     mgr._config["users"]["alice"]["totp_enabled"] = True
     mgr._save()
     assert mgr.check_oidc_totp("alice") is False
+
+
+# ---------------------------------------------------------------------------
+# S3: dev's newer auth rules applied to OIDC accounts
+# ---------------------------------------------------------------------------
+
+import contextlib
+import sys as _sys
+import types as _types
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from src.constants import USERNAME_MAX_LENGTH
+from core.auth import username_error as _username_error
+
+
+def _oidc_db_stub(monkeypatch, *, fail=False, probe=None):
+    """Stub core.database so ApiToken purges are observable.
+
+    Mirrors the stub in tests/test_delete_user_revokes_api_tokens.py.  *probe*
+    runs inside the delete() call so ordering against the admin flag flip can
+    be asserted; *fail* makes the token store raise instead of purging.
+    """
+    calls = []
+
+    class _OwnerColumn:
+        def __eq__(self, other):
+            return ("owner ==", other)
+
+        def __hash__(self):
+            return id(self)
+
+    class _FakeApiToken:
+        owner = _OwnerColumn()
+
+    class _FakeQuery:
+        def __init__(self):
+            self._conds = []
+
+        def filter(self, *conds):
+            self._conds.extend(conds)
+            return self
+
+        def delete(self, *args, **kwargs):
+            calls.append(list(self._conds))
+            if probe is not None:
+                probe()
+            return 1
+
+    class _FakeSession:
+        def query(self, model):
+            assert model is _FakeApiToken
+            return _FakeQuery()
+
+    @contextlib.contextmanager
+    def _get_db_session():
+        if fail:
+            raise RuntimeError("database unavailable")
+        yield _FakeSession()
+
+    db_stub = _types.ModuleType("core.database")
+    db_stub.get_db_session = _get_db_session
+    db_stub.ApiToken = _FakeApiToken
+    monkeypatch.setitem(_sys.modules, "core.database", db_stub)
+    return calls
+
+
+def test_set_oidc_user_admin_demotion_purges_api_tokens(tmp_path, monkeypatch):
+    """An actual demotion deletes the user's ApiToken rows (dev #6832)."""
+    mgr = _make_manager(tmp_path)
+    mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
+                          is_admin=True)
+    mgr.create_user("recovery", "pw123456", is_admin=True)
+    db_calls = _oidc_db_stub(monkeypatch)
+
+    assert mgr.set_oidc_user_admin("alice", False) is True
+    assert not mgr.is_admin("alice")
+    assert [("owner ==", "alice")] in db_calls, \
+        "set_oidc_user_admin never purged ApiToken rows for the demoted user"
+
+
+def test_set_oidc_user_admin_purges_before_flag_flip(tmp_path, monkeypatch):
+    """The purge runs while the user is still flagged admin, as set_admin
+    does: a token-store failure must never leave a demoted user behind."""
+    mgr = _make_manager(tmp_path)
+    mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
+                          is_admin=True)
+    mgr.create_user("recovery", "pw123456", is_admin=True)
+    seen = {}
+
+    def probe():
+        seen["admin_at_purge"] = mgr._config["users"]["alice"].get("is_admin")
+
+    _oidc_db_stub(monkeypatch, probe=probe)
+    assert mgr.set_oidc_user_admin("alice", False) is True
+    assert seen.get("admin_at_purge") is True, (
+        "ApiToken purge ran after the admin flag was already flipped"
+    )
+
+
+def test_set_oidc_user_admin_store_failure_keeps_admin(tmp_path, monkeypatch):
+    """A token-store exception propagates and the user stays admin; the
+    locks must not leak so a later demotion still works."""
+    mgr = _make_manager(tmp_path)
+    mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
+                          is_admin=True)
+    mgr.create_user("recovery", "pw123456", is_admin=True)
+    _oidc_db_stub(monkeypatch, fail=True)
+
+    with pytest.raises(RuntimeError):
+        mgr.set_oidc_user_admin("alice", False)
+    assert mgr.is_admin("alice") is True
+    mgr._load()
+    assert mgr._config["users"]["alice"]["is_admin"] is True, \
+        "auth.json changed although the token store failed"
+
+    # No lock leaked by the failure: the retry with a working store succeeds.
+    db_calls = _oidc_db_stub(monkeypatch)
+    assert mgr.set_oidc_user_admin("alice", False) is True
+    assert not mgr.is_admin("alice")
+    assert [("owner ==", "alice")] in db_calls
+
+
+def test_set_oidc_user_admin_last_admin_refusal_skips_token_purge(tmp_path, monkeypatch):
+    """The unchanged last-admin guard must not touch the token store."""
+    mgr = _make_manager(tmp_path)
+    mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
+                          is_admin=True)
+    db_calls = _oidc_db_stub(monkeypatch)
+    assert mgr.set_oidc_user_admin("alice", False) is False
+    assert mgr.is_admin("alice") is True
+    assert db_calls == []
+
+
+def test_create_user_oidc_rejects_invalid_usernames(tmp_path):
+    """create_user_oidc refuses names that fail dev's username_error (#6821)."""
+    mgr = _make_manager(tmp_path)
+    long_name = "u" * (USERNAME_MAX_LENGTH + 1)
+    for bad in ("bad/name", "bad\\name", ".", "..", long_name):
+        assert mgr.create_user_oidc(
+            bad, sub=f"sub-{abs(hash(bad))}", issuer="https://idp.example.com",
+        ) is None, f"should reject {bad!r}"
+    assert not mgr.users
+
+
+def test_create_user_oidc_collision_suffix_stays_within_max_length(tmp_path):
+    """Collision suffixes must keep the final name <= USERNAME_MAX_LENGTH."""
+    mgr = _make_manager(tmp_path)
+    base = "u" * USERNAME_MAX_LENGTH
+    assert mgr.create_user(base, "pw123456") is True
+
+    first = mgr.create_user_oidc(base, sub="sub1", issuer="https://idp.example.com")
+    assert first is not None
+    assert first != base
+    assert len(first) <= USERNAME_MAX_LENGTH
+    assert _username_error(first) is None
+
+    second = mgr.create_user_oidc(base, sub="sub2", issuer="https://idp.example.com")
+    assert second is not None
+    assert len(second) <= USERNAME_MAX_LENGTH
+    assert _username_error(second) is None
+
+
+def test_reset_user_password_refuses_oidc_account(tmp_path):
+    """An admin reset must not open a password login past the IdP."""
+    mgr = _make_manager(tmp_path)
+    mgr.create_user("admin", "pw-admin123", is_admin=True)
+    mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com")
+    session = mgr.create_session_trusted("alice")
+    assert session is not None
+
+    assert mgr.reset_user_password("alice", "new-password123", "admin") is False
+
+    mgr._load()
+    assert mgr._config["users"]["alice"].get("password_hash") is None, \
+        "reset_user_password wrote a password_hash for an OIDC account"
+    assert not mgr.verify_password("alice", "new-password123")
+    assert mgr.validate_token(session) is True, \
+        "OIDC sessions must not be revoked by a refused reset"
+
+
+def test_reset_password_route_answers_403_when_manager_refuses(tmp_path):
+    """The route maps a refused reset (False) to 403 for OIDC accounts."""
+    import asyncio
+    from fastapi import HTTPException
+    from routes.auth_routes import ResetUserPasswordRequest, setup_auth_routes
+
+    auth = MagicMock()
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+    auth.reset_user_password.return_value = False  # OIDC refusal
+    endpoint = next(
+        route.endpoint for route in setup_auth_routes(auth).routes
+        if getattr(route, "path", "") == "/api/auth/users/{username}/password"
+    )
+    request = SimpleNamespace(cookies={"odysseus_session": "session-token"})
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(endpoint("alice", ResetUserPasswordRequest(new_password="new-password123"), request))
+    assert exc.value.status_code == 403

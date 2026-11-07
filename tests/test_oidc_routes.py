@@ -33,8 +33,13 @@ def _get_endpoint(router: APIRouter, path: str):
     raise AssertionError(f"No route found for path: {path}")
 
 
-def _fake_request(base_url="http://testserver", cookies=None):
-    """Build a minimal Request-like object."""
+def _fake_request(base_url="http://testserver", cookies=None, root_path=None):
+    """Build a minimal Request-like object.
+
+    ``root_path`` carries the ASGI mount prefix through ``request.scope``;
+    ``app`` carries an empty ``state`` so the callback's optional
+    ``invalidate_token_cache`` lookup resolves to absent.
+    """
     req = SimpleNamespace()
     req.base_url = SimpleNamespace()
     req.base_url.__str__ = lambda s, b=base_url: b
@@ -44,11 +49,13 @@ def _fake_request(base_url="http://testserver", cookies=None):
     req.url = SimpleNamespace()
     req.url.scheme = "http"
     req.headers = {}
+    req.scope = {"root_path": root_path} if root_path is not None else {}
+    req.app = SimpleNamespace(state=SimpleNamespace())
     return req
 
 
-def _fake_request_with_params(query_params, base_url="http://testserver", cookies=None):
-    req = _fake_request(base_url, cookies=cookies)
+def _fake_request_with_params(query_params, base_url="http://testserver", cookies=None, root_path=None):
+    req = _fake_request(base_url, cookies=cookies, root_path=root_path)
     req.query_params = query_params
     return req
 
@@ -1227,3 +1234,384 @@ class TestOidcCallbackSecurityFailures:
             assert "odysseus_oidc_csrf" in result.headers.get("set-cookie", ""), (
                 f"CSRF cookie was not cleared for {error_code}"
             )
+
+
+# ---------------------------------------------------------------------------
+# S3: dev's newer auth rules — username candidates, token-cache invalidation
+# on demotion, and ASGI root_path mounting.
+# ---------------------------------------------------------------------------
+
+class TestCallbackUsernameCandidates:
+    """dev #6821: the callback uses the first candidate that passes
+    username_error, is non-empty and not reserved; otherwise the hash sub."""
+
+    def _run(self, claims):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = claims
+
+        auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
+        auth.get_user_by_oidc.return_value = None
+        auth.create_user_oidc.return_value = "resolved"
+        auth.create_session_trusted.return_value = "token"
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        import asyncio
+        result = asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    {"code": "c", "state": "s"},
+                    cookies={"odysseus_oidc_csrf": "s"},
+                ),
+                SimpleNamespace(
+                    set_cookie=MagicMock(),
+                    delete_cookie=MagicMock(),
+                    status_code=200,
+                    headers={},
+                ),
+            )
+        )
+        return auth, result
+
+    def test_backslash_preferred_username_falls_back_to_hash(self):
+        """A backslash DOMAIN-user login must succeed under the hash fallback."""
+        import hashlib
+        sub = "sub-back"
+        auth, result = self._run(
+            {"sub": sub, "preferred_username": "DOMAIN\\user"},
+        )
+        expected = f"oidc_{hashlib.sha256(sub.encode()).hexdigest()[:16]}"
+        assert auth.create_user_oidc.call_args[0][0] == expected
+        assert result.status_code == 302
+        assert result.headers["location"] == "/"
+        auth.create_session_trusted.assert_called_once_with("resolved")
+
+    def test_reserved_candidate_skipped_for_next_candidate(self):
+        auth, result = self._run(
+            {"sub": "sub-res", "preferred_username": "api",
+             "email": "someone@example.com"},
+        )
+        assert auth.create_user_oidc.call_args[0][0] == "someone"
+        assert result.status_code == 302
+
+    def test_overlong_preferred_username_falls_back(self):
+        import hashlib
+        sub = "sub-long"
+        auth, _ = self._run(
+            {"sub": sub, "preferred_username": "u" * 65},
+        )
+        expected = f"oidc_{hashlib.sha256(sub.encode()).hexdigest()[:16]}"
+        assert auth.create_user_oidc.call_args[0][0] == expected
+
+    def test_invalid_email_local_part_skipped_for_name(self):
+        auth, _ = self._run(
+            {"sub": "sub-email", "email": "bad\\user@domain.example",
+             "name": "Good Name"},
+        )
+        assert auth.create_user_oidc.call_args[0][0] == "good name"
+
+    def test_name_candidate_used_last(self):
+        auth, _ = self._run({"sub": "sub-name", "name": " Ada Loven "})
+        assert auth.create_user_oidc.call_args[0][0] == "ada loven"
+
+    def test_all_candidates_invalid_uses_hash_of_sub(self):
+        import hashlib
+        sub = "sub-none"
+        auth, _ = self._run(
+            {"sub": sub, "preferred_username": "sys/tem",
+             "email": "a/b@domain.example"},
+        )
+        expected = f"oidc_{hashlib.sha256(sub.encode()).hexdigest()[:16]}"
+        assert auth.create_user_oidc.call_args[0][0] == expected
+
+    # --- candidate ORDER (review R5): the plan pins preferred_username,
+    # --- email local-part, name.  A silent reordering would rename new
+    # --- OIDC accounts, so every slot with two or more valid candidates
+    # --- must be asserted with distinct values.
+
+    def test_all_three_valid_preferred_username_wins(self):
+        """preferred_username, email local-part and name all valid and
+        different: the account must be created under preferred_username."""
+        auth, result = self._run({
+            "sub": "sub-order-1",
+            "preferred_username": "preferredname",
+            "email": "emailperson@domain.example",
+            "name": "Name Person",
+        })
+        chosen = auth.create_user_oidc.call_args[0][0]
+        assert chosen == "preferredname"
+        assert chosen != "emailperson" and chosen != "name person"
+
+    def test_preferred_username_absent_email_before_name(self):
+        """preferred_username absent, email and name valid and different:
+        the email local-part wins over name."""
+        auth, _ = self._run({
+            "sub": "sub-order-2",
+            "email": "emailperson@domain.example",
+            "name": "Name Person",
+        })
+        assert auth.create_user_oidc.call_args[0][0] == "emailperson"
+
+    def test_preferred_username_invalid_email_before_name(self):
+        """preferred_username invalid (backslash, dev #6821), email and
+        name valid and different: the email local-part wins over name."""
+        auth, _ = self._run({
+            "sub": "sub-order-3",
+            "preferred_username": "DOM\\main",
+            "email": "emailperson@domain.example",
+            "name": "Name Person",
+        })
+        assert auth.create_user_oidc.call_args[0][0] == "emailperson"
+
+    def test_only_name_valid_name_used(self):
+        """preferred_username and the email local-part both invalid, name
+        valid: name is used."""
+        auth, _ = self._run({
+            "sub": "sub-order-4",
+            "preferred_username": "who/ever",
+            "email": "bad/user@domain.example",
+            "name": "Name Person",
+        })
+        assert auth.create_user_oidc.call_args[0][0] == "name person"
+
+
+class TestCallbackAdminSyncCacheInvalidation:
+    """A demotion synced from IdP groups purges ApiTokens in the core and
+    must dirty the per-process bearer cache, including when the purge
+    fails — mirroring set_user_admin's finally pattern."""
+
+    def _run_demotion(self, monkeypatch, *, sync_error=None,
+                      with_invalidator=True, group="users"):
+        monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = {
+            "sub": "existing", "email": "grace@example.com", "groups": [group],
+        }
+
+        auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
+        auth.get_user_by_oidc.return_value = "grace"
+        auth.create_session_trusted.return_value = "token"
+        if sync_error is not None:
+            auth.set_oidc_user_admin.side_effect = sync_error
+        else:
+            auth.set_oidc_user_admin.return_value = True
+
+        req = _fake_request_with_params(
+            {"code": "c", "state": "s"},
+            cookies={"odysseus_oidc_csrf": "s"},
+        )
+        invalidator = MagicMock()
+        if with_invalidator:
+            req.app.state.invalidate_token_cache = invalidator
+
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        import asyncio
+        try:
+            result = asyncio.run(
+                ep(
+                    req,
+                    SimpleNamespace(
+                        set_cookie=MagicMock(),
+                        delete_cookie=MagicMock(),
+                        status_code=200,
+                        headers={},
+                    ),
+                )
+            )
+        except Exception as exc:  # HEAD never wraps the call
+            pytest.fail(f"callback did not handle set_oidc_user_admin: {exc!r}")
+        return auth, invalidator, result
+
+    def test_demotion_invalidates_bearer_token_cache(self, monkeypatch):
+        auth, invalidator, result = self._run_demotion(monkeypatch)
+        auth.set_oidc_user_admin.assert_called_once_with("grace", False)
+        assert result.status_code == 302
+        invalidator.assert_called_once_with()
+
+    def test_demotion_sync_failure_refuses_session_and_still_invalidates(
+        self, monkeypatch,
+    ):
+        """Store failure: no session issued, oidc_failed redirect, and the
+        cache is still invalidated by the finally block."""
+        auth, invalidator, result = self._run_demotion(
+            monkeypatch, sync_error=RuntimeError("database unavailable"),
+        )
+        assert "error=oidc_failed" in result.headers["location"]
+        auth.create_session_trusted.assert_not_called()
+        invalidator.assert_called_once_with()
+
+    def test_promotion_does_not_invalidate_cache(self, monkeypatch):
+        auth, invalidator, result = self._run_demotion(
+            monkeypatch, group="odysseus-admins",
+        )
+        auth.set_oidc_user_admin.assert_called_once_with("grace", True)
+        assert result.status_code == 302
+        invalidator.assert_not_called()
+
+    def test_missing_invalidator_is_tolerated(self, monkeypatch):
+        auth, _, result = self._run_demotion(monkeypatch, with_invalidator=False)
+        assert result.status_code == 302
+        assert result.headers["location"] == "/"
+
+
+class TestOidcMountPath:
+    """dev's ASGI root_path support: every redirect target and the CSRF
+    cookie path must carry the mount prefix; an empty root_path keeps the
+    exact pre-mount values."""
+
+    MOUNT = "/odysseus"
+
+    def _login_manager(self):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.get_authorization_url.return_value = (
+            "https://idp.example.com/authorize?state=abc", "abc", "def",
+        )
+        return mgr
+
+    def _login_set_cookie_kwargs(self, root_path):
+        import asyncio
+        router = _setup_oidc_routes(MagicMock(), self._login_manager())
+        ep = _get_endpoint(router, "/api/auth/oidc/login")
+        from unittest.mock import patch
+        with patch("fastapi.responses.RedirectResponse.set_cookie") as sc:
+            asyncio.run(ep(_fake_request(root_path=root_path)))
+            return sc.call_args.kwargs
+
+    def _callback(self, *, root_path, mgr, auth, query=None, cookies=None):
+        import asyncio
+        router = _setup_oidc_routes(auth, mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        response = SimpleNamespace(
+            set_cookie=MagicMock(),
+            delete_cookie=MagicMock(),
+            status_code=200,
+            headers={},
+        )
+        return asyncio.run(
+            ep(
+                _fake_request_with_params(
+                    query if query is not None else {"code": "c", "state": "s"},
+                    cookies=cookies if cookies is not None else {"odysseus_oidc_csrf": "s"},
+                    root_path=root_path,
+                ),
+                response,
+            )
+        )
+
+    def _success_auth(self):
+        auth = MagicMock()
+        auth.check_oidc_totp.return_value = False
+        auth.get_user_by_oidc.return_value = "alice"
+        auth.create_session_trusted.return_value = "token"
+        return auth
+
+    def _success_mgr(self):
+        mgr = MagicMock()
+        mgr.configured = True
+        mgr.redirect_uri_override = None
+        mgr.issuer = "https://idp.example.com"
+        mgr.exchange_code.return_value = {
+            "sub": "user123", "email": "alice@example.com",
+        }
+        return mgr
+
+    # -- /login error redirect -------------------------------------------------
+
+    def test_login_error_redirect_includes_root_path(self):
+        from core.oidc import OidcError
+        mgr = self._login_manager()
+        mgr.get_authorization_url.side_effect = OidcError("bad config")
+        router = _setup_oidc_routes(MagicMock(), mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/login")
+        import asyncio
+        result = asyncio.run(ep(_fake_request(root_path=self.MOUNT)))
+        assert result.headers["location"] == f"{self.MOUNT}/login?error=oidc_config"
+
+    def test_login_error_redirect_empty_root_path_unchanged(self):
+        from core.oidc import OidcError
+        mgr = self._login_manager()
+        mgr.get_authorization_url.side_effect = OidcError("bad config")
+        router = _setup_oidc_routes(MagicMock(), mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/login")
+        import asyncio
+        result = asyncio.run(ep(_fake_request()))
+        assert result.headers["location"] == "/login?error=oidc_config"
+
+    # -- CSRF cookie path on set ------------------------------------------------
+
+    def test_csrf_cookie_set_path_includes_root_path(self):
+        kwargs = self._login_set_cookie_kwargs(self.MOUNT)
+        assert kwargs["path"] == f"{self.MOUNT}/api/auth/oidc/callback"
+
+    def test_csrf_cookie_set_path_empty_root_unchanged(self):
+        kwargs = self._login_set_cookie_kwargs(None)
+        assert kwargs["path"] == "/api/auth/oidc/callback"
+
+    # -- callback success: redirect target + CSRF delete path --------------------
+
+    def test_callback_success_redirect_and_csrf_delete_under_mount(self):
+        result = self._callback(
+            root_path=self.MOUNT, mgr=self._success_mgr(),
+            auth=self._success_auth(),
+        )
+        assert result.headers["location"] == f"{self.MOUNT}/"
+        assert result.delete_cookie.call_args.kwargs["path"] == \
+            f"{self.MOUNT}/api/auth/oidc/callback"
+        # The session cookie path itself stays "/" exactly like password login.
+        assert result.set_cookie.call_args.kwargs["path"] == "/"
+
+    def test_callback_success_empty_root_path_unchanged(self):
+        result = self._callback(root_path=None, mgr=self._success_mgr(),
+                                auth=self._success_auth())
+        assert result.headers["location"] == "/"
+        assert result.delete_cookie.call_args.kwargs["path"] == \
+            "/api/auth/oidc/callback"
+
+    # -- callback error redirect (via _build_oidc_error_redirect) ----------------
+
+    def test_callback_error_redirect_under_mount(self):
+        from core.oidc import OidcError
+        mgr = self._success_mgr()
+        mgr.exchange_code.side_effect = OidcError("exchange failed")
+        auth = MagicMock()
+        result = self._callback(root_path=self.MOUNT, mgr=mgr, auth=auth)
+        assert result.headers["location"] == \
+            f"{self.MOUNT}/login?error=oidc_failed"
+        assert "Path=/odysseus/api/auth/oidc/callback" in \
+            result.headers.get("set-cookie", "")
+
+    def test_callback_error_redirect_empty_root_path_unchanged(self):
+        from core.oidc import OidcError
+        mgr = self._success_mgr()
+        mgr.exchange_code.side_effect = OidcError("exchange failed")
+        result = self._callback(root_path=None, mgr=mgr, auth=MagicMock())
+        assert result.headers["location"] == "/login?error=oidc_failed"
+        assert "Path=/api/auth/oidc/callback" in result.headers.get("set-cookie", "")
+
+    # -- callback not-configured branch delete path ------------------------------
+
+    def test_callback_not_configured_csrf_delete_under_mount(self):
+        import asyncio
+        mgr = MagicMock()
+        mgr.configured = False
+        router = _setup_oidc_routes(MagicMock(), mgr)
+        ep = _get_endpoint(router, "/api/auth/oidc/callback")
+        result = asyncio.run(ep(
+            _fake_request_with_params({"code": "c", "state": "s"},
+                                      root_path=self.MOUNT),
+            SimpleNamespace(),
+        ))
+        assert result.status_code == 503
+        assert "Path=/odysseus/api/auth/oidc/callback" in \
+            result.headers.get("set-cookie", "")

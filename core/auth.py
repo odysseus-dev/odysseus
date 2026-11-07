@@ -716,7 +716,11 @@ class AuthManager:
         OIDC_FIRST_USER_IS_ADMIN=false to disable this bootstrap.
         """
         username = username.strip().lower()
-        if not username:
+        name_error = username_error(username)
+        if name_error:
+            logger.warning(
+                "Refused OIDC user with invalid username %r: %s", username, name_error,
+            )
             return None
         if username in RESERVED_USERNAMES:
             logger.warning("Refused OIDC user with reserved username '%s'", username)
@@ -764,6 +768,10 @@ class AuthManager:
             suffix = 1
             while candidate in users:
                 suffix += 1
+                # The suffix must also keep the name <= USERNAME_MAX_LENGTH,
+                # else the account would fail username_error: truncate the
+                # base so base + suffix always fits.
+                base = username[: USERNAME_MAX_LENGTH - len(str(suffix))]
                 candidate = f"{base}{suffix}"
                 if suffix > 100:  # safety valve
                     logger.error("OIDC username collision loop for '%s'", username)
@@ -827,6 +835,18 @@ class AuthManager:
                         username,
                     )
                     return False
+            # Token creation is admin-only and a demoted user can neither
+            # list nor revoke their tokens, so purge them with the role
+            # (dev #6832). Done before the flag flips: if the token store
+            # fails the exception propagates and the user is still an admin.
+            if user.get("is_admin") and not is_admin:
+                from core.database import get_db_session, ApiToken
+                with get_db_session() as db:
+                    removed_tokens = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+                if removed_tokens:
+                    logger.info(
+                        f"Revoked {removed_tokens} API token(s) owned by demoted OIDC admin '{username}'"
+                    )
             self._config["users"][username]["is_admin"] = is_admin
             if is_admin:
                 self._config["users"][username]["privileges"] = dict(ADMIN_PRIVILEGES)
@@ -1090,6 +1110,10 @@ class AuthManager:
         with self._config_lock:
             target = self.users.get(username)
             if not self.is_admin(requesting_user) or not target or target.get("is_admin"):
+                return False
+            if target.get("oidc_sub"):
+                # OIDC account: writing a hash would open a password login
+                # that bypasses the IdP. Credentials must go through the IdP.
                 return False
             self._config["users"][username]["password_hash"] = _hash_password(new_password)
             self._save()

@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import hashlib
 import logging
 import os
 import secrets
@@ -10,7 +11,8 @@ from typing import Optional
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import RedirectResponse, JSONResponse
 
-from core.auth import AuthManager
+from core.auth import RESERVED_USERNAMES, AuthManager, username_error
+from core.middleware import with_asgi_root_path
 from core.oidc import OidcManager, OidcError
 
 logger = logging.getLogger(__name__)
@@ -35,17 +37,22 @@ def setup_oidc_routes(
 ) -> APIRouter:
     router = APIRouter(prefix="/api/auth/oidc", tags=["oidc"])
 
-    def _build_oidc_error_redirect(error_code: str, state: str | None = None) -> RedirectResponse:
+    def _build_oidc_error_redirect(request: Request, error_code: str, state: str | None = None) -> RedirectResponse:
         """Build a RedirectResponse that both redirects to /login with
-        an error and clears the OIDC CSRF cookie."""
+        an error and clears the OIDC CSRF cookie. The redirect target and
+        the cookie path are ASGI root-path aware (mounted deployments)."""
         from urllib.parse import urlencode
         params = {"error": error_code}
         if state:
             params["state"] = state
         qs = urlencode(params)
-        response = RedirectResponse(url=f"/login?{qs}", status_code=302)
+        response = RedirectResponse(
+            url=f"{with_asgi_root_path(request.scope, '/login')}?{qs}",
+            status_code=302,
+        )
         response.delete_cookie(
-            key=OIDC_CSRF_COOKIE, path="/api/auth/oidc/callback",
+            key=OIDC_CSRF_COOKIE,
+            path=with_asgi_root_path(request.scope, "/api/auth/oidc/callback"),
         )
         return response
 
@@ -94,7 +101,8 @@ def setup_oidc_routes(
         except OidcError as exc:
             logger.error("Failed to build OIDC authorization URL: %s", exc)
             return RedirectResponse(
-                url=f"/login?error=oidc_config", status_code=302,
+                url=f"{with_asgi_root_path(request.scope, '/login')}?error=oidc_config",
+                status_code=302,
             )
 
         # Set a CSRF cookie binding the state to this browser. The
@@ -106,7 +114,7 @@ def setup_oidc_routes(
             httponly=True,
             samesite="lax",
             secure=_oidc_cookie_secure(),
-            path="/api/auth/oidc/callback",
+            path=with_asgi_root_path(request.scope, "/api/auth/oidc/callback"),
             max_age=OIDC_CSRF_MAX_AGE,
         )
         return response
@@ -121,7 +129,10 @@ def setup_oidc_routes(
         """
         if oidc_manager is None or not oidc_manager.configured:
             resp = JSONResponse({"error": "OIDC is not configured"}, status_code=503)
-            resp.delete_cookie(key=OIDC_CSRF_COOKIE, path="/api/auth/oidc/callback")
+            resp.delete_cookie(
+                key=OIDC_CSRF_COOKIE,
+                path=with_asgi_root_path(request.scope, "/api/auth/oidc/callback"),
+            )
             return resp
 
         code = request.query_params.get("code")
@@ -131,18 +142,18 @@ def setup_oidc_routes(
 
         if error:
             logger.warning("OIDC provider returned error: %s — %s", error, error_description)
-            return _build_oidc_error_redirect("oidc_denied", state=state)
+            return _build_oidc_error_redirect(request, "oidc_denied", state=state)
 
         if not code or not state:
             logger.warning("OIDC callback missing code or state")
-            return _build_oidc_error_redirect("oidc_invalid")
+            return _build_oidc_error_redirect(request, "oidc_invalid")
 
         # Verify the CSRF cookie matches the state parameter — ensures
         # the browser completing the flow is the same one that started it.
         csrf_cookie = request.cookies.get(OIDC_CSRF_COOKIE, "")
         if not csrf_cookie or not secrets.compare_digest(csrf_cookie, state):
             logger.warning("OIDC CSRF cookie mismatch")
-            return _build_oidc_error_redirect("oidc_csrf")
+            return _build_oidc_error_redirect(request, "oidc_csrf")
 
         # Use OIDC_REDIRECT_URI when explicitly configured (proxy-safe),
         # matching the value used in /login.
@@ -155,7 +166,7 @@ def setup_oidc_routes(
             claims = await asyncio.to_thread(oidc_manager.exchange_code, code, state, redirect_uri)
         except OidcError as exc:
             logger.error("OIDC code exchange failed: %s", exc)
-            return _build_oidc_error_redirect("oidc_failed")
+            return _build_oidc_error_redirect(request, "oidc_failed")
 
         # Extract identity claims
         sub = claims.get("sub", "")
@@ -178,10 +189,10 @@ def setup_oidc_routes(
         # account and hand one subject the other's session and privileges.
         if not isinstance(sub, str) or not sub:
             logger.error("OIDC id_token sub is not a non-empty string: %r", sub)
-            return _build_oidc_error_redirect("oidc_failed")
+            return _build_oidc_error_redirect(request, "oidc_failed")
         if len(sub) > 512:
             logger.error("OIDC id_token sub exceeds maximum length")
-            return _build_oidc_error_redirect("oidc_failed")
+            return _build_oidc_error_redirect(request, "oidc_failed")
         if not isinstance(email, str) or len(email) > 512:
             email = ""
         if not isinstance(preferred_username, str) or len(preferred_username) > 256:
@@ -220,21 +231,24 @@ def setup_oidc_routes(
                 group_set = {str(g) for g in groups}
                 is_admin = bool(group_set & set(admin_groups))
 
-        # Determine username: use preferred_username first, then email
-        # local-part, then the sub as a last resort.
+        # Determine username: the first candidate that passes dev's
+        # username_error and is not a reserved sentinel (dev #6821) —
+        # preferred_username, email local-part, then name.  A candidate
+        # like "DOMAIN\user" (backslash) or a reserved name would create
+        # an unmanageable account, so it is skipped for the next one.
+        # When nothing is usable, a stable sub-derived fallback is used.
         raw_username = ""
-        if preferred_username:
-            raw_username = preferred_username
-        elif email:
-            raw_username = email.split("@")[0]
-        elif name:
-            raw_username = name
-        else:
-            raw_username = sub[:32]
-
-        raw_username = raw_username.strip().lower()
+        for candidate in (preferred_username, email.split("@")[0], name):
+            normalized = candidate.strip().lower()
+            if (
+                    normalized
+                    and username_error(normalized) is None
+                    and normalized not in RESERVED_USERNAMES
+            ):
+                raw_username = normalized
+                break
         if not raw_username:
-            raw_username = f"oidc_{sub[:16]}"
+            raw_username = f"oidc_{hashlib.sha256(sub.encode()).hexdigest()[:16]}"
 
         # Look up or create the user
         username = auth_manager.get_user_by_oidc(sub, issuer)
@@ -251,7 +265,27 @@ def setup_oidc_routes(
                 # change — must not silently demote an existing admin.
                 if groups_evidence_valid:
                     logger.info("OIDC login for existing user '%s' (admin=%s)", username, is_admin)
-                    auth_manager.set_oidc_user_admin(username, is_admin)
+                    try:
+                        auth_manager.set_oidc_user_admin(username, is_admin)
+                    except Exception:
+                        # Demotion purges ApiTokens; a store failure must not
+                        # leave a half-applied role change or issue a session.
+                        logger.exception(
+                            "OIDC admin sync failed for '%s' — refusing session",
+                            username,
+                        )
+                        return _build_oidc_error_redirect(request, "oidc_failed")
+                    finally:
+                        # A demotion attempt (including a failed one) may have
+                        # purged this user's ApiToken rows: dirty the bearer
+                        # cache so already-cached tokens stop authenticating.
+                        if not is_admin:
+                            invalidator = getattr(
+                                getattr(getattr(request, "app", None), "state", None),
+                                "invalidate_token_cache", None,
+                            )
+                            if callable(invalidator):
+                                invalidator()
                 else:
                     logger.info(
                         "OIDC login for existing user '%s' — skipping admin sync "
@@ -267,7 +301,7 @@ def setup_oidc_routes(
             )
             if username is None:
                 logger.error("Failed to create OIDC user for sub=%s", sub)
-                return _build_oidc_error_redirect("oidc_failed")
+                return _build_oidc_error_redirect(request, "oidc_failed")
 
         # Defense-in-depth: refuse to issue an OIDC session for a user
         # that somehow has local TOTP enabled (externally-edited auth.json
@@ -278,13 +312,13 @@ def setup_oidc_routes(
                 "(TOTP must be managed through the IdP)",
                 username,
             )
-            return _build_oidc_error_redirect("oidc_failed")
+            return _build_oidc_error_redirect(request, "oidc_failed")
 
         # Issue a session cookie (same as password login)
         token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
         if token is None:
             logger.error("Failed to create OIDC session for '%s'", username)
-            return _build_oidc_error_redirect("oidc_failed")
+            return _build_oidc_error_redirect(request, "oidc_failed")
 
         cookie_kwargs = dict(
             key=SESSION_COOKIE,
@@ -297,9 +331,12 @@ def setup_oidc_routes(
         )
         response.set_cookie(**cookie_kwargs)
         # Clear the CSRF cookie (single-use)
-        response.delete_cookie(key=OIDC_CSRF_COOKIE, path="/api/auth/oidc/callback")
+        response.delete_cookie(
+            key=OIDC_CSRF_COOKIE,
+            path=with_asgi_root_path(request.scope, "/api/auth/oidc/callback"),
+        )
         response.status_code = 302
-        response.headers["location"] = "/"
+        response.headers["location"] = with_asgi_root_path(request.scope, "/")
         return response
 
     return router
