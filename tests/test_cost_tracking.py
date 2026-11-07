@@ -35,6 +35,86 @@ def test_estimate_cost_usd_computes_per_million_rates():
     assert model_pricing.estimate_cost_usd("openai/gpt-5", 1000, 1000, "https://openrouter.ai/api/v1") == pytest.approx(0.01)
 
 
+_ANTHROPIC_URL = "https://api.anthropic.com/v1"
+
+
+@pytest.mark.parametrize("model, price_in, price_out", [
+    ("claude-opus-5-5", 4.00, 20.00),
+    ("claude-opus-5", 5.00, 25.00),
+    ("claude-sonnet-5-5", 2.00, 10.00),
+    ("claude-fable-5-1", 10.00, 50.00),
+    ("claude-opus-4-5-20251101", 5.00, 25.00),   # not Opus 4's $15/$75
+    ("claude-opus-4-6", 5.00, 25.00),
+    ("claude-opus-4-8", 5.00, 25.00),
+    ("claude-opus-4-1", 15.00, 75.00),
+    ("claude-haiku-4-5-20251001", 1.00, 5.00),
+])
+def test_claude_base_prices_match_published_table(model, price_in, price_out):
+    cost = model_pricing.estimate_cost_usd(model, 1_000_000, 1_000_000, _ANTHROPIC_URL)
+    assert cost == pytest.approx(price_in + price_out)
+
+
+def test_claude_cache_reads_and_writes_use_cache_rates():
+    # Opus 4.6: $5 base. 100k read at 0.1x, 248 written at 1.25x, 50 fresh.
+    cost = model_pricing.estimate_cost_usd(
+        "claude-opus-4-6", 100_298, 0, _ANTHROPIC_URL,
+        cache_read_tokens=100_000, cache_write_tokens=248,
+    )
+    expected = 5.00 * (50 + 100_000 * 0.10 + 248 * 1.25) / 1_000_000
+    assert cost == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("model, read_mult", [
+    ("claude-opus-5-5", 0.05),
+    ("claude-sonnet-5-5", 0.05),
+    ("claude-fable-5-1", 0.025),
+    ("claude-sonnet-5", 0.10),
+])
+def test_claude_cache_read_multiplier_per_model(model, read_mult):
+    price_in = model_pricing.MODEL_PRICING[model][0]
+    cost = model_pricing.estimate_cost_usd(
+        model, 1_000_000, 0, _ANTHROPIC_URL, cache_read_tokens=1_000_000,
+    )
+    assert cost == pytest.approx(price_in * read_mult)
+
+
+def test_cache_split_never_bills_more_than_the_prompt():
+    # A malformed split larger than the prompt is clamped, not over-billed.
+    cost = model_pricing.estimate_cost_usd(
+        "claude-opus-4-6", 1000, 0, _ANTHROPIC_URL,
+        cache_read_tokens=5000, cache_write_tokens=5000,
+    )
+    assert cost == pytest.approx(5.00 * 1000 * 0.10 / 1_000_000)
+
+
+def test_cache_split_ignored_for_non_claude_models():
+    cost = model_pricing.estimate_cost_usd(
+        "openai/gpt-5", 1000, 1000, "https://openrouter.ai/api/v1",
+        cache_read_tokens=1000,
+    )
+    assert cost == pytest.approx(0.01)
+
+
+def test_haiku_5_5_long_prompt_tier():
+    short = model_pricing.estimate_cost_usd("claude-haiku-5-5", 100_000, 0, _ANTHROPIC_URL)
+    long = model_pricing.estimate_cost_usd("claude-haiku-5-5", 100_001, 0, _ANTHROPIC_URL)
+    assert short == pytest.approx(0.10 * 100_000 / 1_000_000)
+    assert long == pytest.approx(0.50 * 100_001 / 1_000_000)
+
+
+def test_final_metrics_estimate_uses_cache_split():
+    m = agent_loop._compute_final_metrics(
+        messages=[], full_response="hi", total_duration=1.0, time_to_first_token=0.1,
+        context_length=200000, real_input_tokens=100_298, real_output_tokens=0,
+        has_real_usage=True, tool_events=[], round_texts=[], model="claude-opus-4-6",
+        endpoint_url=_ANTHROPIC_URL,
+        real_cache_read_tokens=100_000, real_cache_write_tokens=248,
+    )
+    expected = 5.00 * (50 + 100_000 * 0.10 + 248 * 1.25) / 1_000_000
+    assert m["cost_usd"] == pytest.approx(round(expected, 6))
+    assert m["cost_source"] == "estimated"
+
+
 def test_estimate_cost_usd_unknown_model_returns_none():
     assert model_pricing.estimate_cost_usd("totally-unknown-model", 1000, 1000, "https://openrouter.ai/api/v1") is None
     assert model_pricing.estimate_cost_usd("", 1000, 1000) is None

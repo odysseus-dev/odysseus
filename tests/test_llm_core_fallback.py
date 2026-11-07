@@ -1043,6 +1043,64 @@ def test_native_stream_adapters_report_actual_model_and_usage(
     assert "data: [DONE]\n\n" in chunks
 
 
+def _anthropic_cache_stream(usage):
+    return [
+        "data: " + json.dumps({
+            "type": "message_start",
+            "message": {"model": "claude-opus-5-5", "usage": usage},
+        }),
+        "data: " + json.dumps({
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "ok"},
+        }),
+        "data: " + json.dumps({"type": "message_delta", "usage": {"output_tokens": 1}}),
+        "data: " + json.dumps({"type": "message_stop"}),
+    ]
+
+
+def _usage_events(chunks):
+    return [
+        json.loads(chunk[6:])["data"]
+        for chunk in chunks
+        if chunk.startswith("data: ") and '"type": "usage"' in chunk
+    ]
+
+
+def test_anthropic_usage_reports_full_prompt_including_cache(monkeypatch):
+    # Anthropic's input_tokens covers only what follows the last cache
+    # breakpoint; the reported prompt size must add cache reads and writes.
+    chunks = _run_provider_stream(
+        monkeypatch,
+        "https://api.anthropic.com/v1/messages",
+        _anthropic_cache_stream({
+            "input_tokens": 50,
+            "cache_read_input_tokens": 100_000,
+            "cache_creation_input_tokens": 248,
+        }),
+    )
+    [usage] = _usage_events(chunks)
+    assert usage["input_tokens"] == 100_298
+    assert usage["cache_read_input_tokens"] == 100_000
+    assert usage["cache_creation_input_tokens"] == 248
+    assert usage["output_tokens"] == 1
+
+
+def test_anthropic_usage_ignores_malformed_cache_counts(monkeypatch):
+    chunks = _run_provider_stream(
+        monkeypatch,
+        "https://api.anthropic.com/v1/messages",
+        _anthropic_cache_stream({
+            "input_tokens": 7,
+            "cache_read_input_tokens": "lots",
+            "cache_creation_input_tokens": -3,
+        }),
+    )
+    [usage] = _usage_events(chunks)
+    assert usage["input_tokens"] == 7
+    assert "cache_read_input_tokens" not in usage
+    assert "cache_creation_input_tokens" not in usage
+
+
 def test_degenerate_stream_error_is_not_availability_evidence():
     guard = llm_core._DegenerateStreamGuard("looping-model")
     chunk = guard.check("repeat " * 100)

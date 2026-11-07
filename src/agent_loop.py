@@ -16202,6 +16202,14 @@ def _compact_web_search_tool_text_for_model(text: str, max_chars: int = 3200) ->
     return compact[:max_chars].rstrip()
 
 
+def _usage_cache_count(usage, key: str) -> int:
+    """A prompt-cache token count from a usage event, or 0 when absent/malformed."""
+    value = usage.get(key) if isinstance(usage, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
 def _compute_final_metrics(
     messages: List[Dict],
     full_response: str,
@@ -16224,6 +16232,8 @@ def _compute_final_metrics(
     backend_prefill_tps: float = 0,
     real_cost_usd: float = 0.0,
     endpoint_url: Optional[str] = None,
+    real_cache_read_tokens: int = 0,
+    real_cache_write_tokens: int = 0,
 ) -> dict:
     """Compute token counts, TPS, and build the final metrics dict."""
     if has_real_usage:
@@ -16297,7 +16307,9 @@ def _compute_final_metrics(
             from src.model_pricing import estimate_cost_usd
 
             _est = estimate_cost_usd(
-                model, input_tokens, output_tokens, endpoint_url
+                model, input_tokens, output_tokens, endpoint_url,
+                cache_read_tokens=real_cache_read_tokens if has_real_usage else 0,
+                cache_write_tokens=real_cache_write_tokens if has_real_usage else 0,
             )
         except Exception:
             _est = None
@@ -22322,6 +22334,8 @@ async def stream_agent_loop(
         direct_reasoning = ""
         real_input_tokens = 0
         real_output_tokens = 0
+        real_cache_read_tokens = 0
+        real_cache_write_tokens = 0
         real_cost_usd = 0.0
         direct_has_real_usage = False
         # The merged tools model has a clean native stream; do not hold its
@@ -22461,6 +22475,8 @@ async def stream_agent_loop(
                             continue
                         real_input_tokens += normalized_usage["input_tokens"]
                         real_output_tokens += normalized_usage["output_tokens"]
+                        real_cache_read_tokens += _usage_cache_count(usage, "cache_read_input_tokens")
+                        real_cache_write_tokens += _usage_cache_count(usage, "cache_creation_input_tokens")
                         direct_has_real_usage = True
                         try:
                             real_cost_usd += float(usage.get("cost_usd") or 0.0)
@@ -22631,6 +22647,8 @@ async def stream_agent_loop(
                     metrics.get("input_tokens"),
                     metrics.get("output_tokens"),
                     endpoint_url,
+                    cache_read_tokens=real_cache_read_tokens if direct_has_real_usage else 0,
+                    cache_write_tokens=real_cache_write_tokens if direct_has_real_usage else 0,
                 )
             except Exception:
                 _direct_est = None
@@ -25024,6 +25042,8 @@ async def stream_agent_loop(
     _declared_verifier_force_command = ""
     real_input_tokens = 0   # Accumulated real usage from API
     real_output_tokens = 0
+    real_cache_read_tokens = 0   # Anthropic prompt-cache split of real_input_tokens
+    real_cache_write_tokens = 0
     last_round_input_tokens = 0  # Last round's input tokens (for context % peak)
     has_real_usage = False
     backend_gen_tps = 0      # backend-reported true gen speed (llama.cpp timings)
@@ -27657,6 +27677,8 @@ async def stream_agent_loop(
                         round_output = normalized_usage["output_tokens"]
                         real_input_tokens += round_input
                         real_output_tokens += round_output
+                        real_cache_read_tokens += _usage_cache_count(u, "cache_read_input_tokens")
+                        real_cache_write_tokens += _usage_cache_count(u, "cache_creation_input_tokens")
                         _round_real_input_tokens += round_input
                         _round_real_output_tokens += round_output
                         last_round_input_tokens = round_input
@@ -28170,6 +28192,8 @@ async def stream_agent_loop(
                 tool_events, round_texts, model=model,
                 round_models=round_models, round_endpoint_ids=round_endpoint_ids,
                 round_endpoint_labels=round_endpoint_labels,
+                real_cache_read_tokens=real_cache_read_tokens,
+                real_cache_write_tokens=real_cache_write_tokens,
             )
             _required_metrics.update({
                 "requested_model": requested_model,
@@ -38336,6 +38360,8 @@ async def stream_agent_loop(
         backend_prefill_tps=backend_prefill_tps,
         real_cost_usd=real_cost_usd,
         endpoint_url=endpoint_url,
+        real_cache_read_tokens=real_cache_read_tokens,
+        real_cache_write_tokens=real_cache_write_tokens,
     )
     metrics["requested_model"] = requested_model
     metrics["endpoint_id"] = actual_endpoint_id

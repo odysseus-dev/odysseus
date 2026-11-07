@@ -1271,6 +1271,8 @@ def _annotate_chat_cost(metrics: Optional[dict], sess) -> None:
             metrics.get("input_tokens"),
             metrics.get("output_tokens"),
             getattr(sess, "endpoint_url", None),
+            cache_read_tokens=metrics.get("cache_read_input_tokens"),
+            cache_write_tokens=metrics.get("cache_creation_input_tokens"),
         )
     except Exception:
         est = None

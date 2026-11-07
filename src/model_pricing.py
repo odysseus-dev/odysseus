@@ -18,12 +18,25 @@ from urllib.parse import urlsplit
 # Per-1M-token USD prices, ported from static/js/chatRenderer.js MODEL_INFO.
 # Keep in sync with the JS table (ctx window kept for parity/debugging).
 MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # --- Anthropic ---
+    # --- Anthropic --- (platform.claude.com prompt-caching pricing table)
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-fable-5": (10.00, 50.00),
+    "claude-mythos-5-1": (10.00, 50.00),
+    "claude-mythos-5": (10.00, 50.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-opus-5": (5.00, 25.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-haiku-5-5": (0.10, 0.50),  # prompts <=100k; see _LONG_PROMPT_PRICING
     "claude-sonnet-4-5": (3.00, 15.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4": (3.00, 15.00),
-    "claude-opus-4": (15.00, 75.00),
-    "claude-opus-4-6": (15.00, 75.00),
+    "claude-opus-4": (15.00, 75.00),  # Opus 4 / 4.1
+    "claude-opus-4-5": (5.00, 25.00),
+    "claude-opus-4-6": (5.00, 25.00),
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-haiku-4-5": (1.00, 5.00),
     "claude-haiku-4": (0.80, 4.00),
     "claude-haiku-3-5": (0.80, 4.00),
     "claude-3-5-sonnet": (3.00, 15.00),
@@ -102,6 +115,22 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "hermes": (0.20, 0.20),
 }
 
+# Anthropic prompt-cache multipliers on the base input price. 5-minute cache
+# writes cost 1.25x; cache reads cost 0.1x except where listed below.
+_ANTHROPIC_CACHE_WRITE_MULT = 1.25
+_ANTHROPIC_CACHE_READ_MULT_DEFAULT = 0.10
+_ANTHROPIC_CACHE_READ_MULT = {
+    "claude-fable-5-1": 0.025,
+    "claude-mythos-5-1": 0.025,
+    "claude-opus-5-5": 0.05,
+    "claude-sonnet-5-5": 0.05,
+}
+# Models priced by prompt length: (threshold_tokens, (input, output)) used when
+# the whole prompt (cached + uncached) exceeds the threshold.
+_LONG_PROMPT_PRICING = {
+    "claude-haiku-5-5": (100_000, (0.50, 2.50)),
+}
+
 _CGNAT_RE = re.compile(r"^100\.(\d+)\.")
 _PRIVATE_172_RE = re.compile(r"^172\.(1[6-9]|2\d|3[01])\.")
 
@@ -170,8 +199,14 @@ def estimate_cost_usd(
     input_tokens: int | float | None,
     output_tokens: int | float | None,
     endpoint_url: str | None = None,
+    cache_read_tokens: int | float | None = None,
+    cache_write_tokens: int | float | None = None,
 ) -> float | None:
     """Estimated USD cost for a turn, or None when it can't be priced.
+
+    ``input_tokens`` is the whole prompt. For Claude models, the optional
+    ``cache_read_tokens`` / ``cache_write_tokens`` (parts of that prompt) are
+    billed at Anthropic's prompt-cache rates instead of the base input price.
 
     None cases: unknown model (never guess), local/subscription/unknown
     endpoint, or no token counts.
@@ -183,10 +218,25 @@ def estimate_cost_usd(
     try:
         in_tok = int(input_tokens or 0)
         out_tok = int(output_tokens or 0)
+        read_tok = max(int(cache_read_tokens or 0), 0)
+        write_tok = max(int(cache_write_tokens or 0), 0)
     except (TypeError, ValueError):
         return None
     key = match_model_key(model, MODEL_PRICING.keys())
     if not key:
         return None
     price_in, price_out = MODEL_PRICING[key]
-    return (in_tok * price_in + out_tok * price_out) / 1_000_000
+    long_tier = _LONG_PROMPT_PRICING.get(key)
+    if long_tier and in_tok > long_tier[0]:
+        price_in, price_out = long_tier[1]
+    if not key.startswith("claude-") or not (read_tok or write_tok):
+        return (in_tok * price_in + out_tok * price_out) / 1_000_000
+    # Never let a malformed split bill more cache tokens than the prompt held.
+    read_tok = min(read_tok, in_tok)
+    write_tok = min(write_tok, in_tok - read_tok)
+    uncached = in_tok - read_tok - write_tok
+    read_mult = _ANTHROPIC_CACHE_READ_MULT.get(key, _ANTHROPIC_CACHE_READ_MULT_DEFAULT)
+    input_cost = price_in * (
+        uncached + read_tok * read_mult + write_tok * _ANTHROPIC_CACHE_WRITE_MULT
+    )
+    return (input_cost + out_tok * price_out) / 1_000_000
