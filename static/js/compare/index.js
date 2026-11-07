@@ -21,7 +21,7 @@ import { EVAL_PROMPTS, WAVE_FRAMES,
 import { fetchModels, _persistSelections, _modelDisplayNames, getExcludedModels, setExcludedModels } from './models.js';
 import { showModelSelector, disableToolToggles, restoreToolToggles, _syncToolbarIndicator } from './selector.js?v=20260903compareprobe4';
 import { _checkUnprobed, _clearProbeWaves } from './probe.js';
-import { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions } from './stream.js?v=20260908panestatspopup2';
+import { streamToPane, _renderSearchResults, _runSynthForPane, _formatMs, registerStreamActions } from './stream.js?v=20261107promptcache1';
 import {
   stopAll, stopPane, rerollPane, shufflePanePositions, resetCompare,
   _addPane, _removePane, toggleExpandPane, togglePanePreview, copyPaneResponse,
@@ -29,8 +29,8 @@ import {
   mountMobilePaneTabs, syncShuffleButtonPlacement,
   paneSettingsButtonHtml, togglePaneSettings,
   registerPaneActions,
-} from './panes.js?v=20260908compareheader1';
-import { handleVote, buildVoteBar, addFinishBadge, spawnConfetti, _saveVote, registerCompareActions } from './vote.js?v=20260828resendcaldrag1';
+} from './panes.js?v=20261107promptcache1';
+import { handleVote, buildVoteBar, addFinishBadge, spawnConfetti, _saveVote, registerCompareActions } from './vote.js?v=20261107promptcache1';
 import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
 
 // ── External dependency imports ──

@@ -16334,8 +16334,15 @@ def _usage_bucket(
     input_tokens: int,
     output_tokens: int,
     usage_source: str,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> dict:
-    """Build non-secret usage attribution for one concrete Agent round."""
+    """Build non-secret usage attribution for one concrete Agent round.
+
+    ``input_tokens`` is the whole prompt; the optional cache counts are the
+    parts of it Anthropic served from / wrote to its prompt cache, so cost
+    displays can bill them at cache rates.
+    """
 
     bucket = {
         "round": round_num,
@@ -16346,6 +16353,10 @@ def _usage_bucket(
         "output_tokens": max(int(output_tokens or 0), 0),
         "usage_source": "real" if usage_source == "real" else "estimated",
     }
+    if cache_read_tokens and cache_read_tokens > 0:
+        bucket["cache_read_input_tokens"] = int(cache_read_tokens)
+    if cache_write_tokens and cache_write_tokens > 0:
+        bucket["cache_creation_input_tokens"] = int(cache_write_tokens)
     # Persist the owner-resolved route classification so saved usage remains
     # stable even if the session later selects a different endpoint.
     if isinstance(endpoint_cost_tracked, bool):
@@ -22615,6 +22626,8 @@ async def stream_agent_loop(
                 else max(len(direct_response) // 4, 1)
             ),
             usage_source="real" if direct_has_real_usage else "estimated",
+            cache_read_tokens=real_cache_read_tokens if direct_has_real_usage else 0,
+            cache_write_tokens=real_cache_write_tokens if direct_has_real_usage else 0,
         )
         metrics = {
             "model": direct_actual_model,
@@ -26672,6 +26685,8 @@ async def stream_agent_loop(
         _round_actual_endpoint_label = actual_endpoint_label
         _round_real_input_tokens = 0
         _round_real_output_tokens = 0
+        _round_cache_read_tokens = 0
+        _round_cache_write_tokens = 0
         _round_has_real_usage = False
         _round_usage_finalized = False
         # Some API models (notably DeepSeek) stream DSML/XML tool calls as
@@ -26714,6 +26729,8 @@ async def stream_agent_loop(
                 input_tokens=round_input_tokens,
                 output_tokens=round_output_tokens,
                 usage_source=usage_source,
+                cache_read_tokens=_round_cache_read_tokens if _round_has_real_usage else 0,
+                cache_write_tokens=_round_cache_write_tokens if _round_has_real_usage else 0,
             ))
         if (
             round_num == 1
@@ -27677,8 +27694,12 @@ async def stream_agent_loop(
                         round_output = normalized_usage["output_tokens"]
                         real_input_tokens += round_input
                         real_output_tokens += round_output
-                        real_cache_read_tokens += _usage_cache_count(u, "cache_read_input_tokens")
-                        real_cache_write_tokens += _usage_cache_count(u, "cache_creation_input_tokens")
+                        _u_cache_read = _usage_cache_count(u, "cache_read_input_tokens")
+                        _u_cache_write = _usage_cache_count(u, "cache_creation_input_tokens")
+                        real_cache_read_tokens += _u_cache_read
+                        real_cache_write_tokens += _u_cache_write
+                        _round_cache_read_tokens += _u_cache_read
+                        _round_cache_write_tokens += _u_cache_write
                         _round_real_input_tokens += round_input
                         _round_real_output_tokens += round_output
                         last_round_input_tokens = round_input

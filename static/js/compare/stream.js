@@ -1,8 +1,8 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
 import { consumeCompareEvents } from './sse.js';
-import { addFinishBadge } from './vote.js?v=20260828resendcaldrag1';
-import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20260914metricssummary1';
+import { addFinishBadge } from './vote.js?v=20261107promptcache1';
+import { getModelCost, renderAskUserCard, safeDisplayImageSrc } from '../chatRenderer.js?v=20261107promptcache1';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js?v=20260916largetoolscroll1';
@@ -817,7 +817,10 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       }
       // Add per-request cost and cost per 1000
       const _model = metrics.model || (state._selectedModels[paneIdx] && state._selectedModels[paneIdx].model) || '';
-      const _cost = getModelCost(_model, metrics.input_tokens || 0, metrics.output_tokens || 0);
+      const _cost = getModelCost(
+        _model, metrics.input_tokens || 0, metrics.output_tokens || 0,
+        metrics.cache_read_input_tokens || 0, metrics.cache_creation_input_tokens || 0,
+      );
       _setPaneSummary(paneIdx, metrics, _cost);
       // Build the metrics span with optional cost and context
       span.textContent = parts.join(' | ');

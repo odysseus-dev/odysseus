@@ -115,6 +115,18 @@ def test_final_metrics_estimate_uses_cache_split():
     assert m["cost_source"] == "estimated"
 
 
+def test_usage_bucket_carries_cache_split_only_when_present():
+    common = dict(round_num=1, model="claude-opus-4-6", endpoint_id=None,
+                  endpoint_label=None, endpoint_cost_tracked=True,
+                  input_tokens=100_298, output_tokens=5, usage_source="real")
+    bucket = agent_loop._usage_bucket(**common, cache_read_tokens=100_000, cache_write_tokens=248)
+    assert bucket["cache_read_input_tokens"] == 100_000
+    assert bucket["cache_creation_input_tokens"] == 248
+    plain = agent_loop._usage_bucket(**common)
+    assert "cache_read_input_tokens" not in plain
+    assert "cache_creation_input_tokens" not in plain
+
+
 def test_estimate_cost_usd_unknown_model_returns_none():
     assert model_pricing.estimate_cost_usd("totally-unknown-model", 1000, 1000, "https://openrouter.ai/api/v1") is None
     assert model_pricing.estimate_cost_usd("", 1000, 1000) is None

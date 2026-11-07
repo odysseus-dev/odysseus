@@ -3,7 +3,7 @@ import { spawnConfetti } from '../shared/ui/confetti.js';
 import Storage from '../storage.js';
 import state from './state.js';
 import { _modelDisplayNames } from './models.js';
-import { getModelCost } from '../chatRenderer.js?v=20260914metricssummary1';
+import { getModelCost } from '../chatRenderer.js?v=20261107promptcache1';
 import uiModule from '../ui.js?v=20260916largetoolscroll1';
 import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js?v=20260908compareprompts1';
 import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';
@@ -108,7 +108,10 @@ function _saveVote(winnerIdx) {
   const costs = state._selectedModels.map((m, i) => {
     const pm = state._paneMetrics[i];
     if (!pm) return null;
-    return getModelCost(pm.model || m.model, pm.input_tokens || 0, pm.output_tokens || 0);
+    return getModelCost(
+      pm.model || m.model, pm.input_tokens || 0, pm.output_tokens || 0,
+      pm.cache_read_input_tokens || 0, pm.cache_creation_input_tokens || 0,
+    );
   });
   const record = {
     models: modelNames,
