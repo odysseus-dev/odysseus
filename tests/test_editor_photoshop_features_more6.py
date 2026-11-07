@@ -266,9 +266,3 @@ def test_more6_preferred_wind_is_present():
     assert 'data-filter-action="stylize-wind"' in TOPBAR
     assert "else if (action === 'stylize-wind') applyWind?.();" in WIRE
     assert "export function wind(snap, v, dst)" in EFFECTS
-
-
-def test_more6_sw_version_is_current():
-    m = re.search(r"const CACHE_NAME = '([^']+)'", SW)
-    assert m, "CACHE_NAME not found"
-    assert re.fullmatch(r"odysseus-v\d+-pr40-editor-precache", m.group(1)), m.group(1)

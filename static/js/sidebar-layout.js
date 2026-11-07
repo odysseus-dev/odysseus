@@ -106,6 +106,9 @@ export function initSidebarLayout(Storage, opts) {
       document.body.classList.toggle('hamburger-only', sidebarHidden && railHidden);
       document.body.classList.toggle('sidebar-collapsed', sidebarHidden);
       _setSidebarModeClasses(!sidebarHidden ? 'full' : (railHidden ? 'off' : 'mini'));
+      hamburgerBtn.setAttribute('aria-expanded', String(!sidebarHidden));
+      const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+      if (sidebarToggleBtn) sidebarToggleBtn.setAttribute('aria-expanded', String(!sidebarHidden));
     }
     // Keep incognito button clear of hamburger
     const incogBtn = document.getElementById('incognito-btn');

@@ -14,11 +14,12 @@ from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.guard_deco import content_type, honeypot, usage_monitor
-from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
+from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL, username_error
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.auth_helpers import _auth_disabled
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
+from src import tool_capabilities
 from src.settings import (
     load_settings as _load_settings,
     save_settings as _save_settings,
@@ -157,8 +158,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Already configured")
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.username.strip()) < 1:
-            raise HTTPException(400, "Username is required")
+        name_error = username_error(body.username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
         ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
@@ -179,8 +181,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Registration is disabled. Ask an admin for an account.")
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.username.strip()) < 1:
-            raise HTTPException(400, "Username is required")
+        name_error = username_error(body.username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
         ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
@@ -347,8 +350,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         if len(body.password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-        if len(body.username.strip()) < 1:
-            raise HTTPException(400, "Username is required")
+        name_error = username_error(body.username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if body.username.lower() in RESERVED_USERNAMES:
             raise HTTPException(403, "Username is reserved")
         ok = auth_manager.create_user(body.username, body.password, body.is_admin)
@@ -375,8 +379,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        body = await request.json()
-        ok = auth_manager.set_privileges(username, body)
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Request body must be a JSON object")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
+        try:
+            ok = auth_manager.set_privileges(username, body)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         if not ok:
             raise HTTPException(404, "User not found or is admin")
         return {"ok": True, "privileges": auth_manager.get_privileges(username)}
@@ -390,6 +402,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         new_username = (body.username or "").strip().lower()
         if not new_username:
             raise HTTPException(400, "Username required")
+        name_error = username_error(new_username)
+        if name_error:
+            raise HTTPException(400, name_error)
         if old_username == new_username:
             return {"ok": True, "username": new_username, "renamed_self": old_username == user}
         if old_username not in auth_manager.users:
@@ -667,7 +682,18 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        result = auth_manager.set_admin(username, body.is_admin, user)
+        try:
+            result = auth_manager.set_admin(username, body.is_admin, user)
+        finally:
+            # A demotion purges the user's ApiToken rows; dirty the bearer
+            # cache so already-cached tokens stop authenticating.
+            if not body.is_admin:
+                invalidator = getattr(
+                    getattr(getattr(request, "app", None), "state", None),
+                    "invalidate_token_cache", None,
+                )
+                if callable(invalidator):
+                    invalidator()
         if result is SetAdminResult.USER_NOT_FOUND:
             raise HTTPException(404, "User not found")
         if result is SetAdminResult.NOT_AUTHORIZED:
@@ -769,6 +795,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         settings = without_retired_settings(_load_settings())
         if _auth_disabled() or (user and auth_manager.is_admin(user)):
+            # Deployment-level truth for the Tool approval row: a falsy
+            # ODYSSEUS_TOOL_APPROVAL_GATE disables the approval gate for every
+            # run regardless of the stored tool_approval_mode, so surface it to
+            # admins instead of letting the row mislead them the other way.
+            settings["tool_approval_gate_env_disabled"] = not tool_capabilities.TOOL_APPROVAL_GATE_ENABLED
             return settings
         return scrub_settings(settings)
 
@@ -785,6 +816,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
             "auto_compact_threshold_percent": (50, 95),
         }
+        _VALID_VALUES = {
+            "tool_approval_mode": {"ask", "off"},
+        }
         for key in DEFAULT_SETTINGS:
             if key in RETIRED_SETTING_KEYS:
                 continue
@@ -798,6 +832,15 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+
+            if key in _VALID_VALUES:
+                allowed = _VALID_VALUES[key]
+                if not isinstance(val, str) or val not in allowed:
+                    raise HTTPException(
+                        400,
+                        f"{key} must be one of {sorted(allowed)}",
+                    )
+
             current[key] = val
         _save_settings(current)
         return without_retired_settings(current)
@@ -903,6 +946,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         """Create a new integration (admin only)."""
         _require_admin_user(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
         item = add_integration(body)
         return {"ok": True, "integration": mask_integration_secret(item)}
 
@@ -911,6 +956,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         """Update an existing integration (admin only)."""
         _require_admin_user(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Request body must be a JSON object")
         item = update_integration(integration_id, body)
         if not item:
             raise HTTPException(404, "Integration not found")

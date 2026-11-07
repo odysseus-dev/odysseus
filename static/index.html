@@ -16,13 +16,6 @@
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
-  // Stops iOS focus-zoom on every field; iOS still allows pinch-zoom, other platforms would not.
-  (function(){
-    var ua = navigator.userAgent || '';
-    var isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    var vp = document.querySelector('meta[name="viewport"]');
-    if (isIOS && vp) vp.setAttribute('content', vp.getAttribute('content') + ', maximum-scale=1');
-  })();
   (function(){
     try {
       var t = JSON.parse(localStorage.getItem('odysseus-theme'));
@@ -254,32 +247,32 @@
        real request is discarded and the font fetched a second time. -->
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-Regular.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/static/fonts/FiraCode-SemiBold.woff2">
-  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/02-compare.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/04-memory.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/05-documents.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/07-documents.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/08-skills.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/14-email.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/15-notes.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/17-research.css?v=20260929csssplit">
+  <link rel="stylesheet" href="/static/css/00-tokens.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/01-agent-chat.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/02-compare.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/03-agent-chat.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/04-memory.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/05-documents.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/06-admin-settings.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/07-documents.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/08-skills.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/09-gallery.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/10-cookbook.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/11-tasks.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/12-gallery.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/13-image-editor.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/14-email.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/15-notes.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/16-calendar.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/17-research.css?v=20261021confirmalign1">
   <!-- Panel stylesheets split out of style.css for maintainability. They are
        eager and their order is load-bearing: the cascade is the concatenation of
        these files in this order, so they must stay in this order here and in the
        PRECACHE list in sw.js. None of them is lazy-loaded. -->
-  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20260929csssplit">
-  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20260929csssplit">
-  <link rel="modulepreload" href="/static/app.js?v=20260929csssplit">
+  <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20261021confirmalign1">
+  <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20261021confirmalign1">
+  <link rel="modulepreload" href="/static/app.js?v=20261021confirmalign1">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
   <link rel="modulepreload" href="/static/js/sessions.js">
@@ -664,6 +657,7 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Font</label>
             <select id="theme-font-select" class="theme-fd-select" aria-label="Font">
+              <option value="gohu">GohuFont</option>
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
               <option value="serif">Serif</option>
@@ -1684,6 +1678,10 @@
                 <select id="set-imgModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
               </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
+                <label class="settings-label" for="set-imgEditModelSelect">Image edit model</label>
+                <select id="set-imgEditModelSelect" class="settings-select"><option value="">Same as generation</option></select>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Quality</label>
                 <select id="set-imgQualitySelect" class="settings-select">
                   <option value="low">Low (fastest, cheapest)</option>
@@ -2465,6 +2463,22 @@
                 <label class="settings-label">Max steps per message</label>
                 <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Tool approval</label>
+                <select id="set-toolApprovalMode" class="settings-select">
+                  <option value="ask">Always ask</option>
+                  <option value="off">Off (YOLO)</option>
+                </select>
+              </div>
+
+              <div class="admin-toggle-sub" style="margin-top:4px;">
+                Auto-approve turns off the tool approval gate (same control as the
+                ODYSSEUS_TOOL_APPROVAL_GATE env var). Bash, host_shell, send_email and
+                delete_email then run without a confirmation even after the agent has
+                seen untrusted external content (email, web pages, documents), so a
+                prompt-injected instruction can reach them directly.
+              </div>
+              <div id="set-toolApprovalEnvNote" class="admin-toggle-sub" style="margin-top:4px;display:none;color:var(--red);"></div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
@@ -2695,7 +2709,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
-<script type="module" src="/static/app.js?v=20260929csssplit"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/app.js?v=20261021confirmalign1"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js?v=20260916autoscroll1').catch(()=>{});}</script>

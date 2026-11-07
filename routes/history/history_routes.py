@@ -474,10 +474,16 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         _verify_session_owner(request, session_id)
         try:
             body = await request.json()
+            if not isinstance(body, dict):
+                raise HTTPException(400, "Request body must be a JSON object")
             role = body.get("role", "assistant")
             content = body.get("content", "")
+            if role not in ("user", "assistant"):
+                raise HTTPException(400, "role must be 'user' or 'assistant'")
             if not content:
                 raise HTTPException(400, "content is required")
+            if not isinstance(content, str):
+                raise HTTPException(400, "content must be a string")
             metadata = sanitize_client_message_metadata(body.get("metadata"))
             _reserve_message_uploads(request, content, metadata)
             msg = ChatMessage(role=role, content=content, metadata=metadata)
@@ -833,6 +839,23 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             body = await request.json()
             keep_count = body.get("keep_count", 0)
+            # A message id is exact; keep_count from the client counts only the
+            # messages loaded in the page. before_msg_id forks before that
+            # message, through_msg_id includes it.
+            before_msg_id = str(body.get("before_msg_id") or "").strip()
+            through_msg_id = str(body.get("through_msg_id") or "").strip()
+            if before_msg_id or through_msg_id:
+                db = SessionLocal()
+                try:
+                    all_db_messages = db.query(DbChatMessage).filter(
+                        DbChatMessage.session_id == session_id
+                    ).order_by(DbChatMessage.timestamp).all()
+                finally:
+                    db.close()
+                resolved = _keep_count_before_message(all_db_messages, before_msg_id or through_msg_id)
+                if resolved is None:
+                    raise HTTPException(404, "Message not found")
+                keep_count = resolved + (0 if before_msg_id else 1)
 
             # Get the source session. keep_count indexes into source.history,
             # so this must go through get_session — reading the cache directly

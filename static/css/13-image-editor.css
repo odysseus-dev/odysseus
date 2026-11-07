@@ -264,7 +264,42 @@
 /* The brush controls (Color/Size/preset/caret) hug their content; only the
    trailing slider section grows, so the Opacity/Flow/Softness group sits
    right after the caret instead of leaving a wide gap. */
-.ge-controls--in-options #ge-brush-controls { flex: 0 0 auto; }
+.ge-controls--in-options #ge-brush-controls { flex: 0 0 auto; flex-direction: row; align-items: center; gap: 8px; }
+.ge-controls--in-options #ge-brush-softness-row input[type="range"] { width: 88px; flex: 0 0 88px; }
+#ge-brush-softness-row {
+  display: grid !important;
+  grid-template-columns: 14px max-content 88px;
+  column-gap: 8px;
+  align-items: center;
+}
+#ge-brush-softness-row:has(> .ge-slider-value) {
+  grid-template-columns: 14px max-content 88px 6ch;
+}
+#ge-brush-softness-row label {
+  flex: 0 0 auto;
+  min-width: max-content;
+  gap: 6px;
+}
+#ge-brush-softness-row #ge-brush-softness-label {
+  position: static;
+  min-width: 6ch;
+  margin: 0;
+  padding: 0;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ge-controls--in-options #ge-brush-controls .ge-brush-size-row {
+  display: grid;
+  grid-template-columns: minmax(6ch, max-content) 96px auto;
+  column-gap: 8px;
+}
+.ge-controls--in-options .ge-brush-size-row label,
+.ge-controls--in-options .ge-brush-size-row .ge-size-label {
+  min-width: 6ch;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .ge-controls--in-options .ge-control-row {
   margin: 0 !important;
   flex: 0 0 auto;
@@ -4607,6 +4642,8 @@ body.ge-editor-open textarea.ge-direct-text-editor {
   pointer-events: auto;
 }
 .ge-filter-modal {
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
   width: 240px;
   background: color-mix(in srgb, var(--panel) 95%, transparent);
   border: 1px solid var(--border);
@@ -4631,6 +4668,9 @@ body.ge-editor-open textarea.ge-direct-text-editor {
   gap: 2px;
 }
 .ge-filter-row label {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
   font-size: 10px;
   opacity: 0.7;
   display: flex;
@@ -9731,6 +9771,28 @@ body.ge-editor-open .tour-hint {
 .ge-submenu-caret {
   margin-left: auto;
   color: var(--color-muted);
+}
+.ge-submenu .dropdown-item-compact {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  padding: 0 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ge-submenu .dropdown-item-compact svg {
+  flex-shrink: 0;
+  max-height: 16px;
+}
+@media (max-width: 820px) {
+  .ge-submenu .dropdown-item-compact {
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+  }
 }
 .ge-submenu {
   display: none;

@@ -93,7 +93,7 @@ def test_custom_filter_reuses_convolve_kernel():
     assert "convolve(readSource(snap), k, divisor, bias, 1)" in EFFECTS
 
 
-def test_new_filter_aliases_registered():
+def test_blur_and_custom_filter_aliases_registered():
     assert "'box-blur': 'blur-box'" in EDITOR
     assert "'surface-blur': 'blur-surface'" in EDITOR
     assert "custom: 'other-custom'" in EDITOR

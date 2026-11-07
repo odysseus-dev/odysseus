@@ -32,13 +32,12 @@ def test_preflight_module_has_the_four_setup_steps():
     assert "required ready" in src
 
 
-def test_preflight_is_wired_into_the_editor():
+def test_editor_uses_ai_settings_without_redundant_setup():
     editor = _read("static/js/galleryEditor.js")
-    assert "import { createPreflight } from './editor/preflight.js';" in editor
-    assert "createPreflight({ canvasArea })" in editor
-    assert "_preflight?.maybeOpen();" in editor
-    assert "setupBtn.id = 'ge-setup-btn';" in editor
-    assert "_preflight?.destroy();" in editor
+    assert "createPreflight" not in editor
+    assert "setupBtn.id = 'ge-setup-btn';" not in editor
+    assert "createAiSettings({ container })" in editor
+    assert "aiBtn.addEventListener('click', () => _aiSettings?.open());" in editor
 
 
 def test_ai_models_exposes_status_for_the_checklist():

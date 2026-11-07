@@ -22,6 +22,20 @@
 
 /* Session items */
 .session-item { position: relative; }
+
+/* Title fade: the server auto-renames a chat shortly after its first
+   prompt, which re-renders the sidebar. Fade the new title in so the
+   change reads as smooth rather than a snap. */
+.session-item .grow.session-title-updated {
+  animation: sessionTitleFade 0.5s ease;
+}
+@keyframes sessionTitleFade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-item .grow.session-title-updated { animation: none; }
+}
 .text-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-menu-btn { padding: 0 2px !important; min-width: 20px; height: 20px; display: inline-flex !important; align-items: center; justify-content: center; background: none !important; border-color: transparent !important; }
 .session-menu-btn:hover { background: none !important; border-color: transparent !important; }
