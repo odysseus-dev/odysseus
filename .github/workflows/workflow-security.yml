@@ -18,7 +18,7 @@ name: Workflow security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 # Default-deny token; each job grants only read access to the code.

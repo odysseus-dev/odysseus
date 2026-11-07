@@ -27,7 +27,7 @@ on:
       - 'assets/branding/**'
       - '.github/ISSUE_TEMPLATE/**'
   push:
-    branches: [main]
+    branches: [main, dev]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -43,12 +43,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Pull requests and manual runs: build and scan under a read-only token.
+  # Pull requests, dev pushes, and manual runs: scan under a read-only token.
   # The build executes PR-supplied Dockerfile instructions, so this job must
   # not hold any write scope, and it does not upload to the Security tab.
   scan:
     name: Trivy (image scan, advisory)
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     # Advisory: a CVE in an upstream package must not block a PR.
     continue-on-error: true
@@ -94,7 +94,7 @@ jobs:
   # security-events:write.
   publish:
     name: Trivy (image scan + SARIF upload)
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     continue-on-error: true
     permissions:
