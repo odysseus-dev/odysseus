@@ -146,6 +146,7 @@ def run_terminal_branch(monkeypatch, native_calls, result, operation=None, *, ma
         requested_model="fixture-model", round_texts=[], round_models=[],
         round_endpoint_ids=[], round_endpoint_labels=[], _last_route_request_messages=[],
         _last_route_context_length=4096, real_input_tokens=20, real_output_tokens=5,
+        real_cache_read_tokens=0, real_cache_write_tokens=0,
         has_real_usage=True, time_to_first_token=0.1, _t0=time.time(),
         json=json, time=time,
     )
