@@ -1943,7 +1943,55 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # The breakpoint caches all tool defs preceding it in the request.
             anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
             payload["tools"] = anthropic_tools
+    # Cache the growing conversation too. Agent rounds and multi-turn chats
+    # re-send every earlier message, so a breakpoint on the final block lets
+    # the next request read the whole history from cache (the API's 20-block
+    # lookback finds this write). One-shot calls skip it: no reuse would pay
+    # back the cache-write premium.
+    if tools or len(chat_messages) >= 3:
+        _mark_last_message_cache_breakpoint(chat_messages)
     return payload
+
+
+# Block types the Messages API accepts a `cache_control` breakpoint on.
+# Thinking blocks are excluded by the API; empty text blocks cannot be cached.
+_ANTHROPIC_CACHEABLE_BLOCK_TYPES = {"text", "image", "document", "tool_use", "tool_result"}
+
+
+def _mark_last_message_cache_breakpoint(chat_messages):
+    """Put one ephemeral cache breakpoint on the last cacheable block of the
+    final message. Copies the message and block it changes, so the caller's
+    history never accumulates breakpoints across rounds (the API allows 4)."""
+    if not chat_messages:
+        return
+    for msg in chat_messages:
+        content = msg.get("content")
+        if isinstance(content, list) and any(
+            isinstance(b, dict) and "cache_control" in b for b in content
+        ):
+            return  # caller already placed its own message breakpoint
+    last = chat_messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content.strip():
+            return
+        blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        blocks = list(content)
+    else:
+        return
+    for i in range(len(blocks) - 1, -1, -1):
+        block = blocks[i]
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype not in _ANTHROPIC_CACHEABLE_BLOCK_TYPES:
+            continue
+        if btype == "text" and not str(block.get("text") or "").strip():
+            continue
+        blocks[i] = {**block, "cache_control": {"type": "ephemeral"}}
+        chat_messages[-1] = {**last, "content": blocks}
+        return
 
 def _build_anthropic_headers(headers):
     """Convert Bearer auth to x-api-key for Anthropic."""
