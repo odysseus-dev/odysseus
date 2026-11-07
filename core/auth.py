@@ -128,6 +128,15 @@ class SetAdminResult(enum.Enum):
     LAST_ADMIN = "last_admin"           # would remove the last remaining admin
 
 
+# Session-lookup states for the shared token resolver (_authenticate_token).
+# _ORPHAN means the token names a user missing from this worker's *current*
+# auth snapshot — not trusted until the snapshot has been re-read.
+_SESSION_VALID = "valid"
+_SESSION_ORPHAN = "orphan"
+_SESSION_EXPIRED = "expired"
+_SESSION_MISSING = "missing"
+
+
 class AuthManager:
     """Manages multi-user password + session-token auth system."""
 
@@ -160,6 +169,21 @@ class AuthManager:
         # on disk.  A disk sync must never re-add these; pruned once the
         # on-disk file no longer contains them.
         self._revoked_tokens: set = set()
+        # Tokens whose username this worker itself renamed since the last
+        # disk sync (filled by rename_user, cleared by _save_sessions for
+        # the tokens it writes).  A disk entry still carrying the old
+        # username must not undo a local rename during a merge; every
+        # other username mismatch yields to disk.
+        self._renamed_since_sync: set = set()
+        # Thread-local depth of _interprocess_auth_lock: _save records the
+        # auth.json signature only while that lock is held, and clears it
+        # otherwise (an unlocked write leaves the snapshot unconfirmed).
+        self._ipc_auth_local = threading.local()
+        # Signature (st_mtime_ns, st_ino, st_size) of the auth.json whose
+        # content self._config mirrors, or None while the snapshot is
+        # unconfirmed.  Recorded by _load/_save (so a worker's own writes do
+        # not trigger a re-read) and consulted by _refresh_users_if_changed.
+        self._auth_signature: Optional[tuple] = None
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -167,6 +191,7 @@ class AuthManager:
         self._migrate_legacy_admin_role()
 
     def _load(self):
+        self._auth_signature = None
         try:
             if os.path.exists(self.auth_path):
                 # Contains password hashes — restrict pre-existing files
@@ -177,6 +202,7 @@ class AuthManager:
                     pass
                 with open(self.auth_path, "r", encoding="utf-8") as f:
                     self._config = json.load(f)
+                    stat_result = os.fstat(f.fileno())
                 # Normalize all stored usernames to lowercase so they match
                 # the .strip().lower() applied at login/verify time. Fixes
                 # "Invalid credentials" when auth.json was written with
@@ -186,6 +212,9 @@ class AuthManager:
                         k.strip().lower(): v
                         for k, v in self._config["users"].items()
                     }
+                self._auth_signature = (
+                    stat_result.st_mtime_ns, stat_result.st_ino, stat_result.st_size
+                )
                 logger.info("Auth config loaded")
             else:
                 self._config = {}
@@ -193,6 +222,91 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to load auth config: {e}")
             self._config = {}
+
+    def _auth_file_signature(self) -> Optional[tuple]:
+        """Signature (st_mtime_ns, st_ino, st_size) of auth.json, or None
+        when it cannot be stat'ed.  An overwrite via atomic_write_json
+        changes at least the inode, so the signature cannot go stale on a
+        rewrite that lands inside one filesystem-timestamp tick."""
+        try:
+            stat_result = os.stat(self.auth_path)
+        except OSError:
+            return None
+        return (stat_result.st_mtime_ns, stat_result.st_ino, stat_result.st_size)
+
+    def _refresh_users_if_changed(self) -> bool:
+        """Hot-reload self._config when another worker rewrote auth.json.
+
+        Each uvicorn worker keeps its own in-memory user snapshot, and the
+        mutation paths only reload under the inter-process auth lock.  The
+        token validators therefore need the freshest snapshot they can get:
+        without this, a session imported from sessions.json for an account
+        created on another worker after this one started would fail the
+        orphan check and be persisted as a revocation tombstone (review P1
+        on PR #5752).
+
+        Gated without a lock on the auth.json signature; steady-state cost
+        is one os.stat.  On change: take _config_lock, open the file and
+        fstat the open descriptor so the recorded signature matches the
+        content actually parsed, and parse into a temporary — self._config
+        is swapped only on success.  Keys are normalized exactly as _load
+        does, and RESERVED_USERNAMES plus empty names are dropped in memory
+        so a hand-edited auth.json cannot admit a request sentinel through
+        this hot path (the drop is never written back to disk; the mutators
+        own the file).
+
+        On a read/parse failure or a missing file the last good snapshot is
+        kept, the signature is left unrecorded (the next validation retries),
+        and False is returned: the caller must then treat "user absent" as
+        unconfirmed rather than proven.  Returns True only when the current
+        auth.json is what self._config reflects.
+
+        Caller must not hold _config_lock (non-reentrant) or _sessions_lock
+        (lock order is _interprocess_auth_lock -> _config_lock ->
+        _sessions_lock).
+        """
+        signature = self._auth_file_signature()
+        if signature is not None and signature == self._auth_signature:
+            return True
+        if signature is None and not os.path.exists(self.auth_path):
+            # auth.json is simply absent: a quiet unconfirmed state, not
+            # an error to log per validation.  No lock taken; the last
+            # good snapshot is kept and the caller fails closed.
+            logger.debug("Auth config file missing — keeping last-good user snapshot")
+            return False
+        with self._config_lock:
+            # Another thread on this worker may have refreshed already.
+            signature = self._auth_file_signature()
+            if signature is not None and signature == self._auth_signature:
+                return True
+            try:
+                with open(self.auth_path, "r", encoding="utf-8") as f:
+                    stat_result = os.fstat(f.fileno())
+                    config = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to refresh auth config: {e}")
+                return False
+            if not isinstance(config, dict):
+                logger.error("Failed to refresh auth config: not a JSON object")
+                return False
+            users = config.get("users")
+            if users is not None and not isinstance(users, dict):
+                logger.error("Failed to refresh auth config: 'users' is not an object")
+                return False
+            if users is not None:
+                normalized = {}
+                for key, data in users.items():
+                    name = str(key or "").strip().lower()
+                    if not name or name in RESERVED_USERNAMES:
+                        continue
+                    normalized[name] = data
+                config["users"] = normalized
+            self._config = config
+            self._auth_signature = (
+                stat_result.st_mtime_ns, stat_result.st_ino, stat_result.st_size
+            )
+            logger.info("Auth config refreshed from disk")
+            return True
 
     def _load_sessions(self):
         """Load persisted session tokens from disk, pruning expired ones."""
@@ -245,16 +359,38 @@ class AuthManager:
         with self._sessions_lock:
             if stat.st_mtime_ns == self._sessions_mtime_ns:
                 return
-            try:
-                with open(self._sessions_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception as e:
-                logger.error(f"Failed to reload sessions: {e}")
-                return
-            self._sessions_mtime_ns = stat.st_mtime_ns
-            if not isinstance(data, dict):
-                return
-            self._apply_disk_sessions(data)
+            self._read_and_apply_disk_sessions(stat.st_mtime_ns)
+
+    def _force_reload_sessions(self):
+        """Reload sessions.json bypassing the mtime gate.
+
+        Used by the token validators' second chance (see
+        _authenticate_token): a rewrite by another worker can land within
+        the same filesystem-timestamp tick as this worker's last sync, in
+        which case the mtime gate alone would miss it.  The gate is not
+        advanced here: the next gated reload re-reads and reconciles, so a
+        rewrite racing this parse cannot be swallowed.
+        """
+        with self._sessions_lock:
+            self._read_and_apply_disk_sessions(None)
+
+    def _read_and_apply_disk_sessions(self, gate_mtime_ns: Optional[int]):
+        """Read sessions.json and merge it in.  Caller must hold
+        ``_sessions_lock``.  ``gate_mtime_ns`` is the stat taken before
+        reading, recorded on success, or None for an ungated (force) read
+        that must leave the gate untouched.
+        """
+        try:
+            with open(self._sessions_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to reload sessions: {e}")
+            return
+        if not isinstance(data, dict):
+            return
+        if gate_mtime_ns is not None:
+            self._sessions_mtime_ns = gate_mtime_ns
+        self._apply_disk_sessions(data)
 
     def _apply_disk_sessions(self, data: Dict[str, Any]) -> None:
         """Merge parsed sessions.json content into memory.
@@ -263,6 +399,17 @@ class AuthManager:
         tokens (unless this worker revoked them and the removal hasn't
         reached disk yet), drops tokens revoked by other workers, and
         refreshes the disk-snapshot bookkeeping.
+
+        A token held both in memory and on disk under *different*
+        usernames takes the disk username — another worker (often the
+        one that renamed the account) has already written the truth to
+        disk.  The exception is a token in ``_renamed_since_sync``: this
+        worker renamed it itself and has not written that rename out
+        yet, so its newer in-memory name wins the merge.  The rule does
+        not consult the user snapshot: a lagging snapshot can still hold
+        the *old* name as a known user, which used to make a stale
+        worker write the pre-rename username back and tombstone the
+        token (review P1 r4347312512 finding 1).
         """
         now = time.time()
         for tok, sess in data.items():
@@ -273,6 +420,16 @@ class AuthManager:
                 and sess.get("expiry", 0) > now
             ):
                 self._sessions[tok] = sess
+                continue
+            mem = self._sessions.get(tok)
+            if isinstance(mem, dict) and isinstance(sess, dict):
+                mem_user = str(mem.get("username") or "").strip().lower()
+                disk_user = str(sess.get("username") or "").strip().lower()
+                if (
+                    mem_user != disk_user
+                    and tok not in self._renamed_since_sync
+                ):
+                    self._sessions[tok] = sess
         revoked_elsewhere = [
             tok for tok in self._sessions
             if tok not in data and tok in self._disk_tokens
@@ -324,6 +481,9 @@ class AuthManager:
                 _atomic_write_json(self._sessions_path, snapshot, mode=0o600)
                 self._disk_tokens = set(snapshot)
                 self._revoked_tokens &= self._disk_tokens
+                # Disk now reflects this worker's renames; release the
+                # pending-rename guard for the tokens just written.
+                self._renamed_since_sync -= set(snapshot)
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}")
 
@@ -390,6 +550,17 @@ class AuthManager:
     def _save(self):
         # Password hashes — owner-only, same policy as sessions.json.
         _atomic_write_json(self.auth_path, self._config, indent=2, mode=0o600)
+        # Record the signature of the file just replaced so this worker's
+        # own write does not trigger a re-read on the next refresh — but
+        # only while the caller holds the inter-process auth lock.  A
+        # write from an unlocked path (e.g. reset_user_password holding
+        # only _config_lock) can race a concurrent worker's locked write,
+        # so its snapshot is never confirmed: clear the signature and the
+        # next refresh re-reads auth.json.  Fail-closed, never fail-open.
+        if getattr(self._ipc_auth_local, "depth", 0) > 0:
+            self._auth_signature = self._auth_file_signature()
+        else:
+            self._auth_signature = None
 
     @property
     def users(self) -> Dict[str, Any]:
@@ -440,16 +611,33 @@ class AuthManager:
         """
         with _auth_intraprocess_lock:
             if not HAS_FCNTL:
-                yield
+                self._enter_auth_lock_depth()
+                try:
+                    yield
+                finally:
+                    self._exit_auth_lock_depth()
                 return
             # Open in read-write mode; create the lock file if it doesn't exist.
             fd = os.open(self._ipc_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX)
-                yield
+                self._enter_auth_lock_depth()
+                try:
+                    yield
+                finally:
+                    self._exit_auth_lock_depth()
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
                 os.close(fd)
+
+    def _enter_auth_lock_depth(self) -> None:
+        # Called only after both the intra-process and inter-process auth
+        # locks are held by this thread.  _save uses the depth to decide
+        # whether an auth.json write is a locked (confirmed) write.
+        self._ipc_auth_local.depth = getattr(self._ipc_auth_local, "depth", 0) + 1
+
+    def _exit_auth_lock_depth(self) -> None:
+        self._ipc_auth_local.depth = getattr(self._ipc_auth_local, "depth", 0) - 1
 
     def setup(self, username: str, password: str) -> bool:
         """First-run admin setup. Only works if no users exist."""
@@ -745,11 +933,18 @@ class AuthManager:
             self._save()
 
         renamed_sessions = 0
+        # Pull sessions written by other workers in first (ungated, so a
+        # rewrite inside one mtime tick is not missed): the rename must also
+        # cover tokens this worker has not yet seen in memory.
+        self._force_reload_sessions()
         with self._sessions_lock:
-            for sess in self._sessions.values():
+            for tok, sess in self._sessions.items():
                 sess_user = str((sess or {}).get("username") or "").strip().lower()
                 if sess_user == old_username:
                     sess["username"] = new_username
+                    # Protect this worker's newer name from a stale disk
+                    # entry (old username) until the rename is written.
+                    self._renamed_since_sync.add(tok)
                     renamed_sessions += 1
         if renamed_sessions:
             self._save_sessions()
@@ -1051,58 +1246,88 @@ class AuthManager:
     def validate_token(self, token: Optional[str]) -> bool:
         if not token:
             return False
-        # Sync issuance/revocation from other workers (mtime-gated).
-        self._reload_sessions_if_changed()
-        expired = False
-        deleted_user = False
-        with self._sessions_lock:
-            session = self._sessions.get(token)
-            if session is None:
-                return False
-            if time.time() > session["expiry"]:
-                self._sessions.pop(token, None)
-                expired = True
-            else:
-                # SECURITY: if the user record has since been removed (admin
-                # deleted them while their cookie was still valid), drop the
-                # session so the next request kicks them out instead of
-                # silently authenticating against a non-existent account.
-                if session.get("username") not in self.users:
-                    self._sessions.pop(token, None)
-                    self._revoked_tokens.add(token)
-                    deleted_user = True
-        if expired or deleted_user:
-            self._save_sessions()
-            return False
-        return True
+        # Sync the user snapshot from other workers (signature-gated)
+        # before the orphan check below can be trusted; see
+        # _refresh_users_if_changed.
+        self._refresh_users_if_changed()
+        return self._authenticate_token(token) is not None
 
     def get_username_for_token(self, token: Optional[str]) -> Optional[str]:
         """Return the username associated with a valid token."""
         if not token:
             return None
-        # Sync issuance/revocation from other workers (mtime-gated).
+        # Same snapshot refresh as validate_token — the two are called
+        # back-to-back on every authenticated request (app.py middleware).
+        self._refresh_users_if_changed()
+        return self._authenticate_token(token)
+
+    def _authenticate_token(self, token: str) -> Optional[str]:
+        """Shared body of validate_token / get_username_for_token: reload
+        sessions (mtime-gated), then look the token up.
+
+        If the token's username is unknown to this worker, do not trust the
+        verdict: an account created on another worker after this one booted
+        (the review P1 on PR #5752 — worker B imported A's cookie from
+        sessions.json while still holding a pre-creation auth.json snapshot)
+        would otherwise be revoked as a deleted user, and the tombstone would
+        make worker A reject its own session too.  Leave _sessions_lock,
+        refresh the users snapshot, force an ungated session reload, and look
+        up again.  A revocation (tombstone + save) is persisted only for a
+        user confirmed absent from a successfully-read auth.json; when the
+        snapshot is unconfirmed the request simply fails without revoking.
+        Expiry behaviour is identical on every path.
+
+        Caller must not hold _config_lock or _sessions_lock.
+        """
         self._reload_sessions_if_changed()
-        expired = False
-        deleted_user = False
+        state, username = self._lookup_session(token)
+        if state == _SESSION_VALID:
+            return username
+        if state == _SESSION_EXPIRED:
+            self._save_sessions()
+            return None
+        if state == _SESSION_MISSING:
+            return None
+        # _SESSION_ORPHAN: re-read both files and look the token up again.
+        snapshot_confirmed = self._refresh_users_if_changed()
+        self._force_reload_sessions()
+        state, username = self._lookup_session(token)
+        if state == _SESSION_VALID:
+            return username
+        if state == _SESSION_EXPIRED:
+            self._save_sessions()
+            return None
+        if state == _SESSION_ORPHAN and snapshot_confirmed:
+            # SECURITY: the user record has since been removed (admin
+            # deleted them while their cookie was still valid) — drop the
+            # session so the next request kicks them out instead of
+            # silently authenticating against a non-existent account.
+            with self._sessions_lock:
+                self._sessions.pop(token, None)
+                self._revoked_tokens.add(token)
+            self._save_sessions()
+        return None
+
+    def _lookup_session(self, token: str) -> tuple:
+        """Classify one token against this worker's session map.
+
+        Returns a ``(state, username)`` pair; see the _SESSION_* constants.
+        Expired entries are dropped from memory (the caller must persist
+        the change).  _ORPHAN means only that the username is missing from
+        this worker's *current* auth snapshot — a stale snapshot must not
+        be treated as proof of deletion.
+        """
         with self._sessions_lock:
             session = self._sessions.get(token)
             if session is None:
-                return None
+                return _SESSION_MISSING, None
             if time.time() > session["expiry"]:
                 self._sessions.pop(token, None)
-                expired = True
-            else:
-                _u = session["username"]
-                # SECURITY: orphan check — same rationale as validate_token.
-                if _u not in self.users:
-                    self._sessions.pop(token, None)
-                    self._revoked_tokens.add(token)
-                    deleted_user = True
-                else:
-                    return _u
-        if expired or deleted_user:
-            self._save_sessions()
-        return None
+                return _SESSION_EXPIRED, None
+            username = session.get("username")
+            if username not in self.users:
+                return _SESSION_ORPHAN, None
+            return _SESSION_VALID, username
 
     def revoke_token(self, token: str):
         with self._sessions_lock:
