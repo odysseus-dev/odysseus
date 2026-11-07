@@ -2839,7 +2839,12 @@ export function displayMetrics(messageElement, metrics) {
       e.stopPropagation();
       document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-      const usedTokens = inputTokens || 0;
+      // The prompt the percent was computed from: the last agent round's
+      // request when per-round usage exists (input_tokens sums the rounds,
+      // and each round re-sends the whole history), else the request size.
+      const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
+      const lastBucketInput = Number(buckets[buckets.length - 1]?.input_tokens) || 0;
+      const usedTokens = lastBucketInput || Number(metrics.request_context_tokens) || inputTokens || 0;
       const totalCtx = ctxLen || 0;
       const modelShort = model.split('/').pop();
       const fmtNum = n => n ? n.toLocaleString() : '?';

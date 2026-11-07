@@ -16382,6 +16382,67 @@ def _usage_bucket_summary(usage_buckets: list) -> dict:
     }
 
 
+def _apply_usage_bucket_metrics(
+    metrics: dict,
+    usage_buckets: list,
+    *,
+    context_length: int,
+    total_duration: float,
+    backend_gen_tps: float,
+    endpoint_url: Optional[str],
+    model: str,
+) -> None:
+    """Fold per-round usage into the final metrics of a multi-round turn.
+
+    ``input_tokens`` becomes the sum over rounds (what was billed), while the
+    context figures describe the last request alone: every round re-sends the
+    whole history, so the sum would count the conversation once per round.
+    An estimated cost is re-priced per request, because Anthropic bills each
+    request on its own (cache split, long-prompt tier) and the webui prices
+    the same buckets one by one.
+    """
+
+    usage_summary = _usage_bucket_summary(usage_buckets)
+    if not usage_summary:
+        return
+    metrics.update(usage_summary)
+    if not backend_gen_tps and total_duration > 0:
+        metrics["tokens_per_second"] = round(
+            usage_summary["output_tokens"] / total_duration,
+            2,
+        )
+    last_request_tokens = usage_buckets[-1]["input_tokens"]
+    metrics["request_context_tokens"] = last_request_tokens
+    if context_length:
+        metrics["context_percent"] = min(
+            round((last_request_tokens / context_length) * 100, 1),
+            100.0,
+        )
+    if metrics.get("cost_source") != "estimated":
+        return
+    try:
+        from src.model_pricing import estimate_cost_usd
+
+        total = 0.0
+        for bucket in usage_buckets:
+            cost = estimate_cost_usd(
+                bucket.get("model") or model,
+                bucket.get("input_tokens"),
+                bucket.get("output_tokens"),
+                endpoint_url,
+                cache_read_tokens=bucket.get("cache_read_input_tokens", 0),
+                cache_write_tokens=bucket.get("cache_creation_input_tokens", 0),
+            )
+            if cost is None:
+                # One round can't be priced: keep the aggregate estimate
+                # rather than silently under-billing.
+                return
+            total += cost
+    except Exception:
+        return
+    metrics["cost_usd"] = round(total, 6)
+
+
 # ── Completion verifier ──
 # Tools whose effects produce a checkable artifact. A turn that used one of
 # these is "effectful" and worth an independent completion check; pure
@@ -38389,22 +38450,15 @@ async def stream_agent_loop(
     metrics["endpoint_label"] = actual_endpoint_label
     if isinstance(actual_endpoint_cost_tracked, bool):
         metrics["endpoint_cost_tracked"] = actual_endpoint_cost_tracked
-    usage_summary = _usage_bucket_summary(usage_buckets)
-    if usage_summary:
-        metrics.update(usage_summary)
-        if not backend_gen_tps and total_duration > 0:
-            metrics["tokens_per_second"] = round(
-                usage_summary["output_tokens"] / total_duration,
-                2,
-            )
-        if _last_route_context_length:
-            metrics["context_percent"] = min(
-                round(
-                    (usage_buckets[-1]["input_tokens"] / _last_route_context_length) * 100,
-                    1,
-                ),
-                100.0,
-            )
+    _apply_usage_bucket_metrics(
+        metrics,
+        usage_buckets,
+        context_length=_last_route_context_length,
+        total_duration=total_duration,
+        backend_gen_tps=backend_gen_tps,
+        endpoint_url=endpoint_url,
+        model=actual_model,
+    )
     metrics["requested_endpoint_id"] = requested_endpoint_id
     metrics["requested_endpoint_label"] = requested_endpoint_label
     _evidence_ledger = EvidenceLedger.from_tool_events(

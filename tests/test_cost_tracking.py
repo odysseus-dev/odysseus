@@ -221,6 +221,91 @@ def test_final_metrics_omit_cost_without_endpoint_url():
     assert "cost_source" not in m
 
 
+# --- multi-round agent turns: per-request context and cost ---
+
+def _bucket(round_num, model, input_tokens, output_tokens, read=0, write=0):
+    return agent_loop._usage_bucket(
+        round_num=round_num, model=model, endpoint_id="ep", endpoint_label="Claude",
+        endpoint_cost_tracked=True, input_tokens=input_tokens,
+        output_tokens=output_tokens, usage_source="real",
+        cache_read_tokens=read, cache_write_tokens=write,
+    )
+
+
+def _apply(metrics, buckets, model, context_length=200_000):
+    agent_loop._apply_usage_bucket_metrics(
+        metrics, buckets, context_length=context_length, total_duration=2.0,
+        backend_gen_tps=0, endpoint_url=_ANTHROPIC_URL, model=model,
+    )
+    return metrics
+
+
+def test_context_tokens_match_the_last_request_not_the_round_sum():
+    # Each round re-sends (and now counts) the whole cached history, so the
+    # summed input is ~3x the prompt; the "used" figure must be the last
+    # request's prompt, the same number context_percent is computed from.
+    buckets = [
+        _bucket(1, "claude-sonnet-4-5", 30_000, 200, write=29_000),
+        _bucket(2, "claude-sonnet-4-5", 31_000, 200, read=29_000, write=1_500),
+        _bucket(3, "claude-sonnet-4-5", 32_000, 300, read=30_500, write=1_000),
+    ]
+    m = _apply({"request_context_tokens": 900, "cost_source": "estimated", "cost_usd": 1.0},
+               buckets, "claude-sonnet-4-5")
+    assert m["input_tokens"] == 93_000
+    assert m["request_context_tokens"] == 32_000
+    assert m["context_percent"] == 16.0
+
+
+def test_long_prompt_tier_is_priced_per_request_not_on_the_round_sum():
+    # Three 40k Haiku 5.5 requests are each under the 100k long-prompt
+    # threshold; their 120k sum must not move the turn to the long tier.
+    buckets = [_bucket(i, "claude-haiku-5-5", 40_000, 1_000) for i in (1, 2, 3)]
+    m = _apply({"cost_source": "estimated", "cost_usd": 1.0}, buckets, "claude-haiku-5-5")
+    per_request = model_pricing.estimate_cost_usd("claude-haiku-5-5", 40_000, 1_000, _ANTHROPIC_URL)
+    assert m["cost_usd"] == pytest.approx(round(3 * per_request, 6))
+    long_tier_sum = model_pricing.estimate_cost_usd("claude-haiku-5-5", 120_000, 3_000, _ANTHROPIC_URL)
+    assert m["cost_usd"] < long_tier_sum
+
+
+def test_per_request_cost_bills_each_rounds_cache_split():
+    buckets = [
+        _bucket(1, "claude-sonnet-4-5", 10_000, 100, write=9_000),
+        _bucket(2, "claude-sonnet-4-5", 10_500, 100, read=9_000, write=1_000),
+    ]
+    m = _apply({"cost_source": "estimated", "cost_usd": 1.0}, buckets, "claude-sonnet-4-5")
+    expected = sum(
+        model_pricing.estimate_cost_usd(
+            "claude-sonnet-4-5", b["input_tokens"], b["output_tokens"], _ANTHROPIC_URL,
+            cache_read_tokens=b.get("cache_read_input_tokens", 0),
+            cache_write_tokens=b.get("cache_creation_input_tokens", 0),
+        )
+        for b in buckets
+    )
+    assert m["cost_usd"] == pytest.approx(round(expected, 6))
+
+
+def test_reported_cost_is_never_replaced_by_the_per_request_estimate():
+    buckets = [_bucket(1, "claude-haiku-5-5", 40_000, 1_000)]
+    m = _apply({"cost_source": "reported", "cost_usd": 0.5}, buckets, "claude-haiku-5-5")
+    assert m["cost_usd"] == 0.5
+    assert m["cost_source"] == "reported"
+
+
+def test_unpriceable_round_keeps_the_aggregate_estimate():
+    buckets = [
+        _bucket(1, "claude-haiku-5-5", 40_000, 1_000),
+        _bucket(2, "mystery-model", 40_000, 1_000),
+    ]
+    m = _apply({"cost_source": "estimated", "cost_usd": 0.123}, buckets, "claude-haiku-5-5")
+    assert m["cost_usd"] == 0.123
+
+
+def test_no_buckets_leaves_metrics_untouched():
+    m = {"input_tokens": 5, "request_context_tokens": 7, "context_percent": 1.0}
+    _apply(m, [], "claude-sonnet-4-5")
+    assert m == {"input_tokens": 5, "request_context_tokens": 7, "context_percent": 1.0}
+
+
 # --- persistence ---
 
 def _setup_db(tmp_path):
