@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import re
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from routes.cookbook_helpers import (
     _llama_cpp_rebuild_cmd,
     _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
+    _local_windows_bash_env_prefix,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
@@ -105,6 +107,70 @@ def test_safe_env_prefix_accepts_powershell_activation_path():
         _safe_env_prefix("& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'")
         == "& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'"
     )
+
+
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ("& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'", "source /c/Users/me/venv/Scripts/activate"),
+        (r"& C:\Users\me\venv\Scripts\Activate.ps1", "source /c/Users/me/venv/Scripts/activate"),
+        (
+            r"& C:\Users\me\My Envs\venv\Scripts\Activate.ps1",
+            "source '/c/Users/me/My Envs/venv/Scripts/activate'",
+        ),
+        (
+            "& 'C:\\Users\\me\\My Envs\\venv\\Scripts\\Activate.ps1'",
+            "source '/c/Users/me/My Envs/venv/Scripts/activate'",
+        ),
+        (r"& D:/Envs/venv/Scripts/Activate.ps1", "source /d/Envs/venv/Scripts/activate"),
+    ],
+)
+def test_local_windows_bash_env_prefix_converts_powershell_venv_activation(prefix, expected):
+    converted = _local_windows_bash_env_prefix(prefix)
+
+    assert converted == expected
+    assert _safe_env_prefix(converted).startswith('[ -f "')
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        None,
+        "",
+        "source /home/me/venv/bin/activate",
+        "conda activate qwen35",
+        'eval "$(conda shell.bash hook)" && conda activate qwen35',
+        r"& \\server\share\venv\Scripts\Activate.ps1",
+    ],
+)
+def test_local_windows_bash_env_prefix_leaves_other_prefixes_unchanged(prefix):
+    assert _local_windows_bash_env_prefix(prefix) == prefix
+
+
+def test_local_windows_bash_env_prefix_handles_long_whitespace_input():
+    prefix = "\t" * 100_000
+
+    assert _local_windows_bash_env_prefix(prefix) == prefix
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["static/js/cookbookRunning.js", "static/js/cookbookDownload.js"],
+)
+def test_primary_windows_venv_emitters_quote_activation_path(relative_path):
+    source = (Path(__file__).resolve().parents[1] / relative_path).read_text(encoding="utf-8")
+
+    assert "'& ' + _psQuote(" in source
+    assert "_psQuote = shared._psQuote;" in source
+
+
+def test_windows_venv_conversion_stays_scoped_to_local_git_bash_runners():
+    source = (Path(__file__).resolve().parents[1] / "routes/cookbook_routes.py").read_text(encoding="utf-8")
+    guarded_conversion = (
+        "_local_windows_bash_env_prefix(req.env_prefix) if local_windows else req.env_prefix"
+    )
+
+    assert source.count(guarded_conversion) == 2
 
 
 def test_validate_local_dir_accepts_external_drive_paths_with_spaces():
@@ -723,7 +789,12 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
     routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
     running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
 
-    assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
+    # The Windows-local runner publishes Python's valid Win32 fallback before
+    # allowing Git Bash to replace it with /proc/$$/winpid.
+    assert "_windows_local_pid_record_line(pid_path, pid_ready_path)" in routes_src
+    assert "/proc/$$/winpid" in routes_src
+    assert "pid_ready_path.touch()" in routes_src
+    assert '\\"$$\\" > {pp}' not in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
     assert "('ParentProcessId = ' + $Id)" in running_src
     assert "Stop-Tree ([int]$p)" in running_src
@@ -956,3 +1027,36 @@ def test_validate_serve_cmd_rejects_unrelated_subshell_pipelines():
     ]:
         with pytest.raises(HTTPException):
             _validate_serve_cmd(cmd)
+
+
+def _dependency_recipe_pip_commands():
+    src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbook-deps-recipes.js").read_text(encoding="utf-8")
+    return re.findall(r"pip:\s*\{\s*commands:\s*\['((?:[^'\\]|\\.)*)'\]\s*\}", src)
+
+
+def test_validate_serve_cmd_accepts_single_line_dependency_recipes():
+    # The Dependencies recipe "Run" button posts these to /api/model/serve.
+    cmds = _dependency_recipe_pip_commands()
+    assert 'uv pip install -U vllm --torch-backend auto' in cmds
+    assert 'uv pip install -U "sglang[all]" --torch-backend auto' in cmds
+    for cmd in cmds:
+        assert _validate_serve_cmd(cmd) == cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "uv run python -c 'print(1)'",
+    "uv tool install ruff",
+    "uv pip uninstall vllm",
+    "uv",
+])
+def test_validate_serve_cmd_allows_uv_only_for_pip_install(cmd):
+    with pytest.raises(HTTPException):
+        _validate_serve_cmd(cmd)
+
+
+def test_dependency_recipe_run_sends_a_valid_pip_repo_id():
+    # A pip-install repo_id must match the server's package-spec regex; the old
+    # "<backend> setup" value had a space and every Run got "Invalid pip package name".
+    src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbook.js").read_text(encoding="utf-8")
+    assert "repo_id: `${backend}-setup`," in src
+    assert "repo_id: `${backend} setup`" not in src

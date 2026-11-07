@@ -7,9 +7,15 @@ notably that "metal" is honoured (Apple Silicon is GGUF-only via llama.cpp /
 Ollama) instead of being silently coerced to CUDA.
 """
 
+import pytest
+
 from routes.hwfit_routes import _apply_manual_hardware, _MANUAL_BACKENDS
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
+from tests.hwfit_publication_fixtures import publication_catalog  # noqa: F401
+
+# Rank authored inputs rather than publication catalog snapshots.
+pytestmark = pytest.mark.usefixtures("publication_catalog")
 
 
 def test_no_manual_mode_leaves_system_untouched():

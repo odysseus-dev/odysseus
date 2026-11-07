@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Quarterly Sales Dashboard</title>
+  <style>
+    body { margin: 0; background: #eef2f7; color: #172033; font: 24px Arial, sans-serif; }
+    main { width: 960px; height: 640px; box-sizing: border-box; padding: 42px 56px; }
+    h1 { margin: 0 0 28px; font-size: 38px; }
+    .cards { display: flex; gap: 20px; margin-bottom: 34px; }
+    .card { background: white; border-radius: 14px; padding: 18px 24px; box-shadow: 0 3px 12px #17203320; }
+    .label { color: #64748b; font-size: 18px; }
+    .value { font-size: 30px; font-weight: 700; margin-top: 5px; }
+    .healthy { color: #14804a; }
+    .chart { height: 350px; display: flex; align-items: end; gap: 42px; padding: 0 45px; background: white; border-radius: 14px; box-shadow: 0 3px 12px #17203320; }
+    .column { width: 135px; text-align: center; font-weight: 700; }
+    .bar { background: #3976e8; border-radius: 10px 10px 0 0; color: white; padding-top: 10px; box-sizing: border-box; }
+    .q1 { height: 100px; } .q2 { height: 175px; } .q3 { height: 275px; background: #7c3aed; } .q4 { height: 200px; }
+    .quarter { padding: 12px 0 18px; color: #334155; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Quarterly Sales Dashboard</h1>
+    <div class="cards">
+      <div class="card"><div class="label">Build status</div><div class="value healthy">Healthy</div></div>
+      <div class="card"><div class="label">API latency</div><div class="value">142 ms</div></div>
+      <div class="card"><div class="label">Active users</div><div class="value">1,284</div></div>
+    </div>
+    <div class="chart" aria-label="Quarterly sales: Q1 20, Q2 35, Q3 55, Q4 40">
+      <div class="column"><div class="bar q1">20</div><div class="quarter">Q1</div></div>
+      <div class="column"><div class="bar q2">35</div><div class="quarter">Q2</div></div>
+      <div class="column"><div class="bar q3">55</div><div class="quarter">Q3</div></div>
+      <div class="column"><div class="bar q4">40</div><div class="quarter">Q4</div></div>
+    </div>
+  </main>
+</body>
+</html>

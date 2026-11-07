@@ -55,6 +55,7 @@ _db.ApiToken = _ApiToken
 
 @pytest.fixture(autouse=True)
 def _companion_pairing_stubs(monkeypatch):
+    monkeypatch.delenv("COMPANION_BASE_URL", raising=False)
     monkeypatch.setitem(sys.modules, "core.database", _db)
     for _name, _attrs in {
         "core.auth": {"AuthManager": MagicMock()},
@@ -114,6 +115,96 @@ def test_mint_pairing_token_tolerates_no_invalidator(monkeypatch):
 def test_pairing_payload_shape():
     p = P.pairing_payload("192.168.1.9", 7000, "ody_x")
     assert p == {"v": 1, "host": "192.168.1.9", "port": 7000, "token": "ody_x"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("http://odysseus", ("odysseus", 80)),
+        ("http://odysseus:7000", ("odysseus", 7000)),
+        ("http://localhost:7000", ("localhost", 7000)),
+        ("http://odysseus.local", ("odysseus.local", 80)),
+        ("http://api.odysseus.local:7000", ("api.odysseus.local", 7000)),
+        ("http://10.0.0.1:7000", ("10.0.0.1", 7000)),
+        ("http://100.64.0.1:7000", ("100.64.0.1", 7000)),
+        ("http://100.127.255.254:7000", ("100.127.255.254", 7000)),
+        ("http://127.0.0.1:7000", ("127.0.0.1", 7000)),
+        ("http://169.254.1.1:7000", ("169.254.1.1", 7000)),
+        ("http://172.16.0.1:7000", ("172.16.0.1", 7000)),
+        ("http://172.31.255.254:7000", ("172.31.255.254", 7000)),
+        ("http://192.168.1.9:7000", ("192.168.1.9", 7000)),
+    ],
+)
+def test_parse_companion_base_url_accepts_v1_client_addresses(value, expected):
+    assert P.parse_companion_base_url(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "odysseus.example",
+        "ftp://odysseus.example",
+        "https://odysseus.local",
+        "http://user:password@odysseus.local",
+        "http://odysseus.local/",
+        "http://odysseus.local/path",
+        "http://odysseus.local?query=1",
+        "http://odysseus.local#fragment",
+        "http://odysseus.local:not-a-port",
+        "http://odysseus.local:0",
+        "http://odysseus.local:65536",
+        "http://odysseus.local:07000",
+        "HTTP://odysseus.local:7000",
+        "http://Odysseus.local:7000",
+        " http://odysseus.local",
+        "http://odysseus.local ",
+        "http://odysseus\\local",
+        "http://odysseus.local\n",
+        "http://odysseus.local\t",
+        "http://odysseus.local\x7f",
+        "http://example.com:7000",
+        "http://1.1.1.1:7000",
+        "http://100.63.255.255:7000",
+        "http://100.128.0.1:7000",
+        "http://126.255.255.255:7000",
+        "http://128.0.0.1:7000",
+        "http://169.253.255.255:7000",
+        "http://169.255.0.1:7000",
+        "http://172.15.255.255:7000",
+        "http://172.32.0.1:7000",
+        "http://192.167.255.255:7000",
+        "http://192.169.0.1:7000",
+        # WHATWG URL parsing normalizes these legacy numeric host spellings to
+        # IPv4 addresses even though Python's strict ipaddress parser rejects
+        # them.  134744072 / 0x08080808 both become public 8.8.8.8.
+        "http://134744072:7000",
+        "http://0x:7000",
+        "http://0x08080808:7000",
+        "http://017700000001:7000",
+        "http://[fd00::1]:7000",
+        "http://[fe80::1%25eth0]:7000",
+        "http://b\N{LATIN SMALL LETTER U WITH DIAERESIS}cher.local:7000",
+        "http://xn--bcher-kva.local:7000",
+        "http://xn--bcher-kva:7000",
+        "http://odysseus%2elocal:7000",
+        "http://%31%39%32.168.1.9:7000",
+        "http://odysseus%40local:7000",
+        "http://.local:7000",
+        "http://odysseus..local:7000",
+        "http://odysseus.local.:7000",
+        "http://-odysseus:7000",
+        "http://odysseus-:7000",
+        "http://odysseus_name:7000",
+        f"http://{'a' * 64}:7000",
+        f"http://{'a' * 250}.local:7000",
+    ],
+)
+def test_parse_companion_base_url_rejects_unsupported_or_noncanonical_addresses(
+    value,
+):
+    with pytest.raises(ValueError):
+        P.parse_companion_base_url(value)
 
 
 @pytest.mark.parametrize("payload", ["[]", '{"users": []}'])
@@ -244,6 +335,15 @@ def test_pair_post_json_returns_pairing_payload(monkeypatch):
     assert response["port"] == 7000
     assert response["token"] == "ody_raw"
     assert response["token_id"] == "tok123"
+    assert set(response) == {
+        "host",
+        "port",
+        "token",
+        "token_id",
+        "hosts",
+        "payload",
+        "qr",
+    }
     assert response["payload"] == {
         "v": 1,
         "host": "192.168.1.50",
@@ -253,6 +353,59 @@ def test_pair_post_json_returns_pairing_payload(monkeypatch):
     for secret_key in ("token_hash", "token_prefix", "scopes", "is_active", "owner", "name"):
         assert secret_key not in response
         assert secret_key not in response["payload"]
+
+
+def test_pair_post_json_prefers_configured_origin(monkeypatch):
+    monkeypatch.setenv("COMPANION_BASE_URL", "http://odysseus.local:7000")
+    mint = MagicMock(return_value=("tok123", "ody_raw"))
+    discovery = MagicMock(side_effect=AssertionError("configured origin must skip LAN discovery"))
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr(R, "mint_pairing_token", mint)
+    monkeypatch.setattr(R._pairing, "lan_ip_candidates", discovery)
+    monkeypatch.setattr(R._pairing, "pairing_qr_png_data_uri", lambda payload: None)
+
+    request = _fake_pair_request(format="json", port=7000)
+    response = _pair_route("POST")(request)
+
+    assert response["host"] == "odysseus.local"
+    assert response["port"] == 7000
+    assert response["hosts"] == ["odysseus.local"]
+    assert set(response) == {
+        "host",
+        "port",
+        "token",
+        "token_id",
+        "hosts",
+        "payload",
+        "qr",
+    }
+    assert response["payload"] == {
+        "v": 1,
+        "host": "odysseus.local",
+        "port": 7000,
+        "token": "ody_raw",
+    }
+    discovery.assert_not_called()
+
+
+def test_pair_post_rejects_invalid_config_before_mint_without_echoing_it(monkeypatch):
+    configured_secret = "secret-password"
+    monkeypatch.setenv(
+        "COMPANION_BASE_URL",
+        f"http://admin:{configured_secret}@odysseus.local",
+    )
+    mint = MagicMock(side_effect=AssertionError("invalid config must not mint a token"))
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    monkeypatch.setattr(R, "mint_pairing_token", mint)
+
+    with pytest.raises(HTTPException) as exc:
+        _pair_route("POST")(_fake_pair_request(format="json"))
+
+    assert exc.value.status_code == 500
+    assert "COMPANION_BASE_URL" in exc.value.detail
+    assert configured_secret not in exc.value.detail
+    mint.assert_not_called()
 
 
 def test_pair_post_json_qr_failure_returns_null_qr(monkeypatch):

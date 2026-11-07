@@ -1,4 +1,7 @@
+import pytest
+
 from src.action_intents import classify_tool_intent, message_needs_tools
+from src.turn_contract import requested_capabilities
 
 
 def test_calendar_entry_request_promotes_to_agent():
@@ -13,6 +16,7 @@ def test_calendar_imperative_variants_promote_to_agent():
     assert message_needs_tools("schedule a call with Mina next Friday")
     assert message_needs_tools("put dentist appointment on my calendar")
     assert message_needs_tools("Alright. Recreate that same appointment")
+    assert message_needs_tools("delete that actually")
     assert message_needs_tools("Okay delete that doctor appointment from the calendar")
     assert message_needs_tools("have another go at adding a test entry to the calendar")
     assert message_needs_tools(
@@ -56,18 +60,124 @@ def test_explicit_web_search_promotes_to_agent():
     assert classify_tool_intent("use web search and find a recipe").category == "web"
 
 
+def test_chinese_web_lookup_requests_route_to_web_tools():
+    intent = classify_tool_intent("帮我查一下这些店铺的地址，我要去打卡")
+
+    assert intent.needs_tools
+    assert intent.category == "web"
+
+
+def test_nearest_place_lookup_promotes_to_web_agent():
+    intent = classify_tool_intent("from vasaplan stockholm where is closest parking")
+    assert intent.needs_tools
+    assert intent.category == "web"
+
+
 def test_workspace_agent_requests_promote_to_shell_workspace():
     prompts = [
         "fix the bug in this repo",
         "run the tests for this project",
         "debug the server logs",
-        "run terminal-bench on this task",
+        "run a performance benchmark on this project",
         "inspect the traceback and patch the code",
     ]
     for prompt in prompts:
         intent = classify_tool_intent(prompt)
         assert intent.needs_tools
         assert intent.category == "workspace"
+
+
+def test_page_references_are_not_mistaken_for_named_computers():
+    for prompt in (
+        "What heading is visible on that page?",
+        "Read it from the current page.",
+        "Compare this with the same page.",
+    ):
+        intent = classify_tool_intent(prompt)
+        assert intent.category != "workspace"
+
+    intent = classify_tool_intent("check the service on odysseus")
+    assert intent.needs_tools and intent.category == "workspace"
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Who is Jensen Huang from NVIDIA?",
+        "Who is Tim Cook from Apple?",
+        "Who is Satya Nadella from Microsoft?",
+        "What happened on Monday?",
+        "What is the best book on Rome?",
+        "Tell me a story from Japan",
+        "What is the best GPU from NVIDIA?",
+        "Who is running from the police?",
+    ],
+)
+def test_people_and_topics_are_not_mistaken_for_named_computers(prompt):
+    assert classify_tool_intent(prompt).reason != "named computer task request"
+    assert "shell_files" not in requested_capabilities(prompt)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "check disk usage on gpu-box",
+        "how much free disk on gpu-box?",
+        "what's the uptime on nas01",
+        "list running processes on gpu-box",
+        "is nginx running on gpu-box",
+        "is ffmpeg installed on workstation",
+        "what is the gpu usage on gpu-box",
+        "copy the logs from gpu-box",
+        "fetch the config file from prod-db",
+        "download the checkpoint from gpu-box",
+    ],
+)
+def test_computer_tasks_on_a_named_host_keep_shell_tools(prompt):
+    assert classify_tool_intent(prompt).category == "workspace"
+    assert requested_capabilities(prompt) == {"shell_files"}
+
+
+def test_direct_code_requests_promote_to_workspace_agent():
+    prompts = [
+        "write a Python function that parses CSV",
+        "write answer.json",
+        "create app.ts",
+        "edit src/app.py",
+        "Can you create a script in this project?",
+        "edit the React component to show a loading state",
+        "I want you to build a small command-line tool",
+        "Can you code this in the repo?",
+    ]
+    for prompt in prompts:
+        intent = classify_tool_intent(prompt)
+        assert intent.needs_tools
+        assert intent.category == "workspace"
+
+
+def test_code_explanations_stay_plain_chat():
+    assert not message_needs_tools("How do I write a Python function?")
+    assert not message_needs_tools("Can you explain how a React component works?")
+
+
+def test_shell_diagnostic_commands_promote_to_agent():
+    prompts = [
+        "lsblk",
+        "run lsblk",
+        "df -h",
+        "docker ps",
+        "nvidia-smi",
+        "can you run journalctl -u odysseus",
+    ]
+    for prompt in prompts:
+        intent = classify_tool_intent(prompt)
+        assert intent.needs_tools
+        assert intent.category in {"shell", "workspace"}
+
+
+def test_shell_command_explanations_stay_plain_chat():
+    assert not message_needs_tools("How do I use lsblk?")
+    assert not message_needs_tools("Can you explain docker ps?")
 
 
 def test_explanatory_calendar_questions_stay_plain_chat():

@@ -18,6 +18,7 @@ import importlib
 from pathlib import Path
 
 import pytest
+from tests.helpers.js_modules import email_library_source
 
 
 # ── prompt-injection context wrapper ────────────────────────────
@@ -118,17 +119,23 @@ def test_secret_storage_key_created_with_safe_mode(tmp_path, monkeypatch):
 
 def test_docker_compose_binds_web_ui_to_loopback_by_default():
     compose = Path("docker-compose.yml").read_text(encoding="utf-8")
-    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000" in compose
+    assert "${APP_BIND:-127.0.0.1}:${APP_PORT:-7011}:7000" in compose
     assert '"${APP_PORT:-7000}:7000"' not in compose
 
 
 def test_readme_native_quickstart_uses_loopback():
-    # The README refresh (#4306) moved the native quickstart into docs/setup.md,
+    # The Pages source split (#6175) moved the native quickstart into website/setup.md,
     # so accept the loopback guidance from either the README or the setup guide.
     docs = Path("README.md").read_text(encoding="utf-8")
-    docs += "\n" + Path("docs/setup.md").read_text(encoding="utf-8")
+    docs += "\n" + Path("website/setup.md").read_text(encoding="utf-8")
     assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in docs
     assert "0.0.0.0` only when you intentionally want" in docs
+
+
+def test_readme_warns_auth_enabled_for_network_access():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "Keep `AUTH_ENABLED=true` for any network-accessible deployment." in readme
+    assert "Keep `LOCALHOST_BYPASS=false` outside local development." in readme
 
 
 def test_ollama_cookbook_runner_does_not_force_public_bind():
@@ -738,6 +745,27 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     assert require_admin(_Req()) is None
 
 
+def test_require_admin_uses_central_auth_disabled_parser(monkeypatch):
+    from core.middleware import require_admin
+
+    monkeypatch.setenv("AUTH_ENABLED", " false ")
+
+    class _State:
+        current_user = None
+
+    class _AppState:
+        auth_manager = None
+
+    class _App:
+        state = _AppState()
+
+    class _Req:
+        state = _State()
+        app = _App()
+
+    assert require_admin(_Req()) is None
+
+
 def test_internal_tool_owner_header_logic_requires_known_user():
     """Pin the owner-attribution branch used by app.AuthMiddleware without
     booting the full FastAPI app."""
@@ -956,7 +984,7 @@ def test_attachment_extract_dir_stays_contained(folder, uid):
     """User-controlled folder/uid must never escape ATTACHMENTS_DIR — pins the
     fix for the attachment-extraction path traversal."""
     aed, base = _import_attachment_extract_dir()
-    target = aed(folder, uid)
+    target = aed(folder, uid, owner="../../owner", account_id="../acct")
     base_r = base.resolve()
     assert target == base_r or base_r in target.parents
     # exactly one extra path segment, and no `..` component survived
@@ -964,9 +992,11 @@ def test_attachment_extract_dir_stays_contained(folder, uid):
     assert ".." not in rel.parts
 
 
-def test_attachment_extract_dir_normal_inputs_unchanged():
+def test_attachment_extract_dir_is_stable_single_segment_per_scope():
     aed, base = _import_attachment_extract_dir()
-    assert aed("INBOX", "123") == base.resolve() / "INBOX_123"
+    target = aed("INBOX", "123", owner="alice", account_id="acct-1")
+    assert target == aed("INBOX", "123", owner="alice", account_id="acct-1")
+    assert target.parent == base.resolve()
 
 
 def test_diagnostics_routes_are_admin_gated():
@@ -982,8 +1012,7 @@ def test_diagnostics_routes_are_admin_gated():
 def test_email_thread_rendering_sanitizes_body_html():
     """Both threaded render paths must run server-parsed body_html through the
     allowlist sanitizer (the flat path already did)."""
-    src = Path(__file__).resolve().parents[1] / "static" / "js" / "emailLibrary.js"
-    text = src.read_text()
+    text = email_library_source()
     # every `t.body_html` reference is wrapped by _sanitizeHtml(...)
     assert text.count("t.body_html") == text.count("_sanitizeHtml(t.body_html")
     assert "t.body_html" in text  # guard against the file being refactored away
@@ -998,11 +1027,15 @@ def test_session_html_export_escapes_name():
 
 
 def test_mcp_oauth_page_escapes_reflected_values():
-    src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
+    src = Path(__file__).resolve().parents[1] / "routes" / "mcp" / "mcp_routes.py"
     text = src.read_text()
-    body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
-    for var in ("auth_url", "server_id", "host", "redirect_uri"):
+    page = text.split("def _oauth_authorize_page(", 1)[1].split("def _oauth_result_page", 1)[0]
+    body = page.split("return f", 1)[0]
+    for var in ("auth_url", "server_id", "redirect_uri"):
         assert f"{var} = html.escape({var}" in body, var
+    # The Host header is no longer reflected at all: the paste-back form posts to
+    # a relative action, so there is nothing to escape and nothing to smuggle.
+    assert "{host}" not in page
 
 
 def _import_mcp_routes():

@@ -26,7 +26,7 @@ class _FakeSock:
 class _FakeIMAP:
     calls = []
 
-    def __init__(self, host, port, timeout=None):
+    def __init__(self, host, port, timeout=None, **_policy):
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -60,8 +60,8 @@ def test_open_imap_connection_uses_shared_timeout_for_implicit_ssl(monkeypatch):
     import routes.email_helpers as helpers
 
     _FakeIMAP.calls = []
-    monkeypatch.setattr(helpers.imaplib, "IMAP4", _FakeIMAP)
-    monkeypatch.setattr(helpers.imaplib, "IMAP4_SSL", _FakeIMAPSSL)
+    monkeypatch.setattr(helpers, "_PolicyIMAP4", _FakeIMAP)
+    monkeypatch.setattr(helpers, "_PolicyIMAP4_SSL", _FakeIMAPSSL)
 
     conn = _open_imap_connection("imap.one.com", 993, starttls=False)
 
@@ -75,8 +75,8 @@ def test_open_imap_connection_supports_starttls(monkeypatch):
     import routes.email_helpers as helpers
 
     _FakeIMAP.calls = []
-    monkeypatch.setattr(helpers.imaplib, "IMAP4", _FakeIMAP)
-    monkeypatch.setattr(helpers.imaplib, "IMAP4_SSL", _FakeIMAPSSL)
+    monkeypatch.setattr(helpers, "_PolicyIMAP4", _FakeIMAP)
+    monkeypatch.setattr(helpers, "_PolicyIMAP4_SSL", _FakeIMAPSSL)
 
     _open_imap_connection("imap.local", 143, starttls=True)
 
@@ -99,7 +99,7 @@ async def test_account_config_uses_shared_imap_timeout(monkeypatch):
         def logout(self):
             captured["logout"] = True
 
-    def fake_open(host, port, *, starttls, timeout):
+    def fake_open(host, port, *, starttls, timeout, **_policy):
         captured["open"] = (host, port, starttls, timeout)
         return _Conn()
 

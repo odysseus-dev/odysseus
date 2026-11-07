@@ -10,6 +10,18 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+class MemoryStoreUnreadable(RuntimeError):
+    """memory.json exists on disk but could not be read or parsed.
+
+    "The contents are unknown" is categorically different from "there are no
+    memories". A read-modify-write caller that conflates the two appends to an
+    empty view and then persists it, destroying the whole store — the writes
+    are atomic, so the loss is durable. Raised by
+    :meth:`MemoryManager.load_all_for_update` so those callers fail closed.
+    """
+
+
 def tokenize(text: str) -> List[str]:
     """Simple tokenizer that splits on whitespace and removes punctuation."""
     return [word.strip('.,!?";') for word in text.split()]
@@ -110,21 +122,69 @@ class MemoryManager:
             with open(self.memory_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
     
-    def load_all(self) -> List[Dict]:
-        """Load all memory entries from JSON file (unfiltered)."""
+    def _read_entries(self) -> List[Dict]:
+        """Parse the store, or raise :class:`MemoryStoreUnreadable`.
+
+        Returns ``[]`` only when the file genuinely does not exist. Every other
+        failure mode raises, so callers can tell "no memories" apart from
+        "couldn't read the memories".
+        """
         if not os.path.exists(self.memory_file):
             return []
 
         try:
             with open(self.memory_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, list):
-                    return self._validate_entries(data)
-        except (json.JSONDecodeError, PermissionError) as e:
-            logger.error("Error loading memory.json: %s", e)
-            return self._migrate_from_legacy()
+        except OSError as e:
+            # PermissionError is an OSError (a scanner holding the file, a
+            # permissions problem, bad media).
+            raise MemoryStoreUnreadable(
+                f"cannot read {self.memory_file}: {e}"
+            ) from e
+        except json.JSONDecodeError as e:
+            # This is the branch that actually destroyed stores: the file reads
+            # back fine, so nothing stops the save that follows. A truncated
+            # memory.json is reachable because core/database.py rewrites it with
+            # a plain open(..,"w") + json.dump during migration.
+            #
+            # Preserved behaviour: a corrupt store still gets one shot at the
+            # pre-JSON memory.txt migration. Only raise when that finds nothing,
+            # so we never report "empty" for a store we simply failed to parse.
+            legacy = self._migrate_from_legacy()
+            if legacy:
+                return legacy
+            raise MemoryStoreUnreadable(
+                f"{self.memory_file} is not valid JSON: {e}"
+            ) from e
 
-        return []
+        if not isinstance(data, list):
+            raise MemoryStoreUnreadable(
+                f"{self.memory_file} is not a JSON array (got {type(data).__name__})"
+            )
+        return self._validate_entries(data)
+
+    def load_all(self) -> List[Dict]:
+        """Load all memory entries from JSON file (unfiltered).
+
+        Lenient by design: this feeds display, search, and context-injection
+        paths, so an unreadable store degrades to an empty list rather than
+        breaking chat. Never build a value from this that you intend to save
+        back — use :meth:`load_all_for_update` for that.
+        """
+        try:
+            return self._read_entries()
+        except MemoryStoreUnreadable as e:
+            logger.error("Error loading memory.json: %s", e)
+            return []
+
+    def load_all_for_update(self) -> List[Dict]:
+        """Load for a read-modify-write cycle.
+
+        Propagates :class:`MemoryStoreUnreadable` instead of degrading to ``[]``
+        so a caller can never append to an empty view and persist it over a
+        store that was only temporarily unreadable (issue #5673).
+        """
+        return self._read_entries()
 
     def load(self, owner: str = None) -> List[Dict]:
         """Load memory entries, optionally filtered by owner."""
@@ -135,7 +195,12 @@ class MemoryManager:
 
     def claim_ownerless(self, owner: str):
         """Assign all ownerless memory entries to the given owner."""
-        entries = self.load_all()
+        try:
+            entries = self.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            # Skip the sweep rather than rewrite the store from an unknown view.
+            logger.error("Skipping ownerless claim, memory store unreadable: %s", e)
+            return
         changed = False
         claimed = 0
         for entry in entries:
@@ -235,7 +300,12 @@ class MemoryManager:
         if not ids:
             return
         id_set = set(ids)
-        entries = self.load_all()
+        try:
+            entries = self.load_all_for_update()
+        except MemoryStoreUnreadable as e:
+            # Best-effort counter; never worth rewriting the store blind.
+            logger.error("Skipping uses bump, memory store unreadable: %s", e)
+            return
         changed = False
         for e in entries:
             if e.get("id") in id_set:
@@ -294,32 +364,32 @@ class MemoryManager:
             return []
             
         # Define keyword categories for semantic matching
-        identity_words = ["name", "who", "i", "am", "called", "identity", "myself", "me", "my"]
+        identity_words = ["name", "called", "identity", "myself"]
         contact_words = ["phone", "email", "address", "contact", "number", "where", "located", "reach"]
         preference_words = ["like", "prefer", "favorite", "want", "love", "hate", "dislike", "enjoy", "interested"]
         task_words = ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline"]
         fact_words = ["what", "when", "where", "how", "why", "explain", "describe", "information", "know"]
         
         query_lower = query.lower()
+        query_words = set(re.findall(r'\w+', query_lower))
+        query_tokens = set(tokenize(query_lower))
         
         # Determine query type based on keywords
         query_type = None
-        if any(word in query_lower for word in identity_words):
+        if query_words.intersection(identity_words) or re.search(r'\bwho\s+am\s+i\b', query_lower):
             query_type = "identity"
-        elif any(word in query_lower for word in contact_words):
+        elif query_words.intersection(contact_words):
             query_type = "contact"
-        elif any(word in query_lower for word in preference_words):
+        elif query_words.intersection(preference_words):
             query_type = "preference"
-        elif any(word in query_lower for word in task_words):
+        elif query_words.intersection(task_words):
             query_type = "task"
-        elif any(word in query_lower for word in fact_words):
+        elif query_words.intersection(fact_words):
             query_type = "fact"
         
         relevant = []
-        identity_memories = []
-        other_memories = []
-        
-        # Separate identity memories from others
+        # Every memory participates in the same ranking and threshold check.
+        # Query type is a scoring hint, not an unconditional insertion path.
         for memory in memories:
             memory_text = memory["text"].lower()
             # Check if this is an identity memory (contains name patterns or identity indicators)
@@ -327,22 +397,7 @@ class MemoryManager:
                 re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
                 any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
             ])
-            if is_identity:
-                identity_memories.append(memory)
-            else:
-                other_memories.append(memory)
-        
-        # For identity queries, include all identity memories regardless of similarity
-        if query_type == "identity" and identity_memories:
-            # Give them high scores to ensure they're included first
-            for memory in identity_memories:
-                relevant.append((0.9, memory))  # High score for identity memories in identity queries
-        
-        # Process other memories with similarity scoring
-        for memory in other_memories:
-            memory_text = memory["text"].lower()
             memory_tokens = set(tokenize(memory_text))
-            query_tokens = set(tokenize(query_lower))
             
             # Calculate base Jaccard similarity
             if not query_tokens or not memory_tokens:
@@ -352,7 +407,11 @@ class MemoryManager:
             final_score = base_similarity
             
             # Apply boosts based on semantic matching
-            if query_type == "contact":
+            if query_type == "identity" and is_identity:
+                # Keep explicit name/identity recall useful without outranking
+                # a closer textual match or bypassing the caller's threshold.
+                final_score = max(final_score * 1.3, 0.6)
+            elif query_type == "contact":
                 # Boost memories with contact information
                 has_contact_info = any(word in memory_text for word in ["@gmail.com", "@", ".com", 
                                                                      "phone", "number", "address", 

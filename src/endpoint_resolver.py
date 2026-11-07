@@ -5,7 +5,9 @@ Consolidates the 4+ copies of normalize_base / resolve_endpoint logic into one p
 """
 
 import json
+import ipaddress
 import logging
+import os
 import socket
 import subprocess
 from typing import Optional, Tuple, Dict
@@ -25,6 +27,67 @@ _NON_CHAT_MODEL = (
     "text-embedding", "embedding", "tts-", "whisper", "dall-e",
     "moderation", "rerank", "reranker", "clip", "stable-diffusion",
 )
+
+
+def endpoint_cost_tracked(url: str, endpoint_kind: Optional[str] = None) -> bool:
+    """Return whether token cost should be tracked for a concrete route.
+
+    This is intentionally a non-secret route classification.  It mirrors the
+    frontend's local/subscription exclusions without exposing endpoint URLs to
+    message metadata.
+    """
+
+    try:
+        parsed = urlparse(url or "")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        path = (parsed.path or "").rstrip("/")
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host == "chatgpt.com" and (
+        path == "/backend-api/codex" or path.startswith("/backend-api/codex/")
+    ):
+        return False
+    kind = str(endpoint_kind or "auto").strip().lower()
+    if kind == "local":
+        return False
+    if kind in {"api", "proxy"}:
+        return True
+    if host in {"localhost", "0.0.0.0", "host.docker.internal"} or host.endswith(".local"):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_global
+    except ValueError:
+        pass
+    if "." not in host:
+        return False
+    return True
+
+
+def _running_in_container() -> bool:
+    if os.path.exists("/.dockerenv"):
+        return True
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8") as fh:
+            return any(
+                marker in fh.read()
+                for marker in ("docker", "containerd", "kubepods")
+            )
+    except OSError:
+        return False
+
+
+def _rewrite_docker_host_for_native_runtime(base: str) -> str:
+    """Make Docker-saved host endpoints usable by a native backend process."""
+    if _running_in_container():
+        return base
+    parsed = urlparse(base)
+    if (parsed.hostname or "").lower() != "host.docker.internal":
+        return base
+    netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port else "")
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 def _first_chat_model(models) -> Optional[str]:
@@ -112,14 +175,18 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     store refreshable credentials in ProviderAuthSession and must resolve a
     current access token at call time.
     """
-    base = normalize_base(getattr(ep, "base_url", "") or "")
+    base = _rewrite_docker_host_for_native_runtime(
+        normalize_base(getattr(ep, "base_url", "") or "")
+    )
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
     if auth_id:
         from src.chatgpt_subscription import resolve_runtime_credentials
 
         creds = resolve_runtime_credentials(auth_id, owner=owner)
-        base = normalize_base(creds.get("base_url") or base)
+        base = _rewrite_docker_host_for_native_runtime(
+            normalize_base(creds.get("base_url") or base)
+        )
         api_key = creds.get("api_key")
     return base, api_key
 
@@ -194,6 +261,74 @@ def normalize_base(url: str) -> str:
         if url.endswith("/api" + suffix):
             url = url[: -len(suffix)].rstrip("/")
     return url
+
+
+def same_endpoint_base(left, right) -> bool:
+    """Allow credential reuse only for the exact API origin and base path."""
+    def identity(value):
+        parsed = urlparse(normalize_base(value))
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.params):
+            return None
+        return (parsed.scheme, parsed.hostname.lower(),
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                parsed.path.rstrip("/"))
+    try:
+        expected = identity(right)
+        return expected is not None and identity(left) == expected
+    except ValueError:
+        return False
+
+
+def _registered_endpoint_url_identity(value):
+    """Compare complete URL paths without collapsing caller-selected suffixes."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    try:
+        parsed = urlparse(value)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or "?" in value or "#" in value or parsed.params):
+            return None
+        port = parsed.port
+        return (parsed.scheme, parsed.hostname.lower(),
+                port if port is not None else (443 if parsed.scheme == "https" else 80),
+                parsed.path.rstrip("/"))
+    except ValueError:
+        return None
+
+
+def resolve_owner_registered_endpoint(db, endpoint_url: str, owner: Optional[str] = None):
+    """Authorize a caller URL against enabled, owner-visible endpoint rows.
+
+    Accept only the registered canonical base or its server-derived chat URL.
+    Request credentials, query strings and fragments are never endpoint identity.
+    Return the server-owned row so runtime credentials come from registration.
+    """
+    from src.auth_helpers import owner_filter
+
+    identity = _registered_endpoint_url_identity(endpoint_url)
+    if identity is None:
+        raise ValueError("Invalid model endpoint URL")
+    query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled.is_(True))
+    for endpoint in owner_filter(query, ModelEndpoint, owner).all():
+        base = normalize_base(endpoint.base_url)
+        base_identity = _registered_endpoint_url_identity(base)
+        if base_identity is None:
+            continue
+        if identity == base_identity:
+            return endpoint
+        if identity == _registered_endpoint_url_identity(build_chat_url(base)):
+            return endpoint
+    raise ValueError("Model endpoint must be enabled and registered for the current owner")
+
+
+def resolve_owner_registered_endpoint_url(db, endpoint_url: str, owner: Optional[str] = None) -> str:
+    """Return only the registered canonical base, never the caller's URL."""
+    endpoint = resolve_owner_registered_endpoint(db, endpoint_url, owner)
+    return normalize_base(endpoint.base_url)
 
 
 def _validated_endpoint_base(url: str) -> str:
@@ -396,10 +531,14 @@ def resolve_endpoint(
         db.close()
 
 
-def resolve_endpoint_by_id(
-    ep_id: str, model: Optional[str] = None, owner: Optional[str] = None
-) -> Optional[Tuple[str, str, Dict]]:
-    """Resolve a specific endpoint id (+ optional model) to (chat_url, model, headers).
+def _resolve_endpoint_by_id_with_descriptor(
+    ep_id: str,
+    model: Optional[str] = None,
+    owner: Optional[str] = None,
+    *,
+    require_exact_model: bool = False,
+) -> Optional[Tuple[Tuple[str, str, Dict], dict]]:
+    """Resolve a concrete endpoint/model plus its non-secret descriptor.
 
     Returns None if the endpoint doesn't exist or is disabled. Used to turn
     a configured fallback entry ({endpoint_id, model}) into a dispatch target.
@@ -426,15 +565,34 @@ def resolve_endpoint_by_id(
         chat_url = build_chat_url(base)
         headers = build_headers(api_key, base)
         m = (model or "").strip()
-        # Drop a model the user disabled on the endpoint, then pick the first
-        # enabled chat model rather than a hidden one.
-        if m and m in _endpoint_hidden_models(ep):
-            m = ""
-        if not m:
-            m = _first_chat_model(_endpoint_enabled_models(ep)) or ""
+        enabled_models = _endpoint_enabled_models(ep)
+        if require_exact_model:
+            # Explicit foreground fallback entries are concrete choices. A
+            # hidden or known-missing model must disable the entry instead of
+            # silently substituting another model from the endpoint.
+            if not m or m in _endpoint_hidden_models(ep):
+                return None
+            if enabled_models and m not in enabled_models:
+                return None
+        else:
+            # Legacy Utility/Vision chains retain their model-repair behavior.
+            if m and m in _endpoint_hidden_models(ep):
+                m = ""
+            if not m:
+                m = _first_chat_model(enabled_models) or ""
         if not m:
             return None
-        return chat_url, m, headers
+        return (
+            (chat_url, m, headers),
+            {
+                "endpoint_id": ep.id,
+                "endpoint_label": getattr(ep, "name", None) or ep.id,
+                "endpoint_cost_tracked": endpoint_cost_tracked(
+                    chat_url,
+                    getattr(ep, "endpoint_kind", None),
+                ),
+            },
+        )
     except Exception as e:
         logger.debug(f"Could not resolve endpoint {ep_id}: {e}")
         return None
@@ -442,29 +600,105 @@ def resolve_endpoint_by_id(
         db.close()
 
 
-def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
-    """Build the configured default-chat fallback chain as a list of
-    (chat_url, model, headers) tuples, skipping any that can't resolve.
+def resolve_endpoint_by_id(
+    ep_id: str,
+    model: Optional[str] = None,
+    owner: Optional[str] = None,
+    *,
+    require_exact_model: bool = False,
+) -> Optional[Tuple[str, str, Dict]]:
+    """Resolve a specific endpoint id (+ optional model) to its runtime route."""
 
-    The primary model is NOT included — callers prepend their session's
-    current (url, model, headers) so per-session model overrides are honored.
+    resolved = _resolve_endpoint_by_id_with_descriptor(
+        ep_id,
+        model,
+        owner=owner,
+        require_exact_model=require_exact_model,
+    )
+    return resolved[0] if resolved else None
+
+
+def resolve_route_descriptor(
+    endpoint_url: str,
+    model: str,
+    headers: Optional[Dict] = None,
+    owner: Optional[str] = None,
+) -> dict:
+    """Return the visible endpoint identity for an already-resolved route.
+
+    Headers are compared only inside the process so two endpoints using the
+    same provider URL/model but different credentials remain distinguishable.
+    No credential material is returned or logged.
     """
-    return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
+
+    if not endpoint_url or not model:
+        return {
+            "endpoint_id": None,
+            "endpoint_label": "Selected route",
+            "endpoint_cost_tracked": endpoint_cost_tracked(endpoint_url),
+        }
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        expected = (endpoint_url.rstrip("/"), model, headers or {})
+        for ep in q.all():
+            resolved = _resolve_endpoint_by_id_with_descriptor(
+                ep.id,
+                model,
+                owner=owner,
+                require_exact_model=True,
+            )
+            if not resolved:
+                continue
+            candidate, descriptor = resolved
+            actual = (candidate[0].rstrip("/"), candidate[1], candidate[2] or {})
+            if actual == expected:
+                return descriptor
+    except Exception as e:
+        logger.debug("Could not identify selected endpoint route: %s", e)
+    finally:
+        db.close()
+    return {
+        "endpoint_id": None,
+        "endpoint_label": "Selected route",
+        "endpoint_cost_tracked": endpoint_cost_tracked(endpoint_url),
+    }
+
+
+def resolve_route_descriptor_by_id(
+    endpoint_id: str,
+    endpoint_url: str,
+    model: str,
+    headers: Optional[Dict] = None,
+    owner: Optional[str] = None,
+) -> Optional[dict]:
+    """Resolve a selected route's identity without relying on row order.
+
+    The explicit endpoint id is still verified against the resolved runtime
+    route. This prevents stale or mismatched request metadata from being used
+    for attribution while disambiguating endpoints whose routes are otherwise
+    identical.
+    """
+
+    resolved = _resolve_endpoint_by_id_with_descriptor(
+        endpoint_id,
+        model,
+        owner=owner,
+        require_exact_model=True,
+    )
+    if not resolved:
+        return None
+    candidate, descriptor = resolved
+    expected = ((endpoint_url or "").rstrip("/"), model, headers or {})
+    actual = (candidate[0].rstrip("/"), candidate[1], candidate[2] or {})
+    return descriptor if actual == expected else None
 
 
 def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     """Configured fallback chain for the Utility model (`utility_model_fallbacks`)."""
-    try:
-        from src.settings import get_user_setting, load_settings
-        settings = load_settings()
-        utility_ep = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
-        if not utility_ep:
-            utility_chain = get_user_setting("utility_model_fallbacks", owner or "", settings.get("utility_model_fallbacks") or []) or []
-            if utility_chain:
-                return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
-            return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
-    except Exception:
-        pass
     return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
 
 
@@ -474,17 +708,62 @@ def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
 
 
 def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
-    out = []
     try:
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
         chain = get_user_setting(setting_key, owner or "", settings.get(setting_key) or []) or []
     except Exception:
-        return out
-    for entry in chain:
+        return []
+    return resolve_fallback_entries(chain, owner=owner)
+
+
+def resolve_fallback_entries(
+    entries,
+    owner: Optional[str] = None,
+    *,
+    require_exact_model: bool = False,
+) -> list:
+    """Resolve ordered endpoint/model entries within the caller's owner scope."""
+
+    out = []
+    for entry in entries or []:
         if not isinstance(entry, dict):
             continue
-        resolved = resolve_endpoint_by_id(entry.get("endpoint_id", ""), entry.get("model", ""), owner=owner)
-        if resolved:
+        resolved = resolve_endpoint_by_id(
+            entry.get("endpoint_id", ""),
+            entry.get("model", ""),
+            owner=owner,
+            require_exact_model=require_exact_model,
+        )
+        if resolved and resolved not in out:
             out.append(resolved)
+    return out
+
+
+def resolve_fallback_entries_with_descriptors(
+    entries,
+    owner: Optional[str] = None,
+    *,
+    require_exact_model: bool = False,
+) -> list:
+    """Resolve ordered entries while retaining safe endpoint provenance."""
+
+    out = []
+    seen = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        resolved = _resolve_endpoint_by_id_with_descriptor(
+            entry.get("endpoint_id", ""),
+            entry.get("model", ""),
+            owner=owner,
+            require_exact_model=require_exact_model,
+        )
+        if not resolved:
+            continue
+        candidate, descriptor = resolved
+        if any(candidate == prior for prior in seen):
+            continue
+        seen.append(candidate)
+        out.append((candidate, descriptor))
     return out

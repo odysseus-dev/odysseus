@@ -5,7 +5,34 @@ Pins the pure budget computation and the explicit-override detection.
 
 import json
 
-from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
+from src.context_budget import (
+    DEFAULT_HARD_MAX,
+    bound_trim_reserve,
+    compute_input_token_budget,
+    compute_trim_context_window,
+)
+
+
+def test_trim_reserve_cannot_consume_small_effective_budget():
+    assert bound_trim_reserve(1638, 2048) == 819
+    assert bound_trim_reserve(100, 2048) == 50
+    assert bound_trim_reserve(4096, 512) == 512
+
+
+def test_trim_window_adds_response_reserve_to_input_budget_once():
+    trim_window, reserve = compute_trim_context_window(1638, 4096, 1024)
+
+    assert trim_window == 2662
+    assert reserve == 1024
+    assert trim_window - reserve == 1638
+
+
+def test_trim_window_keeps_half_of_tiny_context_for_input():
+    trim_window, reserve = compute_trim_context_window(435, 512, 1024)
+
+    assert trim_window == 512
+    assert reserve == 256
+    assert trim_window - reserve == 256
 
 
 def test_default_scales_to_context_window():

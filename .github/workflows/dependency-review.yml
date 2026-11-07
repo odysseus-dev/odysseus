@@ -30,13 +30,16 @@ jobs:
   dependency-review:
     name: dependency-review (PR gate)
     # Only meaningful on a pull request -- it needs a base..head diff to review.
-    if: github.event_name == 'pull_request'
+    # dependency-review-action requires GitHub dependency-review support.
+    # Keep the blocking gate on the canonical repository; forks and maintainer
+    # preview mirrors still run the advisory pip-audit job below.
+    if: github.event_name == 'pull_request' && github.repository == 'odysseus-dev/odysseus'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
@@ -55,17 +58,21 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.12'
 
       - name: Run pip-audit on requirements
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates
+          python scripts/check_ca_trust.py --system
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r requirements-bootstrap.txt
           pip install pip-audit==2.10.0
           pip-audit -r requirements.txt -r requirements-optional.txt --strict

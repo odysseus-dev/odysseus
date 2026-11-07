@@ -517,6 +517,12 @@ async def execute_api_call(
     if not integration:
         return {"error": f"Integration not found: {integration_id}", "exit_code": 1}
 
+    from src.agent_runtime.remote_resources import active_backend_operation, integration_resource
+    bound = active_backend_operation()
+    if bound is not None and bound.resource != integration_resource(integration):
+        return {"error": "Integration resource identity changed", "exit_code": 1,
+                "failure_kind": "resource_identity_denied"}
+
     if not integration.get("enabled", True):
         return {"error": f"Integration '{integration.get('name')}' is disabled", "exit_code": 1}
 
@@ -719,7 +725,14 @@ async def execute_api_call(
         output = f"HTTP {status}\n{formatted}"
 
         if status >= 400:
-            return {"error": output, "exit_code": 1}
+            return {
+                "error": output,
+                "exit_code": 1,
+                # The error string includes the remote response body.  Preserve
+                # it for diagnostics, but make its provenance explicit so the
+                # agent gate does not treat HTTP failure as content-free.
+                "untrusted_content": True,
+            }
 
         return {"output": output, "exit_code": 0}
 

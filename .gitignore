@@ -26,6 +26,9 @@ secrets.env.*
 
 # Data — all user data stays local
 data/
+# Per-worktree runtime state written by `odysseus dev` (its own data dir,
+# logs and stop handle) — disposable, and never shared between checkouts.
+.odysseus-dev/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
 logs/
@@ -50,6 +53,8 @@ services/data/
 
 # Test capture artifacts (browser session dumps may contain personal content)
 .playwright-mcp/
+test-results/
+playwright-report/
 
 # OS
 .DS_Store
@@ -84,6 +89,24 @@ output.txt.txt
 !docs/**/*.jpg
 !docs/**/*.gif
 !docs/**/*.webp
+
+# …except shipped website and branding media.
+!website/**/*.jpg
+!website/**/*.jpeg
+!website/**/*.png
+!website/**/*.gif
+!website/**/*.bmp
+!website/**/*.webp
+!website/**/*.tiff
+!website/**/*.pdf
+!assets/branding/**/*.jpg
+!assets/branding/**/*.jpeg
+!assets/branding/**/*.png
+!assets/branding/**/*.gif
+!assets/branding/**/*.bmp
+!assets/branding/**/*.webp
+!assets/branding/**/*.tiff
+!assets/branding/**/*.pdf
 
 # Reports and temp files
 reports/

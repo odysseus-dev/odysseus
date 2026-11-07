@@ -257,6 +257,7 @@ def test_models_route_rejects_api_token_without_chat_scope(monkeypatch):
 
 
 def test_models_route_unresolved_owner_returns_only_shared_rows(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
     rows = [
         _ep(1, "alice-endpoint", "alice"),
         _ep(2, "shared-endpoint", None),
@@ -276,6 +277,87 @@ def test_models_route_unresolved_owner_returns_only_shared_rows(monkeypatch):
     )
 
     assert _endpoint_names(endpoints) == ["shared-endpoint"]
+
+
+def test_models_route_auth_disabled_does_not_widen_ownerless_api_token(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    rows = [
+        _ep(1, "alice-endpoint", "alice"),
+        _ep(2, "shared-endpoint", None),
+        _ep(3, "bob-endpoint", "bob"),
+    ]
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: None)
+
+    endpoints = _call_models_route(
+        monkeypatch,
+        rows,
+        _request(
+            api_token=True,
+            api_token_owner=None,
+            api_token_scopes=["chat"],
+            current_user="api",
+        ),
+    )
+
+    assert _endpoint_names(endpoints) == ["shared-endpoint"]
+
+
+def test_models_route_auth_disabled_keeps_cookie_owner_scoped(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    rows = [
+        _ep(1, "alice-endpoint", "alice"),
+        _ep(2, "shared-endpoint", None),
+        _ep(3, "bob-endpoint", "bob"),
+    ]
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: "alice")
+
+    endpoints = _call_models_route(
+        monkeypatch,
+        rows,
+        _request(api_token=False, current_user="alice"),
+    )
+
+    assert _endpoint_names(endpoints) == ["alice-endpoint", "shared-endpoint"]
+
+
+def test_models_route_auth_enabled_anonymous_returns_only_shared_rows(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    rows = [
+        _ep(1, "alice-endpoint", "alice"),
+        _ep(2, "shared-endpoint", None),
+        _ep(3, "bob-endpoint", "bob"),
+    ]
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: None)
+
+    endpoints = _call_models_route(
+        monkeypatch,
+        rows,
+        _request(api_token=False, current_user=None),
+    )
+
+    assert _endpoint_names(endpoints) == ["shared-endpoint"]
+
+
+def test_models_route_auth_disabled_returns_all_enabled_rows(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    rows = [
+        _ep(1, "alice-endpoint", "alice"),
+        _ep(2, "shared-endpoint", None),
+        _ep(3, "bob-endpoint", "bob"),
+    ]
+    monkeypatch.setattr(companion_routes, "get_current_user", lambda request: None)
+
+    endpoints = _call_models_route(
+        monkeypatch,
+        rows,
+        _request(api_token=False, current_user=None),
+    )
+
+    assert _endpoint_names(endpoints) == [
+        "alice-endpoint",
+        "shared-endpoint",
+        "bob-endpoint",
+    ]
 
 
 def test_models_route_filters_hidden_models_and_secret_fields(monkeypatch):

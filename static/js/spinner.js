@@ -4,6 +4,13 @@
  * ASCII Spinner Module for AI thinking/processing status
  */
 
+// How long a canvas spinner may keep animating before its element has ever
+// been inserted into the document. start() runs synchronously, before the
+// caller appends the element, so frame 1 is always disconnected. Callers do
+// append in the same task, so anything past this window means the element is
+// never coming and the frames are drawing for nobody.
+const UNATTACHED_GRACE_MS = 2000;
+
 class Spinner {
   constructor(message = "AI is processing", style = "right", animation = "spinner") {
     // Different animation frames
@@ -21,6 +28,9 @@ class Spinner {
     this.intervalId = null;
     this.rafId = null;
     this.element = null;
+    this._wpWasConnected = false;
+    this._wpUnattachedSince = null;
+    this._visHandler = null;
   }
 
   /**
@@ -74,6 +84,7 @@ class Spinner {
   }
 
   _drawSineWave() {
+    if (!this.isRunning) return;
     const ctx = this._ctx;
     const W = this._canvas.width;
     const H = this._canvas.height;
@@ -120,9 +131,7 @@ class Spinner {
     ctx.fillStyle = 'rgba(156, 222, 242, 0.9)';
     ctx.fill();
 
-    if (this.isRunning) {
-      this.rafId = requestAnimationFrame(() => this._drawSineWave());
-    }
+    if (this.isRunning) this._requestFrame();
   }
 
   _createWhirlpoolElement() {
@@ -158,6 +167,7 @@ class Spinner {
   }
 
   _drawWhirlpool() {
+    if (!this.isRunning) return;
     const ctx = this._wpCtx;
     const W = this._wpCanvas.width;
     const H = this._wpCanvas.height;
@@ -229,18 +239,77 @@ class Spinner {
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    if (!this.isRunning) return;
-    // Leak-safe self-terminate: stop once our element WAS in the DOM and then
-    // got removed (e.g. a loading row replaced by results). But keep spinning
-    // before it's first appended — start() runs synchronously, before the
-    // caller inserts the element, so it isn't connected on frame 1.
+    // Leak-safe self-terminate. "Nobody can see this spinner" has two shapes
+    // and we have to catch both:
+    //   1. the element WAS in the DOM and then got removed (a loading row
+    //      replaced by results);
+    //   2. the element was NEVER inserted, and the grace window for inserting
+    //      it has expired. The caller started a spinner and then took an early
+    //      return (aborted request, panel that resolved from cache), so no
+    //      frame we draw will ever be observed.
+    // Case 2 is why this needs a deadline at all: while the element has never
+    // been connected, `!this._wpWasConnected` stays true forever, so without
+    // the grace check the loop re-arms until the tab closes.
     const connected = !!(this.element && this.element.isConnected);
-    if (connected) this._wpWasConnected = true;
-    if (connected || !this._wpWasConnected) {
-      this.rafId = requestAnimationFrame(() => this._drawWhirlpool());
-    } else {
-      this.isRunning = false;
+    if (connected) {
+      this._wpWasConnected = true;
+      this._wpUnattachedSince = null;
+    } else if (!this._wpWasConnected) {
+      if (this._wpUnattachedSince === null) this._wpUnattachedSince = performance.now();
+      if (performance.now() - this._wpUnattachedSince > UNATTACHED_GRACE_MS) {
+        this.stop();
+        return;
+      }
     }
+
+    if (connected || !this._wpWasConnected) {
+      this._requestFrame();
+    } else {
+      this.stop();
+    }
+  }
+
+  /**
+   * Arm the next animation frame. Clearing rafId as the callback enters keeps
+   * it a truthful "a frame is pending" flag, which is what stop() and the
+   * visibility handler cancel against.
+   */
+  _requestFrame() {
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+      if (this.animation === 'sinewave') this._drawSineWave();
+      else this._drawWhirlpool();
+    });
+  }
+
+  /**
+   * Stop drawing while the tab is hidden. Browsers throttle background rAF but
+   * do not reliably stop the canvas work, and a spinner nobody is looking at
+   * should cost nothing. The listener is owned by start()/stop() so it is never
+   * left behind on a dead spinner.
+   */
+  _armVisibilityPause() {
+    if (this._visHandler) return;
+    this._visHandler = () => {
+      if (document.hidden) {
+        if (this.rafId) {
+          cancelAnimationFrame(this.rafId);
+          this.rafId = null;
+        }
+      } else if (this.isRunning && !this.rafId) {
+        // Reset the wave clock so the hidden interval doesn't arrive as one
+        // huge dt and skip the animation forward.
+        this._wavePrev = performance.now();
+        this._requestFrame();
+      }
+    };
+    document.addEventListener('visibilitychange', this._visHandler);
+  }
+
+  _disarmVisibilityPause() {
+    if (!this._visHandler) return;
+    document.removeEventListener('visibilitychange', this._visHandler);
+    this._visHandler = null;
   }
 
   /**
@@ -272,12 +341,15 @@ class Spinner {
 
     if (this.animation === 'sinewave') {
       this._wavePrev = performance.now();
+      this._armVisibilityPause();
       this._drawSineWave();
       return;
     }
 
     if (this.animation === 'whirlpool') {
       this._wpStartedAt = performance.now();
+      this._wpUnattachedSince = null;
+      this._armVisibilityPause();
       this._drawWhirlpool();
       return;
     }
@@ -302,6 +374,7 @@ class Spinner {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this._disarmVisibilityPause();
   }
 
   /**

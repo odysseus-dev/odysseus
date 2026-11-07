@@ -61,6 +61,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`chatRenderer.js`** | Message DOM construction: `addMessage`, role labels, model route labels, color coding, footers, metrics, code blocks, sources boxes (`web`/`research`/`RAG`), findings box, images, report links, ask-user cards, welcome screen, and transcript utilities. |
 | **`streamingRenderer.js`** | Incremental streaming renderer used by `chat.js`. Freezes finalized DOM blocks and only re-renders the growing tail to avoid flicker and O(N²) re-parsing. |
 | **`streamingSegmenter.js`** | Splits a token stream into display units (text vs code fences) for `streamingRenderer.js`. |
+| **`liveThinkingThrottle.js`** | Trailing-edge coalescer for the live thinking block in `chat.js`: one DOM commit per 100 ms carrying the latest reasoning text, with `flush`/`cancel` for terminal and session-switch paths. |
 | **`slashCommands.js`** | Slash-command registry (`/help`, `/setup`, etc.), parsing, and dispatch handlers. Exported functions are consumed by `chat.js` and `slashAutocomplete.js`. |
 | **`slashAutocomplete.js`** | Composer autocomplete popup for `/` commands. |
 | **`composerArrowUpRecall.js`** | Recall last user message with `↑` on an empty composer. |
@@ -136,7 +137,7 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | Module | Responsibility |
 |---|---|
 | **`gallery.js`** / **`galleryEditor.js`** | Gallery/image library and canvas editor entry points. |
-| **`emailInbox.js`** / **`emailLibrary.js`** | Email inbox reader and library modal. Sub-modules handle signatures, reply recipients, state, and signature folding. |
+| **`emailInbox.js`** / **`emailLibrary/`** | Email inbox reader and library modal. `emailLibrary.js` is a re-export wrapper; `emailLibrary/index.js` owns the panel, list and cards, with `settingsPage.js`, `unsubscribe.js`, `reader.js`, `menus.js`, `bodyRender.js`, `attachments.js` and `aiReply.js` alongside it plus the `utils.js` / `signatureFold.js` / `replyRecipients.js` / `state.js` leaves. |
 | **`calendar.js`** / **`calendar/utils.js`** / **`calendar/reminders.js`** | Calendar views, event forms, reminders. |
 | **`tasks.js`** | Scheduled task/recurring LLM job UI. |
 | **`notes.js`** | Notes and todo panel, reminders, pinboard. |

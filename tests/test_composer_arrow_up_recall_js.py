@@ -306,3 +306,24 @@ def test_integration_recalls_from_chat_history_dom():
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip()) == {"value": "stored prompt", "prevented": True}
+
+
+def test_prompt_recall_is_not_duplicated_in_app_js():
+    """Only composerArrowUpRecall.js may own ArrowUp on #message (issue #5862).
+
+    static/app.js once carried a near-verbatim copy of this recall logic, wired
+    as a second capture-phase listener on the same textarea. That copy lacked
+    the draft guard here, and because it called stopImmediatePropagation it won
+    regardless of registration order — so a typed multi-line prompt was replaced
+    by the last sent one instead of the caret moving up a line.
+    """
+    app_js = (_REPO / "static" / "app.js").read_text(encoding="utf-8")
+    for marker in (
+        "_odysseusPromptRecallCapture",
+        "_readComposerPromptHistory",
+        "odysseusRecallIndex",
+    ):
+        assert marker not in app_js, (
+            f"static/app.js reintroduces prompt recall ({marker!r}); "
+            "it belongs to static/js/composerArrowUpRecall.js alone"
+        )
