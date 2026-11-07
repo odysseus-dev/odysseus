@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 import logging
 
 from src.upload_limits import read_upload_limited, STT_MAX_AUDIO_BYTES
+from core.guard_deco import no_waf
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ def setup_stt_routes(stt_service):
             raise HTTPException(status_code=500, detail=str(e))
 
     @router.post("/transcribe")
+    @no_waf()
     async def transcribe_audio(file: UploadFile = File(...)):
         """Transcribe uploaded audio file to text"""
         try:
