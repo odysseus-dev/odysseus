@@ -113,6 +113,10 @@ console.log(JSON.stringify({
     ("anthropic/claude-haiku-4.5", "claude-haiku-4-5"),
     ("anthropic/claude-sonnet-5.5", "claude-sonnet-5-5"),
     ("claude-opus-4-5-20251101", "claude-opus-4-5"),
+    ("qwen2.5-coder-32b-claude-distill", "qwen2.5"),
+    ("meta-llama/llama-3.1-8b-claude-3.5-sonnet-distill", "llama-3.1"),
+    ("gpt-4.1-claude", "gpt-4.1"),
+    ("gemini-2.5-pro-claude-style", "gemini-2.5-pro"),
     ("gpt-4.1-mini", "gpt-4.1-mini"),
 ])
 def test_dotted_claude_names_match_their_dashed_key(name, key):

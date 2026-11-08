@@ -163,6 +163,10 @@ def test_final_metrics_context_uses_last_round_not_round_sum():
     ("anthropic/claude-sonnet-5.5", "claude-sonnet-5-5"),
     ("anthropic/claude-3.5-sonnet", "claude-3-5-sonnet"),
     ("claude-opus-4-5-20251101", "claude-opus-4-5"),
+    ("qwen2.5-coder-32b-claude-distill", "qwen2.5"),
+    ("meta-llama/llama-3.1-8b-claude-3.5-sonnet-distill", "llama-3.1"),
+    ("gpt-4.1-claude", "gpt-4.1"),
+    ("gemini-2.5-pro-claude-style", "gemini-2.5-pro"),
     ("gpt-4.1-mini", "gpt-4.1-mini"),
 ])
 def test_match_model_key_handles_dotted_claude_versions(name, key):
