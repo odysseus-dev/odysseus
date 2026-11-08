@@ -1501,6 +1501,36 @@ def _apply_deepseek_v4_reasoning_defaults(
     payload.setdefault("reasoning_effort", _DEEPSEEK_REASONING_EFFORT)
 
 
+def _apply_ollama_reasoning_replay(payload: Dict, target_url: str) -> None:
+    """Also send replayed reasoning as ``reasoning`` to Ollama's /v1 endpoint.
+
+    Assistant turns carry earlier reasoning back as ``reasoning_content``,
+    which llama-server and DeepSeek read. Ollama's OpenAI-compatible layer
+    ignores that field and reads ``reasoning``, so the replayed reasoning
+    never reached Ollama (issue #7114). Which turns carry reasoning stays the
+    caller's choice; the copy goes only onto this payload's sanitized
+    messages, never onto the caller's history.
+
+    Matched on Ollama's default port, like agent_loop's Ollama /v1 check.
+    ``_is_ollama_openai_compat_url`` also accepts any localhost /v1 server,
+    llama-server included, and hosted APIs may reject unknown message fields.
+    """
+    try:
+        parsed = urlparse(target_url or "")
+        port = parsed.port
+    except Exception:
+        return
+    path = (parsed.path or "").rstrip("/")
+    if port != 11434 or not (path == "/v1" or path.startswith("/v1/")):
+        return
+    for message in payload.get("messages") or []:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        reasoning = message.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            message["reasoning"] = reasoning
+
+
 def _normalize_chatgpt_subscription_url(url: str) -> str:
     base = (url or "").strip().rstrip("/")
     if base.endswith("/responses"):
@@ -2417,6 +2447,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
         _apply_explicit_nonstream_reasoning_effort(payload, reasoning_effort)
+        _apply_ollama_reasoning_replay(payload, target_url)
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -2823,6 +2854,7 @@ async def llm_call_async(
             payload, target_url, model, thinking_mode
         )
         _apply_explicit_nonstream_reasoning_effort(payload, reasoning_effort)
+        _apply_ollama_reasoning_replay(payload, target_url)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -3091,6 +3123,7 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload, target_url, model, thinking_mode
         )
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)
+        _apply_ollama_reasoning_replay(payload, target_url)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
