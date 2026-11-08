@@ -122,8 +122,13 @@ def test_central_dispatcher_denial_never_owns_success_output(monkeypatch):
     assert answer == ""
 
 
-def run_terminal_branch(monkeypatch, native_calls, result, operation=None, *, max_tool_calls=3):
-    """Execute the actual async branch after parsing, without a provider call."""
+def run_terminal_branch(monkeypatch, native_calls, result, operation=None, *, max_tool_calls=3,
+                        **state_overrides):
+    """Execute the actual async branch after parsing, without a provider call.
+
+    ``state_overrides`` replaces names the branch reads (for example a
+    recording ``_compute_final_metrics`` or the turn's token counters).
+    """
     source = Path(al.__file__)
     tree = ast.parse(source.read_text())
     branch = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
@@ -150,6 +155,7 @@ def run_terminal_branch(monkeypatch, native_calls, result, operation=None, *, ma
         has_real_usage=True, time_to_first_token=0.1, _t0=time.time(),
         json=json, time=time,
     )
+    state.update(state_overrides)
     wrapper = ast.parse("async def run():\n    yield 'unexpected synthesis'\n").body[0]
     wrapper.body.insert(0, branch)
     module = ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[]))
@@ -181,6 +187,27 @@ def test_omitted_invalid_and_valid_model_args_use_immutable_read_and_finish(monk
     assert len(metrics["tool_events"]) == 1
     assert payloads[0]["call_id"] == ("call_native" if args == '{"action":"list"}' else "required-read-1")
     assert events[-1] == "data: [DONE]\n\n"
+
+
+def test_required_read_metrics_use_the_last_request_and_the_cache_split(monkeypatch):
+    # real_input_tokens sums every round and each round re-sends the whole
+    # history, so context % must come from the last request; the cache split
+    # lets clients bill cached tokens at cache rates on this bucket-less path.
+    seen = {}
+
+    def record_final_metrics(*args, **kwargs):
+        seen.update(kwargs)
+        return {"tool_events": args[8]}
+
+    run_terminal_branch(
+        monkeypatch, [], notes_result(),
+        _compute_final_metrics=record_final_metrics,
+        real_input_tokens=90_000, last_round_input_tokens=50_000,
+        real_cache_read_tokens=40_000, real_cache_write_tokens=1_000,
+    )
+    assert seen["last_round_input_tokens"] == 50_000
+    assert seen["real_cache_read_tokens"] == 40_000
+    assert seen["real_cache_write_tokens"] == 1_000
 
 
 def test_failed_read_reports_failure_without_retry_or_false_success(monkeypatch):

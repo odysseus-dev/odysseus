@@ -359,6 +359,87 @@ def test_no_buckets_leaves_metrics_untouched():
     assert m == {"input_tokens": 5, "request_context_tokens": 7, "context_percent": 1.0}
 
 
+def test_agent_turn_final_metrics_use_last_request_and_per_request_cost(monkeypatch):
+    # End to end through stream_agent_loop: two Claude rounds, each re-sending
+    # the cached history. The final metrics event must carry the last
+    # request's prompt as the context figure and price each round on its own.
+    import asyncio
+    import json
+    import src.model_context as model_context
+
+    # Haiku 5.5's per-request long-prompt tier (100k) makes the per-request
+    # price differ from pricing the 122k round sum. Its window isn't in the
+    # known-models table, so pin it here instead of probing the endpoint.
+    model = "claude-haiku-5-5"
+    monkeypatch.setattr(model_context, "get_context_length_known", lambda url, m: (200_000, True))
+    rounds = [
+        {"input_tokens": 60_000, "output_tokens": 500, "cache_creation_input_tokens": 59_000},
+        {"input_tokens": 62_000, "output_tokens": 400,
+         "cache_read_input_tokens": 59_000, "cache_creation_input_tokens": 2_000},
+    ]
+    calls = 0
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+    monkeypatch.setattr(
+        agent_loop, "_agent_route_tool_mode", lambda *args, **kwargs: (True, False, False),
+    )
+
+    async def fake_stream(candidates, messages, **kwargs):
+        nonlocal calls
+        usage = dict(rounds[calls], model=model)
+        calls += 1
+        yield "data: " + json.dumps({"type": "usage", "data": usage}) + "\n\n"
+        if calls == 1:
+            call = {"name": "bash", "arguments": json.dumps({"command": "printf one"})}
+            yield "data: " + json.dumps({"type": "tool_calls", "calls": [call]}) + "\n\n"
+        else:
+            yield 'data: {"delta": "done"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    async def fake_execute(block, *args, **kwargs):
+        return "bash", {"output": "ok", "exit_code": 0}
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", fake_execute)
+
+    async def _run():
+        return [chunk async for chunk in agent_loop.stream_agent_loop(
+            _ANTHROPIC_URL,
+            model,
+            [{"role": "user", "content": "Run one tool."}],
+            context_length=200_000,
+            max_rounds=3,
+            relevant_tools={"bash"},
+            workspace="/workspace",
+            route_descriptors=[
+                {"endpoint_id": "claude", "endpoint_label": "Claude", "endpoint_cost_tracked": True},
+            ],
+            fallback_on_empty=False,
+            _is_teacher_run=True,
+        )]
+
+    chunks = asyncio.run(_run())
+    metrics = json.loads(next(c for c in chunks if '"type": "metrics"' in c)[6:])["data"]
+
+    assert calls == 2
+    assert metrics["input_tokens"] == 122_000
+    assert metrics["request_context_tokens"] == 62_000
+    assert metrics["context_percent"] == 31.0
+    assert metrics["usage_buckets"][-1]["cache_read_input_tokens"] == 59_000
+    assert metrics["cost_source"] == "estimated"
+    per_request = sum(
+        model_pricing.estimate_cost_usd(
+            model, r["input_tokens"], r["output_tokens"], _ANTHROPIC_URL,
+            cache_read_tokens=r.get("cache_read_input_tokens", 0),
+            cache_write_tokens=r.get("cache_creation_input_tokens", 0),
+        )
+        for r in rounds
+    )
+    assert metrics["cost_usd"] == pytest.approx(round(per_request, 6))
+
+
 # --- persistence ---
 
 def _setup_db(tmp_path):
