@@ -88,6 +88,7 @@ from src.app_helpers import abs_join, serve_html_with_nonce
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from src.owner_identity import auth_disabled
 from src.rate_limiter import RateLimiter
+from src.upload_body_limit import UploadBodyLimitMiddleware
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -133,6 +134,13 @@ app = FastAPI(
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
     version="1.0.0",
 )
+
+# ========= UPLOAD BODY CAP =========
+# Refuse an oversized upload body with 413 while it streams in, before FastAPI
+# spools the multipart parts to disk (src/upload_body_limit.py). Added first so
+# it is the innermost middleware: its 413 still passes through CORS, gzip and
+# the security headers on the way out.
+app.add_middleware(UploadBodyLimitMiddleware)
 
 # ========= CORS =========
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
