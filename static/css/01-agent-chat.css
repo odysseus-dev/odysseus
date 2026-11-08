@@ -7295,6 +7295,27 @@ body.bg-pattern-ascii-fireflies {
       text-decoration: underline;
       cursor: pointer;
     }
+    /* Remote image not fetched until clicked (markdown.js imageHtml). */
+    a.chat-image.chat-image-remote {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0.5rem 0.75rem;
+      border: 1px dashed var(--border, #475569);
+      border-radius: 8px;
+      background: var(--panel, #202428);
+      color: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      word-break: break-all;
+    }
+    a.chat-image-remote .chat-image-remote-title {
+      font-size: 0.85rem;
+    }
+    a.chat-image-remote .chat-image-remote-sub {
+      font-size: 0.75rem;
+      color: var(--color-muted, #94a3b8);
+    }
 
     /* Setup wizard */
     .setup-wizard { padding: 16px; max-width: 500px; }

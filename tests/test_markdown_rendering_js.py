@@ -401,13 +401,30 @@ def test_url_outside_inline_code_is_still_autolinked(node_available):
     assert 'href="https://example.com/page"' in html
 
 
-def test_https_markdown_image_renders_inline_as_clickable_thumbnail(node_available):
-    # Assistant `![alt](url)` images must render inline: https-only, lazy,
-    # max-width-100% (via CSS), and click-to-open the full size in a new tab.
+def test_remote_https_markdown_image_renders_click_to_load_placeholder(node_available):
+    # A remote image is not fetched on render (a prompt-injected reply could
+    # leak data in its URL): it becomes a placeholder naming the host, and
+    # markdown.js swaps in the <img> only when the user clicks it.
     html = _run_markdown_case(
         "Here is a map:\n\n"
         "![Map of Sweden](https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Sweden_location_map.svg/600px-Sweden_location_map.svg.png)"
     )
+
+    assert "<img" not in html
+    assert html.count('class="chat-image chat-image-remote"') == 1
+    assert 'data-chat-image-src="https://upload.wikimedia.org/' in html
+    assert 'data-chat-image-alt="Map of Sweden"' in html
+    assert 'target="_blank"' in html
+    assert 'rel="noopener noreferrer"' in html
+    # The host's dots are entity-encoded so the scheme-less domain autolink
+    # pass can't nest another <a> inside the placeholder.
+    assert "Remote image blocked · upload&#46;wikimedia&#46;org · Click to load" in html
+
+
+def test_same_origin_markdown_image_renders_inline_as_clickable_thumbnail(node_available):
+    # Same-origin `![alt](url)` images render inline: lazy, max-width-100%
+    # (via CSS), and click-to-open the full size in a new tab.
+    html = _run_markdown_case("Here is a map:\n\n![Map of Sweden](/static/img/sweden.png)")
 
     assert html.count('class="chat-image"') == 1
     assert html.count('class="chat-inline-image"') == 1
@@ -423,11 +440,11 @@ def test_https_markdown_image_renders_inline_as_clickable_thumbnail(node_availab
     assert 'class="chat-image-fallback"' in html
     # The fallback caption carries the alt text plus the URL (the `//` is
     # entity-encoded so the bare-URL autolink pass can't nest another <a>).
-    assert "Map of Sweden — https:&#47;&#47;upload.wikimedia.org" in html
+    assert "Map of Sweden — http:&#47;&#47;localhost/static/img/sweden.png" in html
 
 
 def test_http_markdown_image_is_downgraded_to_alt_text(node_available):
-    # Non-https image URLs must not render as an <img> (https-only policy); the
+    # Remote non-https image URLs must not render as an <img>; the
     # alt text is kept as plain text so nothing is silently dropped.
     html = _run_markdown_case("Look: ![a http pic](http://example.com/pic.png) done.")
 

