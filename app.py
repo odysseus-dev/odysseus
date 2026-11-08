@@ -406,6 +406,13 @@ if AUTH_ENABLED:
     def _bearer_fail_key(client_ip: str, prefix: str) -> str:
         return f"{client_ip}|{prefix}"
 
+    # A prefix with no cached token is answered only after about one bcrypt
+    # check's time (the cost noted at _match_api_token), plus jitter. An instant
+    # 401 there let anyone find live prefixes by timing and then lock them out.
+    # The wait is a sleep, so it costs no CPU, and it is still never counted.
+    _BEARER_MISS_DELAY_S = 0.3
+    _BEARER_MISS_JITTER_S = 0.05
+
     # Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
     # nginx, Caddy, Tailscale Funnel, …). cloudflared connects to the app FROM
     # 127.0.0.1, so without this check every tunneled request would look like
@@ -494,6 +501,7 @@ if AUTH_ENABLED:
                     return JSONResponse(status_code=401, content={"error": "Invalid API token"})
                 prefix = raw_token[:8]
                 fail_key = _bearer_fail_key(client_ip, prefix)
+                verifying = False
                 try:
                     if app.state._token_cache_dirty:
                         async with _token_cache_lock:
@@ -503,7 +511,13 @@ if AUTH_ENABLED:
                     if not candidates:
                         # No token has this prefix: reject without bcrypt and
                         # without recording a failure, so junk prefixes can
-                        # never trip the limiter for anyone.
+                        # never trip the limiter for anyone. Answer no sooner
+                        # than a bcrypt check would, so timing does not reveal
+                        # which prefixes are live.
+                        await _asyncio.sleep(
+                            _BEARER_MISS_DELAY_S
+                            + secrets.SystemRandom().uniform(0, _BEARER_MISS_JITTER_S)
+                        )
                         return JSONResponse(status_code=401, content={"error": "Invalid API token"})
                     # Trade-off: once (client, prefix) is over the limit, even
                     # the valid token with that prefix gets 429 until the
@@ -516,7 +530,9 @@ if AUTH_ENABLED:
                             status_code=429,
                             content={"error": "Too many failed API token attempts, try again later"},
                         )
+                    verifying = True
                     match = await _asyncio.to_thread(_match_api_token, raw_token, candidates)
+                    verifying = False
                     if match is None:
                         # bcrypt ran and matched no cached token.
                         _bearer_fail_limiter.check(fail_key)
@@ -549,8 +565,13 @@ if AUTH_ENABLED:
                         return await call_next(request)
                 except Exception:
                     logger.warning("API token auth error", exc_info=False)
+                    if verifying:
+                        # bcrypt work was spent and nothing matched (e.g. a
+                        # corrupt stored hash). Count it, or a raising check
+                        # would be unlimited bcrypt CPU for this prefix.
+                        _bearer_fail_limiter.check(fail_key)
                 # Invalid bearer token — reject immediately. A failure was
-                # recorded above only when bcrypt ran and found no match.
+                # recorded above only when bcrypt ran without a match.
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
             # --- Cookie-based session auth ---

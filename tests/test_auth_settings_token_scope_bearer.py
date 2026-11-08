@@ -218,6 +218,12 @@ def bearer_client(monkeypatch):
         _OTHER_TOKEN[:8]: [("tid-2", _hash(_OTHER_TOKEN), "bob", ["chat"])],
     })
     app_mod.app.state._token_cache_dirty = False
+    # Unknown-prefix answers wait about one bcrypt check; the tests that send
+    # many of them don't need to. test_unknown_prefix_waits_about_one_bcrypt_check
+    # sets it back. raising=False keeps the fixture usable against an app.py
+    # without the delay, so that test fails on behaviour there.
+    monkeypatch.setattr(app_mod, "_BEARER_MISS_DELAY_S", 0.0, raising=False)
+    monkeypatch.setattr(app_mod, "_BEARER_MISS_JITTER_S", 0.0, raising=False)
 
     async def probe(request):
         return JSONResponse({"owner": getattr(request.state, "api_token_owner", None)})
@@ -320,3 +326,38 @@ def test_failures_on_one_prefix_throttle_only_that_client_and_prefix(bearer_clie
     # A different client is not affected by this client's failures.
     elsewhere = TestClient(client.app, client=("198.51.100.9", 4321))
     assert elsewhere.get("/api/probe", headers=_bearer(_TOKEN)).status_code == 200
+
+
+def test_unknown_prefix_waits_about_one_bcrypt_check(bearer_client, monkeypatch):
+    # An instant 401 for an unknown prefix next to a ~0.3 s bcrypt for a live
+    # one tells an attacker which prefixes are live. The sleep is recorded,
+    # not taken, so the test stays fast.
+    app_mod, client = bearer_client
+    monkeypatch.setattr(app_mod, "_BEARER_MISS_DELAY_S", 0.3, raising=False)
+    monkeypatch.setattr(app_mod, "_BEARER_MISS_JITTER_S", 0.05, raising=False)
+    real_sleep = asyncio.sleep
+    requested = []
+
+    async def recording_sleep(delay, *args, **kwargs):
+        requested.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", recording_sleep)
+    statuses = [client.get("/api/probe", headers=_bearer(_junk_token(i))).status_code
+                for i in range(12)]
+    assert statuses == [401] * 12  # still never counted toward the limiter
+    waits = [d for d in requested if d >= 0.3]
+    assert len(waits) == 12, requested
+    assert all(d <= 0.35 for d in waits), waits
+
+
+def test_bcrypt_check_that_raises_is_counted_as_a_failure(bearer_client, monkeypatch):
+    # A stored hash bcrypt cannot parse makes checkpw raise after the work
+    # began; uncounted, that prefix was unlimited bcrypt for anyone.
+    app_mod, client = bearer_client
+    broken = "ody_" + "C" * 43
+    monkeypatch.setitem(app_mod._token_cache, broken[:8],
+                        [("tid-3", "not-a-bcrypt-hash", "adminuser", ["chat"])])
+    statuses = [client.get("/api/probe", headers=_bearer(broken)).status_code for _ in range(15)]
+    assert statuses[0] == 401
+    assert statuses[-1] == 429
