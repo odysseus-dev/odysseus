@@ -316,7 +316,7 @@ async def test_run_post_response_tasks_does_not_fire_extraction_concurrently(mon
         endpoint_url="http://localhost:1234/v1",
         model="test-model",
         headers={},
-        history=[object()] * 8,  # _msg_count % 4 == 0 → memory extraction eligible
+        history=[{"role": "user"}, {"role": "assistant"}] * 4,  # 4th user turn → memory extraction eligible
         name="My session title",  # needs_auto_name(...) only fires for placeholder names
     )
     session_manager = SimpleNamespace(save_sessions=lambda: None)
