@@ -3,7 +3,7 @@ import { spawnConfetti } from '../shared/ui/confetti.js';
 import Storage from '../storage.js';
 import state from './state.js';
 import { _modelDisplayNames } from './models.js';
-import { getMetricsModelCost } from '../chatRenderer.js?v=20261107promptcache1';
+import { getMetricsModelCost } from '../chatRenderer.js?v=20261108unpricedcost1';
 import uiModule from '../ui.js?v=20260916largetoolscroll1';
 import { VOTES_STORAGE_KEY, VOTES_MAX } from './icons.js?v=20260908compareprompts1';
 import { showScoreboard } from './scoreboard.js?v=20260909voteconfirmalign1';

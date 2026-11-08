@@ -1267,23 +1267,28 @@ export function getModelCost(modelName, inputTokens, outputTokens, cacheReadToke
  * Cost in USD of one turn's final metrics, without endpoint billing checks.
  * Multi-round agent turns carry per-round `usage_buckets`; each round is a
  * separate request, so price them one by one (cache split, long-prompt tier)
- * rather than pricing the summed input as one prompt. Returns null when no
- * part of the turn can be priced.
+ * rather than pricing the summed input as one prompt. When part of the turn
+ * can't be priced here (a model missing from MODEL_INFO), the backend's
+ * cost_usd for the turn is used instead, so this view agrees with the stored
+ * cost rather than silently dropping that round. Returns null when nothing
+ * can be priced.
  */
 export function getMetricsModelCost(metrics, model) {
   if (!metrics || typeof metrics !== 'object') return null;
   const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
   if (!buckets.length) {
-    return getModelCost(
+    const cost = getModelCost(
       metrics.model || model,
       metrics.input_tokens || 0,
       metrics.output_tokens || 0,
       metrics.cache_read_input_tokens || 0,
       metrics.cache_creation_input_tokens || 0,
     );
+    return cost === null ? _backendTurnCost(metrics) : cost;
   }
   let total = 0;
   let priced = false;
+  let unpriced = false;
   for (const bucket of buckets) {
     if (!bucket || typeof bucket !== 'object') continue;
     const cost = getModelCost(
@@ -1293,11 +1298,28 @@ export function getMetricsModelCost(metrics, model) {
       Number(bucket.cache_read_input_tokens) || 0,
       Number(bucket.cache_creation_input_tokens) || 0,
     );
-    if (cost === null) continue;
+    if (cost === null) {
+      unpriced = true;
+      continue;
+    }
     total += cost;
     priced = true;
   }
+  if (unpriced) {
+    const backendCost = _backendTurnCost(metrics);
+    if (backendCost !== null) return backendCost;
+  }
   return priced ? total : null;
+}
+
+/**
+ * The turn cost the backend sent with its metrics (estimated, or reported by
+ * the provider), or null when it sent none. A missing value is not $0.
+ */
+function _backendTurnCost(metrics) {
+  if (!metrics || metrics.cost_usd === null || metrics.cost_usd === undefined) return null;
+  const cost = Number(metrics.cost_usd);
+  return Number.isFinite(cost) && cost >= 0 ? cost : null;
 }
 
 /**
@@ -1352,26 +1374,37 @@ export function isCostTrackedEndpoint(url) {
   return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
 }
 
-/** Cost for the current turn, returning null for non-billable endpoints. */
-function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, selectedEndpointUrl, cacheReadTokens = 0, cacheWriteTokens = 0) {
+/** Is this route billed? Local and subscription endpoints are free. */
+function _isBillableRoute(endpointCostTracked, selectedEndpointUrl) {
   // Foreground fallback can answer on a different endpoint than the session's
   // selected route. Prefer the backend's non-secret actual-route
   // classification; retain the selected-endpoint check for older history.
-  if (endpointCostTracked === false) return null;
+  if (endpointCostTracked === false) return false;
   const selectedUrl = selectedEndpointUrl === undefined
     ? _currentEndpointUrl()
     : selectedEndpointUrl;
   if (endpointCostTracked !== true && !isCostTrackedEndpoint(selectedUrl)) {
-    return null;
+    return false;
   }
+  return true;
+}
+
+/** Cost for the current turn, returning null for non-billable endpoints. */
+function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, selectedEndpointUrl, cacheReadTokens = 0, cacheWriteTokens = 0) {
+  if (!_isBillableRoute(endpointCostTracked, selectedEndpointUrl)) return null;
   return getModelCost(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
 }
 
-/** Sum cost using the route/model that produced each Agent round. */
+/**
+ * Sum cost using the route/model that produced each Agent round. A round on
+ * a free route costs nothing; a billed round whose model is missing from
+ * MODEL_INFO can't be priced here, so the backend's turn cost is used instead
+ * of a partial sum that would silently under-bill.
+ */
 function _metricsBillableCost(metrics, model, inputTokens, outputTokens, selectedEndpointUrl) {
   const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
   if (!buckets.length) {
-    return _billableCost(
+    const cost = _billableCost(
       model,
       inputTokens,
       outputTokens,
@@ -1380,23 +1413,34 @@ function _metricsBillableCost(metrics, model, inputTokens, outputTokens, selecte
       Number(metrics.cache_read_input_tokens) || 0,
       Number(metrics.cache_creation_input_tokens) || 0,
     );
+    if (cost === null && _isBillableRoute(metrics.endpoint_cost_tracked, selectedEndpointUrl)) {
+      return _backendTurnCost(metrics);
+    }
+    return cost;
   }
   let total = 0;
   let hasPricedUsage = false;
+  let unpriced = false;
   for (const bucket of buckets) {
     if (!bucket || typeof bucket !== 'object') continue;
-    const bucketCost = _billableCost(
+    if (!_isBillableRoute(bucket.endpoint_cost_tracked, selectedEndpointUrl)) continue;
+    const bucketCost = getModelCost(
       bucket.model || model,
       Number(bucket.input_tokens) || 0,
       Number(bucket.output_tokens) || 0,
-      bucket.endpoint_cost_tracked,
-      selectedEndpointUrl,
       Number(bucket.cache_read_input_tokens) || 0,
       Number(bucket.cache_creation_input_tokens) || 0,
     );
-    if (bucketCost === null) continue;
+    if (bucketCost === null) {
+      unpriced = true;
+      continue;
+    }
     total += bucketCost;
     hasPricedUsage = true;
+  }
+  if (unpriced) {
+    const backendCost = _backendTurnCost(metrics);
+    if (backendCost !== null) return backendCost;
   }
   return hasPricedUsage ? total : null;
 }
