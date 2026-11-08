@@ -227,6 +227,37 @@ class TestLookupKnown:
     def test_claude_4_5_stays_200k(self):
         assert _lookup_known("claude-haiku-4-5") == 200000
 
+    # The same doc lists Opus 4.6-4.8 and Sonnet 4.6 at 1M by default; Opus
+    # 4.5 and Sonnet 4.5 have 200k.
+    @pytest.mark.parametrize("model,ctx", [
+        ("claude-opus-4-8", 1_000_000),
+        ("claude-opus-4-7", 1_000_000),
+        ("claude-opus-4-6", 1_000_000),
+        ("claude-sonnet-4-6", 1_000_000),
+        ("us.anthropic.claude-opus-4-6-v1:0", 1_000_000),
+        ("claude-opus-4-5-20251101", 200_000),
+        ("claude-sonnet-4-5", 200_000),
+        ("claude-opus-4-1", 200_000),
+    ])
+    def test_claude_4_x_windows_match_anthropic_docs(self, model, ctx):
+        assert _lookup_known(model) == ctx
+
+    # OpenRouter-style dotted ids must reach their dashed keys instead of an
+    # older family key; non-Claude families keep their own match.
+    @pytest.mark.parametrize("model,ctx", [
+        ("anthropic/claude-sonnet-4.6", 1_000_000),
+        ("anthropic/claude-opus-4.7", 1_000_000),
+        ("anthropic/claude-opus-4.5", 200_000),
+        ("anthropic/claude-opus-5.5", 1_000_000),
+        ("anthropic/claude-3.5-sonnet", 200_000),
+    ])
+    def test_dotted_claude_ids_match_their_dashed_keys(self, model, ctx):
+        assert _lookup_known(model) == ctx
+
+    def test_non_claude_family_with_claude_in_name_keeps_its_key(self):
+        name = "meta-llama/llama-3.1-8b-claude-3.5-sonnet-distill"
+        assert _lookup_known(name) == _lookup_known("meta-llama/llama-3.1-8b")
+
 
 class TestModelCtxFromEntry:
     def test_anthropic_models_api_max_input_tokens(self):
