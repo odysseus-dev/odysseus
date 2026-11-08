@@ -131,3 +131,23 @@ def test_dotted_openrouter_opus_4_5_billed_at_opus_4_5_rates():
 console.log(JSON.stringify({cost: getModelCost('anthropic/claude-opus-4.5', 1000000, 0)}));
 """)
     assert out["cost"] == pytest.approx(5.00)
+
+
+# platform.claude.com "Context windows": these models have a 1M-token window
+# by default (no beta header); other Claude models, Sonnet 4.5 included, 200k.
+_ONE_MILLION_CONTEXT = [
+    "claude-fable-5-1", "claude-fable-5", "claude-mythos-5-1", "claude-mythos-5",
+    "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5",
+    "claude-haiku-5-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+    "claude-sonnet-4-6",
+]
+
+
+def test_claude_context_windows_match_anthropic_docs():
+    out = _run("""
+console.log(JSON.stringify(Object.fromEntries(
+  Object.entries(MODEL_INFO).map(([key, info]) => [key, info.ctx ?? null]))));
+""")
+    assert {key: out[key] for key in _ONE_MILLION_CONTEXT} == dict.fromkeys(_ONE_MILLION_CONTEXT, 1_000_000)
+    for key in ("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"):
+        assert out[key] == 200_000, key

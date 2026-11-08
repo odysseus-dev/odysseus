@@ -896,24 +896,26 @@ const TOOL_NARRATION_RE = /(?:The (?:result|output) shows?:?\s*)?-?\s*(?:stdout|
 // Model info: pricing (per 1M tokens) + context window length
 const MODEL_INFO = {
   // --- Anthropic --- (prices: platform.claude.com pricing; keep in sync with
-  // src/model_pricing.py. Claude 5 entries omit ctx rather than guess it.)
-  'claude-fable-5-1':     { input: 10.00, output: 50.00 },
-  'claude-fable-5':       { input: 10.00, output: 50.00 },
-  'claude-mythos-5-1':    { input: 10.00, output: 50.00 },
-  'claude-mythos-5':      { input: 10.00, output: 50.00 },
-  'claude-opus-5-5':      { input: 4.00,  output: 20.00 },
-  'claude-opus-5':        { input: 5.00,  output: 25.00 },
-  'claude-sonnet-5-5':    { input: 2.00,  output: 10.00 },
-  'claude-sonnet-5':      { input: 2.00,  output: 10.00 },
-  'claude-haiku-5-5':     { input: 0.10,  output: 0.50 },
+  // src/model_pricing.py. ctx: platform.claude.com "Context windows" — every
+  // Claude 5.x model, Opus 4.6-4.8 and Sonnet 4.6 have 1M by default, no beta
+  // header; other Claude models, including Sonnet 4.5, have 200k.)
+  'claude-fable-5-1':     { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-fable-5':       { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-mythos-5-1':    { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-mythos-5':      { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-opus-5-5':      { input: 4.00,  output: 20.00, ctx: 1000000 },
+  'claude-opus-5':        { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-sonnet-5-5':    { input: 2.00,  output: 10.00, ctx: 1000000 },
+  'claude-sonnet-5':      { input: 2.00,  output: 10.00, ctx: 1000000 },
+  'claude-haiku-5-5':     { input: 0.10,  output: 0.50,  ctx: 1000000 },
   'claude-sonnet-4-5':    { input: 3.00,  output: 15.00, ctx: 200000 },
-  'claude-sonnet-4-6':    { input: 3.00,  output: 15.00, ctx: 200000 },
+  'claude-sonnet-4-6':    { input: 3.00,  output: 15.00, ctx: 1000000 },
   'claude-sonnet-4':      { input: 3.00,  output: 15.00, ctx: 200000 },
   'claude-opus-4':        { input: 15.00, output: 75.00, ctx: 200000 },
   'claude-opus-4-5':      { input: 5.00,  output: 25.00, ctx: 200000 },
-  'claude-opus-4-6':      { input: 5.00,  output: 25.00, ctx: 200000 },
-  'claude-opus-4-7':      { input: 5.00,  output: 25.00, ctx: 200000 },
-  'claude-opus-4-8':      { input: 5.00,  output: 25.00, ctx: 200000 },
+  'claude-opus-4-6':      { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-opus-4-7':      { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-opus-4-8':      { input: 5.00,  output: 25.00, ctx: 1000000 },
   'claude-haiku-4-5':     { input: 1.00,  output: 5.00,  ctx: 200000 },
   'claude-haiku-4':       { input: 0.80,  output: 4.00,  ctx: 200000 },
   'claude-haiku-3-5':     { input: 0.80,  output: 4.00,  ctx: 200000 },
