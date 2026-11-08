@@ -27,21 +27,22 @@ from src.url_safety import check_outbound_host, connect_outbound_tcp, OutboundAd
 
 @contextlib.contextmanager
 def _forbid_sockets():
-    """Record and refuse any socket construction while keeping socket.socket a type.
+    """Record and refuse any socket construction, leaving socket.socket itself intact.
 
     A plain mock.patch("socket.socket") breaks async tests on Windows: the
     proactor event loop checks isinstance(sock, socket.socket) when it arms its
     self-pipe, the MagicMock makes that raise, and the loop then misses the
     thread pool's wakeup and sleeps until its next timer (or forever).
+    Patching __init__ on the real class keeps that isinstance check true for the
+    loop's existing sockets, and also catches subclasses such as ssl.SSLSocket.
     """
     created = []
 
-    class _NoSocket(socket.socket):
-        def __init__(self, *args, **kwargs):
-            created.append(args)
-            raise AssertionError("socket constructed")
+    def _refuse(self, *args, **kwargs):
+        created.append(args)
+        raise AssertionError("socket constructed")
 
-    with mock.patch("socket.socket", _NoSocket):
+    with mock.patch.object(socket.socket, "__init__", _refuse):
         yield created
 
 
