@@ -44,7 +44,22 @@ def _resolve_hostname_ips(hostname: str) -> list[ipaddress._BaseAddress]:
     return ips
 
 
+# RFC 6052 Well-Known Prefix (NAT64). Decoded like src/url_safety.py does: on a
+# DNS64/NAT64 network an IPv4-only host resolves into this /96, and the
+# translator connects to the IPv4 address in the low 32 bits.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _blocked_ip(addr: ipaddress._BaseAddress) -> bool:
+    if isinstance(addr, ipaddress.IPv6Address):
+        # ::ffff:a.b.c.d reaches the IPv4 host a.b.c.d. CPython reports the
+        # mapped form of most private ranges as private, but not e.g. RFC 6598
+        # shared space (::ffff:100.64.1.1), which _BLOCKED_NETWORKS lists only
+        # in its IPv4 form — so judge the embedded address, not the wrapper.
+        if addr.ipv4_mapped is not None:
+            return _blocked_ip(addr.ipv4_mapped)
+        if addr in _NAT64_WELL_KNOWN_PREFIX:
+            return _blocked_ip(ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF))
     return (
         any(addr in net for net in _BLOCKED_NETWORKS)
         or addr.is_private
