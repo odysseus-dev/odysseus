@@ -207,6 +207,43 @@ class TestLookupKnown:
     def test_gpt4_base(self):
         assert _lookup_known("gpt-4") == 8192
 
+    # Anthropic's context-windows doc lists every Claude 5.x model with a 1M
+    # window (default, no beta header); 4.5 and older stay at 200K.
+    @pytest.mark.parametrize("model", [
+        "claude-fable-5-1",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+        "claude-mythos-5-1",
+        "claude-fable-5",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-mythos-5",
+        "anthropic.claude-opus-5-5",
+    ])
+    def test_claude_5_family_has_1m_window(self, model):
+        assert _lookup_known(model) == 1_000_000
+
+    def test_claude_4_5_stays_200k(self):
+        assert _lookup_known("claude-haiku-4-5") == 200000
+
+
+class TestModelCtxFromEntry:
+    def test_anthropic_models_api_max_input_tokens(self):
+        # Shape of one ModelInfo from Anthropic's GET /v1/models.
+        entry = {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "max_input_tokens": 1000000,
+            "max_tokens": 128000,
+        }
+        assert model_context._model_ctx_from_entry(entry) == 1000000
+
+    def test_null_max_input_tokens_reports_nothing(self):
+        entry = {"id": "claude-opus-5-5", "max_input_tokens": None, "max_tokens": 128000}
+        assert model_context._model_ctx_from_entry(entry) is None
+
 
 class _FakeResp:
     def __init__(self, payload, ok=True):
@@ -329,3 +366,14 @@ class TestGetContextLength:
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
         assert model_context.get_context_length(endpoint, "unknown-proxy-model") == model_context.DEFAULT_CONTEXT
+
+    def test_anthropic_claude_5_budget_context_is_not_zero(self, monkeypatch):
+        # The unauthenticated /models probe to Anthropic fails, so the known
+        # table must prove the window; otherwise the agent context ring and
+        # context_percent read 0%.
+        monkeypatch.setattr(
+            model_context.httpx, "get",
+            lambda *a, **k: _FakeResp({"error": "unauthorized"}, ok=False),
+        )
+        endpoint = "https://api.anthropic.com/v1"
+        assert model_context.budget_context_for_model(endpoint, "claude-haiku-5-5") == 1_000_000
