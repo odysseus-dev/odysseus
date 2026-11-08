@@ -1,4 +1,6 @@
-"""Secret-bearing files are owner-only from creation.
+"""Secret-bearing files are owner-only from creation; revoked sessions stay revoked.
+
+Two regressions pinned here:
 
 * Files holding secrets were created world-readable. ``atomic_write_json``
   opened its temp file with plain ``open()`` (0o666 & ~umask, so 0o644 under the
@@ -7,6 +9,9 @@
   the Bitwarden session key was written with ``write_text`` and only then
   chmod'ed, and ``data/.app_key`` was generated with no exclusive create, so two
   first-start callers could each write their own key.
+* ``AuthManager._save_sessions`` snapshotted the sessions under the lock but
+  wrote outside it, so a save holding an older snapshot could land after a
+  revocation and bring the revoked token back on the next restart.
 
 The mode tests disable ``os.chmod``: a file that is only tightened after it
 was written still exposes the secret in between, so they check the mode the
@@ -24,6 +29,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from core import atomic_io
+from core import auth as auth_mod
 from routes.vault import vault_routes
 from src import secret_storage, tool_approval_scopes
 from src.tools import vault as vault_tool
@@ -176,3 +182,58 @@ def test_key_created_by_another_process_mid_creation_is_adopted(key_storage, mon
 
     assert ss._load_or_create_key() == winner
     assert ss._KEY_PATH.read_bytes() == winner
+
+
+# ---------------------------------------------------------------------------
+# sessions.json: a stale save must not resurrect a revoked token
+# ---------------------------------------------------------------------------
+
+
+def test_revoke_racing_a_stale_session_save_leaves_token_off_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(auth_mod, "_hash_password", lambda password: f"hash:{password}")
+    monkeypatch.setattr(auth_mod, "_verify_password", lambda password, hashed: hashed == f"hash:{password}")
+    auth_path = tmp_path / "auth.json"
+    mgr = auth_mod.AuthManager(str(auth_path))
+    assert mgr.create_user("alice", "alice-password", is_admin=False)
+    assert mgr.create_user("bob", "bob-password", is_admin=False)
+    revoked = mgr.create_session_trusted("alice")
+    assert revoked in json.loads((tmp_path / "sessions.json").read_text(encoding="utf-8"))
+
+    real_write = auth_mod._atomic_write_json
+    first_save_paused = threading.Event()
+    release_first_save = threading.Event()
+    paused_once = []
+
+    def pausing_write(path, data, **kwargs):
+        if path == mgr._sessions_path and not paused_once:
+            paused_once.append(True)
+            first_save_paused.set()
+            release_first_save.wait(timeout=10)
+        real_write(path, data, **kwargs)
+
+    monkeypatch.setattr(auth_mod, "_atomic_write_json", pausing_write)
+    issued = {}
+
+    def issue_bob_session():
+        # Its save snapshots the sessions while alice's token is still live.
+        issued["bob"] = mgr.create_session_trusted("bob")
+
+    stale_saver = threading.Thread(target=issue_bob_session)
+    stale_saver.start()
+    assert first_save_paused.wait(timeout=10)
+
+    revoker = threading.Thread(target=mgr.revoke_token, args=(revoked,))
+    revoker.start()
+    # Unfixed, the revocation writes now; fixed, it waits for the paused save.
+    revoker.join(timeout=0.5)
+    release_first_save.set()
+    stale_saver.join(timeout=10)
+    revoker.join(timeout=10)
+    assert not stale_saver.is_alive() and not revoker.is_alive()
+
+    on_disk = json.loads((tmp_path / "sessions.json").read_text(encoding="utf-8"))
+    assert revoked not in on_disk
+    assert issued["bob"] in on_disk
+    restarted = auth_mod.AuthManager(str(auth_path))
+    assert not restarted.validate_token(revoked)
+    assert restarted.validate_token(issued["bob"])

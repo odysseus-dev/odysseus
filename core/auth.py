@@ -170,9 +170,14 @@ class AuthManager:
     def _save_sessions(self):
         """Persist session tokens to disk (atomic, lock-guarded)."""
         try:
+            # Snapshot AND write under the lock. Callers mutate under the lock
+            # and save after releasing it, so with the write outside, a save
+            # carrying an older snapshot could land after a revocation's save
+            # and bring the revoked token back on the next restart. RLock:
+            # callers already holding it re-enter.
             with self._sessions_lock:
                 snapshot = dict(self._sessions)
-            _atomic_write_json(self._sessions_path, snapshot)
+                _atomic_write_json(self._sessions_path, snapshot)
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}")
 
