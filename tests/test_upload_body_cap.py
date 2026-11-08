@@ -184,3 +184,35 @@ def test_app_registers_the_upload_body_cap():
     from app import app
 
     assert UploadBodyLimitMiddleware in [m.cls for m in app.user_middleware]
+
+
+def test_real_app_refuses_an_over_cap_upload_before_the_handler(monkeypatch):
+    """The app object app.py builds answers an over-cap upload with 413 and
+    never reaches UploadHandler.save_upload, so the cap only holds while the
+    middleware is registered there."""
+    import sys
+
+    from src.upload_handler import UploadHandler
+
+    saved = []
+
+    def save_upload(self, u, client_ip, owner=None):
+        saved.append(u.filename)
+        return {"id": "0" * 32 + ".txt", "name": u.filename, "mime": "text/plain",
+                "size": 5, "hash": "h", "uploaded_at": "now", "width": None,
+                "height": None, "is_duplicate": False}
+
+    monkeypatch.setattr(UploadHandler, "save_upload", save_upload)
+    # Build a fresh app with auth off (the autouse fixture), its upload routes
+    # on a fresh router instead of one an earlier import already filled.
+    monkeypatch.setattr(upload_routes, "router", APIRouter(prefix="/api/upload", tags=["upload"]))
+    monkeypatch.delitem(sys.modules, "app", raising=False)
+    import app as app_mod
+
+    response = TestClient(app_mod.app).post(
+        "/api/upload",
+        content=_multipart(b"x" * (CHAT_CAP + 1)),
+        headers={"content-type": f"multipart/form-data; boundary={BOUNDARY}"},
+    )
+    assert response.status_code == 413, response.text
+    assert saved == []
