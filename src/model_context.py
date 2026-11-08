@@ -113,11 +113,12 @@ REQUEST_TIMEOUT = 5
 KNOWN_CONTEXT_WINDOWS = {
     # --- Anthropic ---
     # Every Claude 5.x model (Fable, Mythos, Opus, Sonnet, Haiku), Opus 4.6,
-    # 4.7 and 4.8, and Sonnet 4.6 have a 1M window by default, no beta header;
-    # other Claude models, Opus 4.5 and Sonnet 4.5 included, have 200k
-    # (platform.claude.com "Context windows").
+    # 4.7 and 4.8, Sonnet 4.6 and Mythos Preview have a 1M window by default,
+    # no beta header; other Claude models, Opus 4.5, Sonnet 4.5 and Sonnet 3.7
+    # included, have 200k (platform.claude.com "Context windows").
     'claude-fable-5': 1000000,
     'claude-mythos-5': 1000000,
+    'claude-mythos-preview': 1000000,
     'claude-opus-5': 1000000,
     'claude-sonnet-5': 1000000,
     'claude-haiku-5': 1000000,
@@ -132,6 +133,7 @@ KNOWN_CONTEXT_WINDOWS = {
     'claude-haiku-3-5': 200000,
     'claude-3-5-sonnet': 200000,
     'claude-3-5-haiku': 200000,
+    'claude-3-7-sonnet': 200000,
     'claude-3-opus': 200000,
     'claude-3-sonnet': 200000,
     'claude-3-haiku': 200000,

@@ -258,6 +258,24 @@ class TestLookupKnown:
         name = "meta-llama/llama-3.1-8b-claude-3.5-sonnet-distill"
         assert _lookup_known(name) == _lookup_known("meta-llama/llama-3.1-8b")
 
+    # Mythos Preview is on the docs' 1M list; Sonnet 3.7 is one of the "other
+    # Claude models" at 200k. Neither had a key, so both fell back to the
+    # generic default instead of their real window.
+    @pytest.mark.parametrize("model,ctx", [
+        ("claude-mythos-preview", 1_000_000),
+        ("claude-3-7-sonnet-20250219", 200_000),
+        ("claude-3-7-sonnet-latest", 200_000),
+        ("us.anthropic.claude-3-7-sonnet-20250219-v1:0", 200_000),
+        ("anthropic/claude-3.7-sonnet", 200_000),
+        ("anthropic/claude-3.7-sonnet:thinking", 200_000),
+    ])
+    def test_mythos_preview_and_sonnet_3_7_have_known_windows(self, model, ctx):
+        assert _lookup_known(model) == ctx
+
+    def test_dotted_sonnet_3_7_distill_keeps_its_own_family(self):
+        name = "meta-llama/llama-3.1-8b-claude-3.7-sonnet-distill"
+        assert _lookup_known(name) == _lookup_known("meta-llama/llama-3.1-8b")
+
 
 class TestModelCtxFromEntry:
     def test_anthropic_models_api_max_input_tokens(self):
