@@ -696,11 +696,10 @@ async def auto_name_session(session_manager, sess):
             logger.info(f"Auto-named session {sess.id} deterministically (no authorized model endpoint): {title}")
             return
 
-        # max_tokens big enough that reasoning models (Minimax M2,
-        # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
-        # plus the actual title — 200 used to clip them mid-reasoning
-        # so strip_think left an empty string and no rename happened.
-        # Timeout matches: 60s gives slow local reasoners room to finish.
+        # A configured effort is the user's explicit choice. Otherwise thinking
+        # stays off, because reasoning would use up this small token budget and
+        # leave no title.
+        title_effort = effort_for_call(t_url, t_model, owner, sess)
         try:
             title = await llm_call_async(
                 t_url,
@@ -713,7 +712,8 @@ async def auto_name_session(session_manager, sess):
                 max_tokens=64,
                 headers=t_headers,
                 timeout=15,
-                reasoning_effort=effort_for_call(t_url, t_model, owner, sess),
+                reasoning_effort=title_effort,
+                thinking_mode=None if title_effort else "off",
             )
         except Exception as e:
             logger.warning("[auto-name] non-spec title call failed for %s: %s", sess.id, e)

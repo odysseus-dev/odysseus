@@ -2321,6 +2321,25 @@ def _apply_explicit_nonstream_reasoning_effort(
         payload["reasoning_effort"] = effort
 
 
+def _nonstream_openai_response_text(msg: Dict, thinking_mode: Optional[str]) -> str:
+    """Return the answer text of an OpenAI-compatible non-streaming message.
+
+    With thinking off the caller wants only the answer, so an empty answer
+    stays empty even when the model spent its whole budget on reasoning.
+    Otherwise reasoning stands in for a missing answer, and Mistral's
+    structured thinking is kept ahead of its text.
+    """
+    thinking_off = _normalize_thinking_mode(thinking_mode) == "off"
+    reasoning = "" if thinking_off else msg.get("reasoning_content")
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return content or reasoning or ""
+    text_part, thinking_part = _normalize_mistral_content(content)
+    if thinking_part and not thinking_off:
+        return thinking_part + "\n\n" + (text_part or "")
+    return text_part or reasoning or ""
+
+
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
@@ -2412,17 +2431,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         elif provider == "ollama":
             response = _parse_ollama_response(data)
         else:
-            msg = data["choices"][0]["message"]
-            content = msg.get("content")
-            if isinstance(content, list):
-                # Mistral structured content — extract thinking + text
-                text_part, thinking_part = _normalize_mistral_content(content)
-                if thinking_part:
-                    response = thinking_part + "\n\n" + (text_part or "")
-                else:
-                    response = text_part or msg.get("reasoning_content") or ""
-            else:
-                response = content or msg.get("reasoning_content") or ""
+            response = _nonstream_openai_response_text(
+                data["choices"][0]["message"], thinking_mode
+            )
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -2860,18 +2871,9 @@ async def llm_call_async(
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
                 else:
-                    msg = data["choices"][0]["message"]
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        # Mistral structured content — extract thinking + text
-                        # (same contract as llm_call / stream_llm; see #5435).
-                        text_part, thinking_part = _normalize_mistral_content(content)
-                        if thinking_part:
-                            response = thinking_part + "\n\n" + (text_part or "")
-                        else:
-                            response = text_part or msg.get("reasoning_content") or ""
-                    else:
-                        response = content or msg.get("reasoning_content") or ""
+                    response = _nonstream_openai_response_text(
+                        data["choices"][0]["message"], thinking_mode
+                    )
                 _set_cached_response(
                     cache_key,
                     response,

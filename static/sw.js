@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v1135-pr40-editor-precache';
+const CACHE_NAME = 'odysseus-v1137-pr40-editor-precache';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -38,30 +38,31 @@ const KATEX_FONTS = [
 // Both are fetched at install time, in the background. Entries must match the
 // exact URL the browser requests, query string included.
 const PRECACHE = [
+  '/static/js/modalVisibility.js',
   '/static/js/compare/sse.js',
   '/',
-  '/static/css/00-tokens.css?v=20261007detailscroll1',
-  '/static/css/01-agent-chat.css?v=20261007detailscroll1',
-  '/static/css/02-compare.css?v=20261007detailscroll1',
-  '/static/css/03-agent-chat.css?v=20261007detailscroll1',
-  '/static/css/04-memory.css?v=20261007detailscroll1',
-  '/static/css/05-documents.css?v=20261007detailscroll1',
-  '/static/css/06-admin-settings.css?v=20261007detailscroll1',
-  '/static/css/07-documents.css?v=20261007detailscroll1',
-  '/static/css/08-skills.css?v=20261007detailscroll1',
-  '/static/css/09-gallery.css?v=20261007detailscroll1',
-  '/static/css/10-cookbook.css?v=20261007detailscroll1',
-  '/static/css/11-tasks.css?v=20261007detailscroll1',
-  '/static/css/12-gallery.css?v=20261007detailscroll1',
-  '/static/css/13-image-editor.css?v=20261007detailscroll1',
-  '/static/css/14-email.css?v=20261007detailscroll1',
-  '/static/css/15-notes.css?v=20261007detailscroll1',
-  '/static/css/16-calendar.css?v=20261007detailscroll1',
-  '/static/css/17-research.css?v=20261007detailscroll1',
-  '/static/css/documents-gallery-editor.css?v=20261007detailscroll1',
-  '/static/css/email-calendar-notes-tasks.css?v=20261007detailscroll1',
-  '/static/css/cookbook-research-memory-settings.css?v=20261007detailscroll1',
-  '/static/app.js?v=20261007detailscroll1',
+  '/static/css/00-tokens.css?v=20261021confirmalign1',
+  '/static/css/01-agent-chat.css?v=20261021confirmalign1',
+  '/static/css/02-compare.css?v=20261021confirmalign1',
+  '/static/css/03-agent-chat.css?v=20261021confirmalign1',
+  '/static/css/04-memory.css?v=20261021confirmalign1',
+  '/static/css/05-documents.css?v=20261021confirmalign1',
+  '/static/css/06-admin-settings.css?v=20261021confirmalign1',
+  '/static/css/07-documents.css?v=20261021confirmalign1',
+  '/static/css/08-skills.css?v=20261021confirmalign1',
+  '/static/css/09-gallery.css?v=20261021confirmalign1',
+  '/static/css/10-cookbook.css?v=20261021confirmalign1',
+  '/static/css/11-tasks.css?v=20261021confirmalign1',
+  '/static/css/12-gallery.css?v=20261021confirmalign1',
+  '/static/css/13-image-editor.css?v=20261021confirmalign1',
+  '/static/css/14-email.css?v=20261021confirmalign1',
+  '/static/css/15-notes.css?v=20261021confirmalign1',
+  '/static/css/16-calendar.css?v=20261021confirmalign1',
+  '/static/css/17-research.css?v=20261021confirmalign1',
+  '/static/css/documents-gallery-editor.css?v=20261021confirmalign1',
+  '/static/css/email-calendar-notes-tasks.css?v=20261021confirmalign1',
+  '/static/css/cookbook-research-memory-settings.css?v=20261021confirmalign1',
+  '/static/app.js?v=20261021confirmalign1',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',

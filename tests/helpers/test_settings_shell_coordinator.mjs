@@ -20,6 +20,7 @@ const REAL_MODULES = new Set([
   path.join(JS, 'settings/sidebar.js'),
   path.join(JS, 'settings/navigation.js'),
   path.join(JS, 'settings/lifecycle.js'),
+  path.join(JS, 'modalVisibility.js'),
   path.join(JS, 'settings/api.js'),
   path.join(JS, 'settings/speech.js'),
   path.join(JS, 'settings/writingStyle.js'),
@@ -869,6 +870,7 @@ const STUBS = new Map([
       clearDockSide() {},
     },
   ],
+  [path.join(JS, 'modalManager.js'), { toggle() { return false; } }],
 ]);
 
 
