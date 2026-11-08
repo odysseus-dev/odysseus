@@ -183,11 +183,9 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     cfg["session"] = session
     from datetime import datetime as _dt
     cfg["unlocked_at"] = _dt.utcnow().isoformat()
-    p.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    try:
-        import os as _os
-        _os.chmod(str(p), 0o600)
-    except Exception:
-        pass
+    # Created 0o600 up front: write_text followed by chmod left the session
+    # key readable by other local users until the chmod ran.
+    from core.atomic_io import atomic_write_json
+    atomic_write_json(str(p), cfg, indent=2)
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}

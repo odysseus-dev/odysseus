@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from core.middleware import require_admin
-from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
+from core.platform_compat import IS_WINDOWS, which_tool
 from src.constants import VAULT_FILE as _VAULT_FILE
 
 logger = logging.getLogger(__name__)
@@ -71,11 +71,11 @@ def _load_config() -> dict:
 
 
 def _save_config(cfg: dict):
-    VAULT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    VAULT_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    # POSIX: restrict the BW_SESSION store to 0o600. Windows: no-op (profile dir
-    # is ACL-restricted already).
-    safe_chmod(str(VAULT_FILE), 0o600)
+    # POSIX: the BW_SESSION store is created 0o600 up front; write_text then
+    # chmod left it world-readable in between. Windows ignores the mode (the
+    # profile dir is ACL-restricted already).
+    from core.atomic_io import atomic_write_json
+    atomic_write_json(str(VAULT_FILE), cfg, indent=2)
 
 
 def _bind_config_owner(cfg: dict, request: Request):
