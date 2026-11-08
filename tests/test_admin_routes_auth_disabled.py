@@ -221,12 +221,12 @@ def test_get_settings_scrubbed_for_unauthenticated_and_non_admin_when_auth_enabl
     stored["brave_api_key"] = "sk-secret-brave"
     stored["default_model"] = "gpt-4o"
 
-    # Unauthenticated caller gets scrubbed settings
+    # Unauthenticated caller gets only the public allowlist (keybinds + TTS)
     r = c.get("/api/auth/settings")
     assert r.status_code == 200
     data = r.json()
-    assert data["brave_api_key"] == ""
-    assert data["default_model"] == "gpt-4o"
+    assert "brave_api_key" not in data
+    assert "default_model" not in data
 
     # Non-admin authenticated user gets scrubbed settings
     c.cookies.set("odysseus_session", "user-token")

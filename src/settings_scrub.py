@@ -4,12 +4,14 @@ Deliberately dependency-light (stdlib only) and separate from
 ``routes/auth_routes.py`` so it can be imported and unit-tested without dragging
 in the FastAPI app / auth / database import chain.
 
-``/api/auth/settings`` is auth-exempt — the frontend (and the pre-login page)
-read it for keybinds + TTS prefs, so non-admin and unauthenticated callers get a
-*scrubbed* copy. Secrets (provider API keys, IMAP/SMTP passwords, OAuth tokens)
-must NOT leak to them — load-bearing when the app is reachable over a Cloudflare
-tunnel / reverse proxy. Scrubbing is deep (recurses nested dicts/lists) and keyed
-on secret-shaped names.
+``/api/auth/settings`` is auth-exempt, so anyone who can reach the app can call
+it. Unauthenticated callers get only :data:`PUBLIC_SETTINGS_KEYS` (an allowlist:
+a key added to settings later stays private until someone decides otherwise).
+Logged-in non-admins run the whole UI off this endpoint, so they get a
+*scrubbed* copy instead. Secrets (provider API keys, IMAP/SMTP passwords, OAuth
+tokens) must NOT leak to them — load-bearing when the app is reachable over a
+Cloudflare tunnel / reverse proxy. Scrubbing is deep (recurses nested
+dicts/lists) and keyed on secret-shaped names.
 """
 
 import re
@@ -68,3 +70,25 @@ def scrub_settings(settings: dict) -> dict:
     if not isinstance(settings, dict):
         return {}
     return {k: _scrub_value(k, v) for k, v in (settings or {}).items()}
+
+
+# The only settings an unauthenticated caller may read: keyboard shortcuts and
+# text-to-speech preferences, the documented reason the endpoint is auth-exempt.
+# Everything else (the reminder ntfy topic, which is a subscribe capability on a
+# public ntfy server, the reminder email address, model and endpoint choices)
+# needs a session.
+PUBLIC_SETTINGS_KEYS = frozenset({
+    "keybinds",
+    "tts_enabled",
+    "tts_provider",
+    "tts_model",
+    "tts_voice",
+    "tts_speed",
+})
+
+
+def public_settings(settings: dict) -> dict:
+    """Return only the allowlisted keys of ``settings``, still scrubbed."""
+    if not isinstance(settings, dict):
+        return {}
+    return scrub_settings({k: v for k, v in settings.items() if k in PUBLIC_SETTINGS_KEYS})

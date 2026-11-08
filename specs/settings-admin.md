@@ -56,7 +56,8 @@ Settings runtime:
 - `GET /api/auth/features` is public feature visibility metadata;
 - `POST /api/auth/features` requires admin unless auth is explicitly disabled;
 - `GET /api/auth/settings` returns full settings to admins and the disabled-auth operator;
-- with auth enabled, non-admin or unauthenticated `GET /api/auth/settings` returns `scrub_settings()` output;
+- with auth enabled, a logged-in non-admin (or a `LOCALHOST_BYPASS` loopback caller) gets `scrub_settings()` output;
+- with auth enabled, a caller without a session gets `public_settings()`: only the `PUBLIC_SETTINGS_KEYS` allowlist (keybinds and TTS prefs);
 - `POST /api/auth/settings` requires admin unless auth is explicitly disabled and only writes keys present in `DEFAULT_SETTINGS`.
 
 `src.settings_scrub` owns deep secret-key scrubbing for non-admin settings reads, including snake_case and camelCase secret-like key names. It preserves structure while blanking secret-shaped string values.

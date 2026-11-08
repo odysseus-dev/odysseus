@@ -15,9 +15,9 @@ from pathlib import Path
 from core.atomic_io import atomic_write_json, atomic_write_text
 from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL, username_error
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
-from src.auth_helpers import _auth_disabled
+from src.auth_helpers import _auth_disabled, is_direct_loopback_request
 from src.rate_limiter import RateLimiter
-from src.settings_scrub import scrub_settings
+from src.settings_scrub import public_settings, scrub_settings
 from src import tool_capabilities
 from src.settings import (
     load_settings as _load_settings,
@@ -773,9 +773,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     @router.get("/settings")
     async def get_settings(request: Request):
-        """Returns app settings. Admins get the full set; non-admins get
-        a scrubbed copy with secret keys blanked. The frontend uses this
-        for keybinds + TTS prefs, so it stays callable without admin."""
+        """Returns app settings. Admins get the full set; logged-in non-admins
+        get a scrubbed copy with secret keys blanked; callers without a session
+        get only the public allowlist (keybinds + TTS prefs). The path is
+        auth-exempt, so that last branch is what the internet sees."""
         user = _get_current_user(request)
         settings = without_retired_settings(_load_settings())
         if _auth_disabled() or (user and auth_manager.is_admin(user)):
@@ -785,7 +786,16 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             # admins instead of letting the row mislead them the other way.
             settings["tool_approval_gate_env_disabled"] = not tool_capabilities.TOOL_APPROVAL_GATE_ENABLED
             return settings
-        return scrub_settings(settings)
+        # LOCALHOST_BYPASS lets a direct loopback caller use the whole UI with
+        # no session (the middleware skips auth for it), so it keeps the
+        # non-admin view it had rather than dropping to the public allowlist.
+        localhost_bypass = (
+            os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+            and is_direct_loopback_request(request)
+        )
+        if user or localhost_bypass:
+            return scrub_settings(settings)
+        return public_settings(settings)
 
     @router.post("/settings")
     async def set_settings(request: Request):
