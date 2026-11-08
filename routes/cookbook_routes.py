@@ -3649,6 +3649,15 @@ def setup_cookbook_routes() -> APIRouter:
     # and normalizes it into a small JSON the frontend can consume. Cached
     # per-repo so the GitHub raw endpoint isn't hammered.
     _vllm_recipe_cache: dict[str, tuple[float, dict | None]] = {}
+    # Every distinct repo string can add an entry (404s are cached too), so
+    # bound the cache and evict the oldest insertion once it is full.
+    _VLLM_RECIPE_CACHE_MAX = 256
+
+    def _vllm_recipe_cache_put(repo: str, entry: tuple[float, dict | None]) -> None:
+        _vllm_recipe_cache.pop(repo, None)
+        _vllm_recipe_cache[repo] = entry
+        while len(_vllm_recipe_cache) > _VLLM_RECIPE_CACHE_MAX:
+            _vllm_recipe_cache.pop(next(iter(_vllm_recipe_cache)))
     # Manifest of all <org>/<model> ids that have a recipe in the upstream
     # repo. Cheap to fetch (one Git Tree API call), so we cache the whole
     # set for ~12h. Per-row "does this model have a recipe?" lookups hit
@@ -3727,7 +3736,12 @@ def setup_cookbook_routes() -> APIRouter:
         TTL = 6 * 3600.0
         now = _time.time()
         repo = (repo or "").strip().strip("/")
-        if "/" not in repo:
+        # `repo` is interpolated into the raw.githubusercontent.com path, so
+        # `..` segments or extra slashes would steer the fetch to any other
+        # GitHub repo. Accept only a plain HF <org>/<name> id.
+        try:
+            _validate_repo_id(repo)
+        except HTTPException:
             return {"exists": False, "error": "repo must be <org>/<model>"}
 
         cached = _vllm_recipe_cache.get(repo)
@@ -3749,7 +3763,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         status, text = await asyncio.to_thread(_fetch_sync)
         if status == 404:
-            _vllm_recipe_cache[repo] = (now, {"exists": False})
+            _vllm_recipe_cache_put(repo, (now, {"exists": False}))
             return {"exists": False}
         if status != 200:
             return {"exists": False, "error": f"HTTP {status}", "transient": True}
@@ -3828,7 +3842,7 @@ def setup_cookbook_routes() -> APIRouter:
             },
             "compatible_strategies": list(doc.get("compatible_strategies") or []),
         }
-        _vllm_recipe_cache[repo] = (now, normalized)
+        _vllm_recipe_cache_put(repo, (now, normalized))
         return normalized
 
     @router.get("/api/cookbook/tasks/status")
