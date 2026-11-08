@@ -375,6 +375,8 @@ def build_chat_url(base: str) -> str:
         return _append_endpoint_path(_ollama_api_root(base), "/chat")
     if provider == "chatgpt-subscription":
         return _append_endpoint_path(base, "/responses")
+    if provider == "typesafe":
+        return _append_endpoint_path(base, "/systemone")
     if _pathless_host(base, "api.openai.com"):
         base = _append_endpoint_path(base, "/v1")
     return _append_endpoint_path(base, "/chat/completions")
@@ -432,6 +434,8 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if provider == "openrouter":
         headers.setdefault("HTTP-Referer", "https://github.com/odysseus-dev/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "typesafe":
+        headers.setdefault("Content-Type", "application/json")
     if _is_kimi_code_url(base):
         headers.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
     return headers
