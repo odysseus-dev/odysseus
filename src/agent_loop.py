@@ -16285,6 +16285,15 @@ def _compute_final_metrics(
         "usage_source": "real" if has_real_usage else "estimated",
         "model": model,
     }
+    # input_tokens already includes Anthropic cache reads/writes. Expose the
+    # split at the top level too, so a client that re-prices the turn without
+    # per-round usage buckets (required-read turns, the compare view) bills
+    # cached tokens at cache rates instead of the full input price.
+    if has_real_usage:
+        if real_cache_read_tokens:
+            metrics["cache_read_input_tokens"] = real_cache_read_tokens
+        if real_cache_write_tokens:
+            metrics["cache_creation_input_tokens"] = real_cache_write_tokens
     if backend_prefill_tps and backend_prefill_tps > 0:
         metrics["prefill_tps"] = round(backend_prefill_tps, 2)
     if prep_timings:
@@ -28274,6 +28283,9 @@ async def stream_agent_loop(
                 tool_events, round_texts, model=model,
                 round_models=round_models, round_endpoint_ids=round_endpoint_ids,
                 round_endpoint_labels=round_endpoint_labels,
+                # Context % describes the last request: real_input_tokens sums
+                # rounds, and each round re-sends the whole history.
+                last_round_input_tokens=last_round_input_tokens,
                 real_cache_read_tokens=real_cache_read_tokens,
                 real_cache_write_tokens=real_cache_write_tokens,
             )

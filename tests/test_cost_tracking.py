@@ -127,6 +127,55 @@ def test_usage_bucket_carries_cache_split_only_when_present():
     assert "cache_creation_input_tokens" not in plain
 
 
+def test_final_metrics_expose_cache_split_for_clients_without_buckets():
+    # Required-read turns and the compare view re-price the turn from the
+    # top-level metrics; without the split they bill cache reads at full price.
+    common = dict(
+        messages=[], full_response="hi", total_duration=1.0, time_to_first_token=0.1,
+        context_length=200000, real_input_tokens=40_300, real_output_tokens=10,
+        tool_events=[], round_texts=[], model="claude-opus-4-6", endpoint_url=_ANTHROPIC_URL,
+    )
+    m = agent_loop._compute_final_metrics(
+        **common, has_real_usage=True, real_cache_read_tokens=40_000, real_cache_write_tokens=0,
+    )
+    assert m["cache_read_input_tokens"] == 40_000
+    assert "cache_creation_input_tokens" not in m
+    estimated = agent_loop._compute_final_metrics(
+        **common, has_real_usage=False, real_cache_read_tokens=40_000, real_cache_write_tokens=0,
+    )
+    assert "cache_read_input_tokens" not in estimated
+
+
+def test_final_metrics_context_uses_last_round_not_round_sum():
+    m = agent_loop._compute_final_metrics(
+        messages=[], full_response="hi", total_duration=1.0, time_to_first_token=0.1,
+        context_length=200_000, real_input_tokens=90_000, real_output_tokens=10,
+        has_real_usage=True, tool_events=[], round_texts=[], model="claude-opus-4-6",
+        last_round_input_tokens=50_000,
+    )
+    assert m["request_context_tokens"] == 50_000
+    assert m["context_percent"] == 25.0
+
+
+@pytest.mark.parametrize("name,key", [
+    ("anthropic/claude-opus-4.5", "claude-opus-4-5"),
+    ("anthropic/claude-haiku-4.5", "claude-haiku-4-5"),
+    ("anthropic/claude-sonnet-5.5", "claude-sonnet-5-5"),
+    ("anthropic/claude-3.5-sonnet", "claude-3-5-sonnet"),
+    ("claude-opus-4-5-20251101", "claude-opus-4-5"),
+    ("gpt-4.1-mini", "gpt-4.1-mini"),
+])
+def test_match_model_key_handles_dotted_claude_versions(name, key):
+    assert model_pricing.match_model_key(name, model_pricing.MODEL_PRICING) == key
+
+
+def test_dotted_openrouter_opus_4_5_billed_at_opus_4_5_rates():
+    cost = model_pricing.estimate_cost_usd(
+        "anthropic/claude-opus-4.5", 1_000_000, 0, "https://openrouter.ai/api/v1",
+    )
+    assert cost == pytest.approx(5.00)
+
+
 def test_estimate_cost_usd_unknown_model_returns_none():
     assert model_pricing.estimate_cost_usd("totally-unknown-model", 1000, 1000, "https://openrouter.ai/api/v1") is None
     assert model_pricing.estimate_cost_usd("", 1000, 1000) is None

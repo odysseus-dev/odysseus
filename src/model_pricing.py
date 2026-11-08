@@ -135,9 +135,21 @@ _CGNAT_RE = re.compile(r"^100\.(\d+)\.")
 _PRIVATE_172_RE = re.compile(r"^172\.(1[6-9]|2\d|3[01])\.")
 
 
+_VERSION_DOT_RE = re.compile(r"(?<=\d)\.(?=\d)")
+
+
 def match_model_key(name: str, keys) -> str | None:
-    """Most specific (longest) key that is a substring of `name` (case-blind)."""
+    """Most specific (longest) key that is a substring of `name` (case-blind).
+
+    Claude keys spell versions with dashes ("claude-opus-4-5"), but some
+    routes (OpenRouter: "anthropic/claude-opus-4.5") use dots. Without
+    normalizing, a dotted name falls back to an older, differently priced key
+    ("claude-opus-4"). Only Claude names are normalized: other families
+    ("gpt-4.1") keep dots in their keys.
+    """
     n = (name or "").lower()
+    if "claude" in n:
+        n = _VERSION_DOT_RE.sub("-", n)
     best: str | None = None
     for key in keys:
         if key in n and (best is None or len(key) > len(best)):

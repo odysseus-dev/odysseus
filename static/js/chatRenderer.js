@@ -1262,6 +1262,43 @@ export function getModelCost(modelName, inputTokens, outputTokens, cacheReadToke
 }
 
 /**
+ * Cost in USD of one turn's final metrics, without endpoint billing checks.
+ * Multi-round agent turns carry per-round `usage_buckets`; each round is a
+ * separate request, so price them one by one (cache split, long-prompt tier)
+ * rather than pricing the summed input as one prompt. Returns null when no
+ * part of the turn can be priced.
+ */
+export function getMetricsModelCost(metrics, model) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
+  if (!buckets.length) {
+    return getModelCost(
+      metrics.model || model,
+      metrics.input_tokens || 0,
+      metrics.output_tokens || 0,
+      metrics.cache_read_input_tokens || 0,
+      metrics.cache_creation_input_tokens || 0,
+    );
+  }
+  let total = 0;
+  let priced = false;
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    const cost = getModelCost(
+      bucket.model || metrics.model || model,
+      Number(bucket.input_tokens) || 0,
+      Number(bucket.output_tokens) || 0,
+      Number(bucket.cache_read_input_tokens) || 0,
+      Number(bucket.cache_creation_input_tokens) || 0,
+    );
+    if (cost === null) continue;
+    total += cost;
+    priced = true;
+  }
+  return priced ? total : null;
+}
+
+/**
  * Is this endpoint a local / self-hosted model server (vLLM, Ollama, …)?
  * Local models are free, so we must NOT bill them at cloud rates — the
  * pricing table matches on a name substring, so a local `qwen2.5-coder`

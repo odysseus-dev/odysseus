@@ -7,8 +7,15 @@
 // Returning the first match instead made "gpt-4o-mini" match the shorter
 // "gpt-4o" key — billing it at gpt-4o rates (~16x) and showing the wrong
 // context window.
+//
+// Claude keys spell versions with dashes ("claude-opus-4-5"), but some routes
+// (OpenRouter: "anthropic/claude-opus-4.5") use dots, which would fall back to
+// an older, differently priced key ("claude-opus-4"). Only Claude names are
+// normalized: other families ("gpt-4.1") keep dots in their keys. Mirrors
+// match_model_key in src/model_pricing.py.
 export function matchModelKey(name, keys) {
-  const n = (name || '').toLowerCase();
+  let n = (name || '').toLowerCase();
+  if (n.includes('claude')) n = n.replace(/(\d)\.(?=\d)/g, '$1-');
   let best = null;
   for (const key of keys) {
     if (n.includes(key) && (best === null || key.length > best.length)) {
