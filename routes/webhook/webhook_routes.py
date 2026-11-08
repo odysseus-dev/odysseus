@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Webhook, ModelEndpoint
 from src.auth_helpers import owner_filter
-from src.url_security import validate_public_http_url
+from src.url_security import resolve_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,21 @@ def _select_api_chat_fallback_endpoint(db, token_owner: Optional[str]):
         query = owner_filter(query, ModelEndpoint, token_owner)
         return query.order_by(ModelEndpoint.owner.desc(), ModelEndpoint.created_at).first()
     return query.filter(ModelEndpoint.owner == None).order_by(ModelEndpoint.created_at).first()  # noqa: E711
+
+
+def _pinned_llm_client(ips) -> httpx.AsyncClient:
+    """AsyncClient that connects only to ``ips[0]``, the address that passed the
+    SSRF check. Host and TLS SNI still come from the request URL, so the
+    provider's certificate is verified against its hostname. Redirects and
+    environment proxies are off: either would send the request somewhere the
+    check never saw."""
+    from src.webhook_manager import _PinnedAsyncTransport
+
+    return httpx.AsyncClient(
+        transport=_PinnedAsyncTransport(ips[0]),
+        follow_redirects=False,
+        trust_env=False,
+    )
 
 
 def _caller_owns_session(sess_owner, caller) -> bool:
@@ -226,6 +241,32 @@ def setup_webhook_routes(
                     return KNOWN_PROVIDERS[prov]
         return None
 
+    def _resumed_endpoint_is_trusted(endpoint_url: Optional[str], owner: Optional[str]) -> bool:
+        """True when a resumed session's endpoint is one the server chose rather
+        than one a token supplied: a KNOWN_PROVIDERS URL, or a ModelEndpoint the
+        owner can see (admin-configured, so local/LAN targets stay allowed).
+        Sessions have no column recording where their URL came from, so any
+        other URL is treated as token-supplied and re-checked on every resume."""
+        from src.endpoint_resolver import build_chat_url, normalize_base
+
+        if not endpoint_url:
+            return False
+        if endpoint_url in {build_chat_url(normalize_base(u)) for u in KNOWN_PROVIDERS.values()}:
+            return True
+        db = SessionLocal()
+        try:
+            query = db.query(ModelEndpoint)
+            if owner:
+                query = owner_filter(query, ModelEndpoint, owner)
+            else:
+                query = query.filter(ModelEndpoint.owner == None)  # noqa: E711
+            for ep in query.all():
+                if ep.base_url and build_chat_url(normalize_base(ep.base_url)) == endpoint_url:
+                    return True
+        finally:
+            db.close()
+        return False
+
     class SyncChatRequest(BaseModel):
         message: str = Field(..., max_length=MAX_MESSAGE_LEN)
         model: Optional[str] = Field(None, max_length=200)
@@ -253,6 +294,9 @@ def setup_webhook_routes(
 
         session_id = body.session
         sess = None
+        # Addresses a token-supplied endpoint resolved to when it was checked;
+        # when set, every connection for this request is pinned to them.
+        pinned_ips = None
 
         # --- Case 1: Resume an existing session ---
         if session_id and session_manager:
@@ -275,6 +319,15 @@ def setup_webhook_routes(
             _sess_owner = getattr(sess, "owner", None)
             if not _caller_owns_session(_sess_owner, _tok_user):
                 raise HTTPException(404, "Session not found")
+            # A session created from a token-supplied base_url keeps that URL;
+            # its DNS may now point somewhere private, so check it again.
+            if not _resumed_endpoint_is_trusted(sess.endpoint_url, _tok_user):
+                try:
+                    _, pinned_ips = resolve_public_http_url(sess.endpoint_url or "")
+                except ValueError:
+                    raise HTTPException(
+                        400, "Session endpoint must point to a public HTTP(S) endpoint"
+                    )
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
         if not sess and body.api_key:
@@ -286,7 +339,7 @@ def setup_webhook_routes(
             direct_base_url = body.base_url.strip().rstrip("/") if body.base_url else None
             if direct_base_url:
                 try:
-                    base_url = validate_public_http_url(direct_base_url)
+                    base_url, pinned_ips = resolve_public_http_url(direct_base_url)
                 except ValueError as e:
                     detail = str(e).replace("URL", "base_url", 1)
                     raise HTTPException(400, detail)
@@ -378,10 +431,16 @@ def setup_webhook_routes(
 
         messages = [{"role": m.role, "content": m.content} for m in sess.history]
 
-        reply = await llm_call_async(
-            sess.endpoint_url, sess.model, messages,
-            headers=sess.headers, timeout=120,
-        )
+        pinned_client = _pinned_llm_client(pinned_ips) if pinned_ips else None
+        try:
+            reply = await llm_call_async(
+                sess.endpoint_url, sess.model, messages,
+                headers=sess.headers, timeout=120,
+                pinned_client=pinned_client,
+            )
+        finally:
+            if pinned_client is not None:
+                await pinned_client.aclose()
         sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()
 

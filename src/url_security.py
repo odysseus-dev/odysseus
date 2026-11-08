@@ -56,19 +56,28 @@ def _blocked_ip(addr: ipaddress._BaseAddress) -> bool:
     )
 
 
-def _host_resolves_publicly(hostname: str) -> bool:
+def _public_ips_for_host(hostname: str) -> list[ipaddress._BaseAddress] | None:
+    """Resolve ``hostname`` once; return its addresses only if every one is public."""
     host = hostname.strip().lower()
     if host in _INTERNAL_HOSTNAMES or host.endswith(_INTERNAL_SUFFIXES):
-        return False
+        return None
     try:
-        return not _blocked_ip(ipaddress.ip_address(host))
+        literal = ipaddress.ip_address(host)
     except ValueError:
         pass
+    else:
+        return None if _blocked_ip(literal) else [literal]
     try:
         addrs = _resolve_hostname_ips(host)
     except OSError:
-        return False
-    return bool(addrs) and all(not _blocked_ip(addr) for addr in addrs)
+        return None
+    if not addrs or any(_blocked_ip(addr) for addr in addrs):
+        return None
+    return addrs
+
+
+def _host_resolves_publicly(hostname: str) -> bool:
+    return _public_ips_for_host(hostname) is not None
 
 
 def is_public_http_url(url: str) -> bool:
@@ -92,3 +101,26 @@ def validate_public_http_url(url: str, *, max_length: int = 2048) -> str:
     if not is_public_http_url(cleaned):
         raise ValueError("URL must point to a public HTTP(S) endpoint")
     return cleaned
+
+
+def resolve_public_http_url(
+    url: str, *, max_length: int = 2048
+) -> tuple[str, list[ipaddress._BaseAddress]]:
+    """Validate an untrusted outbound URL and return it with the addresses checked.
+
+    Same rules and errors as ``validate_public_http_url``, but the host is
+    resolved exactly once and the vetted addresses are returned so the caller
+    can pin its connection to them (``webhook_manager._PinnedAsyncTransport``).
+    Connecting by hostname afterwards would resolve again and reopen the DNS
+    rebinding window between this check and the request.
+    """
+    cleaned = (url or "").strip()
+    if len(cleaned) > max_length:
+        raise ValueError("URL is too long")
+    parsed = urlparse(cleaned)
+    ips = None
+    if parsed.scheme in ("http", "https") and parsed.hostname:
+        ips = _public_ips_for_host(parsed.hostname)
+    if not ips:
+        raise ValueError("URL must point to a public HTTP(S) endpoint")
+    return cleaned, ips

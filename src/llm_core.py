@@ -2721,9 +2721,23 @@ async def llm_call_async(
     return_model_metadata: bool = False,
     thinking_mode: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    pinned_client: Optional[httpx.AsyncClient] = None,
 ) -> str | tuple[str, str]:
-    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging.
+
+    ``pinned_client`` is for URLs an API token supplied: a client whose
+    transport connects only to the address that passed the SSRF check. When it
+    is set, every request goes through it, the context window comes from the
+    built-in table instead of probing the endpoint (that probe would connect by
+    hostname on its own), and upstream bodies are not echoed into errors.
+    """
     provider = _detect_provider(url)
+
+    def _context_length() -> int:
+        if pinned_client is not None:
+            from src.model_context import _lookup_known
+            return _lookup_known(model) or DEFAULT_CONTEXT
+        return get_context_length(url, model)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -2749,7 +2763,7 @@ async def llm_call_async(
 
             max_tokens = fit_output_token_budget(
                 max_tokens,
-                get_context_length(url, model),
+                _context_length(),
                 messages_copy,
             )
         except Exception:
@@ -2843,7 +2857,7 @@ async def llm_call_async(
             h.update(headers)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
-            stream=False, num_ctx=get_context_length(url, model),
+            stream=False, num_ctx=_context_length(),
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2890,7 +2904,7 @@ async def llm_call_async(
         try:
             async with _local_model_slot(target_url, model, workload):
                 note_model_activity(target_url, model)
-                client = _get_http_client()
+                client = pinned_client if pinned_client is not None else _get_http_client()
                 r = await httpx_post_kimi_aware_async(client, target_url, h, json=payload, timeout=call_timeout)
             duration = time.time() - start
             if not r.is_success:
@@ -2944,7 +2958,8 @@ async def llm_call_async(
             except Exception:
                 raise _FallbackIneligibleHTTPException(
                     502,
-                    f"Unexpected schema from {target_url}: {str(data)[:400]}",
+                    f"Unexpected schema from {target_url}"
+                    + ("" if pinned_client is not None else f": {str(data)[:400]}"),
                 )
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
