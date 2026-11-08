@@ -6,9 +6,16 @@
 2. /api/cookbook/vllm-recipe must not let `..` segments in `repo` steer the
    raw.githubusercontent.com fetch to another repository, and its per-repo
    cache must stay bounded.
+3. docker/entrypoint.sh chowns /app/.cache and /app/.cache/huggingface as
+   root. /app is app-user owned, so those paths can be replaced by symlinks;
+   the root chown must never follow them.
 """
 import asyncio
 import ipaddress
+import os
+import re
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -17,6 +24,9 @@ from fastapi import FastAPI
 
 import routes.cookbook_routes as cookbook_routes
 from src.outbound_fetch import _is_private_address, _public_http_url
+
+ROOT = Path(__file__).resolve().parents[1]
+ENTRYPOINT = ROOT / "docker" / "entrypoint.sh"
 
 
 # ── 1. CGNAT / shared address space in the outbound fetch blocklist ─────────
@@ -132,3 +142,98 @@ def test_vllm_recipe_cache_is_bounded(recipe_app):
     assert "org0/model-0" not in cache  # oldest evicted
     assert all(".." not in key for key in cache)
     assert len(_FakeHttpxClient.calls) == 400
+
+
+# ── 3. entrypoint chown must not follow symlinks ────────────────────────────
+
+def _entrypoint_text():
+    return ENTRYPOINT.read_text(encoding="utf-8")
+
+
+def _helper_source():
+    match = re.search(r"^chown_path_no_follow\(\) \{\n.*?^\}\n", _entrypoint_text(), re.M | re.S)
+    assert match, "docker/entrypoint.sh must define chown_path_no_follow()"
+    return match.group(0)
+
+
+def _run_helper(target, tmp_path, *, puid, pgid, shim_chown):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(PUID=str(puid), PGID=str(pgid))
+    if shim_chown:
+        shim_dir = tmp_path / "shim"
+        shim_dir.mkdir(exist_ok=True)
+        log = tmp_path / "chown.log"
+        shim = shim_dir / "chown"
+        shim.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CHOWN_LOG"\n', encoding="utf-8")
+        shim.chmod(0o755)
+        env.update(PATH=f"{shim_dir}{os.pathsep}{env.get('PATH', '')}", CHOWN_LOG=str(log))
+    script = _helper_source() + 'chown_path_no_follow "$1"\n'
+    return subprocess.run(
+        ["sh", "-c", script, "sh", str(target)],
+        env=env, capture_output=True, text=True, timeout=10, check=True,
+    )
+
+
+def _shim_calls(tmp_path):
+    log = tmp_path / "chown.log"
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_entrypoint_is_valid_posix_sh():
+    assert _entrypoint_text().startswith("#!/bin/sh\n")
+    subprocess.run(["sh", "-n", str(ENTRYPOINT)], check=True, timeout=10)
+
+
+def test_entrypoint_direct_chowns_go_through_no_follow_helper():
+    text = _entrypoint_text()
+    assert re.search(r"^chown_path_no_follow /app/\.cache$", text, re.M)
+    assert re.search(r"^chown_path_no_follow /app/\.cache/huggingface$", text, re.M)
+    assert re.search(r"^\s+chown_path_no_follow \"\$dir\"$", text, re.M)
+    direct = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("chown ")]
+    assert direct == ['chown -h "$PUID:$PGID" "$target" 2>/dev/null || true']
+    helper = _helper_source()
+    assert '[ -L "$target" ]' in helper
+    assert '[ -L "${target%/*}" ]' in helper
+
+
+def test_helper_skips_symlinked_path(tmp_path):
+    (tmp_path / "etc").mkdir()
+    link = tmp_path / "cache"
+    link.symlink_to(tmp_path / "etc")
+    result = _run_helper(link, tmp_path, puid=4242, pgid=4242, shim_chown=True)
+    assert _shim_calls(tmp_path) == []
+    assert "symlink" in result.stderr
+
+
+def test_helper_skips_path_under_symlinked_parent(tmp_path):
+    (tmp_path / "etc" / "huggingface").mkdir(parents=True)
+    (tmp_path / "cache").symlink_to(tmp_path / "etc")
+    result = _run_helper(tmp_path / "cache" / "huggingface", tmp_path, puid=4242, pgid=4242, shim_chown=True)
+    assert _shim_calls(tmp_path) == []
+    assert "symlink" in result.stderr
+
+
+def test_helper_chowns_real_directory_without_following(tmp_path):
+    real = tmp_path / "cache"
+    real.mkdir()
+    _run_helper(real, tmp_path, puid=4242, pgid=4343, shim_chown=True)
+    assert _shim_calls(tmp_path) == [f"-h 4242:4343 {real}"]
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root to chown")
+def test_helper_as_root_never_changes_symlink_target_ownership(tmp_path):
+    victim = tmp_path / "etc"
+    (victim / "huggingface").mkdir(parents=True)
+    os.chown(victim, 0, 0)
+    os.chown(victim / "huggingface", 0, 0)
+    (tmp_path / "cache").symlink_to(victim)
+    real = tmp_path / "real"
+    real.mkdir()
+
+    _run_helper(tmp_path / "cache", tmp_path, puid=65534, pgid=65534, shim_chown=False)
+    _run_helper(tmp_path / "cache" / "huggingface", tmp_path, puid=65534, pgid=65534, shim_chown=False)
+    _run_helper(real, tmp_path, puid=65534, pgid=65534, shim_chown=False)
+
+    assert victim.stat().st_uid == 0
+    assert (victim / "huggingface").stat().st_uid == 0
+    assert real.stat().st_uid == 65534

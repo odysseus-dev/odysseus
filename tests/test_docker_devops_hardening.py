@@ -170,11 +170,10 @@ def test_docker_entrypoint_repairs_cache_parent_without_recursive_walk():
     """Pin the hard-coded container-path contract without running entrypoint as root."""
     script = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
     app_repair = script.index("repair_app_tree_ownership\n")
-    cache_parent_repair = script.index(
-        'chown "$PUID:$PGID" /app/.cache 2>/dev/null || true'
-    )
+    # Both single-path repairs go through the symlink-refusing helper.
+    cache_parent_repair = script.index("chown_path_no_follow /app/.cache\n")
     mounted_cache_root_repair = script.index(
-        'chown "$PUID:$PGID" /app/.cache/huggingface 2>/dev/null || true'
+        "chown_path_no_follow /app/.cache/huggingface\n"
     )
 
     assert app_repair < cache_parent_repair < mounted_cache_root_repair
