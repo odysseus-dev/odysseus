@@ -1632,6 +1632,10 @@ function _openDetail(img) {
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></span>
             ${aiTags ? 'Clear AI tags' : 'AI Tag'}
           </button>
+          <button class="dropdown-item-compact" id="gallery-edit-caption-btn">
+            <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span>
+            Edit description
+          </button>
           ${img.album_id ? `<button class="dropdown-item-compact" id="gallery-set-cover-btn">
             <span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>
             Set as album cover
@@ -1678,7 +1682,7 @@ function _openDetail(img) {
             <svg class="gallery-name-enter" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg>
           </div>
         </div>
-        ${img.caption ? `<div class="gallery-detail-section"><label>OCR Caption</label><div class="gallery-detail-prompt">${_esc(img.caption)}</div></div>` : ''}
+        <div class="gallery-detail-section" id="gallery-caption-section"${img.caption ? '' : ' hidden'}>${img.caption ? `<label>OCR Caption</label><div class="gallery-detail-prompt">${_esc(img.caption)}</div>` : ''}</div>
         ${img.prompt && img.model !== 'imported' ? `<div class="gallery-detail-section gallery-detail-prompt-section"><label>Prompt</label><div class="gallery-detail-prompt">${_esc(img.prompt)}</div><div class="gallery-detail-mini-actions"><button class="gallery-detail-mini-btn" id="gallery-detail-copy-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button><button class="gallery-detail-mini-btn" id="gallery-detail-reuse-prompt"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Reuse in chat</button></div></div>` : ''}
         <div class="gallery-detail-meta-grid">
           <div class="gallery-detail-meta-card"><span>Date</span><strong>${date}</strong></div>
@@ -1876,6 +1880,41 @@ function _openDetail(img) {
     }
   };
   document.getElementById('gallery-fav-detail').addEventListener('click', _toggleDetailFavorite);
+
+  // Edit the description in place (also for a photo that has none yet).
+  document.getElementById('gallery-edit-caption-btn')?.addEventListener('click', () => {
+    const section = document.getElementById('gallery-caption-section');
+    if (!section || section.querySelector('#gallery-caption-input')) return;
+    section.hidden = false;
+    section.innerHTML = `<label for="gallery-caption-input">OCR Caption</label>`
+      + `<textarea class="gallery-detail-name-input" id="gallery-caption-input" rows="6" placeholder="Describe this photo"></textarea>`
+      + `<div class="gallery-detail-mini-actions">`
+      + `<button type="button" class="gallery-detail-mini-btn" id="gallery-caption-save">Save</button>`
+      + `<button type="button" class="gallery-detail-mini-btn" id="gallery-caption-cancel">Cancel</button></div>`;
+    const input = section.querySelector('#gallery-caption-input');
+    input.value = img.caption || '';
+    input.focus();
+    const close = () => _openDetail(img);
+    const save = async () => {
+      const res = await fetch(`${API_BASE}/api/gallery/${img.id}`, {
+        method: 'PATCH', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caption: input.value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { uiModule.showToast(data.detail || 'Could not save the description'); return; }
+      img.caption = data.caption || '';
+      _renderGrid();
+      uiModule.showToast('Description saved');
+      close();
+    };
+    section.querySelector('#gallery-caption-save').addEventListener('click', save);
+    section.querySelector('#gallery-caption-cancel').addEventListener('click', close);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+  });
   document.getElementById('gallery-detail-fav-header')?.addEventListener('click', _toggleDetailFavorite);
 
   document.getElementById('gallery-ai-tag-btn').addEventListener('click', async (e) => {
@@ -3178,6 +3217,14 @@ export function openGallery() {
 
   _escHandler = (e) => {
     if (e.key === 'Escape') {
+      // Esc while editing a photo's description cancels the edit and stays
+      // on the photo; this capture listener would otherwise take it as Back.
+      if (document.getElementById('gallery-caption-input')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        document.getElementById('gallery-caption-cancel')?.click();
+        return;
+      }
       if (window.__galleryCancelSelection?.()) {
         e.preventDefault();
         e.stopImmediatePropagation();

@@ -22,6 +22,7 @@ class GalleryPatch(BaseModel):
     tags: Optional[str] = None
     favorite: Optional[bool] = None
     album_id: Optional[str] = None
+    caption: Optional[str] = None
 
 
 # ---- EXIF extraction ----
