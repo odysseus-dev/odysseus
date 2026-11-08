@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import ipaddress
 import logging
+import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -111,15 +112,20 @@ REQUEST_TIMEOUT = 5
 # Substring matching — use the shortest unique prefix so variants get caught.
 KNOWN_CONTEXT_WINDOWS = {
     # --- Anthropic ---
-    # Every Claude 5.x model (Fable, Mythos, Opus, Sonnet, Haiku) has a 1M
-    # window by default, no beta header (Anthropic "Context windows" docs).
+    # Every Claude 5.x model (Fable, Mythos, Opus, Sonnet, Haiku), Opus 4.6,
+    # 4.7 and 4.8, and Sonnet 4.6 have a 1M window by default, no beta header;
+    # other Claude models, Opus 4.5 and Sonnet 4.5 included, have 200k
+    # (platform.claude.com "Context windows").
     'claude-fable-5': 1000000,
     'claude-mythos-5': 1000000,
     'claude-opus-5': 1000000,
     'claude-sonnet-5': 1000000,
     'claude-haiku-5': 1000000,
+    'claude-opus-4-8': 1000000,
+    'claude-opus-4-7': 1000000,
+    'claude-opus-4-6': 1000000,
+    'claude-sonnet-4-6': 1000000,
     'claude-sonnet-4-5': 200000,
-    'claude-sonnet-4-6': 200000,
     'claude-sonnet-4': 200000,
     'claude-opus-4': 200000,
     'claude-haiku-4': 200000,
@@ -317,6 +323,27 @@ def _lookup_known(model: str) -> Optional[int]:
     first-match return would report o1-mini's window as 200k.
     """
     name = model.lower()
+    best_key, best_ctx = _longest_known_key(name)
+    # Claude keys spell versions with dashes ("claude-sonnet-4-6"), but some
+    # routes (OpenRouter: "anthropic/claude-sonnet-4.6") use dots, which would
+    # fall back to an older key ("claude-sonnet-4"). Try the version right
+    # after "claude-" with dashes too, but only override a Claude match or no
+    # match, so "llama-3.1-8b-claude-3.5-distill" keeps its own family key.
+    # Same rule as match_model_key in src/model_pricing.py.
+    if "claude" in name and (best_key is None or best_key.startswith("claude")):
+        normalized = _CLAUDE_VERSION_DOT_RE.sub(r"\1-", name)
+        if normalized != name:
+            alt_key, alt_ctx = _longest_known_key(normalized)
+            if alt_key is not None and (best_key is None or len(alt_key) >= len(best_key)):
+                best_key, best_ctx = alt_key, alt_ctx
+    return best_ctx
+
+
+# The version right after "claude-" ("claude-sonnet-4.6", "claude-3.5-sonnet").
+_CLAUDE_VERSION_DOT_RE = re.compile(r"(claude-(?:[a-z]+-)?\d+)\.(?=\d)")
+
+
+def _longest_known_key(name: str) -> Tuple[Optional[str], Optional[int]]:
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
     best_key: Optional[str] = None
@@ -325,7 +352,7 @@ def _lookup_known(model: str) -> Optional[int]:
         if key in basename or key in name:
             if best_key is None or len(key) > len(best_key):
                 best_key, best_ctx = key, ctx
-    return best_ctx
+    return best_key, best_ctx
 
 
 def _model_ctx_from_entry(m: dict) -> Optional[int]:
