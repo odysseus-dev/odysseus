@@ -111,6 +111,13 @@ REQUEST_TIMEOUT = 5
 # Substring matching — use the shortest unique prefix so variants get caught.
 KNOWN_CONTEXT_WINDOWS = {
     # --- Anthropic ---
+    # Every Claude 5.x model (Fable, Mythos, Opus, Sonnet, Haiku) has a 1M
+    # window by default, no beta header (Anthropic "Context windows" docs).
+    'claude-fable-5': 1000000,
+    'claude-mythos-5': 1000000,
+    'claude-opus-5': 1000000,
+    'claude-sonnet-5': 1000000,
+    'claude-haiku-5': 1000000,
     'claude-sonnet-4-5': 200000,
     'claude-sonnet-4-6': 200000,
     'claude-sonnet-4': 200000,
@@ -335,6 +342,9 @@ def _model_ctx_from_entry(m: dict) -> Optional[int]:
         "max_model_len",
         "max_context_length",
         "max_seq_len",
+        # Anthropic's GET /v1/models ModelInfo: "Maximum input context
+        # window size in tokens for this model".
+        "max_input_tokens",
     ):
         val = m.get(field)
         if val and isinstance(val, (int, float)) and val > 0:
