@@ -16,12 +16,34 @@ Dovecot is a normal setup). Unresolved names are rejected before persistence;
 live connections also validate and pin their own resolved addresses.
 """
 
+import contextlib
 import socket
 import unittest.mock as mock
 
 import pytest
 
 from src.url_safety import check_outbound_host, connect_outbound_tcp, OutboundAddressBlocked
+
+
+@contextlib.contextmanager
+def _forbid_sockets():
+    """Record and refuse any socket construction, leaving socket.socket itself intact.
+
+    A plain mock.patch("socket.socket") breaks async tests on Windows: the
+    proactor event loop checks isinstance(sock, socket.socket) when it arms its
+    self-pipe, the MagicMock makes that raise, and the loop then misses the
+    thread pool's wakeup and sleeps until its next timer (or forever).
+    Patching __init__ on the real class keeps that isinstance check true for the
+    loop's existing sockets, and also catches subclasses such as ssl.SSLSocket.
+    """
+    created = []
+
+    def _refuse(self, *args, **kwargs):
+        created.append(args)
+        raise AssertionError("socket constructed")
+
+    with mock.patch.object(socket.socket, "__init__", _refuse):
+        yield created
 
 
 # ── helper policy table ──────────────────────────────────────────────────────
@@ -136,13 +158,13 @@ async def test_test_connection_rejects_loopback_for_non_admin_before_any_socket(
         "imap_starttls": False,
         "smtp_host": "169.254.169.254", "smtp_port": 80, "smtp_security": "none",
     }
-    with mock.patch("socket.socket") as create_socket:
+    with _forbid_sockets() as created:
         result = await test_conn(req=_Req(body), owner="regular-user")
 
     assert result["ok"] is False
     assert ("Rejected IMAP host" in result["imap"]["error"] or "server address is not allowed" in result["imap"]["error"])
     assert ("Rejected SMTP host" in result["smtp"]["error"] or "server address is not allowed" in result["smtp"]["error"])
-    create_socket.assert_not_called()
+    assert created == []
 
 
 @pytest.mark.asyncio
@@ -153,11 +175,11 @@ async def test_test_connection_metadata_ip_rejected_even_for_admin(monkeypatch):
     test_conn = _route(router, "/api/email/accounts/test", "POST")
 
     body = {"imap_host": "169.254.169.254", "imap_port": 80, "imap_user": "x", "imap_password": "x", "imap_starttls": True}
-    with mock.patch("socket.socket") as create_socket:
+    with _forbid_sockets() as created:
         result = await test_conn(req=_Req(body), owner="admin")
     assert result["ok"] is False
     assert ("link-local" in result["imap"]["error"] or "server address is not allowed" in result["imap"]["error"])
-    create_socket.assert_not_called()
+    assert created == []
 
 
 @pytest.mark.asyncio
@@ -305,12 +327,12 @@ async def test_test_connection_endpoint_dns_rebinding_blocked(monkeypatch):
     }
     rebinding_addrs = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 993))]
     with mock.patch("socket.getaddrinfo", return_value=rebinding_addrs), \
-         mock.patch("socket.socket") as create_socket:
+         _forbid_sockets() as created:
         result = await test_conn(req=_Req(body), owner="regular-user")
 
     assert result["ok"] is False
     assert ("Rejected IMAP host" in result["imap"]["error"] or "server address is not allowed" in result["imap"]["error"])
-    create_socket.assert_not_called()
+    assert created == []
 
 
 @pytest.mark.asyncio
