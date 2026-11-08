@@ -3,8 +3,9 @@
 //
 // - Email: _sanitizeHtml output is inserted into the main document, where the
 //   email CSS only forces `background-image: none`. Inline url()-bearing
-//   declarations and absolute `background` / `poster` attributes would still
-//   fetch on open, bypassing click-to-load. Runs in Chromium (Playwright),
+//   declarations, absolute `background` / `poster` attributes, media
+//   elements (video/audio/source/track) and `<input type=image src>` would
+//   still fetch on open, bypassing click-to-load. Runs in Chromium (Playwright),
 //   because the sanitizer needs a real DOMParser.
 // - Chat: mdToHtml must not turn a remote `![x](https://...)` into an <img>
 //   (a prompt-injected reply could exfiltrate data in the URL); same-origin
@@ -39,9 +40,13 @@ const EMAIL_BODY = `
 <table background="http:t.test/noslash.png"><tr><td>i</td></tr></table>
 <table background="images/relative.png"><tr><td>j</td></tr></table>
 <video poster="https://t.test/poster.png"></video>
+<video src="https://t.test/v.mp4" autoplay muted><source src="https://t.test/s.mp4" type="video/mp4"><track kind="captions" src="https://t.test/t.vtt" default></video>
+<audio src="https://t.test/a.mp3" autoplay></audio>
+<audio preload="auto"><source src="https://t.test/as.mp3" type="audio/mpeg"></audio>
+<input type="image" src="https://t.test/input.png" alt="k">
 `;
 
-test('email sanitizer drops url()-bearing styles and remote background/poster attributes',
+test('email sanitizer drops url()-bearing styles, remote background/poster attributes and media sources',
   { skip: chromium ? false : 'playwright is not installed' }, async () => {
     const browser = await chromium.launch({ args: ['--no-sandbox'] });
     try {
@@ -75,6 +80,9 @@ test('email sanitizer drops url()-bearing styles and remote background/poster at
       assert.doesNotMatch(out, /image-set/i);
       assert.doesNotMatch(out, /t\.test/, out);
       assert.doesNotMatch(out, /\sposter=/i);
+      assert.doesNotMatch(out, /<(?:video|audio|source|track)\b/i, out);
+      assert.doesNotMatch(out, /<input\b[^>]*\ssrc=/i, out);
+      assert.match(out, /<input\b[^>]*type="image"/, out);
       // Harmless declarations and relative backgrounds survive.
       assert.match(out, /padding: 4px/);
       assert.match(out, /border: 1px solid/);

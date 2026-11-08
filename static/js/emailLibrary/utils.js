@@ -200,10 +200,14 @@ export function _initials(s) {
 // inline tags in <mark> so they render legibly across themes.
 function _sanitizeHtmlOnce(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
+  // Media elements and image inputs fetch their src on insertion, bypassing
+  // click-to-load: video/audio/source/track go entirely, input loses src.
   doc.querySelectorAll(
     'script, iframe, object, embed, form, style, link, ' +
-    'svg, math, base, meta, noscript, frame, frameset, applet, portal'
+    'svg, math, base, meta, noscript, frame, frameset, applet, portal, ' +
+    'video, audio, source, track'
   ).forEach(el => el.remove());
+  doc.querySelectorAll('input[src]').forEach(el => el.removeAttribute('src'));
 
   const URL_ATTRS = ['href', 'src', 'xlink:href', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
 
