@@ -38,6 +38,17 @@ class RateLimiter:
             self._log[key] = timestamps
             return True
 
+    def is_limited(self, key: str) -> bool:
+        """Return True if ``key`` is at its limit, without recording a hit.
+
+        Pair with :meth:`check` to count only some outcomes (e.g. failures).
+        """
+        now = time.monotonic()
+        with self._lock:
+            cutoff = now - self.window
+            recent = sum(1 for t in self._log.get(key, ()) if t > cutoff)
+            return recent >= self.max_requests
+
     def _maybe_cleanup(self, now: float) -> None:
         """Periodically purge stale entries."""
         if now - self._last_cleanup < self._cleanup_interval:

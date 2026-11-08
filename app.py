@@ -87,6 +87,7 @@ import bcrypt as _bcrypt
 from src.app_helpers import abs_join, serve_html_with_nonce
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from src.owner_identity import auth_disabled
+from src.rate_limiter import RateLimiter
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -376,6 +377,21 @@ if AUTH_ENABLED:
         app.state._token_cache = _token_cache
         app.state._token_cache_dirty = False
 
+    def _match_api_token(raw_token: str, candidates):
+        """Return ``(id, owner, scopes)`` of the cached token ``raw_token``
+        matches, or None. Each bcrypt check costs about a third of a second of
+        CPU, so callers run this in a worker thread, never on the event loop."""
+        raw = raw_token.encode()
+        for tid, thash, owner, scopes in candidates:
+            if _bcrypt.checkpw(raw, thash.encode()):
+                return tid, owner, scopes or []
+        return None
+
+    # Failed bearer attempts per client IP. Only failures are recorded, so a
+    # working token is never throttled by its own traffic; once an IP is over
+    # the limit it gets 429 before any bcrypt work is done for it.
+    _bearer_fail_limiter = RateLimiter(max_requests=10, window_seconds=60)
+
     # Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
     # nginx, Caddy, Tailscale Funnel, …). cloudflared connects to the app FROM
     # 127.0.0.1, so without this check every tunneled request would look like
@@ -456,27 +472,30 @@ if AUTH_ENABLED:
             # --- Bearer token auth (API tokens for external integrations) ---
             auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer ody_"):
+                client_ip = request.client.host if request.client else ""
+                if _bearer_fail_limiter.is_limited(client_ip):
+                    return JSONResponse(
+                        status_code=429,
+                        content={"error": "Too many failed API token attempts, try again later"},
+                    )
                 raw_token = auth_header[7:]
                 # Sanity check: tokens are "ody_" + 43 chars of base64
                 if len(raw_token) < 12 or len(raw_token) > 100:
+                    _bearer_fail_limiter.check(client_ip)
                     return JSONResponse(status_code=401, content={"error": "Invalid API token"})
                 prefix = raw_token[:8]
+                matched_id = None
                 try:
                     if app.state._token_cache_dirty:
                         async with _token_cache_lock:
                             if app.state._token_cache_dirty:
                                 await _asyncio.to_thread(_refresh_token_cache)
                     candidates = list(_token_cache.get(prefix, ()))
-                    matched_id = None
-                    matched_owner = None
-                    matched_scopes = []
-                    for tid, thash, owner, scopes in candidates:
-                        if _bcrypt.checkpw(raw_token.encode(), thash.encode()):
-                            matched_id = tid
-                            matched_owner = owner
-                            matched_scopes = scopes or []
-                            break
-                    if matched_id:
+                    match = None
+                    if candidates:
+                        match = await _asyncio.to_thread(_match_api_token, raw_token, candidates)
+                    if match:
+                        matched_id, matched_owner, matched_scopes = match
                         # Update last_used_at off the hot path. Doing it
                         # inline used to keep the request open across an
                         # extra commit; do it fire-and-forget instead.
@@ -504,7 +523,11 @@ if AUTH_ENABLED:
                         return await call_next(request)
                 except Exception:
                     logger.warning("API token auth error", exc_info=False)
-                # Invalid bearer token — reject immediately
+                # Invalid bearer token — reject immediately. matched_id is set
+                # once the token verified, so an error raised further down the
+                # stack for a valid token is not counted as a failed attempt.
+                if matched_id is None:
+                    _bearer_fail_limiter.check(client_ip)
                 return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
             # --- Cookie-based session auth ---
