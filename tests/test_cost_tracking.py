@@ -35,6 +35,151 @@ def test_estimate_cost_usd_computes_per_million_rates():
     assert model_pricing.estimate_cost_usd("openai/gpt-5", 1000, 1000, "https://openrouter.ai/api/v1") == pytest.approx(0.01)
 
 
+_ANTHROPIC_URL = "https://api.anthropic.com/v1"
+
+
+@pytest.mark.parametrize("model, price_in, price_out", [
+    ("claude-opus-5-5", 4.00, 20.00),
+    ("claude-opus-5", 5.00, 25.00),
+    ("claude-sonnet-5-5", 2.00, 10.00),
+    ("claude-fable-5-1", 10.00, 50.00),
+    ("claude-opus-4-5-20251101", 5.00, 25.00),   # not Opus 4's $15/$75
+    ("claude-opus-4-6", 5.00, 25.00),
+    ("claude-opus-4-8", 5.00, 25.00),
+    ("claude-opus-4-1", 15.00, 75.00),
+    ("claude-haiku-4-5-20251001", 1.00, 5.00),
+])
+def test_claude_base_prices_match_published_table(model, price_in, price_out):
+    cost = model_pricing.estimate_cost_usd(model, 1_000_000, 1_000_000, _ANTHROPIC_URL)
+    assert cost == pytest.approx(price_in + price_out)
+
+
+def test_claude_cache_reads_and_writes_use_cache_rates():
+    # Opus 4.6: $5 base. 100k read at 0.1x, 248 written at 1.25x, 50 fresh.
+    cost = model_pricing.estimate_cost_usd(
+        "claude-opus-4-6", 100_298, 0, _ANTHROPIC_URL,
+        cache_read_tokens=100_000, cache_write_tokens=248,
+    )
+    expected = 5.00 * (50 + 100_000 * 0.10 + 248 * 1.25) / 1_000_000
+    assert cost == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("model, read_mult", [
+    ("claude-opus-5-5", 0.05),
+    ("claude-sonnet-5-5", 0.05),
+    ("claude-fable-5-1", 0.025),
+    ("claude-sonnet-5", 0.10),
+])
+def test_claude_cache_read_multiplier_per_model(model, read_mult):
+    price_in = model_pricing.MODEL_PRICING[model][0]
+    cost = model_pricing.estimate_cost_usd(
+        model, 1_000_000, 0, _ANTHROPIC_URL, cache_read_tokens=1_000_000,
+    )
+    assert cost == pytest.approx(price_in * read_mult)
+
+
+def test_cache_split_never_bills_more_than_the_prompt():
+    # A malformed split larger than the prompt is clamped, not over-billed.
+    cost = model_pricing.estimate_cost_usd(
+        "claude-opus-4-6", 1000, 0, _ANTHROPIC_URL,
+        cache_read_tokens=5000, cache_write_tokens=5000,
+    )
+    assert cost == pytest.approx(5.00 * 1000 * 0.10 / 1_000_000)
+
+
+def test_cache_split_ignored_for_non_claude_models():
+    cost = model_pricing.estimate_cost_usd(
+        "openai/gpt-5", 1000, 1000, "https://openrouter.ai/api/v1",
+        cache_read_tokens=1000,
+    )
+    assert cost == pytest.approx(0.01)
+
+
+def test_haiku_5_5_long_prompt_tier():
+    short = model_pricing.estimate_cost_usd("claude-haiku-5-5", 100_000, 0, _ANTHROPIC_URL)
+    long = model_pricing.estimate_cost_usd("claude-haiku-5-5", 100_001, 0, _ANTHROPIC_URL)
+    assert short == pytest.approx(0.10 * 100_000 / 1_000_000)
+    assert long == pytest.approx(0.50 * 100_001 / 1_000_000)
+
+
+def test_final_metrics_estimate_uses_cache_split():
+    m = agent_loop._compute_final_metrics(
+        messages=[], full_response="hi", total_duration=1.0, time_to_first_token=0.1,
+        context_length=200000, real_input_tokens=100_298, real_output_tokens=0,
+        has_real_usage=True, tool_events=[], round_texts=[], model="claude-opus-4-6",
+        endpoint_url=_ANTHROPIC_URL,
+        real_cache_read_tokens=100_000, real_cache_write_tokens=248,
+    )
+    expected = 5.00 * (50 + 100_000 * 0.10 + 248 * 1.25) / 1_000_000
+    assert m["cost_usd"] == pytest.approx(round(expected, 6))
+    assert m["cost_source"] == "estimated"
+
+
+def test_usage_bucket_carries_cache_split_only_when_present():
+    common = dict(round_num=1, model="claude-opus-4-6", endpoint_id=None,
+                  endpoint_label=None, endpoint_cost_tracked=True,
+                  input_tokens=100_298, output_tokens=5, usage_source="real")
+    bucket = agent_loop._usage_bucket(**common, cache_read_tokens=100_000, cache_write_tokens=248)
+    assert bucket["cache_read_input_tokens"] == 100_000
+    assert bucket["cache_creation_input_tokens"] == 248
+    plain = agent_loop._usage_bucket(**common)
+    assert "cache_read_input_tokens" not in plain
+    assert "cache_creation_input_tokens" not in plain
+
+
+def test_final_metrics_expose_cache_split_for_clients_without_buckets():
+    # Required-read turns and the compare view re-price the turn from the
+    # top-level metrics; without the split they bill cache reads at full price.
+    common = dict(
+        messages=[], full_response="hi", total_duration=1.0, time_to_first_token=0.1,
+        context_length=200000, real_input_tokens=40_300, real_output_tokens=10,
+        tool_events=[], round_texts=[], model="claude-opus-4-6", endpoint_url=_ANTHROPIC_URL,
+    )
+    m = agent_loop._compute_final_metrics(
+        **common, has_real_usage=True, real_cache_read_tokens=40_000, real_cache_write_tokens=0,
+    )
+    assert m["cache_read_input_tokens"] == 40_000
+    assert "cache_creation_input_tokens" not in m
+    estimated = agent_loop._compute_final_metrics(
+        **common, has_real_usage=False, real_cache_read_tokens=40_000, real_cache_write_tokens=0,
+    )
+    assert "cache_read_input_tokens" not in estimated
+
+
+def test_final_metrics_context_uses_last_round_not_round_sum():
+    m = agent_loop._compute_final_metrics(
+        messages=[], full_response="hi", total_duration=1.0, time_to_first_token=0.1,
+        context_length=200_000, real_input_tokens=90_000, real_output_tokens=10,
+        has_real_usage=True, tool_events=[], round_texts=[], model="claude-opus-4-6",
+        last_round_input_tokens=50_000,
+    )
+    assert m["request_context_tokens"] == 50_000
+    assert m["context_percent"] == 25.0
+
+
+@pytest.mark.parametrize("name,key", [
+    ("anthropic/claude-opus-4.5", "claude-opus-4-5"),
+    ("anthropic/claude-haiku-4.5", "claude-haiku-4-5"),
+    ("anthropic/claude-sonnet-5.5", "claude-sonnet-5-5"),
+    ("anthropic/claude-3.5-sonnet", "claude-3-5-sonnet"),
+    ("claude-opus-4-5-20251101", "claude-opus-4-5"),
+    ("qwen2.5-coder-32b-claude-distill", "qwen2.5"),
+    ("meta-llama/llama-3.1-8b-claude-3.5-sonnet-distill", "llama-3.1"),
+    ("gpt-4.1-claude", "gpt-4.1"),
+    ("gemini-2.5-pro-claude-style", "gemini-2.5-pro"),
+    ("gpt-4.1-mini", "gpt-4.1-mini"),
+])
+def test_match_model_key_handles_dotted_claude_versions(name, key):
+    assert model_pricing.match_model_key(name, model_pricing.MODEL_PRICING) == key
+
+
+def test_dotted_openrouter_opus_4_5_billed_at_opus_4_5_rates():
+    cost = model_pricing.estimate_cost_usd(
+        "anthropic/claude-opus-4.5", 1_000_000, 0, "https://openrouter.ai/api/v1",
+    )
+    assert cost == pytest.approx(5.00)
+
+
 def test_estimate_cost_usd_unknown_model_returns_none():
     assert model_pricing.estimate_cost_usd("totally-unknown-model", 1000, 1000, "https://openrouter.ai/api/v1") is None
     assert model_pricing.estimate_cost_usd("", 1000, 1000) is None
@@ -127,6 +272,172 @@ def test_final_metrics_omit_cost_without_endpoint_url():
     m = _metrics(real_cost_usd=0.0, endpoint_url=None)
     assert "cost_usd" not in m
     assert "cost_source" not in m
+
+
+# --- multi-round agent turns: per-request context and cost ---
+
+def _bucket(round_num, model, input_tokens, output_tokens, read=0, write=0):
+    return agent_loop._usage_bucket(
+        round_num=round_num, model=model, endpoint_id="ep", endpoint_label="Claude",
+        endpoint_cost_tracked=True, input_tokens=input_tokens,
+        output_tokens=output_tokens, usage_source="real",
+        cache_read_tokens=read, cache_write_tokens=write,
+    )
+
+
+def _apply(metrics, buckets, model, context_length=200_000):
+    agent_loop._apply_usage_bucket_metrics(
+        metrics, buckets, context_length=context_length, total_duration=2.0,
+        backend_gen_tps=0, endpoint_url=_ANTHROPIC_URL, model=model,
+    )
+    return metrics
+
+
+def test_context_tokens_match_the_last_request_not_the_round_sum():
+    # Each round re-sends (and now counts) the whole cached history, so the
+    # summed input is ~3x the prompt; the "used" figure must be the last
+    # request's prompt, the same number context_percent is computed from.
+    buckets = [
+        _bucket(1, "claude-sonnet-4-5", 30_000, 200, write=29_000),
+        _bucket(2, "claude-sonnet-4-5", 31_000, 200, read=29_000, write=1_500),
+        _bucket(3, "claude-sonnet-4-5", 32_000, 300, read=30_500, write=1_000),
+    ]
+    m = _apply({"request_context_tokens": 900, "cost_source": "estimated", "cost_usd": 1.0},
+               buckets, "claude-sonnet-4-5")
+    assert m["input_tokens"] == 93_000
+    assert m["request_context_tokens"] == 32_000
+    assert m["context_percent"] == 16.0
+
+
+def test_long_prompt_tier_is_priced_per_request_not_on_the_round_sum():
+    # Three 40k Haiku 5.5 requests are each under the 100k long-prompt
+    # threshold; their 120k sum must not move the turn to the long tier.
+    buckets = [_bucket(i, "claude-haiku-5-5", 40_000, 1_000) for i in (1, 2, 3)]
+    m = _apply({"cost_source": "estimated", "cost_usd": 1.0}, buckets, "claude-haiku-5-5")
+    per_request = model_pricing.estimate_cost_usd("claude-haiku-5-5", 40_000, 1_000, _ANTHROPIC_URL)
+    assert m["cost_usd"] == pytest.approx(round(3 * per_request, 6))
+    long_tier_sum = model_pricing.estimate_cost_usd("claude-haiku-5-5", 120_000, 3_000, _ANTHROPIC_URL)
+    assert m["cost_usd"] < long_tier_sum
+
+
+def test_per_request_cost_bills_each_rounds_cache_split():
+    buckets = [
+        _bucket(1, "claude-sonnet-4-5", 10_000, 100, write=9_000),
+        _bucket(2, "claude-sonnet-4-5", 10_500, 100, read=9_000, write=1_000),
+    ]
+    m = _apply({"cost_source": "estimated", "cost_usd": 1.0}, buckets, "claude-sonnet-4-5")
+    expected = sum(
+        model_pricing.estimate_cost_usd(
+            "claude-sonnet-4-5", b["input_tokens"], b["output_tokens"], _ANTHROPIC_URL,
+            cache_read_tokens=b.get("cache_read_input_tokens", 0),
+            cache_write_tokens=b.get("cache_creation_input_tokens", 0),
+        )
+        for b in buckets
+    )
+    assert m["cost_usd"] == pytest.approx(round(expected, 6))
+
+
+def test_reported_cost_is_never_replaced_by_the_per_request_estimate():
+    buckets = [_bucket(1, "claude-haiku-5-5", 40_000, 1_000)]
+    m = _apply({"cost_source": "reported", "cost_usd": 0.5}, buckets, "claude-haiku-5-5")
+    assert m["cost_usd"] == 0.5
+    assert m["cost_source"] == "reported"
+
+
+def test_unpriceable_round_keeps_the_aggregate_estimate():
+    buckets = [
+        _bucket(1, "claude-haiku-5-5", 40_000, 1_000),
+        _bucket(2, "mystery-model", 40_000, 1_000),
+    ]
+    m = _apply({"cost_source": "estimated", "cost_usd": 0.123}, buckets, "claude-haiku-5-5")
+    assert m["cost_usd"] == 0.123
+
+
+def test_no_buckets_leaves_metrics_untouched():
+    m = {"input_tokens": 5, "request_context_tokens": 7, "context_percent": 1.0}
+    _apply(m, [], "claude-sonnet-4-5")
+    assert m == {"input_tokens": 5, "request_context_tokens": 7, "context_percent": 1.0}
+
+
+def test_agent_turn_final_metrics_use_last_request_and_per_request_cost(monkeypatch):
+    # End to end through stream_agent_loop: two Claude rounds, each re-sending
+    # the cached history. The final metrics event must carry the last
+    # request's prompt as the context figure and price each round on its own.
+    import asyncio
+    import json
+    import src.model_context as model_context
+
+    # Haiku 5.5's per-request long-prompt tier (100k) makes the per-request
+    # price differ from pricing the 122k round sum. Its window isn't in the
+    # known-models table, so pin it here instead of probing the endpoint.
+    model = "claude-haiku-5-5"
+    monkeypatch.setattr(model_context, "get_context_length_known", lambda url, m: (200_000, True))
+    rounds = [
+        {"input_tokens": 60_000, "output_tokens": 500, "cache_creation_input_tokens": 59_000},
+        {"input_tokens": 62_000, "output_tokens": 400,
+         "cache_read_input_tokens": 59_000, "cache_creation_input_tokens": 2_000},
+    ]
+    calls = 0
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+    monkeypatch.setattr(
+        agent_loop, "_agent_route_tool_mode", lambda *args, **kwargs: (True, False, False),
+    )
+
+    async def fake_stream(candidates, messages, **kwargs):
+        nonlocal calls
+        usage = dict(rounds[calls], model=model)
+        calls += 1
+        yield "data: " + json.dumps({"type": "usage", "data": usage}) + "\n\n"
+        if calls == 1:
+            call = {"name": "bash", "arguments": json.dumps({"command": "printf one"})}
+            yield "data: " + json.dumps({"type": "tool_calls", "calls": [call]}) + "\n\n"
+        else:
+            yield 'data: {"delta": "done"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    async def fake_execute(block, *args, **kwargs):
+        return "bash", {"output": "ok", "exit_code": 0}
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+    monkeypatch.setattr(agent_loop, "execute_tool_block", fake_execute)
+
+    async def _run():
+        return [chunk async for chunk in agent_loop.stream_agent_loop(
+            _ANTHROPIC_URL,
+            model,
+            [{"role": "user", "content": "Run one tool."}],
+            context_length=200_000,
+            max_rounds=3,
+            relevant_tools={"bash"},
+            workspace="/workspace",
+            route_descriptors=[
+                {"endpoint_id": "claude", "endpoint_label": "Claude", "endpoint_cost_tracked": True},
+            ],
+            fallback_on_empty=False,
+            _is_teacher_run=True,
+        )]
+
+    chunks = asyncio.run(_run())
+    metrics = json.loads(next(c for c in chunks if '"type": "metrics"' in c)[6:])["data"]
+
+    assert calls == 2
+    assert metrics["input_tokens"] == 122_000
+    assert metrics["request_context_tokens"] == 62_000
+    assert metrics["context_percent"] == 31.0
+    assert metrics["usage_buckets"][-1]["cache_read_input_tokens"] == 59_000
+    assert metrics["cost_source"] == "estimated"
+    per_request = sum(
+        model_pricing.estimate_cost_usd(
+            model, r["input_tokens"], r["output_tokens"], _ANTHROPIC_URL,
+            cache_read_tokens=r.get("cache_read_input_tokens", 0),
+            cache_write_tokens=r.get("cache_creation_input_tokens", 0),
+        )
+        for r in rounds
+    )
+    assert metrics["cost_usd"] == pytest.approx(round(per_request, 6))
 
 
 # --- persistence ---

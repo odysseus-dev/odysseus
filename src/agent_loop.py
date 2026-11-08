@@ -16202,6 +16202,14 @@ def _compact_web_search_tool_text_for_model(text: str, max_chars: int = 3200) ->
     return compact[:max_chars].rstrip()
 
 
+def _usage_cache_count(usage, key: str) -> int:
+    """A prompt-cache token count from a usage event, or 0 when absent/malformed."""
+    value = usage.get(key) if isinstance(usage, dict) else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
 def _compute_final_metrics(
     messages: List[Dict],
     full_response: str,
@@ -16224,6 +16232,8 @@ def _compute_final_metrics(
     backend_prefill_tps: float = 0,
     real_cost_usd: float = 0.0,
     endpoint_url: Optional[str] = None,
+    real_cache_read_tokens: int = 0,
+    real_cache_write_tokens: int = 0,
 ) -> dict:
     """Compute token counts, TPS, and build the final metrics dict."""
     if has_real_usage:
@@ -16275,6 +16285,15 @@ def _compute_final_metrics(
         "usage_source": "real" if has_real_usage else "estimated",
         "model": model,
     }
+    # input_tokens already includes Anthropic cache reads/writes. Expose the
+    # split at the top level too, so a client that re-prices the turn without
+    # per-round usage buckets (required-read turns, the compare view) bills
+    # cached tokens at cache rates instead of the full input price.
+    if has_real_usage:
+        if real_cache_read_tokens:
+            metrics["cache_read_input_tokens"] = real_cache_read_tokens
+        if real_cache_write_tokens:
+            metrics["cache_creation_input_tokens"] = real_cache_write_tokens
     if backend_prefill_tps and backend_prefill_tps > 0:
         metrics["prefill_tps"] = round(backend_prefill_tps, 2)
     if prep_timings:
@@ -16297,7 +16316,9 @@ def _compute_final_metrics(
             from src.model_pricing import estimate_cost_usd
 
             _est = estimate_cost_usd(
-                model, input_tokens, output_tokens, endpoint_url
+                model, input_tokens, output_tokens, endpoint_url,
+                cache_read_tokens=real_cache_read_tokens if has_real_usage else 0,
+                cache_write_tokens=real_cache_write_tokens if has_real_usage else 0,
             )
         except Exception:
             _est = None
@@ -16322,8 +16343,15 @@ def _usage_bucket(
     input_tokens: int,
     output_tokens: int,
     usage_source: str,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
 ) -> dict:
-    """Build non-secret usage attribution for one concrete Agent round."""
+    """Build non-secret usage attribution for one concrete Agent round.
+
+    ``input_tokens`` is the whole prompt; the optional cache counts are the
+    parts of it Anthropic served from / wrote to its prompt cache, so cost
+    displays can bill them at cache rates.
+    """
 
     bucket = {
         "round": round_num,
@@ -16334,6 +16362,10 @@ def _usage_bucket(
         "output_tokens": max(int(output_tokens or 0), 0),
         "usage_source": "real" if usage_source == "real" else "estimated",
     }
+    if cache_read_tokens and cache_read_tokens > 0:
+        bucket["cache_read_input_tokens"] = int(cache_read_tokens)
+    if cache_write_tokens and cache_write_tokens > 0:
+        bucket["cache_creation_input_tokens"] = int(cache_write_tokens)
     # Persist the owner-resolved route classification so saved usage remains
     # stable even if the session later selects a different endpoint.
     if isinstance(endpoint_cost_tracked, bool):
@@ -16357,6 +16389,67 @@ def _usage_bucket_summary(usage_buckets: list) -> dict:
         "usage_source": usage_source,
         "usage_buckets": [dict(bucket) for bucket in usage_buckets],
     }
+
+
+def _apply_usage_bucket_metrics(
+    metrics: dict,
+    usage_buckets: list,
+    *,
+    context_length: int,
+    total_duration: float,
+    backend_gen_tps: float,
+    endpoint_url: Optional[str],
+    model: str,
+) -> None:
+    """Fold per-round usage into the final metrics of a multi-round turn.
+
+    ``input_tokens`` becomes the sum over rounds (what was billed), while the
+    context figures describe the last request alone: every round re-sends the
+    whole history, so the sum would count the conversation once per round.
+    An estimated cost is re-priced per request, because Anthropic bills each
+    request on its own (cache split, long-prompt tier) and the webui prices
+    the same buckets one by one.
+    """
+
+    usage_summary = _usage_bucket_summary(usage_buckets)
+    if not usage_summary:
+        return
+    metrics.update(usage_summary)
+    if not backend_gen_tps and total_duration > 0:
+        metrics["tokens_per_second"] = round(
+            usage_summary["output_tokens"] / total_duration,
+            2,
+        )
+    last_request_tokens = usage_buckets[-1]["input_tokens"]
+    metrics["request_context_tokens"] = last_request_tokens
+    if context_length:
+        metrics["context_percent"] = min(
+            round((last_request_tokens / context_length) * 100, 1),
+            100.0,
+        )
+    if metrics.get("cost_source") != "estimated":
+        return
+    try:
+        from src.model_pricing import estimate_cost_usd
+
+        total = 0.0
+        for bucket in usage_buckets:
+            cost = estimate_cost_usd(
+                bucket.get("model") or model,
+                bucket.get("input_tokens"),
+                bucket.get("output_tokens"),
+                endpoint_url,
+                cache_read_tokens=bucket.get("cache_read_input_tokens", 0),
+                cache_write_tokens=bucket.get("cache_creation_input_tokens", 0),
+            )
+            if cost is None:
+                # One round can't be priced: keep the aggregate estimate
+                # rather than silently under-billing.
+                return
+            total += cost
+    except Exception:
+        return
+    metrics["cost_usd"] = round(total, 6)
 
 
 # ── Completion verifier ──
@@ -22322,6 +22415,8 @@ async def stream_agent_loop(
         direct_reasoning = ""
         real_input_tokens = 0
         real_output_tokens = 0
+        real_cache_read_tokens = 0
+        real_cache_write_tokens = 0
         real_cost_usd = 0.0
         direct_has_real_usage = False
         # The merged tools model has a clean native stream; do not hold its
@@ -22461,6 +22556,8 @@ async def stream_agent_loop(
                             continue
                         real_input_tokens += normalized_usage["input_tokens"]
                         real_output_tokens += normalized_usage["output_tokens"]
+                        real_cache_read_tokens += _usage_cache_count(usage, "cache_read_input_tokens")
+                        real_cache_write_tokens += _usage_cache_count(usage, "cache_creation_input_tokens")
                         direct_has_real_usage = True
                         try:
                             real_cost_usd += float(usage.get("cost_usd") or 0.0)
@@ -22599,6 +22696,8 @@ async def stream_agent_loop(
                 else max(len(direct_response) // 4, 1)
             ),
             usage_source="real" if direct_has_real_usage else "estimated",
+            cache_read_tokens=real_cache_read_tokens if direct_has_real_usage else 0,
+            cache_write_tokens=real_cache_write_tokens if direct_has_real_usage else 0,
         )
         metrics = {
             "model": direct_actual_model,
@@ -22631,6 +22730,8 @@ async def stream_agent_loop(
                     metrics.get("input_tokens"),
                     metrics.get("output_tokens"),
                     endpoint_url,
+                    cache_read_tokens=real_cache_read_tokens if direct_has_real_usage else 0,
+                    cache_write_tokens=real_cache_write_tokens if direct_has_real_usage else 0,
                 )
             except Exception:
                 _direct_est = None
@@ -25024,6 +25125,8 @@ async def stream_agent_loop(
     _declared_verifier_force_command = ""
     real_input_tokens = 0   # Accumulated real usage from API
     real_output_tokens = 0
+    real_cache_read_tokens = 0   # Anthropic prompt-cache split of real_input_tokens
+    real_cache_write_tokens = 0
     last_round_input_tokens = 0  # Last round's input tokens (for context % peak)
     has_real_usage = False
     backend_gen_tps = 0      # backend-reported true gen speed (llama.cpp timings)
@@ -26652,6 +26755,8 @@ async def stream_agent_loop(
         _round_actual_endpoint_label = actual_endpoint_label
         _round_real_input_tokens = 0
         _round_real_output_tokens = 0
+        _round_cache_read_tokens = 0
+        _round_cache_write_tokens = 0
         _round_has_real_usage = False
         _round_usage_finalized = False
         # Some API models (notably DeepSeek) stream DSML/XML tool calls as
@@ -26694,6 +26799,8 @@ async def stream_agent_loop(
                 input_tokens=round_input_tokens,
                 output_tokens=round_output_tokens,
                 usage_source=usage_source,
+                cache_read_tokens=_round_cache_read_tokens if _round_has_real_usage else 0,
+                cache_write_tokens=_round_cache_write_tokens if _round_has_real_usage else 0,
             ))
         if (
             round_num == 1
@@ -27657,6 +27764,12 @@ async def stream_agent_loop(
                         round_output = normalized_usage["output_tokens"]
                         real_input_tokens += round_input
                         real_output_tokens += round_output
+                        _u_cache_read = _usage_cache_count(u, "cache_read_input_tokens")
+                        _u_cache_write = _usage_cache_count(u, "cache_creation_input_tokens")
+                        real_cache_read_tokens += _u_cache_read
+                        real_cache_write_tokens += _u_cache_write
+                        _round_cache_read_tokens += _u_cache_read
+                        _round_cache_write_tokens += _u_cache_write
                         _round_real_input_tokens += round_input
                         _round_real_output_tokens += round_output
                         last_round_input_tokens = round_input
@@ -28170,6 +28283,11 @@ async def stream_agent_loop(
                 tool_events, round_texts, model=model,
                 round_models=round_models, round_endpoint_ids=round_endpoint_ids,
                 round_endpoint_labels=round_endpoint_labels,
+                # Context % describes the last request: real_input_tokens sums
+                # rounds, and each round re-sends the whole history.
+                last_round_input_tokens=last_round_input_tokens,
+                real_cache_read_tokens=real_cache_read_tokens,
+                real_cache_write_tokens=real_cache_write_tokens,
             )
             _required_metrics.update({
                 "requested_model": requested_model,
@@ -38336,28 +38454,23 @@ async def stream_agent_loop(
         backend_prefill_tps=backend_prefill_tps,
         real_cost_usd=real_cost_usd,
         endpoint_url=endpoint_url,
+        real_cache_read_tokens=real_cache_read_tokens,
+        real_cache_write_tokens=real_cache_write_tokens,
     )
     metrics["requested_model"] = requested_model
     metrics["endpoint_id"] = actual_endpoint_id
     metrics["endpoint_label"] = actual_endpoint_label
     if isinstance(actual_endpoint_cost_tracked, bool):
         metrics["endpoint_cost_tracked"] = actual_endpoint_cost_tracked
-    usage_summary = _usage_bucket_summary(usage_buckets)
-    if usage_summary:
-        metrics.update(usage_summary)
-        if not backend_gen_tps and total_duration > 0:
-            metrics["tokens_per_second"] = round(
-                usage_summary["output_tokens"] / total_duration,
-                2,
-            )
-        if _last_route_context_length:
-            metrics["context_percent"] = min(
-                round(
-                    (usage_buckets[-1]["input_tokens"] / _last_route_context_length) * 100,
-                    1,
-                ),
-                100.0,
-            )
+    _apply_usage_bucket_metrics(
+        metrics,
+        usage_buckets,
+        context_length=_last_route_context_length,
+        total_duration=total_duration,
+        backend_gen_tps=backend_gen_tps,
+        endpoint_url=endpoint_url,
+        model=actual_model,
+    )
     metrics["requested_endpoint_id"] = requested_endpoint_id
     metrics["requested_endpoint_label"] = requested_endpoint_label
     _evidence_ledger = EvidenceLedger.from_tool_events(

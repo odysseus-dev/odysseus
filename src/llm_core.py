@@ -70,6 +70,13 @@ def _normalize_usage_counts(input_value=0, output_value=0):
     }
 
 
+def _anthropic_cache_count(value) -> int:
+    """A cache token count from Anthropic usage, or 0 when absent/malformed."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
 def _normalize_http_status(value) -> Optional[int]:
     """Accept only genuine three-digit integral HTTP status values."""
 
@@ -1943,35 +1950,33 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # The breakpoint caches all tool defs preceding it in the request.
             anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
             payload["tools"] = anthropic_tools
-        # Third breakpoint: the conversation itself. Each agent round re-sends the
-        # whole history and appends only a few blocks, so marking the newest block
-        # lets the next round read every earlier round from cache instead of paying
-        # full input price for it again. (system + tools + this = 3 of the 4 allowed.)
-        _mark_conversation_breakpoint(chat_messages)
+    # Cache the growing conversation too. Agent rounds and multi-turn chats
+    # re-send every earlier message, so a breakpoint on the final block lets
+    # the next request read the whole history from cache (the API's 20-block
+    # lookback finds this write). One-shot calls skip it: no reuse would pay
+    # back the cache-write premium.
+    if tools or len(chat_messages) >= 3:
+        _mark_last_message_cache_breakpoint(chat_messages)
     return payload
 
 
-# Block types Anthropic accepts a cache_control on. Thinking blocks and empty text
-# blocks are rejected, so the conversation breakpoint skips past those.
-_ANTHROPIC_CACHEABLE_BLOCKS = frozenset({"text", "image", "document", "tool_use", "tool_result"})
+# Block types the Messages API accepts a `cache_control` breakpoint on.
+# Thinking blocks are excluded by the API; empty text blocks cannot be cached.
+_ANTHROPIC_CACHEABLE_BLOCK_TYPES = {"text", "image", "document", "tool_use", "tool_result"}
 
 
-def _mark_conversation_breakpoint(chat_messages):
-    """Put a prompt-cache breakpoint on the newest message's last cacheable block.
-
-    Replaces the marked message and block with copies, so the caller's message
-    dicts (which content conversion passes through by reference) are never
-    mutated. Does nothing if any message block already carries a cache_control,
-    so caller-placed breakpoints can't push the request past Anthropic's limit of 4.
-    """
+def _mark_last_message_cache_breakpoint(chat_messages):
+    """Put one ephemeral cache breakpoint on the last cacheable block of the
+    final message. Copies the message and block it changes, so the caller's
+    history never accumulates breakpoints across rounds (the API allows 4)."""
     if not chat_messages:
         return
-    for m in chat_messages:
-        content = m.get("content")
+    for msg in chat_messages:
+        content = msg.get("content")
         if isinstance(content, list) and any(
             isinstance(b, dict) and "cache_control" in b for b in content
         ):
-            return
+            return  # caller already placed its own message breakpoint
     last = chat_messages[-1]
     content = last.get("content")
     if isinstance(content, str):
@@ -1984,9 +1989,12 @@ def _mark_conversation_breakpoint(chat_messages):
         return
     for i in range(len(blocks) - 1, -1, -1):
         block = blocks[i]
-        if not isinstance(block, dict) or block.get("type") not in _ANTHROPIC_CACHEABLE_BLOCKS:
+        if not isinstance(block, dict):
             continue
-        if block.get("type") == "text" and not str(block.get("text") or "").strip():
+        btype = block.get("type")
+        if btype not in _ANTHROPIC_CACHEABLE_BLOCK_TYPES:
+            continue
+        if btype == "text" and not str(block.get("text") or "").strip():
             continue
         blocks[i] = {**block, "cache_control": {"type": "ephemeral"}}
         chat_messages[-1] = {**last, "content": blocks}
@@ -3377,6 +3385,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     if provider == "anthropic":
         _anth_input_tokens = 0
         _anth_output_tokens = 0
+        _anth_cache_read = 0
+        _anth_cache_write = 0
         _anth_usage_seen = False
         _anth_actual_model = ""
         _anth_model_announced = False
@@ -3458,13 +3468,24 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             _anth_input_tokens = _u.get("input_tokens", 0)
                             # Surface prompt-cache effectiveness: cache_read > 0 means the
                             # stable system+tools prefix was served from cache this round.
-                            _c_read = _u.get("cache_read_input_tokens", 0)
-                            _c_write = _u.get("cache_creation_input_tokens", 0)
+                            _c_read = _anthropic_cache_count(_u.get("cache_read_input_tokens"))
+                            _c_write = _anthropic_cache_count(_u.get("cache_creation_input_tokens"))
                             if _c_read or _c_write:
                                 logger.info(
                                     "[anthropic-cache] read=%s write=%s fresh_input=%s",
                                     _c_read, _c_write, _anth_input_tokens,
                                 )
+                            # Anthropic's `input_tokens` counts only what follows the
+                            # last cache breakpoint. Report the full prompt size (like
+                            # OpenAI's prompt_tokens) so context % stays accurate, and
+                            # keep the cache split for cache-aware cost estimates.
+                            _anth_cache_read = _c_read
+                            _anth_cache_write = _c_write
+                            if (
+                                isinstance(_anth_input_tokens, int)
+                                and not isinstance(_anth_input_tokens, bool)
+                            ):
+                                _anth_input_tokens += _c_read + _c_write
                         elif evt == "message_delta":
                             _u = j.get("usage") or {}
                             if not isinstance(_u, dict):
@@ -3489,6 +3510,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                 _anth_output_tokens,
                             )
                             if normalized_usage and _anth_usage_seen:
+                                if _anth_cache_read:
+                                    normalized_usage["cache_read_input_tokens"] = _anth_cache_read
+                                if _anth_cache_write:
+                                    normalized_usage["cache_creation_input_tokens"] = _anth_cache_write
                                 _annotate_usage_model(
                                     normalized_usage,
                                     model,

@@ -895,12 +895,28 @@ const TOOL_NARRATION_RE = /(?:The (?:result|output) shows?:?\s*)?-?\s*(?:stdout|
 // Model pricing table — per million tokens
 // Model info: pricing (per 1M tokens) + context window length
 const MODEL_INFO = {
-  // --- Anthropic ---
+  // --- Anthropic --- (prices: platform.claude.com pricing; keep in sync with
+  // src/model_pricing.py. ctx: platform.claude.com "Context windows" — every
+  // Claude 5.x model, Opus 4.6-4.8 and Sonnet 4.6 have 1M by default, no beta
+  // header; other Claude models, including Sonnet 4.5, have 200k.)
+  'claude-fable-5-1':     { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-fable-5':       { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-mythos-5-1':    { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-mythos-5':      { input: 10.00, output: 50.00, ctx: 1000000 },
+  'claude-opus-5-5':      { input: 4.00,  output: 20.00, ctx: 1000000 },
+  'claude-opus-5':        { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-sonnet-5-5':    { input: 2.00,  output: 10.00, ctx: 1000000 },
+  'claude-sonnet-5':      { input: 2.00,  output: 10.00, ctx: 1000000 },
+  'claude-haiku-5-5':     { input: 0.10,  output: 0.50,  ctx: 1000000 },
   'claude-sonnet-4-5':    { input: 3.00,  output: 15.00, ctx: 200000 },
-  'claude-sonnet-4-6':    { input: 3.00,  output: 15.00, ctx: 200000 },
+  'claude-sonnet-4-6':    { input: 3.00,  output: 15.00, ctx: 1000000 },
   'claude-sonnet-4':      { input: 3.00,  output: 15.00, ctx: 200000 },
   'claude-opus-4':        { input: 15.00, output: 75.00, ctx: 200000 },
-  'claude-opus-4-6':      { input: 15.00, output: 75.00, ctx: 200000 },
+  'claude-opus-4-5':      { input: 5.00,  output: 25.00, ctx: 200000 },
+  'claude-opus-4-6':      { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-opus-4-7':      { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-opus-4-8':      { input: 5.00,  output: 25.00, ctx: 1000000 },
+  'claude-haiku-4-5':     { input: 1.00,  output: 5.00,  ctx: 200000 },
   'claude-haiku-4':       { input: 0.80,  output: 4.00,  ctx: 200000 },
   'claude-haiku-3-5':     { input: 0.80,  output: 4.00,  ctx: 200000 },
   'claude-3-5-sonnet':    { input: 3.00,  output: 15.00, ctx: 200000 },
@@ -1209,12 +1225,79 @@ export function applyModelColor(roleEl, modelName) {
   }
 }
 
-export function getModelCost(modelName, inputTokens, outputTokens) {
+// Anthropic prompt-cache multipliers on the base input price (mirror of
+// src/model_pricing.py): 5-minute writes 1.25x, reads 0.1x unless listed.
+const _CLAUDE_CACHE_WRITE_MULT = 1.25;
+const _CLAUDE_CACHE_READ_MULT = {
+  'claude-fable-5-1': 0.025,
+  'claude-mythos-5-1': 0.025,
+  'claude-opus-5-5': 0.05,
+  'claude-sonnet-5-5': 0.05,
+};
+// Prompt-length price tiers: [threshold, input, output] above the threshold.
+const _LONG_PROMPT_PRICING = { 'claude-haiku-5-5': [100000, 0.50, 2.50] };
+
+/**
+ * Cost in USD. `inputTokens` is the whole prompt; for Claude models the
+ * optional cache read/write counts (parts of it) bill at cache rates.
+ */
+export function getModelCost(modelName, inputTokens, outputTokens, cacheReadTokens = 0, cacheWriteTokens = 0) {
   if (!modelName) return null;
   const key = matchModelKey(modelName, Object.keys(MODEL_PRICING));
   if (!key) return null;
-  const price = MODEL_PRICING[key];
-  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
+  let priceIn = MODEL_PRICING[key].input;
+  let priceOut = MODEL_PRICING[key].output;
+  const inTok = Math.max(Number(inputTokens) || 0, 0);
+  const tier = _LONG_PROMPT_PRICING[key];
+  if (tier && inTok > tier[0]) { priceIn = tier[1]; priceOut = tier[2]; }
+  let read = Math.max(Number(cacheReadTokens) || 0, 0);
+  let write = Math.max(Number(cacheWriteTokens) || 0, 0);
+  if (!key.startsWith('claude-') || !(read || write)) {
+    return (inTok * priceIn + outputTokens * priceOut) / 1_000_000;
+  }
+  read = Math.min(read, inTok);
+  write = Math.min(write, inTok - read);
+  const readMult = Object.prototype.hasOwnProperty.call(_CLAUDE_CACHE_READ_MULT, key)
+    ? _CLAUDE_CACHE_READ_MULT[key] : 0.10;
+  const inputCost = priceIn * ((inTok - read - write) + read * readMult + write * _CLAUDE_CACHE_WRITE_MULT);
+  return (inputCost + outputTokens * priceOut) / 1_000_000;
+}
+
+/**
+ * Cost in USD of one turn's final metrics, without endpoint billing checks.
+ * Multi-round agent turns carry per-round `usage_buckets`; each round is a
+ * separate request, so price them one by one (cache split, long-prompt tier)
+ * rather than pricing the summed input as one prompt. Returns null when no
+ * part of the turn can be priced.
+ */
+export function getMetricsModelCost(metrics, model) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
+  if (!buckets.length) {
+    return getModelCost(
+      metrics.model || model,
+      metrics.input_tokens || 0,
+      metrics.output_tokens || 0,
+      metrics.cache_read_input_tokens || 0,
+      metrics.cache_creation_input_tokens || 0,
+    );
+  }
+  let total = 0;
+  let priced = false;
+  for (const bucket of buckets) {
+    if (!bucket || typeof bucket !== 'object') continue;
+    const cost = getModelCost(
+      bucket.model || metrics.model || model,
+      Number(bucket.input_tokens) || 0,
+      Number(bucket.output_tokens) || 0,
+      Number(bucket.cache_read_input_tokens) || 0,
+      Number(bucket.cache_creation_input_tokens) || 0,
+    );
+    if (cost === null) continue;
+    total += cost;
+    priced = true;
+  }
+  return priced ? total : null;
 }
 
 /**
@@ -1270,7 +1353,7 @@ export function isCostTrackedEndpoint(url) {
 }
 
 /** Cost for the current turn, returning null for non-billable endpoints. */
-function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, selectedEndpointUrl) {
+function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, selectedEndpointUrl, cacheReadTokens = 0, cacheWriteTokens = 0) {
   // Foreground fallback can answer on a different endpoint than the session's
   // selected route. Prefer the backend's non-secret actual-route
   // classification; retain the selected-endpoint check for older history.
@@ -1281,7 +1364,7 @@ function _billableCost(model, inputTokens, outputTokens, endpointCostTracked, se
   if (endpointCostTracked !== true && !isCostTrackedEndpoint(selectedUrl)) {
     return null;
   }
-  return getModelCost(model, inputTokens, outputTokens);
+  return getModelCost(model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens);
 }
 
 /** Sum cost using the route/model that produced each Agent round. */
@@ -1294,6 +1377,8 @@ function _metricsBillableCost(metrics, model, inputTokens, outputTokens, selecte
       outputTokens,
       metrics.endpoint_cost_tracked,
       selectedEndpointUrl,
+      Number(metrics.cache_read_input_tokens) || 0,
+      Number(metrics.cache_creation_input_tokens) || 0,
     );
   }
   let total = 0;
@@ -1306,6 +1391,8 @@ function _metricsBillableCost(metrics, model, inputTokens, outputTokens, selecte
       Number(bucket.output_tokens) || 0,
       bucket.endpoint_cost_tracked,
       selectedEndpointUrl,
+      Number(bucket.cache_read_input_tokens) || 0,
+      Number(bucket.cache_creation_input_tokens) || 0,
     );
     if (bucketCost === null) continue;
     total += bucketCost;
@@ -2791,7 +2878,12 @@ export function displayMetrics(messageElement, metrics) {
       e.stopPropagation();
       document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-      const usedTokens = inputTokens || 0;
+      // The prompt the percent was computed from: the last agent round's
+      // request when per-round usage exists (input_tokens sums the rounds,
+      // and each round re-sends the whole history), else the request size.
+      const buckets = Array.isArray(metrics.usage_buckets) ? metrics.usage_buckets : [];
+      const lastBucketInput = Number(buckets[buckets.length - 1]?.input_tokens) || 0;
+      const usedTokens = lastBucketInput || Number(metrics.request_context_tokens) || inputTokens || 0;
       const totalCtx = ctxLen || 0;
       const modelShort = model.split('/').pop();
       const fmtNum = n => n ? n.toLocaleString() : '?';
