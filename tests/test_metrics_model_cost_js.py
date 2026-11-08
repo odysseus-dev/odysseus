@@ -151,3 +151,42 @@ console.log(JSON.stringify(Object.fromEntries(
     assert {key: out[key] for key in _ONE_MILLION_CONTEXT} == dict.fromkeys(_ONE_MILLION_CONTEXT, 1_000_000)
     for key in ("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"):
         assert out[key] == 200_000, key
+
+
+def _js_tables():
+    return _run("""
+console.log(JSON.stringify({
+  prices: Object.fromEntries(Object.entries(MODEL_INFO).map(([key, info]) => [key, [info.input, info.output]])),
+  ctx: Object.fromEntries(Object.entries(MODEL_INFO).map(([key, info]) => [key, info.ctx ?? null])),
+  cacheWrite: _CLAUDE_CACHE_WRITE_MULT,
+  cacheRead: _CLAUDE_CACHE_READ_MULT,
+  longPrompt: _LONG_PROMPT_PRICING,
+}));
+""")
+
+
+def test_price_tables_match_src_model_pricing():
+    # The webui keeps its own copy of the price table (chatRenderer.js has no
+    # backend round trip for session cost); both copies are edited by hand, so
+    # a price changed in one must fail here until the other matches.
+    from src import model_pricing
+
+    out = _js_tables()
+    assert out["prices"] == {key: list(price) for key, price in model_pricing.MODEL_PRICING.items()}
+    assert out["cacheWrite"] == model_pricing._ANTHROPIC_CACHE_WRITE_MULT
+    assert out["cacheRead"] == model_pricing._ANTHROPIC_CACHE_READ_MULT
+    assert out["longPrompt"] == {
+        key: [threshold, price_in, price_out]
+        for key, (threshold, (price_in, price_out)) in model_pricing._LONG_PROMPT_PRICING.items()
+    }
+
+
+def test_claude_context_windows_match_src_model_context():
+    # The model info popup's Claude windows must agree with the server's
+    # known-windows lookup, which context % is computed from.
+    from src.model_context import _lookup_known
+
+    out = _js_tables()
+    claude = {key: ctx for key, ctx in out["ctx"].items() if key.startswith("claude-")}
+    assert claude, "no Claude rows found in MODEL_INFO"
+    assert claude == {key: _lookup_known(key) for key in claude}
