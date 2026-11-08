@@ -7,7 +7,9 @@
    the owner-scoped view, not every user's endpoints (the delegated-credential
    policy in ``src/auth_helpers.is_delegated_credential``).
 3. Bearer tokens are bcrypt-verified in a worker thread, not on the event loop,
-   and repeated failed bearer attempts from one client get 429.
+   and repeated failed bearer attempts get 429 per (client, token prefix): a
+   prefix no token has costs no bcrypt and is never counted, so junk headers
+   (all from 127.0.0.1 behind a tunnel) cannot lock out other tokens.
 """
 import asyncio
 import json
@@ -190,6 +192,7 @@ def test_admin_cookie_session_still_lists_every_endpoint(models_endpoint):
 # ---------------------------------------------------------------------------
 
 _TOKEN = "ody_" + "A" * 43
+_OTHER_TOKEN = "ody_" + "B" * 43
 
 
 @pytest.fixture
@@ -207,9 +210,13 @@ def bearer_client(monkeypatch):
     monkeypatch.setattr(app_mod, "auth_manager",
                         SimpleNamespace(is_configured=True, validate_token=lambda _t: False))
     monkeypatch.setattr(app_mod, "SessionLocal", MagicMock())
-    token_hash = bcrypt.hashpw(_TOKEN.encode(), bcrypt.gensalt(rounds=4)).decode()
-    monkeypatch.setattr(app_mod, "_token_cache",
-                        {_TOKEN[:8]: [("tid-1", token_hash, "adminuser", ["chat"])]})
+    def _hash(token):
+        return bcrypt.hashpw(token.encode(), bcrypt.gensalt(rounds=4)).decode()
+
+    monkeypatch.setattr(app_mod, "_token_cache", {
+        _TOKEN[:8]: [("tid-1", _hash(_TOKEN), "adminuser", ["chat"])],
+        _OTHER_TOKEN[:8]: [("tid-2", _hash(_OTHER_TOKEN), "bob", ["chat"])],
+    })
     app_mod.app.state._token_cache_dirty = False
 
     async def probe(request):
@@ -255,3 +262,61 @@ def test_repeated_failed_bearer_attempts_get_429(bearer_client):
     first_429 = statuses.index(429)
     assert set(statuses[:first_429]) == {401}
     assert set(statuses[first_429:]) == {429}
+
+
+def _bearer(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _junk_token(i):
+    """A well-formed token whose prefix no cached token has."""
+    return f"ody_{i:04d}" + "x" * 39
+
+
+def test_junk_prefixes_do_not_lock_out_a_valid_token(bearer_client):
+    _app_mod, client = bearer_client
+    for i in range(20):
+        assert client.get("/api/probe", headers=_bearer(_junk_token(i))).status_code == 401
+
+    ok = client.get("/api/probe", headers=_bearer(_TOKEN))
+    assert ok.status_code == 200
+    assert ok.json() == {"owner": "adminuser"}
+
+
+def test_junk_prefix_never_runs_bcrypt_and_is_never_counted(bearer_client, monkeypatch):
+    _app_mod, client = bearer_client
+    calls = []
+    real_checkpw = bcrypt.checkpw
+
+    def spy_checkpw(password, hashed):
+        calls.append(password)
+        return real_checkpw(password, hashed)
+
+    monkeypatch.setattr(bcrypt, "checkpw", spy_checkpw)
+    statuses = [client.get("/api/probe", headers=_bearer(_junk_token(7))).status_code
+                for _ in range(30)]
+    assert statuses == [401] * 30
+    assert calls == []
+
+
+def test_failures_on_one_prefix_throttle_only_that_client_and_prefix(bearer_client):
+    from fastapi.testclient import TestClient
+
+    _app_mod, client = bearer_client
+    wrong = _TOKEN[:-1] + "B"  # existing prefix, wrong secret
+    statuses = [client.get("/api/probe", headers=_bearer(wrong)).status_code for _ in range(15)]
+    assert statuses[0] == 401
+    assert statuses[-1] == 429
+
+    # Another token from the same client is not refused for those failures.
+    other = client.get("/api/probe", headers=_bearer(_OTHER_TOKEN))
+    assert other.status_code == 200
+    assert other.json() == {"owner": "bob"}
+
+    # The attacked prefix stays limited for this client, valid token included:
+    # verifying it first would give the attacker unbounded bcrypt work again.
+    assert client.get("/api/probe", headers=_bearer(_TOKEN)).status_code == 429
+
+    # A different client is not affected by this client's failures.
+    elsewhere = TestClient(client.app, client=("198.51.100.9", 4321))
+    assert elsewhere.get("/api/probe", headers=_bearer(_TOKEN)).status_code == 200
