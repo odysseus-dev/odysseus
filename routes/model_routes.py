@@ -47,7 +47,7 @@ from src.endpoint_resolver import (
     build_models_url,
     build_headers,
 )
-from src.auth_helpers import _auth_disabled, effective_user, owner_filter
+from src.auth_helpers import _auth_disabled, effective_user, is_delegated_credential, owner_filter
 from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -1781,11 +1781,14 @@ def setup_model_routes(model_discovery):
             logger.error("Auth gate error in GET /api/models, failing closed: %s", e)
             raise HTTPException(status_code=500, detail="Internal error")
         # Admins see every endpoint (they manage the global pool); regular
-        # users get the owner-scoped view.
+        # users get the owner-scoped view. So does a bearer token: only admins
+        # can mint one, so asking "is the owner an admin?" would hand every
+        # token, and whoever it was given to, the whole pool.
         _is_admin = False
         try:
             auth_mgr = getattr(request.app.state, "auth_manager", None)
-            if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+            if (owner and not is_delegated_credential(request)
+                    and auth_mgr is not None and getattr(auth_mgr, "is_admin", None)):
                 _is_admin = bool(auth_mgr.is_admin(owner))
         except Exception:
             _is_admin = False

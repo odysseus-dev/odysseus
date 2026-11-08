@@ -1766,7 +1766,9 @@ def test_api_models_scopes_api_token_to_token_owner(monkeypatch):
     result = _route_endpoint(router, "/api/models")(request)
 
     assert [item["endpoint_name"] for item in result["items"]] == ["alice", "shared"]
-    assert admin_checks == ["alice"]
+    # A delegated credential never inherits its owner's admin view, so the
+    # owner's admin status is not consulted at all.
+    assert admin_checks == []
 
 
 def test_api_models_returns_only_pinned_proxy_models_without_refresh_probe(monkeypatch):
