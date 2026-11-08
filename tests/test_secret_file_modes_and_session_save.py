@@ -20,6 +20,7 @@ them runs git.
 """
 
 import asyncio
+import importlib
 import json
 import os
 import stat
@@ -31,7 +32,7 @@ from cryptography.fernet import Fernet
 from core import atomic_io
 from core import auth as auth_mod
 from routes.vault import vault_routes
-from src import secret_storage, tool_approval_scopes
+from src import tool_approval_scopes
 from src.tools import vault as vault_tool
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
@@ -117,46 +118,86 @@ def test_vault_unlock_tool_saves_session_owner_only(tmp_path, monkeypatch, umask
 
 @pytest.fixture
 def key_storage(tmp_path, monkeypatch):
-    monkeypatch.setattr(secret_storage, "_KEY_PATH", tmp_path / "data" / ".app_key")
-    monkeypatch.setattr(secret_storage, "_fernet", None)
-    return secret_storage
+    # Patch the module callers resolve now, not the one bound when this file
+    # was imported: tests/test_security_regressions.py pops src.secret_storage
+    # from sys.modules and re-imports it, and tool_approval_scopes._grant_key
+    # imports it at call time, so a stale binding sent that caller to a
+    # different, unpatched key file.
+    ss = importlib.import_module("src.secret_storage")
+    monkeypatch.setattr(ss, "_KEY_PATH", tmp_path / "data" / ".app_key")
+    monkeypatch.setattr(ss, "_fernet", None)
+    return ss
 
 
 @posix_only
 def test_concurrent_first_key_loads_share_one_owner_only_key(key_storage, monkeypatch, umask_022, no_chmod):
     ss = key_storage
-    both_generated = threading.Barrier(2, timeout=0.5)
+    # The interleaving is forced with events, never with a timer: the first
+    # loader is held right after it found no key file, and is released only
+    # once the second loader has either found no key file as well (the race)
+    # or is queued behind the first on the key lock (serialized). The waits
+    # below are hang guards; neither path depends on how fast a thread runs.
+    first_held = threading.Event()
+    second_arrived = threading.Event()
+    release = threading.Event()
 
-    class _SlowFernet(Fernet):
+    class _HeldFernet(Fernet):
         @staticmethod
         def generate_key():
             key = Fernet.generate_key()
-            # Hold both first-start callers between "no key yet" and the
-            # write. Callers that are serialized never meet here: the first
-            # one times out and carries on alone.
-            try:
-                both_generated.wait()
-            except threading.BrokenBarrierError:
-                pass
+            # Only reached after a loader saw no key file.
+            (second_arrived if first_held.is_set() else first_held).set()
+            release.wait(timeout=60)
             return key
 
-    monkeypatch.setattr(ss, "Fernet", _SlowFernet)
+    class _ObservedKeyLock:
+        """The module's re-entrant lock, signalling when a caller must queue."""
+
+        def __init__(self):
+            self._lock = threading.RLock()
+
+        def __enter__(self):
+            if not self._lock.acquire(blocking=False):
+                second_arrived.set()
+                self._lock.acquire()
+            return self
+
+        def __exit__(self, *exc_info):
+            self._lock.release()
+
+    monkeypatch.setattr(ss, "Fernet", _HeldFernet)
+    # raising=False: a module without the lock (the unfixed one) still runs.
+    monkeypatch.setattr(ss, "_KEY_LOCK", _ObservedKeyLock(), raising=False)
 
     results = {}
+    errors = []
 
-    def encrypt_first():
-        results["token"] = ss.encrypt("imap-password")
+    def loader(name, load):
+        def run():
+            try:
+                results[name] = load()
+            except BaseException as exc:  # surfaced by the assertion below
+                errors.append(exc)
 
-    def grant_key_first():
-        # The direct _load_or_create_key path tool approval signatures use.
-        results["grant_key"] = tool_approval_scopes._grant_key()
+        return threading.Thread(target=run, daemon=True)
 
-    threads = [threading.Thread(target=encrypt_first), threading.Thread(target=grant_key_first)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-    assert not any(thread.is_alive() for thread in threads)
+    first = loader("token", lambda: ss.encrypt("imap-password"))
+    # The direct _load_or_create_key path tool approval signatures use.
+    second = loader("grant_key", tool_approval_scopes._grant_key)
+    first.start()
+    try:
+        assert first_held.wait(timeout=60), "first loader never reached key generation"
+        second.start()
+        assert second_arrived.wait(timeout=60), (
+            "second loader neither reached key generation nor queued on the key lock"
+        )
+    finally:
+        release.set()
+        for thread in (first, second):
+            if thread.ident is not None:
+                thread.join(timeout=60)
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
 
     key_on_disk = ss._KEY_PATH.read_bytes()
     assert results["grant_key"] == key_on_disk
