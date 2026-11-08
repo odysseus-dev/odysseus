@@ -568,6 +568,7 @@ class ModelEndpoint(TimestampMixin, Base):
     hidden_models = Column(Text, nullable=True)    # JSON list of model IDs that failed probing
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
     pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
+    cookbook_serve_session_id = Column(String, nullable=True)  # Current Cookbook serve identity
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
     # auto = classify by URL; local = self-hosted server; api/proxy = external
     # OpenAI-compatible API even when reachable through a private/tailnet IP.
@@ -1377,6 +1378,26 @@ def _migrate_add_pinned_models_column():
             conn.close()
         except Exception:
             pass
+
+
+def _migrate_add_cookbook_serve_session_id_column():
+    """Bind Cookbook cleanup to the serve session that owns the endpoint."""
+    from sqlalchemy import inspect
+
+    with engine.begin() as conn:
+        columns = {
+            column["name"]
+            for column in inspect(conn).get_columns("model_endpoints")
+        }
+
+        if "cookbook_serve_session_id" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE model_endpoints "
+                    "ADD COLUMN cookbook_serve_session_id VARCHAR"
+                )
+            )
+
 
 def _migrate_add_notes_sort_order():
     """Add sort_order, image_url, repeat columns to notes if they don't exist."""
@@ -2390,6 +2411,7 @@ def init_db():
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
+    _migrate_add_cookbook_serve_session_id_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()

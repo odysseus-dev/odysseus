@@ -2,6 +2,7 @@
 """Document processing: PDF/OCR extraction, text file handling, image VL analysis, user content building."""
 
 import os
+import io
 import logging
 import mimetypes
 import base64
@@ -141,7 +142,10 @@ def _process_pdf(
                         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                             temp_img_path = tmp.name
                         try:
-                            img.image.save(temp_img_path, "PNG")  # pypdf -> PIL image
+                            image = img.image
+                            if image.mode == "CMYK":
+                                image = image.convert("RGB")
+                            image.save(temp_img_path, "PNG")
                             ocr_text = analyze_image_with_vl(temp_img_path, owner=owner)
                             if ocr_text and "unavailable" not in ocr_text.lower():
                                 pdf_text += f"\n\n[Page {page_num + 1} image {img_index + 1} text]: {ocr_text}"
@@ -496,6 +500,49 @@ def analyze_image_with_vl(image_path: str, owner: str | None = None) -> str:
     return analyze_image_with_vl_result(image_path, owner=owner).get("text", "")
 
 
+def _vision_max_side() -> int:
+    """Longest-side cap for images inlined into the chat request (tokens)."""
+    try:
+        value = int(os.getenv("ODYSSEUS_VISION_MAX_SIDE", "1280") or 1280)
+    except (TypeError, ValueError):
+        value = 1280
+    return max(0, value)
+
+
+def encode_image_data_url(path: str, fallback_format: str) -> tuple[str, str]:
+    """Return (data_url, image_format) for an image, downscaled if large.
+
+    Downscale the longest side to ODYSSEUS_VISION_MAX_SIDE (default 1280) and
+    re-encode as JPEG so the chat model does not pay full-resolution image
+    tokens. Small/undecodable images fall back to the original bytes so a
+    real attachment is never dropped.
+    """
+    max_side = _vision_max_side()
+    try:
+        from PIL import Image  # local import: keep module import cost low
+        with Image.open(path) as img:
+            img = img.convert("RGB") if img.mode not in ("RGB", "L") else img
+            width, height = img.size
+            if max_side and max(width, height) > max_side:
+                scale = max_side / float(max(width, height))
+                img = img.resize(
+                    (max(1, round(width * scale)), max(1, round(height * scale))),
+                    Image.LANCZOS,
+                )
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=85, optimize=True)
+        return (
+            "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("utf-8"),
+            "jpeg",
+        )
+    except Exception as exc:
+        logger.debug(f"Image downscale failed for {path}: {exc}; sending original bytes")
+        with open(path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+        image_format = (fallback_format or "png").lower()
+        return f"data:image/{image_format};base64,{encoded_string}", image_format
+
+
 def build_user_content(
     text: str,
     attachment_ids: list[str] | None,
@@ -542,15 +589,14 @@ def build_user_content(
 
         if upload_handler.is_image_file(display_name, mime):
             try:
-                with open(path, "rb") as image_file:
-                    encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
                 # Extensionless uploads (e.g. a pasted screenshot) have no ext,
                 # so fall back to the resolved MIME subtype rather than emitting
                 # an invalid "data:image/;base64," with an empty subtype.
-                image_format = ext[1:] or (mime.split("/", 1)[1] if mime.startswith("image/") else "png")
+                fallback_format = ext[1:] or (mime.split("/", 1)[1] if mime.startswith("image/") else "png")
+                data_url, image_format = encode_image_data_url(path, fallback_format)
                 content.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/{image_format};base64,{encoded_string}"},
+                    "image_url": {"url": data_url},
                 })
             except Exception as e:
                 logger.error(f"Failed to encode image {fid}: {e}")

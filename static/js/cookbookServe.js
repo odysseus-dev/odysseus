@@ -1498,7 +1498,8 @@ function _rerenderCachedModels() {
       const _ggufOptions = _ggufChoices.map(f =>
         `<option value="${esc(f.rel_path)}"${f.rel_path === _defaultGguf ? ' selected' : ''}>${esc(_ggufFileLabel(f))}</option>`
       ).join('');
-      const _defaultServeModel = (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
+      const _minimaxM3Snapshot = '~/.cache/huggingface/hub/models--cyankiwi--MiniMax-M3-AWQ-INT4/snapshots/4082acbbec1236d21828d55b6bb0fe02ade4ab5b';
+      const _defaultServeModel = _isMiniMaxM3 ? _minimaxM3Snapshot : (m.is_local_dir && m.path ? `${m.path}/${repo}` : repo);
       const _savedModelPath = String(svm('model_path', _defaultServeModel) || '').trim();
       const _modelPathValue = _savedModelPath || _defaultServeModel;
       const _defaultServedModelName = _isMiniMaxM3 ? repo : '';

@@ -43,7 +43,7 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Anchor the path so the script works when invoked from anywhere.
@@ -136,7 +136,7 @@ def cmd_list(args) -> None:
             emit([], args)
             return
         all_uids = data[0].split()
-        # Newest first, limit
+        # Keep a bounded arrival batch; order its decoded rows by Date below.
         uids = list(reversed(all_uids))[: args.limit]
         out = []
         for uid in uids:
@@ -165,10 +165,15 @@ def cmd_list(args) -> None:
                 sender_name, sender_addr = parseaddr(sender)
                 date_raw = msg.get("Date", "")
                 try:
-                    iso = parsedate_to_datetime(date_raw).isoformat() if date_raw else ""
+                    parsed_date = parsedate_to_datetime(date_raw) if date_raw else None
+                    iso = parsed_date.isoformat() if parsed_date else ""
+                    if parsed_date is not None and parsed_date.tzinfo is None:
+                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                    date_epoch = parsed_date.timestamp() if parsed_date else float("-inf")
                 except Exception:
                     iso = ""
-                out.append({
+                    date_epoch = float("-inf")
+                out.append((date_epoch, {
                     "uid": uid.decode(),
                     "date": iso,
                     "from_addr": sender_addr,
@@ -176,10 +181,11 @@ def cmd_list(args) -> None:
                     "subject": subject,
                     "is_read": "\\Seen" in flags,
                     "is_answered": "\\Answered" in flags,
-                })
+                }))
             except Exception as e:
                 sys.stderr.write(f"warn: skipping uid {uid!r}: {e}\n")
-        emit(out, args)
+        out.sort(key=lambda item: item[0], reverse=True)
+        emit([row for _, row in out], args)
 
 
 # ─── read ────────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ from pathlib import Path
 
 try:
     from core.database import SessionLocal, Document, DocumentVersion
+    from src.session_search import escape_like_pattern
     quiet_logs()
 except ModuleNotFoundError as e:
     sys.stderr.write(f"error: {e}\nhint: run from repo root with venv active.\n")
@@ -139,10 +140,17 @@ def cmd_export(args):
 def cmd_search(args):
     db = SessionLocal()
     try:
-        like = f"%{args.query}%"
-        rows = db.query(Document).filter(
-            (Document.title.ilike(like)) | (Document.current_content.ilike(like))
-        ).order_by(Document.updated_at.desc()).limit(args.limit).all()
+        # Per-term AND search: a single `%foo bar%` LIKE only matched the
+        # exact phrase, so "machine learning" missed docs containing both
+        # words apart. LIKE wildcards are escaped per token.
+        q = db.query(Document)
+        for tok in args.query.split():
+            term = f"%{escape_like_pattern(tok)}%"
+            q = q.filter(
+                Document.title.ilike(term, escape="\\")
+                | Document.current_content.ilike(term, escape="\\")
+            )
+        rows = q.order_by(Document.updated_at.desc()).limit(args.limit).all()
         emit([_serialize(d) for d in rows], args)
     finally:
         db.close()

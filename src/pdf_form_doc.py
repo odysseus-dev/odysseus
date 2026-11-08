@@ -102,8 +102,10 @@ _PLAIN_FRONT_MATTER_RE = re.compile(
 #   - **label:** value <!-- field=NAME-ENC type=text -->
 #   - **label** [opts]: value <!-- field=NAME-ENC type=choice -->
 #   - [x] **label** <!-- field=NAME-ENC type=checkbox -->
+# Accept Unicode word characters for older saved markers, whose encoder left
+# non-ASCII letters/numbers literal. Newly rendered names are ASCII-safe.
 _FIELD_BULLET_RE = re.compile(
-    r'^\s*-\s+(?P<body>.*?)\s*<!--\s*field=(?P<name>[A-Za-z0-9_.%-]+)\s+type=(?P<type>\w+)\s*-->\s*$'
+    r'^\s*-\s+(?P<body>.*?)\s*<!--\s*field=(?P<name>[\w.%-]+)\s+type=(?P<type>\w+)\s*-->\s*$'
 )
 
 
@@ -115,7 +117,7 @@ def _encode_name(name: str) -> str:
     """
     out = []
     for ch in name or "":
-        if ch.isalnum() or ch in ("_", ".", "-"):
+        if (ch.isascii() and ch.isalnum()) or ch in ("_", ".", "-"):
             out.append(ch)
         else:
             for b in ch.encode("utf-8"):

@@ -41,8 +41,48 @@ export function transformedLayerGeometry(snapshot, sourceBounds, target) {
   const centerY = target.centerY + relativeX * sin + relativeY * cos;
   const scaledWidth = snapshot.width * scaleX;
   const scaledHeight = snapshot.height * scaleY;
-  const width = Math.max(1, Math.round(scaledWidth * absCos + scaledHeight * absSin));
-  const height = Math.max(1, Math.round(scaledWidth * absSin + scaledHeight * absCos));
+  const skewX = target.skewX || 0;
+  const skewY = target.skewY || 0;
+  const perspectiveX = target.perspectiveX || 0;
+  const perspectiveY = target.perspectiveY || 0;
+  const skewPadX = Math.abs(Math.tan(skewX * Math.PI / 180)) * scaledHeight;
+  const skewPadY = Math.abs(Math.tan(skewY * Math.PI / 180)) * scaledWidth;
+
+  // Free distort (Ctrl/Cmd+drag): the four corners as a quad in the layer's
+  // local (unrotated) space, plus its axis-aligned bounds.
+  const distort = target.distort || null;
+  let quad = null;
+  if (distort) {
+    const corners = [['tl', -0.5, -0.5], ['tr', 0.5, -0.5], ['br', 0.5, 0.5], ['bl', -0.5, 0.5]];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const points = corners.map(([key, sx, sy]) => {
+      const delta = distort[key] || { x: 0, y: 0 };
+      const px = (sx + delta.x) * scaledWidth;
+      const py = (sy + delta.y) * scaledHeight;
+      minX = Math.min(minX, px);
+      minY = Math.min(minY, py);
+      maxX = Math.max(maxX, px);
+      maxY = Math.max(maxY, py);
+      return { x: px, y: py };
+    });
+    quad = {
+      points,
+      minX,
+      minY,
+      quadW: Math.max(1, maxX - minX),
+      quadH: Math.max(1, maxY - minY),
+    };
+  }
+  const quadW = quad ? quad.quadW : scaledWidth;
+  const quadH = quad ? quad.quadH : scaledHeight;
+  const quadCx = quad ? quad.minX + quadW / 2 : 0;
+  const quadCy = quad ? quad.minY + quadH / 2 : 0;
+
+  const width = Math.max(1, Math.round(quadW * absCos + quadH * absSin + skewPadX));
+  const height = Math.max(1, Math.round(quadW * absSin + quadH * absCos + skewPadY));
   return {
     scaleX,
     scaleY,
@@ -50,13 +90,19 @@ export function transformedLayerGeometry(snapshot, sourceBounds, target) {
     signedScaleY,
     rotation: target.rotation,
     radians,
+    skewX,
+    skewY,
+    perspectiveX,
+    perspectiveY,
+    distort,
+    quad,
     width,
     height,
-    centerX,
-    centerY,
+    centerX: centerX + (quadCx * cos - quadCy * sin),
+    centerY: centerY + (quadCx * sin + quadCy * cos),
     offset: {
-      x: Math.round(centerX - width / 2),
-      y: Math.round(centerY - height / 2),
+      x: Math.round(centerX + (quadCx * cos - quadCy * sin) - width / 2),
+      y: Math.round(centerY + (quadCx * sin + quadCy * cos) - height / 2),
     },
   };
 }
@@ -94,6 +140,8 @@ export function planLayerTransform(editorState, snapshots, sourceBounds, target,
   const numericTarget = [
     target?.width, target?.height, target?.rotation,
     target?.centerX, target?.centerY,
+    target?.skewX ?? 0, target?.skewY ?? 0,
+    target?.perspectiveX ?? 0, target?.perspectiveY ?? 0,
   ].every(Number.isFinite);
   if (!numericTarget || target.width < 1 || target.height < 1) {
     return { ok: false, reason: 'Transform values must be finite positive numbers.' };

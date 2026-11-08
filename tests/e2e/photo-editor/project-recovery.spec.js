@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { editorState, openBlankEditor } = require('./helpers.js');
+const { editorState, openBlankEditor, waitForDraft } = require('./helpers.js');
 
 async function currentPng(page) {
   return page.evaluate(async () => {
@@ -46,6 +46,7 @@ test('mixed-corrupt project recovers valid layers and remains undoable', async (
 
 test('fully corrupt project leaves the open document unchanged', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Recovery E2E');
+  await waitForDraft(page);
   const before = await editorState(page);
   await loadProject(page, {
     type: 'odysseus-gallery-editor-project',
@@ -108,13 +109,13 @@ test('new project size dialog cancels cleanly with Escape', async ({ page }) => 
   await expect(page.locator('#gallery-editor-new')).toBeVisible();
 });
 
-test('editor topbar uses uppercase action labels', async ({ page }) => {
+test('editor topbar uses Photoshop text menu labels', async ({ page }) => {
   await openBlankEditor(page, { width: 320, height: 240 }, 'Topbar labels');
 
-  await expect(page.locator('#ge-view-menu-btn')).toHaveText(/VIEW/);
-  await expect(page.locator('#ge-image-menu-btn')).toHaveText(/IMAGE/);
-  await expect(page.locator('#ge-selection-menu-btn')).toHaveText(/SELECT/);
-  await expect(page.locator('#ge-filter-menu-btn')).toHaveText(/FILTER/);
+  await expect(page.locator('#ge-view-menu-btn')).toHaveText(/View/);
+  await expect(page.locator('#ge-image-menu-btn')).toHaveText(/Image/);
+  await expect(page.locator('#ge-selection-menu-btn')).toHaveText(/Select/);
+  await expect(page.locator('#ge-filter-menu-btn')).toHaveText(/Filter/);
   await expect(page.locator('#ge-import-topbar')).toHaveText(/IMPORT/);
   await expect(page.locator('#ge-save-menu-btn')).toHaveText(/SAVE/);
 });
