@@ -20,6 +20,7 @@ jobs:
   check-description:
     name: Check PR description
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: write
@@ -40,6 +41,7 @@ jobs:
   check-title:
     name: Check PR title (Conventional Commits)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     # Skip bots: they open PRs programmatically and have their own process.
     if: github.event.pull_request.user.type != 'Bot'
@@ -65,6 +67,7 @@ jobs:
     name: Flag unmergeable PRs
     needs: check-description
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: write
       issues: write
