@@ -21,7 +21,7 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _SOURCE = (_REPO / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
-_MATCH_KEY = (_REPO / "static" / "js" / "model" / "matchKey.js").as_posix()
+_MATCH_KEY = (_REPO / "static" / "js" / "model" / "matchKey.js").as_uri()
 _HAS_NODE = shutil.which("node") is not None
 
 pytestmark = pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
