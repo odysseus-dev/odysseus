@@ -1,5 +1,7 @@
 """The default namespace must protect callers and simultaneous pytest runs."""
 
+import logging
+import logging.handlers
 import os
 import socket
 import subprocess
@@ -44,6 +46,26 @@ def test_runtime_restores_environment_and_removes_files(monkeypatch, tmp_path, f
     assert root is not None and not root.exists()
     assert sentinel.read_text() == "keep"
     assert list(caller.iterdir()) == [sentinel]
+
+
+def test_runtime_removes_directory_holding_an_open_log_file():
+    # app.py leaves a rotating app.log handler open in the private data
+    # directory; Windows refuses to delete a directory with an open file.
+    logger = logging.getLogger("odysseus-runtime-open-log-test")
+    outside = logging.NullHandler()
+    logger.addHandler(outside)
+    try:
+        with isolated_runtime("gw0") as root:
+            log_dir = root / "data" / "logs"
+            log_dir.mkdir()
+            handler = logging.handlers.RotatingFileHandler(log_dir / "app.log", encoding="utf-8")
+            logger.addHandler(handler)
+            logger.warning("kept open until the runtime exits")
+        assert not root.exists()
+        assert handler not in logger.handlers
+        assert outside in logger.handlers
+    finally:
+        logger.removeHandler(outside)
 
 
 def test_same_worker_name_gets_distinct_namespaces():

@@ -1,5 +1,6 @@
 """Private filesystem defaults established before application imports."""
 
+import logging
 import os
 import tempfile
 from contextlib import contextmanager
@@ -68,4 +69,26 @@ def isolated_runtime(worker="main"):
                 patcher.setenv(name, str(tmp))
             # tempfile may already have cached the caller's directory.
             patcher.setattr(tempfile, "tempdir", str(tmp))
-            yield root
+            try:
+                yield root
+            finally:
+                close_log_files_under(root)
+
+
+def close_log_files_under(root):
+    """Close logging handlers whose files live under ``root``.
+
+    Importing app.py attaches a rotating app.log handler inside the private
+    data directory. Windows cannot remove a directory while a file in it is
+    open, so the runtime's cleanup failed at session end and turned a green
+    run into a crash.
+    """
+    root = Path(root).resolve()
+    loggers = [logging.getLogger()]
+    loggers += [item for item in logging.Logger.manager.loggerDict.values() if isinstance(item, logging.Logger)]
+    for logger in loggers:
+        for handler in list(logger.handlers):
+            filename = getattr(handler, "baseFilename", None)
+            if filename and Path(filename).resolve().is_relative_to(root):
+                logger.removeHandler(handler)
+                handler.close()
