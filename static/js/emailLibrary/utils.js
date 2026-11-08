@@ -71,6 +71,22 @@ function _isDangerousSrcset(value) {
   return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
 }
 
+// An absolute (or scheme-relative) http(s) URL in a legacy `background` /
+// `poster` attribute is fetched as soon as the body is inserted, bypassing the
+// click-to-load remote image flow. `http:host` and `\\host` are matched too:
+// the URL parser treats both like `//host` for http(s).
+function _isRemoteFetchUrl(value) {
+  return /^(?:https?:|[\\/]{2})/.test(_compactUrlSchemeValue(value));
+}
+
+// An inline style declaration that can make the browser fetch something on
+// render: url(), image-set() (which takes bare strings), or src(). Any
+// backslash (CSS escapes such as `u\72l(`) or comment (`/*`) drops the
+// declaration too, so obfuscated spellings never have to be decoded here.
+function _isFetchingCssDeclaration(compactDecl) {
+  return /url\(|image-set\(|src\(|\\|\/\*/.test(compactDecl);
+}
+
 // Escape + linkify URLs and email addresses. Returns innerHTML-safe markup.
 export function _escLinkify(text) {
   const raw = String(text || '');
@@ -208,6 +224,10 @@ function _sanitizeHtmlOnce(html) {
         el.removeAttribute(attr.name);
         continue;
       }
+      if ((name === 'background' || name === 'poster') && _isRemoteFetchUrl(attr.value)) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
     }
     el.removeAttribute('color');
     const bgcolor = el.getAttribute('bgcolor');
@@ -223,6 +243,11 @@ function _sanitizeHtmlOnce(html) {
         if (!decl) return false;
         const lower = _compactUrlSchemeValue(decl);
         if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:') || lower.includes('expression(')) return false;
+        // Remote content stays blocked until the reader opts in: the email
+        // CSS only forces `background-image: none`, so an inline
+        // `background-image: url(...) !important`, list-style-image,
+        // border-image, cursor or content would still fetch on open.
+        if (_isFetchingCssDeclaration(lower)) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
         return !STRIP_CSS_PROPS.includes(prop);
       });
