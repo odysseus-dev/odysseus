@@ -161,14 +161,16 @@ def test_docs_check_skips_pytest_only_for_prose_changes(tmp_path, event, change,
 
 
 @_NEEDS_SHELL
-@pytest.mark.parametrize(("with_parent", "expected"), [(False, "false"), (True, "true")])
-def test_docs_check_with_an_unknown_push_base(tmp_path, with_parent, expected):
-    # A new branch's first push reports an all-zero `before`. The check falls
-    # back to HEAD~1..HEAD; when that diff does not exist either (a root
-    # commit), nothing proves the change is docs-only, so pytest must run.
+@pytest.mark.parametrize("unknown_base", ["0" * 40, "1" * 40])
+@pytest.mark.parametrize("earlier_commits", [0, 1, 2])
+def test_docs_check_runs_pytest_when_the_push_base_is_unknown(tmp_path, unknown_base, earlier_commits):
+    # A new branch's first push reports an all-zero `before`, and a force-push
+    # can report one that is no longer in the clone. The push may then carry
+    # several commits; looking only at its last one would let a docs-only tip
+    # hide earlier code changes, so with no diff to the real base pytest runs.
     repo, env = _scratch_repo(tmp_path)
-    if with_parent:
-        _commit(repo, env, {"src/module.py": "value = 0\n"}, "base")
-    head = _commit(repo, env, {"docs/guide.md": "guide\n"}, "change")
+    for index in range(earlier_commits):
+        _commit(repo, env, {f"src/module_{index}.py": "value = 0\n"}, f"code {index}")
+    head = _commit(repo, env, {"docs/guide.md": "guide\n"}, "docs tip")
 
-    assert _run_docs_check(repo, env, tmp_path, event="push", base="0" * 40, head=head) == expected
+    assert _run_docs_check(repo, env, tmp_path, event="push", base=unknown_base, head=head) == "false"
