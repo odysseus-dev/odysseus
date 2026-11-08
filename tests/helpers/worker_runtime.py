@@ -3,6 +3,7 @@
 import logging
 import os
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -48,8 +49,9 @@ def isolated_runtime(worker="main"):
     name. Test-specific monkeypatches and function-scoped databases still own
     their resources; this is a fallback namespace, not a shared DB fixture.
     """
-    with tempfile.TemporaryDirectory(prefix=f"ody-{worker}-") as directory:
-        root = Path(directory)
+    directory = tempfile.TemporaryDirectory(prefix=f"ody-{worker}-")
+    try:
+        root = Path(directory.name)
         with pytest.MonkeyPatch.context() as patcher:
             paths = {
                 "ODYSSEUS_DATA_DIR": root / "data",
@@ -73,6 +75,25 @@ def isolated_runtime(worker="main"):
                 yield root
             finally:
                 close_log_files_under(root)
+    finally:
+        cleanup_with_retry(directory)
+
+
+def cleanup_with_retry(directory, attempts=20, delay=0.05):
+    """Remove a TemporaryDirectory, waiting briefly for Windows file locks.
+
+    A virus scanner or the search indexer can hold a just-written file open
+    for a moment. TemporaryDirectory.cleanup() may be called again after a
+    partial failure; it removes whatever is left.
+    """
+    for attempt in range(attempts):
+        try:
+            directory.cleanup()
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
 
 
 def close_log_files_under(root):
@@ -85,7 +106,7 @@ def close_log_files_under(root):
     """
     root = Path(root).resolve()
     loggers = [logging.getLogger()]
-    loggers += [item for item in logging.Logger.manager.loggerDict.values() if isinstance(item, logging.Logger)]
+    loggers += [item for item in list(logging.Logger.manager.loggerDict.values()) if isinstance(item, logging.Logger)]
     for logger in loggers:
         for handler in list(logger.handlers):
             filename = getattr(handler, "baseFilename", None)

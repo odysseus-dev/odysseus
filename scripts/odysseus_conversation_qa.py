@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import errno
 import json
 import os
 import re
@@ -23,12 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-import httpx
-
 try:  # POSIX hosts lock with flock; Windows falls back to msvcrt below.
     import fcntl
 except ImportError:
     fcntl = None
+
+import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -54,8 +55,11 @@ def try_exclusive_lock(handle) -> bool:
     handle.seek(0)
     try:
         msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        return False
+    except OSError as exc:
+        # msvcrt reports a lock held elsewhere as EACCES or EDEADLOCK.
+        if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+            return False
+        raise
     return True
 
 

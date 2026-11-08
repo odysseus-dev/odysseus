@@ -51,9 +51,11 @@ def test_runtime_restores_environment_and_removes_files(monkeypatch, tmp_path, f
 def test_runtime_removes_directory_holding_an_open_log_file():
     # app.py leaves a rotating app.log handler open in the private data
     # directory; Windows refuses to delete a directory with an open file.
-    logger = logging.getLogger("odysseus-runtime-open-log-test")
+    # Like app.py, attach to the root logger, which is not in loggerDict.
+    logger = logging.getLogger()
     outside = logging.NullHandler()
     logger.addHandler(outside)
+    handler = None
     try:
         with isolated_runtime("gw0") as root:
             log_dir = root / "data" / "logs"
@@ -66,6 +68,32 @@ def test_runtime_removes_directory_holding_an_open_log_file():
         assert outside in logger.handlers
     finally:
         logger.removeHandler(outside)
+        if handler is not None:
+            logger.removeHandler(handler)
+            handler.close()
+
+
+def test_runtime_cleanup_retries_a_briefly_held_file(monkeypatch):
+    from tests.helpers import worker_runtime
+
+    class Directory:
+        calls = 0
+
+        def cleanup(self):
+            Directory.calls += 1
+            if Directory.calls < 3:
+                raise PermissionError("held by a scanner")
+
+    monkeypatch.setattr(worker_runtime.time, "sleep", lambda _seconds: None)
+    worker_runtime.cleanup_with_retry(Directory())
+    assert Directory.calls == 3
+
+    class Stuck:
+        def cleanup(self):
+            raise PermissionError("still held")
+
+    with pytest.raises(PermissionError):
+        worker_runtime.cleanup_with_retry(Stuck(), attempts=2)
 
 
 def test_same_worker_name_gets_distinct_namespaces():
