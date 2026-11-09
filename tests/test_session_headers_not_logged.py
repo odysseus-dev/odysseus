@@ -12,9 +12,10 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.orm import sessionmaker
 
 from core import database
-from core.database import Session as DbSession, SessionLocal
+from core.database import Session as DbSession
 
 KEY = "sk-live-session-header-key-5c1e9a"
 NEW_KEY = "sk-live-rotated-header-key-0b7d42"
@@ -22,12 +23,16 @@ NEW_KEY = "sk-live-rotated-header-key-0b7d42"
 
 @pytest.fixture
 def db_ready():
+    """Yield a session factory on ``database.engine``, the engine the tests
+    build triggers on. The code under test holds its own module-level
+    ``SessionLocal``, which an earlier test can leave bound to another
+    (possibly deleted) database; each test pins that name to this factory."""
     database.Base.metadata.create_all(bind=database.engine)
-    yield
+    yield sessionmaker(autocommit=False, autoflush=False, bind=database.engine)
 
 
-def _insert_row(sid):
-    db = SessionLocal()
+def _insert_row(factory, sid):
+    db = factory()
     try:
         db.add(DbSession(id=sid, name="n", endpoint_url="http://x/v1/chat/completions",
                          model="m", headers={"Authorization": f"Bearer {KEY}"}))
@@ -36,11 +41,12 @@ def _insert_row(sid):
         db.close()
 
 
-def test_persist_session_headers_failure_log_omits_key(db_ready, caplog):
+def test_persist_session_headers_failure_log_omits_key(db_ready, caplog, monkeypatch):
     from routes import session_routes
 
+    monkeypatch.setattr(session_routes, "SessionLocal", db_ready)
     sid = f"hdr-{uuid.uuid4().hex[:8]}"
-    _insert_row(sid)
+    _insert_row(db_ready, sid)
     trigger = f"block_update_{uuid.uuid4().hex[:8]}"
     with database.engine.begin() as conn:
         conn.execute(text(
@@ -65,11 +71,14 @@ def test_persist_session_headers_failure_log_omits_key(db_ready, caplog):
     assert KEY not in caplog.text
 
 
-def test_create_session_failure_log_and_error_omit_key(db_ready, caplog):
+def test_create_session_failure_log_and_error_omit_key(db_ready, caplog, monkeypatch):
     from core.session_manager import SessionManager
 
+    # Patch the globals create_session actually reads, whichever module copy
+    # sys.modules holds now.
+    monkeypatch.setitem(SessionManager.create_session.__globals__, "SessionLocal", db_ready)
     sid = f"hdr-{uuid.uuid4().hex[:8]}"
-    _insert_row(sid)
+    _insert_row(db_ready, sid)
     manager = SessionManager.__new__(SessionManager)
     manager.sessions = {}
     try:
