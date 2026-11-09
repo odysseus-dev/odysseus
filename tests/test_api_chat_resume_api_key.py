@@ -58,7 +58,11 @@ def chat(monkeypatch, tmp_path):
     calls = []
 
     async def _fake_llm_call_async(url, model, messages, **kwargs):
-        calls.append({"url": url, "headers": dict(kwargs.get("headers") or {})})
+        calls.append({
+            "url": url,
+            "headers": dict(kwargs.get("headers") or {}),
+            "message": messages[-1]["content"],
+        })
         return f"reply {len(calls)}"
 
     monkeypatch.setattr(llm_core, "llm_call_async", _fake_llm_call_async)
@@ -167,3 +171,98 @@ def test_resume_of_fallback_session_takes_the_configured_endpoint_key(chat):
     r3 = client.post("/api/v1/chat", json={"message": "turn three", "session": session_id})
     assert r3.status_code == 400, r3.text
     assert len(calls) == 2
+
+
+def _cached_session(session_id):
+    return core_models._SESSION_MANAGER_INSTANCE.sessions[session_id]
+
+
+def _start_direct_key_session(client):
+    r = client.post("/api/v1/chat", json={
+        "message": "turn one",
+        "model": "claude-sonnet-4-6",
+        "api_key": KEY,
+        "base_url": "https://api.anthropic.com/v1",
+    })
+    assert r.status_code == 200, r.text
+    return r.json()["session_id"]
+
+
+def test_key_is_never_left_on_the_cached_session(chat):
+    # The cached Session is shared by every request on it, so a key sent for
+    # one request must not stay on it.
+    client, calls, _ = chat
+    session_id = _start_direct_key_session(client)
+    assert calls[0]["headers"].get("x-api-key") == KEY
+    assert KEY not in json.dumps(_cached_session(session_id).headers or {})
+
+    r2 = client.post("/api/v1/chat", json={
+        "message": "turn two", "session": session_id, "api_key": KEY,
+    })
+    assert r2.status_code == 200, r2.text
+    assert calls[1]["headers"].get("x-api-key") == KEY
+    assert KEY not in json.dumps(_cached_session(session_id).headers or {})
+
+
+def test_interleaved_resumes_each_send_their_own_key(chat, monkeypatch):
+    client, calls, _ = chat
+    session_id = _start_direct_key_session(client)
+    key_a, key_b = "sk-ant-key-for-a", "sk-ant-key-for-b"
+
+    # Resume B runs to completion inside resume A, after A has rebuilt its
+    # headers and before A makes its outbound call.
+    session_cls = type(_cached_session(session_id))
+    original_add_message = session_cls.add_message
+    nested = []
+
+    def _add_message(self, message):
+        original_add_message(self, message)
+        if message.content == "turn A" and not nested:
+            nested.append(client.post("/api/v1/chat", json={
+                "message": "turn B", "session": session_id, "api_key": key_b,
+            }))
+
+    monkeypatch.setattr(session_cls, "add_message", _add_message)
+
+    r_a = client.post("/api/v1/chat", json={
+        "message": "turn A", "session": session_id, "api_key": key_a,
+    })
+    assert r_a.status_code == 200, r_a.text
+    assert nested and nested[0].status_code == 200, nested[0].text
+    # B's call is made first, inside A; A's own call follows.
+    assert len(calls) == 3
+    assert calls[1]["message"] == "turn B"
+    assert calls[1]["headers"].get("x-api-key") == key_b
+    assert calls[2]["headers"].get("x-api-key") == key_a
+
+
+def test_resume_of_provider_auth_session_matches_the_runtime_base(chat, monkeypatch):
+    # A provider-auth endpoint's first turn goes to the base URL its
+    # credentials resolve to, which can differ from the endpoint's base_url.
+    client, calls, factory = chat
+    with factory() as db:
+        db.add(cdb.ModelEndpoint(
+            id="ep-sub", name="Subscription", owner="alice", is_enabled=True,
+            base_url="https://llm.example.test/v1", provider_auth_id="auth-1",
+        ))
+        db.commit()
+    resolved = []
+
+    def _runtime_credentials(auth_id, owner=None, **kwargs):
+        resolved.append((auth_id, owner))
+        return {"base_url": "https://other.example.test/v1", "api_key": "sub-access-token"}
+
+    monkeypatch.setattr("src.chatgpt_subscription.resolve_runtime_credentials", _runtime_credentials)
+
+    r1 = client.post("/api/v1/chat", json={"message": "turn one", "model": "test-model"})
+    assert r1.status_code == 200, r1.text
+    session_id = r1.json()["session_id"]
+    assert calls[0]["url"] == "https://other.example.test/v1/chat/completions"
+    assert calls[0]["headers"].get("Authorization") == "Bearer sub-access-token"
+
+    r2 = client.post("/api/v1/chat", json={"message": "turn two", "session": session_id})
+    assert r2.status_code == 200, r2.text
+    assert calls[1]["url"] == calls[0]["url"]
+    assert calls[1]["headers"].get("Authorization") == "Bearer sub-access-token"
+    assert set(resolved) == {("auth-1", "alice")}
+    assert _stored_headers(factory, session_id) == {}

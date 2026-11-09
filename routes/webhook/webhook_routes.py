@@ -48,27 +48,44 @@ def _bound_endpoint_headers(sess, owner: Optional[str]) -> dict:
     from that endpoint the way the first turn resolved them. The endpoint is
     chosen as the web chat chooses it (``_select_session_endpoint``): the
     bound row only, owner-scoped, enabled, and still matching the session URL.
+    A provider-auth endpoint's first turn used the base URL its credentials
+    resolve to, which may differ from ``ep.base_url``; for the bound row that
+    runtime base, resolved now and owner-scoped, also counts as a match.
     The headers are for this request only; nothing is written to the DB.
     Fails like the fallback path: 400 when the endpoint is gone, 500 when its
     credentials cannot be resolved."""
-    from routes.chat_helpers import _select_session_endpoint
+    from routes.chat_helpers import _select_session_endpoint, _session_url_matches_endpoint
     from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
 
     db = SessionLocal()
     try:
         query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
         query = owner_filter(query, ModelEndpoint, owner)
-        ep, _ = _select_session_endpoint(sess, sess.endpoint_url or "", query.all())
+        endpoints = query.all()
     finally:
         db.close()
+    ep, _ = _select_session_endpoint(sess, sess.endpoint_url or "", endpoints)
+    runtime = None
+    if ep is None:
+        bound = next((e for e in endpoints
+                      if str(e.id) == str(sess.endpoint_id) and getattr(e, "provider_auth_id", None)), None)
+        if bound is not None:
+            try:
+                runtime = resolve_endpoint_runtime(bound, owner=owner)
+            except Exception:
+                raise HTTPException(500, "Could not resolve endpoint credentials")
+            if _session_url_matches_endpoint(sess.endpoint_url or "", runtime[0]):
+                ep = bound
     if ep is None:
         raise HTTPException(400,
             "The session's configured endpoint no longer exists. "
             "Pass api_key, or configure an endpoint in Admin and start a new session.")
-    try:
-        base_url, api_key = resolve_endpoint_runtime(ep, owner=owner)
-    except Exception:
-        raise HTTPException(500, "Could not resolve endpoint credentials")
+    if runtime is None:
+        try:
+            runtime = resolve_endpoint_runtime(ep, owner=owner)
+        except Exception:
+            raise HTTPException(500, "Could not resolve endpoint credentials")
+    base_url, api_key = runtime
     return build_headers(api_key, base_url) if api_key else {}
 
 
@@ -333,6 +350,10 @@ def setup_webhook_routes(
         # Addresses a token-supplied endpoint resolved to when it was checked;
         # when set, every connection for this request is pinned to them.
         pinned_ips = None
+        # Auth headers for this request's outbound call only. A caller-supplied
+        # or freshly resolved key is never put on ``sess.headers``: that object
+        # is cached and shared by every request on the session.
+        call_headers = None
 
         # --- Case 1: Resume an existing session ---
         if session_id and session_manager:
@@ -372,9 +393,9 @@ def setup_webhook_routes(
             # from a configured endpoint takes its key from that endpoint again.
             resume_key = (body.api_key or "").strip()
             if resume_key:
-                sess.headers = build_headers(resume_key, normalize_base(sess.endpoint_url or ""))
+                call_headers = build_headers(resume_key, normalize_base(sess.endpoint_url or ""))
             elif getattr(sess, "endpoint_id", None):
-                sess.headers = _bound_endpoint_headers(sess, _tok_user)
+                call_headers = _bound_endpoint_headers(sess, _tok_user)
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
         if not sess and body.api_key:
@@ -407,8 +428,7 @@ def setup_webhook_routes(
                 session_id=sid, name="API Chat", endpoint_url=endpoint_url,
                 model=model, owner=token_owner,
             )
-            sess.headers = build_headers(api_key, base_url)
-            session_manager.save_sessions()
+            call_headers = build_headers(api_key, base_url)
             session_id = sid
 
         # --- Case 3: Fall back to first configured ModelEndpoint ---
@@ -483,7 +503,8 @@ def setup_webhook_routes(
         try:
             reply = await llm_call_async(
                 sess.endpoint_url, sess.model, messages,
-                headers=sess.headers, timeout=120,
+                headers=sess.headers if call_headers is None else call_headers,
+                timeout=120,
                 pinned_client=pinned_client,
             )
         finally:
