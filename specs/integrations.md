@@ -108,7 +108,7 @@ Allowed outgoing events are:
 
 Current webhook event emitters include session creation, chat message/completion paths, and `/api/v1/chat` completion.
 
-`/api/v1/chat` is an inbound external chat endpoint. It requires a `chat` API token, checks session ownership before resume, can create a session from a direct API key, and otherwise falls back to the first owner-visible enabled model endpoint. Token-supplied direct `base_url` values use public-URL validation; configured endpoints remain admin-trusted. Logs and delivery/error text that include endpoint URLs should pass through URL redaction helpers before persistence or diagnostics.
+`/api/v1/chat` is an inbound external chat endpoint. It requires a `chat` API token, checks session ownership before resume, can create a session from a direct API key, and otherwise falls back to the first owner-visible enabled model endpoint. A session started with a direct `api_key` needs `api_key` on every turn: the key is used for that request only and is never stored, and on resume it applies to the session's own endpoint (`base_url`/`provider` cannot change it). Token-supplied direct `base_url` values use public-URL validation; configured endpoints remain admin-trusted. Logs and delivery/error text that include endpoint URLs should pass through URL redaction helpers before persistence or diagnostics.
 
 ## Task Webhooks And Event Triggers
 

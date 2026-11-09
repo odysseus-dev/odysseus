@@ -70,6 +70,12 @@ def _caller_owns_session(sess_owner, caller) -> bool:
     device) could resume such a session, inject a message, and read back its
     history and reuse the owner's endpoint credentials. Fail closed: an
     unresolvable caller also returns False.
+
+    A session started with a direct ``api_key`` needs ``api_key`` on every
+    turn: the key is used for that request only and is never stored, so a
+    resume without it reaches the provider with no key. A resume ``api_key``
+    is applied to the session's own endpoint; ``base_url`` and ``provider``
+    cannot change it.
     """
     if not caller:
         return False
@@ -328,6 +334,14 @@ def setup_webhook_routes(
                     raise HTTPException(
                         400, "Session endpoint must point to a public HTTP(S) endpoint"
                     )
+            # Session headers are never written to the DB, and get_session()
+            # refreshes them from it, so a session started with a direct
+            # api_key has no key on later turns. Take the key again for this
+            # request only. Headers come from the session's own endpoint;
+            # base_url and provider are ignored on resume.
+            resume_key = (body.api_key or "").strip()
+            if resume_key:
+                sess.headers = build_headers(resume_key, normalize_base(sess.endpoint_url or ""))
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
         if not sess and body.api_key:
