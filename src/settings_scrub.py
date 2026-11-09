@@ -87,6 +87,24 @@ PUBLIC_SETTINGS_KEYS = frozenset({
 })
 
 
+# Install-wide reminder delivery targets. A logged-in non-admin could subscribe
+# to the ntfy topic (it is a capability on a public ntfy server) or learn the
+# address the admin's reminders go to; neither can change them (POST
+# /api/auth/settings is admin-only), so the non-admin view drops them.
+NON_ADMIN_HIDDEN_KEYS = frozenset({
+    "reminder_ntfy_topic",
+    "reminder_email_to",
+})
+
+
+def non_admin_settings(settings: dict) -> dict:
+    """Return the scrubbed copy a logged-in non-admin may read."""
+    scrubbed = scrub_settings(settings)
+    for key in NON_ADMIN_HIDDEN_KEYS:
+        scrubbed.pop(key, None)
+    return scrubbed
+
+
 def public_settings(settings: dict) -> dict:
     """Return only the allowlisted keys of ``settings``, still scrubbed."""
     if not isinstance(settings, dict):

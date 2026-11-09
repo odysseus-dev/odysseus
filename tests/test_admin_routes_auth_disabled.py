@@ -245,6 +245,35 @@ def test_get_settings_scrubbed_for_unauthenticated_and_non_admin_when_auth_enabl
     assert data["default_model"] == "gpt-4o"
 
 
+def test_reminder_targets_hidden_from_non_admin_but_visible_to_admin(client, monkeypatch):
+    # The install's ntfy topic is a subscribe capability on a public ntfy
+    # server and the email recipient is the admin's address: a logged-in
+    # non-admin must not read either (they cannot change them anyway).
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    c, stored = client
+    stored["reminder_ntfy_topic"] = "admin-secret-topic-7f3a"
+    stored["reminder_email_to"] = "admin@example.com"
+    stored["reminder_channel"] = "ntfy"
+
+    c.cookies.set("odysseus_session", "user-token")
+    r = c.get("/api/auth/settings")
+    assert r.status_code == 200
+    data = r.json()
+    assert "reminder_ntfy_topic" not in data
+    assert "reminder_email_to" not in data
+    assert "admin-secret-topic-7f3a" not in r.text
+    assert "admin@example.com" not in r.text
+    # The reminders panel still learns which channel is active.
+    assert data["reminder_channel"] == "ntfy"
+
+    c.cookies.set("odysseus_session", "session-token")
+    r = c.get("/api/auth/settings")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["reminder_ntfy_topic"] == "admin-secret-topic-7f3a"
+    assert data["reminder_email_to"] == "admin@example.com"
+
+
 def test_set_settings_403_for_authenticated_non_admin(client, monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     c, stored = client

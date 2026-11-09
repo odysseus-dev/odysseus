@@ -17,7 +17,7 @@ from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult, TOKEN_TTL
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.auth_helpers import _auth_disabled, is_direct_loopback_request
 from src.rate_limiter import RateLimiter
-from src.settings_scrub import public_settings, scrub_settings
+from src.settings_scrub import non_admin_settings, public_settings
 from src import tool_capabilities
 from src.settings import (
     load_settings as _load_settings,
@@ -774,7 +774,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.get("/settings")
     async def get_settings(request: Request):
         """Returns app settings. Admins get the full set; logged-in non-admins
-        get a scrubbed copy with secret keys blanked; callers without a session
+        get a scrubbed copy with secret keys blanked and the install's reminder
+        ntfy topic and email recipient removed; callers without a session
         get only the public allowlist (keybinds + TTS prefs). The path is
         auth-exempt, so that last branch is what the internet sees."""
         user = _get_current_user(request)
@@ -794,7 +795,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             and is_direct_loopback_request(request)
         )
         if user or localhost_bypass:
-            return scrub_settings(settings)
+            return non_admin_settings(settings)
         return public_settings(settings)
 
     @router.post("/settings")
