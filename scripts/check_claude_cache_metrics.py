@@ -5,9 +5,10 @@ per assistant turn: input tokens, cache reads, cache writes, cost and the
 context window the ring measured against. Prints no secrets.
 
 How to run the live check:
-  1. ANTHROPIC_API_KEY must be set in the environment (never print it,
-     never write it to a file).
-  2. Start Odysseus and hold a chat of at least 3 turns with
+  1. Add an Anthropic endpoint in Settings > Add Models > Add API Models.
+     Odysseus stores the key encrypted in its own database; it does not
+     read ANTHROPIC_API_KEY from the environment.
+  2. Start Odysseus and hold a chat of at least 3 turns in Agent mode with
      claude-sonnet-4-6 (or Opus 4.6+) through the real Anthropic API.
   3. From the repository root:  python scripts/check_claude_cache_metrics.py [path/to/app.db]
 
@@ -75,14 +76,19 @@ def main():
         model = str(m.get("model", "?"))[:22]
         inp, out = num(m.get("input_tokens")), num(m.get("output_tokens"))
         read, write = num(m.get("cache_read_input_tokens")), num(m.get("cache_creation_input_tokens"))
-        for bucket in m.get("usage_buckets") or []:
-            if isinstance(bucket, dict) and not m.get("cache_read_input_tokens"):
-                read += num(bucket.get("cache_read_input_tokens"))
-                write += num(bucket.get("cache_creation_input_tokens"))
+        # usage_buckets repeat the top-level totals; fall back to them only
+        # when the turn saved no top-level cache fields at all.
+        if m.get("cache_read_input_tokens") is None and m.get("cache_creation_input_tokens") is None:
+            for bucket in m.get("usage_buckets") or []:
+                if isinstance(bucket, dict):
+                    read += num(bucket.get("cache_read_input_tokens"))
+                    write += num(bucket.get("cache_creation_input_tokens"))
         cost = m.get("cost_usd")
         pct = num(m.get("context_percent"))
         used = num(m.get("request_context_tokens")) or inp
-        window = round(used / (pct / 100)) if pct else 0
+        # context_length is the exact window; context_percent is rounded to
+        # 0.1, so estimating from it is only a fallback for older rows.
+        window = num(m.get("context_length")) or (round(used / (pct / 100)) if pct else 0)
         print(f"{i:>2}  {model:<22} {inp:>8} {read:>10} {write:>11} {cost if cost is not None else '-':>9} {pct:>6} {window:>9}")
         if i >= 2 and read > 0:
             saw_read = True
