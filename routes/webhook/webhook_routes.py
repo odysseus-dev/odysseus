@@ -42,6 +42,36 @@ def _select_api_chat_fallback_endpoint(db, token_owner: Optional[str]):
     return query.filter(ModelEndpoint.owner == None).order_by(ModelEndpoint.created_at).first()  # noqa: E711
 
 
+def _bound_endpoint_headers(sess, owner: Optional[str]) -> dict:
+    """Auth headers for a resumed session bound to a configured ModelEndpoint
+    (``sess.endpoint_id``, set when the fallback path started it), resolved
+    from that endpoint the way the first turn resolved them. The endpoint is
+    chosen as the web chat chooses it (``_select_session_endpoint``): the
+    bound row only, owner-scoped, enabled, and still matching the session URL.
+    The headers are for this request only; nothing is written to the DB.
+    Fails like the fallback path: 400 when the endpoint is gone, 500 when its
+    credentials cannot be resolved."""
+    from routes.chat_helpers import _select_session_endpoint
+    from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
+
+    db = SessionLocal()
+    try:
+        query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+        query = owner_filter(query, ModelEndpoint, owner)
+        ep, _ = _select_session_endpoint(sess, sess.endpoint_url or "", query.all())
+    finally:
+        db.close()
+    if ep is None:
+        raise HTTPException(400,
+            "The session's configured endpoint no longer exists. "
+            "Pass api_key, or configure an endpoint in Admin and start a new session.")
+    try:
+        base_url, api_key = resolve_endpoint_runtime(ep, owner=owner)
+    except Exception:
+        raise HTTPException(500, "Could not resolve endpoint credentials")
+    return build_headers(api_key, base_url) if api_key else {}
+
+
 def _pinned_llm_client(ips) -> httpx.AsyncClient:
     """AsyncClient that connects only to ``ips[0]``, the address that passed the
     SSRF check. Host and TLS SNI still come from the request URL, so the
@@ -338,10 +368,13 @@ def setup_webhook_routes(
             # refreshes them from it, so a session started with a direct
             # api_key has no key on later turns. Take the key again for this
             # request only. Headers come from the session's own endpoint;
-            # base_url and provider are ignored on resume.
+            # base_url and provider are ignored on resume. A session started
+            # from a configured endpoint takes its key from that endpoint again.
             resume_key = (body.api_key or "").strip()
             if resume_key:
                 sess.headers = build_headers(resume_key, normalize_base(sess.endpoint_url or ""))
+            elif getattr(sess, "endpoint_id", None):
+                sess.headers = _bound_endpoint_headers(sess, _tok_user)
 
         # --- Case 2: Direct API key + model (no pre-configured endpoint needed) ---
         if not sess and body.api_key:
@@ -431,9 +464,10 @@ def setup_webhook_routes(
                 raise HTTPException(500, "Session manager not available")
 
             sid = str(uuid.uuid4())
+            # endpoint_id lets a resume take the key from this endpoint again.
             sess = session_manager.create_session(
                 session_id=sid, name="API Chat", endpoint_url=endpoint_url,
-                model=model, owner=token_owner,
+                model=model, owner=token_owner, endpoint_id=ep.id,
             )
             if api_key:
                 sess.headers = build_headers(api_key, base_url)

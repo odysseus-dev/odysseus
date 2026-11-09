@@ -122,7 +122,9 @@ class _Endpoint:
         created_at=1,
         base_url="https://api.example.com/v1",
         api_key=None,
+        id="ep-1",
     ):
+        self.id = id
         self.owner = owner
         self.is_enabled = is_enabled
         self.created_at = created_at
@@ -192,7 +194,7 @@ class _SessionManager:
         self.created = []
         self.save_calls = 0
 
-    def create_session(self, *, session_id, name, endpoint_url, model, owner):
+    def create_session(self, *, session_id, name, endpoint_url, model, owner, endpoint_id=None):
         session = _ChatSession(endpoint_url, model)
         self.created.append({
             "session_id": session_id,
@@ -200,6 +202,7 @@ class _SessionManager:
             "endpoint_url": endpoint_url,
             "model": model,
             "owner": owner,
+            "endpoint_id": endpoint_id,
             "session": session,
         })
         return session

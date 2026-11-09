@@ -23,6 +23,7 @@ ANTHROPIC_CHAT_URL = "https://api.anthropic.com/v1/messages"
 DNS = {
     "api.anthropic.com": "93.184.216.34",
     "other.example.test": "93.184.216.35",
+    "llm.example.test": "93.184.216.36",
 }
 
 
@@ -129,3 +130,40 @@ def test_resume_with_api_key_sends_the_key_and_never_stores_it(chat):
     assert stored == {}
     with factory() as db:
         assert db.query(cdb.Session).filter(cdb.Session.id != session_id).count() == 0
+
+
+def test_resume_of_fallback_session_takes_the_configured_endpoint_key(chat):
+    client, calls, factory = chat
+    endpoint_key = "sk-admin-endpoint-key"
+    with factory() as db:
+        db.add(cdb.ModelEndpoint(
+            id="ep-alice", name="Admin LLM", owner="alice", is_enabled=True,
+            base_url="https://llm.example.test/v1", api_key=endpoint_key,
+        ))
+        db.commit()
+
+    # No session and no api_key: the session starts from the configured endpoint.
+    r1 = client.post("/api/v1/chat", json={"message": "turn one", "model": "test-model"})
+    assert r1.status_code == 200, r1.text
+    session_id = r1.json()["session_id"]
+    assert calls[0]["url"] == "https://llm.example.test/v1/chat/completions"
+    assert calls[0]["headers"].get("Authorization") == f"Bearer {endpoint_key}"
+
+    # Resume with session only: the key comes from that endpoint again.
+    r2 = client.post("/api/v1/chat", json={"message": "turn two", "session": session_id})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["session_id"] == session_id
+    assert calls[1]["url"] == calls[0]["url"]
+    assert calls[1]["headers"].get("Authorization") == f"Bearer {endpoint_key}"
+
+    assert _stored_headers(factory, session_id) == {}
+    with factory() as db:
+        assert db.get(cdb.Session, session_id).endpoint_id == "ep-alice"
+
+    # The endpoint was deleted since: the resume fails instead of calling keyless.
+    with factory() as db:
+        db.delete(db.get(cdb.ModelEndpoint, "ep-alice"))
+        db.commit()
+    r3 = client.post("/api/v1/chat", json={"message": "turn three", "session": session_id})
+    assert r3.status_code == 400, r3.text
+    assert len(calls) == 2
