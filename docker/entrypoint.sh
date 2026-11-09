@@ -78,7 +78,7 @@ repair_tree_ownership() {
     dir="$1"
     if [ -d "$dir" ]; then
         find "$dir" -xdev -not -uid "$PUID" -print0 2>/dev/null \
-            | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+            | xargs -0 -r chown -h "$PUID:$PGID" 2>/dev/null || true
     fi
 }
 
@@ -87,7 +87,7 @@ repair_app_tree_ownership() {
         find /app -xdev \
             \( -path /app/data -o -path /app/logs -o -path /app/.ssh -o -path /app/.cache -o -path /app/.local \) -prune \
             -o -not -uid "$PUID" -print0 2>/dev/null \
-            | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+            | xargs -0 -r chown -h "$PUID:$PGID" 2>/dev/null || true
     fi
 }
 

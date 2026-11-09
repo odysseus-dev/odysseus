@@ -8,7 +8,8 @@
    cache must stay bounded.
 3. docker/entrypoint.sh chowns /app/.cache and /app/.cache/huggingface as
    root. /app is app-user owned, so those paths can be replaced by symlinks;
-   the root chown must never follow them.
+   the root chown must never follow them, including in the recursive
+   `find | xargs chown` repairs.
 """
 import asyncio
 import ipaddress
@@ -150,13 +151,25 @@ def _entrypoint_text():
     return ENTRYPOINT.read_text(encoding="utf-8")
 
 
-def _helper_source():
-    match = re.search(r"^chown_path_no_follow\(\) \{\n.*?^\}\n", _entrypoint_text(), re.M | re.S)
-    assert match, "docker/entrypoint.sh must define chown_path_no_follow()"
+def _function_source(name):
+    match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", _entrypoint_text(), re.M | re.S)
+    assert match, f"docker/entrypoint.sh must define {name}()"
     return match.group(0)
 
 
+def _helper_source():
+    return _function_source("chown_path_no_follow")
+
+
 def _run_helper(target, tmp_path, *, puid, pgid, shim_chown):
+    return _run_function("chown_path_no_follow", target, tmp_path, puid=puid, pgid=pgid, shim_chown=shim_chown)
+
+
+def _run_function(name, target, tmp_path, *, puid, pgid, shim_chown, app_root=None):
+    source = _function_source(name)
+    if app_root is not None:
+        # repair_app_tree_ownership hard-codes /app; point it at a sandbox.
+        source = source.replace("/app", str(app_root))
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(PUID=str(puid), PGID=str(pgid))
     if shim_chown:
@@ -167,7 +180,7 @@ def _run_helper(target, tmp_path, *, puid, pgid, shim_chown):
         shim.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CHOWN_LOG"\n', encoding="utf-8")
         shim.chmod(0o755)
         env.update(PATH=f"{shim_dir}{os.pathsep}{env.get('PATH', '')}", CHOWN_LOG=str(log))
-    script = _helper_source() + 'chown_path_no_follow "$1"\n'
+    script = source + f'{name} "$1"\n'
     return subprocess.run(
         ["sh", "-c", script, "sh", str(target)],
         env=env, capture_output=True, text=True, timeout=10, check=True,
@@ -237,3 +250,52 @@ def test_helper_as_root_never_changes_symlink_target_ownership(tmp_path):
     assert victim.stat().st_uid == 0
     assert (victim / "huggingface").stat().st_uid == 0
     assert real.stat().st_uid == 65534
+
+
+# The recursive repairs pipe `find ... -print0` into `xargs chown`. A path that
+# is (or is swapped for, between the find and the chown) a symlink must have
+# the link itself chowned, never its target: chown needs -h for that.
+
+TREE_REPAIRS = ["repair_tree_ownership", "repair_app_tree_ownership"]
+
+
+def _run_tree_repair(name, tmp_path, *, puid, pgid, shim_chown):
+    """Run `name` over a sandbox tree holding a file and a symlink to a file
+    outside it. Returns (victim, tree root)."""
+    victim = tmp_path / "etc" / "shadow"
+    victim.parent.mkdir()
+    victim.write_text("root only", encoding="utf-8")
+    root = tmp_path / ("data" if name == "repair_tree_ownership" else "app")
+    root.mkdir()
+    (root / "note.txt").write_text("x", encoding="utf-8")
+    (root / "link").symlink_to(victim)
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        for path in (victim.parent, victim, root, root / "note.txt"):
+            os.chown(path, 0, 0)
+        os.lchown(root / "link", 0, 0)
+    if name == "repair_tree_ownership":
+        target, app_root = root, None
+    else:
+        target, app_root = "", root
+    _run_function(name, target, tmp_path, puid=puid, pgid=pgid, shim_chown=shim_chown, app_root=app_root)
+    return victim, root
+
+
+@pytest.mark.parametrize("name", TREE_REPAIRS)
+def test_tree_repair_chowns_with_no_dereference(tmp_path, name):
+    _victim, root = _run_tree_repair(name, tmp_path, puid=4242, pgid=4343, shim_chown=True)
+    calls = _shim_calls(tmp_path)
+    assert calls, f"{name} never ran chown"
+    assert all(call.startswith("-h 4242:4343 ") for call in calls), calls
+    chowned = " ".join(calls)
+    assert str(root / "link") in chowned
+    assert str(root / "note.txt") in chowned
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root to chown")
+@pytest.mark.parametrize("name", TREE_REPAIRS)
+def test_tree_repair_as_root_never_changes_symlink_target_ownership(tmp_path, name):
+    victim, root = _run_tree_repair(name, tmp_path, puid=65534, pgid=65534, shim_chown=False)
+    assert victim.stat().st_uid == 0
+    assert (root / "note.txt").stat().st_uid == 65534
+    assert (root / "link").lstat().st_uid == 65534
