@@ -9,6 +9,7 @@ This handbook records the project's maintainer governance and gives reviewers a 
 | Area | Working rule |
 |---|---|
 | Product direction | Pewds is the Product Owner |
+| New feature | Feature Request issue; big, new-direction or hard-to-undo features need a recorded Product Owner decision ([workflow](product-and-features.md#feature-proposal-workflow)) |
 | Ordinary, reversible maintainer PR | Self-merge allowed after appropriate validation and applicable repository checks |
 | External contribution | Maintainer review required |
 | High-risk change | At least one **independent, qualified** maintainer review |
@@ -22,7 +23,7 @@ These are governance rules, not guarantees that a GitHub permission or branch-pr
 ## Start here
 
 - [Roles and access](roles-and-access.md): responsibility, permissions, and continuity.
-- [Product and feature proposals](product-and-features.md): product approval versus technical ownership.
+- [Product and feature proposals](product-and-features.md): product approval versus technical ownership, and the feature proposal workflow.
 - [Changes and review](changes-and-review.md): review thresholds, self-merge, contributor corrections.
 - [Practical review playbook](review-playbook.md): risk, provenance, CI, CodeQL, independent audit, and handoff evidence.
 - [Triage](triage.md): turning incoming reports into actionable work.
