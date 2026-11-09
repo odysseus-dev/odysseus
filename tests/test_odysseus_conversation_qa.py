@@ -15,6 +15,25 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+def test_script_loads_without_fcntl(monkeypatch):
+    # Windows has no fcntl; loading the runner must not depend on it.
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+    spec = importlib.util.spec_from_file_location("odysseus_conversation_qa_no_fcntl", PATH)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    assert module.fcntl is None
+
+
+def test_exclusive_lock_refuses_a_second_holder_until_released(tmp_path):
+    lock_path = tmp_path / "run.lock"
+    with lock_path.open("w", encoding="utf-8") as first, lock_path.open("w", encoding="utf-8") as second:
+        assert MODULE.try_exclusive_lock(first) is True
+        assert MODULE.try_exclusive_lock(second) is False
+    with lock_path.open("w", encoding="utf-8") as third:
+        assert MODULE.try_exclusive_lock(third) is True
+
+
 def test_json_parser_accepts_fenced_teacher_output():
     assert MODULE._json_from_text('```json\n{"ok": true}\n```') == {"ok": True}
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import fcntl
+import errno
 import json
 import os
 import re
@@ -24,6 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+try:  # POSIX hosts lock with flock; Windows falls back to msvcrt below.
+    import fcntl
+except ImportError:
+    fcntl = None
+
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +36,32 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.manage_sft_fixture_state import restore_owner, snapshot_owner
+
+
+def try_exclusive_lock(handle) -> bool:
+    """Lock an open file for this process without waiting.
+
+    Returns False when another holder already owns the lock. The lock is
+    released when the handle is closed or the process exits.
+    """
+    if fcntl is not None:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+    import msvcrt
+
+    handle.seek(0)
+    try:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        # msvcrt reports a lock held elsewhere as EACCES or EDEADLOCK.
+        if exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+            return False
+        raise
+    return True
+
 
 DEFAULT_DATA = Path(os.environ.get("ODYSSEUS_DATA_DIR", str(Path(__file__).resolve().parents[1] / "data")))
 DEFAULT_LEDGER = ROOT / "docs" / "ODYSSEUS_HARNESS_QA.md"
@@ -1395,9 +1426,7 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     lock_path = args.out_dir / ".conversation-qa.lock"
     lock_handle = lock_path.open("w", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if not try_exclusive_lock(lock_handle):
         raise SystemExit(
             f"another conversation QA run owns {lock_path}; inspect it instead of overlapping endpoint load"
         )
