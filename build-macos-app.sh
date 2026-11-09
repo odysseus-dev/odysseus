@@ -27,14 +27,16 @@ echo "  port:        $PORT"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# ── Icon ──
-if ! sips -s format icns "$REPO_DIR/static/icons/icon-512.png" \
-    --out "$APP/Contents/Resources/odysseus.icns" \
-    || [ ! -s "$APP/Contents/Resources/odysseus.icns" ]; then
-  echo "Error: failed to generate the Odysseus app icon." >&2
-  exit 1
+# ── Icon (best effort) -- use the shared sailboat logo ──
+if [ -f "$REPO_DIR/static/icons/icon-512.png" ] && command -v sips >/dev/null 2>&1; then
+  if sips -s format icns "$REPO_DIR/static/icons/icon-512.png" --out "$APP/Contents/Resources/odysseus.icns" >/dev/null 2>&1; then
+    echo "  icon:        odysseus.icns"
+  else
+    echo "  icon:        (skipped - conversion failed)"
+  fi
+else
+  echo "  icon:        (skipped - no static/icons/icon-512.png)"
 fi
-echo "  icon:        odysseus.icns"
 cp -R "$REPO_DIR/licenses" "$APP/Contents/Resources/licenses"
 cp "$REPO_DIR/THIRD_PARTY_PROVENANCE.json" "$REPO_DIR/ACKNOWLEDGMENTS.md" "$APP/Contents/Resources/"
 
