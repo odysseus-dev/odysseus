@@ -140,6 +140,31 @@ def _reminder_text_from_note(note: Note) -> tuple[str, str]:
 _scheduler_ref = None
 
 
+def _reminder_owner_is_admin(owner: str) -> bool:
+    """Whether reminders for `owner` may go to the install-wide
+    `reminder_email_to` address.
+
+    That setting is the admin's own address (hidden from non-admin settings
+    reads), so only admins and the single-user modes qualify. Mirrors
+    fire_reminder's `_is_admin_or_single_user` for callers that have no
+    request, such as the background note scanner: an empty owner is the
+    single-user / legacy ownerless path. Fails closed on a lookup error.
+    """
+    if not owner or owner == INTERNAL_TOOL_USER:
+        return True
+    try:
+        from src.auth_helpers import _auth_disabled
+        if _auth_disabled():
+            return True
+        from core.auth import AuthManager
+        auth_mgr = AuthManager()
+        if not auth_mgr.is_configured:
+            return True
+        return bool(auth_mgr.is_admin(owner))
+    except Exception:
+        return False
+
+
 async def dispatch_reminder(
     title: str,
     note_body: str,
@@ -147,6 +172,7 @@ async def dispatch_reminder(
     owner: str = "",
     queue_browser: bool = True,
     settings_override: dict | None = None,
+    owner_is_admin: bool | None = None,
 ) -> dict:
     """Fire a reminder via the configured channel (browser/email/ntfy/webhook).
 
@@ -156,6 +182,11 @@ async def dispatch_reminder(
         note_id: stable id (used as tag/dedupe in browser notifications)
         owner: the user this reminder belongs to — scopes SMTP config to
                their account so we don't cross-leak credentials
+        owner_is_admin: whether `owner` is an admin (or the install is in a
+               single-user mode). None looks it up from `owner`. A non-admin's
+               reminder email never goes to the install-wide
+               `reminder_email_to`; it goes to the owner's own mail account
+               address, or is skipped when they have none.
 
     Returns: {synthesis, email_sent, ntfy_sent}. Browser channel is wired via
     the in-memory notification queue picked up by the frontend poller, so
@@ -335,7 +366,17 @@ async def dispatch_reminder(
                 except Exception as _fallback_error:
                     logger.debug(f"Reminder SMTP fallback lookup failed: {_fallback_error}")
             from_addr = (cfg.get("from_address") or cfg.get("smtp_user") or "").strip()
-            recipient = (settings.get("reminder_email_to") or "").strip() or from_addr
+            if owner_is_admin is None:
+                owner_is_admin = _reminder_owner_is_admin(owner)
+            # Only an account row resolved for this owner counts as their own
+            # address; the legacy settings.json/env fallback is install-wide.
+            owns_account = bool(cfg.get("account_id")) and (cfg.get("owner") or "") == (owner or "")
+            if owner_is_admin:
+                recipient = (settings.get("reminder_email_to") or "").strip() or from_addr
+            else:
+                # `reminder_email_to` is the admin's address: never send a
+                # non-admin's note there.
+                recipient = from_addr if owns_account else ""
             # Loud diagnostic so we can see WHY a reminder didn't send (the
             # previous "silently no-op when cfg has no smtp_host" was invisible).
             logger.info(
@@ -356,7 +397,14 @@ async def dispatch_reminder(
                 missing.append("from address")
             if not recipient:
                 missing.append("recipient")
-            if missing:
+            if not owner_is_admin and not owns_account:
+                email_error = "No email account of your own is set up for reminder emails"
+                logger.warning(
+                    "Reminder email skipped for note_id=%s owner=%r: "
+                    "non-admin owner has no email account of their own",
+                    note_id, owner,
+                )
+            elif missing:
                 email_error = "Missing " + ", ".join(missing)
                 logger.warning(
                     "Reminder email not sent for note_id=%s account=%r: %s",
@@ -395,8 +443,14 @@ async def dispatch_reminder(
                 await _aio.to_thread(_smtp_send)
                 email_sent = True
         except Exception as e:
-            email_error = str(e) or e.__class__.__name__
-            logger.warning(f"Reminder email send failed: {e}")
+            # SMTP errors can quote the recipient/sender address (e.g.
+            # SMTPRecipientsRefused), so neither the response nor the log
+            # carries the exception text.
+            email_error = "Reminder email could not be sent; see the server log"
+            logger.warning(
+                "Reminder email send failed for note_id=%s owner=%r: %s (smtp_code=%s)",
+                note_id, owner, e.__class__.__name__, getattr(e, "smtp_code", None),
+            )
 
     webhook_sent = False
     webhook_error = ""
@@ -904,6 +958,7 @@ def setup_note_routes(task_scheduler=None, upload_handler=None):
             owner=caller or "",
             queue_browser=False,
             settings_override=_override or None,
+            owner_is_admin=is_admin,
         )
 
     # --- REORDER NOTES ---

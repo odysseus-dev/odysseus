@@ -115,6 +115,7 @@ def test_real_reminder_uses_stored_note_and_ignores_overrides(monkeypatch):
         "owner": "alice",
         "queue_browser": False,
         "settings_override": None,
+        "owner_is_admin": False,
     }]
 
 
@@ -170,4 +171,5 @@ def test_admin_test_reminder_can_use_current_ui_overrides(monkeypatch):
             "reminder_webhook_integration_id": "global-webhook",
             "reminder_webhook_payload_template": '{"content":"{{message}}"}',
         },
+        "owner_is_admin": True,
     }]
