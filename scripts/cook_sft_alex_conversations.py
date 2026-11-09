@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import fcntl
 import json
 import re
 import sys
@@ -25,6 +24,7 @@ from odysseus_conversation_qa import (
     compact_tool_catalog,
     endpoint_from_db,
     teacher_json,
+    try_exclusive_lock,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -253,9 +253,7 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     lock_path = args.output.with_suffix(args.output.suffix + ".lock")
     lock_handle = lock_path.open("w", encoding="utf-8")
-    try:
-        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    if not try_exclusive_lock(lock_handle):
         raise SystemExit(f"another cooker already owns {lock_path}")
     endpoint = endpoint_from_db(args.data_dir, args.endpoint_id, args.model)
     seeds = load_seeds(args.seeds)
