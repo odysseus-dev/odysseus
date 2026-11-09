@@ -188,6 +188,60 @@ def test_admin_note_still_goes_to_install_recipient(reminders, path):
     assert reminders.sent == [(ADMIN_FROM, [ADMIN_INBOX])]
 
 
+# `_get_email_config` copies an already-resolved account id into its
+# install-wide settings.json/env fallback when the row read fails part-way,
+# and stamps that dict with the caller as `owner`. Ownership must come from
+# the account row itself, never from that dict.
+def _fallback_cfg_with_account(leaked_id):
+    def fake_get_email_config(account_id=None, owner=None):
+        return {
+            "account_id": leaked_id,
+            "account_name": "legacy",
+            "owner": owner or "",
+            "smtp_host": "smtp.install.test",
+            "smtp_port": 465,
+            "smtp_user": "install-user",
+            "smtp_password": "install-password",
+            "from_address": INSTALL_FROM,
+        }
+    return fake_get_email_config
+
+
+@pytest.mark.parametrize("path", ["route", "scanner"])
+@pytest.mark.parametrize("owner", ["bob", "carol"])
+def test_fallback_cfg_with_unowned_account_id_skips_email(reminders, monkeypatch, owner, path):
+    import routes.email_routes as email_routes
+    from src.builtin_actions import TaskNoop
+
+    monkeypatch.setattr(email_routes, "_get_email_config", _fallback_cfg_with_account("acct-admin"))
+
+    if path == "route":
+        result = reminders.fire(owner)
+        assert result["email_sent"] is False
+        assert result["email_error"] == "No email account of your own is set up for reminder emails"
+        _assert_absent(json.dumps(result))
+    else:
+        with pytest.raises(TaskNoop) as exc:
+            reminders.scan(owner)
+        _assert_absent(str(exc.value))
+
+    assert reminders.sent == []
+    _assert_absent(_logs(reminders.caplog))
+
+
+def test_fallback_cfg_with_own_account_id_sends_from_the_row_address(reminders, monkeypatch):
+    import routes.email_routes as email_routes
+
+    monkeypatch.setattr(email_routes, "_get_email_config", _fallback_cfg_with_account("acct-bob"))
+
+    result = reminders.fire("bob")
+
+    assert result["email_sent"] is True
+    assert reminders.sent == [(BOB_ADDR, [BOB_ADDR])]
+    _assert_absent(json.dumps(result))
+    _assert_absent(_logs(reminders.caplog), (ADMIN_INBOX, INSTALL_FROM))
+
+
 @pytest.mark.parametrize("owner", ["bob", "admin"])
 def test_smtp_failure_response_and_log_carry_no_address(reminders, owner):
     reminders.failure["refuse"] = True

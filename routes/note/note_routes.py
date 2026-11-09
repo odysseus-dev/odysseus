@@ -373,9 +373,34 @@ async def dispatch_reminder(
                 except Exception as _fallback_error:
                     logger.debug(f"Reminder SMTP fallback lookup failed: {_fallback_error}")
             from_addr = (cfg.get("from_address") or cfg.get("smtp_user") or "").strip()
-            # Only an account row resolved for this owner counts as their own
-            # address; the legacy settings.json/env fallback is install-wide.
-            owns_account = bool(cfg.get("account_id")) and (cfg.get("owner") or "") == (owner or "")
+            owns_account = False
+            if not owner_is_admin:
+                # Only an email-account row owned by this owner counts as their
+                # own address, so look it up by id AND owner rather than
+                # trusting cfg: `_get_email_config` can carry an account_id into
+                # its install-wide settings.json/env fallback and stamps that
+                # dict with the caller as `owner`.
+                own_from = ""
+                _own_acc_id = cfg.get("account_id")
+                if _own_acc_id and owner:
+                    from core.database import SessionLocal as _OwnSL, EmailAccount as _OwnEA
+                    _own_db = _OwnSL()
+                    try:
+                        _own_row = (
+                            _own_db.query(_OwnEA)
+                            .filter(_OwnEA.id == _own_acc_id, _OwnEA.owner == owner)
+                            .first()
+                        )
+                        if _own_row is not None:
+                            owns_account = True
+                            own_from = (
+                                _own_row.from_address or _own_row.imap_user
+                                or _own_row.smtp_user or ""
+                            ).strip()
+                    finally:
+                        _own_db.close()
+                # Never the install-wide `email_from`: only the owned row's.
+                from_addr = own_from
             if owner_is_admin:
                 recipient = (settings.get("reminder_email_to") or "").strip() or from_addr
             else:
