@@ -15,8 +15,10 @@ lock on the file, merges every durable record other writers appended, allocates
 the next position from that merged tail, checks the record against the merged
 history, then appends and fsyncs before releasing the lock. Positions therefore
 stay unique and a settled outcome is never appended twice. Cross-process
-exclusion relies on POSIX ``flock``; directory fsync relies on POSIX directory
-semantics. Neither is claimed where the platform does not provide it.
+exclusion for writers uses POSIX ``flock``, or on Windows an ``msvcrt``
+byte-range lock past the end of the file; on Windows, readers (``refresh`` and
+``load``) take no shared lock. Directory fsync relies on POSIX directory
+semantics and is not claimed elsewhere.
 """
 from __future__ import annotations
 
