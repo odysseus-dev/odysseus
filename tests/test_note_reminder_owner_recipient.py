@@ -418,3 +418,63 @@ def test_missing_webhook_integration_is_not_quoted(push):
     assert result["webhook_sent"] is False
     assert result["webhook_error"]
     _assert_absent(json.dumps(result), CHANNEL_TARGETS + (gone,))
+
+
+# --- the email-urgency scanner's reminder (builtin_actions) ---------------
+
+@pytest.fixture
+def urgency(reminders, monkeypatch, tmp_path):
+    """`reminders` plus the email-urgency scan wired to one fake urgent unread
+    message per account (the IMAP double from test_email_urgency_checkpoint)."""
+    import routes.email_helpers as email_helpers
+    from src import builtin_actions, llm_core, task_endpoint
+    from tests.test_email_urgency_checkpoint import _FakeImap
+
+    monkeypatch.setattr(builtin_actions, "EMAIL_URGENCY_CACHE_DIR", str(tmp_path / "urgency-cache"))
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", tmp_path / "scheduled-emails.db")
+    monkeypatch.setattr(
+        email_helpers, "_imap_connect",
+        lambda account_id=None, **_kwargs: _FakeImap(str(account_id), set(), set(), {}),
+    )
+    monkeypatch.setattr(
+        task_endpoint, "resolve_task_candidates",
+        lambda *args, **kwargs: [("http://llm", "model", {})],
+    )
+
+    async def urgent(*_args, **_kwargs):
+        return '{"score": 3, "reason": "urgent"}'
+
+    monkeypatch.setattr(llm_core, "llm_call_async_with_fallback", urgent)
+
+    def scan(owner):
+        try:
+            return asyncio.run(builtin_actions.action_check_email_urgency(owner))
+        except builtin_actions.TaskNoop as exc:
+            return str(exc), False
+
+    return SimpleNamespace(scan=scan, sent=reminders.sent, caplog=reminders.caplog)
+
+
+def test_urgency_reminder_for_non_admin_goes_to_own_account(urgency):
+    message, _ok = urgency.scan("bob")
+
+    assert urgency.sent == [(BOB_ADDR, [BOB_ADDR])]
+    _assert_absent(message, (ADMIN_INBOX, INSTALL_FROM, ADMIN_FROM))
+    _assert_absent(_logs(urgency.caplog), (ADMIN_INBOX, INSTALL_FROM, ADMIN_FROM))
+
+
+def test_urgency_reminder_for_non_admin_never_falls_back_to_install_address(urgency, monkeypatch):
+    # The owner's account resolves to the install-wide settings.json SMTP
+    # config (ready to send, with `email_from` and `reminder_email_to` set):
+    # the urgency reminder is skipped rather than sent there.
+    import routes.email_routes as email_routes
+
+    monkeypatch.setattr(email_routes, "_get_email_config", _fallback_cfg_with_account(None))
+
+    message, _ok = urgency.scan("bob")
+
+    logs = _logs(urgency.caplog)
+    assert "non-admin owner has no email account of their own" in logs, "the reminder was never dispatched"
+    assert urgency.sent == []
+    _assert_absent(message)
+    _assert_absent(logs)

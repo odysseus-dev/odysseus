@@ -349,3 +349,88 @@ def test_fallback_endpoint_key_is_never_left_on_the_cached_session(chat):
     assert calls[0]["headers"].get("Authorization") == f"Bearer {endpoint_key}"
     assert endpoint_key not in json.dumps(_cached_session(session_id).headers or {})
     assert _stored_headers(factory, session_id) == {}
+
+
+# --- the bound endpoint must still be the caller's, enabled, and matching ---
+
+ENDPOINT_KEY = "sk-bound-endpoint-key"
+SUB_TOKEN = "sub-access-token"
+
+
+def _start_bound_session(client, factory, monkeypatch, kind):
+    """Start a session from a configured endpoint of `kind`: "key" (an
+    api_key endpoint whose base_url the session uses) or "provider-auth"
+    (credentials resolving to a runtime base other than its base_url).
+    Returns (session_id, credential resolutions)."""
+    with factory() as db:
+        db.add(cdb.ModelEndpoint(
+            id="ep-bound", name="Bound", owner="alice", is_enabled=True,
+            base_url="https://llm.example.test/v1",
+            api_key=ENDPOINT_KEY if kind == "key" else None,
+            provider_auth_id="auth-bound" if kind == "provider-auth" else None,
+        ))
+        db.commit()
+    resolved = []
+
+    def _runtime_credentials(auth_id, owner=None, **kwargs):
+        resolved.append((auth_id, owner))
+        return {"base_url": "https://other.example.test/v1", "api_key": SUB_TOKEN}
+
+    monkeypatch.setattr("src.chatgpt_subscription.resolve_runtime_credentials", _runtime_credentials)
+    r1 = client.post("/api/v1/chat", json={"message": "turn one", "model": "test-model"})
+    assert r1.status_code == 200, r1.text
+    with factory() as db:
+        assert db.get(cdb.Session, r1.json()["session_id"]).endpoint_id == "ep-bound"
+    return r1.json()["session_id"], resolved
+
+
+def _update_bound_endpoint(factory, **fields):
+    with factory() as db:
+        ep = db.get(cdb.ModelEndpoint, "ep-bound")
+        for name, value in fields.items():
+            setattr(ep, name, value)
+        db.commit()
+
+
+def _assert_refused_without_credentials(client, calls, resolved, session_id):
+    resolutions_before = len(resolved)
+    r2 = client.post("/api/v1/chat", json={"message": "turn two", "session": session_id})
+    assert r2.status_code == 400, r2.text
+    assert len(calls) == 1, "the resume must not reach the provider"
+    assert len(resolved) == resolutions_before, "no credentials resolved for the refused resume"
+    for secret in (ENDPOINT_KEY, SUB_TOKEN):
+        assert secret not in r2.text
+
+
+@pytest.mark.parametrize("kind", ["key", "provider-auth"])
+def test_resume_refused_when_bound_endpoint_now_belongs_to_another_owner(chat, monkeypatch, kind):
+    client, calls, factory = chat
+    session_id, resolved = _start_bound_session(client, factory, monkeypatch, kind)
+
+    _update_bound_endpoint(factory, owner="mallory")
+
+    _assert_refused_without_credentials(client, calls, resolved, session_id)
+
+
+@pytest.mark.parametrize("kind", ["key", "provider-auth"])
+def test_resume_refused_when_bound_endpoint_is_disabled(chat, monkeypatch, kind):
+    client, calls, factory = chat
+    session_id, resolved = _start_bound_session(client, factory, monkeypatch, kind)
+
+    _update_bound_endpoint(factory, is_enabled=False)
+
+    _assert_refused_without_credentials(client, calls, resolved, session_id)
+
+
+def test_resume_refused_when_bound_endpoint_without_provider_auth_differs_from_session_url(
+        chat, monkeypatch):
+    # The session went to the provider-auth runtime base (other.example.test).
+    # Once the endpoint is a plain key endpoint, only its base_url
+    # (llm.example.test) can match, so the session URL no longer does.
+    client, calls, factory = chat
+    session_id, resolved = _start_bound_session(client, factory, monkeypatch, "provider-auth")
+    assert calls[0]["url"] == "https://other.example.test/v1/chat/completions"
+
+    _update_bound_endpoint(factory, provider_auth_id=None, api_key=ENDPOINT_KEY)
+
+    _assert_refused_without_credentials(client, calls, resolved, session_id)
