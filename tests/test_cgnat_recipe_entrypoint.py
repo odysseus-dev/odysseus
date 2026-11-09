@@ -9,12 +9,14 @@
 3. docker/entrypoint.sh chowns /app/.cache and /app/.cache/huggingface as
    root. /app is app-user owned, so those paths can be replaced by symlinks;
    the root chown must never follow them, including in the recursive
-   `find | xargs chown` repairs.
+   `find -execdir chown` repairs, where a parent directory swapped for a
+   symlink after find listed a file must not redirect the chown.
 """
 import asyncio
 import ipaddress
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -252,9 +254,11 @@ def test_helper_as_root_never_changes_symlink_target_ownership(tmp_path):
     assert real.stat().st_uid == 65534
 
 
-# The recursive repairs pipe `find ... -print0` into `xargs chown`. A path that
+# The recursive repairs run `find ... -execdir chown -h ... {} +`. A path that
 # is (or is swapped for, between the find and the chown) a symlink must have
-# the link itself chowned, never its target: chown needs -h for that.
+# the link itself chowned, never its target: chown needs -h for that. -h only
+# covers the last component, so chown must also get ./name from inside the
+# directory find opened rather than a full path re-resolved at chown time.
 
 TREE_REPAIRS = ["repair_tree_ownership", "repair_app_tree_ownership"]
 
@@ -287,9 +291,11 @@ def test_tree_repair_chowns_with_no_dereference(tmp_path, name):
     calls = _shim_calls(tmp_path)
     assert calls, f"{name} never ran chown"
     assert all(call.startswith("-h 4242:4343 ") for call in calls), calls
-    chowned = " ".join(calls)
-    assert str(root / "link") in chowned
-    assert str(root / "note.txt") in chowned
+    # -execdir runs chown from the file's own directory with ./name.
+    chowned = " ".join(calls).split()
+    assert "./link" in chowned
+    assert "./note.txt" in chowned
+    assert not any(arg.startswith(str(root)) for arg in chowned), calls
 
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root to chown")
@@ -299,3 +305,66 @@ def test_tree_repair_as_root_never_changes_symlink_target_ownership(tmp_path, na
     assert victim.stat().st_uid == 0
     assert (root / "note.txt").stat().st_uid == 65534
     assert (root / "link").lstat().st_uid == 65534
+
+
+# Race: find lists <tree>/sub/victim, then a writer on the bind mount renames
+# sub and puts a symlink to a directory outside the tree in its place, then the
+# chown runs. The fake chown performs that swap on its first call naming the
+# victim, then hands over to the real chown.
+_RACE_CHOWN = """#!/bin/sh
+case " $* " in
+    *victim*)
+        if [ ! -e "$RACE_DONE" ]; then
+            : > "$RACE_DONE"
+            mv "$RACE_SUB" "$RACE_SUB.real"
+            ln -s "$RACE_OUTSIDE" "$RACE_SUB"
+        fi
+        ;;
+esac
+exec "$REAL_CHOWN" "$@"
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root to chown")
+@pytest.mark.parametrize("name", TREE_REPAIRS)
+def test_tree_repair_as_root_ignores_parent_swapped_for_symlink(tmp_path, name):
+    puid = 65534
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "victim").write_text("outside the tree", encoding="utf-8")
+    root = tmp_path / ("data" if name == "repair_tree_ownership" else "app")
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    (sub / "victim").write_text("inside the tree", encoding="utf-8")
+    for path in (outside, outside / "victim", root, sub, sub / "victim"):
+        os.chown(path, 0, 0)
+
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "chown"
+    shim.write_text(_RACE_CHOWN, encoding="utf-8")
+    shim.chmod(0o755)
+    race_done = tmp_path / "race.done"
+
+    source = _function_source(name)
+    if name == "repair_tree_ownership":
+        target = root
+    else:
+        target = ""
+        source = source.replace("/app", str(root))
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(
+        PUID=str(puid), PGID=str(puid),
+        PATH=f"{shim_dir}{os.pathsep}{env.get('PATH', '')}",
+        REAL_CHOWN=shutil.which("chown"),
+        RACE_SUB=str(sub), RACE_OUTSIDE=str(outside), RACE_DONE=str(race_done),
+    )
+    subprocess.run(
+        ["sh", "-c", source + f'{name} "$1"\n', "sh", str(target)],
+        env=env, capture_output=True, text=True, timeout=10, check=True,
+    )
+
+    assert race_done.exists(), "the swap never ran: chown was not called for the victim"
+    assert (root / "sub").is_symlink()
+    assert (outside / "victim").stat().st_uid == 0
+    assert (root / "sub.real" / "victim").stat().st_uid == puid

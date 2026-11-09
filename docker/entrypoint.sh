@@ -65,6 +65,10 @@ is_broad_mount_root() {
 # its parent) could have been swapped for a symlink to /etc on a previous run.
 # Plain chown follows a final-component symlink and -h does not cover
 # symlinked parent directories, so skip the path if it or its parent is a link.
+# The recursive repairs below have no such check: they use find -execdir, so
+# chown runs inside the directory find actually opened and gets ./name with -h.
+# A parent directory renamed and replaced by a symlink after find listed the
+# file therefore cannot redirect the chown outside the tree.
 chown_path_no_follow() {
     target="$1"
     if [ -L "$target" ] || [ -L "${target%/*}" ]; then
@@ -77,8 +81,8 @@ chown_path_no_follow() {
 repair_tree_ownership() {
     dir="$1"
     if [ -d "$dir" ]; then
-        find "$dir" -xdev -not -uid "$PUID" -print0 2>/dev/null \
-            | xargs -0 -r chown -h "$PUID:$PGID" 2>/dev/null || true
+        find "$dir" -xdev -not -uid "$PUID" \
+            -execdir chown -h "$PUID:$PGID" {} + 2>/dev/null || true
     fi
 }
 
@@ -86,8 +90,7 @@ repair_app_tree_ownership() {
     if [ -d /app ]; then
         find /app -xdev \
             \( -path /app/data -o -path /app/logs -o -path /app/.ssh -o -path /app/.cache -o -path /app/.local \) -prune \
-            -o -not -uid "$PUID" -print0 2>/dev/null \
-            | xargs -0 -r chown -h "$PUID:$PGID" 2>/dev/null || true
+            -o -not -uid "$PUID" -execdir chown -h "$PUID:$PGID" {} + 2>/dev/null || true
     fi
 }
 
