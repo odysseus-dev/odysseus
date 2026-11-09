@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -2166,6 +2167,7 @@ def test_python_http_download_is_rejected_before_subprocess():
     assert urlretrieve["exit_code"] == 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the python tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 def test_python_surfaces_failed_child_viewer_even_when_script_exits_zero():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2179,6 +2181,7 @@ def test_python_surfaces_failed_child_viewer_even_when_script_exits_zero():
     assert "child operation failed" in result["error"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the python tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 def test_python_keeps_warning_only_stderr_successful():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2191,6 +2194,7 @@ def test_python_keeps_warning_only_stderr_successful():
     assert result["exit_code"] == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the python tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 def test_python_emits_one_final_bare_expression_without_duplicating_print():
     import asyncio
     from src.agent_tools.subprocess_tools import PythonTool
@@ -2248,6 +2252,7 @@ def test_python_loaded_code_sees_virtual_workspace_alias(monkeypatch, tmp_path):
     assert output.read_text() == "ok"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="bubblewrap mount-namespace argv is built only on POSIX; Windows has no bwrap and _wrap_workspace_namespace returns None")
 def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch, tmp_path):
     import shlex
 
@@ -2270,6 +2275,7 @@ def test_workspace_namespace_mounts_only_a_nested_python_environment(monkeypatch
     ]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="bubblewrap mount-namespace argv is built only on POSIX; Windows has no bwrap and _wrap_workspace_namespace returns None")
 def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypatch, tmp_path):
     import shlex
 
@@ -2301,6 +2307,7 @@ def test_workspace_namespace_rejects_broad_or_symlinked_python_prefixes(monkeypa
         ]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="bubblewrap mount-namespace argv is built only on POSIX; Windows has no bwrap and _wrap_workspace_namespace returns None")
 def test_workspace_namespace_preserves_the_64_bit_dynamic_loader(monkeypatch):
     """The namespace's /lib64 must mirror usrmerge hosts, not /usr/lib."""
     import shlex

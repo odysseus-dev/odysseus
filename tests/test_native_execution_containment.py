@@ -24,8 +24,11 @@ def native_boundary(tmp_path, monkeypatch):
             return await authorized_handler(_original.__get__(self), workspace)(content, ctx)
         monkeypatch.setattr(cls, "execute", execute)
     monkeypatch.setattr(containment, "CONTAINMENT_MODE", containment.MODE_REPORT_ONLY)
+    # The wall-clock-only mechanism: a POSIX process group, or its Windows
+    # counterpart (taskkill tree teardown). Neither confines filesystem or tree.
+    wall_clock_only = "windows_tree" if os.name == "nt" else "process_group"
     monkeypatch.setattr(containment, "MECHANISMS", tuple(
-        m for m in containment.MECHANISMS if m.name == "process_group"
+        m for m in containment.MECHANISMS if m.name == wall_clock_only
     ))
     return workspace
 

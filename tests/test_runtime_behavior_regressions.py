@@ -13,6 +13,7 @@ hands it, which is the runtime's decision about what the turn may do.
 
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -247,6 +248,7 @@ def test_native_terminal_runtime_adds_offered_tools_deliberately():
 # The Chrome sweep matches on this runtime's own profile prefix. A browser
 # belonging to the user, or to another worktree, must survive it.
 
+@pytest.mark.skipif(os.name == "nt", reason="the Chrome sweep matches reparented browsers through /proc and signals with signal.SIGKILL; Windows has neither, and the product returns early without procfs")
 def test_chrome_sweep_kills_only_this_runtimes_profile(monkeypatch, tmp_path):
     import shutil
 

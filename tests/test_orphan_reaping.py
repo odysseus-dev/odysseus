@@ -21,6 +21,7 @@ case is driven exactly; that module's own tests pin it against real processes.
 """
 
 import json
+import os
 
 import pytest
 
@@ -180,6 +181,7 @@ def test_a_verified_grant_is_torn_down_normally(grant_store, monkeypatch):
     assert outcome.ownership == ""
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no process groups: containment._pgid_of is always None there, so a recorded pgid cannot differ from the leader's")
 def test_verified_leader_does_not_authorize_a_different_group(grant_store, monkeypatch):
     seed_grant(pgid=9999)
     verdicts(monkeypatch, {4242: process_ownership.OWNED})
@@ -399,6 +401,7 @@ def test_already_finished_jobs_are_not_reconsidered(job_store, monkeypatch):
     assert bg_jobs.disown_unverified() == {"seen": 0, "retired": 0, "kept": 0}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="bg_jobs.launch requires filesystem and process_tree containment, which only the Linux bubblewrap mechanism enforces; Windows offers windows_tree and raises ContainmentUnavailable")
 def test_a_launched_job_records_an_identity_next_to_its_pid(job_store, tmp_path, monkeypatch):
     """Without this the record is unverifiable forever and the reaper can only
     refuse — the token has to be captured at launch or not at all."""

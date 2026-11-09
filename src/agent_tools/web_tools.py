@@ -28,6 +28,20 @@ PDF_EXTRACT_MAX_BYTES = 80_000_000
 _ACTIVE_BROWSER_SESSIONS: set[str] = set()
 
 
+def _file_uri_path(parsed: urllib.parse.SplitResult) -> str:
+    """Filesystem path of a parsed file: URI.
+
+    On Windows ``Path.as_uri()`` writes ``file:///C:/dir/f``, whose URI path
+    is ``/C:/dir/f``; drop the slash before the drive letter so the result is
+    an absolute Windows path. Virtual ``/workspace/...`` paths and every POSIX
+    path are returned unchanged.
+    """
+    path = urllib.parse.unquote(parsed.path)
+    if os.name == "nt" and re.match(r"/[A-Za-z]:[/\\]", path):
+        path = path[1:]
+    return path
+
+
 def _service_home() -> Path:
     """Return the account home even when a task overrides ``HOME``."""
 
@@ -835,7 +849,7 @@ class PdfExtractTool:
             parsed = urllib.parse.urlsplit(raw)
             if parsed.netloc not in {"", "localhost"}:
                 return None
-            raw = urllib.parse.unquote(parsed.path)
+            raw = _file_uri_path(parsed)
         if not raw.startswith("/workspace/") and not Path(raw).is_absolute():
             return None
         try:
@@ -2584,7 +2598,7 @@ class PrivateBrowserTool:
             return raw_url
         if parsed.netloc not in {"", "localhost"}:
             raise ValueError("private_browser file URL must use the local workspace")
-        raw_path = urllib.parse.unquote(parsed.path)
+        raw_path = _file_uri_path(parsed)
         resolved = cls._resolve_workspace_path(raw_path)
         return resolved.as_uri()
 

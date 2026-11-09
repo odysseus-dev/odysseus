@@ -59,7 +59,12 @@ def test_workspace_path_aliases_and_unrelated_basenames(tmp_path):
     assert artifact_identity('nested/a.py', str(tmp_path)) != expected
     assert artifact_identity('../a.py', str(tmp_path)) != expected
     assert artifact_identity('/workspace-other/a.py', str(tmp_path)) != expected
-    assert artifact_identity('a.py.', str(tmp_path)) != expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows strips trailing dots from file names, so 'a.py.' really is the same file as 'a.py'")
+def test_trailing_dot_path_is_a_distinct_artifact(tmp_path):
+    (tmp_path / 'a.py').write_text('x')
+    assert artifact_identity('a.py.', str(tmp_path)) != artifact_identity('a.py', str(tmp_path))
 
 
 def test_literal_tool_path_punctuation_is_not_prose_to_strip():
@@ -79,6 +84,7 @@ def test_artifact_observation_does_not_open_sensitive_or_outside_files(tmp_path,
     assert artifact_version('../outside', str(tmp_path)) == 'unobserved'
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo does not exist on Windows (no named FIFOs on the filesystem)")
 def test_fifo_artifact_observation_is_nonblocking(tmp_path):
     os.mkfifo(tmp_path / 'pipe')
     assert artifact_version('pipe', str(tmp_path)) == 'unobserved'
@@ -287,6 +293,7 @@ async def test_normalization_preserves_provider_arguments_and_replay_identity():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="artifact_version needs O_NOFOLLOW/O_DIRECTORY/dir_fd, which Windows lacks, so it reports 'unobserved' by design")
 async def test_changed_bytes_invalidate_a_passing_verifier(tmp_path):
     path = tmp_path / 'app.py'
     path.write_text('before')
@@ -360,6 +367,7 @@ async def test_cancellation_unwinds_bound_journal_without_done_or_claims():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="the bash tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 async def test_real_unittest_dispatch_and_policy_denial_have_distinct_receipts(tmp_path, monkeypatch):
     from src.tool_execution import execute_tool_block, NO_TOOL_SECURITY_CONTEXT
     monkeypatch.setattr('src.tool_execution.owner_is_admin_or_single_user', lambda owner: True)
@@ -381,6 +389,7 @@ async def test_real_unittest_dispatch_and_policy_denial_have_distinct_receipts(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="the bash tool requires enforced filesystem/process_tree containment, which no Windows mechanism provides, so it refuses to run")
 async def test_shell_writing_same_basename_elsewhere_is_not_required_mutation(tmp_path, monkeypatch):
     from src.tool_execution import execute_tool_block, NO_TOOL_SECURITY_CONTEXT
     monkeypatch.setattr('src.tool_execution.owner_is_admin_or_single_user', lambda owner: True)

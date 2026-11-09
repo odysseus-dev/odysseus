@@ -402,6 +402,10 @@ async def test_real_agent_teacher_boundary_and_provider_count(monkeypatch, tmp_p
     monkeypatch.setattr(al, '_agent_route_tool_mode', lambda *args, **kwargs: (True, False, False))
     monkeypatch.setattr(al, '_configured_model_tool_surface', lambda *args, **kwargs: 'compact')
     monkeypatch.setattr('src.model_context.budget_context_for_model', lambda *args, **kwargs: 32768)
+    # The loader walks from the workspace to the filesystem root, so a host whose
+    # temp dir sits under a home directory holding its own AGENTS.md would feed
+    # that file into the teacher's takeover prompt and change the routing.
+    monkeypatch.setattr(al, '_workspace_agents_context_message', lambda workspace: None)
     te, distillation = teacher_settings(monkeypatch)
     trusted = contract(('read_file',))
     calls, journals, chunks = [], [], []

@@ -547,6 +547,7 @@ class TestRunningInContainer:
 class TestAppleSiliconDetection:
     """APFEL should only surface as available on native Apple Silicon Macs."""
 
+    @pytest.mark.skipif(os.name == "nt", reason="IS_APPLE_SILICON also requires a POSIX os.name, which cannot be mocked on Windows (pathlib then cannot build PosixPath)")
     def test_reports_true_on_macos_arm64(self, monkeypatch):
         import core.platform_compat as platform_compat
 
@@ -788,13 +789,17 @@ class TestPackageProbeStatus:
         user_base = tmp_path / "user-base"
         monkeypatch.setattr("site.USER_BASE", str(user_base))
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        # Windows expanduser() reads USERPROFILE, not HOME.
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
         monkeypatch.setenv("PATH", "/usr/bin")
 
         _prepend_user_install_bins_to_path()
 
-        parts = os.environ["PATH"].split(os.pathsep)
-        assert str(user_base / "bin") in parts
-        assert str(tmp_path / "home" / ".local" / "bin") in parts
+        # expanduser("~/.local/bin") keeps the literal "/" on Windows, so compare
+        # separator-normalised paths.
+        parts = [os.path.normpath(p) for p in os.environ["PATH"].split(os.pathsep)]
+        assert os.path.normpath(str(user_base / "bin")) in parts
+        assert os.path.normpath(str(tmp_path / "home" / ".local" / "bin")) in parts
 
     def test_remote_package_probe_checks_user_install_bin(self):
         script = _package_probe_script(["vllm"])
